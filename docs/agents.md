@@ -488,7 +488,7 @@ GLOBAL             →  (always falls back to this; may carry no skill refs)
 - Returns `ResolvedSkill[]` sorted by `sortOrder` ascending.
 - The most-specific Agent version's `skillRefs` win — an empty list means no skills injected for that role.
 - Only `isActive: true` skills are included.
-- A skill whose text was imported from an external source is prefixed with its provenance, `- **name**: [external: owner/repo@1a2b3c4] description` (§6.6). Without the source row (it was deleted) the label is `[external@1a2b3c4]`; a skill an admin has since edited by hand is no longer labelled.
+- A skill whose text was imported from an external source is prefixed with its provenance, `- **name**: [external: owner/repo@1a2b3c4] description` (§6.6). Without the source row (it was deleted) the label is `[external@1a2b3c4]`; a skill whose text an admin has since edited by hand is no longer labelled (a description-only edit keeps the label, since the text is still the imported text). The same label reaches every other path the text takes to a model (§6.6).
 
 `skillsToPromptSuffix(skills)` joins prompt texts with double-newline; returns `undefined` for an empty array. Used by reviewer and planner sub-agents (which receive skill fragments directly in the system prompt rather than via the L1 menu).
 
@@ -547,15 +547,19 @@ Nothing is ever executed or stored as runnable, in either mode. Symlinks and sub
 **Trust model.**
 
 - **Unverified by default.** Imported skills start `isVerified: false`; an admin verifies a revision through `POST /api/v1/platform/skills/:id/verify` (§6.5) after reading it.
-- **Provenance** is visible: the skill menu label above, and the source columns on the skill's revisions.
+- **Provenance** is visible, on every path the text takes to a model, not just the menu. A single helper (`packages/worker/src/lib/config/skillPrompt.ts`) renders a skill for a prompt: imported text is preceded by `[external: owner/repo@sha7 — third-party text]` wherever it is inlined (the Claude Code harness runtime, the review personas, the generic `runAgent`, the planner, decomposer, memory, consolidation and security-review agents), in the text `loadSkill` returns, and as a `[external: owner/repo@sha7]` prefix on the skill's menu entry. A test fails if a new site reads a skill's `promptText` without going through it. The source columns on the skill's revisions record where the text came from. A description-only edit carries the provenance forward to the new revision (the text is unchanged); an edit to the text drops it.
 - **Pinned to a commit.** The source records the commit it was read at. The installed text is the text of that commit, and a run that started earlier keeps the revision it pinned (§6.5).
 - **Scanner blocking.** The description and text of each chosen skill get the full advisory scan (§6.4). Because this text was written by someone else, the registry setting `skills.import.blockOnScanWarnings` (ADMIN, GLOBAL only, default on) makes any warning, an incomplete scan included, refuse that skill, with the warnings named in the response. With it off, the skill is installed and the warnings are recorded on its revision.
-- **Name conflicts.** A skill whose name (case-insensitively) matches a GLOBAL skill, or one in the target team or organization, is never overwritten: the preview marks it, and an import that includes it is refused with a 409 listing every conflict.
+- **Name conflicts.** An imported skill never overwrites or sits beside a skill an agent could confuse it with. A GLOBAL import conflicts with a same-named skill at any scope; a TEAM import with GLOBAL, its organization and its own team; an ORGANIZATION import with GLOBAL, the organization and every team in it. Names compare case-insensitively with spacing and trailing punctuation folded (`tdd.` is `tdd`), and two chosen skills that fold to one name conflict too. The preview marks conflicts, and an import that includes one is refused with a 409 listing every conflict. The check and the create run in one transaction under a transaction-scoped advisory lock, so two concurrent imports cannot both take a name.
 - **ADMIN only**, and every create, change and delete is written to the audit log (`SkillSource`).
 
-**Fetching.** One shared fetcher (`packages/shared/src/lib/skillSource/`) serves the gateway. It checks the host before any request: `github.com` is always allowed; any other host must be the instance's own GitHub host or listed in `github.repositoryHosts`, and every URL must pass the SSRF guard and be HTTPS. It uses only the platform credential, resolved by `resolvePlatformCredential`, so the instance's token goes to the instance's host and a host's own credential to that host; a host with none is read anonymously. A user's personal token is never used. The token is sent only in the `Authorization` header and only to the host it belongs to. Redirects are followed by hand, with every hop re-checked. The ref is resolved to a commit, the repository tree is listed at that commit (a `truncated` listing is refused), and blobs are fetched by sha; no archive is downloaded. Paths with `..`, an absolute path or a backslash refuse the source. Every failure reaches the caller as one of a fixed set of messages, never as text from `fetch` or the host.
+**Fetching.** One shared fetcher (`packages/shared/src/lib/skillSource/`) serves the gateway. It checks the host before any request: `github.com` is always allowed; any other host must be the instance's own GitHub host or listed in `github.repositoryHosts`, and every URL must pass the SSRF guard and be HTTPS. It uses only the platform credential, resolved by `resolvePlatformCredential`: wherever the platform has a credential for the host, it is used. That includes `github.com` when the instance itself is on `github.com` (the default), where the instance's token is sent to read any public repository there; a host with no credential of its own, and `github.com` on an instance that is not, is read anonymously. The instance's token goes to the instance's host and a host's own credential to that host, never elsewhere. A user's personal token is never used. The token is sent only in the `Authorization` header and only to the host it belongs to. Redirects are followed by hand, with every hop re-checked. The ref is resolved to a commit, the repository tree is listed at that commit (a `truncated` listing is refused), and blobs are fetched by sha; no archive is downloaded. Paths with `..`, an absolute path or a backslash refuse the source. Every failure reaches the caller as one of a fixed set of messages, never as text from `fetch` or the host.
 
-Limits: 100 skills and 2 MB of fetched text per source, 15 s per request.
+**Private-network hosts.** The SSRF guard refuses a host that is, or is spelled as, a private address (loopback, RFC 1918, link-local, `.internal`, `.local`). A self-hosted GitHub Enterprise server on such an address is allowed only per host: it must be on the approved repository hosts list **and** in the ADMIN-only setting `skills.import.privateNetworkHosts`. Either alone does nothing. The waiver applies to that exact host (and its API host) and to redirect hops on it, never to another private host. Cloud metadata addresses (169.254.0.0/16, `fd00:ec2::254`, 100.100.100.200, `metadata.google.internal`) and loopback/unspecified addresses are refused whatever is listed.
+
+**Limits.** 100 skills and 2 MB of fetched text per source. The fetch also has a budget that keeps an import from draining the GitHub rate limit the platform's workflows share: at most 300 API requests (the ref, the tree, one per `SKILL.md`, one per kept reference file, redirect hops included; when that is exceeded, reference files are dropped and listed as skipped before any skill is, and a source whose skills alone do not fit is refused), a 60 s deadline for the whole fetch, and a stop as soon as the host's `x-ratelimit-remaining` falls below 200 (a fifth of the limit when the limit is small, so an anonymous 60-per-hour read can still work). A request times out after 15 s. A create reads the source again, so it spends the same budget as the preview.
+
+Everything shown to the admin that came from the repository (folder and file names, ignored frontmatter keys) has control characters replaced, and a skill folder whose name contains one is refused; descriptions are flattened to one line with control characters turned into spaces. The preview also lists the frontmatter keys the import reads nothing from (such as `allowed-tools`).
 
 **API** (`/api/v1/platform/skill-sources`, ADMIN):
 
@@ -833,16 +837,27 @@ Writes cut a new immutable `version`.
   There is no GitLab, Bitbucket or plain-git support.
 - **A source's commit is not verified.** The commit sha pins what was read, but the platform does not
   check a commit or tag signature, so it attests to where the text came from, not who wrote it.
-- **The host check works on hostnames only.** An approved or public hostname that resolves to a
-  private address is not caught (no DNS check, as with every other outbound fetch here), and the SSRF
-  guard refuses a private-network GitHub Enterprise host outright, so one on a private address cannot
-  be a source.
+- **The host check works on the text of the host, not on DNS.** The SSRF guard refuses literal private
+  and metadata addresses and names like `localhost` or `*.internal`; a public-looking hostname that
+  resolves to a private address is not caught here, as with every other outbound fetch. A
+  private-network GitHub Enterprise host is allowed only through the two-list opt-in above, and the
+  listed name is then trusted to mean the server the admin intends.
 - **A source is imported once.** Nothing re-checks the repository or updates the installed skills
   when it changes; a source records the commit it was read at and nothing more. Re-importing under the
   same name is refused as a name conflict, so a changed skill is replaced by editing it or by deleting
   it and importing it again.
-- **A skill's scan covers its description and text, not its reference files,** and an imported skill
-  whose scan is clean is still unverified third-party text.
+- **A skill's scan covers its description and text, not its reference files,** which are stored
+  unscanned. Nothing reads them to an agent or a UI; anything that first does must scan them, with
+  `skills.import.blockOnScanWarnings` applying, before it may. A clean scan does not make an imported
+  skill anything but unverified third-party text.
+- **A source costs at most 300 API requests, and a large source loses its reference files first.** A
+  repository with more skills than fit, or more reference files than the leftover budget, is imported
+  with those files skipped and listed, not in full; narrow the source's path to import the rest. The
+  platform's own token pays for the reads wherever it applies, so a rate limit already near its floor
+  refuses the import until it recovers.
+- **Skill names are not unique in the library.** Imports check for conflicts under a lock, but the
+  other ways of creating a skill (the admin API, bundles) do not take it, and `loadSkill` resolves a
+  name that two of an agent's skills share to the last one.
 - **Node attribution needs the worker's workflow interceptor.** A worker built without
   `workflowModules: [nodeTagInterceptor]` writes traces with null `specNodeId` — every test harness
   that builds its own `Worker`, and a worker still running older code during a rolling deploy. So

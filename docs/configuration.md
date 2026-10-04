@@ -38,7 +38,10 @@ The `mcp` group holds the switches and bounds of the MCP server: `mcp.enabled`,
 per request, so they take effect within the settings cache's ~30 s with no restart; see
 [mcp-server.md](./mcp-server.md#settings).
 
-The `skills` group holds `skills.import.blockOnScanWarnings`: ADMIN-only, GLOBAL only, default on. While
+The `skills` group holds two settings, both ADMIN-only and GLOBAL only. `skills.import.privateNetworkHosts`
+(default empty) names hosts a skill source may live on even though they are, or are spelled as, a private
+address; a host qualifies only if it is also an approved repository host, and cloud metadata and loopback
+addresses stay refused whatever is listed. `skills.import.blockOnScanWarnings` is default on. While
 it is on, importing skills from an external source refuses any chosen skill whose description or text
 draws a scanner warning (an incomplete scan included) and names it in the response; off, such a skill is
 installed unverified with the warnings recorded on its first revision. It is read on each import, so a
