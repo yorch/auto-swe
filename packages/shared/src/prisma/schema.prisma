@@ -631,6 +631,7 @@ model Organization {
   configSettings      ConfigSetting[]
   configPermissions   ConfigPermission[]
   skills            Skill[]
+  skillSources      SkillSource[]
 
   @@map("organizations")
 }
@@ -683,6 +684,7 @@ model Team {
   agentTraces         AgentTrace[]             @relation("TeamAgentTraces")
   autonomyPolicies    AutonomyPolicy[]
   skills            Skill[]
+  skillSources      SkillSource[]
 
   @@index([orgId])
   @@map("teams")
@@ -1072,6 +1074,7 @@ model User {
   workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleCreator")
   skillRevisions        SkillRevision[]        @relation("SkillRevisionCreator")
+  skillSources          SkillSource[]          @relation("SkillSourceCreator")
   schedulesActingAs     ScheduledWorkRequest[] @relation("ScheduleActsAs")
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
@@ -2405,6 +2408,14 @@ model Skill {
   /// working); `SkillRevision` is the immutable history a run pins against.
   currentRevision Int @default(1) @map("current_revision")
 
+  /// The tracked external source this skill was imported from, if any. Deleting
+  /// the source detaches the skill (it stays, as an ordinary custom skill, with
+  /// the provenance its revisions carry).
+  sourceId   String?      @map("source_id") @db.Uuid
+  source     SkillSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  /// The skill's folder inside the source repository (relative to the repo root).
+  sourcePath String?      @map("source_path")
+
   agentSkillRefs AgentSkillRef[]
   revisions      SkillRevision[]
 
@@ -2412,6 +2423,7 @@ model Skill {
   @@index([scope, orgId])
   @@index([teamId])
   @@index([orgId])
+  @@index([sourceId])
   @@map("skills")
 }
 
@@ -2443,6 +2455,65 @@ model SkillRevision {
   @@unique([skillId, revision])
   @@index([createdById])
   @@map("skill_revisions")
+}
+
+enum SkillSourceStatus {
+  OK
+  UPDATE_AVAILABLE
+  ERROR
+  DISABLED
+}
+
+/// What an import does with the non-Markdown files beside a skill's SKILL.md.
+/// Nothing is ever executed or stored as runnable.
+enum SkillSourceScriptMode {
+  /// SKILL.md becomes the prompt, .md/.txt siblings are kept as reference text,
+  /// everything else is skipped and listed.
+  TEXT_ONLY
+  /// A skill folder holding any other file is refused.
+  REJECT
+}
+
+/// An external GitHub / GitHub Enterprise repository skills are imported from,
+/// pinned to one commit. Uniqueness per (host, owner, repo, path) within a
+/// scope is a set of partial unique indexes (see `custom_constraints_and_indexes`),
+/// which Prisma cannot express.
+model SkillSource {
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Lowercased `host[:port]`, e.g. `github.com`.
+  host          String
+  /// Lowercased: GitHub compares owner and repository names case-insensitively.
+  owner         String
+  repo          String
+  /// Subdirectory the skills live under; empty for the repository root.
+  path          String                @default("")
+  /// The branch or tag as the admin gave it.
+  ref           String
+  /// The commit the imported text came from.
+  pinnedSha     String                @map("pinned_sha")
+  /// Newest commit the ref resolved to at the last check; null until one ran.
+  latestSha     String?               @map("latest_sha")
+  lastCheckedAt DateTime?             @map("last_checked_at") @db.Timestamptz
+  /// A fixed error string, never provider or fetch text.
+  lastError     String?               @map("last_error")
+  status        SkillSourceStatus     @default(OK)
+  scriptMode    SkillSourceScriptMode @default(TEXT_ONLY) @map("script_mode")
+  scope         ConfigScope           @default(GLOBAL)
+  teamId        String?               @map("team_id") @db.Uuid
+  team          Team?                 @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  orgId         String?               @map("org_id") @db.Uuid
+  organization  Organization?         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdById   String?               @map("created_by_id") @db.Uuid
+  createdBy     User?                 @relation("SkillSourceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  skills Skill[]
+
+  @@index([teamId])
+  @@index([orgId])
+  @@index([createdById])
+  @@map("skill_sources")
 }
 
 enum ScannerPatternType {
