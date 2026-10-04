@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { useUsageScopes } from '@/hooks/useAdmin';
 import { useApprovalsCount } from '@/hooks/useApprovals';
-import { activeNavHref, visibleNavGroups } from '@/lib/navigation';
+import { activeNavHref, isStartWorkPath, visibleNavGroups } from '@/lib/navigation';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -285,6 +285,19 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto pb-4">
+        <div className="px-[14px] pt-1">
+          <Link
+            aria-current={isStartWorkPath(pathname) ? 'page' : undefined}
+            className={cn(
+              'flex items-center justify-center gap-2 rounded-[10px] border border-transparent bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-[9px] text-[13.5px] font-semibold text-white no-underline hover:brightness-110',
+              FOCUS_RING
+            )}
+            href="/start"
+          >
+            <span aria-hidden="true">+</span>
+            Start work
+          </Link>
+        </div>
         {groups.map((group) => (
           <div key={group.label}>
             <div className="px-5 pb-[6px] pt-[14px] text-[10px] font-bold uppercase tracking-[0.12em] text-paper-600">
