@@ -370,10 +370,48 @@ function checkMcpCodeHasNoDatabaseAccess() {
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// INVARIANT 5 — an outbound connector request states its redirect policy.
+//
+// Connector fetches carry a credential to an operator-supplied or fixed host. `fetch` follows
+// redirects by default, so a call that says nothing lets a checked host bounce the request — and,
+// for headers Node does not strip across origins, the credential — to a host nobody validated.
+// Nothing fails: the request succeeds and returns data. The call must write `redirect` (`'error'`,
+// or `'manual'` with its own per-hop check); GitHub Issues goes through `fetchGuarded`, which
+// does it internally.
+// ---------------------------------------------------------------------------
+
+function checkConnectorFetchesSetRedirect() {
+  const files = [
+    ...walk(
+      'packages/shared/src/lib/integrations',
+      (f) => f.endsWith('.ts') && !f.endsWith('.test.ts')
+    ),
+    ...walk('packages/worker/src/connectors', (f) => f.endsWith('.ts') && !f.endsWith('.test.ts')),
+  ];
+  for (const file of files) {
+    const src = read(file);
+    for (const m of src.matchAll(/(?<![.\w])fetch\s*\(/g)) {
+      const open = m.index + m[0].length - 1;
+      const init = callArgs(src, open)[1] ?? '';
+      if (!/\bredirect\b/.test(init)) {
+        fail(
+          file,
+          src.slice(0, open).split('\n').length,
+          'connector-fetch-sets-redirect',
+          'a connector fetch(…) call does not set `redirect`',
+          "Default `fetch` follows redirects, so a credentialed request can be bounced to an unchecked host. Add `redirect: 'error'`, or follow hops by hand with a check on each (see fetchGuarded)."
+        );
+      }
+    }
+  }
+}
+
 checkWorkspaceImageLiterals();
 checkDockerfileYarnProvisioning();
 checkLayoutRendersPerRequest();
 checkMcpCodeHasNoDatabaseAccess();
+checkConnectorFetchesSetRedirect();
 
 if (failures.length > 0) {
   console.error(`Invariant check failed — ${failures.length} violation(s).\n`);
@@ -388,8 +426,9 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('Invariant check passed — 4 invariants, no violations.');
+console.log('Invariant check passed — 5 invariants, no violations.');
 console.log('  workspace image is inherited, never written inline at a call site');
 console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
 console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
 console.log('  MCP code takes no database access: it reaches data only through a REST route');
+console.log('  connector fetches state a redirect policy');
