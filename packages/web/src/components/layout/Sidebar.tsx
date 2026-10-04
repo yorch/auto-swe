@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { type RefObject, useMemo } from 'react';
+import { useUsageScopes } from '@/hooks/useAdmin';
 import { useApprovalsCount } from '@/hooks/useApprovals';
 import { activeNavHref, visibleNavGroups } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
@@ -75,7 +76,16 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
   const user = useAuthStore((s) => s.user);
   const inboxCount = useApprovalsCount();
 
-  const groups = useMemo(() => visibleNavGroups(user?.role), [user?.role]);
+  const usageScopes = useUsageScopes();
+  const hasUsageScope =
+    usageScopes.data !== undefined &&
+    (usageScopes.data.platform ||
+      usageScopes.data.teams.length > 0 ||
+      usageScopes.data.orgs.length > 0);
+  const groups = useMemo(
+    () => visibleNavGroups(user?.role, hasUsageScope),
+    [user?.role, hasUsageScope]
+  );
   // The most-specific matching nav item wins (e.g. /workflows/library over /workflows).
   const activeHref = useMemo(
     () =>

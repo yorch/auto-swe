@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveCanaryConfig: vi.fn(async () => ({ enabled: false })),
   resolveFigmaConfig: vi.fn(async () => ({ enabled: false })),
+  resolveGitHubConfig: vi.fn(async () => ({ baseUrl: 'https://github.com' })),
   resolveIssueTrackerConfig: vi.fn(async () => ({ provider: null })),
   resolveKnowledgeBaseConfig: vi.fn(async () => ({ enabled: false, provider: null })),
   resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),

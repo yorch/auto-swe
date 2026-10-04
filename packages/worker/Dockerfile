@@ -145,4 +145,4 @@ ENV NODE_ENV=production
 RUN chown node:node /app
 USER node
 # The OpenTelemetry preload must load before the app's imports; see src/instrument.ts.
-CMD ["node", "--import", "./packages/worker/dist/instrument.js", "packages/worker/dist/index.js"]
+CMD ["node", "--disable-warning=DEP0205", "--import", "./packages/worker/dist/instrument.js", "packages/worker/dist/index.js"]

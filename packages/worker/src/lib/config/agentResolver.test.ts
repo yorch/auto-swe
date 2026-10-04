@@ -1,12 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { agentFindFirst, cacheKeys, invalidateMock } = vi.hoisted(() => ({
+const {
+  agentFindFirst,
+  cacheKeys,
+  inActivity,
+  invalidateMock,
+  persistTrace,
+  revisionFindMany,
+  warn,
+} = vi.hoisted(() => ({
   agentFindFirst: vi.fn(),
   cacheKeys: [] as string[],
+  inActivity: { value: false },
   invalidateMock: vi.fn(),
+  persistTrace: vi.fn(async () => undefined),
+  revisionFindMany: vi.fn(),
+  warn: vi.fn(),
 }));
+vi.mock('@temporalio/activity', () => ({
+  asyncLocalStorage: { getStore: () => (inActivity.value ? {} : undefined) },
+}));
+vi.mock('../activityContext.js', () => ({ persistActivityTrace: persistTrace }));
+vi.mock('../activityLog.js', () => ({ logWarn: warn }));
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { agent: { findFirst: agentFindFirst } },
+  prisma: { agent: { findFirst: agentFindFirst }, skillRevision: { findMany: revisionFindMany } },
 }));
 
 // Pass-through cache so resolution isn't memoized across cases; records the
@@ -45,6 +62,7 @@ const mockedResolveCred = vi.mocked(resolveProviderCredential);
 function skillRef(name: string, sortOrder: number) {
   return {
     skill: {
+      currentRevision: 1,
       description: `${name} desc`,
       id: `sk-${name}`,
       isActive: true,
@@ -219,6 +237,169 @@ describe('resolveAgent — run-start version pin', () => {
     const r = await resolveAgent('reviewer', { agentVersions: { reviewer: 2 }, teamId: 't1' });
     expect(r.version).toBe(2);
     expect(wheres.find((w) => w.scope === 'GLOBAL')).toMatchObject({ version: 2 });
+  });
+});
+
+describe('resolveAgent — run-start skill revision pin', () => {
+  // The skill was edited after the run began: live text is revision 3, the run
+  // pinned revision 1.
+  function editedSkillRef() {
+    const ref = skillRef('tdd', 0);
+    ref.skill.currentRevision = 3;
+    ref.skill.promptText = 'PROMPT_tdd (edited mid-run)';
+    ref.skill.description = 'tdd desc (edited)';
+    return ref;
+  }
+
+  it('reads the pinned revision text even though the skill was edited since', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+    revisionFindMany.mockResolvedValue([
+      { description: 'tdd desc', promptText: 'PROMPT_tdd', revision: 1, skillId: 'sk-tdd' },
+    ]);
+
+    const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+
+    expect(r.skills).toEqual([
+      expect.objectContaining({
+        description: 'tdd desc',
+        // A pinned older revision is never reported as verified.
+        isVerified: false,
+        promptText: 'PROMPT_tdd',
+      }),
+    ]);
+    expect(revisionFindMany.mock.calls[0]?.[0].where).toEqual({
+      OR: [{ revision: 1, skillId: 'sk-tdd' }],
+    });
+  });
+
+  it('reads the current revision when the run has no pin', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+
+    const r = await resolveAgent('reviewer');
+
+    expect(r.skills[0]?.promptText).toBe('PROMPT_tdd (edited mid-run)');
+    expect(revisionFindMany).not.toHaveBeenCalled();
+  });
+
+  it('uses the live row (no query) when the pin is the current revision', async () => {
+    const ref = skillRef('tdd', 0);
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [ref] }));
+
+    const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+
+    expect(r.skills[0]).toMatchObject({ isVerified: true, promptText: 'PROMPT_tdd' });
+    expect(revisionFindMany).not.toHaveBeenCalled();
+  });
+
+  it('resolves a skill the pin map does not name at its current revision', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+
+    const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-other': 1 } });
+
+    expect(r.skills[0]?.promptText).toBe('PROMPT_tdd (edited mid-run)');
+  });
+
+  it('falls back to the live text when the pinned revision row is missing, and says so', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+    revisionFindMany.mockResolvedValue([]);
+
+    const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+
+    expect(r.skills[0]?.promptText).toBe('PROMPT_tdd (edited mid-run)');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('pinned skill revision missing'), {
+      missing: [{ currentRevision: 3, pinnedRevision: 1, skillId: 'sk-tdd' }],
+    });
+    // Outside an activity there is no run to attach a trace event to.
+    expect(persistTrace).not.toHaveBeenCalled();
+  });
+
+  it('also records a trace event when it happens inside an activity', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+    revisionFindMany.mockResolvedValue([]);
+    inActivity.value = true;
+    try {
+      await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+    } finally {
+      inActivity.value = false;
+    }
+    expect(persistTrace).toHaveBeenCalledTimes(1);
+  });
+
+  it('keys the cache on the skill pins so two pins never share an entry', async () => {
+    agentFindFirst.mockResolvedValue(agentRow());
+    cacheKeys.length = 0;
+    await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+    await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 2 } });
+    await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+    expect(cacheKeys[0]).not.toBe(cacheKeys[1]);
+    expect(cacheKeys[0]).toBe(cacheKeys[2]);
+  });
+});
+
+describe('resolveAgent — imported skill provenance', () => {
+  function importedRef(source: { owner: string; repo: string } | null) {
+    const ref = skillRef('ext', 0) as ReturnType<typeof skillRef> & {
+      skill: Record<string, unknown>;
+    };
+    ref.skill.sourcePath = 'skills/ext';
+    ref.skill.source = source;
+    return ref;
+  }
+
+  it('labels a skill whose revision came from a source with owner/repo@sha7', async () => {
+    agentFindFirst.mockResolvedValue(
+      agentRow({ skillRefs: [importedRef({ owner: 'acme', repo: 'skills' })] })
+    );
+    revisionFindMany.mockResolvedValue([{ skillId: 'sk-ext', sourceSha: '0123456789abcdef' }]);
+
+    const r = await resolveAgent('reviewer');
+
+    expect(r.skills[0]?.provenance).toBe('external: acme/skills@0123456');
+    expect(revisionFindMany.mock.calls[0]?.[0].where).toEqual({
+      OR: [{ revision: 1, skillId: 'sk-ext' }],
+    });
+  });
+
+  it('keeps the label, without the repository, once the source is deleted', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [importedRef(null)] }));
+    revisionFindMany.mockResolvedValue([{ skillId: 'sk-ext', sourceSha: '0123456789abcdef' }]);
+
+    expect((await resolveAgent('reviewer')).skills[0]?.provenance).toBe('external@0123456');
+  });
+
+  it('drops the label once a hand edit cut a revision with no source sha', async () => {
+    agentFindFirst.mockResolvedValue(
+      agentRow({ skillRefs: [importedRef({ owner: 'acme', repo: 'skills' })] })
+    );
+    revisionFindMany.mockResolvedValue([{ skillId: 'sk-ext', sourceSha: null }]);
+
+    expect((await resolveAgent('reviewer')).skills[0]?.provenance).toBeUndefined();
+  });
+
+  it('reads the sha of the revision a run pinned, not the current one', async () => {
+    const ref = importedRef({ owner: 'acme', repo: 'skills' });
+    ref.skill.currentRevision = 2;
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [ref] }));
+    revisionFindMany.mockImplementation(async ({ select }: { select: Record<string, boolean> }) =>
+      select.sourceSha
+        ? [{ skillId: 'sk-ext', sourceSha: 'aaaaaaa1111111' }]
+        : [{ description: 'old', promptText: 'old text', revision: 1, skillId: 'sk-ext' }]
+    );
+
+    const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-ext': 1 } });
+
+    const shaQuery = revisionFindMany.mock.calls.find((c) => c[0].select.sourceSha)?.[0];
+    expect(shaQuery.where).toEqual({ OR: [{ revision: 1, skillId: 'sk-ext' }] });
+    expect(r.skills[0]).toMatchObject({ provenance: 'external: acme/skills@aaaaaaa' });
+  });
+
+  it('runs no extra query when no skill is imported', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [skillRef('plain', 0)] }));
+
+    const r = await resolveAgent('reviewer');
+
+    expect(r.skills[0]?.provenance).toBeUndefined();
+    expect(revisionFindMany).not.toHaveBeenCalled();
   });
 });
 

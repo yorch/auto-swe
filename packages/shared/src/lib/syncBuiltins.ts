@@ -32,6 +32,14 @@ import {
 import { AGENT_RUN_SPEC, AGENT_RUN_TEMPLATE_NAME, AGENT_RUN_TEMPLATE_ORIGIN } from './agentRun.js';
 import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME } from './channelTask.js';
+import {
+  initialRevision,
+  isRevisionConflict,
+  nextRevision,
+  skillContentChanged,
+  skillContentHash,
+} from './skillRevision.js';
+import { runUnscoped } from './tenantGuard.js';
 
 /** Provenance tag for all SWE seed content. */
 const SWE_ORIGIN = 'swe-starter';
@@ -178,6 +186,7 @@ export async function syncBuiltins(prisma: PrismaClient): Promise<void> {
 
 /** Core platform defaults (origin=null). Always seeded. */
 export async function seedCoreDefaults(prisma: PrismaClient): Promise<void> {
+  await backfillSkillRevisions(prisma);
   await syncScannerPatterns(prisma, 'core');
   await syncAutonomyPolicies(prisma);
   await syncModelCatalog(prisma);
@@ -1091,34 +1100,45 @@ async function syncBuiltinTemplate(
   }
 }
 
-/** Returns the names of the built-in skills this call created. */
+/**
+ * Returns the names of the built-in skills this call created. Content changes
+ * cut a new `SkillRevision` (a no-op sync cuts none), so an in-flight run that
+ * pinned the previous revision keeps its text.
+ */
 async function syncSkills(prisma: PrismaClient): Promise<Set<string>> {
   const created = new Set<string>();
   for (const skillDef of BUILTIN_SKILLS) {
+    const content = { description: skillDef.description, promptText: skillDef.promptText };
     const existingSkill = await prisma.skill.findFirst({
       where: { isBuiltIn: true, name: skillDef.name },
     });
     if (existingSkill) {
       // isActive is intentionally omitted — preserve any admin disable decision.
-      await prisma.skill.update({
-        data: {
-          description: skillDef.description,
-          isVerified: true,
-          origin: SWE_ORIGIN,
-          promptText: skillDef.promptText,
-        },
-        where: { id: existingSkill.id },
-      });
+      const base = { isVerified: true, origin: SWE_ORIGIN };
+      if (skillContentChanged(existingSkill, content)) {
+        const next = nextRevision(existingSkill, content);
+        try {
+          await prisma.skill.update({ data: { ...base, ...next.data }, where: next.where });
+        } catch (err) {
+          // Another replica booting alongside this one cut the same revision
+          // from the same shipped text first; its write is the one we wanted.
+          if (!isRevisionConflict(err)) {
+            throw err;
+          }
+        }
+      } else {
+        await prisma.skill.update({ data: base, where: { id: existingSkill.id } });
+      }
     } else {
       await prisma.skill.create({
         data: {
-          description: skillDef.description,
+          ...content,
+          ...initialRevision(content),
           isActive: true,
           isBuiltIn: true,
           isVerified: true,
           name: skillDef.name,
           origin: SWE_ORIGIN,
-          promptText: skillDef.promptText,
         },
       });
       created.add(skillDef.name);
@@ -1126,6 +1146,32 @@ async function syncSkills(prisma: PrismaClient): Promise<Set<string>> {
     // Skill→agent attachment is via the Agent's skillRefs (synced in syncAgents).
   }
   return created;
+}
+
+/**
+ * Give every skill without a revision row — a custom skill created before
+ * revisions existed — the row for the revision it already names, from its live
+ * content. Idempotent: a skill that has any revision is untouched.
+ */
+async function backfillSkillRevisions(prisma: PrismaClient): Promise<void> {
+  const bare = await runUnscoped(
+    "startup sync backfills revision rows for every tenant's skills",
+    ['Skill'],
+    () => prisma.skill.findMany({ where: { revisions: { none: {} } } })
+  );
+  if (bare.length === 0) {
+    return;
+  }
+  await prisma.skillRevision.createMany({
+    data: bare.map((s) => ({
+      contentHash: skillContentHash(s),
+      description: s.description,
+      promptText: s.promptText,
+      revision: s.currentRevision,
+      skillId: s.id,
+    })),
+    skipDuplicates: true,
+  });
 }
 
 /**

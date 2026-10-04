@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
@@ -187,10 +188,7 @@ export async function consolidateChannelMemory(
     teamId: channel?.teamId ?? '',
   };
   const consolidatorSkills = await loadAgentSkills('commitToMemory', agentCtx);
-  const skillSuffix = consolidatorSkills
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
+  const skillSuffix = joinSkillPrompts(consolidatorSkills);
   const consolidatorPrompt = skillSuffix
     ? `${CHANNEL_MEMORY_CONSOLIDATOR_PROMPT}\n\n${skillSuffix}`
     : CHANNEL_MEMORY_CONSOLIDATOR_PROMPT;

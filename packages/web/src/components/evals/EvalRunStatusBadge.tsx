@@ -7,11 +7,20 @@ const TONE: Record<string, BadgeTone> = {
   SUCCESS: 'moss',
 };
 
-/** An offline harness run's status: RUNNING | SUCCESS | FAILED | REGRESSION. */
-export function EvalRunStatusBadge({ status }: { status: string }) {
+/**
+ * An offline harness run's status: RUNNING | SUCCESS | FAILED | REGRESSION. A
+ * `partial` verdict covers only the cases the runless budget let run, so it is
+ * labelled as such and drawn amber rather than as a plain pass.
+ */
+export function EvalRunStatusBadge({ status, partial }: { status: string; partial?: boolean }) {
+  const isPartial = partial === true && (status === 'SUCCESS' || status === 'REGRESSION');
   return (
-    <Badge dot={status === 'RUNNING' ? 'pulse' : false} tone={TONE[status] ?? 'dust'} uppercase>
-      {status}
+    <Badge
+      dot={status === 'RUNNING' ? 'pulse' : false}
+      tone={isPartial ? 'amber' : (TONE[status] ?? 'dust')}
+      uppercase
+    >
+      {isPartial ? `${status} (partial)` : status}
     </Badge>
   );
 }

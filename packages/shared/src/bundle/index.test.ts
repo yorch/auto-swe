@@ -303,6 +303,16 @@ describe('parseBundle', () => {
     ).toThrow();
   });
 
+  it('caps a skill description at the admin API’s 1000 characters', () => {
+    const bundle = (description: string) => ({
+      bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+      entities: { skills: [{ description, name: 's', promptText: 'p' }] },
+      metadata: { contentHash: 'x', createdAt: 'now', name: 'n', version: '1' },
+    });
+    expect(() => parseBundle(bundle('d'.repeat(1000)))).not.toThrow();
+    expect(() => parseBundle(bundle('d'.repeat(1001)))).toThrow();
+  });
+
   it('rejects an over-long scanner pattern body', () => {
     expect(() =>
       parseBundle({

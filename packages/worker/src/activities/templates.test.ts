@@ -104,6 +104,11 @@ vi.mock('@auto-swe/shared/db', () => {
     runInput: {
       findUnique: vi.fn(async () => null),
     },
+    // Run-start skill-revision snapshot: no skills means an empty pin map.
+    skill: {
+      findMany: vi.fn(async () => []),
+    },
+    slackChannel: { findFirst: vi.fn(async () => null) },
     team: { findUnique: vi.fn() },
     workflowHumanStep: {
       count: vi.fn(async () => 0),
@@ -153,6 +158,7 @@ const orgMonthlyUsageUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
 const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
 const findTemplate = vi.mocked(prisma.workflowTemplate.findFirst);
 const findAgents = vi.mocked(prisma.agent.findMany);
+const findSkills = vi.mocked(prisma.skill.findMany);
 const aggregateTraces = vi.mocked(prisma.agentTrace.aggregate);
 
 // Default: repo-less finalize paths (no activeWorkflows) fall back to summing the
@@ -183,6 +189,7 @@ afterEach(() => {
   findRepo.mockReset();
   findTemplate.mockReset();
   findAgents.mockReset();
+  findSkills.mockClear();
   aggregateTraces.mockReset();
 });
 
@@ -344,6 +351,74 @@ describe('createWorkflowRun', () => {
     expect((args.create as Record<string, unknown>).agentVersions).toEqual({
       implementer: 1,
       reviewer: 2,
+    });
+  });
+
+  it('snapshots the current revision of every skill visible to the run, keyed by skill id', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    findSkills.mockResolvedValueOnce([
+      { currentRevision: 3, id: 'skill-a' },
+      { currentRevision: 1, id: 'skill-b' },
+    ] as never);
+    await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    expect(args.create.skillRevisions).toEqual({ 'skill-a': 3, 'skill-b': 1 });
+    expect(args.update).toEqual({});
+  });
+
+  it('scopes the skill snapshot to GLOBAL plus the run’s own team and organization', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    const findRunInput = vi.mocked(prisma.runInput.findUnique);
+    findRunInput.mockResolvedValue({
+      connection: { team: { orgId: 'org-9' }, teamId: 'team-9' },
+    } as never);
+    try {
+      await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+        workRequestId: 'wr-1',
+      });
+    } finally {
+      findRunInput.mockResolvedValue(null as never);
+    }
+    expect(findSkills.mock.calls[0]?.[0]?.where).toEqual({
+      OR: [
+        { scope: 'GLOBAL' },
+        { scope: 'TEAM', teamId: 'team-9' },
+        { orgId: 'org-9', scope: 'ORGANIZATION' },
+      ],
+    });
+  });
+
+  it('pins a repo-less channel task’s skills at the tenant of its Slack channel', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    const findRunInput = vi.mocked(prisma.runInput.findUnique);
+    const findChannel = vi.mocked(prisma.slackChannel.findFirst);
+    // No connection, so the settings context finds no team; the request names a channel.
+    findRunInput.mockImplementation((async (args: { select: Record<string, unknown> }) =>
+      'slackChannelId' in args.select && Object.keys(args.select).length === 1
+        ? { slackChannelId: 'C123' }
+        : null) as never);
+    findChannel.mockResolvedValueOnce({ orgId: 'org-c', teamId: 'team-c' } as never);
+    try {
+      await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-chan',
+        workRequestId: 'wr-chan',
+      });
+    } finally {
+      findRunInput.mockReset();
+      findRunInput.mockResolvedValue(null as never);
+    }
+    expect(findChannel.mock.calls[0]?.[0]?.where).toEqual({ slackChannelId: 'C123' });
+    expect(findSkills.mock.calls[0]?.[0]?.where).toEqual({
+      OR: [
+        { scope: 'GLOBAL' },
+        { scope: 'TEAM', teamId: 'team-c' },
+        { orgId: 'org-c', scope: 'ORGANIZATION' },
+      ],
     });
   });
 

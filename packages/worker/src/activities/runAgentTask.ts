@@ -188,6 +188,8 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       ...(version !== undefined ? { [key]: version } : {}),
     },
     orgId: baseCtx.orgId,
+    // Same reason as agentVersions: the run's skill text is frozen at its start.
+    skillRevisions: baseCtx.skillRevisions,
   };
   const resolved = await resolveAgent(key, agentCtx);
   // Before any container exists: an unpriced model under a USD cap is refused

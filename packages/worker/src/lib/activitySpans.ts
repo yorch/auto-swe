@@ -1,10 +1,18 @@
-import { traceContextFromHeaders } from '@auto-swe/shared/lib/temporalTracing';
-import { SpanStatusCode, trace } from '@opentelemetry/api';
+import {
+  signalLinkFromHeaders,
+  traceContextFromHeaders,
+} from '@auto-swe/shared/lib/temporalTracing';
+import { type Link, SpanStatusCode, trace } from '@opentelemetry/api';
 import { CancelledFailure, type Context } from '@temporalio/activity';
 import type { ActivityInterceptors } from '@temporalio/worker';
 import { recordActivityDuration } from './metrics.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
+
+function signalLinks(headers: Parameters<typeof signalLinkFromHeaders>[0]): Link[] {
+  const link = signalLinkFromHeaders(headers);
+  return link ? [link] : [];
+}
 
 /**
  * A cancelled attempt (dashboard cancel, heartbeat timeout, reset) is not a
@@ -27,7 +35,10 @@ function isCancellation(err: unknown): boolean {
  * which the workflow forwards as a header on every activity it schedules (see
  * `@auto-swe/shared/lib/temporalTracing`). Every activity of a run therefore
  * shares the starter's trace — a gateway request's, say. A workflow started
- * without one (a schedule) gives each activity its own trace, as before.
+ * without one (a schedule) gets a trace id derived from its identity by the
+ * workflow interceptor, so its activities still share one trace. Activities
+ * scheduled after a signal or update also carry a span link to that signal's
+ * span.
  *
  * Not `@temporalio/interceptors-opentelemetry`: it pins the 1.x OpenTelemetry
  * SDK beside this repo's 2.x one, and runs OpenTelemetry inside the isolate.
@@ -47,6 +58,7 @@ export function activitySpanInterceptor(ctx: Context): ActivityInterceptors {
               'temporal.workflow_id': info.workflowExecution?.workflowId ?? '',
               'temporal.workflow_type': info.workflowType ?? '',
             },
+            links: signalLinks(input.headers),
           },
           traceContextFromHeaders(input.headers),
           async (span) => {

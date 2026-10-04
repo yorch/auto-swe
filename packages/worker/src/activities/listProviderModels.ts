@@ -63,7 +63,7 @@ export async function listProviderModels(
 
   // Precondition, before any workspace: the file this run exists to edit is there.
   const repo = await prisma.connection.findUniqueOrThrow({
-    include: { installation: { select: { installationId: true } } },
+    include: { installation: { select: { host: true, installationId: true } } },
     where: { id: requireRepoId(input.request, 'listProviderModels') },
   });
   const repoRef = toRepoRef(repo);

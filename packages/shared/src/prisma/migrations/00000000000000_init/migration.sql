@@ -53,6 +53,12 @@ CREATE TYPE "ModelStatus" AS ENUM ('ACTIVE', 'DEPRECATED', 'RETIRED');
 CREATE TYPE "ModelSuggestionType" AS ENUM ('NEW', 'RETIREMENT_CANDIDATE');
 
 -- CreateEnum
+CREATE TYPE "SkillSourceStatus" AS ENUM ('OK', 'UPDATE_AVAILABLE', 'ERROR', 'DISABLED');
+
+-- CreateEnum
+CREATE TYPE "SkillSourceScriptMode" AS ENUM ('TEXT_ONLY', 'REJECT');
+
+-- CreateEnum
 CREATE TYPE "ScannerPatternType" AS ENUM ('INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'CODE_SECURITY', 'SENSITIVE_FILE', 'PII');
 
 -- CreateTable
@@ -255,6 +261,7 @@ CREATE TABLE "github_installations" (
     "installation_id" TEXT NOT NULL,
     "account_login" TEXT NOT NULL,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "retired_reason" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -487,6 +494,7 @@ CREATE TABLE "users" (
     "image" TEXT,
     "slack_id" TEXT,
     "github_login" TEXT,
+    "github_login_account_id" TEXT,
     "role" "Role" NOT NULL DEFAULT 'ENGINEER',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -616,6 +624,7 @@ CREATE TABLE "workflow_runs" (
     "context_snapshot" JSONB,
     "agent_versions" JSONB,
     "pinned_settings" JSONB,
+    "skill_revisions" JSONB,
     "is_canary" BOOLEAN NOT NULL DEFAULT false,
     "baseline_sha" TEXT,
     "launched_by_id" UUID,
@@ -1191,8 +1200,53 @@ CREATE TABLE "skills" (
     "org_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "current_revision" INTEGER NOT NULL DEFAULT 1,
+    "source_id" UUID,
+    "source_path" TEXT,
 
     CONSTRAINT "skills_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "skill_revisions" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "skill_id" UUID NOT NULL,
+    "revision" INTEGER NOT NULL,
+    "prompt_text" TEXT NOT NULL,
+    "description" TEXT,
+    "content_hash" TEXT NOT NULL,
+    "source_sha" TEXT,
+    "source_path" TEXT,
+    "reference_files" JSONB,
+    "scan_warnings" JSONB NOT NULL DEFAULT '[]',
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "skill_revisions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "skill_sources" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "host" TEXT NOT NULL,
+    "owner" TEXT NOT NULL,
+    "repo" TEXT NOT NULL,
+    "path" TEXT NOT NULL DEFAULT '',
+    "ref" TEXT NOT NULL,
+    "pinned_sha" TEXT NOT NULL,
+    "latest_sha" TEXT,
+    "last_checked_at" TIMESTAMPTZ,
+    "last_error" TEXT,
+    "status" "SkillSourceStatus" NOT NULL DEFAULT 'OK',
+    "script_mode" "SkillSourceScriptMode" NOT NULL DEFAULT 'TEXT_ONLY',
+    "scope" "ConfigScope" NOT NULL DEFAULT 'GLOBAL',
+    "team_id" UUID,
+    "org_id" UUID,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "skill_sources_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -1862,6 +1916,24 @@ CREATE INDEX "skills_team_id_idx" ON "skills"("team_id");
 CREATE INDEX "skills_org_id_idx" ON "skills"("org_id");
 
 -- CreateIndex
+CREATE INDEX "skills_source_id_idx" ON "skills"("source_id");
+
+-- CreateIndex
+CREATE INDEX "skill_revisions_created_by_id_idx" ON "skill_revisions"("created_by_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "skill_revisions_skill_id_revision_key" ON "skill_revisions"("skill_id", "revision");
+
+-- CreateIndex
+CREATE INDEX "skill_sources_team_id_idx" ON "skill_sources"("team_id");
+
+-- CreateIndex
+CREATE INDEX "skill_sources_org_id_idx" ON "skill_sources"("org_id");
+
+-- CreateIndex
+CREATE INDEX "skill_sources_created_by_id_idx" ON "skill_sources"("created_by_id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "scanner_patterns_label_key" ON "scanner_patterns"("label");
 
 -- CreateIndex
@@ -2214,6 +2286,24 @@ ALTER TABLE "skills" ADD CONSTRAINT "skills_team_id_fkey" FOREIGN KEY ("team_id"
 
 -- AddForeignKey
 ALTER TABLE "skills" ADD CONSTRAINT "skills_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skills" ADD CONSTRAINT "skills_source_id_fkey" FOREIGN KEY ("source_id") REFERENCES "skill_sources"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skill_revisions" ADD CONSTRAINT "skill_revisions_skill_id_fkey" FOREIGN KEY ("skill_id") REFERENCES "skills"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skill_revisions" ADD CONSTRAINT "skill_revisions_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skill_sources" ADD CONSTRAINT "skill_sources_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skill_sources" ADD CONSTRAINT "skill_sources_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skill_sources" ADD CONSTRAINT "skill_sources_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agents" ADD CONSTRAINT "agents_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -1,7 +1,12 @@
-import type { PrismaClient } from '@auto-swe/shared';
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import type { Prisma, PrismaClient } from '@auto-swe/shared';
+import {
+  initialRevision,
+  nextRevision,
+  skillContentChanged,
+} from '@auto-swe/shared/lib/skillRevision';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { WORKFLOW_RUN_FAILURE_STATUSES } from '@auto-swe/shared/types/api';
+import { scanSkillAdvisory } from './skillScan.js';
 
 /**
  * Skill-library service: create/update flows (with the injection/exfiltration
@@ -33,6 +38,7 @@ export function skillVisibilityWhere(tenant: { teamId: string; orgId?: string | 
 export async function createSkill(
   prisma: PrismaClient,
   input: {
+    createdById?: string | null;
     description?: string;
     name: string;
     promptText: string;
@@ -41,12 +47,16 @@ export async function createSkill(
     orgId?: string | null;
   }
 ): Promise<{ scanWarnings: string[]; skill: SkillRow }> {
-  const scanResult = await scanSkillContent(input.promptText);
+  const scanWarnings = await scanSkillAdvisory(input.description, input.promptText);
   // Default GLOBAL preserves the admin-curated library; a caller that supplies
   // a tenant gets a scoped row. The DB CHECK rejects a mismatched combination.
   const skill = await prisma.skill.create({
     data: {
       description: input.description,
+      ...initialRevision(
+        { description: input.description ?? null, promptText: input.promptText },
+        { createdById: input.createdById, scanWarnings }
+      ),
       isBuiltIn: false,
       isVerified: false,
       name: input.name,
@@ -56,7 +66,25 @@ export async function createSkill(
       teamId: input.scope === 'TEAM' ? input.teamId : null,
     },
   });
-  return { scanWarnings: scanResult.warnings, skill };
+  return { scanWarnings, skill };
+}
+
+/// Where the current revision's text came from, when it was imported.
+async function importedProvenance(
+  prisma: PrismaClient,
+  skill: { id: string; currentRevision: number }
+) {
+  const rev = await prisma.skillRevision.findUnique({
+    select: { referenceFiles: true, sourcePath: true, sourceSha: true },
+    where: { skillId_revision: { revision: skill.currentRevision, skillId: skill.id } },
+  });
+  return rev?.sourceSha
+    ? {
+        referenceFiles: (rev.referenceFiles ?? null) as Prisma.InputJsonValue | null,
+        sourcePath: rev.sourcePath,
+        sourceSha: rev.sourceSha,
+      }
+    : {};
 }
 
 /// Updates a skill.
@@ -65,33 +93,78 @@ export async function createSkill(
 /// Custom skills: scan promptText for injection/exfiltration patterns (non-blocking).
 /// Reset isVerified only when promptText changes — name/description edits don't
 /// invalidate the content trust signal.
+/// A change to promptText or description cuts a new immutable SkillRevision (and
+/// bumps currentRevision) in the same statement; name/isActive edits do not.
+/// Throws when a concurrent edit already took the next revision number — see
+/// `isRevisionConflict`.
 export async function updateSkill(
   prisma: PrismaClient,
   existing: SkillRow,
-  body: { description?: string; isActive?: boolean; name?: string; promptText?: string }
+  body: { description?: string; isActive?: boolean; name?: string; promptText?: string },
+  actorId?: string | null
 ): Promise<{ scanWarnings: string[]; updated: SkillRow }> {
   const { name, description, promptText, isActive } = body;
 
-  const updateData = existing.isBuiltIn
-    ? { description, isActive, name }
-    : {
-        description,
-        isActive,
-        name,
-        promptText,
-        ...(promptText !== undefined ? { isVerified: false } : {}),
-      };
+  const nextContent = {
+    description: description ?? existing.description,
+    promptText: existing.isBuiltIn ? existing.promptText : (promptText ?? existing.promptText),
+  };
+  // Scan whenever model-visible text is being written: a custom skill's prompt
+  // text, or either kind of skill's description.
+  const scanWarnings =
+    description !== undefined || (!existing.isBuiltIn && promptText !== undefined)
+      ? await scanSkillAdvisory(nextContent.description, nextContent.promptText)
+      : [];
 
-  const scanResult =
-    !existing.isBuiltIn && promptText
-      ? await scanSkillContent(promptText)
-      : { safe: true, warnings: [] };
+  const contentChanged = skillContentChanged(existing, nextContent);
+  // Verification attests to the text of one revision, so any edit that cuts a
+  // new one clears it — a description-only edit included, since the description
+  // is model-visible (the skill menu) — whether or not the skill is `isBuiltIn`
+  // (bundle installs are). The boot sync re-verifies the seeded built-ins itself.
+  const clearVerified = contentChanged || (!existing.isBuiltIn && promptText !== undefined);
+  const base = {
+    isActive,
+    name,
+    ...(clearVerified ? { isVerified: false } : {}),
+  };
 
-  const updated = await prisma.skill.update({
-    data: updateData,
-    where: { id: existing.id },
+  let updated: SkillRow;
+  if (contentChanged) {
+    // A description-only edit leaves the imported text as it was, so the new
+    // revision still says where that text came from (and keeps its label). A
+    // change to the text itself makes it ours: the provenance is dropped.
+    const carried =
+      typeof existing.sourcePath === 'string' && nextContent.promptText === existing.promptText
+        ? await importedProvenance(prisma, existing)
+        : {};
+    const next = nextRevision(existing, nextContent, {
+      createdById: actorId,
+      scanWarnings,
+      ...carried,
+    });
+    updated = await prisma.skill.update({ data: { ...base, ...next.data }, where: next.where });
+  } else {
+    updated = await prisma.skill.update({ data: base, where: { id: existing.id } });
+  }
+  return { scanWarnings, updated };
+}
+
+/// Marks the skill's CURRENT content as human-verified. Verification is a
+/// property of the text a reviewer read, so it is only ever set here — never by
+/// a create, a bundle install or a sync of custom content — and every content
+/// edit clears it again (see `updateSkill`). `revision` is the one the admin
+/// read, supplied by the client; the write is guarded on it, so text edited
+/// after they read it cannot be verified unseen (Prisma raises P2025; see
+/// `isRevisionConflict`).
+export async function verifySkill(
+  prisma: PrismaClient,
+  skillId: string,
+  revision: number
+): Promise<SkillRow> {
+  return prisma.skill.update({
+    data: { isVerified: true },
+    where: { currentRevision: revision, id: skillId },
   });
-  return { scanWarnings: scanResult.warnings, updated };
 }
 
 /// Correlational report: run outcomes for runs where each skill was active

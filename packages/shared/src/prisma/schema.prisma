@@ -552,6 +552,12 @@ model GitHubInstallation {
   /// GitHub is authoritative, and this is not used to route lookups.
   accountLogin   String @map("account_login")
   isActive       Boolean @default(true) @map("is_active")
+  /// Why a retired installation is retired, when a GitHub webhook did it:
+  /// `webhook:suspend` or `webhook:deleted`. Null for an active installation and
+  /// for one an admin retired. A webhook only ever reverses its own retirement
+  /// (`unsuspend` reactivates a `webhook:suspend` row), so a manual retirement is
+  /// never undone by GitHub, and any admin change to `isActive` clears it.
+  retiredReason  String? @map("retired_reason")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -631,6 +637,7 @@ model Organization {
   configSettings      ConfigSetting[]
   configPermissions   ConfigPermission[]
   skills            Skill[]
+  skillSources      SkillSource[]
 
   @@map("organizations")
 }
@@ -683,6 +690,7 @@ model Team {
   agentTraces         AgentTrace[]             @relation("TeamAgentTraces")
   autonomyPolicies    AutonomyPolicy[]
   skills            Skill[]
+  skillSources      SkillSource[]
 
   @@index([orgId])
   @@map("teams")
@@ -1050,6 +1058,12 @@ model User {
   /// Unique because one GitHub identity must not map to two platform users —
   /// the projection would then grant one user's access to the other.
   githubLogin   String?  @unique @map("github_login")
+  /// The `Account.accountId` the login was read from (`{host}:{id}`, or a bare
+  /// github.com id). A user can link several GitHub accounts, and a login is
+  /// only comparable with the id space of the host that issued it, so ownership
+  /// verification needs to know which account to check. Null on a row written
+  /// before this was recorded; cleared together with `githubLogin`.
+  githubLoginAccountId String? @map("github_login_account_id")
   role          Role     @default(ENGINEER)
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -1071,6 +1085,8 @@ model User {
   humanErrorBaselines   HumanErrorBaseline[]
   workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleCreator")
+  skillRevisions        SkillRevision[]        @relation("SkillRevisionCreator")
+  skillSources          SkillSource[]          @relation("SkillSourceCreator")
   schedulesActingAs     ScheduledWorkRequest[] @relation("ScheduleActsAs")
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
@@ -1328,6 +1344,13 @@ model WorkflowRun {
   /// a model or credential edit land inside an in-flight workflow. Null for
   /// runs created before this column existed — they resolve live.
   pinnedSettings    Json?             @map("pinned_settings")
+  /// Snapshot of the skill revisions the run's agents reference, taken when the
+  /// run began: a `{ skillId: revision }` map. `resolveAgent` reads the pinned
+  /// `SkillRevision` text instead of the live `Skill` row, so editing a skill
+  /// mid-run cannot change the prompt a retry or replay sees. A skill with no
+  /// entry (added to an agent after the run began) resolves its current
+  /// revision. Null for runs created before this column existed.
+  skillRevisions    Json?             @map("skill_revisions")
   /// True when this run was routed to the canary arm (evals P2 canary).
   /// Used to split EvalResult rows for canary vs control comparison.
   isCanary          Boolean           @default(false) @map("is_canary")
@@ -2392,13 +2415,117 @@ model Skill {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
+  /// The revision number whose content `promptText`/`description` mirror. The
+  /// columns above stay the live copy (every reader that wants "now" keeps
+  /// working); `SkillRevision` is the immutable history a run pins against.
+  currentRevision Int @default(1) @map("current_revision")
+
+  /// The tracked external source this skill was imported from, if any. Deleting
+  /// the source detaches the skill (it stays, as an ordinary custom skill, with
+  /// the provenance its revisions carry).
+  sourceId   String?      @map("source_id") @db.Uuid
+  source     SkillSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  /// The skill's folder inside the source repository (relative to the repo root).
+  sourcePath String?      @map("source_path")
+
   agentSkillRefs AgentSkillRef[]
+  revisions      SkillRevision[]
 
   @@index([scope, teamId])
   @@index([scope, orgId])
   @@index([teamId])
   @@index([orgId])
+  @@index([sourceId])
   @@map("skills")
+}
+
+/// One immutable version of a skill's content. Written by every path that
+/// changes `Skill.promptText` or `description` (create, edit, built-in sync,
+/// bundle install) and never updated afterwards: a run records
+/// `{ skillId: revision }` at start (`WorkflowRun.skillRevisions`) and reads the
+/// text from here, so a later edit cannot alter an in-flight run.
+model SkillRevision {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  skillId       String   @map("skill_id") @db.Uuid
+  skill         Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  revision      Int
+  promptText    String   @map("prompt_text")
+  description   String?
+  /// sha256 over promptText + description; equal hashes mean no new revision.
+  contentHash   String   @map("content_hash")
+  /// Provenance for content imported from a git source; null for authored text.
+  sourceSha     String?  @map("source_sha")
+  sourcePath    String?  @map("source_path")
+  /// Companion text files imported with the skill (`{ path, content }[]`).
+  referenceFiles Json?   @map("reference_files")
+  /// Advisory `scanSkillContent` warnings for this exact text.
+  scanWarnings  Json     @default("[]") @map("scan_warnings")
+  createdById   String?  @map("created_by_id") @db.Uuid
+  createdBy     User?    @relation("SkillRevisionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([skillId, revision])
+  @@index([createdById])
+  @@map("skill_revisions")
+}
+
+enum SkillSourceStatus {
+  OK
+  UPDATE_AVAILABLE
+  ERROR
+  DISABLED
+}
+
+/// What an import does with the non-Markdown files beside a skill's SKILL.md.
+/// Nothing is ever executed or stored as runnable.
+enum SkillSourceScriptMode {
+  /// SKILL.md becomes the prompt, .md/.txt siblings are kept as reference text,
+  /// everything else is skipped and listed.
+  TEXT_ONLY
+  /// A skill folder holding any other file is refused.
+  REJECT
+}
+
+/// An external GitHub / GitHub Enterprise repository skills are imported from,
+/// pinned to one commit. Uniqueness per (host, owner, repo, path) within a
+/// scope is a set of partial unique indexes (see `custom_constraints_and_indexes`),
+/// which Prisma cannot express.
+model SkillSource {
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Lowercased `host[:port]`, e.g. `github.com`.
+  host          String
+  /// Lowercased: GitHub compares owner and repository names case-insensitively.
+  owner         String
+  repo          String
+  /// Subdirectory the skills live under; empty for the repository root.
+  path          String                @default("")
+  /// The branch or tag as the admin gave it.
+  ref           String
+  /// The commit the imported text came from.
+  pinnedSha     String                @map("pinned_sha")
+  /// Newest commit the ref resolved to at the last check; null until one ran.
+  latestSha     String?               @map("latest_sha")
+  lastCheckedAt DateTime?             @map("last_checked_at") @db.Timestamptz
+  /// A fixed error string, never provider or fetch text.
+  lastError     String?               @map("last_error")
+  status        SkillSourceStatus     @default(OK)
+  scriptMode    SkillSourceScriptMode @default(TEXT_ONLY) @map("script_mode")
+  scope         ConfigScope           @default(GLOBAL)
+  teamId        String?               @map("team_id") @db.Uuid
+  team          Team?                 @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  orgId         String?               @map("org_id") @db.Uuid
+  organization  Organization?         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdById   String?               @map("created_by_id") @db.Uuid
+  createdBy     User?                 @relation("SkillSourceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  skills Skill[]
+
+  @@index([teamId])
+  @@index([orgId])
+  @@index([createdById])
+  @@map("skill_sources")
 }
 
 enum ScannerPatternType {

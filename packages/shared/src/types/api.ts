@@ -96,6 +96,16 @@ export interface TeamSummary {
 export interface TeamDetail extends TeamSummary {
   memberships: TeamMember[];
   repositories: RepoRef[];
+  /**
+   * Repositories other teams have shared with this one: read-only on this
+   * team's page. Active rows only, and only those the caller may see.
+   */
+  sharedRepositories: SharedRepoRef[];
+}
+
+/** A repository shared with a team, and the team that owns it. */
+export interface SharedRepoRef extends RepoRef {
+  team: { id: string; name: string; slug: string };
 }
 
 // ── Repositories ──
@@ -866,6 +876,11 @@ export interface EvalRunDto {
   candidateRef: string;
   baselineRef: string;
   status: string;
+  /**
+   * The runless budget stopped the run before every case ran, so a SUCCESS or
+   * REGRESSION covers only the cases that did. Derived from `summary.partial`.
+   */
+  partial: boolean;
   summary: unknown;
   startedAt: string;
   endedAt: string | null;
@@ -874,6 +889,8 @@ export interface EvalRunDto {
 /** One scorer's daily mean over a trend window (GET /platform/evals/trends). */
 export interface EvalScorerTrend {
   scorer: string;
+  /** Present when the request set `by`: the column's value for this series; null = rows without one. */
+  breakdown?: string | null;
   /** Signals in the whole window. */
   n: number;
   /** Mean normalized score over the whole window. */
@@ -883,10 +900,29 @@ export interface EvalScorerTrend {
 }
 
 export interface EvalTrendsDto {
+  /** The dimension each scorer's series is split by, when the request set one. */
+  by?: 'judgeModel' | 'agentKey';
   windowDays: number;
   since: string;
   until: string;
   scorers: EvalScorerTrend[];
+}
+
+/** GET /platform/evals/suite-health: what the stored data says about each benchmark's health. */
+export interface EvalSuiteHealthDto {
+  datasets: Array<{
+    datasetId: string;
+    slug: string;
+    name: string;
+    cases: number;
+    /** Cases quarantined by re-validation: their reference stopped passing. */
+    quarantined: number;
+    flakeScreened: number;
+    /** `quarantined / cases`, 0 for an empty dataset. */
+    staleRate: number;
+  }>;
+  /** The Tier-2 gate thresholds. Only the stale rate has a stored measurement. */
+  thresholds: { maxFlakeRate: number; maxStaleRate: number; minKappa: number };
 }
 
 export interface EvalRubricDto {

@@ -21,7 +21,7 @@ function repo(over: {
     githubApiUrl: null,
     githubUrl: null,
     id: over.id ?? 'repo-1',
-    installation: over.retired ? { installationId: 'inst-1', isActive: false } : null,
+    installation: over.retired ? { host: '', installationId: 'inst-1', isActive: false } : null,
     organizationName: 'acme',
     repoName: over.id ?? 'repo-1',
     shares: [],

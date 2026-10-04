@@ -102,7 +102,11 @@ describe('chooseWorkflowId', () => {
 
   it('treats rows with no recorded repository as ours (conservative)', () => {
     const rows = [{ currentStatus: 'IMPLEMENTING', repoId: null, temporalWorkflowId: base }];
-    expect(chooseWorkflowId(base, rows, { repoId: REPO_A })).toEqual({ conflictWorkflowId: base });
+    // Still a conflict, but its id is not shown: the row cannot be shown to be the caller's.
+    expect(chooseWorkflowId(base, rows, { repoId: REPO_A })).toEqual({
+      conflictOtherRow: true,
+      conflictWorkflowId: base,
+    });
   });
 
   it('without an owner behaves as before: every row is ours', () => {
@@ -259,5 +263,71 @@ describe('workflow ids are lowercase in owner and name', () => {
         disambiguatedWorkflowIdBase(CASED, 'repo-mine'),
       ]);
     });
+  });
+});
+
+describe('chooseWorkflowId — rows of one repository under several ids', () => {
+  const base = 'eng-acme-api-X-1';
+  const owner = { externalTicketId: 'X-1', repoId: REPO_A, sameRepoIds: [REPO_A, REPO_B] };
+  const row = (id: string, status: string, repoId: string) => ({
+    currentStatus: status,
+    externalTicketId: 'X-1',
+    repoId,
+    temporalWorkflowId: id,
+  });
+
+  it('conflicts with a run of a same-identity row', () => {
+    expect(chooseWorkflowId(base, [row(base, 'IMPLEMENTING', REPO_B)], owner)).toMatchObject({
+      conflictWorkflowId: base,
+    });
+  });
+
+  it('flags a conflict with another row of the repository, but not with the same row', () => {
+    expect(chooseWorkflowId(base, [row(base, 'IMPLEMENTING', REPO_B)], owner)).toEqual({
+      conflictOtherRow: true,
+      conflictWorkflowId: base,
+    });
+    expect(chooseWorkflowId(base, [row(base, 'IMPLEMENTING', REPO_A)], owner)).toEqual({
+      conflictWorkflowId: base,
+    });
+  });
+
+  it('flags a conflict with a legacy row that has no repository id', () => {
+    const legacy = { ...row(base, 'IMPLEMENTING', REPO_A), repoId: null };
+    expect(chooseWorkflowId(base, [legacy], owner)).toEqual({
+      conflictOtherRow: true,
+      conflictWorkflowId: base,
+    });
+  });
+
+  it('conflicts with a run in the disambiguated family of a same-identity row', () => {
+    const other = disambiguatedWorkflowIdBase(base, REPO_B);
+    expect(chooseWorkflowId(base, [row(other, 'IMPLEMENTING', REPO_B)], owner)).toMatchObject({
+      conflictWorkflowId: other,
+    });
+  });
+
+  it('reruns in the base family once a same-identity run has finished', () => {
+    expect(chooseWorkflowId(base, [row(base, 'COMPLETED', REPO_B)], owner)).toEqual({
+      isRerun: true,
+      workflowId: `${base}-r1`,
+    });
+  });
+
+  it('keeps a row outside the identity foreign, so it still disambiguates', () => {
+    expect(
+      chooseWorkflowId(base, [row(base, 'IMPLEMENTING', REPO_B)], {
+        externalTicketId: 'X-1',
+        repoId: REPO_A,
+      })
+    ).toEqual({ isRerun: false, workflowId: disambiguatedWorkflowIdBase(base, REPO_A) });
+  });
+
+  it('lists every same-identity repository’s disambiguated family', () => {
+    expect(workflowIdFamilyBases(base, [REPO_A, REPO_B])).toEqual([
+      base,
+      disambiguatedWorkflowIdBase(base, REPO_A),
+      disambiguatedWorkflowIdBase(base, REPO_B),
+    ]);
   });
 });

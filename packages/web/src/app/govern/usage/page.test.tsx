@@ -5,23 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlatformUsage } from '@/hooks/useAdmin';
 
 const usePlatformUsage = vi.fn();
-const auth = vi.hoisted(() => ({
-  isAdmin: true,
-  ledTeamIds: new Set<string>() as Set<string> | null,
-}));
+type Scopes = {
+  platform: boolean;
+  teams: { id: string; name: string }[];
+  orgs: { id: string; name: string }[];
+};
+const auth = vi.hoisted(() => ({ scopes: undefined as unknown }));
 vi.mock('@/hooks/useAdmin', () => ({
   usePlatformUsage: (...args: unknown[]) => usePlatformUsage(...args),
-  useUserOrgs: () => ({ data: [{ id: 'org-1', name: 'Acme', role: 'ORG_ADMIN' }] }),
-}));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => auth.isAdmin }));
-vi.mock('@/hooks/useTeams', () => ({
-  useLedTeamIds: () => auth.ledTeamIds,
-  useTeams: () => ({
-    data: [
-      { id: 'team-a', name: 'Payments' },
-      { id: 'team-b', name: 'Platform' },
-    ],
-  }),
+  useUsageScopes: () => ({ data: auth.scopes }),
 }));
 // Recharts needs a laid-out container; the chart has nothing page-specific to check.
 vi.mock('@/components/charts/DailyCostChart', () => ({
@@ -69,9 +61,17 @@ const usage: PlatformUsage = {
   windowDays: 30,
 };
 
+const ADMIN_SCOPES: Scopes = {
+  orgs: [{ id: 'org-1', name: 'Acme' }],
+  platform: true,
+  teams: [
+    { id: 'team-a', name: 'Payments' },
+    { id: 'team-b', name: 'Platform' },
+  ],
+};
+
 beforeEach(() => {
-  auth.isAdmin = true;
-  auth.ledTeamIds = new Set();
+  auth.scopes = ADMIN_SCOPES;
   usePlatformUsage.mockReset().mockReturnValue({ data: usage, isLoading: false });
 });
 
@@ -100,18 +100,28 @@ describe('UsagePage', () => {
     expect(usePlatformUsage).toHaveBeenLastCalledWith(30, {}, true);
   });
 
-  it("shows a LEAD their first team's report, never the whole platform", () => {
-    auth.isAdmin = false;
-    auth.ledTeamIds = new Set(['team-b']);
+  it("shows a team LEAD their first team's report, never the whole platform", () => {
+    auth.scopes = { orgs: [], platform: false, teams: [{ id: 'team-b', name: 'Platform' }] };
     render(<UsagePage />);
     expect(usePlatformUsage).toHaveBeenLastCalledWith(30, { teamId: 'team-b' }, true);
   });
 
-  it('asks for nothing until a LEAD’s teams are known', () => {
-    auth.isAdmin = false;
-    auth.ledTeamIds = null;
+  it('offers an ORG_ADMIN with no led team their organization', () => {
+    auth.scopes = { orgs: [{ id: 'org-1', name: 'Acme' }], platform: false, teams: [] };
+    render(<UsagePage />);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, { orgId: 'org-1' }, true);
+  });
+
+  it('asks for nothing until the scopes are known', () => {
+    auth.scopes = undefined;
     render(<UsagePage />);
     expect(usePlatformUsage).toHaveBeenLastCalledWith(30, {}, false);
+  });
+
+  it('says so when the caller holds no scope', () => {
+    auth.scopes = { orgs: [], platform: false, teams: [] };
+    render(<UsagePage />);
+    expect(screen.getByText(/no usage you can see/)).toBeTruthy();
   });
 
   it('refetches for the chosen window', () => {

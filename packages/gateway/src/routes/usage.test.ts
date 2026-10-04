@@ -17,9 +17,15 @@ function newMockPrisma() {
       groupBy: vi.fn().mockResolvedValue([]),
     },
     organization: { findMany: vi.fn().mockResolvedValue([]) },
-    organizationMembership: { findUnique: vi.fn().mockResolvedValue(null) },
+    organizationMembership: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     team: { findMany: vi.fn().mockResolvedValue([]) },
-    teamMembership: { findUnique: vi.fn().mockResolvedValue(null) },
+    teamMembership: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
@@ -330,5 +336,60 @@ describe('usageRoutes GET /usage', () => {
     const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/usage' });
 
     expect(res.json().data.unattributed).toEqual({ calls: 4, costUsd: 0.75 });
+  });
+});
+
+describe('usageRoutes GET /usage/scopes', () => {
+  const url = '/api/v1/platform/usage/scopes';
+
+  it('gives an ADMIN the platform and every team and organization', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    prisma.team.findMany.mockResolvedValue([
+      { id: TEAM_B, name: 'Beta' },
+      { id: TEAM_A, name: 'Alpha' },
+    ]);
+    prisma.organization.findMany.mockResolvedValue([{ id: ORG_A, name: 'Org' }]);
+
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+
+    expect(res.json().data).toEqual({
+      orgs: [{ id: ORG_A, name: 'Org' }],
+      platform: true,
+      teams: [
+        { id: TEAM_A, name: 'Alpha' },
+        { id: TEAM_B, name: 'Beta' },
+      ],
+    });
+  });
+
+  it('gives a non-admin only the teams they lead and the organizations they administer', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.teamMembership.findMany.mockResolvedValue([
+      { role: 'ENGINEER', team: { id: TEAM_B, name: 'Beta' } },
+      { role: 'LEAD', team: { id: TEAM_A, name: 'Alpha' } },
+    ]);
+    prisma.organizationMembership.findMany.mockResolvedValue([
+      { organization: { id: ORG_A, name: 'Org' }, role: 'ORG_ADMIN' },
+    ]);
+
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+
+    expect(res.json().data).toEqual({
+      orgs: [{ id: ORG_A, name: 'Org' }],
+      platform: false,
+      teams: [{ id: TEAM_A, name: 'Alpha' }],
+    });
+    expect(prisma.organizationMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { role: 'ORG_ADMIN', userId: 'admin-1' } })
+    );
+  });
+
+  it('is empty for someone who leads nothing, and needs a token', async () => {
+    const { app } = await buildApp('ENGINEER');
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.json().data).toEqual({ orgs: [], platform: false, teams: [] });
+
+    const anon = await app.inject({ method: 'GET', url });
+    expect(anon.statusCode).toBe(401);
   });
 });

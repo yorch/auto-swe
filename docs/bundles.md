@@ -114,7 +114,10 @@ On install the gateway:
 
 1. Parses and validates the manifest schema.
 2. Re-derives the content hash and verifies the signature against `BUNDLE_TRUSTED_KEYS`.
-3. Validates every scanner pattern for unsafe flags, compile errors, and length limits.
+3. Validates every scanner pattern for unsafe flags, compile errors, and length limits, and scans
+   every skill's text with the injection and exfiltration patterns. The skill scan is advisory:
+   findings are returned in the response's `warnings` and recorded on the skill's revision, and
+   never refuse the install.
 4. Refuses, with `409 PROTECTED_CONTENT_OVERWRITE`, any bundle entry that would replace GLOBAL
    content the deployment owns — a seeded built-in (`origin = 'swe-starter'`, or a core row with a
    null origin) or an admin-authored row (`origin` null): an agent by key, a skill by name, a
@@ -131,6 +134,8 @@ On install the gateway:
    only while the template is still ACTIVE on the version the previous install wrote (the newest
    version with no author). A version an admin promoted, or an archived template, is left as it is;
    `isDefault` and `status` are never written on an existing template.
+   A skill whose text or description changed gets a new immutable revision (runs that already
+   started keep the text they pinned); an unchanged one does not.
 6. Strips deployment-local IDs and re-establishes `Agent`/`Skill`/template ownership in the target
    deployment.
 7. Records the result as an `InstalledBundle` row, marking it `VERIFIED` or `UNVERIFIED`.

@@ -1,4 +1,5 @@
 import { fetchActiveAgent, skillsFromAgent } from './agentResolver.js';
+import { joinSkillPrompts } from './skillPrompt.js';
 import { parseToolKeys } from './toolKeys.js';
 import type { AnySkillRole, ResolveCtx, ResolvedSkill } from './types.js';
 
@@ -18,21 +19,16 @@ export async function loadAgentSkills(
   ctx?: ResolveCtx
 ): Promise<ResolvedSkill[]> {
   const agent = await fetchActiveAgent(role, ctx);
-  return agent ? skillsFromAgent(agent) : [];
+  return agent ? skillsFromAgent(agent, ctx) : [];
 }
 
 /**
- * Joins skill prompt texts with a double newline separator, returning undefined
+ * Joins skill prompt texts (each labelled when imported, see skillPrompt.ts) with a double newline separator, returning undefined
  * when the resulting string would be empty. Used to build optional system-prompt
  * suffixes for sub-role agents in the review network.
  */
 export function skillsToPromptSuffix(skills: ResolvedSkill[]): string | undefined {
-  return (
-    skills
-      .map((s) => s.promptText)
-      .filter(Boolean)
-      .join('\n\n') || undefined
-  );
+  return joinSkillPrompts(skills) || undefined;
 }
 
 /**

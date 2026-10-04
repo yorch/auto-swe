@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   // Accounts, not users: the GitHub token lives on the account row, and a user
   // with no GitHub account is not a candidate at all.
   const accounts = await prisma.account.findMany({
-    select: { accessToken: true, userId: true },
+    select: { accessToken: true, accountId: true, userId: true },
     where: { providerId: 'github', user: { githubLogin: null } },
   });
 
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
       unresolved.push(`${account.userId} (GitHub did not answer for the stored token)`);
       continue;
     }
-    const result = await storeGithubLogin(prisma, account.userId, login);
+    const result = await storeGithubLogin(prisma, account.userId, login, account.accountId);
     if (result.login) {
       written++;
     } else {

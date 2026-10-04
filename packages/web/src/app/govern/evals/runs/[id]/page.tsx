@@ -140,7 +140,7 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
         {run && id && (
           <>
             <PageHeader
-              actions={<EvalRunStatusBadge status={run.status} />}
+              actions={<EvalRunStatusBadge partial={run.partial} status={run.status} />}
               chapter="§ Govern · Evals · Run"
               subtitle={`${run.candidateRef} vs ${run.baselineRef} · started ${formatDate(run.startedAt)}${run.endedAt ? ` · ended ${formatDate(run.endedAt)}` : ''}`}
               title={`Eval run ${run.id.slice(0, 8)}`}

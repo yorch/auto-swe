@@ -68,6 +68,7 @@ import {
   buildImplementerForActivity,
   createImplementerAgent,
   effectivePersonaToolKeys,
+  skillMenuLine,
 } from './implementer.js';
 
 type ToolDef<I, O> = { execute: (input: I) => Promise<O> };
@@ -292,5 +293,59 @@ describe('effectivePersonaToolKeys', () => {
   it("falls back to the implementer's workspace tools on an empty intersection", () => {
     // [] would read as "every tool" downstream, so it must never be returned.
     expect(effectivePersonaToolKeys(['bash'], ['readFile'])).toEqual(['readFile']);
+  });
+});
+
+describe('skill menu provenance', () => {
+  it('prefixes an imported skill with where it came from, and leaves others alone', async () => {
+    vi.mocked(loadAgentSkills).mockResolvedValue([
+      {
+        description: 'Reviews code',
+        name: 'ext-review',
+        promptText: 'p',
+        provenance: 'external: acme/skills@0123456',
+        sortOrder: 0,
+      },
+      { description: 'Writes tests first', name: 'tdd', promptText: 'p', sortOrder: 1 },
+    ] as never);
+    const built = await buildImplementerForActivity(workspace, new AgentTracer(), { teamId: 't' });
+
+    expect(built.promptSuffix).toContain(
+      '- **ext-review**: [external: acme/skills@0123456] Reviews code'
+    );
+    expect(built.promptSuffix).toContain('- **tdd**: Writes tests first');
+    expect(built.promptSuffix).not.toContain('[external] ');
+  });
+
+  it('prefixes a skill with no description by its provenance and name', () => {
+    expect(skillMenuLine({ description: '', name: 'x', provenance: 'external@abcdef0' })).toBe(
+      '- **x**: [external@abcdef0] x'
+    );
+  });
+});
+
+describe('loadSkill provenance', () => {
+  it('returns imported text labelled as third-party, and authored text as it is', async () => {
+    vi.mocked(loadAgentSkills).mockResolvedValue([
+      {
+        description: 'd',
+        name: 'ext',
+        promptText: 'IMPORTED',
+        provenance: 'external: acme/skills@0123456',
+        sortOrder: 0,
+      },
+      { description: 'd', name: 'own', promptText: 'AUTHORED', sortOrder: 1 },
+    ] as never);
+    const built = await buildImplementerForActivity(workspace, new AgentTracer(), { teamId: 't' });
+    const tools = (
+      built.agent as unknown as {
+        tools: Record<string, { execute: (a: { name: string }) => Promise<unknown> }>;
+      }
+    ).tools;
+
+    expect(await tools.loadSkill?.execute({ name: 'ext' })).toEqual({
+      promptText: '[external: acme/skills@0123456 — third-party text]\nIMPORTED',
+    });
+    expect(await tools.loadSkill?.execute({ name: 'own' })).toEqual({ promptText: 'AUTHORED' });
   });
 });

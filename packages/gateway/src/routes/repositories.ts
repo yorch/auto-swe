@@ -28,10 +28,11 @@ import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
 async function deactivateSchedulesOutsideTeamsQuietly(
   fastify: FastifyInstance,
   repoId: string,
-  log: FastifyRequest['log']
+  log: FastifyRequest['log'],
+  actorId: string
 ): Promise<void> {
   try {
-    await deactivateSchedulesOutsideTeams(fastify, repoId, log);
+    await deactivateSchedulesOutsideTeams(fastify, repoId, log, actorId);
   } catch (err) {
     log.error({ err, repoId }, 'could not deactivate the schedules that lost their claim');
   }
@@ -299,8 +300,8 @@ async function normaliseRepositoryUrls(
  * The `Connection` predicate for repositories on the same host as a (normalised)
  * web base override. Null — the instance's own host — also matches a row whose
  * override spells that host out, which rows written before overrides were
- * normalised, or on a deployment configuring its host only through the
- * environment, can carry. Both mean the same repository.
+ * normalised, or before the instance's host changed, can carry. Both mean the
+ * same repository.
  */
 async function sameHostWhere(githubUrl: string | null): Promise<Prisma.ConnectionWhereInput> {
   if (githubUrl) {
@@ -780,7 +781,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // A move drops the shares that no longer apply and changes who owns the
       // repository, so schedules owned by a team with no remaining claim stop.
       if (moving) {
-        await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log);
+        await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log, user.sub);
       }
 
       return { data: redactConnection(updated) };
@@ -908,7 +909,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // A team that lost its share keeps no schedule on the repository. After the
       // audit, because the change is committed: a failure here must not leave it
       // unrecorded, nor turn it into a 500.
-      await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log);
+      await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log, user.sub);
 
       const shares = await fastify.prisma.connection.findUnique({
         select: { shares: { select: { team: { select: { id: true, name: true, slug: true } } } } },

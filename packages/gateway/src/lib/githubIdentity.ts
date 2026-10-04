@@ -76,14 +76,21 @@ export async function fetchGithubLogin(
  * that user's repository access to this one, which is the exact failure the
  * uniqueness constraint exists to prevent — so the collision is reported and
  * left for an operator, not resolved by whoever signed in last.
+ *
+ * `accountId` is the `Account.accountId` the login was read from, so ownership
+ * can later be verified against that account's host.
  */
 export async function storeGithubLogin(
   prisma: PrismaClient,
   userId: string,
-  login: string
+  login: string,
+  accountId: string | null
 ): Promise<GithubLoginSyncResult> {
   try {
-    await prisma.user.update({ data: { githubLogin: login }, where: { id: userId } });
+    await prisma.user.update({
+      data: { githubLogin: login, githubLoginAccountId: accountId },
+      where: { id: userId },
+    });
     return { login };
   } catch (err) {
     if (isUniqueConstraintError(err)) {
@@ -119,7 +126,12 @@ export { clearGithubLogin } from '@auto-swe/shared/lib/githubIdentityCheck';
  */
 export async function syncGithubLoginForAccount(
   prisma: PrismaClient,
-  args: { userId: string; accessToken: string | null | undefined; apiUrl: string }
+  args: {
+    userId: string;
+    accountId: string | null;
+    accessToken: string | null | undefined;
+    apiUrl: string;
+  }
 ): Promise<GithubLoginSyncResult> {
   if (!args.accessToken) {
     return { login: null, reason: 'fetch-failed' };
@@ -128,5 +140,5 @@ export async function syncGithubLoginForAccount(
   if (!login) {
     return { login: null, reason: 'no-login' };
   }
-  return storeGithubLogin(prisma, args.userId, login);
+  return storeGithubLogin(prisma, args.userId, login, args.accountId);
 }

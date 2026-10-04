@@ -13,11 +13,28 @@ vi.mock('@/components/charts/ScorerTrendChart', () => ({
   },
 }));
 
+const breakdownSeries = vi.fn();
+vi.mock('@/components/charts/ScorerBreakdownChart', () => ({
+  ScorerBreakdownChart: ({ series }: { series: unknown }) => {
+    breakdownSeries(series);
+    return <div data-testid="breakdown-chart" />;
+  },
+}));
+const healthChart = vi.fn();
+vi.mock('@/components/charts/SuiteHealthChart', () => ({
+  SuiteHealthChart: (props: unknown) => {
+    healthChart(props);
+    return <div data-testid="health-chart" />;
+  },
+}));
+
 import GovernEvalsPage from './page';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   chartData.mockReset();
+  breakdownSeries.mockReset();
+  healthChart.mockReset();
 });
 
 const day = (date: string, n: number, mean: number | null) => ({ date, mean, n });
@@ -42,7 +59,10 @@ function result(over: Record<string, unknown>) {
   };
 }
 
-function mock(trendScorers: () => string[] = () => ['gate:runTests', 'merge']) {
+function mock(
+  trendScorers: () => string[] = () => ['gate:runTests', 'merge'],
+  extraTrends: object[] = []
+) {
   return setupFetchMock({
     'GET /api/v1/platform/evals': () => ({
       data: [
@@ -64,7 +84,23 @@ function mock(trendScorers: () => string[] = () => ['gate:runTests', 'merge']) {
       ],
       meta: { limit: 25, offset: 0, total: 60 },
     }),
-    'GET /api/v1/platform/evals/trends': () => ({
+    'GET /api/v1/platform/evals/suite-health': () => ({
+      data: {
+        datasets: [
+          {
+            cases: 8,
+            datasetId: 'ds-1',
+            flakeScreened: 7,
+            name: 'Bench',
+            quarantined: 2,
+            slug: 'bench',
+            staleRate: 0.25,
+          },
+        ],
+        thresholds: { maxFlakeRate: 0.1, maxStaleRate: 0.1, minKappa: 0.4 },
+      },
+    }),
+    'GET /api/v1/platform/evals/trends': (_body?: unknown) => ({
       data: {
         scorers: [
           {
@@ -79,11 +115,16 @@ function mock(trendScorers: () => string[] = () => ['gate:runTests', 'merge']) {
             n: 3,
             scorer: 'merge',
           },
-        ].filter((t) => trendScorers().includes(t.scorer)),
+        ]
+          .filter((t) => trendScorers().includes(t.scorer))
+          .concat(extraTrends as never[]),
         since: '2026-09-01T00:00:00.000Z',
         until: '2026-09-03T00:00:00.000Z',
         windowDays: 30,
       },
+    }),
+    'GET /api/v1/workflow-templates': () => ({
+      data: [{ id: '22222222-2222-4222-8222-222222222222', name: 'Ticket to PR' }],
     }),
   });
 }
@@ -172,5 +213,51 @@ describe('GovernEvalsPage', () => {
         true
       )
     );
+  });
+
+  it('charts the suite health of every dataset against the stale-rate ceiling', async () => {
+    mock();
+    render(withQuery(<GovernEvalsPage />));
+
+    await screen.findByTestId('health-chart');
+    expect(healthChart).toHaveBeenLastCalledWith({
+      datasets: [expect.objectContaining({ slug: 'bench', staleRate: 0.25 })],
+      maxStaleRate: 0.1,
+    });
+  });
+
+  it('asks for a breakdown and a template when they are chosen', async () => {
+    const spy = mock();
+    render(withQuery(<GovernEvalsPage />));
+    await screen.findByText('Window mean');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Judge model' }));
+
+    await waitFor(() =>
+      expect(urls(spy).some((u) => u.includes('trends?') && u.includes('by=judgeModel'))).toBe(true)
+    );
+    // The breakdown names the dimension in the table.
+    expect(screen.getAllByText('Judge model').length).toBeGreaterThan(1);
+  });
+
+  it('charts a split scorer as one series per breakdown value, with the none bucket named', async () => {
+    const series = (breakdown: string | null, mean: number) => ({
+      breakdown,
+      daily: [day('2026-09-01', 2, mean)],
+      mean,
+      n: 2,
+      scorer: 'judge',
+    });
+    mock(() => [], [series('a/x', 1), series(null, 0.5)]);
+    render(withQuery(<GovernEvalsPage />));
+    await screen.findByText('Window mean');
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'judge' })[0] as HTMLElement);
+
+    await screen.findByTestId('breakdown-chart');
+    expect(breakdownSeries).toHaveBeenLastCalledWith([
+      expect.objectContaining({ label: 'a/x' }),
+      expect.objectContaining({ label: '(none)' }),
+    ]);
   });
 });

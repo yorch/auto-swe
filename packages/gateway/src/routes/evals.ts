@@ -9,6 +9,7 @@
  */
 
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   EVAL_SIGNAL_SOURCES,
@@ -19,6 +20,7 @@ import {
   type EvalRubricDto,
   type EvalRunDto,
   type EvalScorerTrend,
+  type EvalSuiteHealthDto,
   type EvalTrendsDto,
 } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
@@ -109,7 +111,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Per-day aggregates in flight at once — see `mapLimited`. */
 const TREND_CONCURRENCY = 3;
 const TrendsQuery = z.object({
+  /** Split each scorer's series by this column of the result rows. */
+  by: z.enum(['judgeModel', 'agentKey']).optional(),
   source: z.enum(EVAL_SIGNAL_SOURCES).optional(),
+  /** Only results of runs of this workflow template (offline harness rows have no run). */
+  templateId: z.string().uuid().optional(),
   window: z.coerce
     .number()
     .int()
@@ -123,6 +129,15 @@ const TrendsQuery = z.object({
 function utcDayStart(ms: number): number {
   const d = new Date(ms);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/** Did the harness record `summary.partial` — a verdict over only some of the cases? */
+function hasPartialVerdict(summary: unknown): boolean {
+  return (
+    typeof summary === 'object' &&
+    summary !== null &&
+    (summary as { partial?: unknown }).partial != null
+  );
 }
 
 function toRunDto(run: {
@@ -141,6 +156,7 @@ function toRunDto(run: {
     datasetId: run.datasetId,
     endedAt: run.endedAt?.toISOString() ?? null,
     id: run.id,
+    partial: hasPartialVerdict(run.summary),
     startedAt: run.startedAt.toISOString(),
     status: run.status,
     summary: run.summary,
@@ -312,7 +328,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     '/evals/trends',
     { onRequest: adminOnly, schema: { querystring: TrendsQuery } },
     async (request) => {
-      const { source, window: windowDays } = request.query;
+      const { by, source, templateId, window: windowDays } = request.query;
       // Whole UTC days closed at the end of today, as the usage report does.
       const until = utcDayStart(Date.now()) + DAY_MS;
       const since = until - windowDays * DAY_MS;
@@ -321,32 +337,53 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.evalResult.groupBy({
           _avg: { value: true },
           _count: { _all: true },
-          by: ['scorer'],
+          by: by ? ['scorer', by] : ['scorer'],
           where: {
             createdAt: { gte: new Date(start), lt: new Date(start + DAY_MS) },
             ...(source ? { source } : {}),
+            ...(templateId ? { run: { templateId } } : {}),
           },
         })
       );
 
+      // A series is a scorer, or a scorer split by the `by` column. JSON keeps
+      // a null breakdown (a row no model or agent produced) distinct from any string.
       const byScorer = new Map<
         string,
-        { n: number; sum: number; daily: Map<number, { n: number; mean: number }> }
+        {
+          scorer: string;
+          breakdown: string | null;
+          n: number;
+          sum: number;
+          daily: Map<number, { n: number; mean: number }>;
+        }
       >();
       perDay.forEach((groups, dayIndex) => {
         for (const g of groups) {
           const n = g._count._all;
           const mean = g._avg.value ?? 0;
-          const acc = byScorer.get(g.scorer) ?? { daily: new Map(), n: 0, sum: 0 };
+          const breakdown = by ? ((g as Record<string, unknown>)[by] as string | null) : null;
+          const key = JSON.stringify([g.scorer, breakdown]);
+          const acc = byScorer.get(key) ?? {
+            breakdown,
+            daily: new Map(),
+            n: 0,
+            scorer: g.scorer,
+            sum: 0,
+          };
           acc.n += n;
           acc.sum += mean * n;
           acc.daily.set(dayIndex, { mean, n });
-          byScorer.set(g.scorer, acc);
+          byScorer.set(key, acc);
         }
       });
-      const scorers: EvalScorerTrend[] = [...byScorer.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([scorer, acc]) => ({
+      const scorers: EvalScorerTrend[] = [...byScorer.values()]
+        .sort(
+          (a, b) =>
+            a.scorer.localeCompare(b.scorer) || (a.breakdown ?? '').localeCompare(b.breakdown ?? '')
+        )
+        .map((acc) => ({
+          ...(by ? { breakdown: acc.breakdown } : {}),
           daily: days.map((start, i) => {
             const day = acc.daily.get(i);
             return {
@@ -357,9 +394,10 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
           }),
           mean: acc.sum / acc.n,
           n: acc.n,
-          scorer,
+          scorer: acc.scorer,
         }));
       const data: EvalTrendsDto = {
+        ...(by ? { by } : {}),
         scorers,
         since: new Date(since).toISOString(),
         until: new Date(until).toISOString(),
@@ -368,6 +406,53 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       return { data };
     }
   );
+
+  // ── Suite health ──
+  // What the stored data can say about a benchmark's health: the share of each
+  // dataset's golden cases quarantined as stale (exact), and how many are flake-screened.
+  // One grouped read over the cases; the thresholds are the Tier-2 defaults the gate uses.
+  app.get('/evals/suite-health', { onRequest: adminOnly }, async () => {
+    const [groups, datasets, defaults] = await Promise.all([
+      fastify.prisma.evalCase.groupBy({
+        _count: { _all: true },
+        by: ['datasetId', 'quarantined', 'flakeScreened'],
+      }),
+      runUnscoped('admin suite health spans every team', ['EvalDataset'], () =>
+        fastify.prisma.evalDataset.findMany({ select: { id: true, name: true, slug: true } })
+      ),
+      resolveWorkflowDefaults(),
+    ]);
+    const perDataset = new Map<string, { cases: number; quarantined: number; screened: number }>();
+    for (const g of groups) {
+      const acc = perDataset.get(g.datasetId) ?? { cases: 0, quarantined: 0, screened: 0 };
+      acc.cases += g._count._all;
+      acc.quarantined += g.quarantined ? g._count._all : 0;
+      acc.screened += g.flakeScreened ? g._count._all : 0;
+      perDataset.set(g.datasetId, acc);
+    }
+    const data: EvalSuiteHealthDto = {
+      datasets: datasets
+        .map((d) => {
+          const acc = perDataset.get(d.id) ?? { cases: 0, quarantined: 0, screened: 0 };
+          return {
+            cases: acc.cases,
+            datasetId: d.id,
+            flakeScreened: acc.screened,
+            name: d.name,
+            quarantined: acc.quarantined,
+            slug: d.slug,
+            staleRate: acc.cases > 0 ? acc.quarantined / acc.cases : 0,
+          };
+        })
+        .sort((a, b) => a.slug.localeCompare(b.slug)),
+      thresholds: {
+        maxFlakeRate: defaults.evalHealthMaxFlakeRate,
+        maxStaleRate: defaults.evalHealthMaxStaleRate,
+        minKappa: defaults.evalHealthMinKappa,
+      },
+    };
+    return { data };
+  });
 
   // ── List eval runs (newest first) ──
   app.get(

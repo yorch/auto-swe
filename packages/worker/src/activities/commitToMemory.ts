@@ -7,6 +7,7 @@ import { currentWorkflowRunId, persistActivityTrace } from '../lib/activityConte
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
@@ -99,10 +100,7 @@ export async function commitToMemory(
 
   const activityCtx = await currentRequestContext();
   const skills = await loadAgentSkills('commitToMemory', activityCtx);
-  const skillSuffix = skills
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
+  const skillSuffix = joinSkillPrompts(skills);
 
   const basePrompt = await resolveSystemPrompt(
     'commitToMemory',

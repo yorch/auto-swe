@@ -168,7 +168,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "75 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "77 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -445,7 +445,15 @@ cost pricing and the model-config UI labels — it is **not** the agent universe
 controls *how* an agent reasons. Built-ins live one-per-file in `packages/shared/src/skills/` and
 seed as `isBuiltIn` + `isVerified`. Custom skills seed as `isVerified: false`, and the flag resets
 to `false` whenever `promptText` is edited. Custom text is scanned by `scanSkillContent`
-(non-blocking; returns warnings).
+(non-blocking; returns warnings), and so is every skill in an installed bundle. Every text or
+description change writes an immutable `SkillRevision` (build the write with `initialRevision` /
+`nextRevision` from `@auto-swe/shared/lib/skillRevision`, never a bare `skill.update` of
+`promptText`), and a run pins the revisions it started with in `WorkflowRun.skillRevisions`.
+Skills imported from a GitHub repository come from `@auto-swe/shared/lib/skillSource` and a
+`SkillSource` row; that fetcher is the only code that talks to the external host (host policy before any
+request, platform credential only, manual redirects, fixed error strings — never put `fetch` error text
+or a response body in a message), and nothing from a source is ever executed. See
+[`docs/agents.md` §6.6](./docs/agents.md#66-external-skill-sources).
 
 **Tool** = an executable Mastra `createTool()` function. The implementer has four configurable
 workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS`

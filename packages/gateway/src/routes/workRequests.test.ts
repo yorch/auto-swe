@@ -3,6 +3,11 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 // Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+// The identity lookup needs a connection table these route mocks do not model.
+vi.mock('@auto-swe/shared/lib/sameRepositoryIds', () => ({
+  sameRepositoryIds: async (_prisma: unknown, id: string) => [id],
+}));
+
 vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   ...(await import('../test/billingMock.js')),
@@ -32,6 +37,8 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
+const sameRepositoryIds = vi.hoisted(() => vi.fn());
+vi.mock('@auto-swe/shared/lib/sameRepositoryIds', () => ({ sameRepositoryIds }));
 vi.mock('../lib/issueTrackerClient.js', () => ({
   fetchTicket: vi.fn(async () => null),
 }));
@@ -68,6 +75,7 @@ describe('POST /api/v1/work-requests', () => {
   let repoGithubUrl: string | null = null;
 
   beforeAll(async () => {
+    sameRepositoryIds.mockImplementation(async (_p: unknown, id: string) => [id]);
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
 
@@ -442,6 +450,32 @@ describe('POST /api/v1/work-requests', () => {
     });
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.payload).error.code).toBe('WORKFLOW_ALREADY_EXISTS');
+  });
+
+  it("does not name another row's workflow id when that row is the same repository", async () => {
+    sameRepositoryIds.mockImplementation(async (_p: unknown, id: string) => [id, 'other-row']);
+    existingWorkflows = [
+      {
+        currentStatus: 'IMPLEMENTING',
+        repoId: 'other-row',
+        temporalWorkflowId: 'eng-org-test-JIRA-1',
+      },
+    ];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'Add health endpoint',
+        externalTicketId: 'JIRA-1',
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(409);
+    const { message } = JSON.parse(res.payload).error;
+    expect(message).toContain('for this repository');
+    expect(message).not.toContain('eng-org-test-JIRA-1');
+    sameRepositoryIds.mockImplementation(async (_p: unknown, id: string) => [id]);
   });
 
   it('returns 409 for a host-qualified repo whose ticket is still running under its old id', async () => {

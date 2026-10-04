@@ -40,7 +40,7 @@ export interface RepoRef {
    */
   installationId?: string | null;
   /** The `GitHubInstallation.host` of that installation: empty for the instance's. */
-  installationHost?: string | null;
+  installationHost: string | null;
 }
 
 /** Result of resolving clone credentials for a repository. */

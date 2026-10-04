@@ -6,6 +6,7 @@ import { runBundleCommand } from './commands/bundle.js';
 import { runBundlesCommand } from './commands/bundles.js';
 import { runEvalsCommand } from './commands/evals.js';
 import { runRunsCommand } from './commands/runs.js';
+import { runSkillsCommand } from './commands/skills.js';
 import { runTokensCommand } from './commands/tokens.js';
 import { runWorkflowsCommand } from './commands/workflows.js';
 import { runWorkRequestsCommand } from './commands/workRequests.js';
@@ -65,6 +66,12 @@ COMMANDS
   bundles install-from-url <url> [--overwrite-protected]
                                        Install a bundle from a URL
 
+  skills sources list                  List tracked external skill sources (admin token)
+  skills sources add <owner/repo> --ref=<branch|tag> [--host=H] [--path=DIR]
+            [--script-mode=text-only|reject] [--skills=a,b] [--yes]
+                                       Preview a GitHub repository's skills, then import them
+                                       (unverified, pinned to the previewed commit)
+
   evals list                           List eval datasets (admin token)
   evals show <id>                      Print a dataset's cases
   evals results [--source=…] [--run=…] Query captured eval signals
@@ -122,6 +129,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'bundles') {
     return await runBundlesCommand(rest, env);
+  }
+  if (cmd === 'skills') {
+    return await runSkillsCommand(rest, env);
   }
   if (cmd === 'evals') {
     return await runEvalsCommand(rest, env);

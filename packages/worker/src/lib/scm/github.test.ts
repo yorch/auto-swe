@@ -160,7 +160,12 @@ describe('GitHubScmProvider.fetchCiLogs', () => {
 
 describe("GitHubScmProvider and the run launcher's own credential", () => {
   const provider = new GitHubScmProvider();
-  const REPO = { connectionId: 'conn-1', organizationName: 'acme', repoName: 'api' };
+  const REPO = {
+    connectionId: 'conn-1',
+    installationHost: null,
+    organizationName: 'acme',
+    repoName: 'api',
+  };
   const USABLE = {
     apiUrl: 'https://api.github.com',
     baseUrl: 'https://github.com',
@@ -277,7 +282,11 @@ describe("GitHubScmProvider and the run launcher's own credential", () => {
 
   it('never looks for a user token on a ref built without a connection', async () => {
     vi.mocked(currentRunLauncherId).mockResolvedValue('user-1');
-    await provider.cloneCredentials({ organizationName: 'acme', repoName: 'api' });
+    await provider.cloneCredentials({
+      installationHost: null,
+      organizationName: 'acme',
+      repoName: 'api',
+    });
     expect(currentRunLauncherId).not.toHaveBeenCalled();
     expect(resolveUserCredential).not.toHaveBeenCalled();
   });
@@ -312,6 +321,7 @@ describe('the platform credential and the repository host', () => {
   const GHE = {
     apiUrl: 'https://ghe.corp/api/v3',
     baseUrl: 'https://ghe.corp',
+    installationHost: null,
     organizationName: 'acme',
     repoName: 'api',
   };
@@ -376,6 +386,7 @@ describe('the platform credential and the repository host', () => {
     const creds = await provider.cloneCredentials({
       apiUrl: 'https://api.github.com',
       baseUrl: 'https://github.com',
+      installationHost: '',
       installationId: '777',
       organizationName: 'acme',
       repoName: 'api',
@@ -402,6 +413,7 @@ describe('the platform credential and the repository host', () => {
     const creds = await provider.cloneCredentials({
       apiUrl: 'https://api.github.com/',
       baseUrl: 'https://GitHub.com',
+      installationHost: null,
       organizationName: 'acme',
       repoName: 'api',
     });
@@ -411,7 +423,12 @@ describe('the platform credential and the repository host', () => {
   it('fails a repository with its own web host and no API URL, rather than ask the instance', async () => {
     await expect(
       provider.fetchFileContent(
-        { baseUrl: 'https://mirror.corp', organizationName: 'acme', repoName: 'api' },
+        {
+          baseUrl: 'https://mirror.corp',
+          installationHost: null,
+          organizationName: 'acme',
+          repoName: 'api',
+        },
         'package.json'
       )
     ).rejects.toMatchObject({ nonRetryable: true, type: 'REPO_HOST_MISCONFIGURED' });
@@ -425,7 +442,12 @@ describe('the platform credential and the repository host', () => {
     });
     await expect(
       provider.repoPermission(
-        { baseUrl: 'https://mirror.corp', organizationName: 'acme', repoName: 'api' },
+        {
+          baseUrl: 'https://mirror.corp',
+          installationHost: null,
+          organizationName: 'acme',
+          repoName: 'api',
+        },
         'octocat'
       )
     ).resolves.toEqual({ failure: 'host-mismatch', ok: false });
@@ -438,9 +460,15 @@ describe('the platform credential and the repository host', () => {
   });
 
   describe('a half override (web and API on different hosts)', () => {
-    const WEB_ONLY = { baseUrl: 'https://ghe.corp', organizationName: 'acme', repoName: 'api' };
+    const WEB_ONLY = {
+      baseUrl: 'https://ghe.corp',
+      installationHost: null,
+      organizationName: 'acme',
+      repoName: 'api',
+    };
     const API_ONLY = {
       apiUrl: 'https://ghe.corp/api/v3',
+      installationHost: null,
       organizationName: 'acme',
       repoName: 'api',
     };
@@ -515,6 +543,7 @@ describe('the platform credential and the repository host', () => {
       const creds = await provider.cloneCredentials({
         apiUrl: 'https://api.github.com',
         baseUrl: 'https://github.com',
+        installationHost: null,
         organizationName: 'acme',
         repoName: 'api',
       });
@@ -527,6 +556,7 @@ describe('the platform credential and the repository host', () => {
         provider.cloneCredentials({
           apiUrl: 'https://api.acme.ghe.com',
           baseUrl: 'https://acme.ghe.com',
+          installationHost: null,
           installationId: '777',
           organizationName: 'acme',
           repoName: 'api',
@@ -557,7 +587,9 @@ describe('the platform credential and the repository host', () => {
         vi.mocked(resolveGitHubConfig).mockResolvedValueOnce(
           instance({ ...APP, token: 'instance-pat' }) as never
         );
-        await call({ ...GHE, installationId: '777' }).catch(() => undefined);
+        await call({ ...GHE, installationHost: 'ghe.corp', installationId: '777' }).catch(
+          () => undefined
+        );
         expect(hostCredential).toHaveBeenCalledWith('ghe.corp');
         const [config, target] = vi.mocked(requireGitHubToken).mock.calls[0] as unknown as [
           Record<string, unknown>,
@@ -648,6 +680,7 @@ describe('the platform credential and the repository host', () => {
       await expect(
         provider.cloneCredentials({
           baseUrl: 'https://ghe.corp',
+          installationHost: null,
           organizationName: 'acme',
           repoName: 'api',
         })

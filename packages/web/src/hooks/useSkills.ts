@@ -13,6 +13,8 @@ export interface Skill {
   isBuiltIn: boolean;
   isVerified: boolean;
   isActive: boolean;
+  /** The revision this row's text is; send it back as `expectedRevision` on edit. */
+  currentRevision: number;
   usedByCount: number;
   createdAt: string;
   updatedAt: string;
@@ -113,6 +115,8 @@ export function useUpdateSkill() {
       description?: string;
       promptText?: string;
       isActive?: boolean;
+      /** The revision the editor read; a skill that moved on answers 409. */
+      expectedRevision?: number;
     }) =>
       api
         .put<{ data: Skill; scanWarnings?: string[] }>(`/api/v1/platform/skills/${id}`, body)

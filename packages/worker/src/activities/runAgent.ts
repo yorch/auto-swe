@@ -135,6 +135,9 @@ export async function runAgent<T = unknown>(
       const { traceId, spanId } = span.spanContext();
       tracer.setSpanContext(traceId, spanId);
       let recorded: LlmAttribution | undefined;
+      // Call ids the tool wrappers have already recorded, so the step pass below
+      // adds rows only for calls that never reached a tool's `execute`.
+      const liveCallIds = new Set<string>();
       let accountingTotals: (() => LlmAttribution) | undefined;
       try {
         span.setAttribute('llm.model', spec.modelSpec);
@@ -145,7 +148,7 @@ export async function runAgent<T = unknown>(
           instructions: spec.systemPrompt,
           model: spec.model,
           name: spec.agentKey,
-          tools: spec.tools,
+          tools: recordToolCalls(spec.tools, tracer, options.selfRecordingTools, liveCallIds),
         });
 
         // An unpriced model measures as $0 and a USD cap would count nothing, so
@@ -241,7 +244,7 @@ export async function runAgent<T = unknown>(
             ? 'max_steps'
             : undefined;
 
-        recordStepToolCalls(tracer, genResult?.steps, options.selfRecordingTools);
+        recordStepToolCalls(tracer, genResult?.steps, options.selfRecordingTools, liveCallIds);
 
         const object = (genResult?.object ?? undefined) as T | undefined;
         const text = genResult?.text || accounting?.lastText() || undefined;
@@ -293,6 +296,67 @@ export async function runAgent<T = unknown>(
   }
 }
 
+/** A tool's `execute`, as far as the wrapper needs to see it. */
+type ToolExecute = (
+  input: unknown,
+  context?: { agent?: { toolCallId?: string } }
+) => Promise<unknown>;
+
+/**
+ * A copy of `tools` whose `execute` records its own `tool_call` row as the call
+ * happens: real duration, and a row even when the surrounding `generate` later
+ * throws, which would leave the step pass below with nothing to read. Tools in
+ * `skip` already record themselves and are passed through untouched. The tool
+ * objects are cloned rather than patched, since a tool may be shared.
+ */
+function recordToolCalls(
+  tools: AgentSpec['tools'],
+  tracer: AgentTracer,
+  skip: ReadonlySet<string> = new Set(),
+  liveCallIds: Set<string>
+): AgentSpec['tools'] {
+  if (!tools) {
+    return tools;
+  }
+  const wrapped: Record<string, unknown> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    const execute = (tool as { execute?: ToolExecute }).execute;
+    if (skip.has(name) || !execute) {
+      wrapped[name] = tool;
+      continue;
+    }
+    const clone = Object.assign(Object.create(Object.getPrototypeOf(tool)), tool, {
+      execute: async (input: unknown, context?: Parameters<ToolExecute>[1]) => {
+        const start = Date.now();
+        const callId = context?.agent?.toolCallId;
+        if (callId) {
+          liveCallIds.add(callId);
+        }
+        try {
+          const output = await execute.call(tool, input, context);
+          tracer.addToolCall({
+            durationMs: Date.now() - start,
+            inputJson: input ?? {},
+            outputJson: output,
+            toolName: name,
+          });
+          return output;
+        } catch (e) {
+          tracer.addToolCall({
+            durationMs: Date.now() - start,
+            error: errorText(e),
+            inputJson: input ?? {},
+            toolName: name,
+          });
+          throw e;
+        }
+      },
+    });
+    wrapped[name] = clone;
+  }
+  return wrapped as AgentSpec['tools'];
+}
+
 /** The slice of a Mastra step that carries its tool calls and their outcomes. */
 interface StepToolCalls {
   toolCalls?: Array<{ payload: { toolCallId: string; toolName: string; args?: unknown } }>;
@@ -304,10 +368,12 @@ interface StepToolCalls {
 const NO_RESULT_ERROR = 'tool call produced no result (it threw or did not complete)';
 
 /**
- * One `tool_call` row per tool call Mastra made inside the loop, paired with
- * its outcome by call id. The steps carry no timing, so `durationMs` is 0, and
- * only a `generate` that returned has steps to read. Calls to a tool named in
- * `skip` are left out, since that tool records its own row.
+ * A `tool_call` row for each call Mastra made inside the loop that no tool
+ * wrapper recorded live (`liveCallIds`) — one that failed input validation or
+ * named no tool never reaches `execute` — paired with its outcome by call id.
+ * The steps carry no timing, so `durationMs` is 0, and only a `generate` that
+ * returned has steps to read. Calls to a tool named in `skip` are left out,
+ * since that tool records its own row.
  *
  * A tool that THROWS never reaches `toolResults`: Mastra emits it as a separate
  * `tool-error` chunk and buffers only `tool-result` chunks there. Its message
@@ -318,7 +384,8 @@ const NO_RESULT_ERROR = 'tool call produced no result (it threw or did not compl
 function recordStepToolCalls(
   tracer: AgentTracer,
   steps: StepToolCalls[] | undefined,
-  skip: ReadonlySet<string> = new Set()
+  skip: ReadonlySet<string> = new Set(),
+  liveCallIds: ReadonlySet<string> = new Set()
 ): void {
   const errors = stepToolErrors(steps ?? []);
   for (const step of steps ?? []) {
@@ -326,7 +393,7 @@ function recordStepToolCalls(
       (step.toolResults ?? []).map((r) => [r.payload.toolCallId, r.payload] as const)
     );
     for (const { payload: call } of step.toolCalls ?? []) {
-      if (skip.has(call.toolName)) {
+      if (skip.has(call.toolName) || liveCallIds.has(call.toolCallId)) {
         continue;
       }
       const result = results.get(call.toolCallId);

@@ -503,7 +503,9 @@ async function resyncTemporalFromRow(
  * deleted) has no claim either, so it is paused too.
  *
  * The row is deactivated first (a schedule must not stay "active" in the
- * dashboard), then the Temporal schedule is paused. Nothing here fails the
+ * dashboard) and each deactivation is audited on its own, against the schedule
+ * (`actorId` is whoever changed the share or moved the repository), then the
+ * Temporal schedule is paused. Nothing here fails the
  * caller, per row: the share change has already committed, the list view shows
  * the live Temporal state, and the worker refuses a fire of an inactive row and
  * re-checks the author's access on every one.
@@ -511,7 +513,8 @@ async function resyncTemporalFromRow(
 export async function deactivateSchedulesOutsideTeams(
   fastify: FastifyInstance,
   repoId: string,
-  log: FastifyRequest['log']
+  log: FastifyRequest['log'],
+  actorId: string | null = null
 ): Promise<number> {
   const repo = await fastify.prisma.connection.findUnique({
     select: { shares: { select: { teamId: true } }, teamId: true },
@@ -539,10 +542,37 @@ export async function deactivateSchedulesOutsideTeams(
     try {
       // Conditional on the team it was read with: a row someone has since moved
       // to a team that does have a claim is left alone.
-      await fastify.prisma.scheduledWorkRequest.updateMany({
+      const deactivated = await fastify.prisma.scheduledWorkRequest.updateMany({
         data: { isActive: false, version: { increment: 1 } },
         where: { id: row.id, isActive: true, teamId: row.teamId },
       });
+      if (deactivated.count > 0) {
+        // Recorded right after the write, and only when this call made the
+        // change: a row someone else already moved is not ours to report. A
+        // failed audit write must not skip the pause that follows, but it is
+        // logged, never silent.
+        try {
+          await fastify.prisma.configAuditLog.create({
+            data: {
+              action: 'UPDATE',
+              actorId,
+              afterJson: {
+                event: 'schedule-deactivated',
+                isActive: false,
+                reason: 'team lost its claim on the repository',
+              },
+              beforeJson: { isActive: true, repoId, teamId: row.teamId },
+              entityId: row.id,
+              entityType: 'ScheduledWorkRequest',
+            },
+          });
+        } catch (auditErr) {
+          log.error(
+            { err: auditErr, scheduleId: row.id },
+            'deactivated the schedule of an unshared team but could not audit it'
+          );
+        }
+      }
       // Sync from the row as it stands now, so a takeover that landed meanwhile
       // keeps its launcher and a re-activation is not paused behind its back.
       const current = await fastify.prisma.scheduledWorkRequest.findUnique({

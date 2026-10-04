@@ -146,6 +146,64 @@ async function fetchInstallationToken(
   };
 }
 
+/** What GitHub says about one installation of an App. */
+export interface AppInstallationState {
+  /** `deleted` is a 404: the installation no longer exists. */
+  state: 'active' | 'suspended' | 'deleted';
+  /** The account the App is installed on, as GitHub reports it now. */
+  accountLogin: string | null;
+}
+
+/**
+ * Ask GitHub about one installation of the App in `config`: `GET
+ * /app/installations/{id}`, authenticated with that App's JWT. Used to confirm
+ * a webhook's claim before acting on it, since a delivery can be forged or
+ * replayed by anyone holding the webhook secret.
+ *
+ * The JWT goes only to the host the credential set belongs to (the same rule as
+ * `resolveGitHubToken`). Throws when the set has no App credentials, the id is
+ * not numeric, the host is refused, or GitHub answers anything but 200 or 404.
+ */
+export async function fetchAppInstallation(
+  config: ResolvedGitHubConfig,
+  installationId: string,
+  apiUrl: string = config.apiUrl
+): Promise<AppInstallationState> {
+  const { appId, appPrivateKey } = config;
+  if (!(appId && appPrivateKey)) {
+    throw new GitHubTokenMissingError();
+  }
+  if (!/^[0-9]+$/.test(installationId)) {
+    throw new Error('GitHub installation id must be numeric');
+  }
+  if (hostFamily(apiUrl) !== (config.credentialHost ?? hostFamily(config.apiUrl))) {
+    throw new PlatformCredentialHostError(apiUrl);
+  }
+  const res = await fetch(`${apiUrl.replace(/\/$/, '')}/app/installations/${installationId}`, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${createGitHubAppJwt(appId, appPrivateKey)}`,
+      'User-Agent': 'auto-swe/1.0',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (res.status === 404) {
+    return { accountLogin: null, state: 'deleted' };
+  }
+  if (!res.ok) {
+    throw new Error(`GitHub installation lookup failed: ${res.status}`);
+  }
+  const body = (await res.json()) as {
+    account?: { login?: unknown } | null;
+    suspended_at?: unknown;
+  };
+  return {
+    accountLogin: typeof body.account?.login === 'string' ? body.account.login : null,
+    state: body.suspended_at ? 'suspended' : 'active',
+  };
+}
+
 /** Which installation a caller wants a token for, and where its API lives. */
 export interface InstallationTarget {
   /**

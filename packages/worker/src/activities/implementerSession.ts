@@ -41,10 +41,11 @@ export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX';
  * types). The installation relation is part of the shape because `toRepoRef`
  * requires it — a fix session that resolved its repo without one would clone
  * through the default installation, which for a repo in another GitHub
- * organization 404s as if the repository did not exist.
+ * organization 404s as if the repository did not exist — and its `host`, without
+ * which the installation-host check at token mint has nothing to compare.
  */
 type Connection = Awaited<ReturnType<typeof prisma.connection.findUniqueOrThrow>> & {
-  installation: { installationId: string } | null;
+  installation: { installationId: string; host: string } | null;
 };
 
 export interface FixSessionInput {

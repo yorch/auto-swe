@@ -414,7 +414,7 @@ The code security scanner findings (`codeResult.codeSecurityFindings`) are forma
 
 A **skill** is a named prompt fragment (`promptText`) injected into an agent's system message. Skills control *how* an agent reasons — they do not grant new capabilities. Each skill has:
 
-Skills are an intentionally **global, ADMIN-curated library** — the `Skill` table carries no `teamId`/`orgId`/tenant column, and creation (`POST /api/v1/platform/skills`) and edits are ADMIN-only routes. Tenant isolation is enforced one layer up: which Agents (themselves tenant-scoped) reference a skill via `skillRefs`, not by row ownership on `Skill` itself.
+Skills are an **ADMIN-curated library**: creation (`POST /api/v1/platform/skills`) and edits are ADMIN-only routes. A skill carries `scope` (`GLOBAL`, `ORGANIZATION` or `TEAM`) with `orgId`/`teamId`, mirroring `Agent`. Built-ins and admin-created skills default to `GLOBAL` and are visible everywhere; a team- or org-scoped skill is visible only within its tenant, because `promptText` is where a team is most likely to encode internal process knowledge. Which agents use a skill is decided separately, by the agent's `skillRefs`.
 
 | Field | Purpose |
 |---|---|
@@ -422,7 +422,8 @@ Skills are an intentionally **global, ADMIN-curated library** — the `Skill` ta
 | `description` | One-line summary shown in the L1 menu |
 | `promptText` | Full reasoning guidance (max 50 KB) |
 | `isBuiltIn` | `true` for seeds from `packages/shared/src/skills/` |
-| `isVerified` | `true` for built-ins; reset to `false` whenever `promptText` is updated |
+| `isVerified` | `true` for built-ins; set on a custom skill only by an ADMIN through `POST /api/v1/platform/skills/:id/verify`; reset to `false` by any edit that cuts a revision (a `promptText` or `description` change) — a rename or an `isActive` toggle does not reset it |
+| `currentRevision` | The `SkillRevision` number that `promptText` and `description` currently mirror (§6.5) |
 | `isActive` | Toggle to enable/disable without deleting |
 
 **Table:** `skills` in `packages/shared/src/prisma/schema.prisma`
@@ -487,6 +488,7 @@ GLOBAL             →  (always falls back to this; may carry no skill refs)
 - Returns `ResolvedSkill[]` sorted by `sortOrder` ascending.
 - The most-specific Agent version's `skillRefs` win — an empty list means no skills injected for that role.
 - Only `isActive: true` skills are included.
+- A skill whose text was imported from an external source is prefixed with its provenance, `- **name**: [external: owner/repo@1a2b3c4] description` (§6.6). Without the source row (it was deleted) the label is `[external@1a2b3c4]`; a skill whose text an admin has since edited by hand is no longer labelled (a description-only edit keeps the label, since the text is still the imported text). The same label reaches every other path the text takes to a model (§6.6).
 
 `skillsToPromptSuffix(skills)` joins prompt texts with double-newline; returns `undefined` for an empty array. Used by reviewer and planner sub-agents (which receive skill fragments directly in the system prompt rather than via the L1 menu).
 
@@ -498,8 +500,81 @@ Custom skills' `promptText` is scanned by `scanSkillContent(text)` in `packages/
 - **Non-blocking advisory** — warnings are returned but never prevent saving or execution. Scan failures are caught so a DB outage cannot abort a run.
 
 The scan runs:
-1. At skill save time (gateway `POST /api/v1/platform/skills`).
-2. After each TDD iteration in `executeImplementation` (scans LLM output for prompt injection attempts).
+1. At skill create and edit (gateway `POST`/`PUT /api/v1/platform/skills`): the description and the prompt text are scanned together over the whole text, and a scanner failure is returned as a `scan-incomplete` warning rather than an error.
+2. For every skill in a bundle at install time. Findings come back in the install response's `warnings` (one entry per finding, prefixed with the skill name) and are recorded on the new revision; an install is never refused for them.
+3. After each TDD iteration in `executeImplementation` (scans LLM output for prompt injection attempts).
+
+The warnings of the save-time and install-time scans are stored on the `SkillRevision` that holds the scanned text (`scanWarnings`).
+
+### 6.5 Skill revisions and run pinning
+
+`Skill.promptText` and `description` are the live copy. Every change to either also writes an immutable `SkillRevision` (`skill_revisions`, unique on `(skillId, revision)`) and sets `Skill.currentRevision` to its number, in one statement. The paths that do so are: skill create (revision 1), skill edit (when the text or the description changes — a rename or an `isActive` toggle does not), the built-in sync when shipped text changes, and bundle install when a skill's text or description changes. A revision stores the text, the description, a content hash, the scan warnings, the author, and — for content imported from a source — provenance (`sourceSha`, `sourcePath`, `referenceFiles`). Revisions are never updated.
+
+An edit is guarded on the revision number it read, so two concurrent edits cannot both produce revision N+1: the second gets `409 SKILL_CHANGED`. `PUT /api/v1/platform/skills/:id` also accepts `expectedRevision`, the revision the editor had on screen; when it is present and the skill has moved on, the edit is refused with the same 409 before anything is written. A guarded write that finds the skill deleted answers 404. A built-in sync that loses the race to another replica booting alongside it skips the skill, since that replica wrote the same shipped text. Startup sync gives any skill that has no revision row the row for the revision it already names.
+
+**A run pins the skill text it started with.** `createWorkflowRun` records `WorkflowRun.skillRevisions`, a `{ skillId: currentRevision }` map, beside `agentVersions`. It covers every skill visible to the run's tenant at that moment — GLOBAL, plus its team's and organization's own — keyed by skill id, so it holds whichever agent later references the skill: an explicit `key@version` agent ref, a CHANNEL-scope agent, or a skill attached to an agent after the run began. `currentRequestContext()` returns the map on `ResolveCtx.skillRevisions`; `resolveAgent` and `loadAgentSkills` then read a pinned skill's text and description from its `SkillRevision`, so a skill edited after the run began is not read at its new text by a retry or a replay of that run. Agent-run activities carry the pin into their own context the same way they carry `agentVersions`, and the map is part of the `resolveAgent` cache key. The pin is activity-side data: nothing in the workflow isolate reads it, so replay histories are unaffected.
+
+What is deliberately not pinned: `isActive` is read live, so disabling a harmful skill still takes effect inside a run already under way; and `isVerified` describes the current text, so a pinned revision older than the current one is never reported as verified. A pin whose revision row is missing resolves the live text, with a warning in the activity log and a `skill.pinned_revision_missing` event on the run's trace.
+
+**Verification.** `POST /api/v1/platform/skills/:id/verify` (ADMIN, audited) takes `{ "revision": n }`, the revision the admin read, and sets `isVerified` only if that is still the skill's current revision; otherwise it answers `409 SKILL_CHANGED` and verifies nothing. A body without `revision` is a 400. It is the only place a custom skill becomes verified, and any later edit that cuts a revision — a description-only edit included — clears it; a rename or an `isActive` toggle does not.
+
+### 6.6 External skill sources
+
+An admin can import skills from a folder of a GitHub or GitHub Enterprise repository. The import is a **tracked source**: a `SkillSource` row (`skill_sources`) holding `host`, `owner`, `repo`, `path` (the subdirectory, empty for the repository root), `ref`, and `pinnedSha`, the commit the text was read at. Each imported `Skill` points back at it (`sourceId`, `sourcePath`), and its revision 1 carries the commit and folder (`SkillRevision.sourceSha` / `sourcePath`) plus the companion text (`referenceFiles`). Deleting the source sets `Skill.sourceId` to null in the database, so its skills stay as ordinary custom skills and keep the provenance their revisions carry.
+
+**What a skill is.** Any folder containing a `SKILL.md`. Its YAML frontmatter must give a `name` (letters, digits, space, `.`, `_`, `-`, up to 200 characters) and a `description` (up to 1000 characters; whitespace is flattened to one line, because the description is shown in the skill menu); the body becomes `promptText` (up to 50,000 characters). A folder whose `SKILL.md` has missing or invalid frontmatter, an empty body, or an over-long field is reported as an error on that skill and does not affect the others. A skill nested inside another skill's folder is its own skill and its files do not belong to the outer one. A skill with the same name as another in the same source is an error on both.
+
+**Field mapping.**
+
+| Source | Stored as |
+|---|---|
+| frontmatter `name` | `Skill.name` |
+| frontmatter `description` | `Skill.description` |
+| `SKILL.md` body | `Skill.promptText` (and revision 1) |
+| `.md` / `.txt` files in the folder | `SkillRevision.referenceFiles` as `{ path, content }`, path relative to the skill folder |
+| commit sha, folder | `SkillRevision.sourceSha`, `SkillRevision.sourcePath`, `Skill.sourcePath` |
+| source tenancy | `Skill.scope` / `teamId` / `orgId` (GLOBAL unless a team or organization is given) |
+
+Reference files are stored, not injected: only `promptText` reaches an agent.
+
+**Script modes** (`SkillSource.scriptMode`, set per source by an admin):
+
+- `TEXT_ONLY` (default): `SKILL.md` becomes the prompt, `.md`/`.txt` siblings are kept as reference text, and every other file is skipped and listed (`skippedFiles`, with a reason). Skipped files are never downloaded.
+- `REJECT`: a skill folder containing any file other than `.md`/`.txt` is refused, with an error naming the files.
+
+Nothing is ever executed or stored as runnable, in either mode. Symlinks and submodules are skipped and listed, never followed. Reference files over 100 KB, past the 50th per skill, or not valid UTF-8 are skipped and listed.
+
+**Trust model.**
+
+- **Unverified by default.** Imported skills start `isVerified: false`; an admin verifies a revision through `POST /api/v1/platform/skills/:id/verify` (§6.5) after reading it.
+- **Provenance** is visible, on every path the text takes to a model, not just the menu. A single helper (`packages/worker/src/lib/config/skillPrompt.ts`) renders a skill for a prompt: imported text is preceded by `[external: owner/repo@sha7 — third-party text]` wherever it is inlined (the Claude Code harness runtime, the review personas, the generic `runAgent`, the planner, decomposer, memory, consolidation and security-review agents), in the text `loadSkill` returns, and as a `[external: owner/repo@sha7]` prefix on the skill's menu entry. A test fails if a new site reads a skill's `promptText` without going through it. The source columns on the skill's revisions record where the text came from. A description-only edit carries the provenance forward to the new revision (the text is unchanged); an edit to the text drops it.
+- **Pinned to a commit.** The source records the commit it was read at. The installed text is the text of that commit, and a run that started earlier keeps the revision it pinned (§6.5).
+- **Scanner blocking.** The description and text of each chosen skill get the full advisory scan (§6.4). Because this text was written by someone else, the registry setting `skills.import.blockOnScanWarnings` (ADMIN, GLOBAL only, default on) makes any warning, an incomplete scan included, refuse that skill, with the warnings named in the response. With it off, the skill is installed and the warnings are recorded on its revision.
+- **Name conflicts.** An imported skill never overwrites or sits beside a skill an agent could confuse it with. A GLOBAL import conflicts with a same-named skill at any scope; a TEAM import with GLOBAL, its organization and its own team; an ORGANIZATION import with GLOBAL, the organization and every team in it. Names compare case-insensitively with spacing and trailing punctuation folded (`tdd.` is `tdd`), and two chosen skills that fold to one name conflict too. The preview marks conflicts, and an import that includes one is refused with a 409 listing every conflict. The check and the create run in one transaction under a transaction-scoped advisory lock, so two concurrent imports cannot both take a name.
+- **ADMIN only**, and every create, change and delete is written to the audit log (`SkillSource`).
+
+**Fetching.** One shared fetcher (`packages/shared/src/lib/skillSource/`) serves the gateway. It checks the host before any request: `github.com` is always allowed; any other host must be the instance's own GitHub host or listed in `github.repositoryHosts`, and every URL must pass the SSRF guard and be HTTPS. It uses only the platform credential, resolved by `resolvePlatformCredential`: wherever the platform has a credential for the host, it is used. That includes `github.com` when the instance itself is on `github.com` (the default), where the instance's token is sent to read any public repository there; a host with no credential of its own, and `github.com` on an instance that is not, is read anonymously. The instance's token goes to the instance's host and a host's own credential to that host, never elsewhere. A user's personal token is never used. The token is sent only in the `Authorization` header and only to the host it belongs to. Redirects are followed by hand, with every hop re-checked. The ref is resolved to a commit, the repository tree is listed at that commit (a `truncated` listing is refused), and blobs are fetched by sha; no archive is downloaded. Paths with `..`, an absolute path or a backslash refuse the source. Every failure reaches the caller as one of a fixed set of messages, never as text from `fetch` or the host.
+
+**Private-network hosts.** The SSRF guard refuses a host that is, or is spelled as, a private address (loopback, RFC 1918, link-local, `.internal`, `.local`). A self-hosted GitHub Enterprise server on such an address is allowed only per host: it must be on the approved repository hosts list **and** in the ADMIN-only setting `skills.import.privateNetworkHosts`. Either alone does nothing. The waiver applies to that exact host (and its API host) and to redirect hops on it, never to another private host. Cloud metadata addresses (169.254.0.0/16, `fd00:ec2::254`, 100.100.100.200, `metadata.google.internal`) and loopback/unspecified addresses are refused whatever is listed.
+
+**Limits.** 100 skills and 2 MB of fetched text per source. The fetch also has a budget that keeps an import from draining the GitHub rate limit the platform's workflows share: at most 300 API requests (the ref, the tree, one per `SKILL.md`, one per kept reference file, redirect hops included; when that is exceeded, reference files are dropped and listed as skipped before any skill is, and a source whose skills alone do not fit is refused), a 60 s deadline for the whole fetch, and a stop as soon as the host's `x-ratelimit-remaining` falls below 200 (a fifth of the limit when the limit is small, so an anonymous 60-per-hour read can still work). A request times out after 15 s. A create reads the source again, so it spends the same budget as the preview.
+
+Everything shown to the admin that came from the repository (folder and file names, ignored frontmatter keys) has control characters replaced, and a skill folder whose name contains one is refused; descriptions are flattened to one line with control characters turned into spaces. The preview also lists the frontmatter keys the import reads nothing from (such as `allowed-tools`).
+
+**API** (`/api/v1/platform/skill-sources`, ADMIN):
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/skill-sources/preview` | Read a source and report each skill; writes nothing |
+| `POST` | `/skill-sources` | Import the chosen skills at the previewed commit |
+| `GET` | `/skill-sources` | List sources with their skill counts |
+| `GET` | `/skill-sources/:id` | One source with its skills |
+| `PATCH` | `/skill-sources/:id` | Change `scriptMode`, or set `status` to `DISABLED` / `OK` |
+| `DELETE` | `/skill-sources/:id` | Remove the source; its skills are detached |
+
+The preview body is `{ host?, owner, repo, path?, ref, scriptMode?, scope?, teamId?, orgId? }`. For each skill it returns the name, description, text length, reference file count, scan warnings, name conflicts, skipped files, errors, and whether it is installable, plus the resolved commit `sha`. The create body is the same fields plus that `sha` and `skills`, the names to import; the request supplies names, never text — the content is read again at the commit. If the ref no longer resolves to `sha` the answer is `409 SKILL_SOURCE_SHA_MOVED` and nothing is written, so the admin previews again. The source, every skill with its revision 1, and the audit entry are written in one transaction; any failure leaves none of them. A second source for the same host, owner, repository and path in the same scope is `409 SKILL_SOURCE_EXISTS` (the reference is not part of that key). Changing `scriptMode` affects only how the source is read from then on; skills already installed are not touched.
+
+**CLI.** `auto-swe skills sources add <owner/repo> --ref=<branch|tag> [--host=H] [--path=DIR] [--script-mode=text-only|reject] [--skills=a,b] [--yes]` previews, asks for confirmation, then creates; `auto-swe skills sources list` lists the sources.
 
 ---
 
@@ -576,7 +651,7 @@ await persistActivityTrace(tracer, 'implementer');
 
 An attempt can persist more than one tracer — its own and `runAgent`'s — and each numbers its records from 0, so `persistActivityTrace` reserves a block of `seq` values per attempt and offsets each batch into it. `seq` is therefore unique within an attempt, and batches order by when they were persisted.
 
-**`runAgent`** records a `tool_call` row for every tool call Mastra made inside its loop, read from the steps of the `generate` result and paired with each call's outcome, then the call's `llm_response` row. A tool that threw is recorded with its error message: Mastra keeps only successful results in a step's `toolResults`, so the error is read from the tool message the loop fed back to the model. A call with no outcome anywhere is recorded as failed, never as a success with no output. A caller whose tools record themselves passes its own tracer as `RunAgentOptions.tracer` and names those tools in `RunAgentOptions.selfRecordingTools` — `runAgentNode` (MCP tools) and `runAgentTask` (workspace and MCP tools) do. `runAgent` then records into that tracer, skips only the named tools when it reads the steps, and leaves persisting to the caller, so every row shares one sequence and persists once. The self-recorded rows land as their calls happen; the rows read from the steps for any other tool are appended after the loop returns, just before the `llm_response`. A tool is named by identity, not key, so a self-recording tool displaced on a key collision does not take the winning tool's rows with it.
+**`runAgent`** records a `tool_call` row for every tool call Mastra made inside its loop, then the call's `llm_response` row. Each tool it binds is wrapped so its `execute` records the row as the call happens — real duration, input, output or the thrown error's message — which also keeps the rows of calls made before a `generate` that then throws. A call that never reached `execute` (invalid input, an unknown tool) is read afterwards from the steps of the `generate` result, matched by call id so a wrapped call is not recorded twice; Mastra keeps only successful results in a step's `toolResults`, so such a call's error comes from the tool message the loop fed back to the model, and a call with no outcome anywhere is recorded as failed, never as a success with no output. A caller whose tools record themselves passes its own tracer as `RunAgentOptions.tracer` and names those tools in `RunAgentOptions.selfRecordingTools` — `runAgentNode` (MCP tools) and `runAgentTask` (workspace and MCP tools) do. `runAgent` then records into that tracer, leaves the named tools unwrapped and unread, and leaves persisting to the caller, so every row shares one sequence and persists once. Every row lands in call order as the calls happen; only the rows read from the steps are appended after the loop returns, just before the `llm_response`. A tool is named by identity, not key, so a self-recording tool displaced on a key collision does not take the winning tool's rows with it.
 
 **`inputJson` convention for `addLlmResponse`:** always pass `{ systemPrompt, userMessage }` so the `/runs/[id]` viewer can show exactly what was sent to the model. Declare prompt variables as `let` before the `try` block (not `const` inside it) so the error `catch` path can reference them too — otherwise failed LLM calls produce traces with no request context.
 
@@ -692,9 +767,12 @@ on the `Agent` payload below.
 | `POST` | `/api/v1/platform/skills` | `ADMIN` | Create a custom skill |
 | `GET` | `/api/v1/platform/skills/:id` | `ADMIN` | Get skill detail |
 | `PUT` | `/api/v1/platform/skills/:id` | `ADMIN` | Update name / description / promptText / isActive |
+| `POST` | `/api/v1/platform/skills/:id/verify` | `ADMIN` | Mark the current revision human-verified (audited) |
 | `DELETE` | `/api/v1/platform/skills/:id` | `ADMIN` | Delete (built-in skills are rejected with 400) |
 
-Updating `promptText` automatically resets `isVerified` to `false` and triggers a security scan (the scan result is returned in the response but does not block the save).
+Any edit that cuts a revision (a `promptText` or `description` change) automatically resets `isVerified` to `false`, whether or not the skill is flagged built-in (bundle-installed skills are); a rename or an `isActive` toggle leaves it. The edit triggers a security scan (the scan result is returned in the response but does not block the save). A change to `promptText` or `description` cuts a new revision (§6.5).
+
+Importing skills from an external repository is a separate surface, documented with its trust model in §6.6.
 
 ### 9.2 Agent library (model / prompt / skills / tools)
 
@@ -721,7 +799,9 @@ Writes cut a new immutable `version`.
 
 | Model | Table | Purpose |
 |---|---|---|
-| `Skill` | `skills` | Skill definitions (name, promptText, isBuiltIn, isVerified, isActive) |
+| `Skill` | `skills` | Skill definitions (name, promptText, isBuiltIn, isVerified, isActive, scope, currentRevision) |
+| `SkillRevision` | `skill_revisions` | Immutable history of a skill's text and description; what a run's `skillRevisions` pin reads |
+| `SkillSource` | `skill_sources` | An external GitHub / GitHub Enterprise folder skills were imported from: location, ref, pinned commit, script mode, scope (§6.6) |
 | `Agent` | `agents` | Single source of truth per key/scope: model spec, system prompt, credential pin, tool keys, skill refs (versioned) |
 | `AgentSkillRef` | `agent_skill_refs` | Join from an `Agent` to a `Skill` with `sortOrder` |
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |
@@ -736,6 +816,48 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
+- **A skill created after a run starts is not in its pin.** It resolves its current revision, which is
+  also its only one. An epic's children are runs of their own and pin at their own start, so an edit
+  between the epic's start and a child's start reaches that child. A run created before the
+  `skillRevisions` column existed has no pin. A channel-resident run started by the channel assistant
+  (`startChannelRun`) writes its own `WorkflowRun` and has no pin; a channel task run through
+  `createWorkflowRun` with no repository pins GLOBAL skills plus those of the team and organization
+  of the Slack channel its request came from (matched on Slack's channel id). Eval-harness cases are not runs and always read current text.
+- **A skill's `isActive` flag is not pinned.** It is read live on purpose, so a pinned run cannot keep
+  using a skill an admin has disabled; the cost is that disabling and re-enabling mid-run changes
+  which skills a retry sees.
+- **A pinned revision whose row is missing falls back to the live text** rather than failing the run.
+  Deleting a skill deletes its revisions with it, along with the agents' references to it.
+- **Verification attests to text, not to a source.** `isVerified` says an admin approved the current
+  revision; it carries no signature and nothing re-checks it against provenance.
+- **External skill sources run no scripts.** Nothing from a source is executed, and only `.md`/`.txt`
+  files are kept, as reference text no agent reads: a skill whose value is in its scripts or assets is
+  imported as its instructions alone (`TEXT_ONLY`) or refused (`REJECT`).
+- **External skill sources are GitHub and GitHub Enterprise only,** read through the GitHub REST API.
+  There is no GitLab, Bitbucket or plain-git support.
+- **A source's commit is not verified.** The commit sha pins what was read, but the platform does not
+  check a commit or tag signature, so it attests to where the text came from, not who wrote it.
+- **The host check works on the text of the host, not on DNS.** The SSRF guard refuses literal private
+  and metadata addresses and names like `localhost` or `*.internal`; a public-looking hostname that
+  resolves to a private address is not caught here, as with every other outbound fetch. A
+  private-network GitHub Enterprise host is allowed only through the two-list opt-in above, and the
+  listed name is then trusted to mean the server the admin intends.
+- **A source is imported once.** Nothing re-checks the repository or updates the installed skills
+  when it changes; a source records the commit it was read at and nothing more. Re-importing under the
+  same name is refused as a name conflict, so a changed skill is replaced by editing it or by deleting
+  it and importing it again.
+- **A skill's scan covers its description and text, not its reference files,** which are stored
+  unscanned. Nothing reads them to an agent or a UI; anything that first does must scan them, with
+  `skills.import.blockOnScanWarnings` applying, before it may. A clean scan does not make an imported
+  skill anything but unverified third-party text.
+- **A source costs at most 300 API requests, and a large source loses its reference files first.** A
+  repository with more skills than fit, or more reference files than the leftover budget, is imported
+  with those files skipped and listed, not in full; narrow the source's path to import the rest. The
+  platform's own token pays for the reads wherever it applies, so a rate limit already near its floor
+  refuses the import until it recovers.
+- **Skill names are not unique in the library.** Imports check for conflicts under a lock, but the
+  other ways of creating a skill (the admin API, bundles) do not take it, and `loadSkill` resolves a
+  name that two of an agent's skills share to the last one.
 - **Node attribution needs the worker's workflow interceptor.** A worker built without
   `workflowModules: [nodeTagInterceptor]` writes traces with null `specNodeId` — every test harness
   that builds its own `Worker`, and a worker still running older code during a rolling deploy. So
@@ -745,10 +867,9 @@ Writes cut a new immutable `version`.
   it lists the trace under every node that runs that activity and labels it ambiguous when two or
   more nodes do (and always when a fan-out branch is selected, since a fallback match cannot name a
   branch). A fallback match with a single candidate node is shown unlabelled.
-- **`runAgent`'s own tool-call rows are reconstructed after the fact.** They are read from the
-  steps of a `generate` that returned, so their `durationMs` is 0 and a `generate` that threw or
-  was aborted records none of its tool calls — only the failed `llm_response`. Tools that record
-  themselves (MCP, workspace) are timed and recorded either way.
+- **A call that never reaches a tool has no duration.** `runAgent` times the calls that execute;
+  one that failed input validation or named no tool is read from the steps of a `generate` that
+  returned, with `durationMs` 0, so a `generate` that throws loses those and keeps the rest.
 - **The Claude Code harness holds a model credential inside the workspace container.** The agent
   runs as root on a network with unrestricted egress, so anything it runs can read the key and send
   it elsewhere; a repository's settings cannot move where the harness itself sends it, but the

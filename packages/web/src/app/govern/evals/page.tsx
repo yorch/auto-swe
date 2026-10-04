@@ -3,18 +3,30 @@
 import type { EvalScorerTrend } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
+import { ScorerBreakdownChart } from '@/components/charts/ScorerBreakdownChart';
 import { ScorerTrendChart } from '@/components/charts/ScorerTrendChart';
+import { SuiteHealthChart } from '@/components/charts/SuiteHealthChart';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { useEvalDatasets, useEvalTrends } from '@/hooks/useAdmin';
-import { cn, scoreColor } from '@/lib/utils';
+import { useEvalDatasets, useEvalSuiteHealth, useEvalTrends } from '@/hooks/useAdmin';
+import { useWorkflowTemplates } from '@/hooks/useTemplates';
+import { cn, formatPercent, scoreColor } from '@/lib/utils';
 
 const WINDOW_OPTIONS = [7, 30, 90].map((days) => ({ label: `${days}d`, value: String(days) }));
+
+const BREAKDOWN_OPTIONS = [
+  { label: 'Scorer', value: '' },
+  { label: 'Judge model', value: 'judgeModel' },
+  { label: 'Agent', value: 'agentKey' },
+];
+
+type Breakdown = '' | 'judgeModel' | 'agentKey';
 
 /** The mean of the most recent day that had any signal, for the "latest" column. */
 function latestMean(trend: EvalScorerTrend): number | null {
@@ -43,22 +55,50 @@ export default function GovernEvalsPage() {
   // One scorer drives both the trend chart and the results filter: the chart
   // shows only the selected scorer, never a stand-in the results do not match.
   const [scorer, setScorer] = useState('');
-  const trendsQuery = useEvalTrends(windowDays);
+  const [by, setBy] = useState<Breakdown>('');
+  const [templateId, setTemplateId] = useState('');
+  const trendsQuery = useEvalTrends(windowDays, {
+    by: by || undefined,
+    templateId: templateId || undefined,
+  });
+  const templates = useWorkflowTemplates();
+  const healthQuery = useEvalSuiteHealth();
   const datasetsQuery = useEvalDatasets();
   const trends = trendsQuery.data?.scorers ?? [];
+  const scorerNames = [...new Set(trends.map((t) => t.scorer))];
   const datasets = datasetsQuery.data;
-  const charted = scorer ? trends.find((t) => t.scorer === scorer) : undefined;
+  // With a breakdown a scorer has one series per value, and they chart together.
+  const charted = scorer ? trends.filter((t) => t.scorer === scorer) : [];
+  const templateOptions = [
+    { label: 'All templates', value: '' },
+    ...(templates.data ?? []).map((t) => ({ label: t.name, value: t.id })),
+  ];
 
   return (
     <div className="space-y-8">
       <PageHeader
         actions={
-          <SegmentedControl
-            ariaLabel="Trend window"
-            onChange={(v) => setWindowDays(Number(v))}
-            options={WINDOW_OPTIONS}
-            value={String(windowDays)}
-          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Select
+              appearance="pill"
+              aria-label="Workflow template"
+              onChange={setTemplateId}
+              options={templateOptions}
+              value={templateId}
+            />
+            <SegmentedControl
+              ariaLabel="Break trends down by"
+              onChange={(v) => setBy(v as Breakdown)}
+              options={BREAKDOWN_OPTIONS}
+              value={by}
+            />
+            <SegmentedControl
+              ariaLabel="Trend window"
+              onChange={(v) => setWindowDays(Number(v))}
+              options={WINDOW_OPTIONS}
+              value={String(windowDays)}
+            />
+          </div>
         }
         chapter="§ Govern"
         subtitle="Per-scorer quality signals over time, every captured result with a link to the run it scored, and the datasets offline runs score against. Days are UTC."
@@ -81,8 +121,15 @@ export default function GovernEvalsPage() {
             <EmptyState title="No eval signals in this window." />
           ) : (
             <div className="space-y-6">
-              {charted ? (
-                <ScorerTrendChart data={charted.daily} />
+              {charted.length > 1 ? (
+                <ScorerBreakdownChart
+                  series={charted.map((t) => ({
+                    daily: t.daily,
+                    label: t.breakdown ?? '(none)',
+                  }))}
+                />
+              ) : charted.length === 1 && charted[0] ? (
+                <ScorerTrendChart data={charted[0].daily} />
               ) : scorer ? (
                 <EmptyState title={`No ${scorer} signals in this window.`} />
               ) : (
@@ -91,6 +138,7 @@ export default function GovernEvalsPage() {
               <Table>
                 <THead>
                   <Th variant="dense">Scorer</Th>
+                  {by && <Th variant="dense">{by === 'judgeModel' ? 'Judge model' : 'Agent'}</Th>}
                   <Th align="right" variant="dense">
                     Signals
                   </Th>
@@ -103,7 +151,7 @@ export default function GovernEvalsPage() {
                 </THead>
                 <tbody>
                   {trends.map((t) => (
-                    <TRow hover key={t.scorer}>
+                    <TRow hover key={`${t.scorer}\u0000${t.breakdown ?? ''}`}>
                       <Td className="px-4 py-2">
                         <button
                           aria-pressed={t.scorer === scorer}
@@ -118,6 +166,11 @@ export default function GovernEvalsPage() {
                           {t.scorer}
                         </button>
                       </Td>
+                      {by && (
+                        <Td className="px-4 py-2 font-mono text-xs text-paper-400">
+                          {t.breakdown ?? '(none)'}
+                        </Td>
+                      )}
                       <Td align="right" className="px-4 py-2 font-mono text-xs text-paper-400">
                         {t.n}
                       </Td>
@@ -138,13 +191,35 @@ export default function GovernEvalsPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle eyebrow="Share of golden cases quarantined as stale">Suite health</CardTitle>
+        </CardHeader>
+        <QueryBoundary
+          error={healthQuery.error}
+          isError={healthQuery.isError}
+          isLoading={healthQuery.isLoading}
+          label="suite health"
+        >
+          {healthQuery.data && (
+            <div className="space-y-3">
+              <SuiteHealthChart
+                datasets={healthQuery.data.datasets}
+                maxStaleRate={healthQuery.data.thresholds.maxStaleRate}
+              />
+              <p className="text-xs text-paper-600">
+                Flake rate (max {formatPercent(healthQuery.data.thresholds.maxFlakeRate)}) and judge
+                kappa (min {healthQuery.data.thresholds.minKappa}) have no stored measurement to
+                chart.
+              </p>
+            </div>
+          )}
+        </QueryBoundary>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Results</CardTitle>
         </CardHeader>
-        <EvalResultsTable
-          onScorerChange={setScorer}
-          scorer={scorer}
-          scorers={trends.map((t) => t.scorer)}
-        />
+        <EvalResultsTable onScorerChange={setScorer} scorer={scorer} scorers={scorerNames} />
       </Card>
 
       <Card>

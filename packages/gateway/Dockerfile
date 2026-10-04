@@ -157,4 +157,4 @@ USER node
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
 # The OpenTelemetry preload must load before the app's imports; see src/instrument.ts.
-CMD ["node", "--import", "./packages/gateway/dist/instrument.js", "packages/gateway/dist/index.js"]
+CMD ["node", "--disable-warning=DEP0205", "--import", "./packages/gateway/dist/instrument.js", "packages/gateway/dist/index.js"]
