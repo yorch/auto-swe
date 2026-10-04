@@ -852,6 +852,11 @@ export interface EvalRunDto {
   candidateRef: string;
   baselineRef: string;
   status: string;
+  /**
+   * The runless budget stopped the run before every case ran, so a SUCCESS or
+   * REGRESSION covers only the cases that did. Derived from `summary.partial`.
+   */
+  partial: boolean;
   summary: unknown;
   startedAt: string;
   endedAt: string | null;

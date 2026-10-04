@@ -96,8 +96,9 @@ calls are held to the runless cap (`workflow.runlessMaxInputTokens` /
 `workflow.runlessMaxOutputTokens`), multiplied by the dataset's case count so the setting reads as
 a per-case allowance. When the cap runs out part-way, the harness stops at that case and finishes
 the run with a verdict over the cases already paired; the summary carries a `partial` marker
-(completed and total case counts, the ids that did not run, the budget message), and the run page
-says the verdict is partial. `auto-swe evals run` prints the partial line and exits 2 for a partial
+(completed and total case counts, the ids that did not run, the budget message). Run rows from the
+API carry `partial: true` for it, and the dataset page's run list and the run page's header badge
+read `SUCCESS (partial)` or `REGRESSION (partial)` in amber instead of a plain verdict. `auto-swe evals run` prints the partial line and exits 2 for a partial
 `SUCCESS`, so a nightly gate never passes on a prefix; a partial `REGRESSION` still exits 1. A cap
 reached before any case completed fails the run.
 

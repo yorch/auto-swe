@@ -72,7 +72,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                           </Link>
                         </Td>
                         <Td className="px-4 py-2">
-                          <EvalRunStatusBadge status={r.status} />
+                          <EvalRunStatusBadge partial={r.partial} status={r.status} />
                         </Td>
                         <Td className="px-4 py-2 font-mono text-[11px] text-paper-300">
                           {r.candidateRef}

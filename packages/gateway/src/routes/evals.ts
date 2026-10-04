@@ -125,6 +125,15 @@ function utcDayStart(ms: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
+/** Did the harness record `summary.partial` — a verdict over only some of the cases? */
+function hasPartialVerdict(summary: unknown): boolean {
+  return (
+    typeof summary === 'object' &&
+    summary !== null &&
+    (summary as { partial?: unknown }).partial != null
+  );
+}
+
 function toRunDto(run: {
   id: string;
   datasetId: string;
@@ -141,6 +150,7 @@ function toRunDto(run: {
     datasetId: run.datasetId,
     endedAt: run.endedAt?.toISOString() ?? null,
     id: run.id,
+    partial: hasPartialVerdict(run.summary),
     startedAt: run.startedAt.toISOString(),
     status: run.status,
     summary: run.summary,

@@ -386,6 +386,33 @@ describe('evalRoutes', () => {
       });
     });
 
+    it('flags a run whose verdict covers only some of the cases', async () => {
+      const { app, prisma } = await buildApp();
+      const base = {
+        baselineRef: 'main',
+        candidateRef: 'feat',
+        datasetId: '11111111-1111-4111-8111-111111111111',
+        endedAt: new Date('2026-09-01T01:00:00Z'),
+        startedAt: new Date('2026-09-01T00:00:00Z'),
+        status: 'SUCCESS',
+      };
+      prisma.evalRun.findMany.mockResolvedValue([
+        { ...base, id: 'full', summary: { summary: 'ok' } },
+        { ...base, id: 'part', summary: { partial: { completedCases: 2, totalCases: 5 } } },
+        { ...base, id: 'none', summary: null },
+      ]);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/runs',
+      });
+      expect(JSON.parse(res.payload).data.map((r: { partial: boolean }) => r.partial)).toEqual([
+        false,
+        true,
+        false,
+      ]);
+    });
+
     it('is ADMIN-only', async () => {
       const { app } = await buildApp('ENGINEER');
       const res = await app.inject({
