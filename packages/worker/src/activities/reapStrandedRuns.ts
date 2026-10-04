@@ -49,8 +49,17 @@ export function reapedStatusFor(temporalStatus: string | undefined): ReapedStatu
   }
 }
 
-/** The status to end the run with, or `null` while its execution still runs. Throws when Temporal cannot say. */
-async function endedStatusOf(workflowId: string): Promise<ReapedStatus | null> {
+/** An execution that closed longer ago than this ended too long ago to tell anyone about. */
+export const NOTIFY_WINDOW_MS = 60 * 60 * 1000;
+
+interface Ended {
+  status: ReapedStatus;
+  /** False for a vanished execution or one closed before the notify window. */
+  notify: boolean;
+}
+
+/** How the run ended, or `null` while its execution still runs. Throws when Temporal cannot say. */
+async function endedStatusOf(workflowId: string, now: Date): Promise<Ended | null> {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(
@@ -59,14 +68,21 @@ async function endedStatusOf(workflowId: string): Promise<ReapedStatus | null> {
     );
   });
   try {
-    const { status } = await Promise.race([
+    const { closeTime, status } = await Promise.race([
       getTemporalClient().workflow.getHandle(workflowId).describe(),
       deadline,
     ]);
-    return isWorkflowStatusFinished(status.name) ? reapedStatusFor(status.name) : null;
+    if (!isWorkflowStatusFinished(status.name)) {
+      return null;
+    }
+    const closedAt = closeTime?.getTime();
+    return {
+      notify: closedAt !== undefined && now.getTime() - closedAt <= NOTIFY_WINDOW_MS,
+      status: reapedStatusFor(status.name),
+    };
   } catch (err) {
     if (err instanceof WorkflowNotFoundError) {
-      return 'FAILED';
+      return { notify: false, status: 'FAILED' };
     }
     throw err;
   } finally {
@@ -77,7 +93,7 @@ async function endedStatusOf(workflowId: string): Promise<ReapedStatus | null> {
 export interface ReapStrandedRunsResult {
   checked: number;
   reaped: number;
-  /** Runs whose lookup failed; they were left alone and are asked about again next sweep. */
+  /** Runs left alone this sweep: Temporal could not be asked, or finalizing failed. */
   unreachable: number;
 }
 
@@ -92,17 +108,34 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
     where: { endedAt: null, startedAt: { lt: new Date(now.getTime() - REAPER_GRACE_MS) } },
   });
   const result: ReapStrandedRunsResult = { checked: runs.length, reaped: 0, unreachable: 0 };
-  const stillRunning: string[] = [];
+  const rotated: string[] = [];
   for (let i = 0; i < runs.length; i += LOOKUP_CONCURRENCY) {
     await Promise.all(
       runs.slice(i, i + LOOKUP_CONCURRENCY).map(async (run) => {
+        // Fail-safe: an unanswered question is not "finished". A live run is
+        // never ended, and so never billed, on a Temporal hiccup. A run whose
+        // lookup failed is not stamped, so it stays first in line.
+        let ended: Ended | null;
         try {
-          // Fail-safe: an unanswered question is not "finished". A live run is
-          // never ended, and so never billed, on a Temporal hiccup.
-          const status = await endedStatusOf(run.workflowId);
-          if (!status) {
-            stillRunning.push(run.id);
-            return;
+          ended = await endedStatusOf(run.workflowId, now);
+        } catch (err) {
+          result.unreachable++;
+          logWarn('run reaper could not ask Temporal about a run; it is left for the next sweep', {
+            err: err instanceof Error ? err.message : String(err),
+            workflowId: run.workflowId,
+          });
+          return;
+        }
+        if (!ended) {
+          rotated.push(run.id);
+          return;
+        }
+        const { notify, status } = ended;
+        try {
+          if (!notify) {
+            logWarn('run reaper ended a run without notifying: its execution closed long ago', {
+              workflowId: run.workflowId,
+            });
           }
           // A channel turn has no work request and bills its channel, not an
           // org, so it ends through the channel path. A channel task run has a
@@ -110,10 +143,13 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
           if (run.channelId && !run.workRequestId) {
             await finalizeChannelRun({ source: 'reaper', status, workflowId: run.workflowId });
           } else {
-            await finalizeRun(run.id, status, undefined, 'reaper');
+            await finalizeRun(run.id, status, undefined, 'reaper', notify);
           }
           result.reaped++;
         } catch (err) {
+          // Stamped like a live run: one that cannot be finalized must not sit
+          // first in every sweep and crowd out the rest.
+          rotated.push(run.id);
           result.unreachable++;
           logWarn('run reaper could not finalize a run; it is left for the next sweep', {
             err: err instanceof Error ? err.message : String(err),
@@ -123,11 +159,11 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
       })
     );
   }
-  if (stillRunning.length > 0) {
+  if (rotated.length > 0) {
     try {
       await prisma.workflowRun.updateMany({
         data: { reapCheckedAt: now },
-        where: { endedAt: null, id: { in: stillRunning } },
+        where: { endedAt: null, id: { in: rotated } },
       });
     } catch (err) {
       // Only the rotation suffers: these runs are asked about again next sweep.

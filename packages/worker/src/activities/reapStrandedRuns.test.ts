@@ -76,16 +76,17 @@ describe('reapStrandedRuns', () => {
       if (s instanceof Error) {
         throw s;
       }
-      return { status: { name: s } };
+      return { closeTime: new Date(), status: { name: s } };
     });
 
     const result = await reapStrandedRuns();
 
     expect(result).toEqual({ checked: 4, reaped: 3, unreachable: 0 });
     expect(finalizeRun.mock.calls).toEqual([
-      ['term', 'CANCELLED', undefined, 'reaper'],
-      ['gone', 'FAILED', undefined, 'reaper'],
-      ['done', 'SUCCESS', undefined, 'reaper'],
+      // A just-closed execution still notifies; a vanished one cannot say when it ended.
+      ['term', 'CANCELLED', undefined, 'reaper', true],
+      ['gone', 'FAILED', undefined, 'reaper', false],
+      ['done', 'SUCCESS', undefined, 'reaper', true],
     ]);
   });
 
@@ -107,6 +108,43 @@ describe('reapStrandedRuns', () => {
     describeWf.mockRejectedValue(new Error('unavailable'));
     await reapStrandedRuns();
     expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('suppresses notices for an execution that closed more than an hour ago, and keeps them within it', async () => {
+    findMany.mockResolvedValue([run('old'), run('recent'), run('noclose')]);
+    const now = new Date('2026-10-04T12:00:00Z');
+    const closes: Record<string, Date | undefined> = {
+      'wf-noclose': undefined,
+      'wf-old': new Date('2026-10-04T10:59:00Z'),
+      'wf-recent': new Date('2026-10-04T11:30:00Z'),
+    };
+    describeWf.mockImplementation(async (id: string) => ({
+      closeTime: closes[id],
+      status: { name: 'FAILED' },
+    }));
+    await reapStrandedRuns(now);
+    expect(finalizeRun.mock.calls).toEqual([
+      ['old', 'FAILED', undefined, 'reaper', false],
+      ['recent', 'FAILED', undefined, 'reaper', true],
+      ['noclose', 'FAILED', undefined, 'reaper', false],
+    ]);
+  });
+
+  it('stamps a finished run whose finalize throws, so it cannot sit first in every sweep', async () => {
+    findMany.mockResolvedValue([run('bad'), run('lookup')]);
+    describeWf.mockImplementation(async (id: string) => {
+      if (id === 'wf-lookup') {
+        throw new Error('unavailable');
+      }
+      return { closeTime: new Date(), status: { name: 'FAILED' } };
+    });
+    finalizeRun.mockRejectedValueOnce(new Error('db'));
+    const now = new Date('2026-10-04T12:00:00Z');
+    await reapStrandedRuns(now);
+    expect(updateMany).toHaveBeenCalledWith({
+      data: { reapCheckedAt: now },
+      where: { endedAt: null, id: { in: ['bad'] } },
+    });
   });
 
   it('leaves a run alone when Temporal cannot be asked', async () => {
@@ -132,9 +170,9 @@ describe('reapStrandedRuns', () => {
 
   it('routes a channel task run (it has a work request) through the core', async () => {
     findMany.mockResolvedValue([run('t', { channelId: 'chan', workRequestId: 'wr' })]);
-    describeWf.mockResolvedValue({ status: { name: 'FAILED' } });
+    describeWf.mockResolvedValue({ closeTime: new Date(), status: { name: 'FAILED' } });
     await reapStrandedRuns();
-    expect(finalizeRun).toHaveBeenCalledWith('t', 'FAILED', undefined, 'reaper');
+    expect(finalizeRun).toHaveBeenCalledWith('t', 'FAILED', undefined, 'reaper', true);
     expect(finalizeChannelRun).not.toHaveBeenCalled();
   });
 

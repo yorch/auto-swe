@@ -829,15 +829,10 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockReset();
   });
 
-  it('bills a reaped run into its own month and fires no user-facing side effect', async () => {
+  it('bills a reaped run into the current month, however long ago it started', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
-    const notify = vi.mocked(notifySlackRunComplete);
-    const tracker = vi.mocked(syncTrackerOnEvent);
     orgUpsert.mockClear();
-    notify.mockClear();
-    tracker.mockClear();
-    tracker.mockResolvedValue(undefined as never);
     updateManyRuns.mockReset();
     updateManyRuns.mockResolvedValue({ count: 1 } as never);
     findRun.mockResolvedValue({
@@ -854,29 +849,66 @@ describe('finalizeWorkflowRun', () => {
           },
         ],
         connection: { team: { orgId: 'org-1' } },
-        externalTicketId: 'T-1',
         payload: null,
       },
     } as never);
-
-    await finalizeRun('run-old', 'FAILED', undefined, 'reaper');
-
-    const usage = orgUpsert.mock.calls[0]?.[0] as {
-      create: { yearMonth: string };
-      where: { orgId_yearMonth: { yearMonth: string } };
-    };
-    expect(usage.create.yearMonth).toBe('2026-03');
-    expect(usage.where.orgId_yearMonth.yearMonth).toBe('2026-03');
-    expect(notify).not.toHaveBeenCalled();
-    expect(tracker).not.toHaveBeenCalled();
-
-    // The workflow's own finalize still notifies and syncs the tracker.
-    updateManyRuns.mockResolvedValue({ count: 1 } as never);
-    await finalizeWorkflowRun('run-old', 'FAILED');
-    expect(notify).toHaveBeenCalledTimes(1);
-    expect(tracker).toHaveBeenCalledTimes(1);
+    await finalizeRun('run-old', 'FAILED', undefined, 'reaper', false);
+    const usage = orgUpsert.mock.calls[0]?.[0] as { create: { yearMonth: string } };
+    expect(usage.create.yearMonth).toBe(new Date().toISOString().slice(0, 7));
     findRun.mockReset();
     orgUpsert.mockReset();
+  });
+
+  it('bills an epic child with no ledger row through its own run connection', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+    orgUpsert.mockClear();
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue({
+      connection: { team: { orgId: 'org-child' } },
+      endedAt: null,
+      workflowId: 'epic-child',
+      workRequest: { activeWorkflows: [], connection: null, connectionId: null, payload: null },
+    } as never);
+    await finalizeWorkflowRun('run-child', 'SUCCESS');
+    expect(orgUpsert).toHaveBeenCalledTimes(1);
+    expect((orgUpsert.mock.calls[0]?.[0] as { create: { orgId: string } }).create.orgId).toBe(
+      'org-child'
+    );
+    findRun.mockReset();
+    orgUpsert.mockReset();
+  });
+
+  it('fires no user-facing side effect when notify is off, and all of them when it is on', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const notify = vi.mocked(notifySlackRunComplete);
+    const tracker = vi.mocked(syncTrackerOnEvent);
+    tracker.mockResolvedValue(undefined as never);
+    const row = {
+      endedAt: null,
+      workflowId: 'eng-x',
+      workRequest: {
+        activeWorkflows: [],
+        connection: { team: { orgId: 'org-1' } },
+        externalTicketId: 'T-1',
+        payload: null,
+      },
+    } as never;
+    for (const [on, expected] of [
+      [false, 0],
+      [true, 1],
+    ] as const) {
+      notify.mockClear();
+      tracker.mockClear();
+      updateManyRuns.mockReset();
+      updateManyRuns.mockResolvedValue({ count: 1 } as never);
+      findRun.mockResolvedValue(row);
+      await finalizeRun('run-n', 'FAILED', undefined, 'reaper', on);
+      expect(notify).toHaveBeenCalledTimes(expected);
+      expect(tracker).toHaveBeenCalledTimes(expected);
+    }
+    findRun.mockReset();
   });
 
   it('does not post a reaped channel task into its Slack thread, but the worker finalize does', async () => {
@@ -899,7 +931,7 @@ describe('finalizeWorkflowRun', () => {
     updateManyRuns.mockReset();
     updateManyRuns.mockResolvedValue({ count: 1 } as never);
     findRun.mockResolvedValue(channelRun as never);
-    await finalizeRun('run-ct', 'FAILED', undefined, 'reaper');
+    await finalizeRun('run-ct', 'FAILED', undefined, 'reaper', false);
     expect(post).not.toHaveBeenCalled();
 
     findRun.mockResolvedValue(channelRun as never);
