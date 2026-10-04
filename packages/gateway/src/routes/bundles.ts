@@ -1,4 +1,3 @@
-import { isRevisionConflict } from '@auto-swe/shared/lib/skillRevision';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -11,6 +10,7 @@ import {
   exportBundle,
   type InstallResult,
   installBundle,
+  SkillChangedError,
   listInstalledBundles,
 } from '../lib/bundleService.js';
 import { resolveBundleAllowUnverified, resolveBundleTrustedKeys } from '../lib/bundleTrust.js';
@@ -119,7 +119,7 @@ async function runInstall(
     if (err instanceof BundleIntegrityError || err instanceof BundleDependencyError) {
       return reply.status(400).send({ error: { code: 'INVALID_BUNDLE', message: err.message } });
     }
-    if (isRevisionConflict(err)) {
+    if (err instanceof SkillChangedError) {
       // A skill was edited while the install ran; the transaction rolled back whole.
       return reply.status(409).send({
         error: {

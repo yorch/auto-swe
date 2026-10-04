@@ -19,6 +19,7 @@ import {
 import { isReservedTemplateOrigin } from '@auto-swe/shared/lib/agentRun';
 import {
   initialRevision,
+  isRevisionConflict,
   nextRevision,
   skillContentChanged,
 } from '@auto-swe/shared/lib/skillRevision';
@@ -242,6 +243,14 @@ async function installBundleTemplate(
       data: { activeVersion: next, ...inputSchema, origin },
       where: { activeVersion: previous.version, id: existing.id, teamId: null },
     });
+  }
+}
+
+/** A skill was edited while a bundle install was rewriting it; the install rolled back whole. */
+export class SkillChangedError extends Error {
+  constructor(readonly skillName: string) {
+    super(`skill '${skillName}' changed while the bundle installed`);
+    this.name = 'SkillChangedError';
   }
 }
 
@@ -582,7 +591,13 @@ export async function installBundle(
           if (skillContentChanged(existing, content)) {
             // New text cuts a revision; runs that pinned the old one keep it.
             const next = nextRevision(existing, content, revisionMeta);
-            await tx.skill.update({ data: { ...base, ...next.data }, where: next.where });
+            try {
+              await tx.skill.update({ data: { ...base, ...next.data }, where: next.where });
+            } catch (err) {
+              // Only this write can mean "someone edited the skill since I read it";
+              // any other unique-constraint failure in the install is its own error.
+              throw isRevisionConflict(err) ? new SkillChangedError(s.name) : err;
+            }
           } else {
             await tx.skill.update({ data: base, where: { id: existing.id } });
           }
