@@ -241,4 +241,175 @@ describe('skills sources', () => {
     expect(await runSkillsCommand(['nope'], ENV)).toBe(1);
     expect(await runSkillsCommand([], ENV)).toBe(0);
   });
+  describe('tracked updates', () => {
+    const NEW = 'b1c2d3e4f5a6'.padEnd(40, '0');
+    const changed = (name: string, over: Record<string, unknown> = {}) => ({
+      blockedByScan: false,
+      description: { changed: false, new: 'd', old: 'd' },
+      handEdited: false,
+      installedRevision: 1,
+      name,
+      referenceFiles: { added: [], changed: [], removed: [] },
+      scanWarnings: [],
+      skippedFiles: [],
+      textDiff: '@@ -1,1 +1,1 @@\n-old line\n+new line',
+      textDiffTruncated: false,
+      ...over,
+    });
+    const DIFF = {
+      added: [{ errors: [], folder: 'skills/extra', name: 'extra', scanWarnings: [] }],
+      changed: [changed('alpha'), changed('beta', { handEdited: true })],
+      errors: [],
+      removed: [{ folder: 'skills/gone', name: 'gone' }],
+      sha: NEW,
+      source: {
+        id: 'src-1',
+        latestSha: NEW,
+        lastError: null,
+        pinnedSha: SHA,
+        status: 'UPDATE_AVAILABLE',
+      },
+      unchanged: [{ handEdited: false, name: 'gamma' }],
+    };
+    const ACCEPTED = {
+      accepted: [{ fromRevision: 1, name: 'alpha', revision: 2 }],
+      added: [],
+      after: { pinnedSha: SHA, status: 'UPDATE_AVAILABLE' },
+      conflicts: ['beta'],
+      notSelected: [],
+      pinAdvanced: false,
+      removed: [],
+      sha: NEW,
+      unreadable: [],
+    };
+    const updateHandler = (url: string) =>
+      url.includes('/diff')
+        ? { body: { data: DIFF } }
+        : url.endsWith('/check')
+          ? { body: { data: DIFF.source } }
+          : { body: { data: ACCEPTED } };
+
+    it('check asks the host through the API and prints the status', async () => {
+      reply(updateHandler);
+      expect(await runSkillsCommand(['sources', 'check', 'src-1'], ENV)).toBe(0);
+      expect(calls[0]).toMatchObject({
+        method: 'POST',
+        url: 'http://gw/api/v1/platform/skill-sources/src-1/check',
+      });
+      expect(out.join('')).toContain('UPDATE_AVAILABLE (pinned a1b2c3d, latest b1c2d3e)');
+    });
+
+    it('diff prints each category and the text diff, and sends --sha', async () => {
+      reply(updateHandler);
+      expect(await runSkillsCommand(['sources', 'diff', 'src-1', `--sha=${NEW}`], ENV)).toBe(0);
+      expect(calls[0]?.url).toContain(`/src-1/diff?sha=${NEW}`);
+      const text = out.join('');
+      expect(text).toContain('2 changed, 1 unchanged, 1 not installed, 1 removed');
+      expect(text).toContain('~ alpha');
+      expect(text).toContain('conflict: edited by hand');
+      expect(text).toContain('-old line');
+      expect(text).toContain('+ extra  not installed (accept does not install it)');
+      expect(text).toContain('- gone  no longer in the source; left installed');
+    });
+
+    it('accept shows the diff, confirms, then accepts the diffed sha without the hand-edited skill', async () => {
+      reply(updateHandler);
+      const asked: string[] = [];
+      const code = await runSkillsCommand(['sources', 'accept', 'src-1'], ENV, async (q) => {
+        asked.push(q);
+        return true;
+      });
+      expect(code).toBe(0);
+      expect(asked[0]).toContain('Update 1 skill(s) (alpha)');
+      const post = calls.find((c) => c.method === 'POST');
+      expect(post?.body).toEqual({ sha: NEW });
+      expect(err.join('')).toContain('Left alone (edited by hand): beta');
+      const text = out.join('');
+      expect(text).toContain('Updated alpha: revision 1 → 2 (unverified)');
+      expect(text).toContain('Source stays at a1b2c3d (UPDATE_AVAILABLE)');
+    });
+
+    it('accept writes nothing when the confirmation is declined', async () => {
+      reply(updateHandler);
+      expect(await runSkillsCommand(['sources', 'accept', 'src-1'], ENV, async () => false)).toBe(
+        1
+      );
+      expect(calls.some((c) => c.method === 'POST')).toBe(false);
+      expect(err.join('')).toContain('nothing was changed');
+    });
+
+    it('accept --skills names a hand-edited skill to overwrite it, and --yes skips the prompt', async () => {
+      reply(updateHandler);
+      const confirm = vi.fn(async () => false);
+      expect(
+        await runSkillsCommand(
+          ['sources', 'accept', 'src-1', '--skills=alpha,beta', '--yes'],
+          ENV,
+          confirm
+        )
+      ).toBe(0);
+      expect(confirm).not.toHaveBeenCalled();
+      expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+        sha: NEW,
+        skills: ['alpha', 'beta'],
+      });
+    });
+
+    it('needs an id, and --sha needs a value', async () => {
+      expect(await runSkillsCommand(['sources', 'check'], ENV)).toBe(1);
+      expect(await runSkillsCommand(['sources', 'diff'], ENV)).toBe(1);
+      expect(await runSkillsCommand(['sources', 'diff', 'src-1', '--sha'], ENV)).toBe(1);
+      expect(await runSkillsCommand(['sources', 'accept'], ENV)).toBe(1);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('reports a stale-sha refusal with its code and exit 2', async () => {
+      reply((url, method) =>
+        method === 'POST'
+          ? {
+              body: {
+                error: { code: 'SKILL_UPDATE_STALE_SHA', message: 'different latest commit' },
+              },
+              status: 409,
+            }
+          : updateHandler(url)
+      );
+      expect(await runSkillsCommand(['sources', 'accept', 'src-1', '--yes'], ENV)).toBe(2);
+      expect(err.join('')).toContain('SKILL_UPDATE_STALE_SHA');
+    });
+
+    it('prints server-supplied names, descriptions and diff lines without control characters', async () => {
+      const ESC = '\u001b[1A\u001b[2K\r';
+      reply(() => ({
+        body: {
+          data: {
+            ...DIFF,
+            changed: [
+              changed(`n${ESC}ame`, {
+                description: { changed: true, new: `d${ESC}`, old: `o${ESC}` },
+                referenceFiles: { added: [`r${ESC}.md`], changed: [], removed: [] },
+                scanWarnings: [`w${ESC}`],
+                textDiff: `-a${ESC}\n+b${ESC}`,
+              }),
+            ],
+            removed: [{ folder: 'x', name: `gone${ESC}` }],
+          },
+        },
+      }));
+      await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
+      const text = out.join('');
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting there are none
+      expect(text).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+      expect(text).toContain('-a?[1A?[2K?');
+      expect(text).toContain('+b?[1A?[2K?');
+    });
+
+    it('help documents the three commands', async () => {
+      await runSkillsCommand([], ENV);
+      const text = out.join('');
+      expect(text).toContain('skills sources check <id>');
+      expect(text).toContain('skills sources diff <id>');
+      expect(text).toContain('skills sources accept <id>');
+    });
+  });
 });
