@@ -63,9 +63,16 @@ describe('EvalRunPage', () => {
     });
 
     expect(await screen.findByText('pass-rate 80% → 70% — no significant regression')).toBeTruthy();
-    expect(screen.getByText('overall')).toBeTruthy();
-    expect(screen.getByText('tag: auth')).toBeTruthy();
-    expect(screen.getByText('-20.0pp')).toBeTruthy();
+    expect(screen.getByText('Overall')).toBeTruthy();
+    expect(screen.getByText('Tag: auth')).toBeTruthy();
+    expect(screen.getByText('−20.0 pts')).toBeTruthy();
+    // The one-line verdict leads, in words, with the likely range spelled out.
+    expect(
+      screen.getByText(
+        /Candidate is 10\.0 points worse than the baseline, but the difference is within the margin of error/
+      )
+    ).toBeTruthy();
+    expect(screen.getByText('Likely range')).toBeTruthy();
     expect(screen.getByRole('link', { name: '← Dataset' }).getAttribute('href')).toBe(
       '/govern/evals/datasets/ds-1'
     );

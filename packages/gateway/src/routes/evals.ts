@@ -484,7 +484,10 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     '/evals/runs/:id',
     { onRequest: adminOnly, schema: { params: IdParam } },
     async (request, reply) => {
-      const run = await fastify.prisma.evalRun.findUnique({ where: { id: request.params.id } });
+      const run = await fastify.prisma.evalRun.findUnique({
+        include: { dataset: { select: { name: true, slug: true } } },
+        where: { id: request.params.id },
+      });
       if (!run) {
         return reply
           .status(404)
