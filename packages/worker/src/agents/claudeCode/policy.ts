@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
+import { auditLog } from '../../lib/activityLog.js';
 import { redactString } from '../../lib/agentTracer.js';
 import { checkSensitiveFilePath } from '../../lib/sensitiveFileScanner.js';
 import { scanShellCommand } from '../../lib/shellCommandScanner.js';
@@ -92,7 +93,7 @@ export async function decideToolCall(
       if (command === undefined) {
         return deny('Bash needs a command.');
       }
-      console.log(
+      auditLog(
         `[bash:audit] container=${ctx.containerId} cmd=${JSON.stringify(redactString(command))}`
       );
       const blocked = await scanShellCommand(command);

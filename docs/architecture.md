@@ -778,7 +778,13 @@ attempt — becomes their attributes. An `Error` in that metadata, at any depth 
 `cause`, is exported with its name, message and stack rather than as `{}`, and the first top-level
 one also sets the OpenTelemetry `exception.type`, `exception.message` and `exception.stacktrace`
 attributes. Temporal's `taskToken` is not exported: it is an opaque per-attempt token nobody
-searches by.
+searches by. The `[bash:audit]` and `[mcp:audit]` lines go through `auditLog` (`lib/activityLog.ts`):
+stdout as before and, inside an activity, the same text through that logger, so they reach Loki
+with the activity's trace and workflow id.
+
+The gateway's Fastify logger is pino. `@opentelemetry/instrumentation-pino` stamps `trace_id`,
+`span_id` and `trace_flags` on every line it writes to stdout and emits each as an OTLP log record,
+exported to Loki beside the worker's, so a request's log lines share its trace id.
 
 The worker exports metrics (`lib/metrics.ts`), and the gateway exports its share of the run counter
 (`gateway/src/lib/metrics.ts`), labelled only by low-cardinality keys — model, agent, activity,
@@ -1020,10 +1026,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   no root span either, so Tempo shows its activities as orphans of a parent that was never recorded.
   A signal's link reaches only activities scheduled after it, and only the newest signal's: work
   already running when it arrives, and earlier signals, are not linked.
-- **Only the worker's Temporal logger reaches Loki.** Plain `console` output — the `[bash:audit]`
-  and `[mcp:audit]` lines among it — and all of the gateway's logging stay on stdout. Workflow-code
-  logs arrive through the SDK's sink after the activation that produced them, so they carry no
-  trace context.
+- **Log export is limited to pino and the Temporal logger.** Plain `console` output other than the
+  audit lines stays on stdout only. An audit line outside an activity (the unit-test path) is stdout
+  only. Workflow-code logs arrive through the SDK's sink after the activation that produced them, so
+  they carry no trace context. Inside an activity an audit line appears twice in a container's
+  output — once on stdout, once on the Temporal logger's stderr.
 - **Usage is attributed at write time, not by repository.** The team and org breakdowns read the
   owner each trace row was written with, so rows older than those columns, spend with no
   derivable owner, and rows written while the run lookup failed land under "no team". The last are
