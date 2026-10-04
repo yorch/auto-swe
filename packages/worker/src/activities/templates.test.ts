@@ -108,6 +108,7 @@ vi.mock('@auto-swe/shared/db', () => {
     skill: {
       findMany: vi.fn(async () => []),
     },
+    slackChannel: { findFirst: vi.fn(async () => null) },
     team: { findUnique: vi.fn() },
     workflowHumanStep: {
       count: vi.fn(async () => 0),
@@ -386,6 +387,37 @@ describe('createWorkflowRun', () => {
         { scope: 'GLOBAL' },
         { scope: 'TEAM', teamId: 'team-9' },
         { orgId: 'org-9', scope: 'ORGANIZATION' },
+      ],
+    });
+  });
+
+  it('pins a repo-less channel task’s skills at the tenant of its Slack channel', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    const findRunInput = vi.mocked(prisma.runInput.findUnique);
+    const findChannel = vi.mocked(prisma.slackChannel.findFirst);
+    // No connection, so the settings context finds no team; the request names a channel.
+    findRunInput.mockImplementation((async (args: { select: Record<string, unknown> }) =>
+      'slackChannelId' in args.select && Object.keys(args.select).length === 1
+        ? { slackChannelId: 'C123' }
+        : null) as never);
+    findChannel.mockResolvedValueOnce({ orgId: 'org-c', teamId: 'team-c' } as never);
+    try {
+      await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-chan',
+        workRequestId: 'wr-chan',
+      });
+    } finally {
+      findRunInput.mockReset();
+      findRunInput.mockResolvedValue(null as never);
+    }
+    expect(findChannel.mock.calls[0]?.[0]?.where).toEqual({ slackChannelId: 'C123' });
+    expect(findSkills.mock.calls[0]?.[0]?.where).toEqual({
+      OR: [
+        { scope: 'GLOBAL' },
+        { scope: 'TEAM', teamId: 'team-c' },
+        { orgId: 'org-c', scope: 'ORGANIZATION' },
       ],
     });
   });

@@ -232,7 +232,7 @@ export async function createWorkflowRun(
   // skill visible to this run so a mid-run edit cannot reach a retry or a replay.
   // An epic's children are runs of their own and pin at their own start, so an
   // edit between the epic's start and a child's reaches that child.
-  const skillRevisions = await snapshotSkillRevisions(settingsCtx);
+  const skillRevisions = await snapshotSkillRevisions(await skillTenantContext(input, settingsCtx));
 
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
   // same workflowId should not create duplicate rows. `update: {}` preserves the
@@ -329,6 +329,34 @@ async function snapshotSkillRevisions(scope: SettingResolveCtx): Promise<Prisma.
     pins[skill.id] = skill.currentRevision;
   }
   return pins;
+}
+
+/// The tenant whose skills a run can see. Normally the settings context's team and
+/// org. A repo-less channel task has neither (no connection, no ledger repo), so
+/// fall back to the tenant of the Slack channel the request came from: the same
+/// channel row the channel's own activities scope to. Deliberately not folded into
+/// `runSettingsContext`: that one must keep matching `currentRequestContext()`.
+async function skillTenantContext(
+  input: CreateWorkflowRunInput,
+  settingsCtx: SettingResolveCtx
+): Promise<SettingResolveCtx> {
+  if (settingsCtx.teamId || settingsCtx.orgId || !input.workRequestId) {
+    return settingsCtx;
+  }
+  const request = await prisma.runInput.findUnique({
+    select: { slackChannelId: true },
+    where: { id: input.workRequestId },
+  });
+  if (!request?.slackChannelId) {
+    return settingsCtx;
+  }
+  const channel = await prisma.slackChannel.findFirst({
+    select: { orgId: true, teamId: true },
+    where: { slackChannelId: request.slackChannelId },
+  });
+  return channel
+    ? { ...settingsCtx, orgId: channel.orgId ?? undefined, teamId: channel.teamId ?? undefined }
+    : settingsCtx;
 }
 
 /// Scope context for the run's pinned-settings snapshot. The template comes from
