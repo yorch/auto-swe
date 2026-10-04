@@ -31,7 +31,7 @@ interface SlackTabProps {
 }
 
 export function SlackTab({ installedTeamId }: SlackTabProps) {
-  const { data: resp, error: loadError, isError, isLoading } = useSlackConfig();
+  const { data: resp, error: loadError, isError, refetch, isLoading } = useSlackConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateSlackConfig();
@@ -84,6 +84,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
         isError={isError}
         isLoading={isLoading}
         label="Slack config"
+        onRetry={() => void refetch()}
       />
     );
   }
@@ -188,6 +189,7 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
     error: workspacesError,
     isError: workspacesIsError,
     isLoading,
+    refetch,
   } = useSlackWorkspaces();
 
   return (
@@ -215,7 +217,13 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
       {isLoading ? (
         <LoadingState compact message="loading workspaces…" />
       ) : workspacesIsError ? (
-        <QueryBoundary error={workspacesError} isError isLoading={false} label="workspaces" />
+        <QueryBoundary
+          error={workspacesError}
+          isError
+          isLoading={false}
+          label="workspaces"
+          onRetry={() => void refetch()}
+        />
       ) : !workspaces || workspaces.length === 0 ? (
         <EmptyState className="py-0 text-left text-paper-500" title="No workspaces yet." />
       ) : (

@@ -21,7 +21,7 @@ import { useAuthStore } from '@/stores/authStore';
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
 export default function UsersPage() {
-  const { data: users, isLoading, isError, error: loadError } = useUsers();
+  const { data: users, isLoading, isError, error: loadError, refetch } = useUsers();
   const updateUser = useUpdateUser();
   const inviteUser = useInviteUser();
   const [inviteEmail, setInviteEmail] = useState('');
@@ -58,6 +58,7 @@ export default function UsersPage() {
         isLoading={isLoading}
         label="users"
         loadingMessage="loading users…"
+        onRetry={() => void refetch()}
       />
     );
   }

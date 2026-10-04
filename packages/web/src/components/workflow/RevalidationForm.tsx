@@ -43,7 +43,13 @@ function toBody(form: RevalidationFormState): RevalidationConfigInput {
 }
 
 export function RevalidationForm() {
-  const { data: revalidation, error: loadError, isError, isLoading } = useRevalidationConfig();
+  const {
+    data: revalidation,
+    error: loadError,
+    isError,
+    refetch,
+    isLoading,
+  } = useRevalidationConfig();
   const update = useUpdateRevalidationConfig();
   const { form, setField, submit, saved, error } = useConfigForm({
     data: revalidation,
@@ -73,6 +79,7 @@ export function RevalidationForm() {
         isError={isError}
         isLoading={isLoading}
         label="the re-validation schedule"
+        onRetry={() => void refetch()}
       >
         <form className="space-y-6" onSubmit={submit}>
           <Card>

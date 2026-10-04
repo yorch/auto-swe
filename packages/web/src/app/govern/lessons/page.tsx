@@ -83,6 +83,7 @@ export default function GovernLessonsPage() {
     isLoading: lessonsLoading,
     isError: lessonsIsError,
     error: lessonsError,
+    refetch: refetchLessons,
   } = useLessons(false, { limit: 20 });
   const { data: consolidation } = useConsolidationConfig();
   const deleteLesson = useDeleteLesson();
@@ -169,6 +170,7 @@ export default function GovernLessonsPage() {
           isError={statsIsError}
           isLoading={statsLoading}
           label="lesson stats"
+          onRetry={() => void refetchStats()}
         >
           {!stats || stats.length === 0 ? (
             <EmptyState title="No repositories found." />
@@ -206,6 +208,7 @@ export default function GovernLessonsPage() {
           isError={lessonsIsError}
           isLoading={lessonsLoading}
           label="lessons"
+          onRetry={() => void refetchLessons()}
         >
           {!lessons || lessons.length === 0 ? (
             <EmptyState title="No active lessons." />

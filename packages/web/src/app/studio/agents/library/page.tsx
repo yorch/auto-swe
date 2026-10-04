@@ -134,7 +134,7 @@ function scopeTarget(
 export default function AgentLibraryPage() {
   // Every scope: filtering to GLOBAL hid organization, team, channel and
   // template overrides from the only page that manages them.
-  const { data: agents, error: loadError, isError, isLoading } = useAgentLibrary();
+  const { data: agents, error: loadError, isError, refetch, isLoading } = useAgentLibrary();
   const { data: teams } = useTeams();
   const { data: templates } = useWorkflowTemplates();
   const [scopeFilter, setScopeFilter] = useState<'' | AgentScope>('');
@@ -291,7 +291,13 @@ export default function AgentLibraryPage() {
             value={scopeFilter}
           />
         </CardHeader>
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="agents">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isLoading={isLoading}
+          label="agents"
+          onRetry={() => void refetch()}
+        >
           <Table>
             <THead>
               <Th className="pr-3" variant="compact">

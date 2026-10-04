@@ -25,7 +25,7 @@ import { SecretInput } from './SecretInput';
 import { UrlRow } from './UrlRow';
 
 export function GitHubTab() {
-  const { data: resp, error: loadError, isError, isLoading } = useGitHubConfig();
+  const { data: resp, error: loadError, isError, refetch, isLoading } = useGitHubConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateGitHubConfig();
@@ -94,6 +94,7 @@ export function GitHubTab() {
         isError={isError}
         isLoading={isLoading}
         label="GitHub config"
+        onRetry={() => void refetch()}
       />
     );
   }

@@ -16,7 +16,7 @@ function ChangedFields({ json }: { json: unknown }) {
 }
 
 export function AuditLogTab() {
-  const { data: entries, isLoading, isError, error } = useConfigAuditLog(200);
+  const { data: entries, isLoading, isError, error, refetch } = useConfigAuditLog(200);
 
   return (
     <AuditLogTable
@@ -30,6 +30,7 @@ export function AuditLogTab() {
       error={error}
       isError={isError}
       isLoading={isLoading}
+      onRetry={() => void refetch()}
       summary={(entry) => <ChangedFields json={entry.afterJson} />}
       summaryHeader="Fields"
     />

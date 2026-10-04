@@ -161,12 +161,14 @@ export default function GovernBaselinesPage() {
     data: orgs,
     isLoading: orgsLoading,
     isError: orgsIsError,
+    refetch: refetchOrgs,
     error: orgsError,
   } = useUserOrgs();
   const {
     data: baselines,
     isLoading: baselinesLoading,
     isError: baselinesIsError,
+    refetch,
     error: baselinesError,
   } = useHumanErrorBaselines(selectedOrgId === 'all' ? undefined : selectedOrgId);
 
@@ -204,6 +206,7 @@ export default function GovernBaselinesPage() {
         isError={orgsIsError || baselinesIsError}
         isLoading={orgsLoading || baselinesLoading}
         label="baselines"
+        onRetry={() => void (orgsIsError ? refetchOrgs() : refetch())}
       >
         <Card>
           <CardHeader>

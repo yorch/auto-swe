@@ -57,6 +57,7 @@ export function CatalogTab() {
     data: entries,
     error,
     isError,
+    refetch,
     isLoading,
   } = useModelCatalog({
     includeRetired: showRetired,
@@ -90,7 +91,13 @@ export function CatalogTab() {
           customized and keeps it. Edits reach the worker within the config cache window, and never
           reprice calls already recorded.
         </p>
-        <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="model catalog">
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isLoading={isLoading}
+          label="model catalog"
+          onRetry={() => void refetch()}
+        >
           <Table>
             <THead>
               <Th variant="compact">Model</Th>

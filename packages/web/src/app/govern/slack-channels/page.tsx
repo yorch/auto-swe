@@ -680,6 +680,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
     data: items,
     isLoading,
     isError,
+    refetch,
     error: loadError,
   } = useChannelMemory(channel?.id ?? null, showConsolidated);
   const deleteMemory = useDeleteChannelMemory();
@@ -720,6 +721,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
           isError={isError}
           isLoading={isLoading}
           label="channel memory"
+          onRetry={() => void refetch()}
         >
           {!items || items.length === 0 ? (
             <EmptyState className="py-6" title="No memory yet for this channel." />
@@ -828,6 +830,7 @@ function OpenItemsModal({
     data: items,
     isLoading,
     isError,
+    refetch,
     error: loadError,
   } = useChannelOpenItems(channel?.id ?? null, statusFilter);
   const updateItem = useUpdateChannelOpenItem();
@@ -864,7 +867,13 @@ function OpenItemsModal({
 
         {actionError && <Alert>{actionError}</Alert>}
 
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="open items">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isLoading={isLoading}
+          label="open items"
+          onRetry={() => void refetch()}
+        >
           {!items || items.length === 0 ? (
             <EmptyState
               className="py-4"
@@ -942,6 +951,7 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
     data: entries,
     error: loadError,
     isError,
+    refetch,
     isLoading,
   } = useChannelAudit(channel?.id ?? null, kindFilter);
 
@@ -972,6 +982,7 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
             isError={isError}
             isLoading={isLoading}
             label="audit entries"
+            onRetry={() => void refetch()}
           />
         ) : !entries || entries.length === 0 ? (
           <EmptyState
@@ -1170,7 +1181,7 @@ function ChannelRow({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function GovernSlackChannelsPage() {
-  const { data: channels, error: loadError, isError, isLoading } = useSlackChannels();
+  const { data: channels, error: loadError, isError, isLoading, refetch } = useSlackChannels();
   const { data: teams } = useTeams();
   const deleteChannel = useDeleteSlackChannel();
 
@@ -1209,6 +1220,7 @@ export default function GovernSlackChannelsPage() {
         isError={isError}
         isLoading={isLoading}
         label="Slack channels"
+        onRetry={() => void refetch()}
       >
         <Card>
           <CardHeader>

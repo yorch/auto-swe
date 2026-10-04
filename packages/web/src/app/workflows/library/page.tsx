@@ -379,6 +379,7 @@ export default function TemplatesPage() {
     data: templates,
     isLoading,
     isError,
+    refetch,
     error: loadError,
   } = useWorkflowTemplates(selectedTeamId);
   const createTemplate = useCreateWorkflowTemplate();
@@ -467,7 +468,13 @@ export default function TemplatesPage() {
           number="01"
           title="Your workflows"
         />
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="workflows">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isLoading={isLoading}
+          label="workflows"
+          onRetry={() => void refetch()}
+        >
           {
             <Card className="overflow-hidden p-0" variant="inset">
               <Table stacked>

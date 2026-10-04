@@ -71,6 +71,7 @@ export default function ConnectionsPage() {
     meta,
     isLoading,
     isError,
+    refetch,
     error: loadError,
   } = useRepositories({ includeInactive: canManage && showInactive });
   const suggestions = useRepoDependencySuggestions();
@@ -85,6 +86,7 @@ export default function ConnectionsPage() {
         isError={isError}
         isLoading={isLoading}
         label="connections"
+        onRetry={() => void refetch()}
       />
     );
   }

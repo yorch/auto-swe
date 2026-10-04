@@ -53,7 +53,7 @@ function toBody(form: CanaryFormState): CanaryConfigInput {
 }
 
 export function CanaryForm() {
-  const { data: canary, error: loadError, isError, isLoading } = useCanaryConfig();
+  const { data: canary, error: loadError, isError, refetch, isLoading } = useCanaryConfig();
   const update = useUpdateCanaryConfig();
   const { form, setField, submit, saved, error } = useConfigForm({
     data: canary,
@@ -82,6 +82,7 @@ export function CanaryForm() {
         isError={isError}
         isLoading={isLoading}
         label="the canary configuration"
+        onRetry={() => void refetch()}
       >
         <form className="space-y-6" onSubmit={submit}>
           <Card>

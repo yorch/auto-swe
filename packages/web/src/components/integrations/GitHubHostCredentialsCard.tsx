@@ -182,7 +182,13 @@ function summary(c: GithubHostCredentialRow): string {
  * Rendered outside the tab's form: it saves on its own, not with "Save changes".
  */
 export function GitHubHostCredentialsCard() {
-  const { data: credentials, error: loadError, isError, isLoading } = useGithubHostCredentials();
+  const {
+    data: credentials,
+    error: loadError,
+    isError,
+    refetch,
+    isLoading,
+  } = useGithubHostCredentials();
   const remove = useDeleteGithubHostCredential();
   // `false` is closed, `null` is the add form, a row is the edit form.
   const [modal, setModal] = useState<GithubHostCredentialRow | null | false>(false);
@@ -203,6 +209,7 @@ export function GitHubHostCredentialsCard() {
         isError={isError}
         isLoading={isLoading}
         label="Host credentials"
+        onRetry={() => void refetch()}
       >
         {!credentials || credentials.length === 0 ? (
           <EmptyState className="py-4" title="No per-host credentials." />

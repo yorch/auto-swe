@@ -37,7 +37,13 @@ const BUILTIN_PROVIDER_HINTS: Record<BuiltinProvider, string> = {
 };
 
 export function CredentialsTab() {
-  const { data: credentials, error: loadError, isError, isLoading } = useAdminCredentials();
+  const {
+    data: credentials,
+    error: loadError,
+    isError,
+    refetch,
+    isLoading,
+  } = useAdminCredentials();
   const [editing, setEditing] = useState<ProviderCredentialRow | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<ProviderCredentialRow | null>(null);
@@ -85,7 +91,13 @@ export function CredentialsTab() {
           New credential
         </Button>
       </CardHeader>
-      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="credentials">
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="credentials"
+        onRetry={() => void refetch()}
+      >
         <Table>
           <THead>
             <Th variant="compact">Provider</Th>

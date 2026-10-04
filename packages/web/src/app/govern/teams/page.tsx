@@ -12,7 +12,7 @@ import { useHasRole } from '@/hooks/useHasRole';
 import { useTeams } from '@/hooks/useTeams';
 
 export default function TeamsPage() {
-  const { data: teams, isLoading, isError, error: loadError } = useTeams();
+  const { data: teams, isLoading, isError, refetch, error: loadError } = useTeams();
   // POST /teams is ADMIN-only.
   const canCreate = useHasRole('ADMIN');
   const [creating, setCreating] = useState(false);
@@ -31,7 +31,13 @@ export default function TeamsPage() {
         subtitle="Teams own repositories, members, sandbox allowlists and per-team agent overrides."
         title="Teams"
       />
-      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="teams">
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="teams"
+        onRetry={() => void refetch()}
+      >
         {(teams ?? []).length === 0 ? (
           <EmptyState
             hint={canCreate ? 'Create a team to group members and repositories.' : undefined}

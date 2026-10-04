@@ -20,7 +20,7 @@ import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter'
 import { SecretInput } from './SecretInput';
 
 export function FigmaTab() {
-  const { data: resp, error: loadError, isError, isLoading } = useFigmaConfig();
+  const { data: resp, error: loadError, isError, refetch, isLoading } = useFigmaConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateFigmaConfig();
@@ -61,6 +61,7 @@ export function FigmaTab() {
         isError={isError}
         isLoading={isLoading}
         label="Figma config"
+        onRetry={() => void refetch()}
       />
     );
   }

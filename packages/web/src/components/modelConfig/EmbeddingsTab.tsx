@@ -18,7 +18,7 @@ import { ModelSpecPicker } from './ModelSpecPicker';
 /// `generateEmbedding` throws (pgvector column is fixed-width); the UI doesn't
 /// enforce dimensionality directly — the worker errors loudly when wrong.
 export function EmbeddingsTab() {
-  const { data: config, error: loadError, isError, isLoading } = useEmbeddingConfig();
+  const { data: config, error: loadError, isError, refetch, isLoading } = useEmbeddingConfig();
   const { data: credentials } = useAdminCredentials();
   const update = useUpdateEmbeddingConfig();
 
@@ -45,6 +45,7 @@ export function EmbeddingsTab() {
         isError={isError}
         isLoading={isLoading}
         label="embedding config"
+        onRetry={() => void refetch()}
       />
     );
   }

@@ -60,7 +60,7 @@ const EDIT_COPY: AgentFormCopy = {
  * library, resolved by `resolveAgent` ahead of GLOBAL for this team's runs.
  */
 export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
-  const { data: agents, error: loadError, isError, isLoading } = useTeamAgents(teamId);
+  const { data: agents, error: loadError, isError, refetch, isLoading } = useTeamAgents(teamId);
   const createAgent = useCreateTeamAgent(teamId);
   const updateAgent = useUpdateTeamAgent(teamId);
   const deleteAgent = useDeleteTeamAgent(teamId);
@@ -165,7 +165,13 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
         inherit from GLOBAL.
       </p>
 
-      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="team agents">
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isLoading={isLoading}
+        label="team agents"
+        onRetry={() => void refetch()}
+      >
         {(agents ?? []).length === 0 ? (
           <EmptyState className="py-3" title="No team overrides yet." />
         ) : (

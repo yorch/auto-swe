@@ -93,7 +93,13 @@ function SecretModal({
  * own, not with "Save changes".
  */
 export function GitHubHostSecretsCard() {
-  const { data: secrets, error: loadError, isError, isLoading } = useGithubWebhookSecrets();
+  const {
+    data: secrets,
+    error: loadError,
+    isError,
+    refetch,
+    isLoading,
+  } = useGithubWebhookSecrets();
   const remove = useDeleteGithubWebhookSecret();
   // `false` is closed, `null` is the add form, a row is the rotate form.
   const [modal, setModal] = useState<GithubWebhookSecretRow | null | false>(false);
@@ -114,6 +120,7 @@ export function GitHubHostSecretsCard() {
         isError={isError}
         isLoading={isLoading}
         label="Host webhook secrets"
+        onRetry={() => void refetch()}
       >
         {!secrets || secrets.length === 0 ? (
           <EmptyState className="py-4" title="No per-host secrets." />

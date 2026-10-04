@@ -345,7 +345,7 @@ function PolicyModal({
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AutonomyPoliciesPage() {
-  const { data: policies, isLoading, isError, error } = useAutonomyPolicies();
+  const { data: policies, isLoading, isError, refetch, error } = useAutonomyPolicies();
   const deletePolicy = useDeleteAutonomyPolicy();
   const [deleteTarget, setDeleteTarget] = useState<AutonomyPolicy | null>(null);
   const [open, setOpen] = useState(false);
@@ -390,6 +390,7 @@ export default function AutonomyPoliciesPage() {
         isLoading={isLoading}
         label="policies"
         loadingMessage="loading policies…"
+        onRetry={() => void refetch()}
       >
         <Card className="p-0" variant="inset">
           <div className="divide-y divide-ink-600">

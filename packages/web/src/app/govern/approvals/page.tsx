@@ -79,7 +79,13 @@ export default function GovernApprovalsPage() {
         />
       </div>
 
-      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="inbox">
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isLoading={isLoading}
+        label="inbox"
+        onRetry={() => void refetch()}
+      >
         {count > 0 && (
           <div className="space-y-3">
             {steps?.map((step) => (
