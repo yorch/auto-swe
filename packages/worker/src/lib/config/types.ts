@@ -39,6 +39,12 @@ export interface ResolveCtx extends SettingResolveCtx {
   /// for a key, `resolveAgent` resolves that exact Agent version instead of the
   /// latest active one, freezing the run against later Agent edits.
   agentVersions?: Record<string, number>;
+  /// Run-start snapshot of the skill revisions the run's agents reference
+  /// (`WorkflowRun.skillRevisions`, `{ skillId: revision }`). Skill resolution
+  /// reads the pinned revision's text instead of the live skill, so editing a
+  /// skill mid-run cannot change a retry or replay. Undefined outside a run and
+  /// for runs created before the column existed (they resolve the current text).
+  skillRevisions?: Record<string, number>;
   /// Run-start snapshot of every `runPinned` registry setting
   /// (`WorkflowRun.pinnedSettings`). `resolveSetting` reads these instead of the
   /// live cascade, so a knob a run has already made a structural decision on —

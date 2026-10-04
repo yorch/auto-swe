@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { agentFindFirst, cacheKeys, invalidateMock } = vi.hoisted(() => ({
+const { agentFindFirst, cacheKeys, invalidateMock, revisionFindMany } = vi.hoisted(() => ({
   agentFindFirst: vi.fn(),
   cacheKeys: [] as string[],
   invalidateMock: vi.fn(),
+  revisionFindMany: vi.fn(),
 }));
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { agent: { findFirst: agentFindFirst } },
+  prisma: { agent: { findFirst: agentFindFirst }, skillRevision: { findMany: revisionFindMany } },
 }));
 
 // Pass-through cache so resolution isn't memoized across cases; records the
@@ -45,6 +46,7 @@ const mockedResolveCred = vi.mocked(resolveProviderCredential);
 function skillRef(name: string, sortOrder: number) {
   return {
     skill: {
+      currentRevision: 1,
       description: `${name} desc`,
       id: `sk-${name}`,
       isActive: true,
@@ -219,6 +221,85 @@ describe('resolveAgent — run-start version pin', () => {
     const r = await resolveAgent('reviewer', { agentVersions: { reviewer: 2 }, teamId: 't1' });
     expect(r.version).toBe(2);
     expect(wheres.find((w) => w.scope === 'GLOBAL')).toMatchObject({ version: 2 });
+  });
+});
+
+describe('resolveAgent — run-start skill revision pin', () => {
+  // The skill was edited after the run began: live text is revision 3, the run
+  // pinned revision 1.
+  function editedSkillRef() {
+    const ref = skillRef('tdd', 0);
+    ref.skill.currentRevision = 3;
+    ref.skill.promptText = 'PROMPT_tdd (edited mid-run)';
+    ref.skill.description = 'tdd desc (edited)';
+    return ref;
+  }
+
+  it('reads the pinned revision text even though the skill was edited since', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+    revisionFindMany.mockResolvedValue([
+      { description: 'tdd desc', promptText: 'PROMPT_tdd', revision: 1, skillId: 'sk-tdd' },
+    ]);
+
+    const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+
+    expect(r.skills).toEqual([
+      expect.objectContaining({
+        description: 'tdd desc',
+        // A pinned older revision is never reported as verified.
+        isVerified: false,
+        promptText: 'PROMPT_tdd',
+      }),
+    ]);
+    expect(revisionFindMany.mock.calls[0]?.[0].where).toEqual({
+      OR: [{ revision: 1, skillId: 'sk-tdd' }],
+    });
+  });
+
+  it('reads the current revision when the run has no pin', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+
+    const r = await resolveAgent('reviewer');
+
+    expect(r.skills[0]?.promptText).toBe('PROMPT_tdd (edited mid-run)');
+    expect(revisionFindMany).not.toHaveBeenCalled();
+  });
+
+  it('uses the live row (no query) when the pin is the current revision', async () => {
+    const ref = skillRef('tdd', 0);
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [ref] }));
+
+    const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+
+    expect(r.skills[0]).toMatchObject({ isVerified: true, promptText: 'PROMPT_tdd' });
+    expect(revisionFindMany).not.toHaveBeenCalled();
+  });
+
+  it('resolves a skill the pin map does not name at its current revision', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+
+    const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-other': 1 } });
+
+    expect(r.skills[0]?.promptText).toBe('PROMPT_tdd (edited mid-run)');
+  });
+
+  it('falls back to the live text when the pinned revision row is missing', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+    revisionFindMany.mockResolvedValue([]);
+
+    const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+
+    expect(r.skills[0]?.promptText).toBe('PROMPT_tdd (edited mid-run)');
+  });
+
+  it('keys the cache on the skill pins so two pins never share an entry', async () => {
+    agentFindFirst.mockResolvedValue(agentRow());
+    cacheKeys.length = 0;
+    await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+    await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 2 } });
+    await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+    expect(cacheKeys[0]).not.toBe(cacheKeys[1]);
+    expect(cacheKeys[0]).toBe(cacheKeys[2]);
   });
 });
 

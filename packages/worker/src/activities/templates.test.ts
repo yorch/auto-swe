@@ -79,6 +79,10 @@ vi.mock('@auto-swe/shared/db', () => {
     agent: {
       findMany: vi.fn(),
     },
+    // Run-start skill-revision snapshot: no references means an empty pin map.
+    agentSkillRef: {
+      findMany: vi.fn(async () => []),
+    },
     agentTrace: {
       aggregate: vi.fn(),
     },
@@ -153,6 +157,7 @@ const orgMonthlyUsageUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
 const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
 const findTemplate = vi.mocked(prisma.workflowTemplate.findFirst);
 const findAgents = vi.mocked(prisma.agent.findMany);
+const findSkillRefs = vi.mocked(prisma.agentSkillRef.findMany);
 const aggregateTraces = vi.mocked(prisma.agentTrace.aggregate);
 
 // Default: repo-less finalize paths (no activeWorkflows) fall back to summing the
@@ -183,6 +188,7 @@ afterEach(() => {
   findRepo.mockReset();
   findTemplate.mockReset();
   findAgents.mockReset();
+  findSkillRefs.mockClear();
   aggregateTraces.mockReset();
 });
 
@@ -345,6 +351,26 @@ describe('createWorkflowRun', () => {
       implementer: 1,
       reviewer: 2,
     });
+  });
+
+  it('snapshots the current skill revision of every skill the run can reach', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    const ref = (key: string, version: number, scope: string, skillId: string, rev: number) => ({
+      agent: { key, scope, version },
+      skill: { currentRevision: rev, id: skillId },
+    });
+    findSkillRefs.mockResolvedValueOnce([
+      ref('implementer', 1, 'GLOBAL', 'skill-a', 3),
+      // reviewer is pinned at v2, so its v1 row's skill must not be pinned...
+      ref('reviewer', 1, 'GLOBAL', 'skill-old', 9),
+      ref('reviewer', 2, 'GLOBAL', 'skill-b', 1),
+      // ...while a scoped agent contributes whatever version it has.
+      ref('implementer', 4, 'TEAM', 'skill-team', 2),
+    ] as never);
+    await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    expect(args.create.skillRevisions).toEqual({ 'skill-a': 3, 'skill-b': 1, 'skill-team': 2 });
+    expect(args.update).toEqual({});
   });
 
   it('records who launched this execution, and which execution, on create only', async () => {

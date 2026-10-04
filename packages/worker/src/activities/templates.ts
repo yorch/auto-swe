@@ -228,6 +228,11 @@ export async function createWorkflowRun(
   const settingsCtx = await runSettingsContext(input);
   const pinnedSettings = await snapshotPinnedSettings(settingsCtx);
 
+  // Skill text is a second input to every agent, and unlike the Agent row it was
+  // never versioned: freeze the revision of every skill this run's agents
+  // reference so a mid-run edit cannot reach a retry or a replay.
+  const skillRevisions = await snapshotSkillRevisions(agentVersions, settingsCtx);
+
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
   // same workflowId should not create duplicate rows. `update: {}` preserves the
   // original spec, agentVersions and pinnedSettings snapshots across Temporal
@@ -250,6 +255,7 @@ export async function createWorkflowRun(
       launchedById: input.launchedById ?? null,
       outcomeDomain: version.template?.workspaceProvider ?? null,
       pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
+      skillRevisions,
       specSnapshot: spec as unknown as object,
       status: 'RUNNING',
       templateId: input.templateId,
@@ -291,6 +297,44 @@ export async function createWorkflowRun(
     runId: run.id,
     spec: (run.specSnapshot as unknown as WorkflowSpec) ?? spec,
   };
+}
+
+/// `{ skillId: currentRevision }` for every skill an agent this run can resolve
+/// references: the GLOBAL agents at the versions just pinned (a canary's
+/// candidate included), plus the active agents the cascade can reach at the
+/// run's own template, team and organization. A CHANNEL-scope agent is not
+/// known at run start; its skills (and any skill attached to an agent after the
+/// run began) have no pin and resolve their current revision.
+async function snapshotSkillRevisions(
+  agentVersions: Record<string, number>,
+  scope: SettingResolveCtx
+): Promise<Prisma.InputJsonObject> {
+  const reachable: Prisma.AgentWhereInput[] = [{ scope: 'GLOBAL' }];
+  if (scope.workflowTemplateId) {
+    reachable.push({ scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: scope.workflowTemplateId });
+  }
+  if (scope.teamId) {
+    reachable.push({ scope: 'TEAM', teamId: scope.teamId });
+  }
+  if (scope.orgId) {
+    reachable.push({ orgId: scope.orgId, scope: 'ORGANIZATION' });
+  }
+  const refs = await prisma.agentSkillRef.findMany({
+    select: {
+      agent: { select: { key: true, scope: true, version: true } },
+      skill: { select: { currentRevision: true, id: true } },
+    },
+    where: { agent: { isActive: true, OR: reachable } },
+  });
+  const pins: Record<string, number> = {};
+  for (const ref of refs) {
+    // A GLOBAL agent contributes only the version this run pinned.
+    if (ref.agent.scope === 'GLOBAL' && agentVersions[ref.agent.key] !== ref.agent.version) {
+      continue;
+    }
+    pins[ref.skill.id] = ref.skill.currentRevision;
+  }
+  return pins;
 }
 
 /// Scope context for the run's pinned-settings snapshot. The template comes from
