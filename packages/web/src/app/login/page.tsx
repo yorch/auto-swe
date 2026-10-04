@@ -341,7 +341,7 @@ function LoginPageInner() {
   }
 
   return (
-    <div className="relative grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
+    <div className="relative grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
       {/* LEFT — editorial panel (unchanged from prior design) */}
       <aside className="relative hidden flex-col justify-between overflow-hidden border-r border-ink-600 bg-ink-950 p-12 lg:flex">
         <div aria-hidden className="absolute inset-0 opacity-60">

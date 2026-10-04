@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { errMsg } from '@/lib/errors';
 import { Alert } from './Alert';
+import { Button } from './Button';
 import { LoadingState } from './LoadingState';
 
 interface QueryBoundaryProps {
@@ -13,6 +14,8 @@ interface QueryBoundaryProps {
   compact?: boolean;
   /** What was being loaded, for the error alert — "Could not load teams: …". */
   label?: string;
+  /** Re-runs the failed query; shows a Retry button on the error alert. */
+  onRetry?: () => void;
   children?: ReactNode;
 }
 
@@ -31,13 +34,25 @@ export function QueryBoundary({
   isLoading,
   label,
   loadingMessage,
+  onRetry,
 }: QueryBoundaryProps) {
   if (isLoading) {
     return <LoadingState compact={compact} message={loadingMessage} />;
   }
   if (isError) {
     const detail = errMsg(error, 'request failed');
-    return <Alert variant="error">{label ? `Could not load ${label}: ${detail}` : detail}</Alert>;
+    return (
+      <Alert variant="error">
+        <span className="flex flex-wrap items-center justify-between gap-3">
+          <span>{label ? `Could not load ${label}: ${detail}` : detail}</span>
+          {onRetry && (
+            <Button onClick={onRetry} size="sm">
+              Retry
+            </Button>
+          )}
+        </span>
+      </Alert>
+    );
   }
   return <>{children}</>;
 }

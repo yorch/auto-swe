@@ -62,6 +62,7 @@ export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflo
           isError={templates.isError}
           isLoading={templates.isLoading}
           label="workflows"
+          onRetry={() => void templates.refetch()}
         >
           {!runnable.length ? (
             <EmptyState

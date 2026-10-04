@@ -94,12 +94,10 @@ export function TRow({
   children,
   className,
   hover = false,
-  onClick,
 }: {
   children: ReactNode;
   className?: string;
   hover?: boolean;
-  onClick?: () => void;
 }) {
   return (
     <tr
@@ -108,7 +106,6 @@ export function TRow({
         hover && 'transition-colors hover:bg-ink-800',
         className
       )}
-      onClick={onClick}
     >
       {children}
     </tr>

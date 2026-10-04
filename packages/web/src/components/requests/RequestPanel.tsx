@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useRerunAgentRun } from '@/hooks/useAgentRuns';
 import { useApprovals } from '@/hooks/useApprovals';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useRequestAttempts, useRequests } from '@/hooks/useRequests';
 import { useRetriedRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useRuns';
 import { agentRunDeliver, describeLaunchError, rerunConsequence } from '@/lib/agentRun';
@@ -81,6 +82,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
   const isCrossRepo = summary.data?.data[0]?.isCrossRepo === true;
   const query = useWorkflowRun(runId, false);
   const run = query.data;
+  useDocumentTitle(run?.templateName ? `Request · ${run.templateName}` : null);
   const total = attempts.data?.meta.total ?? 0;
   return (
     <div className="space-y-6">
@@ -89,6 +91,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
         isError={latest.isError}
         isLoading={latest.isLoading}
         label="request attempts"
+        onRetry={() => void latest.refetch()}
       >
         {!latestId && (
           <Alert variant="info">
@@ -102,6 +105,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
             isError={query.isError}
             isLoading={query.isLoading}
             label="request details"
+            onRetry={() => void query.refetch()}
           >
             {run && (
               <>
@@ -168,6 +172,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
             isError={attempts.isError}
             isLoading={attempts.isLoading}
             label="attempt history"
+            onRetry={() => void attempts.refetch()}
           >
             <ul className="space-y-2">
               {attempts.data?.data.map((attempt) => (
@@ -272,6 +277,7 @@ function AttemptContent({
         isError={approvalQuery.isError}
         isLoading={approvalQuery.isLoading}
         label="pending responses"
+        onRetry={() => void approvalQuery.refetch()}
       />
       {pending.length > 0 && (
         <section className="space-y-3">
@@ -426,6 +432,7 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
             isError={traces.isError}
             isLoading={traces.isLoading}
             label="traces"
+            onRetry={() => void traces.refetch()}
           >
             <p className="text-sm text-paper-400">
               {traces.data?.traces.length ?? 0} events. Open the full page for complete trace

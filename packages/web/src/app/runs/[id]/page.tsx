@@ -30,6 +30,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useApprovals } from '@/hooks/useApprovals';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useRunReRun } from '@/hooks/useRunReRun';
 import { useCancelWorkflowRun, useRetriedRun, useRunDetail } from '@/hooks/useRuns';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
@@ -718,6 +719,7 @@ export default function RunDetailPage({ params }: PageProps) {
     fullTracesFailed,
     toggleFullTraces,
   } = useRunDetail(id ?? '');
+  useDocumentTitle(run?.templateName ? `Run · ${run.templateName}` : null);
   const cancelRun = useCancelWorkflowRun(id ?? '');
   // An agent run is re-run through its own endpoint, after a confirmation when it
   // delivers; see `useRunReRun`.

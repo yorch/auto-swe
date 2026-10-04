@@ -30,11 +30,7 @@ export function Alert({
 }) {
   return (
     <div
-      className={cn(
-        'rounded-md border px-3 py-2.5 text-sm',
-        VARIANT_CLASSES[variant],
-        className
-      )}
+      className={cn('rounded-md border px-3 py-2.5 text-sm', VARIANT_CLASSES[variant], className)}
       role={variant === 'error' ? 'alert' : 'status'}
     >
       {title ? (

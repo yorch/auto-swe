@@ -51,18 +51,12 @@ export function FieldWrapper({ id, label, hint, error, required, children }: Fie
       )}
       {children}
       {hint && !error && (
-        <p
-          className="text-xs text-paper-500"
-          id={id ? `${id}-hint` : undefined}
-        >
+        <p className="text-xs text-paper-500" id={id ? `${id}-hint` : undefined}>
           {hint}
         </p>
       )}
       {error && (
-        <p
-          className="text-xs text-brick-400"
-          id={id ? `${id}-error` : undefined}
-        >
+        <p className="text-xs text-brick-400" id={id ? `${id}-error` : undefined}>
           {error}
         </p>
       )}

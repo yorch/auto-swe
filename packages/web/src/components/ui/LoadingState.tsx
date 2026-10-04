@@ -13,7 +13,11 @@ export function LoadingState({
   message?: string;
 }) {
   return (
-    <div className={cn('flex items-center', compact ? 'py-2' : 'justify-center py-12')}>
+    <div
+      aria-live="polite"
+      className={cn('flex items-center', compact ? 'py-2' : 'justify-center py-12')}
+      role="status"
+    >
       <div className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.2em] text-paper-500">
         <span
           aria-hidden

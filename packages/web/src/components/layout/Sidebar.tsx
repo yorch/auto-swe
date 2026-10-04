@@ -1,12 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { type RefObject, useMemo } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { useUsageScopes } from '@/hooks/useAdmin';
 import { useApprovalsCount } from '@/hooks/useApprovals';
 import { activeNavHref, visibleNavGroups } from '@/lib/navigation';
-import { cn } from '@/lib/utils';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
 // SVG icon paths — each path is for viewBox="0 0 24 24" stroke icons
@@ -60,6 +60,117 @@ function NavIcon({ name }: { name: string }) {
   );
 }
 
+/**
+ * The signed-in user: name and role at a glance, and a small menu with the
+ * account actions (Settings, Sign out). It replaces a chip that was labelled as
+ * a team switcher but showed the user, and a footer that repeated it.
+ */
+function UserMenu() {
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onPointer = (e: MouseEvent) => {
+      if (!root.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Stop the mobile drawer's own Escape handler from also closing the drawer.
+        e.stopPropagation();
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
+  const name = user?.email?.split('@')[0] ?? 'user';
+  const handleLogout = async () => {
+    // logout() clears the gateway session and local cookies; navigating before
+    // it settles can land on /login with the old session still valid.
+    await logout();
+    router.push('/login');
+  };
+
+  return (
+    <div className="relative mx-[14px] mb-[10px]" ref={root}>
+      <button
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className={cn(
+          'flex w-full items-center gap-[9px] rounded-[10px] border border-ink-400 bg-ink-700 px-[11px] py-[9px] text-left text-[12.5px] hover:border-ink-300',
+          FOCUS_RING
+        )}
+        onClick={() => setOpen((o) => !o)}
+        ref={trigger}
+        type="button"
+      >
+        <span
+          aria-hidden="true"
+          className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] bg-gradient-to-br from-dust-400 to-ember-400 text-[11px] font-bold text-ink-950"
+        >
+          {name[0].toUpperCase()}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12.5px] font-semibold text-paper-200">{name}</span>
+          <span className="block text-[10.5px] text-paper-500">
+            {user?.role?.toLowerCase() ?? 'member'}
+          </span>
+        </span>
+        <span aria-hidden="true" className="text-[10px] text-paper-500">
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded-[10px] border border-ink-400 bg-ink-900 shadow-xl"
+          role="menu"
+        >
+          <div className="truncate border-b border-ink-400 px-3 py-2 text-xs text-paper-400">
+            {user?.email ?? 'guest'}
+          </div>
+          <Link
+            className={cn(
+              'block px-3 py-2 text-[13px] text-paper-200 no-underline hover:bg-ink-700',
+              FOCUS_RING
+            )}
+            href="/settings"
+            onClick={() => setOpen(false)}
+            role="menuitem"
+          >
+            Settings
+          </Link>
+          <button
+            className={cn(
+              'block w-full px-3 py-2 text-left text-[13px] text-paper-200 hover:bg-ink-700',
+              FOCUS_RING
+            )}
+            onClick={handleLogout}
+            role="menuitem"
+            type="button"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** DOM id of the sidebar, referenced by the TopBar menu button's `aria-controls`. */
 export const SIDEBAR_ID = 'app-sidebar';
 
@@ -96,8 +207,6 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
     [pathname, groups]
   );
 
-  const avatarLetter = (user?.email ?? 'G')[0].toUpperCase();
-
   return (
     <aside
       aria-label="Main navigation"
@@ -116,7 +225,10 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
     >
       <div className="flex items-center justify-between">
         {/* Brand */}
-        <Link className="flex items-center gap-3 px-[18px] py-[18px] no-underline" href="/">
+        <Link
+          className={cn('flex items-center gap-3 px-[18px] py-[18px] no-underline', FOCUS_RING)}
+          href="/"
+        >
           {/* Gradient logo mark */}
           <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] bg-gradient-to-br from-ember-400 to-violet-400 shadow-[0_6px_18px_-6px_color-mix(in_oklab,var(--color-ember-400)_70%,transparent)]">
             <svg
@@ -146,7 +258,10 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
         </Link>
         <button
           aria-label="Close navigation"
-          className="mr-3 rounded-md p-2 text-paper-400 hover:text-paper-100 md:hidden"
+          className={cn(
+            'mr-3 rounded-md p-2 text-paper-400 hover:text-paper-100 md:hidden',
+            FOCUS_RING
+          )}
           onClick={onClose}
           ref={closeButtonRef}
           type="button"
@@ -166,20 +281,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
         </button>
       </div>
 
-      {/* Team context chip */}
-      <div className="mx-[14px] mb-[10px] flex cursor-default items-center gap-[9px] rounded-[10px] border border-ink-400 bg-ink-700 px-[11px] py-[9px] text-[12.5px]">
-        <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] bg-gradient-to-br from-dust-400 to-ember-400 text-[11px] font-bold text-paper-50">
-          {avatarLetter}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[12.5px] font-semibold text-paper-200">
-            {user?.email?.split('@')[0] ?? 'user'}
-          </div>
-          <div className="text-[10.5px] text-paper-500">
-            {user?.role?.toLowerCase() ?? 'member'}
-          </div>
-        </div>
-      </div>
+      <UserMenu />
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto pb-4">
@@ -195,6 +297,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
                   aria-current={active ? 'page' : undefined}
                   className={cn(
                     'flex items-center gap-[11px] border-l-2 px-[18px] py-[8px] text-[13.5px] font-[550] no-underline transition-all',
+                    FOCUS_RING,
                     active
                       ? 'border-ember-400 bg-ink-700 text-paper-100'
                       : 'border-transparent text-paper-500 hover:text-paper-200'
@@ -215,21 +318,6 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           </div>
         ))}
       </nav>
-
-      {/* Footer */}
-      <div className="border-t border-ink-400 px-[18px] py-[14px]">
-        <div className="flex items-center gap-3">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-ink-500 text-[11px] font-semibold text-paper-300">
-            {avatarLetter}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-xs text-paper-400">{user?.email ?? 'guest'}</div>
-          </div>
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ember-400">
-            {user?.role ?? '—'}
-          </span>
-        </div>
-      </div>
     </aside>
   );
 }

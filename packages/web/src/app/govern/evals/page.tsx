@@ -116,6 +116,7 @@ export default function GovernEvalsPage() {
           isError={trendsQuery.isError}
           isLoading={trendsQuery.isLoading}
           label="eval trends"
+          onRetry={() => void trendsQuery.refetch()}
         >
           {trends.length === 0 ? (
             <EmptyState title="No eval signals in this window." />
@@ -198,6 +199,7 @@ export default function GovernEvalsPage() {
           isError={healthQuery.isError}
           isLoading={healthQuery.isLoading}
           label="suite health"
+          onRetry={() => void healthQuery.refetch()}
         >
           {healthQuery.data && (
             <div className="space-y-3">
@@ -231,6 +233,7 @@ export default function GovernEvalsPage() {
           isError={datasetsQuery.isError}
           isLoading={datasetsQuery.isLoading}
           label="eval datasets"
+          onRetry={() => void datasetsQuery.refetch()}
         >
           {datasets && datasets.length > 0 ? (
             <div className="space-y-1">

@@ -34,6 +34,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
         isError={dataset.isError}
         isLoading={dataset.isLoading}
         label="eval dataset"
+        onRetry={() => void dataset.refetch()}
       >
         {ds && (
           <>
@@ -52,6 +53,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                 isError={runs.isError}
                 isLoading={runs.isLoading}
                 label="eval runs"
+                onRetry={() => void runs.refetch()}
               >
                 <Table>
                   <THead>

@@ -2,6 +2,7 @@ import type { Role } from '@auto-swe/shared';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { deniedHref } from '@/lib/accessDenied';
 import {
   COOKIE_ACCESS_TOKEN,
   COOKIE_SESSION_MARKER,
@@ -104,14 +105,15 @@ export type RoleCheck =
 /**
  * Gate a server-rendered subtree on a minimum role. Redirects to the login
  * bridge when the bearer is missing/expired, to `/` when the caller is signed
- * in but lacks the role (or is inactive), and returns `unavailable` — for the
+ * in but lacks the role (or is inactive; Home then explains why), and returns `unavailable` — for the
  * caller to render as an error — when the gateway could not be asked, so an
  * outage is not dressed up as "you are not allowed here".
  */
 export async function requireRole(allowed: Role[]): Promise<RoleCheck> {
   const result = await requireActiveSession();
   if (result.status === 'ok' && !allowed.some((r) => roleMeets(result.user.role, r))) {
-    redirect('/');
+    const headerStore = await headers();
+    redirect(deniedHref(headerStore.get(PATHNAME_HEADER) ?? '/', allowed));
   }
   return result;
 }
@@ -168,7 +170,8 @@ export async function requireUsageScope(): Promise<RoleCheck> {
     return { detail: 'The gateway returned an unexpected response.', status: 'unavailable' };
   }
   if (!(scopes.platform || scopes.teams?.length || scopes.orgs?.length)) {
-    redirect('/');
+    const headerStore = await headers();
+    redirect(deniedHref(headerStore.get(PATHNAME_HEADER) ?? '/', ['LEAD']));
   }
   return result;
 }

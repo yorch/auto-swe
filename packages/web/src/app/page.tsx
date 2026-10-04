@@ -1,14 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useState } from 'react';
 import { RequestList } from '@/components/requests/RequestList';
+import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { type RequestScope, type RequestState, useRequests } from '@/hooks/useRequests';
+import { deniedMessage } from '@/lib/accessDenied';
 
 function WorkSection({
   title,
@@ -41,6 +44,7 @@ function WorkSection({
         isError={query.isError}
         isLoading={query.isLoading}
         label={title.toLowerCase()}
+        onRetry={() => void query.refetch()}
       >
         {requests.length ? (
           <RequestList
@@ -55,10 +59,20 @@ function WorkSection({
   );
 }
 
+/** Why the user landed here, when a role-gated page sent them Home. */
+function AccessDeniedNotice() {
+  const params = useSearchParams();
+  const message = deniedMessage(params.get('denied'), params.get('need'));
+  return message ? <Alert variant="warning">{message}</Alert> : null;
+}
+
 export default function HomePage() {
   const [scope, setScope] = useState<RequestScope>('MINE');
   return (
     <div className="space-y-8">
+      <Suspense fallback={null}>
+        <AccessDeniedNotice />
+      </Suspense>
       <PageHeader
         actions={
           <ButtonLink href="/start" variant="primary">

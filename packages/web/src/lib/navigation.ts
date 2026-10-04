@@ -213,3 +213,38 @@ export function navLabel(href: string): string {
   }
   return item.label;
 }
+
+/** Sections for the pages that have no sidebar entry of their own. */
+const EXTRA_PAGE_SECTIONS: [string, string][] = [
+  ['/runs', 'Work'],
+  ['/agent-runs', 'Work'],
+  ['/start', 'Work'],
+  ['/epics', 'Work'],
+  ['/docs', 'Account'],
+  ['/lessons', 'Govern'],
+];
+
+/**
+ * The sidebar group a page belongs to — the first half of the TopBar breadcrumb.
+ * Null when the page is its own top level (Home) or belongs to no group.
+ */
+export function pageSection(pathname: string): string | null {
+  const href = activeNavHref(pathname, NAV_ITEMS);
+  const group = NAV_GROUPS.find((g) => g.items.some((i) => i.href === href));
+  if (group && pageTitle(pathname) !== 'Home') {
+    // A sub-page with its own title (autonomy decisions) still sits in its parent's group.
+    return group.label;
+  }
+  for (const [prefix, section] of EXTRA_PAGE_SECTIONS) {
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
+      return section;
+    }
+  }
+  if (pathname.startsWith('/govern')) {
+    return 'Govern';
+  }
+  if (pathname.startsWith('/studio')) {
+    return 'Studio';
+  }
+  return null;
+}

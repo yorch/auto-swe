@@ -107,6 +107,7 @@ function RequestsWorkspace() {
         isError={query.isError}
         isLoading={query.isLoading}
         label="requests"
+        onRetry={() => void query.refetch()}
       >
         {requests.length ? (
           <RequestList hrefFor={(id) => urlFor({ request: id })} requests={requests} />

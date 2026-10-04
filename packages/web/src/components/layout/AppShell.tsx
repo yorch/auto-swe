@@ -2,9 +2,12 @@
 
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { useApprovalsStream } from '@/hooks/useApprovals';
+import { useRouteDocumentTitle } from '@/hooks/useDocumentTitle';
+import { pageTitle } from '@/lib/navigation';
 
 // Public routes (mirrors the page entries in proxy.ts PUBLIC_PATHS). They render
 // without the app chrome, whose queries would 401 for a signed-out visitor.
@@ -22,7 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   if (isChromeless) {
-    return <>{children}</>;
+    return <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>;
   }
 
   const fullscreen = isFullscreenRoute(pathname);
@@ -35,35 +38,56 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscreen: boolean }) {
   useApprovalsStream();
   const pathname = usePathname();
+  useRouteDocumentTitle(pageTitle(pathname));
   const { navOpen, openNav, closeNav, menuButtonRef, closeButtonRef } = useNavDrawer(pathname);
 
   return (
-    <div className="grid h-screen grid-cols-1 overflow-hidden text-paper-200 [grid-auto-rows:minmax(0,1fr)] md:grid-cols-[234px_minmax(0,1fr)]">
-      <Sidebar closeButtonRef={closeButtonRef} onClose={closeNav} open={navOpen} />
-      {navOpen && (
-        // Backdrop for the mobile drawer; a click outside the drawer closes it.
-        <div
-          aria-hidden="true"
-          className="fixed inset-0 z-30 bg-black/60 md:hidden"
-          onClick={closeNav}
-        />
-      )}
-      {/* While the drawer is open (only possible below md) the page behind it is
+    <>
+      <a
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:bg-ember-500 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+        href="#main-content"
+      >
+        Skip to content
+      </a>
+      <div className="grid h-dvh grid-cols-1 overflow-hidden text-paper-200 [grid-auto-rows:minmax(0,1fr)] md:grid-cols-[234px_minmax(0,1fr)]">
+        <Sidebar closeButtonRef={closeButtonRef} onClose={closeNav} open={navOpen} />
+        {navOpen && (
+          // Backdrop for the mobile drawer; a click outside the drawer closes it.
+          <div
+            aria-hidden="true"
+            className="fixed inset-0 z-30 bg-black/60 md:hidden"
+            onClick={closeNav}
+          />
+        )}
+        {/* While the drawer is open (only possible below md) the page behind it is
           inert: screen readers cannot wander into it and nothing in it takes
           focus or clicks — the Tab trap below is only the keyboard half. */}
-      <div className="flex min-w-0 flex-col overflow-hidden" inert={navOpen}>
-        <TopBar menuButtonRef={menuButtonRef} navOpen={navOpen} onOpenNav={openNav} />
-        {fullscreen ? (
-          <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
-        ) : (
-          <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
-            <div className="mx-auto max-w-[1280px] px-4 pt-6 pb-16 md:px-10 md:pt-10">
-              {children}
-            </div>
-          </main>
-        )}
+        <div className="flex min-w-0 flex-col overflow-hidden" inert={navOpen}>
+          <TopBar menuButtonRef={menuButtonRef} navOpen={navOpen} onOpenNav={openNav} />
+          {/* The boundary sits inside <main>, keyed by route: a page crash leaves the
+            shell standing, and navigating away clears it. */}
+          {fullscreen ? (
+            <main
+              className="min-w-0 flex-1 overflow-hidden outline-none"
+              id="main-content"
+              tabIndex={-1}
+            >
+              <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
+            </main>
+          ) : (
+            <main
+              className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden outline-none"
+              id="main-content"
+              tabIndex={-1}
+            >
+              <div className="mx-auto max-w-[1280px] px-4 pt-6 pb-16 md:px-10 md:pt-10">
+                <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
+              </div>
+            </main>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
