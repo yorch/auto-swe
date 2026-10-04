@@ -849,12 +849,16 @@ holding the batch.
 A run whose execution is finished or no longer exists is ended through `finalizeRun`, the same core
 as the workflow's own finalize step, so billing and the `workflow_runs_finalized_total` count
 (`source=reaper`) happen exactly once however the two race. A run whose execution closed within the
-last hour, or that failed minutes ago because its finalize step exhausted its retries, still gets
-the usual Slack run-complete notice, in-thread channel report and tracker sync. For an execution
-that closed longer ago, or that Temporal no longer has, the reaper finalizes billing and status
-only (a channel task's cost still accrues to its channel) and logs that it did not notify, because
-a first sweep over history would otherwise post every orphan at once, even against tickets a later
-run completed. Billing goes to the month of finalization, like every other finalization: the cap
+last hour, or closed after the last sweep that found it still running (up to a day back, because a
+run waits its turn in the rotation and its notice should not be lost to that wait), still gets the
+usual Slack run-complete notice, in-thread channel report and tracker sync. A finalize that fails
+is retried on the next sweep, not a rotation later, for as long as such a notice is owed; once it
+is not, the run is stamped like a live one, so a run that cannot be finalized holds the front of
+the queue for at most that long. For an execution that closed before both, or that Temporal no
+longer has, the reaper finalizes billing and status only (a channel task's cost still accrues to
+its channel) and logs, once it has done so, that it did not notify, because a first sweep over
+history would otherwise post every orphan at once, even against tickets a later run completed.
+Billing goes to the month of finalization, like every other finalization: the cap
 counts an unfinalized run's spend in the current month whenever it started, so billing it
 elsewhere would move spend out of the figure the cap reads. A run that crosses a month boundary,
 or is reaped late, therefore lands wholly in the month it ends in; apportioning it would need

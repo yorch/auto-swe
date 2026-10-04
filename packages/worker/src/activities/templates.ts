@@ -464,7 +464,8 @@ export async function finalizeWorkflowRun(
  * the reaper passes it for a run whose execution closed long ago or no longer
  * exists, because a first sweep over history would otherwise post every orphan at
  * once, possibly against tickets a later run already completed. A run that
- * ended minutes ago still notifies.
+ * ended minutes ago still notifies. Resolves true when this call ended the run,
+ * false when another attempt already had.
  */
 export async function finalizeRun(
   runId: string,
@@ -474,7 +475,7 @@ export async function finalizeRun(
   // User-facing notices (Slack, in-thread report, tracker sync). The reaper
   // turns them off only for a run that ended long ago or whose execution is gone.
   notify = true
-): Promise<void> {
+): Promise<boolean> {
   // Phase-8 denormalize the run's cost + token totals onto workflow_runs at finalize
   // time. Read the workRequest → activeWorkflows join once, sum, then write back.
   const run = await prisma.workflowRun.findUnique({
@@ -588,7 +589,7 @@ export async function finalizeRun(
   // rollback re-reads endedAt null and re-does both. runsCompleted counts only
   // SUCCESS; cost/tokens accrue for every terminal status (real spend).
   if (run?.endedAt != null) {
-    return;
+    return false;
   }
 
   // An epic's work request targets no single connection, so an epic child
@@ -691,7 +692,7 @@ export async function finalizeRun(
   }
 
   if (outcome === 'alreadyEnded') {
-    return;
+    return false;
   }
   // Counted only by the attempt that finalized, so a retried activity cannot
   // double it — and not for a run the dashboard cancelled, which the cancel
@@ -748,6 +749,7 @@ export async function finalizeRun(
       trackerConfig
     ).catch(() => null);
   }
+  return true;
 }
 
 /** Shape of the `payload` we stamp onto a channel-task RunInput. */

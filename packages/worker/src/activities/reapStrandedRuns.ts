@@ -51,6 +51,14 @@ export function reapedStatusFor(temporalStatus: string | undefined): ReapedStatu
 
 /** An execution that closed longer ago than this ended too long ago to tell anyone about. */
 export const NOTIFY_WINDOW_MS = 60 * 60 * 1000;
+/**
+ * The most a run's last "still running" check can widen that window. A run is
+ * asked about once per rotation, so it can wait several sweeps after its
+ * execution closed; what it waited is not a reason to stay silent, but a check
+ * from long ago (the reaper was off) is no better a proof of a recent ending
+ * than none.
+ */
+export const NOTIFY_RECHECK_MAX_MS = 24 * 60 * 60 * 1000;
 
 interface Ended {
   status: ReapedStatus;
@@ -59,7 +67,11 @@ interface Ended {
 }
 
 /** How the run ended, or `null` while its execution still runs. Throws when Temporal cannot say. */
-async function endedStatusOf(workflowId: string, now: Date): Promise<Ended | null> {
+async function endedStatusOf(
+  workflowId: string,
+  now: Date,
+  lastSeenRunning: Date | null
+): Promise<Ended | null> {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(
@@ -76,8 +88,16 @@ async function endedStatusOf(workflowId: string, now: Date): Promise<Ended | nul
       return null;
     }
     const closedAt = closeTime?.getTime();
+    // Closed within the window, or since the last sweep that found it running:
+    // the execution closed after that check, so the reaper is late only by the
+    // rotation, not by neglect.
+    const seen = lastSeenRunning?.getTime();
+    const since =
+      seen !== undefined && now.getTime() - seen <= NOTIFY_RECHECK_MAX_MS
+        ? Math.min(seen, now.getTime() - NOTIFY_WINDOW_MS)
+        : now.getTime() - NOTIFY_WINDOW_MS;
     return {
-      notify: closedAt !== undefined && now.getTime() - closedAt <= NOTIFY_WINDOW_MS,
+      notify: closedAt !== undefined && closedAt >= since,
       status: reapedStatusFor(status.name),
     };
   } catch (err) {
@@ -103,7 +123,13 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
     // live goes to the back, so a crowd of long-lived live runs cannot hold the
     // batch and keep newer stranded runs from ever being reached.
     orderBy: [{ reapCheckedAt: { nulls: 'first', sort: 'asc' } }, { startedAt: 'asc' }],
-    select: { channelId: true, id: true, workflowId: true, workRequestId: true },
+    select: {
+      channelId: true,
+      id: true,
+      reapCheckedAt: true,
+      workflowId: true,
+      workRequestId: true,
+    },
     take: REAPER_MAX_CHECKS,
     where: { endedAt: null, startedAt: { lt: new Date(now.getTime() - REAPER_GRACE_MS) } },
   });
@@ -117,7 +143,7 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
         // lookup failed is not stamped, so it stays first in line.
         let ended: Ended | null;
         try {
-          ended = await endedStatusOf(run.workflowId, now);
+          ended = await endedStatusOf(run.workflowId, now, run.reapCheckedAt);
         } catch (err) {
           result.unreachable++;
           logWarn('run reaper could not ask Temporal about a run; it is left for the next sweep', {
@@ -131,25 +157,28 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
           return;
         }
         const { notify, status } = ended;
+        // A channel turn has no work request and bills its channel, not an
+        // org, so it ends through the channel path. A channel task run has a
+        // work request and goes through the core like any other run.
+        const channelTurn = !!run.channelId && !run.workRequestId;
         try {
-          if (!notify) {
+          if (channelTurn) {
+            await finalizeChannelRun({ source: 'reaper', status, workflowId: run.workflowId });
+          } else if ((await finalizeRun(run.id, status, undefined, 'reaper', notify)) && !notify) {
             logWarn('run reaper ended a run without notifying: its execution closed long ago', {
               workflowId: run.workflowId,
             });
           }
-          // A channel turn has no work request and bills its channel, not an
-          // org, so it ends through the channel path. A channel task run has a
-          // work request and goes through the core like any other run.
-          if (run.channelId && !run.workRequestId) {
-            await finalizeChannelRun({ source: 'reaper', status, workflowId: run.workflowId });
-          } else {
-            await finalizeRun(run.id, status, undefined, 'reaper', notify);
-          }
           result.reaped++;
         } catch (err) {
-          // Stamped like a live run: one that cannot be finalized must not sit
-          // first in every sweep and crowd out the rest.
-          rotated.push(run.id);
+          // Not stamped while a notice is still owed, so the retry comes next
+          // sweep instead of a rotation later, while it can still be sent. That
+          // lasts only until the window closes, so a run that never finalizes
+          // cannot hold the front of the queue for longer than that. Once
+          // nothing is owed, it is stamped like a live run.
+          if (!notify || channelTurn) {
+            rotated.push(run.id);
+          }
           result.unreachable++;
           logWarn('run reaper could not finalize a run; it is left for the next sweep', {
             err: err instanceof Error ? err.message : String(err),

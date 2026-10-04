@@ -10,7 +10,8 @@ vi.mock('../lib/temporalClient.js', () => ({
     workflow: { getHandle: (id: string) => ({ describe: () => describeWf(id) }) },
   }),
 }));
-vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
+const logWarn = vi.fn();
+vi.mock('../lib/activityLog.js', () => ({ logWarn: (...a: unknown[]) => logWarn(...a) }));
 
 const finalizeRun = vi.fn();
 vi.mock('./templates.js', () => ({ finalizeRun: (...a: unknown[]) => finalizeRun(...a) }));
@@ -27,6 +28,7 @@ import { REAPER_GRACE_MS, reapedStatusFor, reapStrandedRuns } from './reapStrand
 const run = (id: string, extra: Record<string, unknown> = {}) => ({
   channelId: null,
   id,
+  reapCheckedAt: null,
   workflowId: `wf-${id}`,
   workRequestId: 'wr',
   ...extra,
@@ -130,13 +132,51 @@ describe('reapStrandedRuns', () => {
     ]);
   });
 
-  it('stamps a finished run whose finalize throws, so it cannot sit first in every sweep', async () => {
+  it('keeps the window open for a run last seen live, up to a day', async () => {
+    findMany.mockResolvedValue([
+      // Seen live 3 h ago, closed 2 h ago: reached late by the rotation, not neglected.
+      run('rotated', { reapCheckedAt: new Date('2026-10-04T09:00:00Z') }),
+      // Closed before the check that found it live: the window stays one hour.
+      run('before-check', { reapCheckedAt: new Date('2026-10-04T09:00:00Z') }),
+      // Last seen live two days ago (the reaper was off): no longer evidence.
+      run('stale-check', { reapCheckedAt: new Date('2026-10-02T09:00:00Z') }),
+      run('never-seen'),
+    ]);
+    const now = new Date('2026-10-04T12:00:00Z');
+    const closes: Record<string, Date> = {
+      'wf-before-check': new Date('2026-10-04T08:00:00Z'),
+      'wf-never-seen': new Date('2026-10-04T10:00:00Z'),
+      'wf-rotated': new Date('2026-10-04T10:00:00Z'),
+      'wf-stale-check': new Date('2026-10-04T10:00:00Z'),
+    };
+    describeWf.mockImplementation(async (id: string) => ({
+      closeTime: closes[id],
+      status: { name: 'FAILED' },
+    }));
+    await reapStrandedRuns(now);
+    expect(finalizeRun.mock.calls).toEqual([
+      ['rotated', 'FAILED', undefined, 'reaper', true],
+      ['before-check', 'FAILED', undefined, 'reaper', false],
+      ['stale-check', 'FAILED', undefined, 'reaper', false],
+      ['never-seen', 'FAILED', undefined, 'reaper', false],
+    ]);
+  });
+
+  it('does not stamp a failed finalize while a notice is still owed, so the retry is next sweep', async () => {
+    findMany.mockResolvedValue([run('bad')]);
+    describeWf.mockResolvedValue({ closeTime: new Date(), status: { name: 'FAILED' } });
+    finalizeRun.mockRejectedValueOnce(new Error('db'));
+    await reapStrandedRuns();
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('stamps a failed finalize once no notice is owed, so it cannot sit first in every sweep', async () => {
     findMany.mockResolvedValue([run('bad'), run('lookup')]);
     describeWf.mockImplementation(async (id: string) => {
       if (id === 'wf-lookup') {
         throw new Error('unavailable');
       }
-      return { closeTime: new Date(), status: { name: 'FAILED' } };
+      return { closeTime: new Date('2026-10-04T08:00:00Z'), status: { name: 'FAILED' } };
     });
     finalizeRun.mockRejectedValueOnce(new Error('db'));
     const now = new Date('2026-10-04T12:00:00Z');
@@ -145,6 +185,31 @@ describe('reapStrandedRuns', () => {
       data: { reapCheckedAt: now },
       where: { endedAt: null, id: { in: ['bad'] } },
     });
+  });
+
+  it('logs "without notifying" only when this call really finalized a suppressed run', async () => {
+    const old = { closeTime: new Date('2026-10-04T08:00:00Z'), status: { name: 'FAILED' } };
+    const said = () =>
+      logWarn.mock.calls.some(([m]) => String(m).includes('ended a run without notifying'));
+    const now = new Date('2026-10-04T12:00:00Z');
+    describeWf.mockResolvedValue(old);
+
+    // Finalized concurrently by someone else: nothing was suppressed by us.
+    findMany.mockResolvedValue([run('raced')]);
+    finalizeRun.mockResolvedValueOnce(false);
+    await reapStrandedRuns(now);
+    expect(said()).toBe(false);
+
+    // A channel turn takes no notify at all.
+    findMany.mockResolvedValue([run('c', { channelId: 'chan', workRequestId: null })]);
+    await reapStrandedRuns(now);
+    expect(said()).toBe(false);
+
+    // A real finalize that suppressed.
+    findMany.mockResolvedValue([run('real')]);
+    finalizeRun.mockResolvedValueOnce(true);
+    await reapStrandedRuns(now);
+    expect(said()).toBe(true);
   });
 
   it('leaves a run alone when Temporal cannot be asked', async () => {
