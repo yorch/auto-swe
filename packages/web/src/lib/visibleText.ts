@@ -11,14 +11,15 @@
  * text (never as HTML).
  */
 
-// Bidi/zero-width/format characters, plus every control character except what
-// `multiline` keeps (newline, and tab, which are layout in a text body).
-const INVISIBLE =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
-const INVISIBLE_OR_LAYOUT =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
-  /[\u0000-\u001f\u007f-\u009f\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+// Every control (Cc) and format (Cf) character, the line and paragraph separators and
+// every Default_Ignorable_Code_Point: soft hyphen, variation selectors, the Hangul
+// fillers, the combining grapheme joiner, Unicode tag characters (U+E0000-E007F, which a
+// model reads and a reviewer does not), the bidi controls and zero-width characters. The
+// `u` flag matches whole code points, so an astral character gets one marker. A text body
+// keeps newline and tab, which are layout.
+const HIDDEN = '[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}]';
+const INVISIBLE = new RegExp(`(?![\\n\\t])${HIDDEN}`, 'gu');
+const INVISIBLE_OR_LAYOUT = new RegExp(HIDDEN, 'gu');
 
 const marker = (c: string) =>
   `⟨U+${(c.codePointAt(0) as number).toString(16).toUpperCase().padStart(4, '0')}⟩`;

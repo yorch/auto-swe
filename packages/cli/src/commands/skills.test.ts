@@ -448,6 +448,28 @@ describe('skills sources', () => {
       expect(text).not.toMatch(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/);
     });
 
+    it.each([
+      ['tag character', 0xe0041, '<U+E0041>'],
+      ['soft hyphen', 0xad, '<U+00AD>'],
+      ['variation selector', 0xfe0f, '<U+FE0F>'],
+      ['Hangul filler', 0x3164, '<U+3164>'],
+      ['deprecated format character', 0x206a, '<U+206A>'],
+      ['interlinear annotation', 0xfff9, '<U+FFF9>'],
+      ['combining grapheme joiner', 0x34f, '<U+034F>'],
+    ])('shows a %s in a diff line and cleans it from a name', async (_n, cp, shown) => {
+      const ch = String.fromCodePoint(cp);
+      reply(() => ({
+        body: {
+          data: { ...DIFF, changed: [changed(`al${ch}pha`, { textDiff: `+x${ch}y` })] },
+        },
+      }));
+      await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
+      const text = out.join('');
+      expect(text).toContain(`x${shown}y`);
+      expect(text).toContain('al?pha');
+      expect(text).not.toContain(ch);
+    });
+
     it('names are cleaned of bidi controls, and a rename is shown and reported', async () => {
       reply((_url, method) =>
         method === 'POST'

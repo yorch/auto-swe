@@ -1,6 +1,60 @@
 import { describe, expect, it } from 'vitest';
 import { visibleOrNull, visibleText } from './visibleText';
 
+const CLASSES: Array<[string, number]> = [
+  ['Cc control', 0x1b],
+  ['C1 control', 0x85],
+  ['soft hyphen', 0xad],
+  ['combining grapheme joiner', 0x34f],
+  ['Arabic letter mark', 0x61c],
+  ['Hangul choseong filler', 0x115f],
+  ['Hangul jungseong filler', 0x1160],
+  ['Khmer inherent vowel', 0x17b4],
+  ['Mongolian free variation selector', 0x180b],
+  ['Mongolian vowel separator', 0x180e],
+  ['zero-width space', 0x200b],
+  ['left-to-right mark', 0x200e],
+  ['line separator', 0x2028],
+  ['paragraph separator', 0x2029],
+  ['bidi override', 0x202e],
+  ['word joiner', 0x2060],
+  ['invisible times', 0x2062],
+  ['bidi isolate', 0x2067],
+  ['deprecated format character', 0x206a],
+  ['deprecated format character (last)', 0x206f],
+  ['ideographic Hangul filler', 0x3164],
+  ['variation selector', 0xfe0f],
+  ['byte order mark', 0xfeff],
+  ['halfwidth Hangul filler', 0xffa0],
+  ['interlinear annotation anchor', 0xfff9],
+  ['interlinear annotation terminator', 0xfffb],
+  ['variation selector supplement', 0xe0100],
+  ['tag space', 0xe0020],
+  ['tag latin letter a', 0xe0041],
+  ['tag cancel', 0xe007f],
+];
+
+describe('visibleText hidden-character classes', () => {
+  it.each(CLASSES)('shows %s', (_name, cp) => {
+    const shown = `⟨U+${cp.toString(16).toUpperCase().padStart(4, '0')}⟩`;
+    expect(visibleText(`a${String.fromCodePoint(cp)}b`)).toBe(`a${shown}b`);
+    expect(visibleText(`a${String.fromCodePoint(cp)}b`, { multiline: true })).toBe(`a${shown}b`);
+  });
+
+  it('shows a smuggled tag-character instruction, one marker per code point', () => {
+    const hidden = [...'ignore']
+      .map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0)))
+      .join('');
+    const out = visibleText(`fine${hidden}`);
+    expect(out.startsWith('fine⟨U+E0069⟩⟨U+E0067⟩')).toBe(true);
+    expect(out.match(/⟨/g)).toHaveLength(6);
+  });
+
+  it('keeps ordinary visible text: emoji, ZWJ-free scripts, accents, and a plain space', () => {
+    expect(visibleText('café 日本 ا 😀 x y')).toBe('café 日本 ا 😀 x y');
+  });
+});
+
 describe('visibleText', () => {
   it.each([
     ['\u202e', '⟨U+202E⟩'],

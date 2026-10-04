@@ -131,9 +131,7 @@ export async function runSkillsCommand(
 
 // Everything below that came from the server describes a third-party repository: its
 // names can carry terminal escapes, so control characters never reach the terminal.
-const CONTROL =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
-  /[\u0000-\u001f\u007f-\u009f\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 const clean = (s: string) => s.replace(CONTROL, '?');
 
 const short = (sha: string) => clean(sha).slice(0, 7);
@@ -380,7 +378,7 @@ async function cmdCheck(args: string[], env: CliEnv): Promise<number> {
 }
 
 /** A unified diff as text for a terminal: each line cleaned on its own so line breaks survive. */
-const INVISIBLE = /[\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 /** Bidi overrides and zero-width characters in review text are shown, not hidden or dropped. */
 const visible = (l: string) =>
   l.replace(

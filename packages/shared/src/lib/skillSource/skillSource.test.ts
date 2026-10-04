@@ -1045,6 +1045,20 @@ describe('repository-derived text', () => {
   });
 });
 
+describe('safeDisplayPath hidden-character classes', () => {
+  it.each([
+    0x1b, 0x85, 0xad, 0x34f, 0x61c, 0x115f, 0x17b4, 0x180b, 0x180e, 0x200b, 0x2028, 0x2029, 0x202e,
+    0x2060, 0x206a, 0x206f, 0x3164, 0xfe0f, 0xfeff, 0xffa0, 0xfff9, 0xfffb, 0xe0020, 0xe0041,
+    0xe007f, 0xe0100,
+  ])('replaces U+%s with one ?', (cp) => {
+    expect(safeDisplayPath(`a${String.fromCodePoint(cp)}b`)).toBe('a?b');
+  });
+
+  it('keeps ordinary text', () => {
+    expect(safeDisplayPath('café/日本 😀.md')).toBe('café/日本 😀.md');
+  });
+});
+
 describe('safeDisplayPath', () => {
   it('replaces bidirectional overrides and zero-width characters, not just control characters', () => {
     expect(safeDisplayPath('a\u202eb\u2066c\u2069d\u200be\u200ff\ufeffg\u2060h')).toBe(
