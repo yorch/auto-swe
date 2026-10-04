@@ -17,7 +17,7 @@ authoring a workflow around it.
 |---|---|
 | API | `POST /api/v1/agent-runs` |
 | Re-run | `POST /api/v1/agent-runs/:workRequestId/rerun` |
-| Dashboard | **Run an agent** (`/agent-runs`), under Requests in the sidebar (section 9) |
+| Dashboard | **Start work** (`/start`), then **Run an agent** (section 9) |
 | CLI | `auto-swe agent run <key[@version]> "<prompt>" --repo <org/name> [--deliver none\|branch\|draft_pr] [--max-steps N] [--timeout S] [--wait]` |
 
 Request body:
@@ -38,11 +38,13 @@ will actually use). The run row appears once a worker picks the workflow up; fin
 run; the key is scoped to the caller as well as the repository, so one user's key can neither collide
 with nor reveal another's run.
 
-A re-run starts a **new** run (new ticket id, so a new branch name) from the stored parameters, as the
+A re-run starts a **new execution attempt under the same request** (new ticket id, so a new branch
+name) from the stored parameters, as the
 person re-running it, and re-validates everything: the agent may have been deactivated, a ceiling
 lowered, or the caller's access revoked since. The generic `POST /work-requests/:id/retry` refuses an
-agent run (`USE_AGENT_RUN_RERUN`): it rebuilds the request without its payload and reuses the ticket
-id, which would collide with the branch the first run pushed.
+agent run (`USE_AGENT_RUN_RERUN`): agent delivery requires a fresh ticket and branch for each
+attempt. The agent re-run endpoint accepts optional `instructions` (up to 4,000 characters), appends
+them to the original task for that attempt, and leaves the original request unchanged.
 
 ### Who may launch, and as whom
 
@@ -295,7 +297,11 @@ gateway, so the entry point would be too.
 
 ## 9. The dashboard
 
-**Run an agent** (`/agent-runs`, ENGINEER and above) is a form over the same `POST /api/v1/agent-runs`.
+**Start work** (`/start`, ENGINEER and above) offers workflow and agent launch paths. The
+`/agent-runs` URL opens the same flow with **Run an agent** selected. The agent path is a form over
+the same `POST /api/v1/agent-runs`. A review screen shows the repository, agent, task, delivery, and
+limits before launch. Returning to the inputs preserves the draft. Launching opens the request
+side panel in **Requests** (`/workflows`), which groups its execution attempts.
 Choosing a repository first scopes everything else to it, because the repository decides which agents
 exist (its organization's overrides) and which ceilings apply (they cascade to team and organization).
 Two read endpoints, both ENGINEER, serve the form:
