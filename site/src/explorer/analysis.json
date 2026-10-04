@@ -1606,7 +1606,7 @@
     {
       "body": "Package agents, skills, scanner patterns and templates for export/install and SDK authoring.",
       "category": "Extensibility",
-      "detail": "Manifest v2 hashes identity and content; detached Ed25519 signatures are checked against deployment trust keys. Unverified install is denied unless allowed. Installing a skill over an existing one cuts a new revision, clears its verification and scans it; a concurrent edit rolls the install back. Credentials and connection instances are not portable bundle content.",
+      "detail": "Manifest v2 hashes identity and content; detached Ed25519 signatures are checked against deployment trust keys. Unverified install is denied unless allowed. Installing a skill over an existing one cuts a new revision when its text or description differs, always clears its verification, and scans it; a concurrent edit to that skill rolls back the whole install. Credentials and connection instances are not portable bundle content.",
       "id": "distribution",
       "refs": ["bundles", "sdk", "skillBundle"],
       "status": "Implemented",
@@ -1633,7 +1633,7 @@
     {
       "body": "Reach repositories on other approved GitHub hosts with that host’s own PAT or App, and never send a platform credential to a host it does not belong to.",
       "category": "Governance",
-      "detail": "GitHubHostCredential holds, per approved non-instance host family, an optional PAT and/or a GitHub App (id and private key), encrypted with the platform envelope and managed by ADMINs through routes that return only whether a secret is set and its last four characters. resolvePlatformCredential returns instance, host, mismatch, misconfigured or installation-mismatch. A launcher’s own saved token still wins; a host’s set is built from its row alone (no instance PAT, App, auth mode or singleton installation) and lapses when the host leaves github.repositoryHosts. resolveGitHubToken refuses any API host outside the set’s credentialHost as a last line, for the PAT, installation tokens and the App JWT. GitHubInstallation is identified by (host, installationId) with the host fixed at creation, and a repository may point only at an installation on its own host: checked when the repository is written and again when a run token is minted (REPO_INSTALLATION_HOST_MISMATCH), on every path that mints one: toRepoRef’s type requires the installation host. The login-ownership check asks the host the account belongs to with that host’s credential and reports a non-github.com host with none as unverifiable, keeping the login; a github.com account with no applicable credential is asked unauthenticated, so the check is rate-limited, but a confirmed mismatch still clears the login and records a takeover.",
+      "detail": "GitHubHostCredential holds, per approved non-instance host family, an optional PAT and/or a GitHub App (id and private key), encrypted with the platform envelope and managed by ADMINs through routes that return only whether a secret is set and its last four characters. resolvePlatformCredential returns instance, host, mismatch, misconfigured or installation-mismatch. A launcher’s own saved token still wins; a host’s set is built from its row alone (no instance PAT, App, auth mode or singleton installation) and lapses when the host leaves github.repositoryHosts. resolveGitHubToken refuses any API host outside the set’s credentialHost as a last line, for the PAT, installation tokens and the App JWT. GitHubInstallation is identified by (host, installationId) with the host fixed at creation, and a repository may point only at an installation on its own host: checked when the repository is written and again when a run token is minted (REPO_INSTALLATION_HOST_MISMATCH), Every current minting path loads the installation’s host: toRepoRef’s type enforces this for the worker’s SCM calls, and the gateway’s check-run and permission lookups select it explicitly. The login-ownership check asks the host the account belongs to with that host’s credential and reports a non-github.com host with none as unverifiable, keeping the login; a github.com account with no applicable credential is asked unauthenticated, so the check is rate-limited, but a confirmed mismatch still clears the login and records a takeover.",
       "id": "githubHosts",
       "refs": [
         "hostCredentialRow",
@@ -1653,7 +1653,7 @@
     {
       "body": "A skill’s text is an immutable revision, and a run reads the revisions it pinned at start, so editing a skill mid-run does not change what a retry or replay sees.",
       "category": "Agents",
-      "detail": "Every write of a skill’s text or description (create, edit, boot sync, bundle install) cuts a SkillRevision in the same statement, guarded on the revision number the writer read; a concurrent edit gets 409 SKILL_CHANGED (PUT also accepts expectedRevision), and the boot sync skips a race it lost. createWorkflowRun stores {skillId: revision} in WorkflowRun.skillRevisions for every skill visible to GLOBAL plus the run’s team and organization (a repo-less channel task uses its Slack channel’s). Skill reads for agents use the pinned text, and the pin is part of the resolveAgent cache key. isActive is deliberately read live, so an admin can switch a harmful skill off under a running run. isVerified describes the current text: any edit that cuts a revision clears it, a pinned older revision never reports as verified, and only POST /platform/skills/:id/verify (ADMIN, naming the revision, 409 when stale) sets it. Skill descriptions and text are scanned in full on create, edit and bundle install; the scan is advisory and is marked incomplete when a pattern is quarantined or the scanner fails.",
+      "detail": "Every write that changes a skill’s text or description (create, edit, boot sync, bundle install) cuts a SkillRevision in the same statement, guarded on the revision number the writer read; a concurrent edit gets 409 SKILL_CHANGED (PUT also accepts expectedRevision), and the boot sync skips a race it lost. createWorkflowRun stores {skillId: revision} in WorkflowRun.skillRevisions for every skill visible to GLOBAL plus the run’s team and organization (a repo-less channel task uses its Slack channel’s). Skill reads for agents use the pinned text, and the pin is part of the resolveAgent cache key. isActive is deliberately read live (within the config cache window of about 30 s), so an admin can switch a harmful skill off under a running run. isVerified describes the current text. An admin edit or bundle install that cuts a revision clears it, and a pinned older revision never reports as verified. For custom and bundle-installed skills, only POST /platform/skills/:id/verify (ADMIN, naming the revision, 409 when stale) sets it; the boot sync re-verifies the seeded built-ins on every start, including when it cuts a revision from shipped text. Skill descriptions and text are scanned in full on create, edit and bundle install; the scan is advisory and is marked incomplete when a pattern is quarantined or the scanner fails.",
       "id": "skillRevisions",
       "refs": [
         "skillRevBuilders",
@@ -1665,7 +1665,9 @@
         "skillConflict",
         "skillClearVerified",
         "skillScanAdvisory",
-        "skillBoot"
+        "skillBoot",
+        "skillExpected",
+        "skillRunPin"
       ],
       "status": "Implemented",
       "title": "Immutable skill revisions pinned per run"
@@ -1846,7 +1848,7 @@
     {
       "body": "Skill pinning covers runs that have a WorkflowRun row, and it is not a freeze of every skill input.",
       "category": "Coverage",
-      "detail": "The channel assistant’s own conversational runs have no WorkflowRun and read skills unpinned. An epic’s children are runs of their own and pin at their own start. A skill with no entry in the map, such as one created after the run began, resolves its current revision. isActive is read live. A missing pinned revision row falls back to the live text, with a warning in the log and a skill.pinned_revision_missing trace event, which is the swap pinning exists to prevent. A repo-less channel task finds its tenant by Slack channel id, which is unique only per workspace.",
+      "detail": "The channel assistant’s own conversational runs have no WorkflowRun and read skills unpinned. An epic’s children are runs of their own and pin at their own start. A skill with no entry in the map, such as one created after the run began, resolves its current revision. isActive is read live, within the config cache window. A missing pinned revision row falls back to the live text, with a warning in the log and, inside an activity, a skill.pinned_revision_missing trace event, which is the swap pinning exists to prevent. A repo-less channel task finds its tenant by Slack channel id, which is unique only per workspace.",
       "id": "skillPinGaps",
       "refs": ["skillSnapshot", "skillTenant", "skillPinRead", "skillPinMissing"],
       "status": "Confirmed boundary",
