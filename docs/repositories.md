@@ -312,7 +312,8 @@ longer fit.
   repository, that nobody launched (a webhook start, or one from before launchers were recorded) is
   visible to everyone but can be cancelled, or its human steps answered, only by an admin.
 - **A deactivated team keeps its members' access and its shares.** `Team.isActive` gates managing
-  (creating, editing and moving repositories, leading templates) and the team listing, not
+  (creating, editing and moving repositories, leading templates, saving a per-user credential
+  against a repository, creating an MCP connection) and the team listing, not
   membership: the members of an inactive owning team still reach its repositories, and the members
   of an inactive team a repository was shared with still reach that one. Removing the share is what
   ends a shared team's access, and only active teams of the organization can be chosen when sharing.

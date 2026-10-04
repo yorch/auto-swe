@@ -33,8 +33,10 @@ export async function sameRepositoryIds(prisma: PrismaClient, repoId: string): P
   if (!(own?.organizationName && own.repoName)) {
     return [repoId];
   }
-  const owner = own.organizationName.toLowerCase();
-  const name = own.repoName.toLowerCase();
+  const ownerName = own.organizationName;
+  const repoName = own.repoName;
+  const owner = ownerName.toLowerCase();
+  const name = repoName.toLowerCase();
   const instanceBase = (await resolveGitHubConfig()).baseUrl;
   const ownHost = hostFamily(own.githubUrl ?? instanceBase);
   // Not tenant-filtered on purpose: the identity is global (one unique index
@@ -47,8 +49,8 @@ export async function sameRepositoryIds(prisma: PrismaClient, repoId: string): P
         // An archived row's stuck run must not block the live one; the
         // caller's own row counts whatever its state.
         OR: [{ isActive: true }, { id: repoId }],
-        organizationName: { equals: likeLiteral(own.organizationName), mode: 'insensitive' },
-        repoName: { equals: likeLiteral(own.repoName), mode: 'insensitive' },
+        organizationName: { equals: likeLiteral(ownerName), mode: 'insensitive' },
+        repoName: { equals: likeLiteral(repoName), mode: 'insensitive' },
         type: 'git_repo',
       },
     })

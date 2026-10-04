@@ -223,7 +223,7 @@ describe('GET /api/v1/teams/:id shared repositories', () => {
     expect(sharedRepositories[0].team).toEqual(OWNER);
     // Scoped to this team and to active rows, like the Connections page.
     expect(state.shareQueries?.[0]?.where).toMatchObject({
-      connection: { isActive: true },
+      connection: { isActive: true, type: 'git_repo' },
       teamId: TEAM_ID,
     });
   });

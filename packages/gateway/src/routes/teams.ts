@@ -261,6 +261,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           connection: {
             isActive: true,
+            type: 'git_repo',
             ...(user.role === 'ADMIN' ? {} : permissionRequirement(user, request.repoAccessGate)),
           },
           teamId: team.id,

@@ -379,6 +379,16 @@ function buildAuth() {
               return;
             }
             try {
+              // With several GitHub accounts linked, only unlinking the one the
+              // login was read from forgets it. A login with no recorded source
+              // keeps the old rule: any unlink clears it.
+              const owner = await prisma.user.findUnique({
+                select: { githubLoginAccountId: true },
+                where: { id: account.userId },
+              });
+              if (owner?.githubLoginAccountId && owner.githubLoginAccountId !== account.accountId) {
+                return;
+              }
               await clearGithubLogin(prisma, account.userId);
             } catch (err) {
               console.error(

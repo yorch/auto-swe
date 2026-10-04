@@ -236,6 +236,35 @@ export async function clearGithubLogin(prisma: PrismaClient, userId: string): Pr
 }
 
 /**
+ * {@link clearGithubLogin}, but only if the user still holds exactly the login
+ * (and source account) that was verified. A sign-in can rewrite both while the
+ * lookup is in flight; clearing unconditionally would wipe a login that was just
+ * written, and the access rows with it. Returns whether it cleared.
+ */
+async function clearGithubLoginIfUnchanged(
+  prisma: PrismaClient,
+  userId: string,
+  login: string,
+  accountId: string | null
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const { count } = await tx.user.updateMany({
+      data: { githubLogin: null, githubLoginAccountId: null },
+      where: { githubLogin: login, githubLoginAccountId: accountId, id: userId },
+    });
+    if (count > 0) {
+      await tx.repoAccess.deleteMany({ where: { userId } });
+    }
+    return count > 0;
+  });
+}
+
+const CHANGED_MEANWHILE: LoginOwnershipResult = {
+  reason: 'the login changed while it was being verified',
+  status: 'unverifiable',
+};
+
+/**
  * Verify `login` still names `userId`'s GitHub account, and clear it if not.
  *
  * **Only a confirmed mismatch clears.** A failed lookup leaves the login alone:
@@ -268,8 +297,9 @@ export async function verifyGithubLoginOwnership(
     // safety net for one that slipped past — the login would otherwise back
     // repository access with nothing behind it. Reported as `unlinked` rather
     // than `reassigned` so a failed unlink does not raise the takeover alarm.
-    await clearGithubLogin(prisma, args.userId);
-    return { clearedLogin: args.login, status: 'unlinked' };
+    return (await clearGithubLoginIfUnchanged(prisma, args.userId, args.login, sourceId))
+      ? { clearedLogin: args.login, status: 'unlinked' }
+      : CHANGED_MEANWHILE;
   }
   // A row written before the source account was recorded cannot say which of
   // several linked accounts the login came from, and a login is only comparable
@@ -305,7 +335,9 @@ export async function verifyGithubLoginOwnership(
     return { status: 'ok' };
   }
 
-  await clearGithubLogin(prisma, args.userId);
+  if (!(await clearGithubLoginIfUnchanged(prisma, args.userId, args.login, sourceId))) {
+    return CHANGED_MEANWHILE;
+  }
   await recordTakeover(prisma, args.userId, args.login, currentOwner, account.accountId);
   return { clearedLogin: args.login, status: 'reassigned' };
 }
