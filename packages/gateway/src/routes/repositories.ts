@@ -299,8 +299,8 @@ async function normaliseRepositoryUrls(
  * The `Connection` predicate for repositories on the same host as a (normalised)
  * web base override. Null — the instance's own host — also matches a row whose
  * override spells that host out, which rows written before overrides were
- * normalised, or on a deployment configuring its host only through the
- * environment, can carry. Both mean the same repository.
+ * normalised, or before the instance's host changed, can carry. Both mean the
+ * same repository.
  */
 async function sameHostWhere(githubUrl: string | null): Promise<Prisma.ConnectionWhereInput> {
   if (githubUrl) {

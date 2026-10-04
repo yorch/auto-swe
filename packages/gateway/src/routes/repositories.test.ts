@@ -24,11 +24,12 @@ vi.mock('@auto-swe/shared', () => ({
 
 // URL normalisation compares overrides with the instance's own GitHub hosts;
 // stub the config read so it never reaches the database.
+const instance = vi.hoisted(() => ({
+  apiUrl: 'https://api.github.com',
+  baseUrl: 'https://github.com',
+}));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
-  resolveGitHubConfig: async () => ({
-    apiUrl: 'https://api.github.com',
-    baseUrl: 'https://github.com',
-  }),
+  resolveGitHubConfig: async () => ({ ...instance }),
 }));
 
 import { repositoryRoutes } from './repositories.js';
@@ -323,6 +324,38 @@ describe('repositoryRoutes', () => {
       teamId: TEAM_ID,
       type: 'git_repo',
     };
+
+    it("clears an override spelling out the instance's host however that host is configured", async () => {
+      // `resolveGitHubConfig` is DB-primary with an environment fallback, so a
+      // host configured only through the environment resolves the same way.
+      Object.assign(instance, { apiUrl: 'https://ghe.corp/api/v3', baseUrl: 'https://ghe.corp' });
+      try {
+        ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+        ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(null);
+        ctx.mockPrisma.connection.create.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'POST',
+          payload: {
+            ...validBody,
+            githubApiUrl: 'https://ghe.corp/api/v3',
+            githubUrl: 'https://ghe.corp',
+          },
+          url: '/api/v1/repositories',
+        });
+        expect(res.statusCode).toBe(201);
+        expect(ctx.mockPrisma.connection.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ githubApiUrl: null, githubUrl: null }),
+          })
+        );
+      } finally {
+        Object.assign(instance, {
+          apiUrl: 'https://api.github.com',
+          baseUrl: 'https://github.com',
+        });
+      }
+    });
 
     it('onboards a repository and returns 201', async () => {
       ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });

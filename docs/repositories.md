@@ -292,10 +292,12 @@ longer fit.
   duplicate are rebuilt from the repository's current owner and name, which no API route edits, so
   they match the id a run was started under; a database edit that changes only the casing while a
   run is in flight would leave that run's id unmatched.
-- **An override spelling out the instance host is only cleared when the GitHub integration stores
-  that host.** On a deployment configuring its host through the environment such an override is
-  kept; it works, and onboarding treats it as the same repository as one with no override, but the
-  database's unique index does not, so two onboarding requests racing each other could create both.
+- **Changing the instance's host does not rewrite stored overrides.** An override spelling out the
+  instance's host is cleared when it is written, against the host the integration resolves (the
+  saved one, else the environment's), so two onboarding requests racing each other collide on the
+  database's unique index. A repository onboarded on a host that later becomes the instance's keeps
+  its override: it works, and onboarding treats it as the same repository as one with no override,
+  but the unique index does not.
 - **Some runs can only be controlled by a platform admin.** A run on a global template, against no
   repository, that nobody launched (a webhook start, or one from before launchers were recorded) is
   visible to everyone but can be cancelled, or its human steps answered, only by an admin.
