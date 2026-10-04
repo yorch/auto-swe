@@ -1,10 +1,11 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { ModelSpecPicker } from '@/components/modelConfig/ModelSpecPicker';
 import { Combobox } from '@/components/ui/Combobox';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
+import { RadioGroup } from '@/components/ui/RadioGroup';
 import { Textarea } from '@/components/ui/Textarea';
 import type { SkillRefInput } from '@/hooks/useAgentLibrary';
 import type { McpConnectionRow } from '@/hooks/useMcpConnections';
@@ -40,6 +41,18 @@ type FieldName =
 /** Per-field hint and placeholder copy — each caller explains the fields in its own terms. */
 export type AgentFormCopy = Partial<Record<FieldName, { hint?: string; placeholder?: string }>>;
 
+/** An agent a sub-role can inherit its model from. */
+export interface ParentAgentOption {
+  key: string;
+  name: string;
+  modelSpec: string | null;
+}
+
+function providerOf(spec: string | null | undefined): string | null {
+  const provider = spec?.split('/')[0]?.trim().toLowerCase();
+  return provider ? provider : null;
+}
+
 /**
  * The create / edit body of an Agent modal, shared by the GLOBAL agent library
  * and the per-team overrides section. `create` adds the key field, the
@@ -53,6 +66,7 @@ export function AgentFormFields({
   mcpConnections,
   mode,
   onChange,
+  parentAgents,
   scopeFields,
   skillEditorLabel,
   skillEmptyHint,
@@ -65,6 +79,11 @@ export function AgentFormFields({
   mcpConnections: McpConnectionRow[];
   mode: 'create' | 'edit';
   onChange: (patch: Partial<AgentFormValue>) => void;
+  /**
+   * Agents whose model a sub-role may inherit. Without it (a caller that cannot read the
+   * platform library) the parent is typed as a key.
+   */
+  parentAgents?: ParentAgentOption[];
   /** Create only: scope pickers rendered under the key / name row. */
   scopeFields?: ReactNode;
   /** Label on the add-skill Combobox while no skill is attached. */
@@ -75,6 +94,19 @@ export function AgentFormFields({
   value: AgentFormValue;
 }) {
   const optional = (label: string) => (mode === 'create' ? `${label} (optional)` : label);
+  // An own model wins over an inherited one, so a row carrying both starts as "own".
+  const [modelMode, setModelMode] = useState<'own' | 'inherit'>(
+    !value.modelSpec && value.inheritsModelFrom ? 'inherit' : 'own'
+  );
+  const parentSpec = parentAgents?.find((a) => a.key === value.inheritsModelFrom)?.modelSpec;
+  const modelProvider = providerOf(modelMode === 'own' ? value.modelSpec : parentSpec);
+  // A credential only works for its own provider, so offer just the matching ones — plus the
+  // one already chosen, so a stale pick stays visible instead of silently vanishing.
+  const credentialOptions = (credentials ?? []).filter(
+    (c) =>
+      !modelProvider || c.provider.toLowerCase() === modelProvider || c.id === value.credentialId
+  );
+  const toolKeys = value.toolKeys ?? null;
 
   const nameInput = (
     <Input
@@ -99,7 +131,7 @@ export function AgentFormFields({
     <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
       {mode === 'create' ? (
         <>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
               hint={copy.key?.hint}
               label="Key"
@@ -113,12 +145,36 @@ export function AgentFormFields({
           {descriptionInput}
         </>
       ) : (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {nameInput}
           {descriptionInput}
         </div>
       )}
-      <div className="grid grid-cols-2 gap-4">
+      <RadioGroup
+        legend="Model"
+        name="agent-model-mode"
+        onChange={(next) => {
+          setModelMode(next);
+          // The two bindings are alternatives: choosing one clears the other.
+          onChange(
+            next === 'own' ? { inheritsModelFrom: '' } : { credentialId: null, modelSpec: '' }
+          );
+        }}
+        options={[
+          {
+            description: 'Pick the exact model this agent calls.',
+            label: 'Own model',
+            value: 'own',
+          },
+          {
+            description: "Use another agent's model, so changing it there changes it here.",
+            label: 'Inherit from another agent',
+            value: 'inherit',
+          },
+        ]}
+        value={modelMode}
+      />
+      {modelMode === 'own' ? (
         <ModelSpecPicker
           hint={copy.modelSpec?.hint}
           kind="CHAT"
@@ -127,14 +183,30 @@ export function AgentFormFields({
           placeholder={copy.modelSpec?.placeholder}
           value={value.modelSpec ?? ''}
         />
+      ) : parentAgents ? (
+        <Combobox
+          hint={copy.inheritsModelFrom?.hint}
+          label="Inherit model from"
+          onChange={(v) => onChange({ inheritsModelFrom: v })}
+          options={parentAgents
+            .filter((a) => a.key !== value.key)
+            .map((a) => ({
+              label: `${a.name} (${a.key})${a.modelSpec ? ` — ${a.modelSpec}` : ''}`,
+              textValue: `${a.name} ${a.key}`,
+              value: a.key,
+            }))}
+          placeholder="Choose an agent…"
+          value={value.inheritsModelFrom ?? ''}
+        />
+      ) : (
         <Input
           hint={copy.inheritsModelFrom?.hint}
-          label={optional('Inherits model from')}
+          label="Inherit model from (agent key)"
           onChange={(e) => onChange({ inheritsModelFrom: e.target.value })}
           placeholder={copy.inheritsModelFrom?.placeholder}
           value={value.inheritsModelFrom ?? ''}
         />
-      </div>
+      )}
       <Textarea
         hint={copy.systemPrompt?.hint}
         label={optional('System prompt')}
@@ -145,8 +217,9 @@ export function AgentFormFields({
       />
       <ToolKeysEditor
         inheritHint={toolKeysInheritHint}
+        mcpSelected={Boolean(value.mcpConnectionId)}
         onChange={(v) => onChange({ toolKeys: v })}
-        value={value.toolKeys ?? null}
+        value={toolKeys}
       />
       <FieldWrapper hint={copy.skills?.hint} label="Skills">
         <SkillRefEditor
@@ -160,7 +233,14 @@ export function AgentFormFields({
       <Combobox
         hint={copy.mcpConnection?.hint}
         label={optional('MCP connection')}
-        onChange={(v) => onChange({ mcpConnectionId: v || null })}
+        onChange={(v) => {
+          // A custom tool list without `mcp` never loads the server's tools, so tick it for them.
+          const needsMcpTool = v && toolKeys !== null && !toolKeys.includes('mcp');
+          onChange({
+            mcpConnectionId: v || null,
+            ...(needsMcpTool ? { toolKeys: [...toolKeys, 'mcp'] } : {}),
+          });
+        }}
         options={[
           { label: 'None', value: '' },
           ...mcpConnections.map((c) => ({
@@ -177,7 +257,7 @@ export function AgentFormFields({
           onChange={(v) => onChange({ credentialId: v || null })}
           options={[
             { label: 'None (system default)', value: '' },
-            ...credentials.map((c) => ({
+            ...credentialOptions.map((c) => ({
               label: `${c.provider} ···${c.lastFour}`,
               value: c.id,
             })),

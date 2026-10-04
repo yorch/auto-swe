@@ -1,5 +1,6 @@
 'use client';
 
+import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
@@ -133,11 +134,14 @@ export function ToolKeysEditor({
   value,
   onChange,
   inheritHint = 'Inherits all available tools',
+  mcpSelected = false,
 }: {
   value: string[] | null;
   onChange: (v: string[] | null) => void;
   /** Hint shown while the agent inherits every tool (`toolKeys === null`). */
   inheritHint?: string;
+  /** An MCP connection is bound to the agent, which only loads when `mcp` is ticked. */
+  mcpSelected?: boolean;
 }) {
   const isCustom = value !== null;
 
@@ -155,7 +159,7 @@ export function ToolKeysEditor({
           onChange={(e) => onChange(e.target.checked ? [] : null)}
         />
         {isCustom && (
-          <div className="grid grid-cols-3 gap-x-4 gap-y-1 pl-1">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 pl-1 sm:grid-cols-3">
             {ALL_TOOL_KEYS.map((key) => (
               <Checkbox
                 checked={value?.includes(key) ?? false}
@@ -165,6 +169,18 @@ export function ToolKeysEditor({
               />
             ))}
           </div>
+        )}
+        {isCustom && value.length === 0 && (
+          <Alert variant="warning">
+            No tools are ticked, so this agent cannot read files, edit code or run commands. Tick
+            the tools it needs, or untick custom selection to give it all of them.
+          </Alert>
+        )}
+        {isCustom && mcpSelected && !value.includes('mcp') && (
+          <Alert variant="warning">
+            An MCP connection is selected, but the mcp tool is not ticked, so its tools will not
+            load.
+          </Alert>
         )}
       </div>
     </FieldWrapper>
