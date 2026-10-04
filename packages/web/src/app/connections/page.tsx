@@ -10,6 +10,7 @@ import { MyCredentialModal } from '@/components/repositories/MyCredentialModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
 import { ShareRepoModal } from '@/components/repositories/ShareRepoModal';
+import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -138,6 +139,7 @@ export default function ConnectionsPage() {
         subtitle="External systems — git repos, REST APIs, and other integrations — available to your workflows."
         title="Connections"
       />
+      <SetupBanner items={['connections']} />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {(repos ?? []).map((r) => {
           const isGitRepo = !r.type || r.type === 'git_repo';

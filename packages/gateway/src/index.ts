@@ -63,6 +63,7 @@ import { organizationRoutes } from './routes/organizations.js';
 import { orgBudgetRoutes } from './routes/orgBudget.js';
 import { orgMembersRoutes } from './routes/orgMembers.js';
 import { prdRunRoutes } from './routes/prdRuns.js';
+import { readinessRoutes } from './routes/readiness.js';
 import { repoDependencyRoutes } from './routes/repoDependencies.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
@@ -360,6 +361,7 @@ async function start() {
   // Deprecated alias — kept for one release.
   await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
   await app.register(usageRoutes, { prefix: '/api/v1/platform' });
+  await app.register(readinessRoutes, { prefix: '/api/v1/platform' });
   await app.register(orgMembersRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.
   await app.register(orgMembersRoutes, { prefix: '/api/v1/admin/organizations' });

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { RequestList } from '@/components/requests/RequestList';
+import { SetupReadiness } from '@/components/setup/SetupReadiness';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -68,6 +69,7 @@ export default function HomePage() {
         subtitle="See what needs your attention, follow your work, and review the results."
         title="Home"
       />
+      <SetupReadiness />
       <SegmentedControl
         ariaLabel="Home scope"
         onChange={setScope}

@@ -22,6 +22,7 @@ import {
   useAdminTestCredential,
   useAdminUpdateCredential,
 } from '@/hooks/useModelConfig';
+import { useReadiness } from '@/hooks/useReadiness';
 import { useTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 
@@ -40,6 +41,8 @@ export function CredentialsTab() {
   const { data: credentials, error: loadError, isError, isLoading } = useAdminCredentials();
   const [editing, setEditing] = useState<ProviderCredentialRow | null>(null);
   const [creating, setCreating] = useState(false);
+  // Provider prefilled when "Add credential" is clicked on a missing provider.
+  const [newProvider, setNewProvider] = useState('');
   const [deleting, setDeleting] = useState<ProviderCredentialRow | null>(null);
   const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
   // Per-row pending flag — `useMutation` returns a single `isPending` shared
@@ -51,6 +54,7 @@ export function CredentialsTab() {
   const del = useAdminDeleteCredential();
   const test = useAdminTestCredential();
   const { data: teams } = useTeams();
+  const { data: readiness } = useReadiness();
   const teamName = (id: string) => teams?.find((t) => t.id === id)?.name ?? `${id.slice(0, 8)}…`;
 
   const handleTest = async (id: string) => {
@@ -85,6 +89,40 @@ export function CredentialsTab() {
           New credential
         </Button>
       </CardHeader>
+      {readiness && readiness.providers.length > 0 && (
+        <section aria-label="Providers your agents use" className="mb-5">
+          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-paper-500">
+            Providers your agents use
+          </h3>
+          <ul className="space-y-1.5">
+            {readiness.providers.map((p) => (
+              <li className="flex flex-wrap items-center gap-2 text-sm" key={p.provider}>
+                <span className="font-mono text-xs">{p.provider}</span>
+                <Badge tone={p.present ? 'moss' : 'brick'} variant="text">
+                  {p.present ? 'Credential present' : 'Credential missing'}
+                </Badge>
+                <span className="text-xs text-paper-500">
+                  {p.usedBy.length} {p.usedBy.length === 1 ? 'user' : 'users'}:{' '}
+                  {p.usedBy.slice(0, 4).join(', ')}
+                  {p.usedBy.length > 4 && ` and ${p.usedBy.length - 4} more`}
+                </span>
+                {!p.present && (
+                  <Button
+                    onClick={() => {
+                      setNewProvider(p.provider);
+                      setCreating(true);
+                    }}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Add credential
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="credentials">
         <Table>
           <THead>
@@ -159,8 +197,10 @@ export function CredentialsTab() {
       {(creating || editing) && (
         <CredentialModal
           existing={editing}
+          initialProvider={newProvider}
           onClose={() => {
             setCreating(false);
+            setNewProvider('');
             setEditing(null);
           }}
           onSave={async (body) => {
@@ -194,10 +234,12 @@ export function CredentialsTab() {
 
 function CredentialModal({
   existing,
+  initialProvider = '',
   onClose,
   onSave,
 }: {
   existing: ProviderCredentialRow | null;
+  initialProvider?: string;
   onClose: () => void;
   onSave: (body: {
     provider?: string;
@@ -208,7 +250,7 @@ function CredentialModal({
     apiKey?: string;
   }) => Promise<void>;
 }) {
-  const [provider, setProvider] = useState(existing?.provider ?? '');
+  const [provider, setProvider] = useState(existing?.provider ?? initialProvider);
   const [scope, setScope] = useState<'GLOBAL' | 'TEAM'>(
     existing?.scope === 'TEAM' ? 'TEAM' : 'GLOBAL'
   );
