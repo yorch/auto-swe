@@ -284,9 +284,11 @@ longer fit.
   for lookups) until it is pointed at an installation of its own host. An installation whose host is absent counts as
   a mismatch, so no caller can skip the check by not loading it.
 - **Installation webhook events only update installations an admin has registered, on the host
-  that signed them.** An `installation` event with `deleted` or `suspend` retires the registered
-  installation, `unsuspend` reactivates one that a suspension retired, and an `installation_target`
-  rename updates its account login; each change is audited with no actor. An event for an
+  that signed them.** An `installation` event with `deleted`, `suspend` or `unsuspend` makes the platform ask
+  GitHub for the installation's state with its host's App credentials, and apply only what GitHub
+  reports (retire when deleted or suspended, reactivate a webhook-retired one when active); an
+  `installation_target` rename reads the login from GitHub. A host with no App credentials, or a
+  failed lookup, changes nothing. Each change is audited with no actor. An event for an
   installation nobody registered, or on a host the delivery's secret does not prove, changes nothing,
   so GitHub can never add one. A retirement an admin made is never undone by GitHub, and any admin
   edit of the active flag clears the webhook's claim. An installation on github.com or a `*.ghe.com`

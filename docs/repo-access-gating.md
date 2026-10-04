@@ -193,9 +193,10 @@ pointing at it — with a distinct `INSTALLATION_RETIRED` code, because it is an
 configuration problem rather than a statement about the user. Clones, pushes, CI reads and runs
 already in flight are deliberately unaffected.
 
-GitHub's own lifecycle events set it too: an App uninstall or suspension retires the registered
-installation (`installation` `deleted` / `suspend`, delivered to the App's webhook URL), and an
-unsuspension reactivates it only if a suspension retired it. A retirement made by an admin is never
+GitHub's own lifecycle events set it too: an `installation` `deleted`, `suspend` or `unsuspend`
+delivery to the App's webhook URL makes the platform ask GitHub for the installation's state, and the
+state GitHub reports is applied (retired when deleted or suspended; reactivated only if a webhook
+retired it). A retirement made by an admin is never
 reversed by a webhook, and an admin's edit of the active flag replaces the webhook's. See
 [repositories.md](./repositories.md).
 

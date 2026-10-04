@@ -114,8 +114,9 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       try {
         const updated = await fastify.prisma.gitHubInstallation.update({
-          // An admin's choice about `isActive` is final: it replaces whatever
-          // retired the row, so a later webhook cannot undo it.
+          // An admin's choice about `isActive` replaces whatever retired the row:
+          // clearing `retiredReason` means a later webhook no longer treats the
+          // retirement as its own to reverse.
           data: {
             ...request.body,
             ...(request.body.isActive === undefined ? {} : { retiredReason: null }),

@@ -402,7 +402,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const eventType = request.headers['x-github-event'];
       if (typeof eventType === 'string' && INSTALLATION_EVENT_TYPES.has(eventType)) {
         return {
-          data: await applyInstallationEvent(fastify, eventType, request.body, verified.host),
+          data: await applyInstallationEvent(
+            fastify,
+            eventType,
+            request.body,
+            verified.host,
+            request.headers['x-github-enterprise-host']
+          ),
         };
       }
 
@@ -621,7 +627,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const eventType = (request.headers['x-github-event'] as string | undefined) ?? '';
       if (INSTALLATION_EVENT_TYPES.has(eventType)) {
         return {
-          data: await applyInstallationEvent(fastify, eventType, request.body, verified.host),
+          data: await applyInstallationEvent(
+            fastify,
+            eventType,
+            request.body,
+            verified.host,
+            request.headers['x-github-enterprise-host']
+          ),
         };
       }
       const invalidation = classifyAccessEvent(eventType, request.body);
