@@ -42,6 +42,15 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
 5. Set **Subscribe to events**:
    - Pull request
    - Check run
+   - Installation target (account renames)
+
+   GitHub also sends the App's `installation` events (`deleted`, `suspend`, `unsuspend`) to the
+   webhook URL without a subscription. auto-swe applies them to installations an admin has recorded:
+   an uninstall or suspension retires the installation, an unsuspension reactivates one that a
+   suspension retired, and a rename updates its account login. It never creates an installation, and
+   it never reverses a retirement an admin made. Each change is written to the audit log. The events
+   are accepted at `/api/v1/webhooks/git` and at `/api/v1/webhooks/access`, and are verified and bound
+   to a host like every other delivery.
 6. Under **Where can this GitHub App be installed?**, choose **Only on this account** for a private org app, or **Any account** if you want to share it.
 7. Click **Create GitHub App**.
 8. On the next page, note the **App ID** (shown at the top of the settings page).

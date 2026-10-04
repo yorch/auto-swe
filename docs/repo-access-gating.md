@@ -193,6 +193,12 @@ pointing at it — with a distinct `INSTALLATION_RETIRED` code, because it is an
 configuration problem rather than a statement about the user. Clones, pushes, CI reads and runs
 already in flight are deliberately unaffected.
 
+GitHub's own lifecycle events set it too: an App uninstall or suspension retires the registered
+installation (`installation` `deleted` / `suspend`, delivered to the App's webhook URL), and an
+unsuspension reactivates it only if a suspension retired it. A retirement made by an admin is never
+reversed by a webhook, and an admin's edit of the active flag replaces the webhook's. See
+[repositories.md](./repositories.md).
+
 It is enforced in two places, because not every run starts at the gateway. Every launch route
 refuses one up front, which is what produces the error a caller sees. And the run's first activity
 refuses again at run start, which is what covers the paths that never touch the gateway at all: a

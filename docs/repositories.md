@@ -275,8 +275,15 @@ longer fit.
   recorded for another host gets no token (`REPO_INSTALLATION_HOST_MISMATCH` for runs, `host-mismatch`
   for lookups) until it is pointed at an installation of its own host. An installation whose host is absent counts as
   a mismatch, so no caller can skip the check by not loading it.
-- **No installation webhook events are handled.** Installations are registered by an admin; the
-  platform does not create, rename or retire them from GitHub's `installation` events.
+- **Installation webhook events only update installations an admin has registered, on the host
+  that signed them.** An `installation` event with `deleted` or `suspend` retires the registered
+  installation, `unsuspend` reactivates one that a suspension retired, and an `installation_target`
+  rename updates its account login; each change is audited with no actor. An event for an
+  installation nobody registered, or on a host the delivery's secret does not prove, changes nothing,
+  so GitHub can never add one. A retirement an admin made is never undone by GitHub, and any admin
+  edit of the active flag clears the webhook's claim. An installation on github.com or a `*.ghe.com`
+  host, whose deliveries always use the instance secret, is updated only when that host is the
+  instance's own.
 - **Rolling upgrades can start one ticket twice.** A gateway or worker still running the code that
   built workflow ids from the stored casing starts `eng-Acme-Api-T-1` while an upgraded one starts
   `eng-acme-api-T-1`, and neither sees the other's run as a duplicate. Drain the old gateways and

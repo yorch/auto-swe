@@ -552,6 +552,12 @@ model GitHubInstallation {
   /// GitHub is authoritative, and this is not used to route lookups.
   accountLogin   String @map("account_login")
   isActive       Boolean @default(true) @map("is_active")
+  /// Why a retired installation is retired, when a GitHub webhook did it:
+  /// `webhook:suspend` or `webhook:deleted`. Null for an active installation and
+  /// for one an admin retired. A webhook only ever reverses its own retirement
+  /// (`unsuspend` reactivates a `webhook:suspend` row), so a manual retirement is
+  /// never undone by GitHub, and any admin change to `isActive` clears it.
+  retiredReason  String? @map("retired_reason")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz

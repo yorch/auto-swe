@@ -23,6 +23,7 @@ import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib
 import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
 
 const JiraWebhookSchema = z
@@ -397,6 +398,14 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
+      // The App's own lifecycle events arrive on the same webhook URL.
+      const eventType = request.headers['x-github-event'];
+      if (typeof eventType === 'string' && INSTALLATION_EVENT_TYPES.has(eventType)) {
+        return {
+          data: await applyInstallationEvent(fastify, eventType, request.body, verified.host),
+        };
+      }
+
       const event = normalizeGitHubPullRequestEvent(request.body);
       if (event.type === 'unrecognized') {
         return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
@@ -610,6 +619,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const eventType = (request.headers['x-github-event'] as string | undefined) ?? '';
+      if (INSTALLATION_EVENT_TYPES.has(eventType)) {
+        return {
+          data: await applyInstallationEvent(fastify, eventType, request.body, verified.host),
+        };
+      }
       const invalidation = classifyAccessEvent(eventType, request.body);
       if (invalidation.kind === 'ignored') {
         return { data: { ignored: true, reason: invalidation.reason } };

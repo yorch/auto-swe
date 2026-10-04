@@ -123,4 +123,18 @@ describe('githubInstallationRoutes and the host an installation lives on', () =>
       accountLogin: 'renamed',
     });
   });
+
+  it("an admin's choice about isActive clears the webhook's retirement reason", async () => {
+    admin.prisma.gitHubInstallation.update.mockResolvedValue({ id: 'row' });
+    await admin.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { isActive: false },
+      url: `${BASE}/11111111-1111-4111-8111-111111111111`,
+    });
+    expect(admin.prisma.gitHubInstallation.update.mock.calls[0][0].data).toEqual({
+      isActive: false,
+      retiredReason: null,
+    });
+  });
 });
