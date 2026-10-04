@@ -8,7 +8,7 @@ import {
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
-import { persistActivityTrace } from '../lib/activityContext.js';
+import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -133,9 +133,18 @@ async function doCreateOrUpdatePullRequest(
   }
   const { prNumber, prUrl } = created;
 
-  const workflow = await prisma.activeWorkflow.findFirst({
-    where: { workRequestId: request.workRequestId },
-  });
+  // A work request can have several ledger rows (a scheduled fire's own row
+  // beside the schedule's anchor, one per fire), so an unordered lookup could
+  // link the PR to another execution and aim its CI webhook signals at it.
+  // This execution's own row wins; the request-wide lookup is the fallback for
+  // an execution that keeps no row of its own.
+  const workflow =
+    (await prisma.activeWorkflow.findFirst({
+      where: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },
+    })) ??
+    (await prisma.activeWorkflow.findFirst({
+      where: { workRequestId: request.workRequestId },
+    }));
 
   await prisma.pullRequest.create({
     data: {
