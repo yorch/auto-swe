@@ -708,3 +708,48 @@ describe('the platform credential and the repository host', () => {
     expect(resolveGitHubToken).not.toHaveBeenCalled();
   });
 });
+
+describe('GitHubScmProvider.fetchCiLogs redirects', () => {
+  const provider = new GitHubScmProvider();
+  const redirectTo = (location: string, status = 302) => ({
+    body: null,
+    headers: new Headers({ location }),
+    ok: false,
+    status,
+    text: async () => '',
+  });
+
+  it('follows a redirect to blob storage without the token', async () => {
+    fetchMock.mockResolvedValueOnce(redirectTo('https://blob.example.net/logs/1') as never);
+    const out = await provider.fetchCiLogs('https://github.com/acme/api/actions/runs/1');
+    expect(out).toBe('log body');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const second = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(first[1].redirect).toBe('manual');
+    expect(first[1].headers).toHaveProperty('Authorization');
+    expect(second[0]).toBe('https://blob.example.net/logs/1');
+    expect(second[1].headers).not.toHaveProperty('Authorization');
+  });
+
+  it.each([
+    'http://169.254.169.254/latest/meta-data',
+    'http://127.0.0.1:9000/x',
+    'https://svc.internal/x',
+  ])('refuses a redirect to %s before requesting it', async (location) => {
+    fetchMock.mockResolvedValueOnce(redirectTo(location) as never);
+    await expect(
+      provider.fetchCiLogs('https://github.com/acme/api/actions/runs/1')
+    ).rejects.toThrow(/redirect target refused/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops after a bounded number of hops', async () => {
+    fetchMock.mockResolvedValue(redirectTo('https://blob.example.net/again') as never);
+    await expect(
+      provider.fetchCiLogs('https://github.com/acme/api/actions/runs/1')
+    ).rejects.toThrow(/too many redirects/);
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(5);
+    fetchMock.mockReset();
+  });
+});
