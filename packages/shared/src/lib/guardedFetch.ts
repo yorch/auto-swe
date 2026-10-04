@@ -19,14 +19,14 @@ export class RedirectRefusedError extends Error {
   }
 }
 
-function headerRecord(init: HeadersInit | undefined): Record<string, string> {
+function headerRecord(init: RequestInit['headers']): Record<string, string> {
   if (!init) {
     return {};
   }
   if (init instanceof Headers || Array.isArray(init)) {
     return Object.fromEntries(new Headers(init));
   }
-  return { ...init };
+  return { ...init } as Record<string, string>;
 }
 
 export interface GuardedFetchOptions {

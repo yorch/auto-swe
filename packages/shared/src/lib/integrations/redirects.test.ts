@@ -120,7 +120,7 @@ describe('redirect behaviour against local servers', () => {
       email: 'a@b.com',
       maxRetries: 3,
     });
-    const err = await client.get('/rest/api/3/myself').catch((e) => e);
+    const err = (await client.get('/rest/api/3/myself').catch((e: unknown) => e)) as AtlassianError;
     expect(err).toBeInstanceOf(AtlassianError);
     expect(err.code).toBe('redirect');
     expect(origin.seen).toHaveLength(1);
