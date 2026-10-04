@@ -200,6 +200,55 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(res.json().data.isAgentRun).toBe(expected);
   });
 
+  it('returns the spec snapshot by default and when includeSpec=true', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    for (const qs of ['', '?includeSpec=true']) {
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/workflow-runs/${runId}${qs}`,
+      });
+      expect(res.json().data.specSnapshot).toEqual({});
+    }
+    expect(prisma.workflowRun.findFirst.mock.calls[0]?.[0]).not.toHaveProperty('omit');
+  });
+
+  it('neither reads nor sends the spec snapshot when includeSpec=false, but still returns steps', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    const row = await prisma.workflowRun.findFirst();
+    const { specSnapshot: _spec, ...withoutSpec } = row;
+    prisma.workflowRun.findFirst.mockClear();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      ...withoutSpec,
+      steps: [{ attempt: 1, id: 's1', nodeId: 'n1', status: 'SUCCESS' }],
+    });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}?includeSpec=false`,
+    });
+    expect(res.statusCode).toBe(200);
+    const { data } = res.json();
+    expect('specSnapshot' in data).toBe(false);
+    expect(data.steps).toHaveLength(1);
+    expect(prisma.workflowRun.findFirst.mock.calls[0]?.[0]).toMatchObject({
+      omit: { specSnapshot: true },
+    });
+  });
+
+  it('rejects an includeSpec value other than true/false', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}?includeSpec=0`,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('omits traces when includeTraces=false is explicit', async () => {
     const { app, prisma } = await buildApp();
     mockRun(prisma);

@@ -35,6 +35,11 @@ const RunIdParam = z.object({ id: z.string().uuid() });
 const RunDetailQuery = z.object({
   /** Skip server-side trace payload trimming (forensic deep-dive only). */
   fullTraces: booleanQueryParam(false),
+  /**
+   * Include `specSnapshot`. The spec is fixed when the run starts, so a poller
+   * that holds it asks for `false` and the server neither reads nor sends it.
+   */
+  includeSpec: booleanQueryParam(true),
   includeTraces: booleanQueryParam(false),
 });
 
@@ -487,9 +492,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { fullTraces } = request.query;
+      const { fullTraces, includeSpec } = request.query;
       const includeTraces = request.query.includeTraces || fullTraces;
       const run = await fastify.prisma.workflowRun.findFirst({
+        ...(includeSpec ? {} : { omit: { specSnapshot: true } }),
         include: {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
           template: { select: { name: true, origin: true, teamId: true } },
@@ -529,7 +535,8 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           isAgentRun:
             run.template.teamId === null && run.template.origin === AGENT_RUN_TEMPLATE_ORIGIN,
           result: (run.contextSnapshot as { result?: unknown })?.result ?? null,
-          specSnapshot: run.specSnapshot,
+          // Absent, not null, when the caller declined it: null is a spec a run can have.
+          specSnapshot: includeSpec ? run.specSnapshot : undefined,
           startedAt: run.startedAt,
           status: run.status,
           steps: run.steps.map((s) => ({

@@ -147,13 +147,49 @@ describe('trace live tail', () => {
     // The poll: the run without traces, and the tail from the cursor.
     expect(urls.slice(1)).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/\/api\/v1\/workflow-runs\/run-1$/),
+        expect.stringMatching(/\/api\/v1\/workflow-runs\/run-1\?includeSpec=false$/),
         expect.stringContaining(
           `/api/v1/workflow-runs/run-1/traces?since=${encodeURIComponent('2026-09-01T09:59:50.000Z')}`
         ),
       ])
     );
     await waitFor(() => expect(result.current.data?.traces.map((t) => t.id)).toEqual(['t1', 't2']));
+  });
+
+  it('reads the spec snapshot once and carries it through every later poll', async () => {
+    let steps = 1;
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/traces')) {
+        return json({ data: [], serverTime: '2026-09-01T10:00:40.000Z', total: 0 });
+      }
+      const withSpec = !url.includes('includeSpec=false');
+      return json({
+        data: {
+          id: 'run-1',
+          status: 'RUNNING',
+          steps: Array.from({ length: steps }, (_, i) => ({ id: `s${i}` })),
+          traces: [],
+          ...(withSpec ? { specSnapshot: { nodes: ['a'] } } : {}),
+        },
+      });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useWorkflowRun('run-1'), { wrapper });
+    await waitFor(() => expect(result.current.data?.specSnapshot).toEqual({ nodes: ['a'] }));
+
+    steps = 2;
+    await act(() => result.current.refetch());
+
+    // Steps moved on, the spec stayed, and the poll never asked for it again.
+    await waitFor(() => expect(result.current.data?.steps).toHaveLength(2));
+    expect(result.current.data?.specSnapshot).toEqual({ nodes: ['a'] });
+    const runReads = fetchSpy.mock.calls
+      .map(([u]) => String(u))
+      .filter((u) => !u.includes('/traces'));
+    expect(runReads[0]).not.toContain('includeSpec');
+    expect(runReads.slice(1).every((u) => u.includes('includeSpec=false'))).toBe(true);
   });
 
   /**
@@ -298,7 +334,9 @@ describe('trace live tail', () => {
 
     const urls = fetchSpy.mock.calls.map(([u]) => String(u));
     expect(urls).toHaveLength(2);
-    expect(urls.every((u) => u.endsWith('?fullTraces=true'))).toBe(true);
+    // Both are whole-run reads, never the tail; the second also skips the spec it holds.
+    expect(urls[0]).toMatch(/run-1\?fullTraces=true$/);
+    expect(urls[1]).toMatch(/run-1\?fullTraces=true&includeSpec=false$/);
   });
 });
 
