@@ -1,3 +1,4 @@
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -54,11 +55,16 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
       if (!agent) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
       }
-      const versions = await fastify.prisma.agent.findMany({
-        include: WITH_SKILLS,
-        orderBy: { version: 'desc' },
-        where: lineageWhere(agent),
-      });
+      const versions = await runUnscoped(
+        'admin reads the version history of one agent lineage at any scope',
+        ['Agent'],
+        () =>
+          fastify.prisma.agent.findMany({
+            include: WITH_SKILLS,
+            orderBy: { version: 'desc' },
+            where: lineageWhere(agent),
+          })
+      );
       const authorIds = [
         ...new Set(versions.map((v) => v.createdById).filter(Boolean)),
       ] as string[];

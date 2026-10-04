@@ -38,7 +38,7 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/readiness', { onRequest: adminOnly }, async () => {
     const { agents, credentials, embedding, connectionCount } = await runUnscoped(
       'setup readiness spans every team',
-      ['Agent', 'Connection'],
+      ['Agent', 'Connection', 'ProviderCredential'],
       async () => {
         const [agents, credentials, embedding, connectionCount] = await Promise.all([
           fastify.prisma.agent.findMany({
