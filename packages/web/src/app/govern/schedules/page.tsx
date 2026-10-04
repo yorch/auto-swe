@@ -1,7 +1,7 @@
 'use client';
 
 import type { ScheduledWorkRequestSummary } from '@auto-swe/shared/types/api';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -57,10 +57,45 @@ const EMPTY_FORM: ScheduleForm = {
   templateId: '',
 };
 
-function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [form, setForm] = useState<ScheduleForm>(EMPTY_FORM);
+const BUDGET_TIER_OPTIONS = [
+  { label: 'Standard', value: 'STANDARD' },
+  { label: 'Large', value: 'LARGE' },
+  { label: 'Epic', value: 'EPIC' },
+];
+
+function formFromSchedule(s: ScheduledWorkRequestSummary): ScheduleForm {
+  return {
+    budgetTier:
+      (['STANDARD', 'LARGE', 'EPIC'] as const).find((t) => t === s.budgetTier) ?? 'STANDARD',
+    cronExpression: s.cronExpression,
+    description: s.description,
+    externalTicketPrefix: s.externalTicketPrefix,
+    name: s.name,
+    repoId: s.repository.id,
+    teamId: s.team?.id ?? '',
+    templateId: s.template?.id ?? '',
+  };
+}
+
+/** Creates a schedule, or — given `schedule` — edits the parts of one that can change. */
+function ScheduleFormModal({
+  open,
+  onClose,
+  schedule,
+}: {
+  open: boolean;
+  onClose: () => void;
+  schedule?: ScheduledWorkRequestSummary;
+}) {
+  const editing = schedule !== undefined;
+  // Ids are per instance: the create and edit dialogs are both on the page.
+  const uid = useId();
+  const [form, setForm] = useState<ScheduleForm>(() =>
+    schedule ? formFromSchedule(schedule) : EMPTY_FORM
+  );
   const [error, setError] = useState<string | null>(null);
   const create = useCreateSchedule();
+  const update = useUpdateSchedule();
   const { data: repos } = useRepositories();
   const { data: templates } = useWorkflowTemplates();
   const isAdmin = useHasRole('ADMIN');
@@ -84,6 +119,19 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
     e.preventDefault();
     setError(null);
     try {
+      if (schedule) {
+        // The repository, ticket prefix and owning team are fixed at creation.
+        await update.mutateAsync({
+          budgetTier: form.budgetTier,
+          cronExpression: form.cronExpression,
+          description: form.description,
+          id: schedule.id,
+          name: form.name,
+          templateId: form.templateId || null,
+        });
+        onClose();
+        return;
+      }
       await create.mutateAsync({
         budgetTier: form.budgetTier,
         cronExpression: form.cronExpression,
@@ -97,38 +145,40 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
       onClose();
       setForm(EMPTY_FORM);
     } catch (err) {
-      setError(errMsg(err, 'Failed to create schedule'));
+      setError(errMsg(err, editing ? 'Failed to save the schedule' : 'Failed to create schedule'));
     }
   }
 
   return (
-    <Modal onClose={onClose} open={open} title="New schedule">
+    <Modal onClose={onClose} open={open} title={editing ? 'Edit schedule' : 'New schedule'}>
       <form className="space-y-4" onSubmit={handleSubmit}>
         <Input
-          id="schedule-name"
+          id={`${uid}-name`}
           label="Name"
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           placeholder="Weekly dependency update"
           required
           value={form.name}
         />
-        <Combobox
-          id="schedule-repo"
-          label="Repository"
-          onChange={(v) => setForm((f) => ({ ...f, repoId: v }))}
-          options={(repos ?? [])
-            .filter((r) => r.isActive)
-            .map((r) => ({
-              label: `${r.organizationName}/${r.repoName}`,
-              value: r.id,
-            }))}
-          placeholder="Select a repository…"
-          required
-          value={form.repoId}
-        />
-        {showTeamPicker && (
+        {!editing && (
           <Combobox
-            id="schedule-team"
+            id={`${uid}-repo`}
+            label="Repository"
+            onChange={(v) => setForm((f) => ({ ...f, repoId: v }))}
+            options={(repos ?? [])
+              .filter((r) => r.isActive)
+              .map((r) => ({
+                label: `${r.organizationName}/${r.repoName}`,
+                value: r.id,
+              }))}
+            placeholder="Select a repository…"
+            required
+            value={form.repoId}
+          />
+        )}
+        {!editing && showTeamPicker && (
+          <Combobox
+            id={`${uid}-team`}
             label="Owning team"
             onChange={(v) => setForm((f) => ({ ...f, teamId: v }))}
             options={eligibleTeams.map((t) => ({ label: t.name, value: t.id }))}
@@ -137,35 +187,39 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
         )}
         <div className="grid grid-cols-2 gap-4">
           <Input
-            id="schedule-cron"
+            hint="Minute hour day month weekday, in UTC. 0 3 * * 1 is Mondays at 03:00."
+            id={`${uid}-cron`}
             label="Cron (5-field, UTC)"
             onChange={(e) => setForm((f) => ({ ...f, cronExpression: e.target.value }))}
             placeholder="0 3 * * 1"
             required
             value={form.cronExpression}
           />
-          <Input
-            id="schedule-ticket-prefix"
-            label="Ticket prefix"
-            onChange={(e) => setForm((f) => ({ ...f, externalTicketPrefix: e.target.value }))}
-            placeholder="DEPS"
-            required
-            value={form.externalTicketPrefix}
-          />
+          {!editing && (
+            <Input
+              hint="Names the ticket and branch every run of this schedule uses."
+              id={`${uid}-ticket-prefix`}
+              label="Ticket prefix"
+              onChange={(e) => setForm((f) => ({ ...f, externalTicketPrefix: e.target.value }))}
+              placeholder="DEPS"
+              required
+              value={form.externalTicketPrefix}
+            />
+          )}
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Combobox
-            id="schedule-template"
-            label="Template (blank → team default)"
+            id={`${uid}-template`}
+            label="Workflow template"
             onChange={(v) => setForm((f) => ({ ...f, templateId: v }))}
             options={[
-              { label: 'Team default (resolved on save)', value: '' },
+              { label: 'Team default', value: '' },
               ...(templates ?? []).map((t) => ({ label: t.name, value: t.id })),
             ]}
             value={form.templateId}
           />
           <Select
-            id="schedule-budget-tier"
+            id={`${uid}-budget-tier`}
             label="Budget tier"
             onChange={(v) =>
               setForm((f) => ({
@@ -173,16 +227,12 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
                 budgetTier: v as ScheduleForm['budgetTier'],
               }))
             }
-            options={[
-              { label: 'STANDARD', value: 'STANDARD' },
-              { label: 'LARGE', value: 'LARGE' },
-              { label: 'EPIC', value: 'EPIC' },
-            ]}
+            options={BUDGET_TIER_OPTIONS}
             value={form.budgetTier}
           />
         </div>
         <Textarea
-          id="schedule-description"
+          id={`${uid}-description`}
           label="Description (what the agent should do each fire)"
           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           placeholder="Update all dependencies to their latest compatible versions and fix any breakages."
@@ -190,12 +240,19 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
           rows={4}
           value={form.description}
         />
+        {editing && (
+          <p className="text-xs text-paper-500">
+            Saving changes to what the schedule does, when it runs or how much it may spend makes it
+            run as you from now on, using your saved GitHub token. The change is recorded in the
+            audit log.
+          </p>
+        )}
         {error && <Alert variant="error">{error}</Alert>}
         <ModalFooter
-          isPending={create.isPending}
+          isPending={create.isPending || update.isPending}
           onCancel={onClose}
-          pendingLabel="Creating…"
-          submitLabel="Create schedule"
+          pendingLabel={editing ? 'Saving…' : 'Creating…'}
+          submitLabel={editing ? 'Save changes' : 'Create schedule'}
         />
       </form>
     </Modal>
@@ -205,9 +262,11 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
 function ScheduleRow({
   schedule,
   onDelete,
+  onEdit,
 }: {
   schedule: ScheduledWorkRequestSummary;
   onDelete: () => void;
+  onEdit: () => void;
 }) {
   const update = useUpdateSchedule();
   const fire = useFireSchedule();
@@ -269,7 +328,7 @@ function ScheduleRow({
           {mismatch && (
             <Badge
               className="ml-2"
-              title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but Temporal has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
+              title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but the scheduler has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
               tone="brick"
               uppercase
               variant="text"
@@ -278,8 +337,14 @@ function ScheduleRow({
             </Badge>
           )}
           {!schedule.schedule.exists && (
-            <Badge className="ml-2" tone="brick" uppercase variant="text">
-              missing in temporal
+            <Badge
+              className="ml-2"
+              title="The scheduler has no trigger for this schedule. Edit and save it to create the trigger again."
+              tone="brick"
+              uppercase
+              variant="text"
+            >
+              Not running — re-save to repair
             </Badge>
           )}
         </Td>
@@ -288,32 +353,40 @@ function ScheduleRow({
           {fmtTime(schedule.schedule.lastRunAt ?? schedule.lastFiredAt)}
         </Td>
         <Td className="py-2 text-right">
-          <div className="flex justify-end gap-1">
-            <Button
-              disabled={fire.isPending || !schedule.isActive}
-              onClick={() =>
-                takesOver ? setConfirmFire(true) : run(() => fire.mutateAsync(schedule.id))
-              }
-              size="sm"
-              title={schedule.isActive ? undefined : 'Paused: resume the schedule before firing it'}
-              variant="ghost"
-            >
-              {fire.isPending ? 'Firing…' : 'Fire now'}
-            </Button>
-            <Button
-              disabled={update.isPending}
-              onClick={() =>
-                resume && takesOver && !schedule.isActive ? setConfirmResume(true) : run(toggle)
-              }
-              size="sm"
-              variant="ghost"
-            >
-              {resume ? 'Resume' : 'Pause'}
-            </Button>
-            <Button onClick={onDelete} size="sm" variant="danger">
-              Delete
-            </Button>
-          </div>
+          {schedule.canManage ? (
+            <div className="flex justify-end gap-1">
+              {/* One source of truth for "is it running": the live state the badge shows. */}
+              <Button
+                disabled={fire.isPending || livePaused}
+                onClick={() =>
+                  takesOver ? setConfirmFire(true) : run(() => fire.mutateAsync(schedule.id))
+                }
+                size="sm"
+                title={livePaused ? 'Paused: resume the schedule before firing it' : undefined}
+                variant="ghost"
+              >
+                {fire.isPending ? 'Firing…' : 'Fire now'}
+              </Button>
+              <Button onClick={onEdit} size="sm" variant="ghost">
+                Edit
+              </Button>
+              <Button
+                disabled={update.isPending}
+                onClick={() =>
+                  resume && takesOver && !schedule.isActive ? setConfirmResume(true) : run(toggle)
+                }
+                size="sm"
+                variant="ghost"
+              >
+                {resume ? 'Resume' : 'Pause'}
+              </Button>
+              <Button onClick={onDelete} size="sm" variant="danger">
+                Delete
+              </Button>
+            </div>
+          ) : (
+            <span className="text-[11px] text-paper-500">Team leads manage this schedule</span>
+          )}
         </Td>
       </TRow>
       <ConfirmModal
@@ -345,6 +418,11 @@ function ScheduleRow({
 
 export default function GovernSchedulesPage() {
   const [newOpen, setNewOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<ScheduledWorkRequestSummary | null>(null);
+  const isAdmin = useHasRole('ADMIN');
+  const ledTeamIds = useLedTeamIds();
+  // Mirrors the gateway: an ADMIN, or a lead of the owning or a shared team.
+  const canCreate = isAdmin || (ledTeamIds?.size ?? 0) > 0;
   const [deleteTarget, setDeleteTarget] = useState<ScheduledWorkRequestSummary | null>(null);
   const deleteSchedule = useDeleteSchedule();
   const { data: schedules, isLoading, isError, error: loadError } = useSchedules();
@@ -353,12 +431,19 @@ export default function GovernSchedulesPage() {
     <div className="space-y-8">
       <PageHeader
         actions={
-          <Button onClick={() => setNewOpen(true)} variant="primary">
-            Create schedule
-          </Button>
+          <div className="flex flex-col items-end gap-1">
+            <Button disabled={!canCreate} onClick={() => setNewOpen(true)} variant="primary">
+              Create schedule
+            </Button>
+            {!canCreate && ledTeamIds && (
+              <span className="text-[11px] text-paper-500">
+                Only team leads can create schedules
+              </span>
+            )}
+          </div>
         }
         chapter="§ Govern"
-        subtitle="Standing automation: each schedule fires the workflow engine on a cron cadence against one repository (e.g. a weekly dependency update). Fires reuse the same synthetic ticket and branch; runs appear in Run History attributed to the schedule's standing work request. Templates are snapshotted when the schedule is saved."
+        subtitle="Recurring work: each schedule starts a workflow on a repeating timetable against one repository, such as a weekly dependency update. Every run reuses the same ticket and branch, so an open pull request is updated instead of duplicated. Runs appear in your run history. The workflow template is fixed when you save the schedule."
         title="Scheduled work requests"
       />
 
@@ -375,7 +460,7 @@ export default function GovernSchedulesPage() {
                 <Th variant="compact">Name</Th>
                 <Th variant="compact">Repository</Th>
                 <Th variant="compact">Cron</Th>
-                <Th variant="compact">Template</Th>
+                <Th variant="compact">Workflow template</Th>
                 <Th variant="compact">Status</Th>
                 <Th variant="compact">Next fire</Th>
                 <Th variant="compact">Last fire</Th>
@@ -383,7 +468,12 @@ export default function GovernSchedulesPage() {
               </THead>
               <tbody>
                 {schedules.map((s) => (
-                  <ScheduleRow key={s.id} onDelete={() => setDeleteTarget(s)} schedule={s} />
+                  <ScheduleRow
+                    key={s.id}
+                    onDelete={() => setDeleteTarget(s)}
+                    onEdit={() => setEditTarget(s)}
+                    schedule={s}
+                  />
                 ))}
               </tbody>
             </Table>
@@ -392,10 +482,19 @@ export default function GovernSchedulesPage() {
       </Card>
 
       <ScheduleFormModal onClose={() => setNewOpen(false)} open={newOpen} />
+      {/* Keyed by schedule so each edit starts from that schedule's current values. */}
+      {editTarget && (
+        <ScheduleFormModal
+          key={editTarget.id}
+          onClose={() => setEditTarget(null)}
+          open
+          schedule={editTarget}
+        />
+      )}
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message="This removes the schedule and its Temporal Schedule. Past runs and their history are kept."
+        message="This removes the schedule and stops its future runs. Past runs and their history are kept."
         onClose={() => setDeleteTarget(null)}
         onConfirm={async () => {
           if (deleteTarget) {

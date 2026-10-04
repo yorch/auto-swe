@@ -778,6 +778,8 @@ export interface ScheduledWorkRequestSummary {
   externalTicketId: string;
   budgetTier: string;
   isActive: boolean;
+  /** Whether the caller may edit, fire, pause or delete this schedule. */
+  canManage: boolean;
   repository: { id: string; organizationName: string; repoName: string };
   /** Explicit template override; null → repo team default at save time. */
   template: { id: string; name: string } | null;
