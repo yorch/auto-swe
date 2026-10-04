@@ -43,7 +43,12 @@ function hash128(text: string): string {
  * Temporal Schedule. The trace id is a hash of the run chain's identity, so
  * every activity of the run (continuations and children included, since they
  * carry this header on) lands in one trace instead of one root trace each.
- * There is no parent span: the first span in the trace is a root.
+ *
+ * The span id is the first 16 hex digits of the trace id, and propagators read
+ * it as a valid remote parent that was never exported, so the activities are
+ * children of a span Tempo does not have — not roots. Flag `01` (sampled) is
+ * deliberate: under a parent-based sampler it is what makes a schedule-started
+ * run get sampled at all.
  */
 function derivedCarrier(): Payload {
   const { workflowId, firstExecutionRunId } = workflowInfo();
@@ -87,6 +92,8 @@ export const interceptors = (): WorkflowInterceptors => {
       {
         execute(input, next) {
           carried = input.headers[TRACE_CONTEXT_HEADER] ?? derivedCarrier();
+          // A child or continuation inherits the parent's newest signal link.
+          signalCarried = input.headers[TRACE_SIGNAL_HEADER];
           return next(input);
         },
         handleSignal(input, next) {

@@ -739,13 +739,13 @@ that never load OpenTelemetry into the workflow isolate:
 
 | Hop | Where | What it does |
 |---|---|---|
-| Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start, signal-with-start, signal and update |
-| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new. A run that arrives without one gets a derived carrier: a trace id hashed from its workflow id and first run id (pure arithmetic, so replay-stable), with no parent span. The newest signal's or update's header travels beside it as `x-auto-swe-trace-signal` |
+| Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start and signal-with-start, and — on the gateway's client only — every signal and update |
+| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new. A run that arrives without one gets a derived carrier: a trace id hashed from its workflow id and first run id (pure arithmetic, so replay-stable), whose span id is derived too, so the parent is a span that was never exported. The newest signal's or update's header travels beside it as `x-auto-swe-trace-signal` |
 | Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the starter's span, with a span link to the signal's span when the signal header is present |
 
 So a gateway request — its Fastify and HTTP server spans — and every activity of the run it
 started, child workflows included, are one trace in Tempo. A workflow started without a span around
-it (a Temporal schedule) gets one trace per run from the derived carrier, whose first span is a root. An
+it (a Temporal schedule) gets one trace per run from the derived carrier; its activities are children of a derived parent span that is never exported, and the carrier is flagged sampled so a parent-based sampler keeps them. An
 approval or steering signal does not move the run into the sender's trace: activities scheduled after
 it link to the signal's span instead, so the approval request is one click from the work it released.
 Headers are not part of the command

@@ -116,6 +116,11 @@ describe('trace context propagation through a workflow', () => {
     expect(spans).toHaveLength(2);
     expect(new Set(spans.map((s) => s.spanContext().traceId)).size).toBe(1);
     expect(spans[0]?.spanContext().traceId).toMatch(/^[0-9a-f]{32}$/);
+    // Not a root: the derived carrier names a parent span that is never exported.
+    const traceId = spans[0]?.spanContext().traceId as string;
+    for (const sp of spans) {
+      expect(sp.parentSpanContext?.spanId).toBe(traceId.slice(0, 16));
+    }
 
     // A different run derives a different trace.
     exporter.reset();
@@ -161,6 +166,35 @@ describe('trace context propagation through a workflow', () => {
       ).resolves.toBeUndefined();
     }
   }, 60_000);
+
+  it("keeps a signal's link on the activities of a child workflow started after it", async () => {
+    const handle = await client.workflow.start('TraceSignalParentWorkflow', {
+      taskQueue: TASK_QUEUE,
+      workflowId: 'trace-signal-2',
+    });
+    const approval = await trace
+      .getTracer('test')
+      .startActiveSpan('POST /approve', async (span) => {
+        await handle.signal('poke');
+        span.end();
+        return span.spanContext();
+      });
+    await handle.result();
+
+    const [child] = activitySpans();
+    expect(child?.links).toHaveLength(1);
+    expect(child?.links[0]?.context.spanId).toBe(approval.spanId);
+  }, 60_000);
+
+  it('stamps signals only when the client propagates them', () => {
+    expect(traceContextClientInterceptor().signal).toBeTypeOf('function');
+    expect(traceContextClientInterceptor().startUpdate).toBeTypeOf('function');
+    const quiet = traceContextClientInterceptor({ propagateSignals: false });
+    expect(quiet.signal).toBeUndefined();
+    expect(quiet.startUpdate).toBeUndefined();
+    expect(quiet.startWithDetails).toBeTypeOf('function');
+    expect(quiet.signalWithStart).toBeTypeOf('function');
+  });
 
   it('replays a history that carries the header with or without the interceptor', async () => {
     await trace.getTracer('test').startActiveSpan('request', async (span) => {

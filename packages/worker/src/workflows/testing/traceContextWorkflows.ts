@@ -28,6 +28,16 @@ export async function TraceParentWorkflow(): Promise<void> {
 
 const poke = defineSignal('poke');
 
+/** Waits for a signal, then runs a child whose activity should still link to it. */
+export async function TraceSignalParentWorkflow(): Promise<void> {
+  let poked = false;
+  setHandler(poke, () => {
+    poked = true;
+  });
+  await condition(() => poked);
+  await executeChild(TraceChildWorkflow, { workflowId: `${workflowInfo().workflowId}-child` });
+}
+
 /** Waits for a signal, then runs an activity — the shape of an approval gate. */
 export async function TraceSignalWorkflow(): Promise<void> {
   let poked = false;
