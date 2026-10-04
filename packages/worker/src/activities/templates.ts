@@ -2,7 +2,7 @@ import type { Prisma } from '@auto-swe/shared';
 import type { SettingResolveCtx } from '@auto-swe/shared/config';
 import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
@@ -488,7 +488,6 @@ export async function finalizeRun(
           activeWorkflows: {
             select: {
               costUsdAccrued: true,
-              repository: { select: { team: { select: { orgId: true } } } },
               temporalWorkflowId: true,
               tokensInputUsed: true,
               tokensOutputUsed: true,
@@ -594,12 +593,22 @@ export async function finalizeRun(
 
   // An epic's work request targets no single connection, so an epic child
   // reaches its org through its own run's connection, else its own ledger row's
-  // repository. The same order `orgMonthSpend` and the mid-run cap use, so a run
-  // is billed to the org the cap counted it under.
-  const orgId =
-    run?.workRequest?.connection?.team?.orgId ??
-    (run?.workRequest?.connectionId ? undefined : run?.connection?.team?.orgId) ??
-    ownWorkflows[0]?.repository?.team?.orgId;
+  // repository. The order `readOrgMonthSpend` and `resolveBilledOrg` (the mid-run
+  // cap) also use, so a run is billed to the org the cap counted it under.
+  let orgId = billedOrgId({
+    requestConnectionId: run?.workRequest?.connectionId,
+    requestOrgId: run?.workRequest?.connection?.team?.orgId,
+    runOrgId: run?.connection?.team?.orgId,
+  });
+  if (!orgId && run?.workflowId) {
+    // The ledger row is read by workflow id whether or not it is linked to the
+    // work request, as the cap guard reads it, so both find the same org.
+    const ledger = await prisma.activeWorkflow.findFirst({
+      select: { repository: { select: { team: { select: { orgId: true } } } } },
+      where: { temporalWorkflowId: run.workflowId },
+    });
+    orgId = ledger?.repository?.team?.orgId ?? null;
+  }
 
   // A run the dashboard cancelled ends CANCELLED whatever the workflow reports
   // (`endWorkflowRun`), and everything below follows the status it ended with.

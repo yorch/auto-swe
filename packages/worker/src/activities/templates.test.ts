@@ -879,6 +879,73 @@ describe('finalizeWorkflowRun', () => {
     orgUpsert.mockReset();
   });
 
+  describe('which org a finalized run is billed to', () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const findLedger = vi.mocked(prisma.activeWorkflow.findFirst);
+    const runRow = (over: Record<string, unknown>) =>
+      ({
+        endedAt: null,
+        workflowId: 'wf-org',
+        workRequest: { activeWorkflows: [], connection: null, connectionId: null, payload: null },
+        ...over,
+      }) as never;
+    async function billedTo(row: never, ledgerOrg?: string): Promise<string | undefined> {
+      const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+      orgUpsert.mockClear();
+      findLedger.mockResolvedValue(
+        ledgerOrg ? ({ repository: { team: { orgId: ledgerOrg } } } as never) : null
+      );
+      updateManyRuns.mockReset();
+      updateManyRuns.mockResolvedValue({ count: 1 } as never);
+      findRun.mockResolvedValue(row);
+      await finalizeWorkflowRun('run-org', 'SUCCESS');
+      return (orgUpsert.mock.calls[0]?.[0] as { create: { orgId: string } } | undefined)?.create
+        .orgId;
+    }
+
+    afterEach(() => {
+      findRun.mockReset();
+      findLedger.mockReset();
+      findLedger.mockResolvedValue(null);
+    });
+
+    it("bills the request's connection's org even when the run has a different connection", async () => {
+      const row = runRow({
+        connection: { team: { orgId: 'org-run' } },
+        workRequest: {
+          activeWorkflows: [],
+          connection: { team: { orgId: 'org-request' } },
+          connectionId: 'c',
+          payload: null,
+        },
+      });
+      expect(await billedTo(row, 'org-ledger')).toBe('org-request');
+    });
+
+    it("does not use the run's connection when the request named one whose team has no org", async () => {
+      const row = runRow({
+        connection: { team: { orgId: 'org-run' } },
+        workRequest: {
+          activeWorkflows: [],
+          connection: { team: { orgId: null } },
+          connectionId: 'c',
+          payload: null,
+        },
+      });
+      expect(await billedTo(row)).toBeUndefined();
+      expect(await billedTo(row, 'org-ledger')).toBe('org-ledger');
+    });
+
+    it("uses the run's connection when the request names none", async () => {
+      const row = runRow({ connection: { team: { orgId: 'org-run' } } });
+      expect(await billedTo(row, 'org-ledger')).toBe('org-run');
+    });
+
+    it('falls back to the ledger repository for a run with no work request and no connection', async () => {
+      expect(await billedTo(runRow({ workRequest: null }), 'org-ledger')).toBe('org-ledger');
+    });
+  });
+
   it('fires no user-facing side effect when notify is off, and all of them when it is on', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const notify = vi.mocked(notifySlackRunComplete);

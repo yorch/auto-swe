@@ -39,9 +39,10 @@ export interface OrgMonthSpend {
  * never neither. Read-only; it takes no lock. When the pool cannot give the
  * snapshot a connection in time (P2028), the same reads run without it.
  *
- * Mirrors `finalizeWorkflowRun`'s attribution: the work request's connection,
- * else (an epic child, whose request spans repositories) the run's own
- * repository.
+ * Attributes a run as `billedOrgId` does, which `finalizeRun` and the mid-run
+ * cap guard use: the work request's connection, else — only when the request
+ * names none — the run's own connection, else the run's own ledger row's
+ * repository. The reads below are that rule written as filters.
  */
 export async function orgMonthSpend(db: PrismaClient, orgId: string): Promise<OrgMonthSpend> {
   try {
@@ -67,6 +68,30 @@ function isTransactionTimeout(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === 'P2028';
 }
 
+/**
+ * The organization a run's spend is billed to, from what each source says.
+ * The one definition of the order; `readOrgMonthSpend` below states it as
+ * database filters, since it has to find runs rather than resolve one.
+ *
+ * The run's own connection counts only when the work request names no
+ * connection of its own: a request that does decides, and when that
+ * connection's team has no organization the run is not billed through the
+ * run's connection instead. The ledger row's repository is the last resort.
+ */
+export function billedOrgId(sources: {
+  requestConnectionId?: string | null;
+  requestOrgId?: string | null;
+  runOrgId?: string | null;
+  ledgerOrgId?: string | null;
+}): string | null {
+  return (
+    sources.requestOrgId ??
+    (sources.requestConnectionId ? null : sources.runOrgId) ??
+    sources.ledgerOrgId ??
+    null
+  );
+}
+
 async function readOrgMonthSpend(
   db: Prisma.TransactionClient,
   orgId: string
@@ -79,22 +104,50 @@ async function readOrgMonthSpend(
   });
   // Unfinalized by `endedAt`, not status: a dashboard-cancelled run is
   // CANCELLED with `endedAt` null until its workflow finalizes and bills it.
-  const runs = await db.workflowRun.findMany({
-    select: { id: true, workflowId: true },
-    where: {
-      endedAt: null,
-      OR: [
-        { workRequest: { connection: { team: { orgId } } } },
-        { connection: { team: { orgId } }, workRequest: { connectionId: null } },
-      ],
-    },
-  });
-  const ledgers = runs.length
-    ? await db.activeWorkflow.findMany({
-        select: { costUsdAccrued: true, temporalWorkflowId: true },
-        where: { temporalWorkflowId: { in: runs.map((r) => r.workflowId) } },
-      })
-    : [];
+  // `runs` are the runs a connection places in the org; `unplaced` are the
+  // unfinalized runs no connection places anywhere, which only a ledger row's
+  // repository can (the two sets are disjoint).
+  const [runs, unplaced] = await Promise.all([
+    db.workflowRun.findMany({
+      select: { id: true, workflowId: true },
+      where: {
+        endedAt: null,
+        OR: [
+          { workRequest: { connection: { team: { orgId } } } },
+          {
+            connection: { team: { orgId } },
+            OR: [{ workRequestId: null }, { workRequest: { connectionId: null } }],
+          },
+        ],
+      },
+    }),
+    db.workflowRun.findMany({
+      select: { workflowId: true },
+      where: {
+        connectionId: null,
+        endedAt: null,
+        OR: [{ workRequestId: null }, { workRequest: { connectionId: null } }],
+      },
+    }),
+  ]);
+  const [directLedgers, placedByLedger] = await Promise.all([
+    runs.length
+      ? db.activeWorkflow.findMany({
+          select: { costUsdAccrued: true, temporalWorkflowId: true },
+          where: { temporalWorkflowId: { in: runs.map((r) => r.workflowId) } },
+        })
+      : [],
+    unplaced.length
+      ? db.activeWorkflow.findMany({
+          select: { costUsdAccrued: true, temporalWorkflowId: true },
+          where: {
+            repository: { team: { orgId } },
+            temporalWorkflowId: { in: unplaced.map((r) => r.workflowId) },
+          },
+        })
+      : [],
+  ]);
+  const ledgers = [...directLedgers, ...placedByLedger];
   const withLedger = new Set(ledgers.map((l) => l.temporalWorkflowId));
   const ledgerless = runs.filter((r) => !withLedger.has(r.workflowId)).map((r) => r.id);
   const [traced, runless] = await Promise.all([

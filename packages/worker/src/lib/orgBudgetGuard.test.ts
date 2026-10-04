@@ -133,6 +133,33 @@ describe('assertOrgBudgetAvailable', () => {
     await refusal(assertOrgBudgetAvailable('wf-1', 'agent.x'));
   });
 
+  it("prefers the request's connection to the run's own, when the two differ", async () => {
+    findLedger.mockResolvedValue(null as never);
+    findRun.mockResolvedValue({
+      connection: { team: { orgId: 'org-run' } },
+      workRequest: { connection: { team: { orgId: 'org-request' } }, connectionId: 'c' },
+    } as never);
+    await assertOrgBudgetAvailable('wf-1', 'agent.x');
+    expect(findOrg).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'org-request' } }));
+  });
+
+  it("never uses the run's connection when the request named one whose team has no org", async () => {
+    findLedger.mockResolvedValue(null as never);
+    findRun.mockResolvedValue({
+      connection: { team: { orgId: 'org-run' } },
+      workRequest: { connection: { team: { orgId: null } }, connectionId: 'c' },
+    } as never);
+    currentSpendOwnerMock.mockResolvedValue({});
+    await assertOrgBudgetAvailable('wf-1', 'agent.x');
+    expect(findOrg).not.toHaveBeenCalled();
+
+    // The ledger row's repository is the one remaining place it can be billed to.
+    _resetConfigCacheForTests();
+    findLedger.mockResolvedValue({ repository: { team: { orgId: 'org-ledger' } } } as never);
+    await assertOrgBudgetAvailable('wf-1', 'agent.x');
+    expect(findOrg).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'org-ledger' } }));
+  });
+
   it('does not cap a repo-less channel task: a run that resolves to no org', async () => {
     findLedger.mockResolvedValue(null as never);
     findRun.mockResolvedValue(request(null));

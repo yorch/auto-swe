@@ -1,16 +1,17 @@
 import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
-import { orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
+import { billedOrgId, orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from './activityLog.js';
 import { currentSpendOwner } from './spendOwner.js';
 
 /**
  * The org whose monthly USD cap this call's spend counts against, found the way
- * billing finds it (`finalizeRun`, `orgMonthSpend`): the run's work request's
- * connection, else — an epic child, whose request spans repositories — the run's
- * own connection, else the ledger row's repository. So a PRD run and a code-route
- * channel task, which bill their org through the request's connection, are capped
+ * billing finds it (`finalizeRun`, `orgMonthSpend`; the order is `billedOrgId`):
+ * the run's work request's connection, else — when the request names none, as
+ * an epic child's and a scheduled fire's do not — the run's own connection,
+ * else the ledger row's repository. So a PRD run and a code-route channel
+ * task, which bill their org through the request's connection, are capped
  * like any run.
  *
  * `stable` is true once a run or a repository-bearing ledger row exists: the
@@ -36,10 +37,13 @@ async function resolveBilledOrg(
       where: { temporalWorkflowId: workflowId },
     }),
   ]);
-  const viaRequest = run?.workRequest?.connection?.team?.orgId;
-  const viaRun = run && !run.workRequest?.connectionId ? run.connection?.team?.orgId : undefined;
   const viaLedger = ledger?.repository?.team?.orgId;
-  const orgId = viaRequest ?? viaRun ?? viaLedger ?? null;
+  const orgId = billedOrgId({
+    ledgerOrgId: viaLedger,
+    requestConnectionId: run?.workRequest?.connectionId,
+    requestOrgId: run?.workRequest?.connection?.team?.orgId,
+    runOrgId: run?.connection?.team?.orgId,
+  });
   return { orgId, stable: run != null || viaLedger != null };
 }
 
