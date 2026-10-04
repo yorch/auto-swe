@@ -53,7 +53,8 @@ export const BUNDLE_SCHEMA_VERSION = 2 as const;
 export { SCANNER_PATTERN_TYPES } from '../lib/scannerPatternTypes.js';
 
 export const BundleSkillSchema = z.object({
-  description: z.string().nullable().optional(),
+  // Same cap as the admin API: the description is model-visible (the skill menu).
+  description: z.string().max(1000).nullable().optional(),
   isVerified: z.boolean().optional(),
   name: z.string().min(1),
   origin: z.string().nullable().optional(),
