@@ -10,8 +10,8 @@ import {
   exportBundle,
   type InstallResult,
   installBundle,
-  SkillChangedError,
   listInstalledBundles,
+  SkillChangedError,
 } from '../lib/bundleService.js';
 import { resolveBundleAllowUnverified, resolveBundleTrustedKeys } from '../lib/bundleTrust.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';

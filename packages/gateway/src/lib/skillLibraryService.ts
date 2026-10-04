@@ -103,8 +103,7 @@ export async function updateSkill(
   // new one clears it — a description-only edit included, since the description
   // is model-visible (the skill menu) — whether or not the skill is `isBuiltIn`
   // (bundle installs are). The boot sync re-verifies the seeded built-ins itself.
-  const clearVerified =
-    contentChanged || (!existing.isBuiltIn && promptText !== undefined);
+  const clearVerified = contentChanged || (!existing.isBuiltIn && promptText !== undefined);
   const base = {
     isActive,
     name,

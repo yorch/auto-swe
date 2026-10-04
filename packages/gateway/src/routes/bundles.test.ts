@@ -229,9 +229,7 @@ describe('bundleRoutes', () => {
   it('409s, not 500, when a skill was edited while the install ran', async () => {
     const app = await buildApp();
     const prisma = (app as unknown as { prisma: Record<string, unknown> }).prisma;
-    prisma.$transaction = vi
-      .fn()
-      .mockRejectedValue(new SkillChangedError('s'));
+    prisma.$transaction = vi.fn().mockRejectedValue(new SkillChangedError('s'));
     const entities = { agents: [], scannerPatterns: [], skills: [], templates: [] };
     const metadata = { createdAt: 'now', name: 'n', version: '1' };
     const bundle = {
@@ -262,7 +260,9 @@ describe('bundleRoutes', () => {
   it('does not read an unrelated unique-constraint failure as SKILL_CHANGED', async () => {
     const app = await buildApp();
     const prisma = (app as unknown as { prisma: Record<string, unknown> }).prisma;
-    prisma.$transaction = vi.fn().mockRejectedValue(Object.assign(new Error('x'), { code: 'P2002' }));
+    prisma.$transaction = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('x'), { code: 'P2002' }));
     const entities = { agents: [], scannerPatterns: [], skills: [], templates: [] };
     const metadata = { createdAt: 'now', name: 'n', version: '1' };
     const bundle = {
