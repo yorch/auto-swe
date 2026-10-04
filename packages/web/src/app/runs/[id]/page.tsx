@@ -35,6 +35,7 @@ import { useCancelWorkflowRun, useRetriedRun, useRunDetail } from '@/hooks/useRu
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
+import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
 import {
@@ -647,7 +648,13 @@ export default function RunDetailPage({ params }: PageProps) {
     fullTracesFailed,
     toggleFullTraces,
   } = useRunDetail(id ?? '');
-  useDocumentTitle(run?.templateName ? `Run · ${run.templateName}` : null);
+  const runTitle =
+    run?.workRequest?.title ||
+    run?.workRequest?.description ||
+    run?.workRequest?.externalTicketId ||
+    run?.templateName ||
+    'Run';
+  useDocumentTitle(run ? `Run · ${runTitle}` : null);
   const cancelRun = useCancelWorkflowRun(id ?? '');
   // An agent run is re-run through its own endpoint, after a confirmation when it
   // delivers; see `useRunReRun`.
@@ -753,31 +760,41 @@ export default function RunDetailPage({ params }: PageProps) {
   return (
     <div className="flex h-full flex-col bg-ink-800">
       {/* ── Page header band ──────────────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center gap-4 border-b border-ink-600/40 bg-ink-900 px-6 py-4">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-ink-600/40 bg-ink-900 px-4 py-4 md:px-6">
         {/* Breadcrumb */}
         <div className="label-mono flex items-center gap-2">
+          {run.workRequest && (
+            <>
+              <Link
+                className="transition-colors hover:text-paper-200"
+                href={requestHref(run.workRequest.id)}
+              >
+                ← Request
+              </Link>
+              <span>/</span>
+            </>
+          )}
           <Link className="transition-colors hover:text-paper-200" href="/runs">
-            ← Runs
+            All runs
           </Link>
-          <span>/</span>
-          <span>run history</span>
         </div>
 
-        <span className="h-4 w-px bg-ink-500" />
+        <span className="hidden h-4 w-px bg-ink-500 md:block" />
 
-        {/* Title */}
-        <h1 className="shrink-0 font-display text-[22px] font-medium tracking-[-0.01em] text-paper-100">
-          Run · {run.templateName}
+        {/* Title: the request this run belongs to, not the template's name */}
+        <h1 className="min-w-0 break-words font-display text-[22px] font-medium tracking-[-0.01em] text-paper-100">
+          {runTitle}
         </h1>
 
         <StatusBadge status={run.status} />
 
         <span className="font-mono text-[10.5px] text-paper-600">
-          v{run.templateVersion} · {formatRelativeTime(run.startedAt)}
+          {run.templateName ? `${run.templateName} · ` : ''}v{run.templateVersion} ·{' '}
+          {formatRelativeTime(run.startedAt)}
         </span>
 
         {/* Right side: actions + layout switcher */}
-        <div className="flex items-center gap-3 ml-auto">
+        <div className="flex flex-wrap items-center gap-3 md:ml-auto">
           {securityEvents.length > 0 && (
             <Badge tone="amber" uppercase>
               {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
