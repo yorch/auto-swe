@@ -50,7 +50,7 @@ describe('AgentHistoryModal', () => {
     expect(await screen.findByText('v2')).toBeTruthy();
     expect(screen.getByText('Current')).toBeTruthy();
     expect(screen.getByText('What changed from v1 to v2')).toBeTruthy();
-    expect(screen.getByText('anthropic/model-2')).toBeTruthy();
+    expect(screen.getAllByText('anthropic/model-2').length).toBeGreaterThan(0);
     // Only an older version can be restored.
     expect(screen.queryByRole('button', { name: 'Restore version 2 as a new version' })).toBeNull();
   });
