@@ -64,6 +64,8 @@ interface Ended {
   status: ReapedStatus;
   /** False for a vanished execution or one closed before the notify window. */
   notify: boolean;
+  /** When the execution closed, in epoch ms; unknown for a vanished execution. */
+  closedAt?: number;
 }
 
 /** How the run ended, or `null` while its execution still runs. Throws when Temporal cannot say. */
@@ -97,6 +99,7 @@ async function endedStatusOf(
         ? Math.min(seen, now.getTime() - NOTIFY_WINDOW_MS)
         : now.getTime() - NOTIFY_WINDOW_MS;
     return {
+      closedAt,
       notify: closedAt !== undefined && closedAt >= since,
       status: reapedStatusFor(status.name),
     };
@@ -156,7 +159,7 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
           rotated.push(run.id);
           return;
         }
-        const { notify, status } = ended;
+        const { closedAt, notify, status } = ended;
         // A channel turn has no work request and bills its channel, not an
         // org, so it ends through the channel path. A channel task run has a
         // work request and goes through the core like any other run.
@@ -171,12 +174,16 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
           }
           result.reaped++;
         } catch (err) {
-          // Not stamped while a notice is still owed, so the retry comes next
-          // sweep instead of a rotation later, while it can still be sent. That
-          // lasts only until the window closes, so a run that never finalizes
-          // cannot hold the front of the queue for longer than that. Once
-          // nothing is owed, it is stamped like a live run.
-          if (!notify || channelTurn) {
+          // Not stamped while a notice can still be sent in time, so the retry
+          // comes next sweep instead of a rotation later. That is bounded by the
+          // notify window after the execution closed, not by the widened window
+          // a successful finalize enjoys: past it the notice is late whatever
+          // happens, and a run that never finalizes would otherwise keep
+          // `notify` true, and its place at the front of the queue, for a day.
+          // After that it is stamped like a live run.
+          const noticeStillTimely =
+            notify && closedAt !== undefined && now.getTime() - closedAt <= NOTIFY_WINDOW_MS;
+          if (!noticeStillTimely || channelTurn) {
             rotated.push(run.id);
           }
           result.unreachable++;

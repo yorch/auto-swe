@@ -852,9 +852,10 @@ as the workflow's own finalize step, so billing and the `workflow_runs_finalized
 last hour, or closed after the last sweep that found it still running (up to a day back, because a
 run waits its turn in the rotation and its notice should not be lost to that wait), still gets the
 usual Slack run-complete notice, in-thread channel report and tracker sync. A finalize that fails
-is retried on the next sweep, not a rotation later, for as long as such a notice is owed; once it
-is not, the run is stamped like a live one, so a run that cannot be finalized holds the front of
-the queue for at most that long. For an execution that closed before both, or that Temporal no
+is retried on the next sweep, not a rotation later, only while its execution closed within the last
+hour (the widened window above applies to a finalize that succeeds, not to this retry); past that
+hour the run is stamped like a live one, so a run that cannot be finalized holds the front of the
+queue for at most an hour after its execution closed. For an execution that closed before both, or that Temporal no
 longer has, the reaper finalizes billing and status only (a channel task's cost still accrues to
 its channel) and logs, once it has done so, that it did not notify, because a first sweep over
 history would otherwise post every orphan at once, even against tickets a later run completed.

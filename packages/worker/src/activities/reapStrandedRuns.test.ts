@@ -187,6 +187,24 @@ describe('reapStrandedRuns', () => {
     });
   });
 
+  it('stamps a failed finalize once its execution closed over an hour ago, though the widened window is still open', async () => {
+    const now = new Date('2026-10-04T12:00:00Z');
+    // Last seen running 3 h ago, closed 2 h ago: notify is true by the widened
+    // window, but the notice is no longer timely, so the failure must not pin it.
+    findMany.mockResolvedValue([run('bad', { reapCheckedAt: new Date('2026-10-04T09:00:00Z') })]);
+    describeWf.mockResolvedValue({
+      closeTime: new Date('2026-10-04T10:00:00Z'),
+      status: { name: 'FAILED' },
+    });
+    finalizeRun.mockRejectedValueOnce(new Error('db'));
+    await reapStrandedRuns(now);
+    expect(finalizeRun).toHaveBeenCalledWith('bad', 'FAILED', undefined, 'reaper', true);
+    expect(updateMany).toHaveBeenCalledWith({
+      data: { reapCheckedAt: now },
+      where: { endedAt: null, id: { in: ['bad'] } },
+    });
+  });
+
   it('logs "without notifying" only when this call really finalized a suppressed run', async () => {
     const old = { closeTime: new Date('2026-10-04T08:00:00Z'), status: { name: 'FAILED' } };
     const said = () =>
