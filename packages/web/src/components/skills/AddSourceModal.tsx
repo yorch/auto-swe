@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -10,15 +10,18 @@ import { RadioGroup } from '@/components/ui/RadioGroup';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
+  type IncomingSkill,
   type PreviewSkill,
   type ScriptMode,
   type SourceLocationInput,
   type SourcePreview,
   useCreateSource,
   usePreviewSource,
+  useReadPreviewSkill,
 } from '@/hooks/useSkillSources';
 import { useTeams } from '@/hooks/useTeams';
 import { visibleText } from '@/lib/visibleText';
+import { FullText } from './FullText';
 import { describeApiError, keyed, shortSha, sourceLabel } from './sourceDisplay';
 
 interface FormState {
@@ -103,10 +106,15 @@ function Notes({ skill }: { skill: PreviewSkill }) {
 export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const preview = usePreviewSource();
   const create = useCreateSource();
+  const readPreview = useReadPreviewSkill();
   const { data: teams } = useTeams();
   const [form, setForm] = useState<FormState>(EMPTY);
   const [previewed, setPreviewed] = useState<SourcePreview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Full texts read, by `sha:folder`: a text is about exactly the commit that was previewed.
+  const [fulls, setFulls] = useState<Record<string, IncomingSkill>>({});
+  const [reading, setReading] = useState<string | null>(null);
+  const [readErrors, setReadErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<{ message: string; lines: string[]; moved?: boolean } | null>(
     null
   );
@@ -115,6 +123,8 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
     setForm(EMPTY);
     setPreviewed(null);
     setSelected(new Set());
+    setFulls({});
+    setReadErrors({});
     setError(null);
     onClose();
   }
@@ -137,9 +147,35 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
       const result = await preview.mutateAsync(body());
       setPreviewed(result);
       setSelected(new Set());
+      setFulls({});
+      setReadErrors({});
     } catch (err) {
       const d = describeApiError(err, 'Failed to read the repository');
       setError({ lines: d.lines, message: d.message });
+    }
+  }
+
+  async function readFull(skill: PreviewSkill) {
+    if (!previewed || skill.name === null) {
+      return;
+    }
+    setReading(skill.folder);
+    setReadErrors((cur) => ({ ...cur, [skill.folder]: '' }));
+    try {
+      const r = await readPreview.mutateAsync({ ...body(), skill: skill.name });
+      if (r.sha === previewed.sha) {
+        setFulls((cur) => ({ ...cur, [`${previewed.sha}:${skill.folder}`]: r }));
+      } else {
+        setReadErrors((cur) => ({
+          ...cur,
+          [skill.folder]: 'The repository changed since the preview. Preview it again.',
+        }));
+      }
+    } catch (err) {
+      const d = describeApiError(err, 'Failed to read the full text');
+      setReadErrors((cur) => ({ ...cur, [skill.folder]: visibleText(d.message) }));
+    } finally {
+      setReading(null);
     }
   }
 
@@ -219,7 +255,8 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
       >
         <div className="space-y-4">
           <p className="text-xs text-paper-500">
-            Nothing has been written yet. Skills with errors, a name conflict
+            Nothing has been written yet. Read a skill's full text to be able to choose it (each
+            read costs one full fetch of the repository). Skills with errors, a name conflict
             {previewed.skills.some((s) => s.blockedByScan) ? ', or blocking scan warnings' : ''}{' '}
             cannot be chosen. Installed skills start unverified.
           </p>
@@ -234,42 +271,71 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
               {previewed.skills.map((s) => {
                 const reason = unselectableReason(s);
                 const label = visibleText(s.name ?? s.folder);
+                const full = fulls[`${previewed.sha}:${s.folder}`];
                 return (
-                  <TRow key={s.folder}>
-                    <Td className="py-2 pr-2 align-top">
-                      <input
-                        aria-label={`Install ${label}`}
-                        checked={s.name !== null && selected.has(s.name)}
-                        className="h-4 w-4 accent-ember-400"
-                        disabled={reason !== null}
-                        onChange={() => s.name !== null && toggle(s.name)}
-                        title={reason ?? undefined}
-                        type="checkbox"
-                      />
-                    </Td>
-                    <Td className="py-2 pr-4 align-top">
-                      <div className="font-medium text-paper-100">{label}</div>
-                      <div className="font-mono text-[11px] text-paper-500">
-                        {visibleText(s.folder)}
-                      </div>
-                      {s.description && (
-                        <div className="mt-0.5 text-xs text-paper-400">
-                          {visibleText(s.description)}
+                  <Fragment key={s.folder}>
+                    <TRow>
+                      <Td className="py-2 pr-2 align-top">
+                        <input
+                          aria-label={`Install ${label}`}
+                          checked={s.name !== null && selected.has(s.name)}
+                          className="h-4 w-4 accent-ember-400"
+                          disabled={reason !== null || !full}
+                          onChange={() => s.name !== null && toggle(s.name)}
+                          title={reason ?? (full ? undefined : 'Read the full text first')}
+                          type="checkbox"
+                        />
+                      </Td>
+                      <Td className="py-2 pr-4 align-top">
+                        <div className="font-medium text-paper-100">{label}</div>
+                        <div className="font-mono text-[11px] text-paper-500">
+                          {visibleText(s.folder)}
                         </div>
-                      )}
-                      {reason && (
-                        <Badge className="mt-1" tone="muted">
-                          {reason}
-                        </Badge>
-                      )}
-                    </Td>
-                    <Td className="py-2 pr-4 align-top tabular-nums text-paper-400">
-                      {s.textLength}
-                    </Td>
-                    <Td className="py-2 align-top">
-                      <Notes skill={s} />
-                    </Td>
-                  </TRow>
+                        {s.description && (
+                          <div className="mt-0.5 text-xs text-paper-400">
+                            {visibleText(s.description)}
+                          </div>
+                        )}
+                        {reason && (
+                          <Badge className="mt-1" tone="muted">
+                            {reason}
+                          </Badge>
+                        )}
+                      </Td>
+                      <Td className="py-2 pr-4 align-top tabular-nums text-paper-400">
+                        {s.textLength}
+                      </Td>
+                      <Td className="py-2 align-top">
+                        <Notes skill={s} />
+                        {reason === null && (
+                          <div className="mt-1 space-y-0.5">
+                            <Button
+                              aria-label={`Read full text of ${label}`}
+                              disabled={reading === s.folder}
+                              onClick={() => readFull(s)}
+                              size="sm"
+                            >
+                              {reading === s.folder
+                                ? 'Reading…'
+                                : full
+                                  ? 'Read again'
+                                  : 'Read full text'}
+                            </Button>
+                            {readErrors[s.folder] && (
+                              <div className="text-xs text-brick-400">{readErrors[s.folder]}</div>
+                            )}
+                          </div>
+                        )}
+                      </Td>
+                    </TRow>
+                    {full && (
+                      <TRow>
+                        <Td className="pb-3" colSpan={4}>
+                          <FullText label={`Full text of ${label}`} text={full.promptText} />
+                        </Td>
+                      </TRow>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
