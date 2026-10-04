@@ -79,6 +79,7 @@
     "./lib/connectionCredential": "./dist/lib/connectionCredential.js",
     "./lib/githubPermission": "./dist/lib/githubPermission.js",
     "./lib/githubIdentityCheck": "./dist/lib/githubIdentityCheck.js",
+    "./lib/sameRepositoryIds": "./dist/lib/sameRepositoryIds.js",
     "./lib/repoAccessProjection": "./dist/lib/repoAccessProjection.js",
     "./lib/accessActor": "./dist/lib/accessActor.js",
     "./lib/repoAccessDecision": "./dist/lib/repoAccessDecision.js",

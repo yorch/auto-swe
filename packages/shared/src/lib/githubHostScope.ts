@@ -81,8 +81,16 @@ export interface HostScopedRepo {
   baseUrl?: string | null;
   /** The repository's own GitHub App installation, if any. */
   installationId?: string | null;
-  /** The `GitHubInstallation.host` of that installation, when known. */
-  installationHost?: string | null;
+}
+
+/**
+ * {@link HostScopedRepo} as a credential is minted for it. The installation's
+ * host is required, so a caller that loads a repository without it does not
+ * compile; an installation whose host is absent fails the mint-time check.
+ */
+export interface InstallationScopedRepo extends HostScopedRepo {
+  /** The `GitHubInstallation.host` of the installation; null only when there is none. */
+  installationHost: string | null;
 }
 
 export interface HostScopedConfig {
@@ -154,14 +162,15 @@ export function installationHostFor(repo: HostScopedRepo, config: HostScopedConf
 
 /**
  * Whether the repository's installation is recorded for a different host than
- * the repository lives on. Unknown (no installation, or its host not loaded)
- * is not a mismatch.
+ * the repository lives on. A repository with no installation cannot mismatch; one
+ * whose installation host is absent fails closed.
  */
-export function installationHostMismatch(repo: HostScopedRepo, config: HostScopedConfig): boolean {
+export function installationHostMismatch(
+  repo: InstallationScopedRepo,
+  config: HostScopedConfig
+): boolean {
   return (
-    Boolean(repo.installationId) &&
-    repo.installationHost != null &&
-    repo.installationHost !== installationHostFor(repo, config)
+    Boolean(repo.installationId) && repo.installationHost !== installationHostFor(repo, config)
   );
 }
 

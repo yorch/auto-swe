@@ -251,6 +251,27 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             )}
           </div>
         </Card>
+
+        {(team.sharedRepositories ?? []).length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Shared with this team ({team.sharedRepositories.length})</CardTitle>
+            </CardHeader>
+            <div className="space-y-2">
+              {team.sharedRepositories.map((r) => (
+                <div
+                  className="flex items-center justify-between text-sm p-2 rounded hover:bg-ink-800"
+                  key={r.id}
+                >
+                  <span className="font-medium">
+                    {r.organizationName}/{r.repoName}
+                  </span>
+                  <span className="text-paper-500">shared by {r.team.name}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
       </div>
 
       {canEditAllowlists && <ShellAllowlistEditor teamId={id} />}

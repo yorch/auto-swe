@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { sameRepositoryIds } from '@auto-swe/shared/lib/sameRepositoryIds';
 import {
   chooseWorkflowId,
   generateWorkflowId,
@@ -16,7 +17,8 @@ import {
  * part may contain hyphens), so a workflow ID built by hand can land on another
  * tenant's running workflow and be silently swallowed as "already started".
  * This reads the rows in the ticket's ID family and lets `chooseWorkflowId`
- * pick: a foreign row moves the ticket to its disambiguated family, a finished
+ * pick: a row of the same repository (same host, owner and name, whatever
+ * the casing) is ours; a foreign row moves the ticket to its disambiguated family, a finished
  * run of the same ticket gets an `-rN` rerun ID, and a run of the same ticket
  * still in flight is returned as a conflict.
  */
@@ -42,8 +44,13 @@ export async function allocateTicketWorkflowId(repo: {
     repo.repoName,
     repo.githubUrl
   );
-  const owner = { externalTicketId: repo.externalTicketId, repoId: repo.id };
-  const bases = workflowIdFamilyBases(baseId, owner.repoId, legacyBaseIds);
+  // Rows of the same repository stored under another id still count as ours.
+  const owner = {
+    externalTicketId: repo.externalTicketId,
+    repoId: repo.id,
+    sameRepoIds: await sameRepositoryIds(prisma, repo.id),
+  };
+  const bases = workflowIdFamilyBases(baseId, owner.sameRepoIds, legacyBaseIds);
   const rows = await prisma.activeWorkflow.findMany({
     select: {
       currentStatus: true,

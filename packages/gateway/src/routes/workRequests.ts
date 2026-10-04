@@ -607,7 +607,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           return raced.reply;
         }
         return refuseConflict(
-          `Workflow already running for ${externalTicketId} (${allocated.conflictWorkflowId})`
+          // Another row's run (possibly another team's) is not named.
+          allocated.conflictOtherRow
+            ? `Workflow already running for ${externalTicketId} for this repository`
+            : `Workflow already running for ${externalTicketId} (${allocated.conflictWorkflowId})`
         );
       }
       const temporalWorkflowId = allocated.workflowId;
@@ -895,7 +898,9 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(409).send({
           error: {
             code: 'WORKFLOW_ALREADY_EXISTS',
-            message: `Workflow still running for ${workRequest.externalTicketId} (${allocated.conflictWorkflowId})`,
+            message: allocated.conflictOtherRow
+              ? `Workflow still running for ${workRequest.externalTicketId} for this repository`
+              : `Workflow still running for ${workRequest.externalTicketId} (${allocated.conflictWorkflowId})`,
           },
         });
       }

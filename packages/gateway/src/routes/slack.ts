@@ -2057,7 +2057,9 @@ async function handleRunModalSubmission(
   if ('conflictWorkflowId' in allocated) {
     return {
       errors: {
-        ticket_block: `Workflow already running for ${ticket} (${allocated.conflictWorkflowId})`,
+        ticket_block: allocated.conflictOtherRow
+          ? `Workflow already running for ${ticket} for this repository`
+          : `Workflow already running for ${ticket} (${allocated.conflictWorkflowId})`,
       },
       response_action: 'errors',
     };

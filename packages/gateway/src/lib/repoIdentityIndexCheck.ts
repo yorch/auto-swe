@@ -77,7 +77,7 @@ export async function warnIfReposOnUnusableHosts(
         {
           apiUrl: r.githubApiUrl,
           baseUrl: r.githubUrl,
-          installationHost: r.installation?.host,
+          installationHost: r.installation?.host ?? null,
           installationId: r.installation?.installationId ?? null,
         },
         ghConfig

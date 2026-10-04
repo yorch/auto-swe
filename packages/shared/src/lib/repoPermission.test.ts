@@ -188,7 +188,10 @@ describe('lookupRepoPermission and the platform credential', () => {
     resolveGitHubConfig.mockResolvedValue(instance({ authMode: 'pat' }));
     await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(HOST_MISMATCH);
     await expect(
-      lookupRepoPermission(repo({ ...GHE, installation: { installationId: '7' } }), 'octocat')
+      lookupRepoPermission(
+        repo({ ...GHE, installation: { host: 'ghe.corp', installationId: '7' } }),
+        'octocat'
+      )
     ).resolves.toEqual(HOST_MISMATCH);
     expect(fetchRepoPermission).not.toHaveBeenCalled();
   });
@@ -211,7 +214,7 @@ describe('lookupRepoPermission and the platform credential', () => {
       // The host has a PAT only; the instance App (installed at 900001) must not be minted for it.
       hostCredentialFindUnique.mockResolvedValue(patRow('ghe.corp', 'host-pat'));
       await lookupRepoPermission(
-        repo({ ...GHE, installation: { installationId: '7' } }),
+        repo({ ...GHE, installation: { host: 'ghe.corp', installationId: '7' } }),
         'octocat'
       );
       expect(fetchSpy).not.toHaveBeenCalled();
@@ -261,7 +264,10 @@ describe('lookupRepoPermission and the platform credential', () => {
   it('refuses a half override, whichever side, even with an installation', async () => {
     for (const half of [{ githubApiUrl: GHE.githubApiUrl }, { githubUrl: GHE.githubUrl }]) {
       await expect(
-        lookupRepoPermission(repo({ ...half, installation: { installationId: '7' } }), 'octocat')
+        lookupRepoPermission(
+          repo({ ...half, installation: { host: '', installationId: '7' } }),
+          'octocat'
+        )
       ).resolves.toEqual(HOST_MISMATCH);
     }
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -270,14 +276,20 @@ describe('lookupRepoPermission and the platform credential', () => {
 
   it('posts no App JWT, PAT or token to a foreign host even for an installed repository (App mode)', async () => {
     await expect(
-      lookupRepoPermission(repo({ ...GHE, installation: { installationId: '7' } }), 'octocat')
+      lookupRepoPermission(
+        repo({ ...GHE, installation: { host: 'ghe.corp', installationId: '7' } }),
+        'octocat'
+      )
     ).resolves.toEqual(HOST_MISMATCH);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(fetchRepoPermission).not.toHaveBeenCalled();
   });
 
   it("asks the instance host with a repository's own installation's token", async () => {
-    await lookupRepoPermission(repo({ installation: { installationId: '7' } }), 'octocat');
+    await lookupRepoPermission(
+      repo({ installation: { host: '', installationId: '7' } }),
+      'octocat'
+    );
     expect(fetchSpy.mock.calls[0][0]).toBe(
       'https://api.github.com/app/installations/7/access_tokens'
     );

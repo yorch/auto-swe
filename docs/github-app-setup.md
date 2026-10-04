@@ -42,6 +42,23 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
 5. Set **Subscribe to events**:
    - Pull request
    - Check run
+
+   GitHub delivers the App's `installation` events (`deleted`, `suspend`, `unsuspend`) to the webhook
+   URL by default; they cannot be subscribed to or unsubscribed from. auto-swe treats a delivery only
+   as a prompt: it asks GitHub (`GET /app/installations/{id}`, with the App JWT of the installation's
+   own host) and applies the state GitHub reports, so a forged or replayed event that GitHub
+   contradicts changes nothing, and a host with no App credentials, or a lookup that fails, changes
+   nothing. Only installations an admin has recorded are touched: an uninstall or suspension retires
+   the installation, a report of "active" reactivates one a webhook retired, and an account rename
+   (`installation_target`, when GitHub sends it) updates the account login read from GitHub. Otherwise
+   an admin updates the login by hand. Lookups on a
+   GitHub Enterprise Server host go to `https://<host>/api/v3`; a host served over plain http or on a
+   non-default API path gets no webhook-driven installation changes (the lookup fails and nothing
+   changes). It never creates an installation, and never
+   reverses a retirement an admin made. Each change is written to the audit log. The events are
+   accepted at `/api/v1/webhooks/git` and at `/api/v1/webhooks/access`, and are verified and bound
+   to a host like every other delivery; a delivery signed with the instance secret that names another
+   enterprise host is ignored.
 6. Under **Where can this GitHub App be installed?**, choose **Only on this account** for a private org app, or **Any account** if you want to share it.
 7. Click **Create GitHub App**.
 8. On the next page, note the **App ID** (shown at the top of the settings page).

@@ -14,6 +14,7 @@ export type AuditEntityType =
   | 'GitHubConfig'
   | 'GitHubHostCredential'
   | 'GitHubHostWebhookSecret'
+  | 'GitHubInstallation'
   | 'GoogleOAuthConfig'
   | 'McpGrant'
   | 'McpToolCall'
@@ -24,6 +25,7 @@ export type AuditEntityType =
   | 'PersonalAccessToken'
   | 'ProviderCredential'
   | 'ScannerPattern'
+  | 'ScheduledWorkRequest'
   | 'Session'
   | 'Skill'
   | 'SlackChannel'
@@ -36,7 +38,8 @@ export async function writeAuditLog(
   fastify: FastifyInstance,
   args: {
     action: 'CREATE' | 'DELETE' | 'UPDATE';
-    actor: JwtPayload;
+    /** Null when the system acts — a webhook or a sweep, not a person. */
+    actor: JwtPayload | null;
     after?: unknown;
     before?: unknown;
     entityId: string;
@@ -46,7 +49,7 @@ export async function writeAuditLog(
   await fastify.prisma.configAuditLog.create({
     data: {
       action: args.action,
-      actorId: args.actor.sub,
+      actorId: args.actor?.sub ?? null,
       afterJson: (args.after ?? null) as never,
       beforeJson: (args.before ?? null) as never,
       entityId: args.entityId,

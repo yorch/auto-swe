@@ -1,7 +1,9 @@
 import type { Prisma } from '@auto-swe/shared';
+import { sameRepositoryIds } from '@auto-swe/shared/lib/sameRepositoryIds';
 import {
   chooseWorkflowId,
   type WorkflowIdAllocation,
+  type WorkflowIdOwner,
   workflowIdFamilyBases,
 } from '@auto-swe/shared/lib/workflowId';
 import type { FastifyInstance } from 'fastify';
@@ -244,7 +246,10 @@ async function compensate(
  * across repositories (`generateWorkflowId` joins hyphenated names with
  * hyphens), so without it another tenant's running workflow that merely shares
  * the string reads as "already running" here; with it, that row is recognised
- * as foreign and this ticket gets a disambiguated ID (`chooseWorkflowId`).
+ * as foreign and this ticket gets a disambiguated ID (`chooseWorkflowId`). A row
+ * of another repository id with the same identity (same host, owner and name
+ * compared case-insensitively) is the same repository, not a foreign one, and
+ * conflicts exactly as a row of this id does.
  *
  * `legacyBaseIds` are the ids the same ticket had in earlier formats (stored
  * casing, no host segment: `legacyWorkflowIdBases`). An execution of
@@ -258,10 +263,19 @@ async function compensate(
 export async function allocateWorkflowId(
   prisma: FastifyInstance['prisma'],
   baseId: string,
-  owner?: { repoId: string; externalTicketId?: string },
+  owner?: WorkflowIdOwner,
   legacyBaseIds?: readonly string[]
 ): Promise<WorkflowIdAllocation> {
-  const bases = workflowIdFamilyBases(baseId, owner?.repoId, legacyBaseIds);
+  // Rows of the same repository stored under another id still count as ours.
+  const withIdentity = owner && {
+    ...owner,
+    sameRepoIds: owner.sameRepoIds ?? (await sameRepositoryIds(prisma, owner.repoId)),
+  };
+  const bases = workflowIdFamilyBases(
+    baseId,
+    withIdentity && [withIdentity.repoId, ...withIdentity.sameRepoIds],
+    legacyBaseIds
+  );
   const rows = await prisma.activeWorkflow.findMany({
     select: {
       currentStatus: true,
@@ -284,7 +298,7 @@ export async function allocateWorkflowId(
       repoId: r.repoId,
       temporalWorkflowId: r.temporalWorkflowId,
     })),
-    owner,
+    withIdentity,
     legacyBaseIds
   );
 }

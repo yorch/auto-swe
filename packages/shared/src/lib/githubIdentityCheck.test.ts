@@ -26,25 +26,33 @@ function json(body: unknown, status = 200): Response {
 
 const findFirst = vi.fn(); // account.findMany
 const update = vi.fn();
+const userFind = vi.fn(); // user.findUnique
 const deleteMany = vi.fn();
 const auditCreate = vi.fn();
 
 function prisma(): PrismaClient {
   return {
-    $transaction: (ops: Array<Promise<unknown>>) => Promise.all(ops),
+    $transaction: (arg: unknown) =>
+      typeof arg === 'function'
+        ? (arg as (tx: unknown) => Promise<unknown>)({
+            repoAccess: { deleteMany },
+            user: { updateMany: update },
+          })
+        : Promise.all(arg as Array<Promise<unknown>>),
     account: { findMany: findFirst },
     configAuditLog: { create: auditCreate },
     repoAccess: { deleteMany },
-    user: { update },
+    user: { findUnique: userFind, update, updateMany: update },
   } as unknown as PrismaClient;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  update.mockResolvedValue({});
+  update.mockResolvedValue({ count: 1 });
   deleteMany.mockResolvedValue({ count: 0 });
   auditCreate.mockResolvedValue({});
   findFirst.mockResolvedValue([{ accountId: '4242' }]);
+  userFind.mockResolvedValue({ githubLoginAccountId: null });
 });
 
 afterEach(() => {
@@ -153,8 +161,8 @@ describe('verifyGithubLoginOwnership', () => {
       status: 'reassigned',
     });
     expect(update).toHaveBeenCalledWith({
-      data: { githubLogin: null },
-      where: { id: USER_ID },
+      data: { githubLogin: null, githubLoginAccountId: null },
+      where: expect.objectContaining({ id: USER_ID }),
     });
   });
 
@@ -208,8 +216,8 @@ describe('verifyGithubLoginOwnership', () => {
       status: 'reassigned',
     });
     expect(update).toHaveBeenCalledWith({
-      data: { githubLogin: null },
-      where: { id: USER_ID },
+      data: { githubLogin: null, githubLoginAccountId: null },
+      where: expect.objectContaining({ id: USER_ID }),
     });
   });
 
@@ -274,6 +282,80 @@ describe('verifyGithubLoginOwnership with several linked accounts', () => {
     ).resolves.toMatchObject({ status: 'unverifiable' });
     expect(spy).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
+    expect(auditCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('verifyGithubLoginOwnership with a recorded source account', () => {
+  const userId = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+  const both = [{ accountId: '4242' }, { accountId: 'ghe.corp:7' }];
+  const targets = (spy: (id: string) => void): AccountTargets => ({
+    forAccount: async (id) => {
+      spy(id);
+      return { apiUrl: API, token: 'tok' };
+    },
+    unauthenticatedHosts: () => [],
+  });
+
+  it('verifies against the recorded account, not the first one', async () => {
+    findFirst.mockResolvedValue(both);
+    userFind.mockResolvedValue({ githubLoginAccountId: 'ghe.corp:7' });
+    stub(() => json({ id: 7 }));
+    const asked = vi.fn();
+    await expect(
+      verifyGithubLoginOwnership(prisma(), { login: 'octocat', targets: targets(asked), userId })
+    ).resolves.toEqual({ status: 'ok' });
+    expect(asked).toHaveBeenCalledWith('ghe.corp:7');
+  });
+
+  it('detects a takeover against the recorded account', async () => {
+    findFirst.mockResolvedValue(both);
+    userFind.mockResolvedValue({ githubLoginAccountId: 'ghe.corp:7' });
+    stub(() => json({ id: 999 }));
+    await expect(
+      verifyGithubLoginOwnership(prisma(), {
+        login: 'octocat',
+        targets: targets(vi.fn()),
+        userId,
+      })
+    ).resolves.toEqual({ clearedLogin: 'octocat', status: 'reassigned' });
+    expect(update).toHaveBeenCalledWith({
+      data: { githubLogin: null, githubLoginAccountId: null },
+      where: expect.objectContaining({ id: userId }),
+    });
+  });
+
+  it('treats a recorded account that is no longer linked as unlinked', async () => {
+    findFirst.mockResolvedValue([{ accountId: '4242' }]);
+    userFind.mockResolvedValue({ githubLoginAccountId: 'ghe.corp:7' });
+    const spy = stub(() => json({ id: 7 }));
+    await expect(
+      verifyGithubLoginOwnership(prisma(), {
+        login: 'octocat',
+        targets: targets(vi.fn()),
+        userId,
+      })
+    ).resolves.toEqual({ clearedLogin: 'octocat', status: 'unlinked' });
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('verifyGithubLoginOwnership racing a sign-in', () => {
+  it('does not clear, audit or drop access rows when the login changed meanwhile', async () => {
+    stub(() => json({ id: 999 }));
+    update.mockResolvedValue({ count: 0 });
+    const targets: AccountTargets = {
+      forAccount: async () => ({ apiUrl: API, token: 'tok' }),
+      unauthenticatedHosts: () => [],
+    };
+    await expect(
+      verifyGithubLoginOwnership(prisma(), { login: 'octocat', targets, userId: 'user-race' })
+    ).resolves.toMatchObject({ status: 'unverifiable' });
+    expect(update).toHaveBeenCalledWith({
+      data: { githubLogin: null, githubLoginAccountId: null },
+      where: { githubLogin: 'octocat', githubLoginAccountId: null, id: 'user-race' },
+    });
+    expect(deleteMany).not.toHaveBeenCalled();
     expect(auditCreate).not.toHaveBeenCalled();
   });
 });

@@ -255,6 +255,7 @@ CREATE TABLE "github_installations" (
     "installation_id" TEXT NOT NULL,
     "account_login" TEXT NOT NULL,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "retired_reason" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -487,6 +488,7 @@ CREATE TABLE "users" (
     "image" TEXT,
     "slack_id" TEXT,
     "github_login" TEXT,
+    "github_login_account_id" TEXT,
     "role" "Role" NOT NULL DEFAULT 'ENGINEER',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -30,7 +30,11 @@ const cred = (over: Partial<HostCredential> = {}): HostCredential => ({
   ...over,
 });
 
-const GHE_REPO = { apiUrl: 'https://ghe.corp/api/v3', baseUrl: 'https://ghe.corp' };
+const GHE_REPO = {
+  apiUrl: 'https://ghe.corp/api/v3',
+  baseUrl: 'https://ghe.corp',
+  installationHost: null,
+};
 
 describe('hostKeyOf', () => {
   it('folds a hosted GitHub web and API name into one host key', () => {
@@ -85,7 +89,7 @@ describe('platformCredentialFor and the installation host', () => {
     ).toEqual({ host: 'ghe.corp', scope: 'installation-mismatch' });
   });
 
-  it('accepts a matching installation, and an unknown host as no judgement', async () => {
+  it('accepts a matching installation, and refuses one whose host is absent', async () => {
     const lookup = vi.fn().mockResolvedValue(cred());
     expect(
       (await platformCredentialFor({ installationHost: '', installationId: '7' }, INSTANCE, lookup))
@@ -102,7 +106,7 @@ describe('platformCredentialFor and the installation host', () => {
     ).toBe('host');
     expect(
       (await platformCredentialFor({ ...GHE_REPO, installationId: '7' }, INSTANCE, lookup)).scope
-    ).toBe('host');
+    ).toBe('installation-mismatch');
   });
 
   it("sets the host set's credentialHost to its row's host", async () => {
@@ -116,7 +120,7 @@ describe('platformCredentialFor and the installation host', () => {
 describe('platformCredentialFor', () => {
   it("returns the instance's own set for an instance repository, without a lookup", async () => {
     const lookup = vi.fn();
-    const r = await platformCredentialFor({}, INSTANCE, lookup);
+    const r = await platformCredentialFor({ installationHost: null }, INSTANCE, lookup);
     expect(r).toEqual({ config: INSTANCE, scope: 'instance' });
     expect(lookup).not.toHaveBeenCalled();
   });
@@ -139,7 +143,13 @@ describe('platformCredentialFor', () => {
 
   it('is misconfigured for a half override, without a lookup', async () => {
     const lookup = vi.fn().mockResolvedValue(cred());
-    expect(await platformCredentialFor({ baseUrl: 'https://ghe.corp' }, INSTANCE, lookup)).toEqual({
+    expect(
+      await platformCredentialFor(
+        { baseUrl: 'https://ghe.corp', installationHost: null },
+        INSTANCE,
+        lookup
+      )
+    ).toEqual({
       scope: 'misconfigured',
     });
     expect(lookup).not.toHaveBeenCalled();
@@ -148,7 +158,11 @@ describe('platformCredentialFor', () => {
   it('looks up a data-residency tenant that is not the instance by its web host', async () => {
     const lookup = vi.fn().mockResolvedValue(cred({ host: 'acme.ghe.com' }));
     const r = await platformCredentialFor(
-      { apiUrl: 'https://api.acme.ghe.com', baseUrl: 'https://acme.ghe.com' },
+      {
+        apiUrl: 'https://api.acme.ghe.com',
+        baseUrl: 'https://acme.ghe.com',
+        installationHost: null,
+      },
       INSTANCE,
       lookup
     );
@@ -160,7 +174,7 @@ describe('platformCredentialFor', () => {
     const ghe = { ...INSTANCE, apiUrl: 'https://ghe.corp/api/v3', baseUrl: 'https://ghe.corp' };
     const lookup = vi.fn().mockResolvedValue(cred({ host: 'github.com' }));
     const r = await platformCredentialFor(
-      { apiUrl: 'https://api.github.com', baseUrl: 'https://github.com' },
+      { apiUrl: 'https://api.github.com', baseUrl: 'https://github.com', installationHost: null },
       ghe,
       lookup
     );

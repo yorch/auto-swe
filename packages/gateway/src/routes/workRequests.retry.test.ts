@@ -39,6 +39,7 @@ describe('POST /work-requests/:id/retry', () => {
         delete: async () => ({}),
         findMany: async () => [],
       },
+      connection: { findUnique: async () => null },
       organizationMembership: { findUnique: async () => ({ role: 'ORG_MEMBER' }) },
       orgMonthlyUsage: { findUnique: async () => null },
       runInput: {

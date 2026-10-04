@@ -25,7 +25,7 @@ Everything that names a repository by owner and name takes the host into account
 | Onboarding (`POST /repositories`) | the duplicate check and the unique index include the host and compare owner and name case-insensitively |
 | Import from GitHub | the list comes from the instance host, so only repositories with no override count as already imported |
 | PR and CI webhooks, the access webhook | the delivery is first bound to the host its secret proved (see [Webhook secrets per host](#webhook-secrets-per-host)). Within that, when the owner/name is onboarded on more than one distinct host, the payload's `repository.html_url` picks which; otherwise the match is by name, as before. Owner and name match case-insensitively and literally (`_` and `%` in a name are not wildcards), whatever casing the payload uses |
-| Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. Owner and name are lowercased in the id; the ticket id keeps its casing. A run still in flight under an earlier form of the id (stored casing, or without the host) blocks a new one, as one under the current id does |
+| Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. Owner and name are lowercased in the id; the ticket id keeps its casing. A run still in flight under an earlier form of the id (stored casing, or without the host) blocks a new one, as one under the current id does. So does a run of another row for the same repository — the same host (no override is the instance's host) and the same owner and name compared case-insensitively; a repository on another host with the same owner and name is a different repository and never blocks |
 | Dependency detection | a dependency URL that names a host matches only a repository on that host |
 | Dependency checkouts | two neighbours with the same owner/name get distinct directories |
 
@@ -201,6 +201,11 @@ the same organization (`ConnectionTeamShare`).
 
 Runs keep the owning team's budget, default template and settings, whoever launches them.
 
+A team's own page (`GET /api/v1/teams/:id`) lists the repositories it owns and, separately, the ones
+shared with it, each marked "shared by" its owning team and read-only. The shared list shows only
+active repositories, and under an enforcing repo-access gate only those the viewer's GitHub
+permission reaches, as the Connections page does.
+
 **Schedules.** A `ScheduledWorkRequest` belongs to a team (`teamId`): the repository's owning team or
 a team it is shared with. A lead of either may create one; the body's optional `teamId` must be the
 owning team or a shared team the caller leads. Omitted, it is the owning team if the caller leads
@@ -215,7 +220,10 @@ team, and is deactivated like a schedule of a team that lost its claim.
 When a team stops having a claim on the repository (its share is removed, or the repository moves
 to another team), its schedules on it are deactivated after the change commits, and the change is
 audited first: the row is marked inactive and the Temporal schedule is paused. Each schedule is
-handled on its own, and a failure on one is logged and never fails the request. The worker also
+handled on its own, and a failure on one is logged and never fails the request. Every schedule the
+change deactivates gets its own audit entry (entity `ScheduledWorkRequest`, naming the team that lost
+its claim and the person who changed the share or moved the repository); a failed audit write is
+logged and does not skip the pause. The worker also
 refuses to fire a schedule whose row is inactive, so a pause that did not reach Temporal still
 stops it, and refuses one whose team is no longer the repository's owning team or a current
 sharer (`schedule-team-unclaimed`, non-retryable), which covers a create that raced an unshare. A
@@ -273,10 +281,20 @@ longer fit.
   chosen per repository. A repository's installation host is checked when an admin chooses it or
   repoints the repository, and again whenever a token is minted: a repository whose installation is
   recorded for another host gets no token (`REPO_INSTALLATION_HOST_MISMATCH` for runs, `host-mismatch`
-  for lookups) until it is pointed at an installation of its own host. Callers that load a repository
-  without its installation's host skip the mint-time check and rely on the write-time one.
-- **No installation webhook events are handled.** Installations are registered by an admin; the
-  platform does not create, rename or retire them from GitHub's `installation` events.
+  for lookups) until it is pointed at an installation of its own host. An installation whose host is absent counts as
+  a mismatch, so no caller can skip the check by not loading it.
+- **Installation webhook events only update installations an admin has registered, on the host
+  that signed them.** An `installation` event with `deleted`, `suspend` or `unsuspend` makes the platform ask
+  GitHub for the installation's state with its host's App credentials, and apply only what GitHub
+  reports (retire when deleted or suspended, reactivate a webhook-retired one when active); an
+  `installation_target` rename reads the login from GitHub. A host with no App credentials, or a
+  failed lookup, changes nothing; lookups on a GitHub Enterprise Server host go to
+  `https://<host>/api/v3`, so a host on plain http or a non-default API path is never updated. Each change is audited with no actor. An event for an
+  installation nobody registered, or on a host the delivery's secret does not prove, changes nothing,
+  so GitHub can never add one. A retirement an admin made is never undone by GitHub, and any admin
+  edit of the active flag clears the webhook's claim. An installation on github.com or a `*.ghe.com`
+  host, whose deliveries always use the instance secret, is updated only when that host is the
+  instance's own.
 - **Rolling upgrades can start one ticket twice.** A gateway or worker still running the code that
   built workflow ids from the stored casing starts `eng-Acme-Api-T-1` while an upgraded one starts
   `eng-acme-api-T-1`, and neither sees the other's run as a duplicate. Drain the old gateways and
@@ -285,15 +303,22 @@ longer fit.
   duplicate are rebuilt from the repository's current owner and name, which no API route edits, so
   they match the id a run was started under; a database edit that changes only the casing while a
   run is in flight would leave that run's id unmatched.
-- **Case-only duplicate rows do not block each other's runs.** Legacy rows for the same repository
-  under two casings now share one workflow id, but they are still two repositories to the allocator,
-  so the second ticket start gets a disambiguated id instead of a conflict.
-- **An override spelling out the instance host is only cleared when the GitHub integration stores
-  that host.** On a deployment configuring its host through the environment such an override is
-  kept; it works, and onboarding treats it as the same repository as one with no override, but the
-  database's unique index does not, so two onboarding requests racing each other could create both.
+- **A run on an archived duplicate row still blocks the ticket.** Rows for one repository count as
+  one when workflow ids are allocated, whether or not they are active, and deactivating a connection
+  does not cancel its runs. A non-terminal run on an archived duplicate therefore blocks a second
+  start of that ticket on the live row until it finishes or is cancelled.
+- **Changing the instance's host does not rewrite stored overrides.** An override spelling out the
+  instance's host is cleared when it is written, against the host the integration resolves (the
+  saved one, else the environment's), so two onboarding requests racing each other collide on the
+  database's unique index. A repository onboarded on a host that later becomes the instance's keeps
+  its override: it works, and onboarding treats it as the same repository as one with no override,
+  but the unique index does not.
 - **Some runs can only be controlled by a platform admin.** A run on a global template, against no
   repository, that nobody launched (a webhook start, or one from before launchers were recorded) is
   visible to everyone but can be cancelled, or its human steps answered, only by an admin.
-- **The team page lists owned repositories only.** Repositories shared with a team appear in its
-  members' Connections page and listings, not on the team's own page.
+- **A deactivated team keeps its members' access and its shares.** `Team.isActive` gates managing
+  (creating, editing and moving repositories, leading templates, saving a per-user credential
+  against a repository, creating an MCP connection) and the team listing, not
+  membership: the members of an inactive owning team still reach its repositories, and the members
+  of an inactive team a repository was shared with still reach that one. Removing the share is what
+  ends a shared team's access, and only active teams of the organization can be chosen when sharing.

@@ -55,7 +55,7 @@ export function toRepoRef(repo: {
     apiUrl: repo.githubApiUrl,
     baseUrl: repo.githubUrl,
     connectionId: repo.id,
-    installationHost: repo.installation?.host,
+    installationHost: repo.installation?.host ?? null,
     installationId: repo.installation?.installationId ?? null,
     organizationName: repo.organizationName,
     repoName: repo.repoName,

@@ -23,6 +23,7 @@ import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib
 import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
 
 const JiraWebhookSchema = z
@@ -241,7 +242,7 @@ async function checkRunTarget(
     | {
         githubApiUrl: string | null;
         githubUrl: string | null;
-        installation: { installationId: string; host?: string } | null;
+        installation: { installationId: string; host: string } | null;
       }
     | null
     | undefined,
@@ -265,7 +266,7 @@ async function checkRunTarget(
   const scoped = {
     apiUrl: repo?.githubApiUrl,
     baseUrl: repo?.githubUrl,
-    installationHost: repo?.installation?.host,
+    installationHost: repo?.installation?.host ?? null,
     installationId: repo?.installation?.installationId ?? null,
   };
   try {
@@ -395,6 +396,20 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const verified = await verifyWebhookOrReject(request, reply);
       if (!verified.ok) {
         return;
+      }
+
+      // The App's own lifecycle events arrive on the same webhook URL.
+      const eventType = request.headers['x-github-event'];
+      if (typeof eventType === 'string' && INSTALLATION_EVENT_TYPES.has(eventType)) {
+        return {
+          data: await applyInstallationEvent(
+            fastify,
+            eventType,
+            request.body,
+            verified.host,
+            request.headers['x-github-enterprise-host']
+          ),
+        };
       }
 
       const event = normalizeGitHubPullRequestEvent(request.body);
@@ -610,6 +625,17 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const eventType = (request.headers['x-github-event'] as string | undefined) ?? '';
+      if (INSTALLATION_EVENT_TYPES.has(eventType)) {
+        return {
+          data: await applyInstallationEvent(
+            fastify,
+            eventType,
+            request.body,
+            verified.host,
+            request.headers['x-github-enterprise-host']
+          ),
+        };
+      }
       const invalidation = classifyAccessEvent(eventType, request.body);
       if (invalidation.kind === 'ignored') {
         return { data: { ignored: true, reason: invalidation.reason } };

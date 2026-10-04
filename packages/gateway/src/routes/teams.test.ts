@@ -42,6 +42,9 @@ interface State {
   locks?: string[];
   /** When true, `teamMembership.create` loses a concurrent race (P2002). */
   createConflict?: boolean;
+  /** Rows `connectionTeamShare.findMany` returns, and the queries it was asked. */
+  shares?: Array<{ connection: Record<string, unknown> }>;
+  shareQueries?: Array<{ where: Record<string, unknown> }>;
 }
 
 const TEAM_ID = '00000000-0000-4000-8000-000000000001';
@@ -101,6 +104,12 @@ function buildApp(state: State): FastifyInstance {
       return 1;
     },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+    connectionTeamShare: {
+      findMany: async (args: { where: Record<string, unknown> }) => {
+        state.shareQueries = [...(state.shareQueries ?? []), args];
+        return state.shares ?? [];
+      },
+    },
     organization: {
       findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
         // Single default org for the create-path test.
@@ -187,6 +196,37 @@ function buildApp(state: State): FastifyInstance {
 
 afterEach(() => {
   // App instances are throwaway per-test; nothing to clean.
+});
+
+describe('GET /api/v1/teams/:id shared repositories', () => {
+  const OWNER = { id: 'team-owner', name: 'Owners', slug: 'owners' };
+  const repo = (id: string, name: string) => ({
+    connection: { id, isActive: true, organizationName: 'acme', repoName: name, team: OWNER },
+  });
+
+  it('lists the repositories shared with the team, with their owning team, in name order', async () => {
+    const state = freshState({
+      shares: [repo('r2', 'zeta'), repo('r1', 'alpha')],
+      userRole: 'ADMIN',
+    });
+    const res = await buildApp(state).inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    const { sharedRepositories } = JSON.parse(res.payload).data;
+    expect(sharedRepositories.map((r: { repoName: string }) => r.repoName)).toEqual([
+      'alpha',
+      'zeta',
+    ]);
+    expect(sharedRepositories[0].team).toEqual(OWNER);
+    // Scoped to this team and to active rows, like the Connections page.
+    expect(state.shareQueries?.[0]?.where).toMatchObject({
+      connection: { isActive: true, type: 'git_repo' },
+      teamId: TEAM_ID,
+    });
+  });
 });
 
 describe('POST /api/v1/teams', () => {

@@ -227,10 +227,42 @@ export async function fetchGithubUserId(
  */
 export async function clearGithubLogin(prisma: PrismaClient, userId: string): Promise<void> {
   await prisma.$transaction([
-    prisma.user.update({ data: { githubLogin: null }, where: { id: userId } }),
+    prisma.user.update({
+      data: { githubLogin: null, githubLoginAccountId: null },
+      where: { id: userId },
+    }),
     prisma.repoAccess.deleteMany({ where: { userId } }),
   ]);
 }
+
+/**
+ * {@link clearGithubLogin}, but only if the user still holds exactly the login
+ * (and source account) that was verified. A sign-in can rewrite both while the
+ * lookup is in flight; clearing unconditionally would wipe a login that was just
+ * written, and the access rows with it. Returns whether it cleared.
+ */
+export async function clearGithubLoginIfUnchanged(
+  prisma: PrismaClient,
+  userId: string,
+  login: string,
+  accountId: string | null
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const { count } = await tx.user.updateMany({
+      data: { githubLogin: null, githubLoginAccountId: null },
+      where: { githubLogin: login, githubLoginAccountId: accountId, id: userId },
+    });
+    if (count > 0) {
+      await tx.repoAccess.deleteMany({ where: { userId } });
+    }
+    return count > 0;
+  });
+}
+
+const CHANGED_MEANWHILE: LoginOwnershipResult = {
+  reason: 'the login changed while it was being verified',
+  status: 'unverifiable',
+};
 
 /**
  * Verify `login` still names `userId`'s GitHub account, and clear it if not.
@@ -244,27 +276,40 @@ export async function verifyGithubLoginOwnership(
   prisma: PrismaClient,
   args: { userId: string; login: string; targets: AccountTargets }
 ): Promise<LoginOwnershipResult> {
-  const accounts = await prisma.account.findMany({
-    select: { accountId: true },
-    where: { providerId: 'github', userId: args.userId },
-  });
-  const account = accounts[0];
+  const [accounts, owner] = await Promise.all([
+    prisma.account.findMany({
+      select: { accountId: true },
+      where: { providerId: 'github', userId: args.userId },
+    }),
+    prisma.user.findUnique({
+      select: { githubLoginAccountId: true },
+      where: { id: args.userId },
+    }),
+  ]);
+  // The account the login was read from, when that was recorded. A recorded
+  // account that is no longer linked leaves the login with nothing behind it,
+  // however many others are linked.
+  const sourceId = owner?.githubLoginAccountId ?? null;
+  const account = sourceId ? accounts.find((a) => a.accountId === sourceId) : accounts[0];
   if (!account?.accountId) {
     // No linked GitHub account, yet a login is recorded. The account-delete
     // hook handles the unlink and swallows its own failures, so this is the
     // safety net for one that slipped past — the login would otherwise back
     // repository access with nothing behind it. Reported as `unlinked` rather
     // than `reassigned` so a failed unlink does not raise the takeover alarm.
-    await clearGithubLogin(prisma, args.userId);
-    return { clearedLogin: args.login, status: 'unlinked' };
+    return (await clearGithubLoginIfUnchanged(prisma, args.userId, args.login, sourceId))
+      ? { clearedLogin: args.login, status: 'unlinked' }
+      : CHANGED_MEANWHILE;
   }
-  // `users.github_login` does not record which of several linked GitHub
-  // accounts it came from, and a login is only comparable with the id space of
-  // the host that issued it. Comparing against the wrong one would clear a
-  // valid login and write a false takeover, so it is left unverified.
-  if (accounts.length > 1) {
+  // A row written before the source account was recorded cannot say which of
+  // several linked accounts the login came from, and a login is only comparable
+  // with the id space of the host that issued it. Comparing against the wrong
+  // one would clear a valid login and write a false takeover, so it is left
+  // unverified.
+  if (!sourceId && accounts.length > 1) {
     return {
-      reason: 'several GitHub accounts are linked, so the login cannot be tied to one host',
+      reason:
+        'several GitHub accounts are linked and the login does not record which one it came from',
       status: 'unverifiable',
     };
   }
@@ -290,7 +335,9 @@ export async function verifyGithubLoginOwnership(
     return { status: 'ok' };
   }
 
-  await clearGithubLogin(prisma, args.userId);
+  if (!(await clearGithubLoginIfUnchanged(prisma, args.userId, args.login, sourceId))) {
+    return CHANGED_MEANWHILE;
+  }
   await recordTakeover(prisma, args.userId, args.login, currentOwner, account.accountId);
   return { clearedLogin: args.login, status: 'reassigned' };
 }
