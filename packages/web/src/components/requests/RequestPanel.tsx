@@ -82,7 +82,12 @@ function RequestDetail({ requestId }: { requestId: string }) {
   const isCrossRepo = summary.data?.data[0]?.isCrossRepo === true;
   const query = useWorkflowRun(runId, false);
   const run = query.data;
-  useDocumentTitle(run?.templateName ? `Request · ${run.templateName}` : null);
+  const requestTitle =
+    run?.workRequest?.title ||
+    run?.workRequest?.description.split('\n')[0].slice(0, 80) ||
+    run?.workRequest?.externalTicketId ||
+    run?.templateName;
+  useDocumentTitle(requestTitle ? `Request · ${requestTitle}` : null);
   const total = attempts.data?.meta.total ?? 0;
   return (
     <div className="space-y-6">
