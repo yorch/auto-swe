@@ -451,6 +451,22 @@ export async function finalizeWorkflowRun(
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
   contextSnapshot?: unknown
 ): Promise<void> {
+  await finalizeRun(runId, status, contextSnapshot, 'worker');
+}
+
+/**
+ * The finalization core: ends the run, bills its org, and fires the terminal
+ * side effects, exactly once however many callers race (`endWorkflowRun`
+ * guards the write). `source` only labels `workflow_runs_finalized_total`; the
+ * run reaper reaches the same core as the workflow's own finalize step, so a
+ * run it ends is billed and notified identically.
+ */
+export async function finalizeRun(
+  runId: string,
+  status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
+  contextSnapshot: unknown,
+  source: 'worker' | 'reaper'
+): Promise<void> {
   // Phase-8 denormalize the run's cost + token totals onto workflow_runs at finalize
   // time. Read the workRequest → activeWorkflows join once, sum, then write back.
   const run = await prisma.workflowRun.findUnique({
@@ -661,7 +677,7 @@ export async function finalizeWorkflowRun(
   // double it — and not for a run the dashboard cancelled, which the cancel
   // route already counted.
   if (outcome === 'ended') {
-    recordRunFinalized(status, 'worker');
+    recordRunFinalized(status, source);
   }
   const finalStatus = endedStatus(outcome);
 

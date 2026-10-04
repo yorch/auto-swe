@@ -795,7 +795,7 @@ status, source, tier — never a run or ticket:
 | Metric (Prometheus name) | Labels | Recorded by |
 |---|---|---|
 | `llm_calls_total`, `llm_tokens_total`, `llm_cost_usd_total` | `model`, `agent` (+ `direction` on tokens) | `recordLlmUsage`, embedding usage |
-| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel). The worker, channel and eval-verdict writes are conditional on `endedAt` still being null and the dashboard cancel on `status` still being `RUNNING`, so a retried activity or a cancel racing the workflow's own finalisation counts once. A run the dashboard cancelled is counted by the cancel; the worker or channel write that later sets its `endedAt` keeps it `CANCELLED` and does not count it again. The gateway's eval start-failure write is unconditional: no workflow exists to finalise that row, so nothing else writes it |
+| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel), `reaper` (the run reaper, below). The worker, channel and eval-verdict writes are conditional on `endedAt` still being null and the dashboard cancel on `status` still being `RUNNING`, so a retried activity or a cancel racing the workflow's own finalisation counts once. A run the dashboard cancelled is counted by the cancel; the worker or channel write that later sets its `endedAt` keeps it `CANCELLED` and does not count it again. The gateway's eval start-failure write is unconditional: no workflow exists to finalise that row, so nothing else writes it |
 | `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, on each call that ends over the tier |
 | `activity_duration_seconds` (histogram) | `activity`, `outcome` (`success` / `failure` / `cancelled`) | the activity interceptor |
 
@@ -827,6 +827,22 @@ once the cap is reached, and `recordLlmUsage` fails the call that passes it with
 `BUDGET_EXCEEDED`. An eval dataset run multiplies the cap by its case count, and finishes with a
 partial verdict rather than failing when the cap runs out after some cases completed (see
 [evals.md](./evals.md)). Epic planning is not runless: it is debited to the epic's own ledger row.
+
+**Run reaper.** A run is finalized — ended and billed to its org — by its own workflow's last step,
+so a workflow that never reaches it would otherwise stay "in flight" for the org cap for ever. The
+`auto-swe-run-reaper` Temporal Schedule (`RUN_REAPER_ENABLED`, default `true`; `RUN_REAPER_CRON`,
+default every 15 minutes) starts `ScheduledRunReaperWorkflow`, whose one activity (`reapStrandedRuns`)
+takes up to 200 unfinalized runs older than 10 minutes, oldest first, and asks Temporal about each.
+A run whose execution is finished or no longer exists is ended through `finalizeRun`, the same core
+as the workflow's own finalize step, so billing, the terminal side effects and the
+`workflow_runs_finalized_total` count (`source=reaper`) happen exactly once however the two race. A
+Temporal status maps to a run status as `COMPLETED` → `SUCCESS`, `TIMED_OUT` → `TIMED_OUT`,
+`CANCELLED` and `TERMINATED` → `CANCELLED` (stopped on purpose), `FAILED` and an execution Temporal
+has forgotten → `FAILED`; a run the dashboard already cancelled stays `CANCELLED`. A lookup that
+fails or exceeds its 5 s deadline leaves the run alone, so a live run is never billed on a Temporal
+hiccup. Channel turns end through `finalizeChannelRun`, which bills their channel, not an org. A
+dashboard cancel that finds the execution gone leaves the run for the reaper rather than ending it
+unbilled; the one exception is a channel turn, which bills no org and ends in the cancel itself.
 
 **Agent traces.** Each LLM-calling activity records tool calls, LLM requests/responses, and named
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
@@ -1049,14 +1065,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call
   succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
   so it counts as a failure.
-- **The org cap counts unfinalized runs until they finalize.** A run that never finalizes (a
-  workflow terminated outside the worker, or a cancelled one whose worker never runs its
-  cancellation path) keeps its accrued cost in every month's in-flight figure. That includes a run
-  cancelled in the moment between its first activity creating the row and Temporal recording that
-  activity's completion: the workflow exits before the step that finalizes on cancellation, so the
-  row stays `CANCELLED` with no `endedAt`. A dashboard cancel
-  that finds the run's execution already gone ends the run without billing it, so that run's spend
-  leaves the cap.
+- **The org cap counts unfinalized runs until they finalize.** A run whose workflow ended without
+  finalizing it — terminated outside the worker, or cancelled before its first activity was
+  recorded — keeps its accrued cost in the in-flight figure until the run reaper ends it, so it
+  counts for up to the 10-minute grace plus a sweep interval, and for as long as the reaper is
+  disabled (`RUN_REAPER_ENABLED=false`) or Temporal is unreachable. A sweep looks at the 200 oldest
+  such runs, so more than 200 live runs older than the grace can delay the reaper reaching a stale
+  one behind them.
   Spend with no org on it — a runless workflow with no derivable owner, an epic's own planning ledger
   row, which no run finalizes — is outside the cap.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a

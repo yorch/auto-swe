@@ -144,6 +144,7 @@ import { assertScheduledFireAuthorized } from './scheduledFireAuthorization.js';
 import {
   buildChannelTaskResultText,
   createWorkflowRun,
+  finalizeRun,
   finalizeWorkflowRun,
   recordWorkflowStep,
   resolveTemplateForRepo,
@@ -801,6 +802,26 @@ describe('finalizeWorkflowRun', () => {
 
     expect(updateManyRuns).toHaveBeenCalledTimes(1);
     expect(recorded).toHaveBeenCalledExactlyOnceWith('FAILED', 'worker');
+    findRun.mockReset();
+  });
+
+  it('labels a run the reaper ended with its own source, and counts a reaped cancel not at all', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const recorded = vi.mocked(recordRunFinalized);
+    recorded.mockClear();
+    findRun.mockResolvedValue({ endedAt: null, workRequest: null } as never);
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    await finalizeRun('run-r', 'TIMED_OUT', undefined, 'reaper');
+    expect(recorded).toHaveBeenCalledExactlyOnceWith('TIMED_OUT', 'reaper');
+
+    // A run the gateway already cancelled keeps CANCELLED and was counted by
+    // the cancel route: the reaper's write ends it without counting it again.
+    recorded.mockClear();
+    updateManyRuns.mockResolvedValueOnce({ count: 0 } as never);
+    updateManyRuns.mockResolvedValueOnce({ count: 1 } as never);
+    await finalizeRun('run-c', 'FAILED', undefined, 'reaper');
+    expect(recorded).not.toHaveBeenCalled();
     findRun.mockReset();
   });
 

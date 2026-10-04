@@ -20,12 +20,14 @@ import { metrics } from '@opentelemetry/api';
  * Every `(source, status)` pair this process can finalize, and every budget
  * tier. `source` names the path that finalized the run: `worker` is
  * `finalizeWorkflowRun`, `channel` is `finalizeChannelRun`, `eval` is an
- * `EvalRun` verdict. The gateway records `gateway` (a dashboard cancel) and
+ * `EvalRun` verdict, `reaper` is the run reaper ending a run whose workflow
+ * ended without finalizing it. The gateway records `gateway` (a dashboard cancel) and
  * `eval` (an eval run that failed to start) itself.
  */
 const RUN_SOURCES = {
   channel: ['SUCCESS', 'FAILED'],
   eval: ['SUCCESS', 'REGRESSION', 'FAILED'],
+  reaper: ['SUCCESS', 'FAILED', 'TIMED_OUT', 'CANCELLED'],
   worker: ['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED', 'CANCELLED'],
 } as const;
 export type RunFinalizedSource = keyof typeof RUN_SOURCES;
@@ -67,7 +69,8 @@ function createInstruments() {
     runsFinalized: meter.createCounter('workflow.runs.finalized', {
       description:
         'Runs finalized, by status and by the path that finalized them (source): worker, ' +
-        'channel, eval, or gateway (a dashboard cancel). Each run counts once.',
+        'channel, eval, reaper (a run whose workflow ended without finalizing it), or gateway (a ' +
+        'dashboard cancel). Each run counts once.',
       unit: '{run}',
     }),
   };
