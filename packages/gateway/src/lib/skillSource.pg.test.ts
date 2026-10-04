@@ -18,6 +18,7 @@ vi.mock('@auto-swe/shared/lib/skillSource', async (importOriginal) => ({
 }));
 
 import { skillSourceRoutes } from '../routes/skillSources.js';
+import { updateSkill } from './skillLibraryService.js';
 import { installSkillSource } from './skillSourceService.js';
 
 /**
@@ -280,6 +281,90 @@ describe.skipIf(!enabled)('skill sources against Postgres', () => {
           prisma.skill.count({ where: { name: `race-b-${tag}` } })
         )
       ).toBe(0);
+    });
+
+    it('serialises concurrent imports of one name: exactly one wins, the rest are refused', async () => {
+      const names = ['contended'];
+      const prefixed = names.map((n) => `${n}-${tag}`);
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: 6 }, () => run(names, noAudit))
+      );
+      const won = outcomes.filter((o) => o.status === 'fulfilled');
+      for (const o of won) {
+        sourceIds.add((o as PromiseFulfilledResult<{ source: { id: string } }>).value.source.id);
+      }
+      expect(won).toHaveLength(1);
+      for (const o of outcomes.filter((x) => x.status === 'rejected')) {
+        expect((o as PromiseRejectedResult).reason).toMatchObject({ code: 'NAME_CONFLICT' });
+      }
+      expect(
+        await runUnscoped('test counts the contended name', ['Skill'], () =>
+          prisma.skill.count({ where: { name: prefixed[0] } })
+        )
+      ).toBe(1);
+    });
+
+    it('a GLOBAL import conflicts with a same-named TEAM skill, folded for case and punctuation', async () => {
+      const teamId = await makeTeam();
+      const name = `teamskill-${tag}`;
+      skillNames.push(name);
+      await prisma.skill.create({
+        data: { name: `${name.toUpperCase()}.`, promptText: 'x', scope: 'TEAM', teamId },
+      });
+      skillNames.push(`${name.toUpperCase()}.`);
+      await expect(run(['teamskill'], noAudit)).rejects.toMatchObject({ code: 'NAME_CONFLICT' });
+    });
+
+    it('an ORGANIZATION import conflicts with a skill of any team in the organization', async () => {
+      const teamId = await makeTeam();
+      const name = `orgteam-${tag}`;
+      skillNames.push(name);
+      await prisma.skill.create({ data: { name, promptText: 'x', scope: 'TEAM', teamId } });
+      await expect(
+        run(['orgteam'], noAudit, { orgId, scope: 'ORGANIZATION' })
+      ).rejects.toMatchObject({ code: 'NAME_CONFLICT' });
+    });
+
+    it('a TEAM import conflicts with its organization’s skill but not with another team’s', async () => {
+      const [mine, other] = [await makeTeam(), await makeTeam()];
+      const orgName = `orgskill-${tag}`;
+      const otherName = `otherskill-${tag}`;
+      skillNames.push(orgName, otherName);
+      await prisma.skill.create({
+        data: { name: orgName, orgId, promptText: 'x', scope: 'ORGANIZATION' },
+      });
+      await prisma.skill.create({
+        data: { name: otherName, promptText: 'x', scope: 'TEAM', teamId: other },
+      });
+      await expect(
+        run(['orgskill'], noAudit, { scope: 'TEAM', teamId: mine })
+      ).rejects.toMatchObject({ code: 'NAME_CONFLICT' });
+      const ok = await run(['otherskill'], noAudit, { scope: 'TEAM', teamId: mine });
+      sourceIds.add(ok.source.id);
+    });
+
+    it('a description-only edit of an imported skill keeps its source provenance', async () => {
+      const { installed, source: row } = await run(['provenance'], noAudit);
+      sourceIds.add(row.id);
+      const id = (installed[0] as { id: string }).id;
+      const existing = await prisma.skill.findUniqueOrThrow({ where: { id } });
+      await updateSkill(prisma, existing, { description: 'reworded' }, userId);
+      const revs = await prisma.skillRevision.findMany({
+        orderBy: { revision: 'asc' },
+        where: { skillId: id },
+      });
+      expect(revs.map((r) => [r.revision, r.sourceSha])).toEqual([
+        [1, SHA],
+        [2, SHA],
+      ]);
+      expect(revs[1]?.referenceFiles).toEqual([{ content: 'ref', path: 'n.md' }]);
+      const again = await prisma.skill.findUniqueOrThrow({ where: { id } });
+      await updateSkill(prisma, again, { promptText: 'our own text' }, userId);
+      const last = await prisma.skillRevision.findFirstOrThrow({
+        orderBy: { revision: 'desc' },
+        where: { skillId: id },
+      });
+      expect(last).toMatchObject({ revision: 3, sourcePath: null, sourceSha: null });
     });
   });
 
