@@ -78,6 +78,7 @@ function installedSkill(name: string, over: Record<string, unknown> = {}): Row {
         ...content,
       } satisfies Rev,
     ],
+    scope: 'GLOBAL',
     sourceId: SOURCE_ID,
     sourcePath: `skills/${name}`,
     ...over,
@@ -115,6 +116,10 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   const p2025 = () => Object.assign(new Error('not found'), { code: 'P2025' });
 
   const prisma = {
+    $executeRaw: vi.fn(async () => {
+      writes.push('lock');
+      return 0;
+    }),
     $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
       const snapshot = structuredClone({
         audit: state.audit,
@@ -138,8 +143,31 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       }),
     },
     skill: {
-      findMany: vi.fn(async ({ where }: { where: { sourceId: string } }) =>
-        state.skills.filter((s) => s.sourceId === where.sourceId).map(clone)
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        writes.push('skill.create');
+        const { revisions, ...rest } = data as { revisions?: { create: Rev } } & Record<
+          string,
+          unknown
+        >;
+        const row = {
+          currentRevision: 1,
+          id: `skill-${String(rest.name)}`,
+          ...rest,
+          revisions: [{ ...(revisions?.create as Rev) }],
+        } as Row;
+        state.skills.push(row);
+        return clone(row);
+      }),
+      findMany: vi.fn(
+        async ({ where }: { where: { sourceId?: string; sourcePath?: { in: string[] } } }) =>
+          state.skills
+            .filter(
+              (s) =>
+                (where.sourceId === undefined || s.sourceId === where.sourceId) &&
+                (where.sourcePath === undefined ||
+                  where.sourcePath.in.includes(s.sourcePath as string))
+            )
+            .map(clone)
       ),
       update: vi.fn(
         async ({
@@ -925,5 +953,129 @@ describe('review bounds and binding', () => {
     expect(f.state.audit[0]).toMatchObject({
       afterJson: { notSelected: ['beta'], removed: ['delta'], unreadable: [] },
     });
+  });
+});
+
+describe('POST /:id/install', () => {
+  const withGamma = (over: Record<string, unknown> = {}) =>
+    fetchSkillSource.mockResolvedValue(
+      fetched([upstream('alpha'), upstream('beta'), upstream('gamma', over)], OLD)
+    );
+
+  it('installs a skill of the pinned commit, unverified, with provenance and an audit entry', async () => {
+    withGamma();
+    const f = await buildApp();
+    const res = await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.skills).toEqual([{ id: 'skill-gamma', name: 'gamma', revision: 1 }]);
+    expect(fetchSkillSource).toHaveBeenCalledWith(
+      expect.anything(),
+      { atSha: OLD, scriptMode: 'TEXT_ONLY' },
+      undefined
+    );
+    expect(f.skill('gamma')).toMatchObject({
+      isVerified: false,
+      scope: 'GLOBAL',
+      sourceId: SOURCE_ID,
+      sourcePath: 'skills/gamma',
+    });
+    expect(f.writes.indexOf('lock')).toBeLessThan(f.writes.indexOf('skill.create'));
+    expect(f.state.audit[0]).toMatchObject({
+      action: 'UPDATE',
+      afterJson: { installed: ['gamma'], pinnedSha: OLD },
+      entityId: SOURCE_ID,
+      entityType: 'SkillSource',
+    });
+  });
+
+  it('is bound to the pinned sha: any other commit is 409 before anything is fetched', async () => {
+    withGamma();
+    const f = await buildApp();
+    const res = await f.call('POST', '/install', { sha: NEW, skills: ['gamma'] });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatchObject({
+      code: 'SKILL_IMPORT_STALE_SHA',
+      details: { pinnedSha: OLD },
+    });
+    expect(fetchSkillSource).not.toHaveBeenCalled();
+    expect(f.writes).toEqual([]);
+  });
+
+  it('refuses a disabled source', async () => {
+    const f = await buildApp();
+    f.state.source.status = 'DISABLED';
+    const res = await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_IMPORT_DISABLED');
+  });
+
+  it('refuses a skill the pinned commit does not hold (400) and one with errors (422)', async () => {
+    withGamma({ errors: ['SKILL.md has no YAML frontmatter'], name: null });
+    const f = await buildApp();
+    const unknown = await f.call('POST', '/install', { sha: OLD, skills: ['nope'] });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json().error.details).toEqual(['nope']);
+    fetchSkillSource.mockResolvedValue(
+      fetched([upstream('alpha'), upstream('delta', { errors: ['bad'] })], OLD)
+    );
+    const broken = await f.call('POST', '/install', { sha: OLD, skills: ['delta'] });
+    expect(broken.statusCode).toBe(422);
+    expect(broken.json().error.code).toBe('SKILL_IMPORT_NOT_INSTALLABLE');
+    expect(f.writes).toEqual([]);
+  });
+
+  it('refuses scan warnings while the setting blocks them, and nothing is written', async () => {
+    withGamma();
+    scanSkillContent.mockResolvedValue({ incomplete: false, safe: false, warnings: ['x'] });
+    const f = await buildApp();
+    const res = await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe('SKILL_IMPORT_SCAN_WARNINGS');
+    expect(f.writes).toEqual([]);
+  });
+
+  it('installs a warned skill, recording the warnings, when the setting is off', async () => {
+    withGamma();
+    resolveSetting.mockResolvedValue(false);
+    scanSkillContent.mockResolvedValue({ incomplete: false, safe: false, warnings: ['x'] });
+    const f = await buildApp();
+    const res = await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] });
+    expect(res.statusCode).toBe(201);
+    expect(f.skill('gamma').revisions).toMatchObject([{ scanWarnings: ['x'] }]);
+  });
+
+  it('refuses a name that another skill holds, and a folder already installed here', async () => {
+    withGamma();
+    const f = await buildApp();
+    f.state.skills.push(installedSkill('gamma', { sourceId: null, sourcePath: null }));
+    const taken = await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] });
+    expect(taken.statusCode).toBe(409);
+    expect(taken.json().error.code).toBe('SKILL_IMPORT_NAME_CONFLICT');
+    const again = await f.call('POST', '/install', { sha: OLD, skills: ['alpha'] });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error.code).toBe('SKILL_IMPORT_ALREADY_INSTALLED');
+    expect(f.writes.filter((w) => w === 'skill.create')).toEqual([]);
+    expect(f.state.audit).toEqual([]);
+  });
+
+  it('a source disabled or moved while installing is SOURCE_CHANGED, writing nothing', async () => {
+    withGamma();
+    const f = await buildApp();
+    f.prisma.$executeRaw.mockImplementationOnce(async () => {
+      f.state.source.pinnedSha = NEW;
+      return 0;
+    });
+    const res = await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_IMPORT_SOURCE_CHANGED');
+    expect(f.writes).not.toContain('skill.create');
+  });
+
+  it('is ADMIN-only', async () => {
+    const f = await buildApp('ENGINEER');
+    expect((await f.call('POST', '/install', { sha: OLD, skills: ['gamma'] })).statusCode).toBe(
+      403
+    );
+    expect(fetchSkillSource).not.toHaveBeenCalled();
   });
 });

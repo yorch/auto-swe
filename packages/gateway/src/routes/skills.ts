@@ -107,11 +107,22 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     async () => {
       const skills = await runUnscoped('admin skill library spans every team', ['Skill'], () =>
         fastify.prisma.skill.findMany({
-          include: { _count: { select: { agentSkillRefs: true } } },
+          include: {
+            _count: { select: { agentSkillRefs: true } },
+            // The commit the current text was cut from, for the "external" badge.
+            revisions: { orderBy: { revision: 'desc' }, select: { sourceSha: true }, take: 1 },
+            source: { select: { host: true, owner: true, repo: true } },
+          },
           orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],
         })
       );
-      return { data: skills.map((s) => ({ ...s, usedByCount: s._count.agentSkillRefs })) };
+      return {
+        data: skills.map(({ _count, revisions, source, ...s }) => ({
+          ...s,
+          externalSource: source ? { ...source, sha: revisions[0]?.sourceSha ?? null } : null,
+          usedByCount: _count.agentSkillRefs,
+        })),
+      };
     }
   );
 

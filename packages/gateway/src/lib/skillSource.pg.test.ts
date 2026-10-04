@@ -649,6 +649,87 @@ describe.skipIf(!enabled)('skill sources against Postgres', () => {
         [3, `v2 of ${names[0]}`],
       ]);
     });
+
+    describe('installing more skills into an existing source', () => {
+      const countNamed = (name: string) =>
+        runUnscoped('test counts one skill by name', ['Skill'], () =>
+          prisma.skill.count({ where: { name } })
+        );
+      const install = (id: string, body: unknown) =>
+        app.inject({
+          headers: { authorization: 'Bearer t' },
+          method: 'POST',
+          payload: body as never,
+          url: `/api/v1/platform/skill-sources/${id}/install`,
+        });
+      /** The pinned commit holds the installed skills plus `extra`, which were never chosen. */
+      const pinnedHolds = (names: string[], extra: string[]) => {
+        skillNames.push(...extra);
+        fetchSkillSource.mockResolvedValue({
+          sha: SHA,
+          skills: [...names, ...extra].map((n) => ({
+            ...upstream(n, `text of ${n}`),
+            referenceFiles: [],
+          })),
+        });
+      };
+
+      it('writes the skill at revision 1, unverified, bound to the source, and audits in the same transaction', async () => {
+        const { names, row } = await installed(['insa']);
+        const extra = `insb-${tag}`;
+        pinnedHolds(names, [extra]);
+        const res = await install(row.id, { sha: SHA, skills: [extra] });
+        expect(res.statusCode).toBe(201);
+        const skill = await runUnscoped('test reads the skill it installed', ['Skill'], () =>
+          prisma.skill.findFirstOrThrow({ where: { name: extra } })
+        );
+        expect(skill).toMatchObject({
+          currentRevision: 1,
+          isVerified: false,
+          scope: 'GLOBAL',
+          sourceId: row.id,
+          sourcePath: `skills/${extra}`,
+        });
+        expect(await revs(skill.id)).toMatchObject([{ revision: 1, sourceSha: SHA }]);
+        expect(
+          await prisma.configAuditLog.count({
+            where: { action: 'UPDATE', entityId: row.id, entityType: 'SkillSource' },
+          })
+        ).toBe(1);
+        // The pin never moves, and the folder cannot be installed a second time.
+        expect(
+          (await prisma.skillSource.findUniqueOrThrow({ where: { id: row.id } })).pinnedSha
+        ).toBe(SHA);
+        const again = await install(row.id, { sha: SHA, skills: [extra] });
+        expect(again.statusCode).toBe(409);
+      });
+
+      it('concurrent installs of one name: exactly one wins, the other is refused', async () => {
+        const { names, row } = await installed(['insc']);
+        const extra = `insd-${tag}`;
+        pinnedHolds(names, [extra]);
+        const results = await Promise.all([
+          install(row.id, { sha: SHA, skills: [extra] }),
+          install(row.id, { sha: SHA, skills: [extra] }),
+        ]);
+        expect(results.map((r) => r.statusCode).sort()).toEqual([201, 409]);
+        expect(await countNamed(extra)).toBe(1);
+      });
+
+      it('a source deleted before the write leaves nothing behind (SOURCE_CHANGED)', async () => {
+        const { names, row } = await installed(['inse']);
+        const extra = `insf-${tag}`;
+        pinnedHolds(names, [extra]);
+        fetchSkillSource.mockImplementationOnce(async () => {
+          await prisma.skillSource.delete({ where: { id: row.id } });
+          return { sha: SHA, skills: [{ ...upstream(extra, 'x'), referenceFiles: [] }] };
+        });
+        const res = await install(row.id, { sha: SHA, skills: [extra] });
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error.code).toBe('SKILL_IMPORT_SOURCE_CHANGED');
+        expect(await countNamed(extra)).toBe(0);
+      });
+    });
   });
   describe('the sweep', () => {
     it('records latestSha and status on enabled sources only, and never touches a skill', async () => {

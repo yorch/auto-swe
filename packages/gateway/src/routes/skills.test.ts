@@ -113,7 +113,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   } as unknown as never);
   await app.register(skillsRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
-  const call = (method: 'POST' | 'PUT', url: string, payload?: unknown) =>
+  const call = (method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown) =>
     app.inject({
       headers: { authorization: 'Bearer token' },
       method,
@@ -123,6 +123,34 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   const revisionsOf = (id: string) => revisions.filter((r) => r.skillId === id);
   return { audit, call, prisma, revisionsOf, skills };
 }
+
+describe('GET /skills — external source badge', () => {
+  it('names the source and the commit the current text was cut from, and nothing else of the revisions', async () => {
+    const { call, prisma } = await buildApp();
+    const row = (id: string, over: Record<string, unknown>) => ({
+      _count: { agentSkillRefs: 2 },
+      id,
+      revisions: [] as unknown[],
+      source: null,
+      ...over,
+    });
+    (prisma.skill as unknown as { findMany: unknown }).findMany = vi.fn(async () => [
+      row('imported', {
+        revisions: [{ sourceSha: 'ab'.repeat(20) }],
+        source: { host: 'github.com', owner: 'acme', repo: 'skills' },
+      }),
+      row('custom', {}),
+    ]);
+    const res = await call('GET', '/skills');
+    const [imported, custom] = res.json().data;
+    expect(imported).toMatchObject({
+      externalSource: { host: 'github.com', owner: 'acme', repo: 'skills', sha: 'ab'.repeat(20) },
+      usedByCount: 2,
+    });
+    expect(imported).not.toHaveProperty('revisions');
+    expect(custom.externalSource).toBeNull();
+  });
+});
 
 describe('skill revisions on the write paths', () => {
   it('creates a skill with revision 1, its author and its scan warnings', async () => {

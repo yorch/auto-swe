@@ -160,7 +160,15 @@ export async function previewSkillSource(
 /** The install cannot proceed as asked; `code` selects the HTTP status in the route. */
 export class SkillImportRefusal extends Error {
   constructor(
-    readonly code: 'NAME_CONFLICT' | 'NOT_INSTALLABLE' | 'SCAN_WARNINGS' | 'UNKNOWN_SKILLS',
+    readonly code:
+      | 'ALREADY_INSTALLED'
+      | 'DISABLED'
+      | 'NAME_CONFLICT'
+      | 'NOT_INSTALLABLE'
+      | 'SCAN_WARNINGS'
+      | 'SOURCE_CHANGED'
+      | 'STALE_SHA'
+      | 'UNKNOWN_SKILLS',
     readonly details: unknown
   ) {
     super(code);
@@ -177,6 +185,97 @@ export interface InstalledSkill {
   name: string;
   revision: number;
 }
+
+/**
+ * The skills the request names, checked against what the source holds: names
+ * folded together, unknown names, skills with errors and (when the setting
+ * blocks them) scan warnings are each refused, naming everything at once.
+ */
+async function chooseSkills(fetchedSkills: SourceSkill[], names: string[]) {
+  const byName = new Map(
+    fetchedSkills.flatMap((s) => (s.name === null ? [] : [[s.name, s] as const]))
+  );
+  const wanted = [...new Set(names)];
+  if (new Set(wanted.map(normaliseSkillName)).size !== wanted.length) {
+    throw new SkillImportRefusal(
+      'NAME_CONFLICT',
+      wanted.map((name) => ({ name, scope: 'this import' }))
+    );
+  }
+  const unknown = wanted.filter((n) => !byName.has(n));
+  if (unknown.length > 0) {
+    throw new SkillImportRefusal('UNKNOWN_SKILLS', unknown);
+  }
+  const chosen = wanted.map((n) => byName.get(n) as SourceSkill);
+
+  const broken = chosen.filter((s) => s.errors.length > 0);
+  if (broken.length > 0) {
+    throw new SkillImportRefusal(
+      'NOT_INSTALLABLE',
+      broken.map((s) => ({ errors: s.errors, name: s.name }))
+    );
+  }
+
+  const [scans, block] = await Promise.all([
+    scanAll(chosen),
+    resolveSetting('skills.import.blockOnScanWarnings'),
+  ]);
+  const flagged = chosen.filter((s) => (scans.get(s) ?? []).length > 0);
+  if (block && flagged.length > 0) {
+    throw new SkillImportRefusal(
+      'SCAN_WARNINGS',
+      flagged.map((s) => ({ name: s.name, warnings: scans.get(s) }))
+    );
+  }
+  return { chosen, scans, wanted };
+}
+
+/** The skill rows and their revision 1, written inside the caller's transaction. */
+async function createSkillRows(
+  tx: Prisma.TransactionClient,
+  source: SkillSourceRow,
+  chosen: SourceSkill[],
+  scans: Map<SourceSkill, string[]>,
+  sha: string,
+  createdById: string
+): Promise<InstalledSkill[]> {
+  const installed: InstalledSkill[] = [];
+  for (const s of chosen) {
+    const content = { description: s.description, promptText: s.promptText };
+    const skill = await tx.skill.create({
+      data: {
+        ...content,
+        ...initialRevision(content, {
+          createdById,
+          // Reference files are stored UNSCANNED (the scan covers description and
+          // text). Nothing reads them back to an agent or a UI; whatever first does
+          // must scan them, with blockOnScanWarnings applying, before it may.
+          referenceFiles: s.referenceFiles as unknown as Prisma.InputJsonValue,
+          scanWarnings: scans.get(s) ?? [],
+          sourcePath: s.folder,
+          sourceSha: sha,
+        }),
+        // Imported text is third-party until a human verifies a revision.
+        isBuiltIn: false,
+        isVerified: false,
+        name: s.name as string,
+        orgId: source.orgId,
+        scope: source.scope,
+        sourceId: source.id,
+        sourcePath: s.folder,
+        teamId: source.teamId,
+      },
+    });
+    installed.push({ id: skill.id, name: skill.name, revision: 1 });
+  }
+  return installed;
+}
+
+// CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
+// `skills` has no unique name, so two concurrent imports could both find a name
+// free; this serialises the check-then-create of every import.
+const lockSkillNames = (tx: Prisma.TransactionClient) =>
+  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('skill-name-allocation', 0))`;
 
 /**
  * Install the chosen skills from a source at one commit.
@@ -211,50 +310,13 @@ export async function installSkillSource(
     deps
   );
 
-  const byName = new Map(
-    fetched.skills.flatMap((s) => (s.name === null ? [] : [[s.name, s] as const]))
-  );
-  const wanted = [...new Set(input.skills)];
-  if (new Set(wanted.map(normaliseSkillName)).size !== wanted.length) {
-    throw new SkillImportRefusal(
-      'NAME_CONFLICT',
-      wanted.map((name) => ({ name, scope: 'this import' }))
-    );
-  }
-  const unknown = wanted.filter((n) => !byName.has(n));
-  if (unknown.length > 0) {
-    throw new SkillImportRefusal('UNKNOWN_SKILLS', unknown);
-  }
-  const chosen = wanted.map((n) => byName.get(n) as SourceSkill);
-
-  const broken = chosen.filter((s) => s.errors.length > 0);
-  if (broken.length > 0) {
-    throw new SkillImportRefusal(
-      'NOT_INSTALLABLE',
-      broken.map((s) => ({ errors: s.errors, name: s.name }))
-    );
-  }
-
-  const [scans, block] = await Promise.all([
-    scanAll(chosen),
-    resolveSetting('skills.import.blockOnScanWarnings'),
-  ]);
-  const flagged = chosen.filter((s) => (scans.get(s) ?? []).length > 0);
-  if (block && flagged.length > 0) {
-    throw new SkillImportRefusal(
-      'SCAN_WARNINGS',
-      flagged.map((s) => ({ name: s.name, warnings: scans.get(s) }))
-    );
-  }
+  const { chosen, scans, wanted } = await chooseSkills(fetched.skills, input.skills);
 
   return prisma.$transaction(
     async (tx) => {
       // Inside the transaction, immediately before the writes, so the decision
       // is taken on the rows the writes then sit beside.
-      // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
-      // `skills` has no unique name, so two concurrent imports could both find a name
-      // free; this serialises the check-then-create of every import.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('skill-name-allocation', 0))`;
+      await lockSkillNames(tx);
       const conflicts = await findConflicts(tx, wanted, input);
       if (conflicts.size > 0) {
         throw new SkillImportRefusal(
@@ -281,37 +343,110 @@ export async function installSkillSource(
           teamId: input.scope === 'TEAM' ? input.teamId : null,
         },
       });
-      const installed: InstalledSkill[] = [];
-      for (const s of chosen) {
-        const content = { description: s.description, promptText: s.promptText };
-        const skill = await tx.skill.create({
-          data: {
-            ...content,
-            ...initialRevision(content, {
-              createdById: input.createdById,
-              // Reference files are stored UNSCANNED (the scan covers description and
-              // text). Nothing reads them back to an agent or a UI; whatever first does
-              // must scan them, with blockOnScanWarnings applying, before it may.
-              referenceFiles: s.referenceFiles as unknown as Prisma.InputJsonValue,
-              scanWarnings: scans.get(s) ?? [],
-              sourcePath: s.folder,
-              sourceSha: fetched.sha,
-            }),
-            // Imported text is third-party until a human verifies a revision.
-            isBuiltIn: false,
-            isVerified: false,
-            name: s.name as string,
-            orgId: source.orgId,
-            scope: source.scope,
-            sourceId: source.id,
-            sourcePath: s.folder,
-            teamId: source.teamId,
-          },
-        });
-        installed.push({ id: skill.id, name: skill.name, revision: 1 });
-      }
+      const installed = await createSkillRows(
+        tx,
+        source,
+        chosen,
+        scans,
+        fetched.sha,
+        input.createdById
+      );
       await audit(tx, source, installed);
       return { installed, source };
+    },
+    { maxWait: 10_000, timeout: 60_000 }
+  );
+}
+
+/**
+ * Install more skills from a source that already exists: the folders its pinned
+ * commit holds that nothing installed uses (never chosen at import).
+ *
+ * `sha` must be the source's `pinnedSha` — the commit it is installed at — and is
+ * read by sha, never through the ref, so what is installed is the pinned text
+ * and the pin never has to move. A folder first added upstream after the pin is
+ * therefore `UNKNOWN_SKILLS` until an accept advances the pin. The rules are
+ * those of the first import: all-or-nothing, scan warnings blocked by the
+ * setting, name conflicts decided under the same lock inside the transaction.
+ * The source is re-read inside the transaction, so one disabled, deleted or
+ * moved meanwhile is `SOURCE_CHANGED` and nothing is written.
+ */
+export async function installIntoSource(
+  prisma: PrismaClient,
+  source: SkillSourceRow,
+  input: { sha: string; skills: string[]; createdById: string },
+  audit: (
+    tx: Prisma.TransactionClient,
+    source: SkillSourceRow,
+    skills: InstalledSkill[]
+  ) => Promise<void>,
+  deps?: SkillSourceDeps
+): Promise<{ installed: InstalledSkill[]; source: SkillSourceRow }> {
+  if (source.status === 'DISABLED') {
+    throw new SkillImportRefusal('DISABLED', undefined);
+  }
+  if (source.pinnedSha !== input.sha) {
+    throw new SkillImportRefusal('STALE_SHA', { pinnedSha: source.pinnedSha });
+  }
+  const fetched = await fetchSkillSource(
+    {
+      host: source.host,
+      owner: source.owner,
+      path: source.path,
+      ref: source.ref,
+      repo: source.repo,
+    },
+    { atSha: input.sha, scriptMode: source.scriptMode },
+    deps
+  );
+  const { chosen, scans, wanted } = await chooseSkills(fetched.skills, input.skills);
+
+  return prisma.$transaction(
+    async (tx) => {
+      await lockSkillNames(tx);
+      const current = await tx.skillSource.findUnique({ where: { id: source.id } });
+      if (!current || current.status === 'DISABLED' || current.pinnedSha !== input.sha) {
+        throw new SkillImportRefusal('SOURCE_CHANGED', undefined);
+      }
+      const taken = await runUnscoped(
+        'skill install checks the folders of one source',
+        ['Skill'],
+        () =>
+          tx.skill.findMany({
+            select: { name: true },
+            where: { sourceId: source.id, sourcePath: { in: chosen.map((s) => s.folder) } },
+          })
+      );
+      if (taken.length > 0) {
+        throw new SkillImportRefusal(
+          'ALREADY_INSTALLED',
+          taken.map((t) => ({ name: t.name }))
+        );
+      }
+      // A source is only ever created GLOBAL, ORGANIZATION or TEAM (a CHECK keeps it so).
+      const conflicts = await findConflicts(tx, wanted, {
+        orgId: current.orgId,
+        scope: current.scope as SourceScope['scope'],
+        teamId: current.teamId,
+      });
+      if (conflicts.size > 0) {
+        throw new SkillImportRefusal(
+          'NAME_CONFLICT',
+          [...conflicts.values()]
+            .flat()
+            .map((c) => ({ existingId: c.id, name: c.name, scope: c.scope }))
+        );
+      }
+      const installed = await createSkillRows(
+        tx,
+        current,
+        chosen,
+        scans,
+        input.sha,
+        input.createdById
+      );
+      await audit(tx, current, installed);
+      return { installed, source: current };
     },
     { maxWait: 10_000, timeout: 60_000 }
   );
