@@ -16,6 +16,8 @@ import {
   getIssueTrackerConfig,
   getKnowledgeBaseConfig,
   getSlackConfig,
+  issueTrackerBaseUrlRefusal,
+  knowledgeBaseBaseUrlRefusal,
   listConfigAuditEntries,
   testDecryptSecrets,
   testFigmaConnection,
@@ -315,8 +317,17 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.put(
     '/config/issue-tracker',
-    { schema: { body: IssueTrackerPutBody, response: { 200: z.any() } } },
+    { schema: { body: IssueTrackerPutBody, response: { 200: z.any(), 400: z.any() } } },
     async (req, reply) => {
+      const refusal = await issueTrackerBaseUrlRefusal(fastify.prisma, req.body);
+      if (refusal) {
+        return reply.status(400).send({
+          error: {
+            code: 'BASE_URL_REFUSED',
+            message: `Base URL refused: ${refusal}. The private-network option permits private addresses only, never loopback, link-local or metadata addresses.`,
+          },
+        });
+      }
       const result = await updateIssueTrackerConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });
@@ -355,8 +366,17 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.put(
     '/config/knowledge-base',
-    { schema: { body: KnowledgeBasePutBody, response: { 200: z.any() } } },
+    { schema: { body: KnowledgeBasePutBody, response: { 200: z.any(), 400: z.any() } } },
     async (req, reply) => {
+      const refusal = await knowledgeBaseBaseUrlRefusal(fastify.prisma, req.body);
+      if (refusal) {
+        return reply.status(400).send({
+          error: {
+            code: 'BASE_URL_REFUSED',
+            message: `Base URL refused: ${refusal}. The private-network option permits private addresses only, never loopback, link-local or metadata addresses.`,
+          },
+        });
+      }
       const result = await updateKnowledgeBaseConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       return reply.send({ data: result.data });

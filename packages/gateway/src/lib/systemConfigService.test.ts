@@ -62,6 +62,8 @@ import {
   getIssueTrackerConfig,
   getKnowledgeBaseConfig,
   getSlackConfig,
+  issueTrackerBaseUrlRefusal,
+  knowledgeBaseBaseUrlRefusal,
   listConfigAuditEntries,
   testDecryptSecrets,
   testFigmaConnection,
@@ -1029,9 +1031,14 @@ describe('systemConfigService', () => {
 
     it('succeeds when the Figma API responds ok', async () => {
       resolveFigmaConfigMock.mockResolvedValueOnce({ apiToken: 'figd_x', enabled: true } as never);
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true }));
+      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true });
+      vi.stubGlobal('fetch', fetchMock);
       const result = await testFigmaConnection();
       expect(result.ok).toBe(true);
+      // The token is never forwarded by a redirect, and the probe is bounded.
+      expect(fetchMock.mock.calls[0][1]).toEqual(
+        expect.objectContaining({ redirect: 'error', signal: expect.any(AbortSignal) })
+      );
     });
 
     it('reports the API status on failure', async () => {
@@ -1088,6 +1095,26 @@ describe('systemConfigService', () => {
       const result = await testKnowledgeBaseConnection();
       expect(result.ok).toBe(false);
       expect(result.detail).toBe('Provider confluence not supported.');
+    });
+
+    it('reports a refused base URL instead of an unsupported provider', async () => {
+      resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
+        apiToken: 'tok',
+        baseUrl: 'http://127.0.0.1:8090',
+        enabled: true,
+        provider: 'confluence',
+        spaces: [],
+      } as never);
+      mockCreateKnowledgeBaseProvider.mockImplementationOnce(((
+        _config: unknown,
+        opts: { log: { warn: (obj: unknown, msg?: string) => void } }
+      ) => {
+        opts.log.warn({ reason: "host '127.0.0.1' is internal" }, 'rejected by SSRF guard');
+        return null;
+      }) as never);
+      const result = await testKnowledgeBaseConnection();
+      expect(result.ok).toBe(false);
+      expect(result.detail).toBe("Base URL refused: host '127.0.0.1' is internal.");
     });
 
     it('succeeds when the provider search resolves', async () => {
@@ -1155,6 +1182,76 @@ describe('systemConfigService', () => {
       const result = await testIssueTrackerConnection('PROJ-1');
       expect(result.ok).toBe(true);
       expect(result.detail).toBe('Fetched "Fix the thing" (status: In Progress) from jira.');
+    });
+  });
+
+  describe('connector base URL save-time check', () => {
+    const tracker = (row: unknown) =>
+      (mockPrisma.issueTrackerConfig.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        row
+      );
+    const kb = (row: unknown) =>
+      (mockPrisma.knowledgeBaseConfig.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        row
+      );
+
+    it('refuses a loopback tracker URL even with the opt-in', async () => {
+      tracker(null);
+      const reason = await issueTrackerBaseUrlRefusal(prisma, {
+        allowPrivateNetwork: true,
+        baseUrl: 'http://127.0.0.1:8080',
+        provider: 'jira',
+      });
+      expect(reason).toEqual(expect.any(String));
+    });
+
+    it('accepts a private tracker URL only with the opt-in', async () => {
+      tracker(null);
+      expect(
+        await issueTrackerBaseUrlRefusal(prisma, {
+          baseUrl: 'https://jira.corp.internal',
+          provider: 'jira',
+        })
+      ).not.toBeNull();
+      tracker(null);
+      expect(
+        await issueTrackerBaseUrlRefusal(prisma, {
+          allowPrivateNetwork: true,
+          baseUrl: 'https://jira.corp.internal',
+          provider: 'jira',
+        })
+      ).toBeNull();
+    });
+
+    it('ignores a provider with a fixed host and writes that do not touch the URL', async () => {
+      tracker(null);
+      expect(
+        await issueTrackerBaseUrlRefusal(prisma, {
+          baseUrl: 'http://localhost',
+          provider: 'linear',
+        })
+      ).toBeNull();
+      tracker({ allowPrivateNetwork: false, baseUrl: 'http://localhost', provider: 'jira' });
+      expect(await issueTrackerBaseUrlRefusal(prisma, { email: 'a@b.com' })).toBeNull();
+    });
+
+    it('applies the same check to the knowledge base', async () => {
+      kb(null);
+      expect(
+        await knowledgeBaseBaseUrlRefusal(prisma, {
+          allowPrivateNetwork: true,
+          baseUrl: 'http://169.254.169.254',
+          provider: 'confluence',
+        })
+      ).not.toBeNull();
+      kb(null);
+      expect(
+        await knowledgeBaseBaseUrlRefusal(prisma, {
+          allowPrivateNetwork: true,
+          baseUrl: 'http://10.0.0.5',
+          provider: 'confluence',
+        })
+      ).toBeNull();
     });
   });
 });

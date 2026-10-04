@@ -54,6 +54,8 @@ vi.mock('../lib/systemConfigService.js', () => ({
   getIssueTrackerConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getKnowledgeBaseConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getSlackConfig: vi.fn(async () => ({ data: {}, sources: {} })),
+  issueTrackerBaseUrlRefusal: vi.fn(async () => null),
+  knowledgeBaseBaseUrlRefusal: vi.fn(async () => null),
   listConfigAuditEntries: vi.fn(async () => []),
   SYSTEM_CONFIG_IDS: {
     canary: '00000000-0000-0000-0001-000000000012',
@@ -148,8 +150,12 @@ import { resolveCanaryConfig } from '@auto-swe/shared/lib/systemConfig';
 import {
   auditConfigWrite,
   detectJiraFields,
+  issueTrackerBaseUrlRefusal,
+  knowledgeBaseBaseUrlRefusal,
   updateCanaryConfig,
   updateConsolidationConfig,
+  updateIssueTrackerConfig,
+  updateKnowledgeBaseConfig,
   updateWorkflowDefaults,
 } from '../lib/systemConfigService.js';
 import { systemConfigRoutes } from './systemConfig.js';
@@ -240,6 +246,27 @@ describe('POST /config/issue-tracker/detect-fields', () => {
       url: '/api/v1/platform/config/issue-tracker/detect-fields',
     });
     expect(res.statusCode).toBe(500);
+    await app.close();
+  });
+});
+
+describe('connector base URL refusal on save', () => {
+  it.each([
+    ['issue-tracker', issueTrackerBaseUrlRefusal, updateIssueTrackerConfig],
+    ['knowledge-base', knowledgeBaseBaseUrlRefusal, updateKnowledgeBaseConfig],
+  ] as const)('PUT /config/%s answers 400 and writes nothing', async (name, refusal, update) => {
+    vi.mocked(refusal).mockResolvedValueOnce("host '127.0.0.1' is internal");
+    vi.mocked(update).mockClear();
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      payload: { allowPrivateNetwork: true, baseUrl: 'http://127.0.0.1:8080' },
+      url: `/api/v1/platform/config/${name}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('BASE_URL_REFUSED');
+    expect(update).not.toHaveBeenCalled();
     await app.close();
   });
 });

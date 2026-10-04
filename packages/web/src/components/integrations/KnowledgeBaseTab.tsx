@@ -188,10 +188,10 @@ export function KnowledgeBaseTab() {
             checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
             hint={
               <>
-                Bypasses the SSRF guard that otherwise rejects internal/<code>.local</code>
-                /private-IP base URLs. Only enable this for a trusted self-hosted instance you
-                control — it reopens the server to requests against your internal network for this
-                connector.
+                Allows a base URL on a private-network address (internal, <code>.local</code>,
+                private IP). Loopback, link-local and cloud-metadata addresses are always refused;
+                use the host's LAN address or <code>host.docker.internal</code> instead. Only enable
+                this for a trusted self-hosted instance you control.
               </>
             }
             id="kb-allow-private-network"
