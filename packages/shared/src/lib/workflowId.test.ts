@@ -273,14 +273,24 @@ describe('chooseWorkflowId — rows of one repository under several ids', () => 
   });
 
   it('conflicts with a run of a same-identity row', () => {
+    expect(chooseWorkflowId(base, [row(base, 'IMPLEMENTING', REPO_B)], owner)).toMatchObject({
+      conflictWorkflowId: base,
+    });
+  });
+
+  it('flags a conflict with another row of the repository, but not with the same row', () => {
     expect(chooseWorkflowId(base, [row(base, 'IMPLEMENTING', REPO_B)], owner)).toEqual({
+      conflictOtherRow: true,
+      conflictWorkflowId: base,
+    });
+    expect(chooseWorkflowId(base, [row(base, 'IMPLEMENTING', REPO_A)], owner)).toEqual({
       conflictWorkflowId: base,
     });
   });
 
   it('conflicts with a run in the disambiguated family of a same-identity row', () => {
     const other = disambiguatedWorkflowIdBase(base, REPO_B);
-    expect(chooseWorkflowId(base, [row(other, 'IMPLEMENTING', REPO_B)], owner)).toEqual({
+    expect(chooseWorkflowId(base, [row(other, 'IMPLEMENTING', REPO_B)], owner)).toMatchObject({
       conflictWorkflowId: other,
     });
   });

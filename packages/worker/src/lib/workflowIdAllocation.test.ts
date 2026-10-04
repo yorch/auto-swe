@@ -90,7 +90,10 @@ describe('allocateTicketWorkflowId', () => {
         workRequest: { externalTicketId: 'X-1' },
       },
     ]);
-    await expect(allocateTicketWorkflowId(REPO)).resolves.toEqual({ conflictWorkflowId: BASE });
+    await expect(allocateTicketWorkflowId(REPO)).resolves.toEqual({
+      conflictOtherRow: true,
+      conflictWorkflowId: BASE,
+    });
   });
 
   it('still treats a row that is not the same repository as foreign', async () => {

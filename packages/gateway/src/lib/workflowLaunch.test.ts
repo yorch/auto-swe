@@ -339,7 +339,7 @@ describe('allocateWorkflowId — the id from before repository ids carried a hos
         ME,
         []
       );
-      expect(result).toEqual({ conflictWorkflowId: BASE });
+      expect(result).toEqual({ conflictOtherRow: true, conflictWorkflowId: BASE });
     });
 
     it('does not conflict with a run of the same owner and name on another host', async () => {

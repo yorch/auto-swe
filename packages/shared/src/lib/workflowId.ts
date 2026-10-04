@@ -117,7 +117,15 @@ export interface WorkflowIdCandidate {
 
 export type WorkflowIdAllocation =
   | { workflowId: string; isRerun: boolean }
-  | { conflictWorkflowId: string };
+  | {
+      conflictWorkflowId: string;
+      /**
+       * Set when the run in flight belongs to a different row of the same
+       * repository (`owner.sameRepoIds`), possibly another team's. Callers then
+       * say the ticket is already running without naming its workflow id.
+       */
+      conflictOtherRow?: true;
+    };
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -161,6 +169,18 @@ export interface WorkflowIdOwner {
    * this ticket. Omitted, only `repoId` itself is.
    */
   sameRepoIds?: readonly string[];
+}
+
+function conflictOf(
+  row: WorkflowIdCandidate,
+  owner?: WorkflowIdOwner
+): { conflictWorkflowId: string; conflictOtherRow?: true } {
+  return {
+    conflictWorkflowId: row.temporalWorkflowId,
+    ...(owner && row.repoId != null && row.repoId !== owner.repoId
+      ? { conflictOtherRow: true as const }
+      : {}),
+  };
 }
 
 /**
@@ -211,12 +231,12 @@ export function chooseWorkflowId(
       !isTerminalActiveWorkflowStatus(r.currentStatus)
   );
   if (legacyActive) {
-    return { conflictWorkflowId: legacyActive.temporalWorkflowId };
+    return conflictOf(legacyActive, owner);
   }
   const ours = inFamily.filter(isOurs);
   const active = ours.find((r) => !isTerminalActiveWorkflowStatus(r.currentStatus));
   if (active) {
-    return { conflictWorkflowId: active.temporalWorkflowId };
+    return conflictOf(active, owner);
   }
   const baseFamily = familyRe(baseId);
   const foreignInBase = inFamily.some((r) => !isOurs(r) && baseFamily.test(r.temporalWorkflowId));

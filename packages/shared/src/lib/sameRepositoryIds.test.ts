@@ -62,4 +62,14 @@ describe('sameRepositoryIds', () => {
     await expect(sameRepositoryIds(prisma, 'me')).resolves.toEqual(['me']);
     expect(findMany).not.toHaveBeenCalled();
   });
+
+  it('asks only for active rows besides its own, with literal names', async () => {
+    findUnique.mockResolvedValue({ ...ME, organizationName: 'a_c', repoName: 'ap%' });
+    findMany.mockResolvedValue([]);
+    await sameRepositoryIds(prisma, 'me');
+    const where = findMany.mock.calls[0]?.[0].where;
+    expect(where.OR).toEqual([{ isActive: true }, { id: 'me' }]);
+    expect(where.organizationName).toEqual({ equals: 'a\\_c', mode: 'insensitive' });
+    expect(where.repoName).toEqual({ equals: 'ap\\%', mode: 'insensitive' });
+  });
 });

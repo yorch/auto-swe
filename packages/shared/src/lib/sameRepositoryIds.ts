@@ -4,6 +4,15 @@ import { resolveGitHubConfig } from './systemConfig.js';
 import { runUnscoped } from './tenantGuard.js';
 
 /**
+ * `value` as a literal for a case-insensitive `equals`: Prisma compiles it to
+ * `ILIKE` without escaping, so `\\`, `%` and `_` are escaped. The same rule as
+ * the gateway's `insensitiveName`, which this package cannot import.
+ */
+function likeLiteral(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&');
+}
+
+/**
  * The ids of every git repository connection that is the same repository as
  * `repoId`: the same host (a missing `githubUrl` override is the instance's own
  * host) and the same owner and name compared case-insensitively, as GitHub
@@ -35,8 +44,11 @@ export async function sameRepositoryIds(prisma: PrismaClient, repoId: string): P
     prisma.connection.findMany({
       select: { githubUrl: true, id: true, organizationName: true, repoName: true },
       where: {
-        organizationName: { equals: own.organizationName, mode: 'insensitive' },
-        repoName: { equals: own.repoName, mode: 'insensitive' },
+        // An archived row's stuck run must not block the live one; the
+        // caller's own row counts whatever its state.
+        OR: [{ isActive: true }, { id: repoId }],
+        organizationName: { equals: likeLiteral(own.organizationName), mode: 'insensitive' },
+        repoName: { equals: likeLiteral(own.repoName), mode: 'insensitive' },
         type: 'git_repo',
       },
     })
