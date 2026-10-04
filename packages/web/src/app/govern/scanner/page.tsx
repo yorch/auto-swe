@@ -271,6 +271,17 @@ function PatternRow({
   onError,
 }: { pattern: ScannerPattern } & RowActions) {
   const update = useUpdateScannerPattern();
+  const [confirmDisable, setConfirmDisable] = useState(false);
+  // Blocking rules stop agent actions outright, so switching one off needs a confirmation.
+  const blocking = pattern.type === 'SHELL_COMMAND' || pattern.type === 'SENSITIVE_FILE';
+
+  function requestToggle() {
+    if (pattern.isActive && blocking) {
+      setConfirmDisable(true);
+      return;
+    }
+    toggleActive();
+  }
 
   function toggleActive() {
     onError(null);
@@ -317,8 +328,25 @@ function PatternRow({
         <ToggleSwitch
           checked={pattern.isActive}
           disabled={update.isPending}
-          onChange={toggleActive}
+          label={`${pattern.isActive ? 'Disable' : 'Enable'} ${pattern.label}`}
+          onChange={requestToggle}
+          title={`${pattern.isActive ? 'Disable' : 'Enable'} ${pattern.label}`}
         />
+        {confirmDisable && (
+          <ConfirmModal
+            confirmLabel="Disable rule"
+            dangerous
+            message={
+              pattern.type === 'SENSITIVE_FILE'
+                ? 'Agents will be able to write to files this rule protects, with no block from the sensitive file scanner, until you enable it again.'
+                : 'Agents will be able to run shell commands this rule blocks, with no warning from the shell scanner, until you enable it again.'
+            }
+            onClose={() => setConfirmDisable(false)}
+            onConfirm={() => toggleActive()}
+            open
+            title={`Disable "${pattern.label}"?`}
+          />
+        )}
       </Td>
       <Td className="py-2 text-right">
         <div className="flex items-center justify-end gap-2">
