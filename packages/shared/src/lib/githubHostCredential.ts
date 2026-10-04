@@ -18,8 +18,8 @@ import { approvedRepositoryHosts } from './connectionCredential.js';
 import { decryptSecret } from './crypto.js';
 import {
   type HostScopedConfig,
-  type HostScopedRepo,
   hostFamily,
+  type InstallationScopedRepo,
   installationHostMismatch,
   platformCredentialScope,
 } from './githubHostScope.js';
@@ -138,7 +138,7 @@ export type PlatformCredential =
  * the common case costs nothing.
  */
 export async function resolvePlatformCredential(
-  repo: HostScopedRepo,
+  repo: InstallationScopedRepo,
   config: ResolvedGitHubConfig
 ): Promise<PlatformCredential> {
   return platformCredentialFor(repo, config, resolveHostCredential);
@@ -146,7 +146,7 @@ export async function resolvePlatformCredential(
 
 /** {@link resolvePlatformCredential} with the host lookup injected. */
 export async function platformCredentialFor(
-  repo: HostScopedRepo,
+  repo: InstallationScopedRepo,
   config: ResolvedGitHubConfig,
   lookup: (host: string) => Promise<HostCredential | null>
 ): Promise<PlatformCredential> {

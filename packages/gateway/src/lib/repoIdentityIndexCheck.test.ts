@@ -82,7 +82,7 @@ describe('warnIfReposOnUnusableHosts', () => {
     id: string,
     githubUrl: string | null,
     githubApiUrl: string | null = githubUrl,
-    installation: { installationId: string } | null = null
+    installation: { host: string; installationId: string } | null = null
   ) => ({
     githubApiUrl,
     githubUrl,
@@ -97,7 +97,7 @@ describe('warnIfReposOnUnusableHosts', () => {
       repo('a', 'https://ghe.corp'),
       repo('b', null),
       // An installation does not make a foreign host usable.
-      repo('c', 'https://ghe.corp', 'https://ghe.corp', { installationId: '7' }),
+      repo('c', 'https://ghe.corp', 'https://ghe.corp', { host: 'ghe.corp', installationId: '7' }),
     ]);
     expect(warned).toBe(true);
     expect(findMany).toHaveBeenCalledWith(
@@ -150,7 +150,7 @@ describe('warnIfReposOnUnusableHosts', () => {
       (
         await run([
           repo('a', null),
-          repo('b', 'https://github.com', 'https://api.github.com', { installationId: '7' }),
+          repo('b', 'https://github.com', 'https://api.github.com', { host: '', installationId: '7' }),
         ])
       ).warned
     ).toBe(false);

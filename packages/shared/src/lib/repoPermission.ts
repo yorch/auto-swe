@@ -34,7 +34,7 @@ export interface PermissionRepo {
    */
   githubApiUrl: string | null;
   githubUrl: string | null;
-  installation: { installationId: string; host?: string } | null;
+  installation: { installationId: string; host: string } | null;
 }
 
 /** Select exactly the columns `lookupRepoPermission` reads. */
@@ -77,7 +77,7 @@ export async function lookupRepoPermission(
   const scoped = {
     apiUrl: repo.githubApiUrl,
     baseUrl: repo.githubUrl,
-    installationHost: repo.installation?.host,
+    installationHost: repo.installation?.host ?? null,
     installationId: repo.installation?.installationId ?? null,
   };
   let credential: Awaited<ReturnType<typeof resolvePlatformCredential>>;

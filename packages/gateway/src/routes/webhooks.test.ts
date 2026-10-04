@@ -1664,7 +1664,7 @@ describe('webhook routes', () => {
             githubApiUrl: 'https://api.github.com',
             githubUrl: 'https://github.com',
             id: 'repo-ghe',
-            installation: { installationId: '777' },
+            installation: { host: '', installationId: '777' },
           },
           workflow: { temporalWorkflowId: 'wf-ghe' },
         },
@@ -1760,7 +1760,7 @@ describe('webhook routes', () => {
       trackRepo({
         githubApiUrl: 'https://api.github.com',
         githubUrl: 'https://github.com',
-        installation: { installationId: '777' },
+        installation: { host: '', installationId: '777' },
       });
       vi.mocked(resolveGitHubToken).mockResolvedValueOnce('inst-777-token');
       fetchMock.mockResolvedValueOnce(done);
@@ -1785,7 +1785,7 @@ describe('webhook routes', () => {
       trackRepo({
         githubApiUrl: 'https://ghe.corp/api/v3',
         githubUrl: 'https://ghe.corp',
-        installation: { installationId: '777' },
+        installation: { host: 'ghe.corp', installationId: '777' },
       });
 
       const res = await inject('/api/v1/webhooks/ci', body, sign(body));
@@ -1843,7 +1843,7 @@ describe('webhook routes', () => {
       it("mints the repository's installation with the host's credential set, at the host's API", async () => {
         state.github = { ...state.github, ...APP_MODE, token: 'instance-pat' };
         hostCredentials.rows.set('ghe.corp', 'host-pat');
-        trackRepo({ ...GHE_REPO, installation: { installationId: '777' } });
+        trackRepo({ ...GHE_REPO, installation: { host: 'ghe.corp', installationId: '777' } });
         vi.mocked(resolveGitHubToken).mockResolvedValueOnce('host-inst-token');
         fetchMock.mockResolvedValueOnce(done);
 
@@ -1941,7 +1941,7 @@ describe('webhook routes', () => {
       trackRepo({
         githubApiUrl: null,
         githubUrl: 'https://mirror.corp',
-        installation: { installationId: '777' },
+        installation: { host: 'mirror.corp', installationId: '777' },
       });
 
       const res = await inject('/api/v1/webhooks/ci', body, sign(body));
@@ -1960,7 +1960,7 @@ describe('webhook routes', () => {
       trackRepo({
         githubApiUrl: 'https://ghe.corp/api/v3',
         githubUrl: null,
-        installation: { installationId: '777' },
+        installation: { host: '', installationId: '777' },
       });
 
       const res = await inject('/api/v1/webhooks/ci', body, sign(body));
@@ -1988,7 +1988,7 @@ describe('webhook routes', () => {
     it('never sends the instance PAT to another host, installation or not', async () => {
       // PAT mode: `resolveGitHubToken` would hand back the instance PAT for any target.
       state.github = { ...state.github, authMode: 'pat', token: 'instance-pat' };
-      for (const installation of [null, { installationId: '777' }]) {
+      for (const installation of [null, { host: 'ghe.corp', installationId: '777' }]) {
         trackRepo({
           githubApiUrl: 'https://ghe.corp/api/v3',
           githubUrl: 'https://ghe.corp',
@@ -2022,7 +2022,7 @@ describe('webhook routes', () => {
       trackRepo({
         githubApiUrl: 'https://evil.example/api/v3',
         githubUrl: 'https://evil.example',
-        installation: { installationId: '777' },
+        installation: { host: 'evil.example', installationId: '777' },
       });
 
       const res = await inject('/api/v1/webhooks/ci', body, sign(body));
@@ -2034,7 +2034,7 @@ describe('webhook routes', () => {
     });
 
     it('signals per run when no credential can be resolved for the installation', async () => {
-      trackRepo({ githubApiUrl: null, githubUrl: null, installation: { installationId: '777' } });
+      trackRepo({ githubApiUrl: null, githubUrl: null, installation: { host: '', installationId: '777' } });
       vi.mocked(resolveGitHubToken).mockRejectedValueOnce(new Error('no key'));
 
       const res = await inject('/api/v1/webhooks/ci', body, sign(body));

@@ -273,8 +273,8 @@ longer fit.
   chosen per repository. A repository's installation host is checked when an admin chooses it or
   repoints the repository, and again whenever a token is minted: a repository whose installation is
   recorded for another host gets no token (`REPO_INSTALLATION_HOST_MISMATCH` for runs, `host-mismatch`
-  for lookups) until it is pointed at an installation of its own host. Callers that load a repository
-  without its installation's host skip the mint-time check and rely on the write-time one.
+  for lookups) until it is pointed at an installation of its own host. An installation whose host is absent counts as
+  a mismatch, so no caller can skip the check by not loading it.
 - **No installation webhook events are handled.** Installations are registered by an admin; the
   platform does not create, rename or retire them from GitHub's `installation` events.
 - **Rolling upgrades can start one ticket twice.** A gateway or worker still running the code that
