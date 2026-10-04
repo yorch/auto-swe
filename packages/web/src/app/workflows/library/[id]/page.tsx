@@ -857,7 +857,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       {/* Edit mode: full-bleed canvas */}
       {mode === 'edit' && editorSpec && stepRegistry && (
-        <div className="-mx-10">
+        <div className="-mx-4 md:-mx-10">
           <TemplateEditor
             actions={editorActions}
             costEstimateUsd={costEstimate?.totalUsd}

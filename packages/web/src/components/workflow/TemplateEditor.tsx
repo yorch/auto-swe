@@ -38,7 +38,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { TOKEN } from '@/lib/palette';
-import { formatCost } from '@/lib/utils';
+import { cn, formatCost } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
 import { FlowChrome } from './flowChrome';
@@ -87,6 +87,8 @@ function EditorInner({
   // The outline is a rail beside the canvas, not a replacement for it, so the
   // canvas (and where the author has dragged things) stays mounted.
   const [showOutline, setShowOutline] = useState(false);
+  // Below lg the palette is a drawer over the canvas rather than a fixed column.
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const { screenToFlowPosition } = useReactFlow();
 
@@ -408,8 +410,8 @@ function EditorInner({
   return (
     <div className="flex h-[calc(100vh-180px)] min-h-[560px] flex-col overflow-hidden rounded-sm border border-ink-600 bg-ink-900">
       {/* Action bar */}
-      <div className="flex items-center justify-between gap-4 border-b border-ink-600 px-4 py-2">
-        <div className="label-mono flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-ink-600 px-4 py-2">
+        <div className="label-mono flex flex-wrap items-center gap-x-3 gap-y-1">
           <span>nodes</span>
           <span className="tabular text-paper-200">{Object.keys(spec.nodes).length}</span>
           <span className="text-ink-500">·</span>
@@ -430,7 +432,16 @@ function EditorInner({
             </>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            aria-expanded={paletteOpen}
+            className="lg:hidden"
+            onClick={() => setPaletteOpen((v) => !v)}
+            size="sm"
+            variant={paletteOpen ? 'primary' : 'ghost'}
+          >
+            Add step
+          </Button>
           <Button
             aria-pressed={showOutline}
             onClick={() => setShowOutline((v) => !v)}
@@ -486,13 +497,26 @@ function EditorInner({
         </details>
       )}
 
-      <div className="flex flex-1 overflow-hidden" ref={wrapperRef}>
-        <NodePalette onAdd={handlePaletteAdd} steps={stepRegistry} />
+      <div className="relative flex min-h-0 flex-1 overflow-hidden" ref={wrapperRef}>
+        <div
+          className={cn(
+            'z-20 h-full shadow-xl lg:static lg:block lg:shadow-none',
+            paletteOpen ? 'absolute inset-y-0 left-0 block' : 'hidden'
+          )}
+        >
+          <NodePalette
+            onAdd={(...args) => {
+              handlePaletteAdd(...args);
+              setPaletteOpen(false);
+            }}
+            steps={stepRegistry}
+          />
+        </div>
 
         {showOutline && (
           <aside
             aria-label="Outline"
-            className="flex w-72 shrink-0 flex-col border-r border-ink-600 bg-ink-900"
+            className="absolute inset-y-0 left-0 z-10 flex w-72 max-w-full shrink-0 flex-col border-r border-ink-600 bg-ink-900 shadow-xl lg:static lg:shadow-none"
           >
             <WorkflowOutline
               className="flex-1"
@@ -508,7 +532,7 @@ function EditorInner({
             canvas inside it is the interactive surface. */}
         <div
           aria-label="Workflow editor canvas. Left and right arrows follow the flow, up and down arrows switch between branches, Enter opens a node, Home jumps to the start, Delete removes the selected node."
-          className="relative flex-1 bg-ink-900"
+          className="relative min-w-0 flex-1 bg-ink-900"
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           ref={canvasRef}
@@ -538,27 +562,41 @@ function EditorInner({
           </ReactFlow>
         </div>
 
-        {/* Inspector */}
-        <NodeInspector
-          allNodeIds={Object.keys(spec.nodes)}
-          isEntry={selectedNodeId === spec.entry}
-          knownGroups={knownGroups}
-          node={selectedNode}
-          nodeId={selectedNodeId}
-          onChangeNode={(next) => {
-            if (!selectedNodeId) {
-              return;
-            }
-            onChange({
-              ...spec,
-              nodes: { ...spec.nodes, [selectedNodeId]: next },
-            });
-          }}
-          onDelete={handleDeleteNode}
-          onRename={handleRename}
-          stepMeta={selectedStepMeta}
-          stepRegistry={stepRegistry}
-        />
+        {/* Inspector: a column from lg up; below it, a sheet over the canvas while a node is selected. */}
+        <div
+          className={cn(
+            'z-20 h-full max-w-full flex-col shadow-xl lg:static lg:flex lg:shadow-none [&>aside]:min-h-0 [&>aside]:max-w-full [&>aside]:flex-1',
+            selectedNode ? 'absolute inset-y-0 right-0 flex' : 'hidden'
+          )}
+        >
+          {selectedNode && (
+            <div className="flex justify-end border-b border-ink-600 bg-ink-950 px-3 py-1.5 lg:hidden">
+              <Button onClick={() => onSelect(null)} size="sm" variant="ghost">
+                Close inspector
+              </Button>
+            </div>
+          )}
+          <NodeInspector
+            allNodeIds={Object.keys(spec.nodes)}
+            isEntry={selectedNodeId === spec.entry}
+            knownGroups={knownGroups}
+            node={selectedNode}
+            nodeId={selectedNodeId}
+            onChangeNode={(next) => {
+              if (!selectedNodeId) {
+                return;
+              }
+              onChange({
+                ...spec,
+                nodes: { ...spec.nodes, [selectedNodeId]: next },
+              });
+            }}
+            onDelete={handleDeleteNode}
+            onRename={handleRename}
+            stepMeta={selectedStepMeta}
+            stepRegistry={stepRegistry}
+          />
+        </div>
       </div>
     </div>
   );
