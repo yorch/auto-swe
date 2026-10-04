@@ -228,6 +228,21 @@ describe('runEvalHarness', () => {
     expect(vi.mocked(d.runCase).mock.calls.map(([c]) => c.id)).toEqual(['c1', 'c1', 'c2', 'c2']);
   });
 
+  it('marks the partial org_budget when the organization cap, not the runless cap, stopped it', async () => {
+    const d = deps({
+      runCase: vi.fn(async (c: EvalCaseRow, ref: string) => {
+        if (c.id !== 'c1' && ref === 'cand') {
+          throw ApplicationFailure.nonRetryable('Organization monthly budget exhausted', 'BUDGET_EXCEEDED', {
+            cap: 'organization',
+          });
+        }
+        return 1 as const;
+      }) as HarnessDeps['runCase'],
+    });
+    await runEvalHarness(input, d);
+    expect(d.finals[0].summary).toMatchObject({ partial: { completedCases: 1, reason: 'org_budget' } });
+  });
+
   it('fails when the budget stops it before any case completed', async () => {
     const d = deps({
       runCase: async () => {

@@ -260,11 +260,13 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
 }
 
 /**
- * Set on a run's summary when the runless budget stopped it before every case
- * ran: the verdict covers only the `completedCases` that did.
+ * Set on a run's summary when a budget stopped it before every case ran: the
+ * verdict covers only the `completedCases` that did. `reason` is `budget` for
+ * the runless cap and `org_budget` when the organization's monthly USD cap
+ * refused the next call.
  */
 export interface PartialRunSummary {
-  reason: 'budget';
+  reason: 'budget' | 'org_budget';
   /** The `BUDGET_EXCEEDED` message that stopped the run. */
   error: string;
   completedCases: number;
@@ -275,6 +277,11 @@ export interface PartialRunSummary {
 
 const isBudgetExceeded = (err: unknown) =>
   err instanceof ApplicationFailure && err.type === 'BUDGET_EXCEEDED';
+
+/** `BUDGET_EXCEEDED` raised by the organization's monthly USD cap, not the runless cap. */
+const isOrgBudgetStop = (err: unknown) =>
+  err instanceof ApplicationFailure &&
+  (err.details?.[0] as { cap?: unknown } | undefined)?.cap === 'organization';
 
 /**
  * Run the harness. Persists per-case rows + the run verdict; returns the
@@ -315,7 +322,7 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
           completedCases: pairs.length,
           error: failure instanceof Error ? failure.message : String(failure),
           notRunCaseIds: cases.slice(index).map((r) => r.id),
-          reason: 'budget',
+          reason: isOrgBudgetStop(failure) ? 'org_budget' : 'budget',
           totalCases: cases.length,
         };
         break;

@@ -100,6 +100,28 @@ describe('EvalRunPage', () => {
     ).toBeTruthy();
   });
 
+  it('names the organization budget when that is what cut the verdict short', async () => {
+    renderPage(
+      {
+        byTag: {},
+        overall: delta(0, -0.1, 0.1),
+        partial: {
+          completedCases: 1,
+          error: 'Organization monthly budget exhausted',
+          notRunCaseIds: ['c2'],
+          reason: 'org_budget',
+          totalCases: 2,
+        },
+        regression: false,
+        summary: 'pass-rate 80% → 80% — no significant regression',
+      },
+      'SUCCESS'
+    );
+    expect(
+      await screen.findByText(/the organization's monthly budget stopped this run after 1 of 2/)
+    ).toBeTruthy();
+  });
+
   it('shows no partial marker on a complete verdict', async () => {
     renderPage({
       byTag: {},
