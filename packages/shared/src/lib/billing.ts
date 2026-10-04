@@ -41,8 +41,9 @@ export interface OrgMonthSpend {
  *
  * Attributes a run as `billedOrgId` does, which `finalizeRun` and the mid-run
  * cap guard use: the work request's connection, else — only when the request
- * names none — the run's own connection, else the run's own ledger row's
- * repository. The reads below are that rule written as filters.
+ * names none — the run's own connection, else — only when the run has no
+ * connection either — the run's own ledger row's repository. The reads below
+ * are that rule written as filters.
  */
 export async function orgMonthSpend(db: PrismaClient, orgId: string): Promise<OrgMonthSpend> {
   try {
@@ -73,23 +74,26 @@ function isTransactionTimeout(err: unknown): boolean {
  * The one definition of the order; `readOrgMonthSpend` below states it as
  * database filters, since it has to find runs rather than resolve one.
  *
- * The run's own connection counts only when the work request names no
- * connection of its own: a request that does decides, and when that
- * connection's team has no organization the run is not billed through the
- * run's connection instead. The ledger row's repository is the last resort.
+ * Each source decides once it exists, with no fall-through to the next: a work
+ * request that names a connection decides (its team having no organization
+ * bills no one, not the run's connection); when it names none, the run's own
+ * connection decides the same way; the ledger row's repository is used only
+ * when neither connection exists.
  */
 export function billedOrgId(sources: {
   requestConnectionId?: string | null;
   requestOrgId?: string | null;
+  runConnectionId?: string | null;
   runOrgId?: string | null;
   ledgerOrgId?: string | null;
 }): string | null {
-  return (
-    sources.requestOrgId ??
-    (sources.requestConnectionId ? null : sources.runOrgId) ??
-    sources.ledgerOrgId ??
-    null
-  );
+  if (sources.requestConnectionId) {
+    return sources.requestOrgId ?? null;
+  }
+  if (sources.runConnectionId) {
+    return sources.runOrgId ?? null;
+  }
+  return sources.ledgerOrgId ?? null;
 }
 
 async function readOrgMonthSpend(

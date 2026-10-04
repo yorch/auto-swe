@@ -10,7 +10,7 @@ import { currentSpendOwner } from './spendOwner.js';
  * billing finds it (`finalizeRun`, `orgMonthSpend`; the order is `billedOrgId`):
  * the run's work request's connection, else — when the request names none, as
  * an epic child's and a scheduled fire's do not — the run's own connection,
- * else the ledger row's repository. So a PRD run and a code-route channel
+ * else, only when the run has no connection, the ledger row's repository. So a PRD run and a code-route channel
  * task, which bill their org through the request's connection, are capped
  * like any run.
  *
@@ -28,6 +28,7 @@ async function resolveBilledOrg(
     prisma.workflowRun.findUnique({
       select: {
         connection: { select: { team } },
+        connectionId: true,
         workRequest: { select: { connection: { select: { team } }, connectionId: true } },
       },
       where: { workflowId },
@@ -42,6 +43,7 @@ async function resolveBilledOrg(
     ledgerOrgId: viaLedger,
     requestConnectionId: run?.workRequest?.connectionId,
     requestOrgId: run?.workRequest?.connection?.team?.orgId,
+    runConnectionId: run?.connectionId,
     runOrgId: run?.connection?.team?.orgId,
   });
   return { orgId, stable: run != null || viaLedger != null };

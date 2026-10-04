@@ -191,25 +191,26 @@ describe('orgMonthSpend: runs placed by the run connection or the ledger', () =>
 describe('billedOrgId', () => {
   it('prefers the request connection, then the run connection only when the request names none, then the ledger', () => {
     const all = { ledgerOrgId: 'L', requestOrgId: 'Q', runOrgId: 'R' };
-    expect(billedOrgId({ ...all, requestConnectionId: 'c' })).toBe('Q');
-    expect(billedOrgId({ ...all, requestConnectionId: null, requestOrgId: null })).toBe('R');
-    expect(billedOrgId({ ledgerOrgId: 'L', runOrgId: 'R' })).toBe('R');
-    expect(billedOrgId({ ledgerOrgId: 'L', requestOrgId: null, runOrgId: null })).toBe('L');
+    expect(billedOrgId({ ...all, requestConnectionId: 'c', runConnectionId: 'r' })).toBe('Q');
+    expect(billedOrgId({ ...all, requestOrgId: null, runConnectionId: 'r' })).toBe('R');
+    expect(billedOrgId({ ledgerOrgId: 'L' })).toBe('L');
     expect(billedOrgId({})).toBeNull();
   });
 
-  it("does not fall back to the run connection when the request's connection has no org", () => {
+  it('lets a connection decide even when its team has no org: no fall-through to the next source', () => {
     // The request named a connection, so it decides; its team having no org
-    // sends the run to the ledger, never to the run's own connection.
+    // bills no one, neither the run's connection nor the ledger.
     expect(
       billedOrgId({
         ledgerOrgId: 'L',
         requestConnectionId: 'c',
         requestOrgId: null,
+        runConnectionId: 'r',
         runOrgId: 'R',
       })
-    ).toBe('L');
-    expect(billedOrgId({ requestConnectionId: 'c', requestOrgId: null, runOrgId: 'R' })).toBeNull();
+    ).toBeNull();
+    // Likewise a run's own connection with no org does not reach the ledger.
+    expect(billedOrgId({ ledgerOrgId: 'L', runConnectionId: 'r', runOrgId: null })).toBeNull();
   });
 });
 

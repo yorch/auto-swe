@@ -742,6 +742,7 @@ describe('finalizeWorkflowRun', () => {
       workRequest: {
         activeWorkflows: [{ costUsdAccrued: 2, tokensInputUsed: 100n, tokensOutputUsed: 50n }],
         connection: { team: { orgId: 'org-1' } },
+        connectionId: 'c',
       },
     } as never);
     updateManyRuns.mockResolvedValue({ count: 1 } as never);
@@ -776,6 +777,7 @@ describe('finalizeWorkflowRun', () => {
       workRequest: {
         activeWorkflows: [{ costUsdAccrued: 3, tokensInputUsed: 10n, tokensOutputUsed: 5n }],
         connection: { team: { orgId: 'org-1' } },
+        connectionId: 'c',
       },
     } as never);
     updateManyRuns.mockResolvedValue({ count: 1 } as never);
@@ -819,6 +821,7 @@ describe('finalizeWorkflowRun', () => {
           },
         ],
         connection: { team: { orgId: 'org-1' } },
+        connectionId: 'c',
         payload: null,
       },
     } as never);
@@ -907,6 +910,7 @@ describe('finalizeWorkflowRun', () => {
           },
         ],
         connection: { team: { orgId: 'org-1' } },
+        connectionId: 'c',
         payload: null,
       },
     } as never);
@@ -925,6 +929,7 @@ describe('finalizeWorkflowRun', () => {
     updateManyRuns.mockResolvedValue({ count: 1 } as never);
     findRun.mockResolvedValue({
       connection: { team: { orgId: 'org-child' } },
+      connectionId: 'c-child',
       endedAt: null,
       workflowId: 'epic-child',
       workRequest: { activeWorkflows: [], connection: null, connectionId: null, payload: null },
@@ -970,6 +975,7 @@ describe('finalizeWorkflowRun', () => {
     it("bills the request's connection's org even when the run has a different connection", async () => {
       const row = runRow({
         connection: { team: { orgId: 'org-run' } },
+        connectionId: 'c-run',
         workRequest: {
           activeWorkflows: [],
           connection: { team: { orgId: 'org-request' } },
@@ -983,6 +989,7 @@ describe('finalizeWorkflowRun', () => {
     it("does not use the run's connection when the request named one whose team has no org", async () => {
       const row = runRow({
         connection: { team: { orgId: 'org-run' } },
+        connectionId: 'c-run',
         workRequest: {
           activeWorkflows: [],
           connection: { team: { orgId: null } },
@@ -991,11 +998,17 @@ describe('finalizeWorkflowRun', () => {
         },
       });
       expect(await billedTo(row)).toBeUndefined();
-      expect(await billedTo(row, 'org-ledger')).toBe('org-ledger');
+      // Nor the ledger: the connection the request named decides.
+      expect(await billedTo(row, 'org-ledger')).toBeUndefined();
+    });
+
+    it("bills no one, not the ledger's org, when the run's own connection has no org", async () => {
+      const row = runRow({ connection: { team: { orgId: null } }, connectionId: 'c-run' });
+      expect(await billedTo(row, 'org-ledger')).toBeUndefined();
     });
 
     it("uses the run's connection when the request names none", async () => {
-      const row = runRow({ connection: { team: { orgId: 'org-run' } } });
+      const row = runRow({ connection: { team: { orgId: 'org-run' } }, connectionId: 'c-run' });
       expect(await billedTo(row, 'org-ledger')).toBe('org-run');
     });
 

@@ -679,7 +679,7 @@ returns it as `currentMonthSpend` beside the finalized `currentMonthUsage`. The 
 best-effort under concurrency: launches that arrive together see the same total.
 A run already going meets the cap too: `assertBudgetAvailable` also reads `orgMonthSpend` for the
 run's organization (found as billing finds it: the work request's connection, else the run's own
-connection, else the ledger row's repository, else — for a workflow with no run — its spend owner) and refuses the next model call with a non-retryable `BUDGET_EXCEEDED` once spend
+connection, else — only when the run has no connection — the ledger row's repository, else — for a workflow with no run — its spend owner) and refuses the next model call with a non-retryable `BUDGET_EXCEEDED` once spend
 reaches the cap. That read goes through a per-org cache of one config-cache window (30 s), holding
 the cap and the spend together, so a refusal clears within a window of the cap being raised.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
@@ -1104,7 +1104,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   that month's usage report carries the spend of every run reaped late.
   A run is counted for, capped under and billed to one organization, found in this order: its work
   request's connection, else — only when the request names none, as an epic child's and a scheduled
-  fire's do not — the run's own connection, else the repository of the run's own ledger row. A
+  fire's do not — the run's own connection, else — only when the run has no connection — the
+  repository of the run's own ledger row. A connection that is found decides even when its team has
+  no organization: the run is then billed to no one, never to the next source. A
   scheduled fire gets its connection and ledger row at its first activity, from the schedule's
   repository (and its branch and budget tier), so it is capped, counted in flight and billed to that
   repository's organization like any other run.

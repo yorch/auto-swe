@@ -532,6 +532,7 @@ export async function finalizeRun(
   const run = await prisma.workflowRun.findUnique({
     select: {
       connection: { select: { team: { select: { orgId: true } } } },
+      connectionId: true,
       endedAt: true,
       workflowId: true,
       workRequest: {
@@ -643,23 +644,28 @@ export async function finalizeRun(
   }
 
   // An epic's work request targets no single connection, so an epic child
-  // reaches its org through its own run's connection, else its own ledger row's
-  // repository. The order `readOrgMonthSpend` and `resolveBilledOrg` (the mid-run
-  // cap) also use, so a run is billed to the org the cap counted it under.
-  let orgId = billedOrgId({
-    requestConnectionId: run?.workRequest?.connectionId,
-    requestOrgId: run?.workRequest?.connection?.team?.orgId,
-    runOrgId: run?.connection?.team?.orgId,
-  });
-  if (!orgId && run?.workflowId) {
+  // reaches its org through its own run's connection; a run with no connection
+  // anywhere, through its own ledger row's repository. The order
+  // `readOrgMonthSpend` and `resolveBilledOrg` (the mid-run cap) also use, so a
+  // run is billed to the org the cap counted it under.
+  const placedByConnection = !!(run?.workRequest?.connectionId || run?.connectionId);
+  let ledgerOrgId: string | null = null;
+  if (!placedByConnection && run?.workflowId) {
     // The ledger row is read by workflow id whether or not it is linked to the
     // work request, as the cap guard reads it, so both find the same org.
     const ledger = await prisma.activeWorkflow.findFirst({
       select: { repository: { select: { team: { select: { orgId: true } } } } },
       where: { temporalWorkflowId: run.workflowId },
     });
-    orgId = ledger?.repository?.team?.orgId ?? null;
+    ledgerOrgId = ledger?.repository?.team?.orgId ?? null;
   }
+  const orgId = billedOrgId({
+    ledgerOrgId,
+    requestConnectionId: run?.workRequest?.connectionId,
+    requestOrgId: run?.workRequest?.connection?.team?.orgId,
+    runConnectionId: run?.connectionId,
+    runOrgId: run?.connection?.team?.orgId,
+  });
 
   // A run the dashboard cancelled ends CANCELLED whatever the workflow reports
   // (`endWorkflowRun`), and everything below follows the status it ended with.
