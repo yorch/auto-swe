@@ -737,13 +737,16 @@ that never load OpenTelemetry into the workflow isolate:
 
 | Hop | Where | What it does |
 |---|---|---|
-| Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start and signal-with-start |
-| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new |
-| Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the starter's span |
+| Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start, signal-with-start, signal and update |
+| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new. A run that arrives without one gets a derived carrier: a trace id hashed from its workflow id and first run id (pure arithmetic, so replay-stable), with no parent span. The newest signal's or update's header travels beside it as `x-auto-swe-trace-signal` |
+| Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the starter's span, with a span link to the signal's span when the signal header is present |
 
 So a gateway request — its Fastify and HTTP server spans — and every activity of the run it
 started, child workflows included, are one trace in Tempo. A workflow started without a span around
-it (a Temporal schedule) gives each activity a trace of its own. Headers are not part of the command
+it (a Temporal schedule) gets one trace per run from the derived carrier, whose first span is a root. An
+approval or steering signal does not move the run into the sender's trace: activities scheduled after
+it link to the signal's span instead, so the approval request is one click from the work it released.
+Headers are not part of the command
 stream Temporal compares on replay: `runnable.traceContext.replay.test.ts` replays every committed
 fixture with both workflow interceptors registered. `@temporalio/interceptors-opentelemetry` is not
 used: it pins the 1.x OpenTelemetry SDK beside this repo's 2.x one, and runs OpenTelemetry inside
@@ -1013,9 +1016,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   which Node 26 deprecates in favour of `module.registerHooks()`.
 - **A run's trace has no workflow span.** Activities hang directly off the span that started the
   run; nothing represents the workflow itself or the time between activities, since producing one
-  would mean running OpenTelemetry inside the isolate. Signals and updates sent to a running
-  workflow (approvals, steering) carry no trace context, and runs started by a Temporal schedule
-  have no starting span, so each of their activities is its own trace.
+  would mean running OpenTelemetry inside the isolate. A schedule-started run's derived trace has
+  no root span either, so Tempo shows its activities as orphans of a parent that was never recorded.
+  A signal's link reaches only activities scheduled after it, and only the newest signal's: work
+  already running when it arrives, and earlier signals, are not linked.
 - **Only the worker's Temporal logger reaches Loki.** Plain `console` output — the `[bash:audit]`
   and `[mcp:audit]` lines among it — and all of the gateway's logging stay on stdout. Workflow-code
   logs arrive through the SDK's sink after the activation that produced them, so they carry no

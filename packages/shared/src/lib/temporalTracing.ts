@@ -1,4 +1,11 @@
-import { type Context, context, propagation, ROOT_CONTEXT } from '@opentelemetry/api';
+import {
+  type Context,
+  context,
+  type Link,
+  propagation,
+  ROOT_CONTEXT,
+  trace,
+} from '@opentelemetry/api';
 import {
   defaultPayloadConverter,
   type Payload,
@@ -18,6 +25,13 @@ import {
  * with {@link traceContextFromHeaders} and parents the activity span on it.
  */
 export const TRACE_CONTEXT_HEADER = 'x-auto-swe-trace';
+
+/**
+ * The context of the most recent signal or update a workflow received,
+ * forwarded onto the activities it schedules afterwards. The activity span
+ * links to it rather than parenting on it.
+ */
+export const TRACE_SIGNAL_HEADER = 'x-auto-swe-trace-signal';
 
 /** The active context as a W3C carrier (`traceparent`, `tracestate`), or undefined when there is none. */
 function activeCarrier(): Record<string, string> | undefined {
@@ -40,10 +54,15 @@ function withTraceHeader<T extends { headers: Record<string, Payload> }>(input: 
   };
 }
 
-/** Client interceptor: stamp the caller's trace context on every workflow it starts. */
+/**
+ * Client interceptor: stamp the caller's trace context on every workflow it
+ * starts, and on every signal and update it sends to a running one.
+ */
 export function traceContextClientInterceptor(): WorkflowClientInterceptor {
   return {
+    signal: (input, next) => next(withTraceHeader(input)),
     signalWithStart: (input, next) => next(withTraceHeader(input)),
+    startUpdate: (input, next) => next(withTraceHeader(input)),
     startWithDetails: (input, next) => next(withTraceHeader(input)),
   };
 }
@@ -52,8 +71,11 @@ export function traceContextClientInterceptor(): WorkflowClientInterceptor {
  * The context to parent an activity span on: the starter's, when the header is
  * present and decodes; otherwise the root context, i.e. a new trace.
  */
-export function traceContextFromHeaders(headers: Record<string, Payload> | undefined): Context {
-  const raw = headers?.[TRACE_CONTEXT_HEADER];
+export function traceContextFromHeaders(
+  headers: Record<string, Payload> | undefined,
+  name: string = TRACE_CONTEXT_HEADER
+): Context {
+  const raw = headers?.[name];
   if (!raw) {
     return ROOT_CONTEXT;
   }
@@ -64,4 +86,12 @@ export function traceContextFromHeaders(headers: Record<string, Payload> | undef
     // A header this process cannot decode only costs the link, never the activity.
     return ROOT_CONTEXT;
   }
+}
+
+/** A span link to the signal that most recently reached the workflow, when the header is present and decodes. */
+export function signalLinkFromHeaders(
+  headers: Record<string, Payload> | undefined
+): Link | undefined {
+  const spanContext = trace.getSpanContext(traceContextFromHeaders(headers, TRACE_SIGNAL_HEADER));
+  return spanContext ? { context: spanContext } : undefined;
 }

@@ -4,7 +4,14 @@
  * starter's trace context reach both hops. Test-only — not part of the
  * worker's `index.ts` barrel.
  */
-import { executeChild, proxyActivities, workflowInfo } from '@temporalio/workflow';
+import {
+  condition,
+  defineSignal,
+  executeChild,
+  proxyActivities,
+  setHandler,
+  workflowInfo,
+} from '@temporalio/workflow';
 
 const { probe } = proxyActivities<{ probe(from: string): Promise<void> }>({
   startToCloseTimeout: '10s',
@@ -17,4 +24,17 @@ export async function TraceChildWorkflow(): Promise<void> {
 export async function TraceParentWorkflow(): Promise<void> {
   await probe('parent');
   await executeChild(TraceChildWorkflow, { workflowId: `${workflowInfo().workflowId}-child` });
+}
+
+const poke = defineSignal('poke');
+
+/** Waits for a signal, then runs an activity — the shape of an approval gate. */
+export async function TraceSignalWorkflow(): Promise<void> {
+  let poked = false;
+  setHandler(poke, () => {
+    poked = true;
+  });
+  await probe('before');
+  await condition(() => poked);
+  await probe('after');
 }

@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { span, started, recordDuration } = vi.hoisted(() => ({
   recordDuration: vi.fn(),
   span: { end: vi.fn(), recordException: vi.fn(), setAttribute: vi.fn(), setStatus: vi.fn() },
-  started: [] as Array<{ name: string; attributes: Record<string, unknown>; parent: unknown }>,
+  started: [] as Array<{
+    name: string;
+    attributes: Record<string, unknown>;
+    links: unknown[];
+    parent: unknown;
+  }>,
 }));
 
 vi.mock('@opentelemetry/api', () => ({
@@ -12,11 +17,11 @@ vi.mock('@opentelemetry/api', () => ({
     getTracer: () => ({
       startActiveSpan: (
         name: string,
-        opts: { attributes: Record<string, unknown> },
+        opts: { attributes: Record<string, unknown>; links: unknown[] },
         parent: unknown,
         fn: (s: typeof span) => unknown
       ) => {
-        started.push({ attributes: opts.attributes, name, parent });
+        started.push({ attributes: opts.attributes, links: opts.links, name, parent });
         return fn(span);
       },
     }),
@@ -27,6 +32,8 @@ vi.mock('./metrics.js', () => ({ recordActivityDuration: recordDuration }));
 
 // Real propagation is covered end to end in workflows/traceContext.workflow.test.ts.
 vi.mock('@auto-swe/shared/lib/temporalTracing', () => ({
+  signalLinkFromHeaders: (headers: Record<string, unknown>) =>
+    headers.signal ? { context: { spanId: 's', traceId: 't' } } : undefined,
   traceContextFromHeaders: (headers: Record<string, unknown>) => ({ fromHeaders: headers }),
 }));
 
@@ -51,6 +58,15 @@ beforeEach(() => {
 });
 
 describe('activitySpanInterceptor', () => {
+  it('links the span to the signal that preceded the activity', async () => {
+    await activitySpanInterceptor(ctx).inbound?.execute?.(
+      { args: [], headers: { signal: {} } } as never,
+      async () => 'x'
+    );
+
+    expect(started[0]?.links).toEqual([{ context: { spanId: 's', traceId: 't' } }]);
+  });
+
   it('runs the activity inside a span named for it, tagged with its workflow', async () => {
     const next = vi.fn(async () => 'result');
 
@@ -64,6 +80,7 @@ describe('activitySpanInterceptor', () => {
           'temporal.attempt': 2,
           'temporal.workflow_id': 'eng-acme-svc-JIRA-1',
         }),
+        links: [],
         name: 'activity.executeImplementation',
         parent: { fromHeaders: {} },
       },
