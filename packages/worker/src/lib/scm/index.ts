@@ -46,7 +46,7 @@ export function toRepoRef(repo: {
   repoName: string | null;
   githubUrl: string | null;
   githubApiUrl: string | null;
-  installation: { installationId: string; host?: string } | null;
+  installation: { installationId: string; host: string } | null;
 }): RepoRef {
   if (!repo.organizationName || !repo.repoName) {
     throw new Error('toRepoRef requires a git_repo connection (organizationName/repoName)');

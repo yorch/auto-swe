@@ -77,6 +77,15 @@ beforeEach(() => {
 });
 
 describe('listProviderModels step', () => {
+  it("loads the installation's host, so the token mint can refuse an installation recorded for another host", async () => {
+    await listProviderModels({ request });
+    expect(m.prisma.connection.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: { installation: { select: { host: true, installationId: true } } },
+      })
+    );
+  });
+
   it('returns only a markdown list of ids per provider, with no key anywhere in the output', async () => {
     const out = await listProviderModels({ request });
     expect(Object.keys(out).sort()).toEqual(['guidance', 'previousRefreshOpen']);
