@@ -92,6 +92,12 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
   // strip it before any suffix comparison.
   const host = bracketless.replace(/\.+$/, '');
 
+  // The bare single-label metadata name is never a legitimate target and is
+  // never waivable (no `private` flag).
+  if (host === 'metadata') {
+    return { ok: false, reason: `host '${host}' is a metadata endpoint` };
+  }
+
   // Loopback / link-local / unspecified / IPv6 ::1 — text-level checks.
   if (
     host === '' ||
@@ -161,7 +167,7 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
 
 /**
  * Addresses no opt-in may reach: cloud metadata endpoints (link-local
- * 169.254.0.0/16 — AWS/Azure/GCP/Oracle — plus AWS's IPv6 `fd00:ec2::254`,
+ * 169.254.0.0/16 — AWS/Azure/GCP/Oracle — and IPv6 link-local fe80::/10, plus AWS's IPv6 `fd00:ec2::254`,
  * Alibaba's 100.100.100.200 and the GCP metadata names) and loopback /
  * unspecified addresses, which are the platform's own services. A private
  * network opt-in is for a self-hosted server on an internal address, never for
@@ -185,6 +191,7 @@ function isNeverAllowedHost(url: URL): boolean {
     effective.startsWith('fd00:ec2:') ||
     /^127\./.test(effective) ||
     /^169\.254\./.test(effective) ||
+    /^fe[89ab][0-9a-f]:/.test(effective) ||
     /^0\./.test(effective)
   );
 }
