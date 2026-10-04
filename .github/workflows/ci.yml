@@ -246,3 +246,10 @@ jobs:
         env:
           MODEL_SUGGESTIONS_PG_TEST: '1'
         run: yarn test packages/shared/src/lib/modelSuggestions.pg.test.ts
+
+      # Skill revisions: the revision-guarded update is what makes two racing
+      # edits resolve to one winner, and `(skill_id, revision)` is unique.
+      - name: Skill revisions (database-backed tests)
+        env:
+          SKILL_REVISION_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/skillRevision.pg.test.ts

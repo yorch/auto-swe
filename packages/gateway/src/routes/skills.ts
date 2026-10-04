@@ -1,4 +1,5 @@
 import { MAX_SKILL_PROMPT_TEXT_LENGTH } from '@auto-swe/shared/lib/regexSafety';
+import { isRevisionConflict } from '@auto-swe/shared/lib/skillRevision';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -10,6 +11,7 @@ import {
   getSkillEffectivenessReport,
   skillVisibilityWhere,
   updateSkill,
+  verifySkill,
 } from '../lib/skillLibraryService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -25,6 +27,7 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  *   POST   /api/v1/platform/skills              Create a custom skill
  *   GET    /api/v1/platform/skills/:id          Get skill by ID
  *   PUT    /api/v1/platform/skills/:id          Update skill
+ *   POST   /api/v1/platform/skills/:id/verify   Mark the current revision human-verified
  *   DELETE /api/v1/platform/skills/:id          Delete skill (rejects built-in)
  *   GET    /api/v1/teams/:teamId/skills      Read-only skill library (team members)
  */
@@ -92,7 +95,10 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const { name, description, promptText } = request.body;
-      const { skill, scanWarnings } = await createSkill(fastify.prisma, request.body);
+      const { skill, scanWarnings } = await createSkill(fastify.prisma, {
+        ...request.body,
+        createdById: actor.sub,
+      });
       await writeAuditLog(fastify, {
         action: 'CREATE',
         actor,
@@ -136,7 +142,21 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
       }
 
-      const { updated, scanWarnings } = await updateSkill(fastify.prisma, existing, request.body);
+      let result: Awaited<ReturnType<typeof updateSkill>>;
+      try {
+        result = await updateSkill(fastify.prisma, existing, request.body, actor.sub);
+      } catch (err) {
+        if (isRevisionConflict(err)) {
+          return reply.status(409).send({
+            error: {
+              code: 'SKILL_CHANGED',
+              message: 'The skill was edited by someone else; reload it and retry.',
+            },
+          });
+        }
+        throw err;
+      }
+      const { updated, scanWarnings } = result;
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
@@ -159,6 +179,46 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         data: updated,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
       };
+    }
+  );
+
+  // POST /api/v1/platform/skills/:id/verify — the only place isVerified becomes
+  // true: an admin attests to the text of the CURRENT revision. Any later content
+  // edit clears it (updateSkill).
+  app.post(
+    '/skills/:id/verify',
+    { onRequest: adminOnly, schema: { params: SkillIdParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const existing = await fastify.prisma.skill.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!existing) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
+      }
+      let verified: Awaited<ReturnType<typeof verifySkill>>;
+      try {
+        verified = await verifySkill(fastify.prisma, existing);
+      } catch (err) {
+        if (isRevisionConflict(err)) {
+          return reply.status(409).send({
+            error: {
+              code: 'SKILL_CHANGED',
+              message: 'The skill was edited while you were reviewing it; reload and verify again.',
+            },
+          });
+        }
+        throw err;
+      }
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: { isVerified: true, revision: verified.currentRevision },
+        before: { isVerified: existing.isVerified, revision: existing.currentRevision },
+        entityId: existing.id,
+        entityType: 'Skill',
+      });
+      return { data: verified };
     }
   );
 

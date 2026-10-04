@@ -17,6 +17,12 @@ import {
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
 import { isReservedTemplateOrigin } from '@auto-swe/shared/lib/agentRun';
+import {
+  initialRevision,
+  nextRevision,
+  skillContentChanged,
+} from '@auto-swe/shared/lib/skillRevision';
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
 /**
@@ -523,6 +529,22 @@ export async function installBundle(
     throw new BundleIntegrityError(`bundle source '${origin}' uses the reserved system: prefix`);
   }
   const counts = { agents: 0, scannerPatterns: 0, skills: 0, templates: 0 };
+
+  // Skill text is injected into agent prompts, so every bundle skill is scanned
+  // like an admin-authored one. Advisory, as for the skill API: findings come
+  // back in `warnings` and are recorded on the revision, nothing is refused.
+  // Scanned before the transaction — the scan runs on a worker thread and must
+  // not hold the install's connection open.
+  const warnings: string[] = [];
+  const skillScans = new Map<string, string[]>();
+  for (const s of manifest.entities.skills) {
+    const scan = await scanSkillContent(s.promptText);
+    const found = scan.incomplete
+      ? [...scan.warnings, 'scan-incomplete: some patterns could not be evaluated']
+      : scan.warnings;
+    skillScans.set(s.name, found);
+    warnings.push(...found.map((w) => `skill '${s.name}': ${w}`));
+  }
   let replacedProtected = emptyConflicts();
   let installedBundleId = '';
 
@@ -546,31 +568,35 @@ export async function installBundle(
         // Skill names are only unique per scope: a TEAM/ORG custom skill with the
         // same name must not be overwritten and rebranded as the managed GLOBAL layer.
         const existing = await tx.skill.findFirst({ where: { name: s.name, scope: 'GLOBAL' } });
+        const content = { description: s.description ?? null, promptText: s.promptText };
+        const revisionMeta = {
+          createdById: opts.installedById ?? null,
+          scanWarnings: skillScans.get(s.name) ?? [],
+        };
         if (existing) {
-          await tx.skill.update({
-            data: {
-              description: s.description ?? null,
-              // Never trust the bundle's verification flag — installing new content
-              // over an existing skill must reset isVerified, matching the create
-              // branch below; otherwise an UNVERIFIED bundle can silently overwrite a
-              // human-verified skill's prompt while it keeps its verified badge.
-              isVerified: false,
-              origin,
-              promptText: s.promptText,
-            },
-            where: { id: existing.id },
-          });
+          // Never trust the bundle's verification flag — installing new content
+          // over an existing skill must reset isVerified, matching the create
+          // branch below; otherwise an UNVERIFIED bundle can silently overwrite a
+          // human-verified skill's prompt while it keeps its verified badge.
+          const base = { isVerified: false, origin };
+          if (skillContentChanged(existing, content)) {
+            // New text cuts a revision; runs that pinned the old one keep it.
+            const next = nextRevision(existing, content, revisionMeta);
+            await tx.skill.update({ data: { ...base, ...next.data }, where: next.where });
+          } else {
+            await tx.skill.update({ data: base, where: { id: existing.id } });
+          }
         } else {
           await tx.skill.create({
             data: {
-              description: s.description ?? null,
+              ...content,
+              ...initialRevision(content, revisionMeta),
               isBuiltIn: true,
               // Never trust the bundle's verification flag — installed content starts
               // UNVERIFIED; verification is a local human step regardless of trust state.
               isVerified: false,
               name: s.name,
               origin,
-              promptText: s.promptText,
             },
           });
         }
@@ -676,6 +702,6 @@ export async function installBundle(
     replacedProtected,
     signedBy: trust.signedBy,
     trustState,
-    warnings: [],
+    warnings,
   };
 }

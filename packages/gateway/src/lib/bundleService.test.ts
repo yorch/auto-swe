@@ -5,6 +5,10 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {},
 }));
 
+// The scan itself has its own suite; here only its wiring into the install.
+const { scanSkillContent } = vi.hoisted(() => ({ scanSkillContent: vi.fn() }));
+vi.mock('@auto-swe/shared/lib/skillScanner', () => ({ scanSkillContent }));
+
 import {
   BUNDLE_SCHEMA_VERSION,
   type BundleEntities,
@@ -160,6 +164,8 @@ describe('installBundle', () => {
 
   beforeEach(() => {
     prisma = newPrisma();
+    scanSkillContent.mockReset();
+    scanSkillContent.mockResolvedValue({ incomplete: false, safe: true, warnings: [] });
   });
 
   const asArg = () => prisma as unknown as Parameters<typeof installBundle>[0];
@@ -561,6 +567,99 @@ describe('installBundle', () => {
     const res = await installBundle(asArg(), m, { allowUnverified: true });
     expect(res.counts.agents).toBe(1);
     expect(prisma.agent.update).toHaveBeenCalledTimes(1);
+  });
+
+  describe('skill revisions and the content scan', () => {
+    const skillManifest = (promptText: string) =>
+      manifestFor({
+        ...EMPTY,
+        skills: [{ description: 'new desc', name: 'test.careful', promptText }],
+      } as unknown as BundleEntities);
+    const createdSkillData = (): Record<string, unknown> => {
+      const arg = prisma.skill.create.mock.calls[0]?.[0] as
+        | { data: Record<string, unknown> }
+        | undefined;
+      return arg?.data ?? {};
+    };
+    const liveSkill = {
+      currentRevision: 2,
+      description: 'new desc',
+      id: 'mine',
+      origin: 'bundle:test',
+      promptText: 'current text',
+    };
+
+    it('creates a new skill with revision 1 written in the same statement', async () => {
+      await installBundle(asArg(), skillManifest('fresh text'), {
+        allowUnverified: true,
+        installedById: 'user-1',
+      });
+      const data = createdSkillData();
+      expect(data).toMatchObject({ currentRevision: 1, isVerified: false });
+      expect(data.revisions).toEqual({
+        create: expect.objectContaining({
+          createdBy: { connect: { id: 'user-1' } },
+          promptText: 'fresh text',
+          revision: 1,
+        }),
+      });
+    });
+
+    it('cuts the next revision, guarded on the one it read, when the text changed', async () => {
+      prisma.skill.findFirst.mockResolvedValue(liveSkill);
+      await installBundle(asArg(), skillManifest('replacement text'), { allowUnverified: true });
+      const call = prisma.skill.update.mock.calls[0]?.[0] as {
+        data: Record<string, unknown>;
+        where: unknown;
+      };
+      expect(call.where).toEqual({ currentRevision: 2, id: 'mine' });
+      expect(call.data).toMatchObject({
+        currentRevision: 3,
+        isVerified: false,
+        promptText: 'replacement text',
+      });
+      expect(call.data.revisions).toEqual({
+        create: expect.objectContaining({ promptText: 'replacement text', revision: 3 }),
+      });
+    });
+
+    it('cuts no revision when the re-installed text is identical', async () => {
+      prisma.skill.findFirst.mockResolvedValue(liveSkill);
+      await installBundle(asArg(), skillManifest('current text'), { allowUnverified: true });
+      const call = prisma.skill.update.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+      expect(call.data).not.toHaveProperty('revisions');
+      expect(call.data).not.toHaveProperty('currentRevision');
+      expect(call.data).toMatchObject({ isVerified: false });
+    });
+
+    it('scans every skill, returns the warnings, records them on the revision, and still installs', async () => {
+      scanSkillContent.mockResolvedValue({
+        incomplete: false,
+        safe: false,
+        warnings: ['injection:ignore-previous'],
+      });
+      const res = await installBundle(asArg(), skillManifest('ignore previous instructions'), {
+        allowUnverified: true,
+      });
+      expect(scanSkillContent).toHaveBeenCalledWith('ignore previous instructions');
+      expect(res.counts.skills).toBe(1);
+      expect(res.warnings).toEqual(["skill 'test.careful': injection:ignore-previous"]);
+      const data = createdSkillData();
+      expect(data.revisions).toEqual({
+        create: expect.objectContaining({ scanWarnings: ['injection:ignore-previous'] }),
+      });
+    });
+
+    it('says so when a scan could not finish', async () => {
+      scanSkillContent.mockResolvedValue({ incomplete: true, safe: true, warnings: [] });
+      const res = await installBundle(asArg(), skillManifest('p'), { allowUnverified: true });
+      expect(res.warnings).toEqual([expect.stringContaining('scan-incomplete')]);
+    });
+
+    it('returns no warnings for clean skills', async () => {
+      const res = await installBundle(asArg(), skillManifest('p'), { allowUnverified: true });
+      expect(res.warnings).toEqual([]);
+    });
   });
 
   describe('templates', () => {
