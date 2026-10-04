@@ -45,9 +45,9 @@ function DiffText({ text }: { text: string }) {
           : line.startsWith('-')
             ? 'text-brick-400'
             : 'text-paper-400';
-        // Diff lines have no stable identity; their position in this fixed text is the key.
-        // biome-ignore lint/suspicious/noArrayIndexKey: static list
         return (
+          // Lines of a fixed text have no identity beyond their position.
+          // biome-ignore lint/suspicious/noArrayIndexKey: static list
           <div className={`whitespace-pre-wrap break-words ${tone}`} key={i}>
             {line || ' '}
           </div>

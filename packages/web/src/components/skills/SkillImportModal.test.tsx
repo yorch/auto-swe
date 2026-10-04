@@ -71,7 +71,8 @@ describe('SkillImportModal', () => {
       ([url, init]) =>
         String(url).endsWith('/skill-sources') && (init as RequestInit).method === 'POST'
     );
-    expect(JSON.parse((create?.[1] as RequestInit).body as string)).toMatchObject({
+    expect(create).toBeDefined();
+    expect(JSON.parse(((create as unknown[])[1] as RequestInit).body as string)).toMatchObject({
       owner: 'acme',
       ref: 'main',
       repo: 'skills',
