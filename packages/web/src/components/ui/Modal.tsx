@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { UNSAFE_PortalProvider } from 'react-aria';
 import { createPortal } from 'react-dom';
 import { Button, ButtonLink } from './Button';
@@ -48,7 +48,12 @@ export function ModalFooter({
   return (
     <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
       {children && <div className="mr-auto min-w-0">{children}</div>}
-      <Button onClick={onCancel} type="button" variant={submitLabel ? 'ghost' : 'secondary'}>
+      <Button
+        disabled={isPending}
+        onClick={onCancel}
+        type="button"
+        variant={submitLabel ? 'ghost' : 'secondary'}
+      >
         {cancelLabel}
       </Button>
       {submitLabel && submitHref && (
@@ -79,6 +84,7 @@ export function Modal({
   children,
   size = 'md',
   closeOnBackdropClick = true,
+  dismissible = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -93,6 +99,12 @@ export function Modal({
    * still close it: both are deliberate.
    */
   closeOnBackdropClick?: boolean;
+  /**
+   * Turn off while the dialog is committed to an in-flight action: Escape, the
+   * close button and the backdrop all stop dismissing it, so the user cannot
+   * believe they cancelled something that still completes.
+   */
+  dismissible?: boolean;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   // The dialog is portalled to document.body: callers often own a modal from
@@ -121,8 +133,9 @@ export function Modal({
 
   const width = size === 'lg' ? 'w-[min(720px,92vw)]' : 'w-[min(560px,92vw)]';
   // Names the dialog from its own heading, so it is announced as more than
-  // "dialog". Derived from the title so callers cannot forget it.
-  const titleId = `modal-title-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  // "dialog". useId keeps it unique when several modals share a title, as the
+  // per-row dialogs of a table do.
+  const titleId = `modal-title-${useId()}`;
 
   // A native <dialog> only dismisses itself on Escape. A click on the backdrop
   // targets the <dialog> element itself, since the content fills its box. The
@@ -139,8 +152,15 @@ export function Modal({
     <dialog
       aria-labelledby={titleId}
       className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/80`}
+      onCancel={(e) => {
+        // Escape fires `cancel` first; preventing it keeps the dialog open.
+        if (!dismissible) {
+          e.preventDefault();
+        }
+      }}
       onClick={(e) => {
         if (
+          dismissible &&
           closeOnBackdropClick &&
           pressStartedOnBackdrop.current &&
           e.target === e.currentTarget
@@ -171,7 +191,8 @@ export function Modal({
           {/* close() fires the dialog's close event, which calls onClose once. */}
           <button
             aria-label="Close"
-            className="-mr-1 -mt-1 shrink-0 px-1 text-2xl leading-none text-paper-500 hover:text-paper-100"
+            className="-mr-1 -mt-1 shrink-0 px-1 text-2xl leading-none text-paper-500 hover:text-paper-100 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!dismissible}
             onClick={() => dialogRef.current?.close()}
             type="button"
           >
