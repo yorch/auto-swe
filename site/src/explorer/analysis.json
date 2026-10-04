@@ -1330,9 +1330,17 @@
     {
       "body": "A stored input can be reused across executions; the acting launcher can change.",
       "category": "Identity",
-      "detail": "RunInput.requestedById is submission history. WorkflowRun.launchedById identifies this launch; temporalRunId prevents trusting a reused workflow ID across executions. An Idempotency-Key on a work request binds to that user’s first submission and replays the run it started. A ticket’s workflow id is allocated with every row of the same repository (same host, owner and name compared case-insensitively, active or not) counted as one repository, so a run in flight on any of them conflicts; when the conflicting run belongs to another row, the response says the ticket is running without naming its workflow id.",
+      "detail": "RunInput.requestedById is submission history. WorkflowRun.launchedById identifies this launch; temporalRunId prevents trusting a reused workflow ID across executions. An Idempotency-Key on a work request binds to that user’s first submission and replays the run it started. A ticket’s workflow id is allocated with every row of the same repository (same host, owner and name compared case-insensitively, active or not) counted as one repository, so a run in flight on any of them conflicts; when the conflicting run belongs to another row, the response says the ticket is running without naming its workflow id. A retry or agent re-run keeps the request identity and adds an execution, which the Requests view groups under it.",
       "id": "request",
-      "refs": ["schema", "agentRun", "idempotencyKey", "sameIdentity", "conflictOther"],
+      "refs": [
+        "schema",
+        "agentRun",
+        "idempotencyKey",
+        "sameIdentity",
+        "conflictOther",
+        "requestGroup",
+        "agentRerun"
+      ],
       "status": "Implemented",
       "title": "Request ≠ launch identity"
     },
@@ -1539,9 +1547,19 @@
     {
       "body": "Capture online signals, score workflow values, compare candidates to baselines and revalidate datasets.",
       "category": "Quality",
-      "detail": "Hard floors are gate/assert/policy/PII. Trajectory and judge scores are soft by default; a judge call records its model and cost on the result row. A dataset run shares a runless token cap scaled by its case count and ends with a partial verdict when the cap stops it after a case completed. Frozen fixture SHAs, golden tests, rubric versions and quarantined cases support reproducible comparisons; admins can follow per-scorer daily trends.",
+      "detail": "Hard floors are gate/assert/policy/PII. Trajectory and judge scores are soft by default; a judge call records its model and cost on the result row. A dataset run shares a runless token cap scaled by its case count and ends with a partial verdict when that cap, or its organization’s monthly USD cap, stops it after a case completed; the verdict records which, and run lists label it partial. Frozen fixture SHAs, golden tests, rubric versions and quarantined cases support reproducible comparisons. Admins can follow per-scorer daily trends, split by judge model or agent and filtered to the results of one template’s runs, and see each dataset’s quarantined share of golden cases against its ceiling.",
       "id": "evals",
-      "refs": ["scorers", "eval", "judgeCost", "evalTrends"],
+      "refs": [
+        "scorers",
+        "eval",
+        "judgeCost",
+        "evalTrends",
+        "evalPartialReason",
+        "evalOrgStop",
+        "partialFlag",
+        "trendQuery",
+        "suiteHealth"
+      ],
       "status": "Implemented",
       "title": "Evaluation & regression system"
     },
@@ -1555,20 +1573,53 @@
       "title": "Experiments and canaries"
     },
     {
-      "body": "Track tokens and catalog-priced USD across runs, runless workflows, teams, organizations and Slack channels.",
+      "body": "Track tokens and catalog-priced USD across runs, runless workflows, teams, organizations and Slack channels, and stop a capped organization’s spend at launch and before each model call.",
       "category": "Operations",
-      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. The organization USD cap is checked at launch against finalized, in-flight and runless spend. Prompt-cache reads and writes are priced at cache rates. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization. A model with no catalog price is refused on a path watched by a USD cap and otherwise recorded at zero USD with token usage retained.",
+      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. The organization USD cap is checked at launch and again before every budgeted model call, which refuses with a non-retryable BUDGET_EXCEEDED naming the organization. Both read finalized, in-flight and runless spend; the mid-run read goes through a per-organization cache of one config window. One rule, billedOrgId, places a run for the in-flight count, the mid-run guard and finalization billing: the work request’s connection, else the run’s own connection, else the repository of its own ledger row, and the first source that exists decides. A scheduled fire gets its own ledger row and run connection from its schedule’s repository, and epic planning declares the first repository’s team as its spend owner, so neither sits outside the cap. A scheduled run reaper finalizes and bills runs whose workflow ended without finalizing them. Prompt-cache reads and writes are priced at cache rates: a model’s catalog row may set read, 5-minute-write and 1-hour-write multipliers, each falling back to the code table, where Anthropic 1-hour writes cost twice input. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization, and the usage page opens for anyone who holds at least one of those scopes rather than by platform role. A model with no catalog price is refused on a path watched by a USD cap and otherwise recorded at zero USD with token usage retained.",
       "id": "budget",
-      "refs": ["trace", "settings", "runlessBudget", "orgSpend", "costCache", "usage"],
+      "refs": [
+        "trace",
+        "settings",
+        "runlessBudget",
+        "orgSpend",
+        "costCache",
+        "usage",
+        "billedOrg",
+        "orgGuard",
+        "orgGuardCall",
+        "fireLedger",
+        "epicOwner",
+        "cacheCatalog",
+        "cacheRates",
+        "usageScopes",
+        "usageGate"
+      ],
       "status": "Implemented",
       "title": "Cost, budgets & usage"
     },
     {
       "body": "Inspect node attempts, tool calls, LLM responses, artifacts, policy decisions and telemetry.",
       "category": "Operations",
-      "detail": "PostgreSQL is the queryable application ledger; Temporal owns durable execution history. OpenTelemetry loads as a preload so HTTP is instrumented, and trace context travels in Temporal headers, so a gateway request and every activity of the run it starts share a trace without OpenTelemetry code in the workflow isolate. Trace rows link to their spec node and span; worker logs export over OTLP with trace context; the run page tails new rows and reconciles by count. Large outputs can be offloaded to PostgreSQL or S3-compatible artifacts.",
+      "detail": "PostgreSQL is the queryable application ledger; Temporal owns durable execution history. OpenTelemetry loads as a preload so HTTP is instrumented, and trace context travels in Temporal headers, so a gateway request and every activity of the run it starts share a trace without OpenTelemetry code in the workflow isolate. A run started by a schedule has no starting context, so the workflow interceptor derives one from the workflow id and first run id and its activities share that trace. The gateway stamps its signals and updates with the caller’s context, and activities scheduled after one carry a span link to it. Trace rows link to their spec node and span; an agent’s tool calls are recorded as they execute, with real durations, and survive a generate call that later throws. Worker logs, gateway logs and the bash, MCP and harness audit lines written inside an activity export over OTLP with trace context. The run page tails new rows, reconciles by count and asks for the spec snapshot only once. Large outputs can be offloaded to PostgreSQL or S3-compatible artifacts.",
       "id": "observability",
-      "refs": ["schema", "trace", "traceRow", "traceProp", "otel", "runTail", "infra"],
+      "refs": [
+        "schema",
+        "trace",
+        "traceRow",
+        "traceProp",
+        "otel",
+        "runTail",
+        "infra",
+        "derivedTrace",
+        "signalStamp",
+        "signalLink",
+        "signalSpanLink",
+        "gatewayLogs",
+        "auditLine",
+        "toolRecord",
+        "includeSpec",
+        "heldSpec"
+      ],
       "status": "Implemented",
       "title": "Run and agent observability"
     },
@@ -1577,7 +1628,7 @@
       "category": "Governance",
       "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization. A repository on another approved GitHub host is reached only with that host’s own credentials or the launcher’s own token, never the instance’s; with neither, the run is refused (see per-host GitHub credentials). A team’s own page also lists the repositories shared with it (sharedRepositories on GET /teams/:id), read-only, active rows only, and under an enforcing repo-access gate only those the caller’s own GitHub permission reaches; a platform ADMIN is not gated.",
       "id": "tenancy",
-      "refs": ["tenant", "auth", "schema", "hostCredential", "teamShared"],
+      "refs": ["tenant", "auth", "schema", "hostCredential", "teamShared", "teamMembers"],
       "status": "Implemented",
       "title": "Organizations, teams & repository access"
     },
@@ -1593,11 +1644,39 @@
     {
       "body": "Launch scheduled repository work, template webhooks, GitHub event handling and maintenance sweeps.",
       "category": "Operations",
-      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration; provider model discovery, by contrast, is on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause.",
+      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration; provider model discovery and the run reaper, by contrast, are on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow.",
       "id": "schedules",
-      "refs": ["gateway", "worker", "cli", "modelDiscoverySync", "scheduleCas", "scheduleAudit"],
+      "refs": [
+        "gateway",
+        "worker",
+        "cli",
+        "modelDiscoverySync",
+        "scheduleCas",
+        "scheduleAudit",
+        "reaperSchedule",
+        "reaperEnv",
+        "fireLedger",
+        "fireConnection",
+        "prLedger"
+      ],
       "status": "Implemented",
       "title": "Scheduled automation & webhooks"
+    },
+    {
+      "body": "The dashboard lists work by request, with the latest visible attempt standing for each, and retries a request without losing its identity.",
+      "category": "Operations",
+      "detail": "Run visibility is applied first, then executions are grouped by request. A single-repository request is represented by its newest visible execution; a cross-repository request summarizes every visible child and keeps failed children visible while others run. Filtering and paging happen after grouping, so an old failure cannot resurface behind a successful retry. A retry of a git request starts a new execution of the same request; connection-free and non-git requests re-run their recorded template version through the launch checks again, and an agent re-run reuses the request id with a fresh delivery branch. Optional instructions are appended to the new attempt’s description only. A cross-repository request is not retried as a whole.",
+      "id": "requestWorkspace",
+      "refs": [
+        "requestGroup",
+        "requestStatus",
+        "retryRoute",
+        "retryTemplate",
+        "retryEpic",
+        "agentRerun"
+      ],
+      "status": "Implemented",
+      "title": "Request-centred work inbox and retry"
     },
     {
       "body": "Read and write Notion pages, Zendesk comments, tracker issues and Slack messages.",
@@ -1680,6 +1759,26 @@
       ],
       "status": "Implemented",
       "title": "Immutable skill revisions pinned per run"
+    },
+    {
+      "body": "An ADMIN previews skills in a GitHub or GitHub Enterprise repository, then installs the chosen ones pinned to the commit that was previewed.",
+      "category": "Agents",
+      "detail": "Preview writes nothing: it resolves the ref to a commit and reads each SKILL.md under the path. The install request names skills and the previewed commit, never text; the server fetches again at that commit and fails with 409 if the ref has moved. A non-github.com host must be an approved repository host, and one on a private network must also be listed in a separate setting; the platform credential for that host is the only one used, and a host with none is read anonymously. Fetches are bounded in requests, bytes, skills and time. Skills with scan warnings are refused while the blocking setting is on (it is on by default). One transaction takes a name lock, checks name conflicts across the scopes the skill would be visible in, and writes the source plus every skill at revision 1, unverified, with its source commit. Markdown and text siblings are kept as reference text unscanned and nothing is executed. Wherever a model reads an imported skill’s text, it is labelled third-party with its source and short commit.",
+      "id": "skillImport",
+      "refs": [
+        "skillImportRoutes",
+        "skillImportAccess",
+        "skillImportLimits",
+        "skillImportPin",
+        "skillImportScan",
+        "skillImportTx",
+        "skillImportRefs",
+        "skillImportPrompt",
+        "skillImportSetting",
+        "schema"
+      ],
+      "status": "Implemented",
+      "title": "Skill import from an external GitHub repository"
     }
   ],
   "limits": [
@@ -1747,6 +1846,15 @@
       "title": "Judge scores are advisory by default"
     },
     {
+      "body": "Flake rate and judge/human kappa have configurable ceilings but nothing stores them, so only the quarantined share of golden cases is shown, as it is now.",
+      "category": "Quality",
+      "detail": "The suite-health endpoint counts each dataset’s quarantined and flake-screened cases and returns the configured thresholds beside them, so its stale rate has no history. A trend filtered to a template keeps results of runs of that template, so offline harness rows, which have no run, drop out.",
+      "id": "suiteHealthStored",
+      "refs": ["suiteHealth", "trendQuery"],
+      "status": "Confirmed boundary",
+      "title": "Suite health stores only the stale rate"
+    },
+    {
       "body": "A staging or monitoring signal reports work done elsewhere.",
       "category": "Coverage",
       "detail": "The graph waits and branches on flags, returning FAILED or TIMED_OUT when necessary. A rollback-required termination is not an actual rollback command.",
@@ -1765,13 +1873,38 @@
       "title": "Budget precision differs by execution path"
     },
     {
-      "body": "The cap is compared at launch with finalized, in-flight and runless spend.",
+      "body": "Launches and each later model call are refused once cached spend has reached the cap, so spend can still land after it is crossed, and some spend is outside it.",
       "category": "Cost control",
-      "detail": "Concurrent launches see the same total, and running work keeps spending after the cap is reached. A run that never finalizes keeps counting as in flight, a dashboard cancel that finds the run's execution already gone ends it without billing it, and spend with no derivable organization is outside the cap. An unpriced model is refused for a capped organization through a run's ledger or a runless workflow's spend owner; a run with no ledger row, such as a channel task, is not refused on the organization's account.",
+      "detail": "A call is refused only when the cached organization spend has reached the cap, so up to one cache window of spend from every run of the organization at once can land after the cap is crossed, and concurrent launches see the same total. A spend or cap read that fails lets the call through. Spend with no derivable organization is outside the cap, and a repo-less channel task bills its channel, so the organization cap never refuses it. An epic’s planning is attributed to the first repository it names even when the epic spans organizations; each child is billed to its own repository’s. An unpriced model is refused for a capped organization through a run’s ledger or a runless workflow’s spend owner; a run with no ledger row, such as a channel task, is not refused on the organization’s account.",
       "id": "orgCap",
-      "refs": ["orgCap", "orgSpend", "runlessBudget", "usdCapGuard"],
+      "refs": [
+        "orgCap",
+        "orgSpend",
+        "runlessBudget",
+        "usdCapGuard",
+        "orgGuard",
+        "orgGuardCall",
+        "billedOrg",
+        "epicOwner"
+      ],
       "status": "Confirmed boundary",
-      "title": "The organization USD cap stops new launches, not spend in progress"
+      "title": "The organization USD cap is a gate with a one-window lag"
+    },
+    {
+      "body": "A run whose workflow ended without finalizing still counts as in flight until a sweep reaches it, and only while the sweep is enabled.",
+      "category": "Cost control",
+      "detail": "A run is looked up only after a ten-minute grace, and a sweep asks about a bounded batch, never-checked runs first, so a crowd of live runs cannot hold the batch. A failed Temporal lookup leaves the run alone, because a live run must never be billed. The schedule is set from the environment when the gateway starts and is paused when disabled, after which stranded runs count against the cap indefinitely. A run that closed long ago is ended silently, with no Slack notice, channel report or tracker update, so a first sweep over history does not post for old orphans. Reaped spend is billed to the month of finalization, so a run reaped late lands in the month it is reaped. A dashboard cancel of a run whose execution is gone leaves the run for the reaper to bill rather than ending it unbilled.",
+      "id": "reaperWindow",
+      "refs": [
+        "reaper",
+        "reaperNotify",
+        "reaperSchedule",
+        "reaperEnv",
+        "finalizeBilled",
+        "cancelLeave"
+      ],
+      "status": "Confirmed boundary",
+      "title": "The run reaper bounds unfinalized spend; it does not remove the window"
     },
     {
       "body": "Team and organization breakdowns read the owner stamped on each trace row.",
@@ -1783,11 +1916,22 @@
       "title": "Usage is attributed when a trace is written"
     },
     {
-      "body": "A run’s trace has no workflow span, and not every entry point or log line carries trace context.",
+      "body": "A run’s trace has no workflow span, a schedule-started run’s trace hangs off a parent that was never exported, and a signal is a link rather than a parent.",
       "category": "Observability",
-      "detail": "Activities hang off the span that started the run. Signals and schedule-started runs carry no starting context. Only the worker’s Temporal logger exports over OTLP; plain console output and gateway logs stay on stdout. HTTP instrumentation requires the --import preload.",
+      "detail": "Activities hang off the span that started the run; nothing represents the workflow or the time between activities, since that would mean running OpenTelemetry in the isolate. A schedule-started run’s activities share one derived trace whose parent span was never recorded, so a trace backend shows them under a missing parent. A signal or update context reaches only activities scheduled after it, and only the newest one is linked; work already running and earlier signals are not. The worker’s own signals are not stamped. Worker and gateway structured logs export over OTLP, and audit lines do only inside an activity; other plain console output stays on stdout. A tool call that fails input validation or names no tool never executes, so it is recorded from the step results with zero duration. HTTP instrumentation requires the --import preload, and the start scripts silence one Node deprecation code only.",
       "id": "telemetryGaps",
-      "refs": ["traceProp", "otel", "otelLogs"],
+      "refs": [
+        "traceProp",
+        "otel",
+        "otelLogs",
+        "derivedTrace",
+        "signalStamp",
+        "signalLink",
+        "signalSpanLink",
+        "gatewayLogs",
+        "auditLine",
+        "toolRecord"
+      ],
       "status": "Confirmed boundary",
       "title": "Tracing and log export have deliberate gaps"
     },
@@ -1862,6 +2006,33 @@
       "refs": ["skillSnapshot", "skillTenant", "skillPinRead", "skillPinMissing"],
       "status": "Confirmed boundary",
       "title": "Skill revision pins have gaps"
+    },
+    {
+      "body": "Grouping attempts by request reads every matching execution identity before status filtering and paging.",
+      "category": "Operations",
+      "detail": "The cost therefore grows with history. A request appears once its first execution row is recorded. A retry amends only the attempt description (and the payload description when one exists), so a custom workflow that reads another input field does not see the added instructions.",
+      "id": "requestListCost",
+      "refs": ["requestGroup", "retryTemplate", "retryEpic"],
+      "status": "Code-derived caveat",
+      "title": "The request list groups before it paginates"
+    },
+    {
+      "body": "Pinning to a commit fixes what is read; it does not vouch for the author, the files kept beside the text, or the host.",
+      "category": "Agents",
+      "detail": "Reference files are stored unscanned, so whatever first reads them to an agent or a person must scan them first. The host check reads address text and literal addresses and does not resolve DNS, so a listed name is trusted to mean the intended server. Commit signatures are not checked. No update check runs: the source row carries a latest-commit field and status, but nothing in the import fills them. Only imports take the name-allocation lock, so the skill API can still create a name an import has just checked.",
+      "id": "skillImportBounds",
+      "refs": ["skillImportAccess", "skillImportRefs", "skillImportTx", "skillImportSetting"],
+      "status": "Confirmed boundary",
+      "title": "Skill import is pinned and bounded, not verified"
+    },
+    {
+      "body": "A team marked inactive keeps its members’ repository access and its shares.",
+      "category": "Governance",
+      "detail": "Team membership predicates read membership rows only. Removing a repository share is what ends a shared team’s access.",
+      "id": "teamDeactivation",
+      "refs": ["teamMembers", "tenant"],
+      "status": "Confirmed boundary",
+      "title": "Deactivating a team does not remove repository access"
     }
   ],
   "modelDescriptions": {
@@ -1901,7 +2072,7 @@
     "Jwks": "Rotated signing keys for issued JWTs.",
     "KnowledgeBaseConfig": "Schema entity; inspect fields and relationship declarations below.",
     "MemoryItem": "Scoped semantic memory with vector embedding and run/agent lineage.",
-    "ModelCatalogEntry": "Provider/model capability, price and lifecycle metadata.",
+    "ModelCatalogEntry": "Provider/model capability, price and lifecycle metadata, with optional cache-read and cache-write (5-minute, 1-hour) multipliers that fall back to the code table when null.",
     "ModelDiscoveryProviderStatus": "One row per provider: when discovery last asked, the fixed-string error if it failed, and the time of the last complete listing.",
     "ModelSuggestion": "A provider-listed model the catalog lacks (NEW) or a priced model a complete listing no longer shows (RETIREMENT_CANDIDATE), unique per provider and model id, with a sticky dismissal; never read by pricing.",
     "OauthAccessToken": "Stored opaque access token; JWT access tokens are not stored.",
@@ -1923,8 +2094,9 @@
     "ScannerPattern": "Schema entity; inspect fields and relationship declarations below.",
     "ScheduledWorkRequest": "Standing repository automation mapped to a Temporal schedule.",
     "Session": "Schema entity; inspect fields and relationship declarations below.",
-    "Skill": "Scoped reusable prompt fragment; its text mirrors currentRevision, with a verification flag that edits clear.",
+    "Skill": "Scoped reusable prompt fragment; its text mirrors currentRevision, with a verification flag that edits clear, and an optional link to the external source it was imported from.",
     "SkillRevision": "Immutable version of a skill’s text and description, with content hash, provenance and advisory scan warnings; runs pin one per skill.",
+    "SkillSource": "An external GitHub repository skills are imported from, pinned to one commit, with script mode, scope and a status; deleting it detaches its skills.",
     "SlackChannel": "Team/org-owned assistant configuration, optional proactivity and budget settings.",
     "SlackConfig": "Schema entity; inspect fields and relationship declarations below.",
     "SlackWorkspace": "Slack installation and organization binding.",
@@ -1936,7 +2108,7 @@
     "WorkflowDefaults": "Schema entity; inspect fields and relationship declarations below.",
     "WorkflowHumanStep": "Pending/resolved human interaction with context, deadline and approver count.",
     "WorkflowOutcomeReference": "External write result ledger used to suppress repeated calls.",
-    "WorkflowRun": "One execution: spec/config snapshots, state, lineage, cost and outcome analytics.",
+    "WorkflowRun": "One execution: spec/config snapshots, state, lineage, cost and outcome analytics; reapCheckedAt records when the run reaper last found it still running.",
     "WorkflowShellAudit": "Schema entity; inspect fields and relationship declarations below.",
     "WorkflowStep": "One node attempt with inputs, outputs, timing and error.",
     "WorkflowTemplate": "Named reusable workflow definition and input/provider contract.",
@@ -1960,6 +2132,7 @@
       "ConfigAuditLog",
       "Skill",
       "SkillRevision",
+      "SkillSource",
       "Agent",
       "AgentSkillRef",
       "InstalledBundle"
@@ -3115,6 +3288,382 @@
       "lines": 18,
       "path": "packages/gateway/src/lib/bundleService.ts",
       "title": "Bundle install cuts a skill revision"
+    },
+    {
+      "anchor": "export async function reapStrandedRuns(",
+      "before": 2,
+      "id": "reaper",
+      "lines": 75,
+      "path": "packages/worker/src/activities/reapStrandedRuns.ts",
+      "title": "Run reaper: stranded runs are looked up and finalized"
+    },
+    {
+      "anchor": "async function endedStatusOf(",
+      "before": 2,
+      "id": "reaperNotify",
+      "lines": 50,
+      "path": "packages/worker/src/activities/reapStrandedRuns.ts",
+      "title": "Run reaper: when an ended run still notifies"
+    },
+    {
+      "anchor": "async syncRunReaperSchedule(config: RunReaperScheduleConfig)",
+      "before": 2,
+      "id": "reaperSchedule",
+      "lines": 9,
+      "path": "packages/gateway/src/plugins/temporal.ts",
+      "title": "Run reaper Temporal schedule, paused when disabled"
+    },
+    {
+      "anchor": "cronExpression: envCron('RUN_REAPER_CRON', '*/15 * * * *'),",
+      "before": 2,
+      "id": "reaperEnv",
+      "lines": 6,
+      "path": "packages/shared/src/lib/systemConfig.ts",
+      "title": "Run reaper schedule defaults"
+    },
+    {
+      "anchor": "export function billedOrgId(",
+      "before": 2,
+      "id": "billedOrg",
+      "lines": 20,
+      "path": "packages/shared/src/lib/billing.ts",
+      "title": "One rule for the organization a run is billed to"
+    },
+    {
+      "anchor": "const orgId = billedOrgId({",
+      "before": 10,
+      "id": "finalizeBilled",
+      "lines": 22,
+      "path": "packages/worker/src/activities/templates.ts",
+      "title": "Finalization bills the run to that organization"
+    },
+    {
+      "anchor": "export async function assertOrgBudgetAvailable(",
+      "before": 2,
+      "id": "orgGuard",
+      "lines": 62,
+      "path": "packages/worker/src/lib/orgBudgetGuard.ts",
+      "title": "Mid-run organization USD cap guard"
+    },
+    {
+      "anchor": "await assertOrgBudgetAvailable(temporalWorkflowId, label);",
+      "before": 4,
+      "id": "orgGuardCall",
+      "lines": 8,
+      "path": "packages/worker/src/lib/costTracking.ts",
+      "title": "The guard runs before every budgeted model call"
+    },
+    {
+      "anchor": "async function writeScheduledFireLedgerRow(",
+      "before": 2,
+      "id": "fireLedger",
+      "lines": 22,
+      "path": "packages/worker/src/activities/templates.ts",
+      "title": "A scheduled fire gets its own ledger row"
+    },
+    {
+      "anchor": "...(scheduledRepoId ? { connectionId: scheduledRepoId } : {}),",
+      "before": 3,
+      "id": "fireConnection",
+      "lines": 6,
+      "path": "packages/worker/src/activities/templates.ts",
+      "title": "A scheduled fire’s run connection is its schedule’s repository"
+    },
+    {
+      "anchor": "export async function planEpic(epicRequest: EpicPlanRequest)",
+      "before": 0,
+      "id": "epicOwner",
+      "lines": 14,
+      "path": "packages/worker/src/activities/planEpic.ts",
+      "title": "Epic planning spend owner"
+    },
+    {
+      "anchor": "where: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },",
+      "before": 4,
+      "id": "prLedger",
+      "lines": 9,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "A pull request links to the executing workflow’s own ledger row"
+    },
+    {
+      "anchor": "export async function getCacheMultipliers(",
+      "before": 6,
+      "id": "cacheCatalog",
+      "lines": 8,
+      "path": "packages/worker/src/lib/costTracking.ts",
+      "title": "Cache multipliers read from the catalog row, field by field"
+    },
+    {
+      "anchor": "anthropic: { read: 0.1, write: 1.25, write1h: 2 },",
+      "before": 3,
+      "id": "cacheRates",
+      "lines": 8,
+      "path": "packages/shared/src/lib/builtinModels.ts",
+      "title": "Code-table cache rates, including Anthropic 1-hour writes"
+    },
+    {
+      "anchor": "const isOrgBudgetStop = (err: unknown) =>",
+      "before": 3,
+      "id": "evalOrgStop",
+      "lines": 6,
+      "path": "packages/worker/src/activities/evalHarness.ts",
+      "title": "An organization-cap stop is recognized by its failure details"
+    },
+    {
+      "anchor": "reason: isOrgBudgetStop(failure) ? 'org_budget' : 'budget',",
+      "before": 10,
+      "id": "evalPartialReason",
+      "lines": 14,
+      "path": "packages/worker/src/activities/evalHarness.ts",
+      "title": "A budget-stopped eval records a partial verdict and its reason"
+    },
+    {
+      "anchor": "const workflowFinalizes = !isChannelTurn;",
+      "before": 12,
+      "id": "cancelLeave",
+      "lines": 40,
+      "path": "packages/gateway/src/routes/workflowRuns.ts",
+      "title": "A dashboard cancel leaves a non-channel run for whoever finalizes it with billing"
+    },
+    {
+      "anchor": "export function traceContextClientInterceptor(",
+      "before": 8,
+      "id": "signalStamp",
+      "lines": 24,
+      "path": "packages/shared/src/lib/temporalTracing.ts",
+      "title": "Signals and updates carry the caller’s trace context"
+    },
+    {
+      "anchor": "function derivedCarrier(): Payload {",
+      "before": 14,
+      "id": "derivedTrace",
+      "lines": 20,
+      "path": "packages/worker/src/workflows/traceContextInterceptor.ts",
+      "title": "A derived carrier for runs started without a trace context"
+    },
+    {
+      "anchor": "handleSignal(input, next) {",
+      "before": 6,
+      "id": "signalLink",
+      "lines": 14,
+      "path": "packages/worker/src/workflows/traceContextInterceptor.ts",
+      "title": "The newest signal’s context is remembered, not adopted as the parent"
+    },
+    {
+      "anchor": "links: signalLinks(input.headers),",
+      "before": 8,
+      "id": "signalSpanLink",
+      "lines": 14,
+      "path": "packages/worker/src/lib/activitySpans.ts",
+      "title": "Activity spans link to the signal context"
+    },
+    {
+      "anchor": "new PinoInstrumentation(),",
+      "before": 10,
+      "id": "gatewayLogs",
+      "lines": 18,
+      "path": "packages/gateway/src/lib/telemetry.ts",
+      "title": "Gateway logs exported over OTLP"
+    },
+    {
+      "anchor": "export function auditLog(line: string): void {",
+      "before": 10,
+      "id": "auditLine",
+      "lines": 12,
+      "path": "packages/worker/src/lib/activityLog.ts",
+      "title": "Audit lines reach the Temporal logger inside an activity"
+    },
+    {
+      "anchor": "function recordToolCalls(",
+      "before": 8,
+      "id": "toolRecord",
+      "lines": 50,
+      "path": "packages/worker/src/activities/runAgent.ts",
+      "title": "Tool calls recorded as they execute"
+    },
+    {
+      "anchor": "app.get('/usage/scopes',",
+      "before": 4,
+      "id": "usageScopes",
+      "lines": 44,
+      "path": "packages/gateway/src/routes/usage.ts",
+      "title": "Usage scopes the caller may read"
+    },
+    {
+      "anchor": "const access = await requireUsageScope();",
+      "before": 4,
+      "id": "usageGate",
+      "lines": 12,
+      "path": "packages/web/src/app/govern/usage/layout.tsx",
+      "title": "The usage page is gated on a held scope, not the platform role"
+    },
+    {
+      "anchor": "app.get('/evals/suite-health', { onRequest: adminOnly }, async () => {",
+      "before": 4,
+      "id": "suiteHealth",
+      "lines": 50,
+      "path": "packages/gateway/src/routes/evals.ts",
+      "title": "Suite health: stale rate and screened counts only"
+    },
+    {
+      "anchor": "const TrendsQuery = z.object({",
+      "before": 0,
+      "id": "trendQuery",
+      "lines": 16,
+      "path": "packages/gateway/src/routes/evals.ts",
+      "title": "Trend breakdown and template filter"
+    },
+    {
+      "anchor": "function hasPartialVerdict(summary: unknown): boolean {",
+      "before": 2,
+      "id": "partialFlag",
+      "lines": 10,
+      "path": "packages/gateway/src/routes/evals.ts",
+      "title": "Partial verdict flag on an eval run"
+    },
+    {
+      "anchor": "omit: { specSnapshot: !includeSpec },",
+      "before": 8,
+      "id": "includeSpec",
+      "lines": 12,
+      "path": "packages/gateway/src/routes/workflowRuns.ts",
+      "title": "The run page may decline the spec snapshot"
+    },
+    {
+      "anchor": "distinct: ['workRequestId', 'connectionId'],",
+      "before": 8,
+      "id": "requestGroup",
+      "lines": 24,
+      "path": "packages/gateway/src/routes/requestWorkspace.ts",
+      "title": "Requests list: latest visible attempt per request, read before filtering"
+    },
+    {
+      "anchor": "export function groupRequestExecutions(",
+      "before": 1,
+      "id": "requestStatus",
+      "lines": 42,
+      "path": "packages/gateway/src/lib/requestExecutions.ts",
+      "title": "Request status aggregation across visible executions"
+    },
+    {
+      "anchor": "return retryTemplateRequest(",
+      "before": 12,
+      "id": "retryRoute",
+      "lines": 18,
+      "path": "packages/gateway/src/routes/workRequests.ts",
+      "title": "Retry routes connection-free and non-git requests to the template path"
+    },
+    {
+      "anchor": "code: 'EPIC_RETRY_REQUIRED',",
+      "before": 4,
+      "id": "retryEpic",
+      "lines": 8,
+      "path": "packages/gateway/src/routes/workRequests.ts",
+      "title": "Cross-repository requests are not retried as a whole"
+    },
+    {
+      "anchor": "const description = instructions",
+      "before": 4,
+      "id": "retryTemplate",
+      "lines": 24,
+      "path": "packages/gateway/src/lib/retryTemplateRequest.ts",
+      "title": "Retry instructions amend the attempt description"
+    },
+    {
+      "anchor": "workRequestId: request.params.workRequestId,",
+      "before": 14,
+      "id": "agentRerun",
+      "lines": 18,
+      "path": "packages/gateway/src/routes/agentRuns.ts",
+      "title": "An agent re-run keeps its request identity"
+    },
+    {
+      "anchor": "export async function resolveAccess(",
+      "before": 8,
+      "id": "skillImportAccess",
+      "lines": 48,
+      "path": "packages/shared/src/lib/skillSource/github.ts",
+      "title": "Skill source host policy and credential resolution"
+    },
+    {
+      "anchor": "export const MAX_API_REQUESTS = 300;",
+      "before": 4,
+      "id": "skillImportLimits",
+      "lines": 12,
+      "path": "packages/shared/src/lib/skillSource/github.ts",
+      "title": "Skill source fetch limits"
+    },
+    {
+      "anchor": "throw new SkillSourceError('SHA_MOVED');",
+      "before": 12,
+      "id": "skillImportPin",
+      "lines": 16,
+      "path": "packages/shared/src/lib/skillSource/index.ts",
+      "title": "An install fails when the ref no longer resolves to the previewed commit"
+    },
+    {
+      "anchor": "if (block && flagged.length > 0) {",
+      "before": 8,
+      "id": "skillImportScan",
+      "lines": 14,
+      "path": "packages/gateway/src/lib/skillSourceService.ts",
+      "title": "Scan warnings refuse an import when the setting blocks them"
+    },
+    {
+      "anchor": "const conflicts = await findConflicts(tx, wanted, input);",
+      "before": 8,
+      "id": "skillImportTx",
+      "lines": 30,
+      "path": "packages/gateway/src/lib/skillSourceService.ts",
+      "title": "One transaction: name lock, conflicts, source and skills"
+    },
+    {
+      "anchor": "referenceFiles: s.referenceFiles as unknown as Prisma.InputJsonValue,",
+      "before": 6,
+      "id": "skillImportRefs",
+      "lines": 14,
+      "path": "packages/gateway/src/lib/skillSourceService.ts",
+      "title": "Reference files stored unscanned, skills unverified"
+    },
+    {
+      "anchor": "const adminOnly = requireAuth({ requiredRole: 'ADMIN' });",
+      "before": 2,
+      "id": "skillImportRoutes",
+      "lines": 4,
+      "path": "packages/gateway/src/routes/skillSources.ts",
+      "title": "Skill source routes are ADMIN-only"
+    },
+    {
+      "anchor": "export function skillPromptBlock(",
+      "before": 4,
+      "id": "skillImportPrompt",
+      "lines": 8,
+      "path": "packages/worker/src/lib/config/skillPrompt.ts",
+      "title": "Imported skill text is labelled third-party wherever a model reads it"
+    },
+    {
+      "anchor": "'skills.import.blockOnScanWarnings': defineSetting({",
+      "before": 1,
+      "id": "skillImportSetting",
+      "lines": 14,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "Import scan blocking and private-network host settings"
+    },
+    {
+      "anchor": "export function memberTeams(actor: ScopeActor)",
+      "before": 2,
+      "id": "teamMembers",
+      "lines": 4,
+      "path": "packages/gateway/src/lib/tenantScope.ts",
+      "title": "Team membership predicates do not read Team.isActive"
+    },
+    {
+      "anchor": "const withHeldSpec = (run: WorkflowRunDetail): WorkflowRunDetail =>",
+      "before": 3,
+      "id": "heldSpec",
+      "lines": 14,
+      "path": "packages/web/src/hooks/useRuns.ts",
+      "title": "The run page holds the spec snapshot instead of refetching it"
     }
   ],
   "usecases": [
