@@ -246,10 +246,13 @@ describe('skills sources', () => {
     const changed = (name: string, over: Record<string, unknown> = {}) => ({
       blockedByScan: false,
       description: { changed: false, new: 'd', old: 'd' },
+      diffIncomplete: false,
+      diffTooLarge: false,
       handEdited: false,
       installedRevision: 1,
       name,
       referenceFiles: { added: [], changed: [], removed: [] },
+      renamedTo: null,
       scanWarnings: [],
       skippedFiles: [],
       textDiff: '@@ -1,1 +1,1 @@\n-old line\n+new line',
@@ -279,6 +282,7 @@ describe('skills sources', () => {
       notSelected: [],
       pinAdvanced: false,
       removed: [],
+      renamed: [],
       sha: NEW,
       unreadable: [],
     };
@@ -286,7 +290,15 @@ describe('skills sources', () => {
       url.includes('/diff')
         ? { body: { data: DIFF } }
         : url.endsWith('/check')
-          ? { body: { data: DIFF.source } }
+          ? {
+              body: {
+                data: {
+                  check: { error: null, status: 'UPDATE_AVAILABLE' },
+                  recorded: true,
+                  source: DIFF.source,
+                },
+              },
+            }
           : { body: { data: ACCEPTED } };
 
     it('check asks the host through the API and prints the status', async () => {
@@ -349,10 +361,116 @@ describe('skills sources', () => {
         )
       ).toBe(0);
       expect(confirm).not.toHaveBeenCalled();
+      // Each named skill carries the installed revision the printed diff showed.
       expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
         sha: NEW,
-        skills: ['alpha', 'beta'],
+        skills: [
+          { name: 'alpha', revision: 1 },
+          { name: 'beta', revision: 1 },
+        ],
       });
+    });
+
+    it('check says when nothing was recorded, and when the host was rate limited', async () => {
+      reply(() => ({
+        body: {
+          data: { check: { error: null, status: 'OK' }, recorded: false, source: DIFF.source },
+        },
+      }));
+      expect(await runSkillsCommand(['sources', 'check', 'src-1'], ENV)).toBe(0);
+      expect(out.join('')).toContain('not recorded');
+      out.length = 0;
+      reply(() => ({
+        body: {
+          data: {
+            check: { error: 'rate limited by the host', status: 'SKIPPED' },
+            recorded: true,
+            source: DIFF.source,
+          },
+        },
+      }));
+      expect(await runSkillsCommand(['sources', 'check', 'src-1'], ENV)).toBe(0);
+      expect(out.join('')).toContain('skipped: rate limited by the host');
+      expect(out.join('')).toContain('status is unchanged (UPDATE_AVAILABLE)');
+    });
+
+    it('diff --skill --full prints the complete incoming text', async () => {
+      reply(() => ({
+        body: {
+          data: {
+            description: 'd',
+            errors: [],
+            name: 'alpha',
+            promptText: 'line 1\nline 2',
+            sha: NEW,
+          },
+        },
+      }));
+      expect(
+        await runSkillsCommand(['sources', 'diff', 'src-1', '--skill=alpha', '--full'], ENV)
+      ).toBe(0);
+      expect(calls[0]?.url).toContain('skill=alpha');
+      expect(calls[0]?.url).toContain('full=true');
+      expect(out.join('')).toContain('line 2');
+      expect(await runSkillsCommand(['sources', 'diff', 'src-1', '--full'], ENV)).toBe(1);
+    });
+
+    it('a cut or too-large diff points at the full text, and accept will not take it unnamed', async () => {
+      const data = {
+        ...DIFF,
+        changed: [changed('alpha', { diffIncomplete: true, diffTooLarge: true, textDiff: '' })],
+      };
+      reply(() => ({ body: { data } }));
+      await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
+      expect(out.join('')).toContain('diff too large to show');
+      expect(out.join('')).toContain('--skill=alpha --full');
+      calls.length = 0;
+      expect(await runSkillsCommand(['sources', 'accept', 'src-1', '--yes'], ENV)).toBe(1);
+      expect(err.join('')).toContain('cut or too large');
+      expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    });
+
+    it('shows bidi and zero-width characters in diff lines visibly instead of hiding them', async () => {
+      reply(() => ({
+        body: {
+          data: {
+            ...DIFF,
+            changed: [changed('alpha', { textDiff: '+if (x) \u202eevil\u202c\n+a\u200bb' })],
+          },
+        },
+      }));
+      await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
+      const text = out.join('');
+      expect(text).toContain('<U+202E>evil<U+202C>');
+      expect(text).toContain('a<U+200B>b');
+      expect(text).not.toMatch(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/);
+    });
+
+    it('names are cleaned of bidi controls, and a rename is shown and reported', async () => {
+      reply((url, method) =>
+        method === 'POST'
+          ? { body: { data: { ...ACCEPTED, renamed: [{ name: 'alpha', renamedTo: 'beta' }] } } }
+          : {
+              body: {
+                data: { ...DIFF, changed: [changed('al\u202epha', { renamedTo: 'new-name' })] },
+              },
+            }
+      );
+      const code = await runSkillsCommand(['sources', 'accept', 'src-1', '--yes'], ENV);
+      expect(code).toBe(0);
+      const text = out.join('');
+      expect(text).toContain('al?pha');
+      expect(text).toContain('upstream now names it new-name; accepting keeps the installed name');
+      expect(text).toContain('Upstream now names alpha as beta; the installed name is kept.');
+    });
+
+    it('accept --skills refuses a name the diff does not list as changed', async () => {
+      reply(updateHandler);
+      expect(
+        await runSkillsCommand(['sources', 'accept', 'src-1', '--skills=gamma', '--yes'], ENV)
+      ).toBe(1);
+      expect(err.join('')).toContain('Not changed upstream');
+      expect(calls.some((c) => c.method === 'POST')).toBe(false);
     });
 
     it('needs an id, and --sha needs a value', async () => {

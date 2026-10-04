@@ -9,6 +9,7 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import {
   installSkillSource,
   previewSkillSource,
@@ -17,6 +18,7 @@ import {
 import {
   acceptSkillUpdate,
   diffSkillSource,
+  readIncomingSkill,
   SkillUpdateRefusal,
 } from '../lib/skillSourceUpdateService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -71,13 +73,28 @@ const CreateBody = SourceFields.extend({
 
 const Sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
 
-const DiffQuery = z.object({ sha: Sha.optional() });
+const DiffQuery = z
+  .object({
+    /** With `skill`: return that skill's complete incoming text instead of the diff. */
+    full: booleanQueryParam(),
+    sha: Sha.optional(),
+    skill: z.string().min(1).max(200).optional(),
+  })
+  .refine((q) => !q.full || q.skill !== undefined, 'full needs skill');
 
 const AcceptBody = z.object({
   /** The commit the admin diffed: it must still be the source's latest. */
   sha: Sha,
-  /** Installed skills to update; omit for every changed skill that was not hand-edited. */
-  skills: z.array(z.string().min(1).max(200)).min(1).max(100).optional(),
+  /**
+   * Installed skills to update, each with the installed revision the diff showed
+   * (a skill edited since is a 409). Omit for every changed skill that was not
+   * hand-edited and whose diff could be read in full.
+   */
+  skills: z
+    .array(z.object({ name: z.string().min(1).max(200), revision: z.number().int().positive() }))
+    .min(1)
+    .max(100)
+    .optional(),
 });
 
 const PatchBody = z
@@ -305,12 +322,22 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'SKILL_SOURCE_DISABLED', message: SOURCE_DISABLED_MESSAGE },
         });
       }
-      await checkSkillSource(fastify.prisma, existing);
+      const check = await checkSkillSource(fastify.prisma, existing);
       const updated = await fastify.prisma.skillSource.findUnique({
         select: PUBLIC_SOURCE_SELECT,
         where: { id: existing.id },
       });
-      return updated ? { data: updated } : notFound(reply);
+      // `recorded` is false when the source changed under the check (disabled, or a
+      // newer pin accepted) and its answer was dropped; `check.status` is what the host said.
+      return updated
+        ? {
+            data: {
+              check: { error: check.error, status: check.status },
+              recorded: check.recorded,
+              source: updated,
+            },
+          }
+        : notFound(reply);
     }
   );
 
@@ -335,6 +362,11 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       try {
+        if (request.query.full && request.query.skill) {
+          return {
+            data: await readIncomingSkill(fastify.prisma, existing, sha, request.query.skill),
+          };
+        }
         const diff = await diffSkillSource(fastify.prisma, existing, sha);
         return {
           data: {
@@ -348,6 +380,15 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
           },
         };
       } catch (err) {
+        if (err instanceof SkillUpdateRefusal) {
+          return reply.status(UPDATE_STATUS[err.code]).send({
+            error: {
+              code: `SKILL_UPDATE_${err.code}`,
+              details: err.details,
+              message: UPDATE_MESSAGES[err.code],
+            },
+          });
+        }
         return sourceError(err, reply);
       }
     }
@@ -369,7 +410,7 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
         const summary = await acceptSkillUpdate(
           fastify.prisma,
           existing,
-          { actorId: actor.sub, names: request.body.skills, sha: request.body.sha },
+          { actorId: actor.sub, sha: request.body.sha, skills: request.body.skills },
           (tx, s) =>
             writeAuditLog(fastify, {
               action: 'UPDATE',
@@ -377,8 +418,12 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
               after: {
                 ...s.after,
                 conflicts: s.conflicts,
+                notSelected: s.notSelected,
+                removed: s.removed,
+                renamed: s.renamed,
                 sha: s.sha,
                 skills: s.accepted.map((a) => ({ name: a.name, revision: a.revision })),
+                unreadable: s.unreadable,
               },
               before: s.before,
               client: tx,
@@ -490,6 +535,7 @@ const IMPORT_MESSAGES = {
 const SOURCE_DISABLED_MESSAGE = 'This source is disabled; re-enable it first.';
 
 const UPDATE_STATUS = {
+  DIFF_INCOMPLETE: 409,
   DISABLED: 409,
   NOT_CHECKED: 409,
   NOT_INSTALLABLE: 422,
@@ -501,6 +547,8 @@ const UPDATE_STATUS = {
 } as const;
 
 const UPDATE_MESSAGES = {
+  DIFF_INCOMPLETE:
+    'The diff of some skills was cut or too large to read in full; nothing was changed. Read their full text (diff with skill and full=true), then name them in skills.',
   DISABLED: SOURCE_DISABLED_MESSAGE,
   NOT_CHECKED: 'No newer commit has been recorded yet; check the source first.',
   NOT_INSTALLABLE:

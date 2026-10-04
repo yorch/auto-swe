@@ -80,7 +80,10 @@ describe('unifiedDiff', () => {
 
   it('truncation keeps the head of the diff and says so', () => {
     const a = lines(500);
-    const result = unifiedDiff(a.join('\n'), alternate(a).join('\n'), { context: 0, maxChars: 500 });
+    const result = unifiedDiff(a.join('\n'), alternate(a).join('\n'), {
+      context: 0,
+      maxChars: 500,
+    });
     expect(result.truncated).toBe(true);
     expect(result.tooLarge).toBe(false);
     expect(result.text.length).toBeLessThanOrEqual(500);
@@ -122,7 +125,13 @@ describe('unifiedDiff', () => {
     const base = lines(900, 'a-fairly-long-line-of-text');
     const t0 = performance.now();
     for (let i = 0; i < 100; i++) {
-      unifiedDiff(base.join('\n'), alternate(base).map((l) => `${l}${i}`).join('\n'), { budget });
+      unifiedDiff(
+        base.join('\n'),
+        alternate(base)
+          .map((l) => `${l}${i}`)
+          .join('\n'),
+        { budget }
+      );
     }
     expect(performance.now() - t0).toBeLessThan(3000);
     expect(budget.left).toBeLessThan(DIFF_WORK_BUDGET);

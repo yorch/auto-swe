@@ -85,7 +85,9 @@ function backtrack(a: string[], b: string[], trace: Int32Array[], dEnd: number):
       x--;
       y--;
     }
-    ops.push(down ? { kind: '+', text: b[y - 1] as string } : { kind: '-', text: a[x - 1] as string });
+    ops.push(
+      down ? { kind: '+', text: b[y - 1] as string } : { kind: '-', text: a[x - 1] as string }
+    );
     x = prevX;
     y = prevY;
   }

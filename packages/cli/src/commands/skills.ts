@@ -17,8 +17,9 @@ const SUB_HELP = `auto-swe skills — skill library (admin)
                      [--script-mode=text-only|reject] [--skills=a,b] [--yes]
                                            Preview a repository's skills, then import them
   skills sources check <id>               Ask the host now whether the source's ref moved
-  skills sources diff <id> [--sha=<commit>]
-                                           Show what the newer commit changes, per skill (writes nothing)
+  skills sources diff <id> [--sha=<commit>] [--skill=<name> --full]
+                                           Show what the newer commit changes, per skill (writes nothing);
+                                           --skill --full prints one skill's complete incoming text
   skills sources accept <id> [--skills=a,b] [--yes]
                                            Review the diff, then cut new revisions from the latest commit
 
@@ -131,7 +132,8 @@ export async function runSkillsCommand(
 // Everything below that came from the server describes a third-party repository: its
 // names can carry terminal escapes, so control characters never reach the terminal.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
-const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+const CONTROL =
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 const clean = (s: string) => s.replace(CONTROL, '?');
 
 const short = (sha: string) => clean(sha).slice(0, 7);
@@ -281,6 +283,9 @@ interface ChangedSkill {
   description: { changed: boolean; old: string | null; new: string | null };
   textDiff: string;
   textDiffTruncated: boolean;
+  diffTooLarge: boolean;
+  diffIncomplete: boolean;
+  renamedTo: string | null;
   referenceFiles: { added: string[]; changed: string[]; removed: string[] };
   scanWarnings: string[];
   blockedByScan: boolean;
@@ -297,7 +302,22 @@ interface DiffResult {
   errors: Array<{ name: string; errors: string[] }>;
 }
 
+interface IncomingSkill {
+  name: string | null;
+  sha: string;
+  description: string | null;
+  promptText: string;
+  errors: string[];
+}
+
+interface CheckResult {
+  recorded: boolean;
+  check: { status: string; error: string | null };
+  source: SourceStatus;
+}
+
 interface AcceptResult {
+  renamed: Array<{ name: string; renamedTo: string }>;
   sha: string;
   accepted: Array<{ name: string; fromRevision: number; revision: number }>;
   conflicts: string[];
@@ -329,11 +349,27 @@ async function cmdCheck(args: string[], env: CliEnv): Promise<number> {
   if (!parsed) {
     return 1;
   }
-  const row = await apiRequest<SourceStatus>(
+  const {
+    check,
+    recorded,
+    source: row,
+  } = await apiRequest<CheckResult>(
     env,
     'POST',
     `${SOURCES_URL}/${encodeURIComponent(parsed.id)}/check`
   );
+  if (!recorded) {
+    process.stdout.write(
+      `${clean(row.id)}: not recorded: the source changed while it was being checked (disabled, or a newer commit accepted). Check again.\n`
+    );
+    return 0;
+  }
+  if (check.status === 'SKIPPED') {
+    process.stdout.write(
+      `${clean(row.id)}: skipped: ${clean(check.error ?? 'rate limited')}; its status is unchanged (${clean(row.status)}).\n`
+    );
+    return 0;
+  }
   process.stdout.write(
     `${clean(row.id)}: ${clean(row.status)} (pinned ${short(row.pinnedSha)}, latest ${row.latestSha ? short(row.latestSha) : 'unknown'})\n`
   );
@@ -344,10 +380,17 @@ async function cmdCheck(args: string[], env: CliEnv): Promise<number> {
 }
 
 /** A unified diff as text for a terminal: each line cleaned on its own so line breaks survive. */
+const INVISIBLE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+/** Bidi overrides and zero-width characters in review text are shown, not hidden or dropped. */
+const visible = (l: string) =>
+  l.replace(
+    INVISIBLE,
+    (c) => `<U+${(c.codePointAt(0) as number).toString(16).toUpperCase().padStart(4, '0')}>`
+  );
 const diffBody = (text: string) =>
   text
     .split('\n')
-    .map((l) => `      ${clean(l)}`)
+    .map((l) => `      ${clean(visible(l))}`)
     .join('\n');
 
 function printDiff(d: DiffResult): void {
@@ -357,6 +400,11 @@ function printDiff(d: DiffResult): void {
   );
   for (const c of d.changed) {
     out.write(`  ~ ${clean(c.name)}  (installed revision ${c.installedRevision})\n`);
+    if (c.renamedTo) {
+      out.write(
+        `      upstream now names it ${clean(visible(c.renamedTo))}; accepting keeps the installed name\n`
+      );
+    }
     if (c.handEdited) {
       out.write(
         '      conflict: edited by hand since it was imported; accepting overwrites those edits (name it in --skills)\n'
@@ -364,7 +412,7 @@ function printDiff(d: DiffResult): void {
     }
     if (c.description.changed) {
       out.write(
-        `      description: ${clean(c.description.old ?? '')} → ${clean(c.description.new ?? '')}\n`
+        `      description: ${clean(visible(c.description.old ?? ''))} → ${clean(visible(c.description.new ?? ''))}\n`
       );
     }
     const refs = c.referenceFiles;
@@ -388,9 +436,11 @@ function printDiff(d: DiffResult): void {
     }
     if (c.textDiff) {
       out.write(`${diffBody(c.textDiff)}\n`);
-      if (c.textDiffTruncated) {
-        out.write('      … diff truncated\n');
-      }
+    }
+    if (c.diffIncomplete) {
+      out.write(
+        `      ${c.diffTooLarge ? 'diff too large to show' : 'diff truncated'}: read the complete incoming text with: skills sources diff ${clean(d.source.id)} --skill=${clean(c.name)} --full\n`
+      );
     }
   }
   for (const a of d.added) {
@@ -407,24 +457,40 @@ function printDiff(d: DiffResult): void {
 }
 
 async function cmdDiff(args: string[], env: CliEnv): Promise<number> {
-  const usage = 'Usage: skills sources diff <id> [--sha=<commit>]\n';
+  const usage = 'Usage: skills sources diff <id> [--sha=<commit>] [--skill=<name> --full]\n';
   const parsed = idArg(args, usage);
   if (!parsed) {
     return 1;
   }
-  const bad = missingValue(parsed.flags, 'sha');
-  if (bad) {
-    process.stderr.write(`--${bad} requires a value\n${usage}`);
+  const bad = missingValue(parsed.flags, 'sha', 'skill');
+  const full = parsed.flags.full === FLAG_PRESENT || parsed.flags.full === 'true';
+  if (bad || (full && !parsed.flags.skill)) {
+    process.stderr.write(
+      bad ? `--${bad} requires a value\n${usage}` : `--full needs --skill\n${usage}`
+    );
     return 1;
   }
-  const query = parsed.flags.sha ? `?sha=${encodeURIComponent(parsed.flags.sha)}` : '';
-  printDiff(
-    await apiRequest<DiffResult>(
-      env,
-      'GET',
-      `${SOURCES_URL}/${encodeURIComponent(parsed.id)}/diff${query}`
-    )
-  );
+  const params = new URLSearchParams();
+  if (parsed.flags.sha) {
+    params.set('sha', parsed.flags.sha);
+  }
+  if (full && parsed.flags.skill) {
+    params.set('skill', parsed.flags.skill);
+    params.set('full', 'true');
+  }
+  const query = params.size > 0 ? `?${params}` : '';
+  const url = `${SOURCES_URL}/${encodeURIComponent(parsed.id)}/diff${query}`;
+  if (full) {
+    const skill = await apiRequest<IncomingSkill>(env, 'GET', url);
+    process.stdout.write(
+      `${clean(skill.name ?? '')} at ${short(skill.sha)}: ${skill.promptText.length} characters\ndescription: ${clean(visible(skill.description ?? ''))}\n${diffBody(skill.promptText)}\n`
+    );
+    for (const e of skill.errors) {
+      process.stdout.write(`error: ${clean(e)}\n`);
+    }
+    return 0;
+  }
+  printDiff(await apiRequest<DiffResult>(env, 'GET', url));
   return 0;
 }
 
@@ -444,7 +510,21 @@ async function cmdAccept(args: string[], env: CliEnv, confirm: Confirm): Promise
   printDiff(diff);
 
   const named = parsed.flags.skills ? parsed.flags.skills.split(',').map((n) => n.trim()) : null;
+  const notChanged = named?.filter((n) => !diff.changed.some((c) => c.name === n)) ?? [];
+  if (notChanged.length > 0) {
+    process.stderr.write(
+      `Not changed upstream, or not installed from this source: ${notChanged.map(clean).join(', ')}\n`
+    );
+    return 1;
+  }
   const willUpdate = diff.changed.filter((c) => (named ? named.includes(c.name) : !c.handEdited));
+  const unread = named ? [] : willUpdate.filter((c) => c.diffIncomplete);
+  if (unread.length > 0) {
+    process.stderr.write(
+      `The diff of ${unread.map((c) => clean(c.name)).join(', ')} was cut or too large. Read the full text (skills sources diff ${clean(parsed.id)} --skill=<name> --full), then name the skills in --skills to accept them.\n`
+    );
+    return 1;
+  }
   const conflicts = diff.changed.filter((c) => c.handEdited && !willUpdate.includes(c));
   if (conflicts.length > 0) {
     process.stderr.write(
@@ -469,7 +549,12 @@ async function cmdAccept(args: string[], env: CliEnv, confirm: Confirm): Promise
 
   const result = await apiRequest<AcceptResult>(env, 'POST', `${SOURCES_URL}/${id}/accept`, {
     sha: diff.sha,
-    ...(named ? { skills: named } : {}),
+    // Each named skill is bound to the installed revision the diff above showed.
+    ...(named
+      ? {
+          skills: willUpdate.map((c) => ({ name: c.name, revision: c.installedRevision })),
+        }
+      : {}),
   });
   for (const a of result.accepted) {
     process.stdout.write(
@@ -483,6 +568,11 @@ async function cmdAccept(args: string[], env: CliEnv, confirm: Confirm): Promise
   }
   if (result.notSelected.length > 0) {
     process.stdout.write(`Not selected: ${result.notSelected.map(clean).join(', ')}\n`);
+  }
+  for (const r of result.renamed) {
+    process.stdout.write(
+      `Upstream now names ${clean(r.name)} as ${clean(visible(r.renamedTo))}; the installed name is kept.\n`
+    );
   }
   process.stdout.write(
     result.pinAdvanced

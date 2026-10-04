@@ -248,9 +248,9 @@ describe('POST /:id/check', () => {
     const res = await call('POST', '/check');
     expect(res.statusCode).toBe(200);
     expect(res.json().data).toMatchObject({
-      latestSha: NEWER,
-      pinnedSha: OLD,
-      status: 'UPDATE_AVAILABLE',
+      check: { error: null, status: 'UPDATE_AVAILABLE' },
+      recorded: true,
+      source: { latestSha: NEWER, pinnedSha: OLD, status: 'UPDATE_AVAILABLE' },
     });
     expect(resolveSourceSha).toHaveBeenCalledWith(
       expect.objectContaining({ owner: 'acme', ref: 'main' }),
@@ -266,10 +266,41 @@ describe('POST /:id/check', () => {
     const res = await call('POST', '/check');
     expect(res.statusCode).toBe(200);
     expect(res.json().data).toMatchObject({
-      lastError: 'repository, ref or path not found, or not accessible',
-      status: 'ERROR',
+      recorded: true,
+      source: {
+        lastError: 'repository, ref or path not found, or not accessible',
+        status: 'ERROR',
+      },
     });
     expect(writes).toEqual(['source.update']);
+  });
+
+  it('a rate-limit answer records only lastCheckedAt and keeps UPDATE_AVAILABLE and latestSha', async () => {
+    resolveSourceSha.mockRejectedValue(new SkillSourceError('RATE_LIMIT_LOW'));
+    const { call, state } = await buildApp();
+    const res = await call('POST', '/check');
+    expect(res.json().data).toMatchObject({
+      check: { status: 'SKIPPED' },
+      recorded: true,
+      source: { lastError: null, latestSha: NEW, status: 'UPDATE_AVAILABLE' },
+    });
+    expect(state.source.lastCheckedAt).toBeInstanceOf(Date);
+  });
+
+  it('says recorded:false when the source changed under the check, and writes nothing', async () => {
+    const { call, state } = await buildApp();
+    resolveSourceSha.mockImplementation(async () => {
+      // An admin disables the source while the host is being asked.
+      state.source.status = 'DISABLED';
+      return NEWER;
+    });
+    const res = await call('POST', '/check');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toMatchObject({
+      check: { status: 'UPDATE_AVAILABLE' },
+      recorded: false,
+      source: { latestSha: NEW, status: 'DISABLED' },
+    });
   });
 
   it('refuses a disabled source and an unknown one', async () => {
@@ -413,7 +444,9 @@ describe('GET /:id/diff', () => {
       data.changed.map((c: { name: string; handEdited: boolean }) => [c.name, c.handEdited])
     ).toEqual([['alpha', true]]);
     // Upstream's text for beta is what was imported, so there is nothing to take.
-    expect(data.unchanged).toEqual([{ handEdited: true, name: 'beta', skillId: 'skill-beta' }]);
+    expect(data.unchanged).toEqual([
+      { handEdited: true, name: 'beta', renamedTo: null, skillId: 'skill-beta' },
+    ]);
     expect(data.changed[0].textDiff).toContain('-my edit');
   });
 
@@ -611,7 +644,10 @@ describe('POST /:id/accept', () => {
       changedAlpha();
       const f = await buildApp();
       handEdit(f);
-      const res = await f.call('POST', '/accept', { sha: NEW, skills: ['alpha'] });
+      const res = await f.call('POST', '/accept', {
+        sha: NEW,
+        skills: [{ name: 'alpha', revision: 2 }],
+      });
       expect(res.statusCode).toBe(200);
       expect(res.json().data).toMatchObject({
         accepted: [{ fromRevision: 2, name: 'alpha', revision: 3 }],
@@ -659,7 +695,10 @@ describe('POST /:id/accept', () => {
       ])
     );
     const { call, revisions, state } = await buildApp();
-    const res = await call('POST', '/accept', { sha: NEW, skills: ['alpha'] });
+    const res = await call('POST', '/accept', {
+      sha: NEW,
+      skills: [{ name: 'alpha', revision: 1 }],
+    });
     expect(res.json().data).toMatchObject({
       accepted: [{ name: 'alpha' }],
       notSelected: ['beta'],
@@ -677,12 +716,21 @@ describe('POST /:id/accept', () => {
       fetched([upstream('alpha', { errors: ['SKILL.md has no YAML frontmatter'], name: null })])
     );
     const { call, writes } = await buildApp();
-    const unknown = await call('POST', '/accept', { sha: NEW, skills: ['nope'] });
+    const unknown = await call('POST', '/accept', {
+      sha: NEW,
+      skills: [{ name: 'nope', revision: 1 }],
+    });
     expect(unknown.statusCode).toBe(400);
     expect(unknown.json().error).toMatchObject({ details: ['nope'] });
-    const broken = await call('POST', '/accept', { sha: NEW, skills: ['alpha'] });
+    const broken = await call('POST', '/accept', {
+      sha: NEW,
+      skills: [{ name: 'alpha', revision: 1 }],
+    });
     expect(broken.statusCode).toBe(422);
-    const removed = await call('POST', '/accept', { sha: NEW, skills: ['beta'] });
+    const removed = await call('POST', '/accept', {
+      sha: NEW,
+      skills: [{ name: 'beta', revision: 1 }],
+    });
     expect(removed.statusCode).toBe(422);
     expect(writes).toEqual([]);
   });
@@ -716,5 +764,166 @@ describe('POST /:id/accept', () => {
     const res = await call('POST', '/accept', { sha: NEW });
     expect(res.statusCode).toBe(503);
     expect(writes).toEqual([]);
+  });
+});
+
+describe('review bounds and binding', () => {
+  const longLines = (n: number, p: string) =>
+    Array.from({ length: n }, (_, i) => `${p}${i}-${'x'.repeat(100)}`).join('\n');
+
+  /** Make the installed pristine text of `name` something large. */
+  function setPristine(f: Awaited<ReturnType<typeof buildApp>>, name: string, text: string) {
+    f.skill(name).promptText = text;
+    const rev = f.revisions(name)[0] as Rev;
+    rev.promptText = text;
+    rev.contentHash = skillContentHash({
+      description: f.skill(name).description as string,
+      promptText: text,
+    });
+  }
+
+  it('a rewrite past the edit cap is reported diffTooLarge, with no text to mislead', async () => {
+    const old = longLines(1100, 'old');
+    fetchSkillSource.mockResolvedValue(
+      fetched([upstream('alpha', { promptText: longLines(1100, 'new') }), upstream('beta')])
+    );
+    const f = await buildApp();
+    setPristine(f, 'alpha', old);
+    const { data } = (await f.call('GET', '/diff')).json();
+    expect(data.changed[0]).toMatchObject({
+      diffIncomplete: true,
+      diffTooLarge: true,
+      name: 'alpha',
+      textDiff: '',
+    });
+  });
+
+  it('a diff cut at the size cap is flagged incomplete and still starts at the first change', async () => {
+    const a = Array.from({ length: 800 }, (_, i) => `line ${i} ${'y'.repeat(100)}`);
+    const b = a.map((l, i) => (i % 2 ? `${l}!` : l));
+    fetchSkillSource.mockResolvedValue(
+      fetched([upstream('alpha', { promptText: b.join('\n') }), upstream('beta')])
+    );
+    const f = await buildApp();
+    setPristine(f, 'alpha', a.join('\n'));
+    const { data } = (await f.call('GET', '/diff')).json();
+    expect(data.changed[0]).toMatchObject({
+      diffIncomplete: true,
+      diffTooLarge: false,
+      textDiffTruncated: true,
+    });
+    expect(data.changed[0].textDiff.length).toBeLessThanOrEqual(60_000);
+    expect(data.changed[0].textDiff).toContain('+line 1 ');
+  });
+
+  describe('accept refuses what the admin could not read in full', () => {
+    async function oversized() {
+      fetchSkillSource.mockResolvedValue(
+        fetched([upstream('alpha', { promptText: longLines(1100, 'new') }), upstream('beta')])
+      );
+      const f = await buildApp();
+      setPristine(f, 'alpha', longLines(1100, 'old'));
+      return f;
+    }
+
+    it('409 DIFF_INCOMPLETE listing the skill, nothing written, unless named', async () => {
+      const f = await oversized();
+      const res = await f.call('POST', '/accept', { sha: NEW });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatchObject({
+        code: 'SKILL_UPDATE_DIFF_INCOMPLETE',
+        details: ['alpha'],
+      });
+      expect(f.writes).toEqual([]);
+      expect(f.revisions('alpha')).toHaveLength(1);
+
+      const named = await f.call('POST', '/accept', {
+        sha: NEW,
+        skills: [{ name: 'alpha', revision: 1 }],
+      });
+      expect(named.statusCode).toBe(200);
+      expect(f.revisions('alpha')).toHaveLength(2);
+    });
+
+    it('the complete incoming text is readable with skill and full=true', async () => {
+      const f = await oversized();
+      const res = await f.call('GET', `/diff?skill=alpha&full=true`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toMatchObject({
+        folder: 'skills/alpha',
+        name: 'alpha',
+        promptText: longLines(1100, 'new'),
+        sha: NEW,
+      });
+      expect(f.writes).toEqual([]);
+      expect((await f.call('GET', '/diff?full=true')).statusCode).toBe(400);
+      expect((await f.call('GET', '/diff?skill=nope&full=true')).statusCode).toBe(400);
+    });
+  });
+
+  it('a named skill is bound to the installed revision the admin saw (409 SKILL_CHANGED, nothing written)', async () => {
+    fetchSkillSource.mockResolvedValue(
+      fetched([upstream('alpha', { promptText: 'alpha v2 text' }), upstream('beta')])
+    );
+    const f = await buildApp();
+    // Another admin edits alpha after the diff was read: it is now revision 2.
+    f.skill('alpha').currentRevision = 2;
+    const res = await f.call('POST', '/accept', {
+      sha: NEW,
+      skills: [{ name: 'alpha', revision: 1 }],
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatchObject({
+      code: 'SKILL_CHANGED',
+      details: { names: ['alpha'] },
+    });
+    expect(f.writes).toEqual([]);
+  });
+
+  it('names must carry a revision', async () => {
+    const f = await buildApp();
+    expect((await f.call('POST', '/accept', { sha: NEW, skills: ['alpha'] })).statusCode).toBe(400);
+  });
+
+  it('shows an upstream rename, keeps the installed name and says so', async () => {
+    fetchSkillSource.mockResolvedValue(
+      fetched([
+        upstream('alpha', { name: 'alpha-renamed', promptText: 'alpha v2 text' }),
+        upstream('beta', { name: 'beta-renamed' }),
+      ])
+    );
+    const f = await buildApp();
+    const { data } = (await f.call('GET', '/diff')).json();
+    expect(data.changed[0]).toMatchObject({ name: 'alpha', renamedTo: 'alpha-renamed' });
+    expect(data.unchanged[0]).toMatchObject({ name: 'beta', renamedTo: 'beta-renamed' });
+    const res = await f.call('POST', '/accept', { sha: NEW });
+    expect(res.json().data.renamed).toEqual([
+      { name: 'alpha', renamedTo: 'alpha-renamed' },
+      { name: 'beta', renamedTo: 'beta-renamed' },
+    ]);
+    expect(f.skill('alpha').name).toBe('alpha');
+  });
+
+  it('a source with no recorded commit answers NOT_CHECKED, not a stale sha', async () => {
+    const f = await buildApp();
+    f.state.source.latestSha = null;
+    const res = await f.call('POST', '/accept', { sha: NEW });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_UPDATE_NOT_CHECKED');
+  });
+
+  it('the audit entry records what was left alone, flagged or renamed', async () => {
+    fetchSkillSource.mockResolvedValue(
+      fetched([
+        upstream('alpha', { promptText: 'alpha v2 text' }),
+        upstream('beta', { promptText: 'beta v2 text' }),
+      ])
+    );
+    const f = await buildApp();
+    f.state.skills.push(installedSkill('delta'));
+    await f.call('POST', '/accept', { sha: NEW, skills: [{ name: 'alpha', revision: 1 }] });
+    expect(f.state.audit[0]).toMatchObject({
+      afterJson: { notSelected: ['beta'], removed: ['delta'], unreadable: [] },
+    });
   });
 });

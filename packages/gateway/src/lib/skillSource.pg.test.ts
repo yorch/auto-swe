@@ -25,6 +25,7 @@ vi.mock('@auto-swe/shared/lib/skillSource', async (importOriginal) => ({
   fetchSkillSource,
 }));
 
+import { initialRevision } from '@auto-swe/shared/lib/skillRevision';
 import { skillSourceRoutes } from '../routes/skillSources.js';
 import { updateSkill } from './skillLibraryService.js';
 import { installSkillSource } from './skillSourceService.js';
@@ -599,6 +600,24 @@ describe.skipIf(!enabled)('skill sources against Postgres', () => {
       }
     });
 
+    it('refuses a named skill that was edited after the diff the admin read (revision binding)', async () => {
+      const { names, row, rows } = await installed(['bound']);
+      upstreamV2(names);
+      const target = await prisma.skill.findUniqueOrThrow({ where: { id: rows[0]?.id } });
+      // Another admin edits the skill after this admin read the diff at revision 1.
+      await updateSkill(prisma, target, { promptText: 'edited after the diff' }, userId);
+      const res = await accept(row.id, {
+        sha: NEW_SHA,
+        skills: [{ name: names[0] as string, revision: 1 }],
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('SKILL_CHANGED');
+      expect(await prisma.skill.findUniqueOrThrow({ where: { id: rows[0]?.id } })).toMatchObject({
+        currentRevision: 2,
+        promptText: 'edited after the diff',
+      });
+    });
+
     it('does not overwrite a hand edit unless the skill is named, and keeps the edit in history', async () => {
       const { names, row, rows } = await installed(['edited']);
       const target = await prisma.skill.findUniqueOrThrow({ where: { id: rows[0]?.id } });
@@ -617,7 +636,10 @@ describe.skipIf(!enabled)('skill sources against Postgres', () => {
         promptText: 'our own text',
       });
 
-      const second = await accept(row.id, { sha: NEW_SHA, skills: names });
+      const second = await accept(row.id, {
+        sha: NEW_SHA,
+        skills: names.map((name) => ({ name, revision: 2 })),
+      });
       expect(second.statusCode).toBe(200);
       expect(second.json().data).toMatchObject({ pinAdvanced: true });
       const history = await revs(rows[0]?.id as string);
@@ -634,6 +656,26 @@ describe.skipIf(!enabled)('skill sources against Postgres', () => {
       const same = await source({ path: `sw-same-${rnd()}` });
       const off = await source({ path: `sw-off-${rnd()}`, status: 'DISABLED' });
       const broken = await source({ path: `sw-broken-${rnd()}` });
+      const guarded = [`sweepguard-${tag}`, `sweepguard2-${tag}`];
+      skillNames.push(...guarded);
+      const withSkill = async (name: string, sourceId: string) =>
+        prisma.skill.create({
+          data: {
+            ...initialRevision(
+              { description: 'd', promptText: `text of ${name}` },
+              { sourcePath: `skills/${name}`, sourceSha: SHA }
+            ),
+            description: 'd',
+            name,
+            promptText: `text of ${name}`,
+            sourceId,
+            sourcePath: `skills/${name}`,
+          },
+        });
+      const guardedSkills = [
+        await withSkill(guarded[0] as string, moved.id),
+        await withSkill(guarded[1] as string, off.id),
+      ];
       const skillsBefore = await runUnscoped('test counts skills', ['Skill'], () =>
         prisma.skill.count({ where: { sourceId: { in: [moved.id, same.id, off.id, broken.id] } } })
       );
@@ -681,6 +723,19 @@ describe.skipIf(!enabled)('skill sources against Postgres', () => {
           })
         )
       ).toBe(skillsBefore);
+      // The skills of a flagged source are exactly as they were: same revision, text and history.
+      for (const g of guardedSkills) {
+        const after = await prisma.skill.findUniqueOrThrow({
+          include: { revisions: true },
+          where: { id: g.id },
+        });
+        expect(after).toMatchObject({
+          currentRevision: 1,
+          isVerified: false,
+          promptText: `text of ${g.name}`,
+        });
+        expect(after.revisions.map((r) => [r.revision, r.sourceSha])).toEqual([[1, SHA]]);
+      }
     });
   });
 });

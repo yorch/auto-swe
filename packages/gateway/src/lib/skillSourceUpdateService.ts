@@ -14,7 +14,7 @@ import {
 } from '@auto-swe/shared/lib/skillSource';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { type SkillSourceRow, scanAll } from './skillSourceService.js';
-import { unifiedDiff } from './textDiff.js';
+import { DIFF_WORK_BUDGET, type TextDiff, unifiedDiff } from './textDiff.js';
 
 /**
  * Reviewing and accepting an update to a tracked skill source.
@@ -32,9 +32,6 @@ import { unifiedDiff } from './textDiff.js';
  * that baseline — which tells "upstream changed" from "an admin changed it"
  * without fetching the old commit.
  */
-
-/** Cap on the unified diff returned per skill; the flag says the rest was cut. */
-export const MAX_DIFF_CHARS = 60_000;
 
 interface RevisionRow {
   revision: number;
@@ -98,10 +95,12 @@ interface ChangedItem {
   upstream: SourceSkill;
   handEdited: boolean;
   referenceFilesChanged: boolean;
+  /** The name upstream's frontmatter now gives, when it differs; the installed name is kept. */
+  renamedTo: string | null;
 }
 
 interface UpdatePlan {
-  unchanged: Array<{ installed: InstalledRow; handEdited: boolean }>;
+  unchanged: Array<{ installed: InstalledRow; handEdited: boolean; renamedTo: string | null }>;
   changed: ChangedItem[];
   /** Installed here, but upstream no longer parses (or is rejected by the script mode). */
   errors: Array<{ installed: InstalledRow; upstream: SourceSkill }>;
@@ -161,10 +160,17 @@ function planUpdate(installed: InstalledRow[], fetched: SourceSkill[]): UpdatePl
       refsHash(asRefFiles(baseline.referenceFiles)) !== refsHash(up.referenceFiles);
     const upstreamChanged =
       baseline === null ? liveHash !== upstreamHash : baseline.contentHash !== upstreamHash;
+    const renamedTo = up.name === inst.name ? null : up.name;
     if (upstreamChanged || referenceFilesChanged) {
-      plan.changed.push({ handEdited, installed: inst, referenceFilesChanged, upstream: up });
+      plan.changed.push({
+        handEdited,
+        installed: inst,
+        referenceFilesChanged,
+        renamedTo,
+        upstream: up,
+      });
     } else {
-      plan.unchanged.push({ handEdited, installed: inst });
+      plan.unchanged.push({ handEdited, installed: inst, renamedTo });
     }
   }
   plan.added = fetched.filter((s) => !used.has(s.folder));
@@ -179,10 +185,20 @@ const locationOf = (s: SkillSourceRow) => ({
   repo: s.repo,
 });
 
-const clip = (text: string) =>
-  text.length > MAX_DIFF_CHARS
-    ? { text: text.slice(0, MAX_DIFF_CHARS), truncated: true }
-    : { text, truncated: false };
+/**
+ * The text diff of every changed skill, computed under one work budget shared
+ * by all of them. The diff and the accept both call this over the same list in
+ * the same order, so they agree on which skills' diffs were cut or not computed.
+ */
+function computeDiffs(changed: ChangedItem[]): Map<ChangedItem, TextDiff> {
+  const budget = { left: DIFF_WORK_BUDGET };
+  return new Map(
+    changed.map((c) => [c, unifiedDiff(c.installed.promptText, c.upstream.promptText, { budget })])
+  );
+}
+
+/** A diff the admin cannot read in full: cut, or never computed. */
+const incomplete = (d: TextDiff | undefined) => !!d && (d.truncated || d.tooLarge);
 
 function referenceChanges(before: RefFile[], after: RefFile[]) {
   const old = new Map(before.map((f) => [f.path, f.content]));
@@ -225,6 +241,7 @@ export async function diffSkillSource(
     resolveSetting('skills.import.blockOnScanWarnings'),
   ]);
   const scanOf = (s: SourceSkill) => scans.get(s) ?? [];
+  const diffs = computeDiffs(plan.changed);
 
   return {
     added: plan.added.map((s) => ({
@@ -239,7 +256,7 @@ export async function diffSkillSource(
       textLength: s.promptText.length,
     })),
     changed: plan.changed.map((c) => {
-      const diff = clip(unifiedDiff(c.installed.promptText, c.upstream.promptText));
+      const diff = diffs.get(c) as TextDiff;
       const scanWarnings = scanOf(c.upstream);
       return {
         blockedByScan: block && scanWarnings.length > 0,
@@ -248,6 +265,8 @@ export async function diffSkillSource(
           new: c.upstream.description,
           old: c.installed.description,
         },
+        diffIncomplete: incomplete(diff),
+        diffTooLarge: diff.tooLarge,
         folder: safeDisplayPath(c.upstream.folder),
         handEdited: c.handEdited,
         ignoredKeys: c.upstream.ignoredKeys,
@@ -257,6 +276,7 @@ export async function diffSkillSource(
           asRefFiles(pristineBaseline(c.installed.revisions)?.referenceFiles ?? []),
           c.upstream.referenceFiles
         ),
+        renamedTo: c.renamedTo,
         scanWarnings,
         skillId: c.installed.id,
         skippedFiles: c.upstream.skippedFiles,
@@ -280,8 +300,46 @@ export async function diffSkillSource(
     unchanged: plan.unchanged.map((u) => ({
       handEdited: u.handEdited,
       name: u.installed.name,
+      renamedTo: u.renamedTo,
       skillId: u.installed.id,
     })),
+  };
+}
+
+/**
+ * The complete incoming text of one skill at `sha` (by installed name, or by the
+ * name upstream gives it), for the review a truncated or too-large diff could
+ * not show. Writes nothing.
+ */
+export async function readIncomingSkill(
+  prisma: PrismaClient,
+  source: SkillSourceRow,
+  sha: string,
+  name: string,
+  deps?: SkillSourceDeps
+) {
+  const fetched = await fetchSkillSource(
+    locationOf(source),
+    { atSha: sha, scriptMode: source.scriptMode },
+    deps
+  );
+  const installed = await loadInstalled(prisma, source.id);
+  const folder = installed.find((i) => i.name === name)?.sourcePath;
+  const upstream = fetched.skills.find((s) => (folder ? s.folder === folder : s.name === name));
+  if (!upstream) {
+    throw new SkillUpdateRefusal('UNKNOWN_SKILLS', [name]);
+  }
+  return {
+    description: upstream.description,
+    errors: upstream.errors,
+    folder: safeDisplayPath(upstream.folder),
+    name: upstream.name,
+    promptText: upstream.promptText,
+    referenceFiles: upstream.referenceFiles.map((f) => ({
+      length: f.content.length,
+      path: safeDisplayPath(f.path),
+    })),
+    sha: fetched.sha,
   };
 }
 
@@ -289,6 +347,7 @@ export async function diffSkillSource(
 export class SkillUpdateRefusal extends Error {
   constructor(
     readonly code:
+      | 'DIFF_INCOMPLETE'
       | 'DISABLED'
       | 'NOT_CHECKED'
       | 'NOT_INSTALLABLE'
@@ -316,6 +375,8 @@ export interface AcceptSummary {
   before: { pinnedSha: string; status: string };
   after: { pinnedSha: string; status: 'OK' | 'UPDATE_AVAILABLE' };
   accepted: AcceptedSkill[];
+  /** Skills whose upstream frontmatter name differs; the installed name is kept. */
+  renamed: Array<{ name: string; renamedTo: string }>;
   /** Changed upstream and hand-edited here, and not named in `skills`: left as they are. */
   conflicts: string[];
   /** Changed upstream and not hand-edited, but left out because `skills` did not name them. */
@@ -349,12 +410,20 @@ export interface AcceptSummary {
 export async function acceptSkillUpdate(
   prisma: PrismaClient,
   source: SkillSourceRow,
-  input: { sha: string; names?: string[]; actorId: string },
+  input: {
+    sha: string;
+    /** Skills to update, each bound to the installed revision the admin saw in the diff. */
+    skills?: Array<{ name: string; revision: number }>;
+    actorId: string;
+  },
   audit: (tx: Prisma.TransactionClient, summary: AcceptSummary) => Promise<void>,
   deps?: SkillSourceDeps
 ): Promise<AcceptSummary> {
   if (source.status === 'DISABLED') {
     throw new SkillUpdateRefusal('DISABLED');
+  }
+  if (source.latestSha === null) {
+    throw new SkillUpdateRefusal('NOT_CHECKED');
   }
   if (source.latestSha !== input.sha) {
     throw new SkillUpdateRefusal('STALE_SHA', { latestSha: source.latestSha });
@@ -367,12 +436,18 @@ export async function acceptSkillUpdate(
   const installed = await loadInstalled(prisma, source.id);
   const plan = planUpdate(installed, fetched.skills);
 
-  const explicit = input.names ? [...new Set(input.names)] : null;
+  const named = new Map((input.skills ?? []).map((s) => [s.name, s.revision]));
+  const explicit = input.skills ? [...named.keys()] : null;
   if (explicit) {
-    const known = new Set(installed.map((i) => i.name));
+    const known = new Map(installed.map((i) => [i.name, i]));
     const unknown = explicit.filter((n) => !known.has(n));
     if (unknown.length > 0) {
       throw new SkillUpdateRefusal('UNKNOWN_SKILLS', unknown);
+    }
+    // The live side the admin reviewed: a skill edited since is not overwritten unseen.
+    const moved = explicit.filter((n) => known.get(n)?.currentRevision !== named.get(n));
+    if (moved.length > 0) {
+      throw new SkillUpdateRefusal('SKILL_CHANGED', { names: moved });
     }
     const broken = explicit.filter(
       (n) =>
@@ -393,6 +468,19 @@ export async function acceptSkillUpdate(
   const chosen = plan.changed.filter((c) =>
     explicit ? explicit.includes(c.installed.name) : !c.handEdited
   );
+
+  // A diff the admin could not read in full cannot be accepted by default: it has to
+  // be named, which says the full text (`full=true` on the diff) was read.
+  const diffs = computeDiffs(plan.changed);
+  const unread = chosen.filter(
+    (c) => incomplete(diffs.get(c)) && !(explicit ?? []).includes(c.installed.name)
+  );
+  if (unread.length > 0) {
+    throw new SkillUpdateRefusal(
+      'DIFF_INCOMPLETE',
+      unread.map((c) => c.installed.name)
+    );
+  }
 
   const [scans, block] = await Promise.all([
     scanAll(chosen.map((c) => c.upstream)),
@@ -468,6 +556,9 @@ export async function acceptSkillUpdate(
           .map((c) => c.installed.name),
         pinAdvanced,
         removed: plan.removed.map((r) => r.name),
+        renamed: [...plan.changed, ...plan.unchanged].flatMap((c) =>
+          c.renamedTo === null ? [] : [{ name: c.installed.name, renamedTo: c.renamedTo }]
+        ),
         sha: input.sha,
         unreadable: plan.errors.map((e) => e.installed.name),
       };
