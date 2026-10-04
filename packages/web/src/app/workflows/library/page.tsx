@@ -31,6 +31,7 @@ import {
   useWorkflowTemplates,
 } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { requestHref } from '@/lib/requestDisplay';
 import { requiresRoleTitle } from '@/lib/roles';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -530,7 +531,11 @@ export default function TemplatesPage() {
                         {t.lastRun ? (
                           <Link
                             className="inline-flex items-center gap-2"
-                            href={`/runs/${t.lastRun.id}`}
+                            href={
+                              t.lastRun.workRequestId
+                                ? requestHref(t.lastRun.workRequestId)
+                                : `/runs/${t.lastRun.id}`
+                            }
                           >
                             <StatusBadge status={t.lastRun.status} />
                             <span className="font-mono text-[11px] text-paper-500">

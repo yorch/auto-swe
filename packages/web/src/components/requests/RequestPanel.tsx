@@ -130,7 +130,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
                     </span>
                   </div>
                   <ButtonLink href={`/runs/${run.id}`} size="sm">
-                    Open full page ↗
+                    Open full diagnostics ↗
                   </ButtonLink>
                 </div>
                 {run.id === (summary.data?.data[0]?.id ?? latestId) &&

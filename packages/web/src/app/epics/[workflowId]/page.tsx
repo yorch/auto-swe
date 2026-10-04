@@ -14,6 +14,7 @@ import { useEpic } from '@/hooks/useEpics';
 import { useRunsForWorkRequest } from '@/hooks/useRuns';
 import { epicChildRunCell } from '@/lib/epicChildRun';
 import { errMsg } from '@/lib/errors';
+import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatRelativeTime } from '@/lib/utils';
 
@@ -129,12 +130,24 @@ export default function EpicDetailPage({ params }: PageProps) {
                     const cell = epicChildRunCell(child, runIdByTemporalId, childRunsSettled);
                     if (cell.kind === 'run') {
                       return (
-                        <Link
-                          className="text-ember-400 hover:underline font-mono text-xs"
-                          href={`/runs/${cell.runId}`}
-                        >
-                          view run →
-                        </Link>
+                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs">
+                          <Link
+                            className="text-ember-400 hover:underline"
+                            href={
+                              epic.workRequestId
+                                ? requestHref(epic.workRequestId)
+                                : `/runs/${cell.runId}`
+                            }
+                          >
+                            view request →
+                          </Link>
+                          <Link
+                            className="text-paper-400 hover:underline"
+                            href={`/runs/${cell.runId}`}
+                          >
+                            diagnostics
+                          </Link>
+                        </span>
                       );
                     }
                     if (cell.kind === 'no-access') {

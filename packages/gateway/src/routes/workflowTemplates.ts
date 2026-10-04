@@ -481,6 +481,7 @@ interface LastRunRow {
   status: string;
   startedAt: Date;
   endedAt: Date | null;
+  workRequestId: string | null;
 }
 
 /**
@@ -520,7 +521,14 @@ async function loadLastRuns(
   }
   const rows = (await fastify.prisma.workflowRun.findMany({
     orderBy: { startedAt: 'desc' },
-    select: { endedAt: true, id: true, startedAt: true, status: true, templateId: true },
+    select: {
+      endedAt: true,
+      id: true,
+      startedAt: true,
+      status: true,
+      templateId: true,
+      workRequestId: true,
+    },
     where: { AND: [visibility], OR: keys },
   })) as unknown as LastRunRow[];
   // Newest first; a tie on startedAt keeps the first one seen.
@@ -550,6 +558,7 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
           id: lastRun.id,
           startedAt: lastRun.startedAt,
           status: lastRun.status,
+          workRequestId: lastRun.workRequestId,
         }
       : null,
     name: tpl.name,
