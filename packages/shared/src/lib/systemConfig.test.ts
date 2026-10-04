@@ -515,6 +515,8 @@ describe('systemConfig resolvers', () => {
       'MODEL_DISCOVERY_CRON',
       'RUN_REAPER_ENABLED',
       'RUN_REAPER_CRON',
+      'SKILL_SOURCE_SYNC_ENABLED',
+      'SKILL_SOURCE_SYNC_CRON',
     ];
     beforeEach(() => {
       for (const key of KEYS) {
@@ -528,6 +530,7 @@ describe('systemConfig resolvers', () => {
         repoAccess: { cronExpression: '23 * * * *', enabled: false },
         repoDependency: { cronExpression: '0 4 * * *', enabled: true },
         runReaper: { cronExpression: '*/15 * * * *', enabled: true },
+        skillSourceSync: { cronExpression: '41 5 * * *', enabled: true },
       });
     });
 
@@ -540,11 +543,14 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('MODEL_DISCOVERY_CRON', '0 5 * * 1');
       vi.stubEnv('RUN_REAPER_ENABLED', 'false');
       vi.stubEnv('RUN_REAPER_CRON', '*/5 * * * *');
+      vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'false');
+      vi.stubEnv('SKILL_SOURCE_SYNC_CRON', '7 6 * * 2');
       expect(resolveScheduledSweeps()).toEqual({
         modelDiscovery: { cronExpression: '0 5 * * 1', enabled: false },
         repoAccess: { cronExpression: '5 * * * *', enabled: true },
         repoDependency: { cronExpression: '30 2 * * 1', enabled: false },
         runReaper: { cronExpression: '*/5 * * * *', enabled: false },
+        skillSourceSync: { cronExpression: '7 6 * * 2', enabled: false },
       });
     });
 
@@ -553,11 +559,13 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', 'daily');
       vi.stubEnv('MODEL_DISCOVERY_ENABLED', 'off');
       vi.stubEnv('RUN_REAPER_CRON', 'often');
+      vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'off');
       const sweeps = resolveScheduledSweeps();
       expect(sweeps.repoAccess.enabled).toBe(false);
       expect(sweeps.repoDependency.cronExpression).toBe('0 4 * * *');
       expect(sweeps.modelDiscovery.enabled).toBe(true);
       expect(sweeps.runReaper.cronExpression).toBe('*/15 * * * *');
+      expect(sweeps.skillSourceSync.enabled).toBe(true);
     });
 
     describe('validateScheduledSweepsEnv — the strict check the gateway runs at boot', () => {
@@ -571,6 +579,8 @@ describe('systemConfig resolvers', () => {
         vi.stubEnv('MODEL_DISCOVERY_CRON', '17 3 * * *');
         vi.stubEnv('RUN_REAPER_ENABLED', 'true');
         vi.stubEnv('RUN_REAPER_CRON', '*/15 * * * *');
+        vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'true');
+        vi.stubEnv('SKILL_SOURCE_SYNC_CRON', '41 5 * * *');
         expect(validateScheduledSweepsEnv()).toEqual([]);
       });
 
@@ -583,6 +593,15 @@ describe('systemConfig resolvers', () => {
             `REPO_DEPENDENCY_SCAN_ENABLED=${JSON.stringify(raw)} is not 'true' or 'false'`,
           ]);
         }
+      });
+
+      it('rejects an unusable skill-source sync flag or cron', () => {
+        vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'off');
+        vi.stubEnv('SKILL_SOURCE_SYNC_CRON', 'daily');
+        const problems = validateScheduledSweepsEnv();
+        expect(problems).toHaveLength(2);
+        expect(problems.join('\n')).toContain('SKILL_SOURCE_SYNC_ENABLED="off"');
+        expect(problems.join('\n')).toContain('SKILL_SOURCE_SYNC_CRON="daily"');
       });
 
       it('rejects a cron expression that is not five fields, and reports every problem', () => {

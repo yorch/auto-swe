@@ -892,6 +892,8 @@ export interface ScheduledSweepsConfig {
   runReaper: SweepSchedule;
   /// Refreshes the repo dependency graph from manifests and git signals.
   repoDependency: SweepSchedule;
+  /// Asks each tracked skill source which commit its ref names now; only flags, never updates.
+  skillSourceSync: SweepSchedule;
 }
 
 const CRON_RE = /^(\S+\s+){4}\S+$/;
@@ -921,6 +923,9 @@ function envCron(name: string, fallback: string): string {
 ///   RUN_REAPER_ENABLED            default true — it only reads Temporal and
 ///                                 closes runs that are already over
 ///   RUN_REAPER_CRON               default `*/15 * * * *`
+///   SKILL_SOURCE_SYNC_ENABLED     default true — one cheap request per source, and
+///                                 it only flags: it never changes a skill
+///   SKILL_SOURCE_SYNC_CRON        default `41 5 * * *`
 ///
 /// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
@@ -941,6 +946,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
     runReaper: {
       cronExpression: envCron('RUN_REAPER_CRON', '*/15 * * * *'),
       enabled: envFlag('RUN_REAPER_ENABLED', true),
+    },
+    skillSourceSync: {
+      cronExpression: envCron('SKILL_SOURCE_SYNC_CRON', '41 5 * * *'),
+      enabled: envFlag('SKILL_SOURCE_SYNC_ENABLED', true),
     },
   };
 }
@@ -967,6 +976,8 @@ export function validateScheduledSweepsEnv(): string[] {
   check('MODEL_DISCOVERY_CRON', cron, 'a five-field cron expression such as "17 3 * * *"');
   check('RUN_REAPER_ENABLED', flag, "'true' or 'false'");
   check('RUN_REAPER_CRON', cron, 'a five-field cron expression such as "*/15 * * * *"');
+  check('SKILL_SOURCE_SYNC_ENABLED', flag, "'true' or 'false'");
+  check('SKILL_SOURCE_SYNC_CRON', cron, 'a five-field cron expression such as "41 5 * * *"');
   return problems;
 }
 

@@ -108,7 +108,7 @@ async function findConflicts(
 }
 
 /** A scan that reads the setting once; the setting is GLOBAL-only. */
-async function scanAll(skills: SourceSkill[]): Promise<Map<SourceSkill, string[]>> {
+export async function scanAll(skills: SourceSkill[]): Promise<Map<SourceSkill, string[]>> {
   const scans = new Map<SourceSkill, string[]>();
   for (const s of skills) {
     if (s.errors.length === 0 && s.name !== null) {

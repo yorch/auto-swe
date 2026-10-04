@@ -144,6 +144,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillRevision.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/skillSourceSync',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillSourceSync.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/skillSource',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillSource/index.ts'),
       },

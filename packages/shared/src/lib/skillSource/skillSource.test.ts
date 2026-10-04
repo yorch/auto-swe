@@ -10,6 +10,7 @@ import {
   resolveSourceSha,
   type SkillSourceDeps,
   SkillSourceError,
+  safeDisplayPath,
 } from './index.js';
 
 const SHA = 'a'.repeat(40);
@@ -565,6 +566,27 @@ describe('listing', () => {
     expect(hub.calls).toHaveLength(1);
   });
 
+  it('atSha reads exactly that commit and never asks where the ref points', async () => {
+    const hub = fakeHub({ files: [{ content: skillMd('a'), path: 'a/SKILL.md' }], sha: OTHER });
+    const result = await fetchSkillSource(
+      loc(),
+      { atSha: SHA, scriptMode: 'TEXT_ONLY' },
+      deps(hub)
+    );
+    expect(result.sha).toBe(SHA);
+    expect(result.skills[0]?.name).toBe('a');
+    expect(hub.calls.some((c) => c.url.includes('/commits/'))).toBe(false);
+    expect(hub.calls.some((c) => c.url.includes(`/git/trees/${SHA}`))).toBe(true);
+  });
+
+  it('atSha refuses anything that is not a commit sha, before any request', async () => {
+    const hub = fakeHub({ files: [] });
+    await expect(
+      fetchSkillSource(loc(), { atSha: '../x', scriptMode: 'TEXT_ONLY' }, deps(hub))
+    ).rejects.toMatchObject({ code: 'INVALID_SOURCE' });
+    expect(hub.calls).toHaveLength(0);
+  });
+
   it('resolveSourceSha returns just the commit', async () => {
     const hub = fakeHub({ files: [] });
     expect(await resolveSourceSha(loc(), deps(hub))).toBe(SHA);
@@ -1020,5 +1042,16 @@ describe('repository-derived text', () => {
     for (const ref of ['.', 'a/./b', './a']) {
       expect(() => normaliseLocation(loc({ ref }))).toThrow(SkillSourceError);
     }
+  });
+});
+
+describe('safeDisplayPath', () => {
+  it('replaces bidirectional overrides and zero-width characters, not just control characters', () => {
+    expect(safeDisplayPath('a\u202eb\u2066c\u2069d\u200be\u200ff\ufeffg\u2060h')).toBe(
+      'a?b?c?d?e?f?g?h'
+    );
+    expect(safeDisplayPath('a\u061cb\u180ec')).toBe('a?b?c');
+    expect(safeDisplayPath('plain/path.md')).toBe('plain/path.md');
+    expect(safeDisplayPath('x\u001b[2Ky')).toBe('x?[2Ky');
   });
 });

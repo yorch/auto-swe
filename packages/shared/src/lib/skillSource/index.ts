@@ -387,15 +387,21 @@ async function mapLimited<T>(items: T[], fn: (item: T) => Promise<void>): Promis
  *
  * `expectSha`, when given, is the commit a preview showed: the ref must still
  * resolve to it, or the call fails with `SHA_MOVED` before reading any content.
+ * `atSha` instead reads exactly that commit and never resolves the ref (a
+ * tracked-update review is bound to a commit, not to wherever the ref points now).
  */
 export async function fetchSkillSource(
   input: SourceLocation,
-  opts: { scriptMode: ScriptMode; expectSha?: string },
+  opts: { scriptMode: ScriptMode; expectSha?: string; atSha?: string },
   deps: SkillSourceDeps = defaultDeps
 ): Promise<FetchedSource> {
   const loc = normaliseLocation(input);
   const access = await resolveAccess(loc.host, deps);
-  const sha = await resolveSha(access, loc);
+  if (opts.atSha !== undefined && !SHA_RE.test(opts.atSha)) {
+    throw new SkillSourceError('INVALID_SOURCE');
+  }
+  // `atSha` reads that exact commit without consulting the ref at all.
+  const sha = opts.atSha ?? (await resolveSha(access, loc));
   if (opts.expectSha !== undefined && opts.expectSha !== sha) {
     throw new SkillSourceError('SHA_MOVED');
   }

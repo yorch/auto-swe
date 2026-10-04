@@ -571,10 +571,25 @@ Everything shown to the admin that came from the repository (folder and file nam
 | `GET` | `/skill-sources/:id` | One source with its skills |
 | `PATCH` | `/skill-sources/:id` | Change `scriptMode`, or set `status` to `DISABLED` / `OK` |
 | `DELETE` | `/skill-sources/:id` | Remove the source; its skills are detached |
+| `POST` | `/skill-sources/:id/check` | Ask the host now which commit the ref names (what the sweep does for each source) |
+| `GET` | `/skill-sources/:id/diff` | Per-skill diff against the latest commit, or `?sha=`; with `skill=<name>&full=true`, one skill's complete incoming text; writes nothing |
+| `POST` | `/skill-sources/:id/accept` | Cut new revisions from the diffed commit |
 
 The preview body is `{ host?, owner, repo, path?, ref, scriptMode?, scope?, teamId?, orgId? }`. For each skill it returns the name, description, text length, reference file count, scan warnings, name conflicts, skipped files, errors, and whether it is installable, plus the resolved commit `sha`. The create body is the same fields plus that `sha` and `skills`, the names to import; the request supplies names, never text — the content is read again at the commit. If the ref no longer resolves to `sha` the answer is `409 SKILL_SOURCE_SHA_MOVED` and nothing is written, so the admin previews again. The source, every skill with its revision 1, and the audit entry are written in one transaction; any failure leaves none of them. A second source for the same host, owner, repository and path in the same scope is `409 SKILL_SOURCE_EXISTS` (the reference is not part of that key). Changing `scriptMode` affects only how the source is read from then on; skills already installed are not touched.
 
-**CLI.** `auto-swe skills sources add <owner/repo> --ref=<branch|tag> [--host=H] [--path=DIR] [--script-mode=text-only|reject] [--skills=a,b] [--yes]` previews, asks for confirmation, then creates; `auto-swe skills sources list` lists the sources.
+**CLI.** `auto-swe skills sources add <owner/repo> --ref=<branch|tag> [--host=H] [--path=DIR] [--script-mode=text-only|reject] [--skills=a,b] [--yes]` previews, asks for confirmation, then creates; `auto-swe skills sources list` lists the sources. `auto-swe skills sources check <id>`, `diff <id> [--sha=<commit>] [--skill=<name> --full]` and `accept <id> [--skills=a,b] [--yes]` are the update flow below; `accept` prints the diff and asks for confirmation unless `--yes` is given.
+
+**Updating from the source.** A source is pinned to a commit and updates are reviewed, never applied on their own.
+
+1. **The sweep flags.** `ScheduledSkillSourceSyncWorkflow` (a system-wide Temporal Schedule the gateway registers at startup, like model discovery; cadence in [configuration.md](./configuration.md): `SKILL_SOURCE_SYNC_ENABLED`, default on, and `SKILL_SOURCE_SYNC_CRON`, default `41 5 * * *`) visits each source that is not `DISABLED`, one at a time, and resolves its ref to a commit: one API request, no tree and no blobs. A commit different from `pinnedSha` records it as `latestSha` and sets `status` to `UPDATE_AVAILABLE`; the same commit sets `OK`; a failure sets `ERROR` and `lastError` to one of the fixed fetch messages (never host or `fetch` text). `lastCheckedAt` is always set. The sweep changes no skill and no revision, honours the fetcher's rate-limit floor, and when a host reports its limit low it leaves that host's remaining sources for the next run. One source failing does not stop the others. The workflow's result and logs carry source ids, counts, statuses and the fixed messages only. A rate-limit answer from the host is not an error: it records only `lastCheckedAt`, keeps the source's status and `latestSha`, and counts the source as skipped. `POST /skill-sources/:id/check` runs the same check for one source on demand and answers `{ recorded, check, source }`; `recorded` is false when the source changed under the check (it was disabled, or a newer commit was accepted) and the answer was dropped.
+2. **The diff.** `GET /skill-sources/:id/diff` reads the source at `latestSha` (or `?sha=`), by that commit and not through the ref, and compares it with what is installed. It writes nothing. Per installed skill it answers `unchanged`, `changed` (old and new description, a unified diff of the live prompt text against the incoming text, which reference files were added, changed or removed, scan warnings, whether it is `handEdited`, and `renamedTo` when upstream's frontmatter name now differs), or an error when the skill no longer parses. It also lists `added` (a `SKILL.md` folder that no installed skill uses, whether it is new upstream or was never chosen at import; each with its scan warnings) and `removed` (an installed skill whose folder is gone). A diff of the text, not both full texts, because the change is what a reviewer must judge. The diff is a bounded Myers diff: at most 600 line edits per skill (a replaced line is two), a fixed work budget of 200,000 steps per skill (so a request of 100 skills spends at most 20 million), and 60,000 characters of output per skill. A skill past any of those limits is `diffIncomplete`, and whether it is depends only on that skill's own live and incoming text, never on the other skills, (`textDiffTruncated`, or `diffTooLarge` with no text at all, since a partial diff would show something other than what an accept installs). `GET /skill-sources/:id/diff?skill=<name>&full=true` returns that skill's complete incoming text so it can be read. The diff costs one budgeted fetch of the new commit (see Limits above); the old side comes from the immutable revisions already stored, not from the host. The old text is the live text, so an accept that would overwrite a hand edit shows the edit being reverted.
+3. **The accept.** `POST /skill-sources/:id/accept` takes `{ sha, skills? }`, where `skills` is a list of `{ name, revision }`: the installed revision the diff showed for each skill. A named skill whose current revision differs (someone edited it since) is `409 SKILL_CHANGED` and nothing is written, so a skill is not overwritten while its live text differs from the revision the admin reviewed. Whether a skill's diff was complete is decided by that skill's own live and incoming text alone, so the diff and the accept agree on it. `sha` must still be the source's `latestSha`, the commit the admin diffed; otherwise `409 SKILL_UPDATE_STALE_SHA` and nothing happens. The content is read at exactly that commit. Each skill that changed gets a new `SkillRevision` through the same revision-guarded write a hand edit uses, with `sourceSha`, `sourcePath` and `referenceFiles` set and `isVerified` reset to false; an edit that lands meanwhile makes the whole accept `409 SKILL_CHANGED` and rolls everything back. `skills.import.blockOnScanWarnings` applies as on create: a chosen skill with a warning refuses the accept (`422 SKILL_UPDATE_SCAN_WARNINGS`, nothing written). The revisions, the source's new `pinnedSha` and `status`, and an audit entry with the old and new commit and each skill's new revision number commit in one transaction. A workflow already running keeps the revision it pinned at start (§6.5): an accept only appends revisions. A skill whose diff was `diffIncomplete` is not updated by default: an accept that would update one without it being named is `409 SKILL_UPDATE_DIFF_INCOMPLETE` listing it. Naming it in `skills` says its full text was read. A source with no recorded commit is `409 SKILL_UPDATE_NOT_CHECKED`. The audit entry records the updated skills and their revisions, and the skills left as conflicts, not selected, unreadable or removed. An upstream rename is kept out: the installed skill keeps its name, the diff shows `renamedTo`, and the accept response lists it under `renamed`.
+
+**Hand edits.** An imported skill whose live text or description differs from what its source last gave it (its latest pristine revision: the one an import or an accept cut) is `handEdited`, and a description-only edit counts. A skill like that is never overwritten silently. An accept without `skills` updates every changed skill that was not hand-edited and reports the others under `conflicts`; naming a hand-edited skill in `skills` is the explicit overwrite, and its previous revision, edits included, stays in history. A hand-edited skill that did not change upstream is simply left as it is.
+
+**The pin.** `pinnedSha` moves to the accepted commit only when every skill that changed upstream was updated. If any was left out (a conflict, a subset in `skills`, or a skill that no longer parses) the pin stays, the source stays `UPDATE_AVAILABLE`, and the next diff still lists what was left, so a pin never reads as up to date while a skill sits behind. Naming a subset and leaving a hand-edited skill diverged on purpose therefore keeps the source flagged until that skill is overwritten.
+
+**Added and removed.** An accept never installs an added skill and never deletes a removed one: added folders are listed (`added`), removed skills are flagged (`removed`) and stay installed. There is no install-after-import flow; a new folder is imported by creating a source for it.
 
 ---
 
@@ -833,6 +848,37 @@ Writes cut a new immutable `version`.
 - **External skill sources run no scripts.** Nothing from a source is executed, and only `.md`/`.txt`
   files are kept, as reference text no agent reads: a skill whose value is in its scripts or assets is
   imported as its instructions alone (`TEXT_ONLY`) or refused (`REJECT`).
+- **External skill sources never update on their own.** The sweep only flags a moved ref; skills change
+  when an admin accepts a reviewed diff. A source disabled with `PATCH` is skipped by the sweep and
+  refuses an on-demand check and an accept until it is re-enabled.
+- **Skills added upstream are listed, not installed.** An accept updates and flags skills that are already
+  installed; a new `SKILL.md` folder (or one never chosen at import) appears under `added` and needs a
+  separate source to be installed, because there is no add-to-source flow yet.
+- **A skill left behind keeps its source flagged.** A hand-edited skill that changed upstream, or one left
+  out of `skills`, holds the pin back and the source reads `UPDATE_AVAILABLE` until it is updated; there
+  is no way to mark an upstream change as declined.
+- **Reference files from an accept are stored unscanned,** like the ones from an import; only the
+  description and text are scanned.
+- **Diff and accept each cost a full budgeted fetch.** Each reads the whole new commit (up to 300
+  requests), so the CLI's `accept`, which diffs first, can spend about 600 requests, beside the one
+  request of the check. The old side comes from stored revisions, so a skill with no identifiable
+  import revision is treated as hand-edited.
+- **Diffs are bounded.** A skill with more than 600 line edits (a replaced line is two), or one whose diff would pass
+  60,000 characters, or one whose diff needs more than its 200,000-step work budget, has no complete diff
+  (`diffTooLarge` or `textDiffTruncated`). Its full incoming text has to be read with `full=true` and
+  the skill named in `skills` to accept it; the default accept refuses it.
+- **Hand-edit detection is by content.** Text or a description edited back to exactly what the source
+  last gave counts as not hand-edited, so the next accept updates it without asking; nothing is lost,
+  since every revision stays. If a ref goes back to a commit that a skill already carried (A, then B,
+  then A), content equal to the pin reads as unchanged and the pin simply advances; a skill whose
+  history holds a description-only edit carrying that commit can read as hand-edited until an accept
+  at a new commit, which errs toward asking.
+- **Any commit on the ref flags the source.** The check resolves the ref, not the history of `path`,
+  so in a monorepo an unrelated commit reads as UPDATE_AVAILABLE. The diff then shows nothing changed
+  and an accept with no skills moves the pin. Filtering by path would need a second request per source.
+- **`?sha=` diffs any commit, but only `latestSha` can be accepted.**
+- **A renamed skill keeps its installed name.** An upstream frontmatter `name` change is shown and
+  reported, never applied, because agents refer to skills by name.
 - **External skill sources are GitHub and GitHub Enterprise only,** read through the GitHub REST API.
   There is no GitLab, Bitbucket or plain-git support.
 - **A source's commit is not verified.** The commit sha pins what was read, but the platform does not

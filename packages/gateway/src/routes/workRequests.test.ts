@@ -228,6 +228,7 @@ describe('POST /api/v1/work-requests', () => {
       syncRepoDependencyScanSchedule: async () => {},
       syncRevalidationSchedule: async () => {},
       syncRunReaperSchedule: async () => {},
+      syncSkillSourceSyncSchedule: async () => {},
       syncWorkRequestSchedule: async () => {},
       triggerConsolidationNow: async () => {},
       triggerEvalNow: async () => {},

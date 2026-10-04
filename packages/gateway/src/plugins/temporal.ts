@@ -32,6 +32,7 @@ export const REPO_DEPENDENCY_SCAN_SCHEDULE_ID = 'auto-swe-repo-dependency-scan';
 export const REPO_ACCESS_SYNC_SCHEDULE_ID = 'auto-swe-repo-access-sync';
 export const MODEL_DISCOVERY_SCHEDULE_ID = 'auto-swe-model-discovery';
 export const RUN_REAPER_SCHEDULE_ID = 'auto-swe-run-reaper';
+export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -190,6 +191,15 @@ export interface RunReaperScheduleConfig {
   cronExpression: string;
 }
 
+/**
+ * The skill-source sweep. The workflow reads the tracked sources itself, so the
+ * schedule carries no arguments.
+ */
+export interface SkillSourceSyncScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     temporal: {
@@ -264,6 +274,7 @@ declare module 'fastify' {
       syncRepoAccessSyncSchedule: (config: RepoAccessSyncScheduleConfig) => Promise<void>;
       syncModelDiscoverySchedule: (config: ModelDiscoveryScheduleConfig) => Promise<void>;
       syncRunReaperSchedule: (config: RunReaperScheduleConfig) => Promise<void>;
+      syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
       triggerRepoDependencyScanNow: () => Promise<void>;
       syncWorkRequestSchedule: (input: WorkRequestScheduleInput) => Promise<void>;
@@ -352,6 +363,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledRunReaperWorkflow',
+    };
+  }
+
+  // Skill-source sweep action. The workflow lists the sources itself, so the
+  // schedule carries no arguments.
+  function makeSkillSourceSyncScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledSkillSourceSyncWorkflow',
     };
   }
 
@@ -958,6 +980,16 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     async syncRunReaperSchedule(config: RunReaperScheduleConfig): Promise<void> {
       await upsertSchedule(RUN_REAPER_SCHEDULE_ID, {
         action: makeRunReaperScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Skill-source update check (one system-wide Temporal Schedule) ──
+
+    async syncSkillSourceSyncSchedule(config: SkillSourceSyncScheduleConfig): Promise<void> {
+      await upsertSchedule(SKILL_SOURCE_SYNC_SCHEDULE_ID, {
+        action: makeSkillSourceSyncScheduleAction(),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });
