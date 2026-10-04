@@ -10,6 +10,7 @@ import {
   resolveSourceSha,
   type SkillSourceDeps,
   SkillSourceError,
+  safeDisplayPath,
 } from './index.js';
 
 const SHA = 'a'.repeat(40);
@@ -1041,5 +1042,15 @@ describe('repository-derived text', () => {
     for (const ref of ['.', 'a/./b', './a']) {
       expect(() => normaliseLocation(loc({ ref }))).toThrow(SkillSourceError);
     }
+  });
+});
+
+describe('safeDisplayPath', () => {
+  it('replaces bidirectional overrides and zero-width characters, not just control characters', () => {
+    expect(safeDisplayPath('a\u202eb\u2066c\u2069d\u200be\u200ff\ufeffg\u2060h')).toBe(
+      'a?b?c?d?e?f?g?h'
+    );
+    expect(safeDisplayPath('plain/path.md')).toBe('plain/path.md');
+    expect(safeDisplayPath('x\u001b[2Ky')).toBe('x?[2Ky');
   });
 });
