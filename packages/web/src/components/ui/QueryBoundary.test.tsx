@@ -30,3 +30,15 @@ describe('QueryBoundary', () => {
     expect(screen.getByRole('status')).toBeTruthy();
   });
 });
+
+describe('QueryBoundary retry while refetching', () => {
+  it('disables Retry and says so while a refetch is running', () => {
+    render(
+      <QueryBoundary error={new Error('x')} isError isFetching isLoading={false} onRetry={() => {}}>
+        content
+      </QueryBoundary>
+    );
+    const button = screen.getByRole('button', { name: 'Retrying…' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
+});

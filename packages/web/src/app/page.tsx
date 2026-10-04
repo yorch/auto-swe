@@ -42,6 +42,7 @@ function WorkSection({
       <QueryBoundary
         error={query.error}
         isError={query.isError}
+        isFetching={query.isFetching}
         isLoading={query.isLoading}
         label={title.toLowerCase()}
         onRetry={() => void query.refetch()}

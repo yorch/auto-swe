@@ -89,6 +89,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
       <QueryBoundary
         error={latest.error}
         isError={latest.isError}
+        isFetching={latest.isFetching}
         isLoading={latest.isLoading}
         label="request attempts"
         onRetry={() => void latest.refetch()}
@@ -103,6 +104,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
           <QueryBoundary
             error={query.error}
             isError={query.isError}
+            isFetching={query.isFetching}
             isLoading={query.isLoading}
             label="request details"
             onRetry={() => void query.refetch()}
@@ -170,6 +172,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
           <QueryBoundary
             error={attempts.error}
             isError={attempts.isError}
+            isFetching={attempts.isFetching}
             isLoading={attempts.isLoading}
             label="attempt history"
             onRetry={() => void attempts.refetch()}
@@ -275,6 +278,7 @@ function AttemptContent({
       <QueryBoundary
         error={approvalQuery.error}
         isError={approvalQuery.isError}
+        isFetching={approvalQuery.isFetching}
         isLoading={approvalQuery.isLoading}
         label="pending responses"
         onRetry={() => void approvalQuery.refetch()}
@@ -430,6 +434,7 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
           <QueryBoundary
             error={traces.error}
             isError={traces.isError}
+            isFetching={traces.isFetching}
             isLoading={traces.isLoading}
             label="traces"
             onRetry={() => void traces.refetch()}

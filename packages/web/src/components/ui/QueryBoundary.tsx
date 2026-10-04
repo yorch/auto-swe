@@ -7,6 +7,8 @@ import { LoadingState } from './LoadingState';
 interface QueryBoundaryProps {
   isLoading: boolean;
   isError?: boolean;
+  /** True while a refetch is running; the Retry button disables and says so. */
+  isFetching?: boolean;
   error?: unknown;
   /** Caption for the loading indicator. */
   loadingMessage?: string;
@@ -31,6 +33,7 @@ export function QueryBoundary({
   compact = false,
   error,
   isError = false,
+  isFetching = false,
   isLoading,
   label,
   loadingMessage,
@@ -46,8 +49,8 @@ export function QueryBoundary({
         <span className="flex flex-wrap items-center justify-between gap-3">
           <span>{label ? `Could not load ${label}: ${detail}` : detail}</span>
           {onRetry && (
-            <Button onClick={onRetry} size="sm">
-              Retry
+            <Button disabled={isFetching} onClick={onRetry} size="sm">
+              {isFetching ? 'Retrying…' : 'Retry'}
             </Button>
           )}
         </span>

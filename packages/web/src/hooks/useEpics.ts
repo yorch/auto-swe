@@ -16,11 +16,15 @@ export function useCreateEpic() {
   });
 }
 
-export function useEpics(filters: { limit?: number; offset?: number } = {}) {
+export function useEpics(
+  filters: { limit?: number; offset?: number } = {},
+  options: { enabled?: boolean } = {}
+) {
   const params = new URLSearchParams();
   params.set('limit', String(filters.limit ?? 50));
   params.set('offset', String(filters.offset ?? 0));
   return useQuery({
+    enabled: options.enabled ?? true,
     queryFn: () =>
       api
         .get<{ data: EpicSummary[]; meta: { limit: number; offset: number; total: number } }>(

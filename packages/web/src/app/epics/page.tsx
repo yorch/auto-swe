@@ -1,15 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import { EpicList } from '@/components/epics/EpicList';
 import { ButtonLink } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useEpics } from '@/hooks/useEpics';
 import { useHasRole } from '@/hooks/useHasRole';
-import { formatRelativeTime } from '@/lib/utils';
 
 export default function EpicsPage() {
   // Launching an epic requires LEAD.
@@ -42,6 +40,7 @@ export default function EpicsPage() {
       <QueryBoundary
         error={epicsQuery.error}
         isError={epicsQuery.isError}
+        isFetching={epicsQuery.isFetching}
         isLoading={epicsQuery.isLoading}
         label="epics"
         onRetry={() => void epicsQuery.refetch()}
@@ -59,36 +58,7 @@ export default function EpicsPage() {
             title="No epics yet"
           />
         ) : (
-          <Card className="overflow-hidden p-0">
-            <ul className="divide-y divide-ink-600">
-              {epics.map((epic) => (
-                <li key={epic.workRequestId}>
-                  <Link
-                    className="block px-5 py-4 transition-colors hover:bg-ink-700 focus-visible:outline-2 focus-visible:outline-ember-400 focus-visible:-outline-offset-2"
-                    href={`/epics/${encodeURIComponent(epic.epicWorkflowId)}`}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-ember-400">
-                          {epic.externalTicketId}
-                        </div>
-                        <div className="mt-1 line-clamp-2 break-words text-sm text-paper-400">
-                          {epic.description}
-                        </div>
-                      </div>
-                      <StatusBadge status={epic.status} />
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-paper-400">
-                      <span>
-                        {epic.repoCount} {epic.repoCount === 1 ? 'repository' : 'repositories'}
-                      </span>
-                      <span>Created {formatRelativeTime(epic.createdAt)}</span>
-                    </div>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </Card>
+          <EpicList epics={epics} />
         )}
       </QueryBoundary>
     </div>

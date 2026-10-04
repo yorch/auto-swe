@@ -76,6 +76,7 @@ export function StartWork({
         <QueryBoundary
           error={templates.error}
           isError={templates.isError}
+          isFetching={templates.isFetching}
           isLoading={templates.isLoading}
           label="workflows"
           onRetry={() => void templates.refetch()}

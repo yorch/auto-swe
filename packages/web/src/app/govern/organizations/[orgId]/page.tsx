@@ -218,6 +218,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         <QueryBoundary
           error={membersQuery.error}
           isError={membersQuery.isError}
+          isFetching={membersQuery.isFetching}
           isLoading={membersQuery.isLoading}
           label="members"
           onRetry={() => void membersQuery.refetch()}
@@ -360,6 +361,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         <QueryBoundary
           error={orgQuery.error}
           isError={orgQuery.isError}
+          isFetching={orgQuery.isFetching}
           isLoading={orgQuery.isLoading}
           label="organization"
           onRetry={() => void orgQuery.refetch()}
@@ -400,6 +402,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         <QueryBoundary
           error={budgetQuery.error}
           isError={budgetQuery.isError}
+          isFetching={budgetQuery.isFetching}
           isLoading={budgetQuery.isLoading}
           label="budget"
           onRetry={() => void budgetQuery.refetch()}

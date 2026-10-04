@@ -114,6 +114,7 @@ export default function GovernEvalsPage() {
         <QueryBoundary
           error={trendsQuery.error}
           isError={trendsQuery.isError}
+          isFetching={trendsQuery.isFetching}
           isLoading={trendsQuery.isLoading}
           label="eval trends"
           onRetry={() => void trendsQuery.refetch()}
@@ -197,6 +198,7 @@ export default function GovernEvalsPage() {
         <QueryBoundary
           error={healthQuery.error}
           isError={healthQuery.isError}
+          isFetching={healthQuery.isFetching}
           isLoading={healthQuery.isLoading}
           label="suite health"
           onRetry={() => void healthQuery.refetch()}
@@ -231,6 +233,7 @@ export default function GovernEvalsPage() {
         <QueryBoundary
           error={datasetsQuery.error}
           isError={datasetsQuery.isError}
+          isFetching={datasetsQuery.isFetching}
           isLoading={datasetsQuery.isLoading}
           label="eval datasets"
           onRetry={() => void datasetsQuery.refetch()}
