@@ -452,22 +452,21 @@ export async function exportBundle(
   });
 }
 
+/** What an install or preview works from once the bundle has passed every pre-write check. */
+interface ValidatedBundle {
+  manifest: BundleManifest;
+  origin: string;
+  trust: ReturnType<typeof verifyBundleSignature>;
+  trustState: 'VERIFIED' | 'UNVERIFIED';
+}
+
 /**
- * Install a bundle as a GLOBAL managed base layer (idempotent; re-install = upgrade).
- * Validates the schema + content hash and the dependency manifest *before* any
- * write, then seeds skills → scanner patterns → agents (+ skill refs) → templates,
- * each tagged with the bundle's provenance. Throws {@link BundleIntegrityError} /
- * {@link BundleDependencyError} non-destructively (before writes).
- *
- * Note: agents are updated in place at GLOBAL scope (the managed base layer is
- * authoritative for its own fields), mirroring `syncBuiltins`; user overrides live
- * at TEAM/TEMPLATE scope and are untouched.
+ * Every check an install makes before it writes anything: schema, content hash, scanner pattern
+ * safety, template runnability, dependency types, trust and origin. Shared by install and preview
+ * so a preview cannot say "fine" about a bundle the install would refuse. Throws
+ * {@link BundleIntegrityError} / {@link BundleDependencyError} / a ZodError.
  */
-export async function installBundle(
-  prisma: PrismaClient,
-  raw: unknown,
-  opts: InstallOptions = {}
-): Promise<InstallResult> {
+function validateBundleForInstall(raw: unknown, opts: InstallOptions): ValidatedBundle {
   let manifest: BundleManifest;
   try {
     manifest = parseBundle(raw); // throws ZodError on malformed input
@@ -525,6 +524,33 @@ export async function installBundle(
   const trust = verifyBundleSignature(manifest, opts.trustedKeys ?? []);
   const trustState = trust.verified ? 'VERIFIED' : 'UNVERIFIED';
 
+  const origin = manifest.metadata.source ?? `bundle:${manifest.metadata.name}`;
+  if (isReservedTemplateOrigin(origin)) {
+    // A bundle chooses its own origin; one that claims `system:` would stamp every
+    // row it writes as the platform's own.
+    throw new BundleIntegrityError(`bundle source '${origin}' uses the reserved system: prefix`);
+  }
+  return { manifest, origin, trust, trustState };
+}
+
+/**
+ * Install a bundle as a GLOBAL managed base layer (idempotent; re-install = upgrade).
+ * Validates the schema + content hash and the dependency manifest *before* any
+ * write, then seeds skills → scanner patterns → agents (+ skill refs) → templates,
+ * each tagged with the bundle's provenance. Throws {@link BundleIntegrityError} /
+ * {@link BundleDependencyError} non-destructively (before writes).
+ *
+ * Note: agents are updated in place at GLOBAL scope (the managed base layer is
+ * authoritative for its own fields), mirroring `syncBuiltins`; user overrides live
+ * at TEAM/TEMPLATE scope and are untouched.
+ */
+export async function installBundle(
+  prisma: PrismaClient,
+  raw: unknown,
+  opts: InstallOptions = {}
+): Promise<InstallResult> {
+  const { manifest, origin, trust, trustState } = validateBundleForInstall(raw, opts);
+
   if (trustState === 'UNVERIFIED' && !opts.allowUnverified) {
     throw new BundleIntegrityError(
       'bundle is UNVERIFIED and unverified installs are disabled. ' +
@@ -532,12 +558,6 @@ export async function installBundle(
     );
   }
 
-  const origin = manifest.metadata.source ?? `bundle:${manifest.metadata.name}`;
-  if (isReservedTemplateOrigin(origin)) {
-    // A bundle chooses its own origin; one that claims `system:` would stamp every
-    // row it writes as the platform's own.
-    throw new BundleIntegrityError(`bundle source '${origin}' uses the reserved system: prefix`);
-  }
   const counts = { agents: 0, scannerPatterns: 0, skills: 0, templates: 0 };
 
   // Skill text is injected into agent prompts, so every bundle skill is scanned
@@ -717,6 +737,140 @@ export async function installBundle(
     replacedProtected,
     signedBy: trust.signedBy,
     trustState,
+    warnings,
+  };
+}
+
+/** What installing one entry would do to the library. */
+export interface BundlePreviewEntry {
+  /** `create` adds it; `replace` overwrites the GLOBAL row with this identity. */
+  action: 'create' | 'replace';
+  /** The label shown to the admin: an agent key, skill name, pattern label or template name. */
+  name: string;
+  /** True when the row it replaces is a built-in or admin-authored one (needs explicit consent). */
+  protected: boolean;
+  /** A scanner pattern's type, so a blocking rule is recognisable. */
+  type?: string;
+}
+
+export interface BundlePreview {
+  /** Why an install would be refused right now, or null when it would proceed. */
+  blockedReason: string | null;
+  contentHash: string;
+  entities: {
+    agents: BundlePreviewEntry[];
+    scannerPatterns: BundlePreviewEntry[];
+    skills: BundlePreviewEntry[];
+    templates: BundlePreviewEntry[];
+  };
+  /** The version already installed under this bundle name, if any. */
+  installedVersion: string | null;
+  name: string;
+  signedBy: string | null;
+  source: string | null;
+  trustState: 'VERIFIED' | 'UNVERIFIED';
+  version: string;
+  /** Advisory scanner findings on the bundle's skills. */
+  warnings: string[];
+}
+
+/**
+ * Dry run of {@link installBundle}: runs the same pre-write checks and reports what the install
+ * would create or replace, without writing. Skill text is scanned so findings are visible
+ * before anything lands.
+ */
+export async function previewBundle(
+  prisma: PrismaClient,
+  raw: unknown,
+  opts: InstallOptions = {}
+): Promise<BundlePreview> {
+  const { manifest, origin, trust, trustState } = validateBundleForInstall(raw, opts);
+  const protectedNow = await findProtectedConflicts(prisma as unknown as InstallTx, manifest);
+
+  const entries = async <T>(
+    items: T[],
+    name: (item: T) => string,
+    exists: (item: T) => Promise<boolean>,
+    protectedNames: string[],
+    type?: (item: T) => string
+  ): Promise<BundlePreviewEntry[]> =>
+    Promise.all(
+      items.map(async (item) => ({
+        action: (await exists(item)) ? ('replace' as const) : ('create' as const),
+        name: name(item),
+        protected: protectedNames.includes(name(item)),
+        ...(type ? { type: type(item) } : {}),
+      }))
+    );
+
+  const e = manifest.entities;
+  const [agents, skills, scannerPatterns, templates, installed] = await Promise.all([
+    entries(
+      e.agents,
+      (a) => a.key,
+      async (a) =>
+        !!(await prisma.agent.findFirst({
+          select: { id: true },
+          where: { key: a.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
+        })),
+      protectedNow.agents
+    ),
+    entries(
+      e.skills,
+      (sk) => sk.name,
+      async (sk) =>
+        !!(await prisma.skill.findFirst({
+          select: { id: true },
+          where: { name: sk.name, scope: 'GLOBAL' },
+        })),
+      protectedNow.skills
+    ),
+    entries(
+      e.scannerPatterns,
+      (pat) => pat.label,
+      async (pat) =>
+        !!(await prisma.scannerPattern.findUnique({
+          select: { id: true },
+          where: { label: pat.label },
+        })),
+      protectedNow.scannerPatterns,
+      (pat) => pat.type
+    ),
+    entries(
+      e.templates,
+      (t) => t.name,
+      async (t) =>
+        !!(await prisma.workflowTemplate.findFirst({
+          select: { id: true },
+          where: { name: t.name, teamId: null },
+        })),
+      protectedNow.templates
+    ),
+    prisma.installedBundle.findUnique({
+      select: { version: true },
+      where: { name: manifest.metadata.name },
+    }),
+  ]);
+
+  const warnings: string[] = [];
+  for (const s of e.skills) {
+    const found = await scanSkillAdvisory(s.description, s.promptText);
+    warnings.push(...found.map((w) => `skill '${s.name}': ${w}`));
+  }
+
+  return {
+    blockedReason:
+      trustState === 'UNVERIFIED' && !opts.allowUnverified
+        ? 'This bundle is unverified and this deployment does not allow unverified installs.'
+        : null,
+    contentHash: manifest.metadata.contentHash,
+    entities: { agents, scannerPatterns, skills, templates },
+    installedVersion: installed?.version ?? null,
+    name: manifest.metadata.name,
+    signedBy: trust.signedBy,
+    source: manifest.metadata.source ?? origin,
+    trustState,
+    version: manifest.metadata.version,
     warnings,
   };
 }

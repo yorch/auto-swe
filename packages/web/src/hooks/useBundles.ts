@@ -24,10 +24,52 @@ export function useInstalledBundles() {
   });
 }
 
+/** What installing one bundle entry would do to the library. */
+export interface BundlePreviewEntry {
+  action: 'create' | 'replace';
+  name: string;
+  /** The row it replaces is a built-in or admin-authored one. */
+  protected: boolean;
+  type?: string;
+}
+
+/** What `POST /bundles/preview` returns: the checks an install makes, and its effect. */
+export interface BundlePreview {
+  blockedReason: string | null;
+  contentHash: string;
+  entities: {
+    agents: BundlePreviewEntry[];
+    scannerPatterns: BundlePreviewEntry[];
+    skills: BundlePreviewEntry[];
+    templates: BundlePreviewEntry[];
+  };
+  installedVersion: string | null;
+  name: string;
+  signedBy: string | null;
+  source: string | null;
+  trustState: 'VERIFIED' | 'UNVERIFIED';
+  version: string;
+  warnings: string[];
+}
+
+export interface BundleInstallResult {
+  counts: { agents: number; skills: number; scannerPatterns: number; templates: number };
+  trustState: 'VERIFIED' | 'UNVERIFIED';
+  warnings: string[];
+}
+
+export function usePreviewBundle() {
+  return useMutation({
+    mutationFn: (url: string) =>
+      api.post<{ data: BundlePreview }>(`${BASE}/preview`, { url }).then((r) => r.data),
+  });
+}
+
 export function useInstallBundleFromUrl() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (url: string) => api.post(`${BASE}/install-from-url`, { url }),
+    mutationFn: (body: { url: string; expectedContentHash: string; overwriteProtected: boolean }) =>
+      api.post<{ data: BundleInstallResult }>(`${BASE}/install-from-url`, body).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
