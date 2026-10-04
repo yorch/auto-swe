@@ -298,7 +298,11 @@ Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential`, so
 **Tracker, knowledge-base, and Figma connectors** are fetched server-side at work-request submit
 time and seed `ContextSnapshot`. They are best-effort: a failure never blocks submission. Each
 carries an `allowPrivateNetwork` flag — an explicit opt-in required before the SSRF guard will
-accept a self-hosted base URL on a private or internal address.
+accept a self-hosted base URL on a private or internal address. The opt-in waives only that
+refusal (`checkProbeUrl` in `shared/lib/ssrfGuard.ts`): loopback, link-local, cloud-metadata and
+unspecified addresses, malformed URLs and non-http(s) schemes are refused whatever the flag says.
+Every connector request sets `redirect: 'error'`, so a credential never follows a redirect to
+another origin; a new connector fetch does the same.
 
 **Tier-2 resource & tuning defaults** live on the `WorkflowDefaults` singleton with a
 `row?.x ?? default` fallback, so an unconfigured deployment keeps the built-in constants. They are

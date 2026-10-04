@@ -60,7 +60,10 @@ Mirrors the tracker and knowledge-base enrichment exactly.
 
 Enrichment is **best-effort and never blocking**: a Figma failure logs and moves on, exactly like
 the tracker and knowledge-base connectors. Like them, a self-hosted base URL on a private address
-requires the explicit `allowPrivateNetwork` opt-in before the SSRF guard will accept it.
+requires the explicit `allowPrivateNetwork` opt-in before the SSRF guard will accept it. The
+opt-in permits private addresses only: loopback, link-local, cloud-metadata and unspecified
+addresses, malformed URLs and non-http(s) schemes are always refused. Connector requests do not
+follow redirects, so the API token is sent only to the host that was checked.
 
 ---
 
