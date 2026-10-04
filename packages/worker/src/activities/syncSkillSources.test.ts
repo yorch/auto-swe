@@ -8,7 +8,11 @@ vi.mock('@auto-swe/shared/lib/skillSourceSync', () => ({
 const warn = vi.fn();
 const info = vi.fn();
 vi.mock('@temporalio/activity', () => ({
-  log: { error: vi.fn(), info: (...a: unknown[]) => info(...a), warn: (...a: unknown[]) => warn(...a) },
+  log: {
+    error: vi.fn(),
+    info: (...a: unknown[]) => info(...a),
+    warn: (...a: unknown[]) => warn(...a),
+  },
 }));
 
 import { syncSkillSources } from './syncSkillSources.js';

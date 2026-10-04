@@ -47,15 +47,17 @@ function fake(rows: Row[], replies: Record<string, () => Response | Promise<Resp
       findMany: vi.fn(async ({ where }: { where: { status: { not: string } } }) =>
         rows.filter((r) => r.status !== where.status.not).map((r) => ({ ...r }))
       ),
-      update: vi.fn(async (args: { data: Record<string, unknown>; where: Record<string, unknown> }) => {
-        updates.push(args);
-        const r = rows.find((x) => x.id === args.where.id);
-        if (!r || r.pinnedSha !== args.where.pinnedSha || r.status === 'DISABLED') {
-          throw Object.assign(new Error('no row'), { code: 'P2025' });
+      update: vi.fn(
+        async (args: { data: Record<string, unknown>; where: Record<string, unknown> }) => {
+          updates.push(args);
+          const r = rows.find((x) => x.id === args.where.id);
+          if (!r || r.pinnedSha !== args.where.pinnedSha || r.status === 'DISABLED') {
+            throw Object.assign(new Error('no row'), { code: 'P2025' });
+          }
+          Object.assign(r, args.data);
+          return { ...r };
         }
-        Object.assign(r, args.data);
-        return { ...r };
-      }),
+      ),
     },
   };
   const deps: SkillSourceDeps = {
@@ -81,7 +83,14 @@ function fake(rows: Row[], replies: Record<string, () => Response | Promise<Resp
     })) as unknown as SkillSourceDeps['platformCredential'],
     privateNetworkHosts: async () => [],
   };
-  return { calls, deps, prisma: prisma as unknown as PrismaClient, rawPrisma: prisma, rows, updates };
+  return {
+    calls,
+    deps,
+    prisma: prisma as unknown as PrismaClient,
+    rawPrisma: prisma,
+    rows,
+    updates,
+  };
 }
 
 const commit = (sha: string, headers?: Record<string, string>) => () =>
@@ -163,15 +172,12 @@ describe('checkSkillSource', () => {
 
 describe('sweepSkillSources', () => {
   it('flags OK, UPDATE_AVAILABLE and ERROR in one pass, and skips DISABLED sources', async () => {
-    const f = fake(
-      [row('ok'), row('moved'), row('broken'), row('off', { status: 'DISABLED' })],
-      {
-        broken: () => new Response('{}', { status: 404 }),
-        moved: commit(NEW),
-        off: commit(NEW),
-        ok: commit(SHA),
-      }
-    );
+    const f = fake([row('ok'), row('moved'), row('broken'), row('off', { status: 'DISABLED' })], {
+      broken: () => new Response('{}', { status: 404 }),
+      moved: commit(NEW),
+      off: commit(NEW),
+      ok: commit(SHA),
+    });
     const result = await sweepSkillSources(f.prisma, f.deps);
     expect(result).toMatchObject({ checked: 3, errors: 1, ok: 1, skipped: 0, updateAvailable: 1 });
     expect(result.sources.map((s) => [s.id, s.status])).toEqual(
@@ -183,7 +189,10 @@ describe('sweepSkillSources', () => {
     );
     // The disabled source was never asked and never touched.
     expect(f.calls.some((u) => u.includes('/off/'))).toBe(false);
-    expect(f.rows.find((r) => r.id === 'off')).toMatchObject({ latestSha: SHA, status: 'DISABLED' });
+    expect(f.rows.find((r) => r.id === 'off')).toMatchObject({
+      latestSha: SHA,
+      status: 'DISABLED',
+    });
     // Never any skill or revision write.
     expect(f.rawPrisma.skill.update).not.toHaveBeenCalled();
     expect(f.rawPrisma.skillRevision.create).not.toHaveBeenCalled();

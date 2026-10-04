@@ -109,7 +109,15 @@ export async function sweepSkillSources(
   const sources = await runUnscoped('skill-source sweep spans every tenant', ['SkillSource'], () =>
     prisma.skillSource.findMany({
       orderBy: [{ host: 'asc' }, { lastCheckedAt: { nulls: 'first', sort: 'asc' } }],
-      select: { host: true, id: true, owner: true, path: true, pinnedSha: true, ref: true, repo: true },
+      select: {
+        host: true,
+        id: true,
+        owner: true,
+        path: true,
+        pinnedSha: true,
+        ref: true,
+        repo: true,
+      },
       where: { status: { not: 'DISABLED' } },
     })
   );

@@ -45,7 +45,10 @@ describe('syncSkillSourceSyncSchedule', () => {
   it('creates the system-wide schedule, no arguments, paused when disabled', async () => {
     exists = false;
     const app = await build();
-    await app.temporal.syncSkillSourceSyncSchedule({ cronExpression: '41 5 * * *', enabled: false });
+    await app.temporal.syncSkillSourceSyncSchedule({
+      cronExpression: '41 5 * * *',
+      enabled: false,
+    });
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         action: expect.objectContaining({

@@ -3,6 +3,7 @@ import {
   SkillSourceError,
   type SkillSourceErrorCode,
 } from '@auto-swe/shared/lib/skillSource';
+import { checkSkillSource } from '@auto-swe/shared/lib/skillSourceSync';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -13,6 +14,11 @@ import {
   previewSkillSource,
   SkillImportRefusal,
 } from '../lib/skillSourceService.js';
+import {
+  acceptSkillUpdate,
+  diffSkillSource,
+  SkillUpdateRefusal,
+} from '../lib/skillSourceUpdateService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -26,6 +32,9 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  *   GET    /api/v1/platform/skill-sources/:id       One source, with its skills
  *   PATCH  /api/v1/platform/skill-sources/:id       Change scriptMode, or disable / re-enable
  *   DELETE /api/v1/platform/skill-sources/:id       Remove the source; its skills stay, detached
+ *   POST   /api/v1/platform/skill-sources/:id/check   Ask the host for the ref's commit now (what the sweep does)
+ *   GET    /api/v1/platform/skill-sources/:id/diff    Per-skill diff against a newer commit; writes nothing
+ *   POST   /api/v1/platform/skill-sources/:id/accept  Cut new revisions from the diffed commit
  */
 
 const SourceIdParams = z.object({ id: z.string().uuid() });
@@ -59,6 +68,17 @@ const CreateBody = SourceFields.extend({
   sha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/),
   skills: z.array(z.string().min(1).max(200)).min(1).max(100),
 }).refine(scopeIsConsistent, SCOPE_MESSAGE);
+
+const Sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
+
+const DiffQuery = z.object({ sha: Sha.optional() });
+
+const AcceptBody = z.object({
+  /** The commit the admin diffed: it must still be the source's latest. */
+  sha: Sha,
+  /** Installed skills to update; omit for every changed skill that was not hand-edited. */
+  skills: z.array(z.string().min(1).max(200)).min(1).max(100).optional(),
+});
 
 const PatchBody = z
   .object({
@@ -268,6 +288,120 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // POST /skill-sources/:id/check — the sweep's cheap check, for one source, now.
+  app.post(
+    '/skill-sources/:id/check',
+    { onRequest: adminOnly, schema: { params: SourceIdParams } },
+    async (request, reply) => {
+      const existing = await fastify.prisma.skillSource.findUnique({
+        select: PUBLIC_SOURCE_SELECT,
+        where: { id: request.params.id },
+      });
+      if (!existing) {
+        return notFound(reply);
+      }
+      if (existing.status === 'DISABLED') {
+        return reply.status(409).send({
+          error: { code: 'SKILL_SOURCE_DISABLED', message: SOURCE_DISABLED_MESSAGE },
+        });
+      }
+      await checkSkillSource(fastify.prisma, existing);
+      const updated = await fastify.prisma.skillSource.findUnique({
+        select: PUBLIC_SOURCE_SELECT,
+        where: { id: existing.id },
+      });
+      return updated ? { data: updated } : notFound(reply);
+    }
+  );
+
+  // GET /skill-sources/:id/diff — writes nothing.
+  app.get(
+    '/skill-sources/:id/diff',
+    { onRequest: adminOnly, schema: { params: SourceIdParams, querystring: DiffQuery } },
+    async (request, reply) => {
+      const existing = await fastify.prisma.skillSource.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!existing) {
+        return notFound(reply);
+      }
+      const sha = request.query.sha ?? existing.latestSha;
+      if (!sha) {
+        return reply.status(409).send({
+          error: {
+            code: 'SKILL_SOURCE_NOT_CHECKED',
+            message: 'No newer commit has been recorded yet; check the source first.',
+          },
+        });
+      }
+      try {
+        const diff = await diffSkillSource(fastify.prisma, existing, sha);
+        return {
+          data: {
+            ...diff,
+            source: {
+              id: existing.id,
+              latestSha: existing.latestSha,
+              pinnedSha: existing.pinnedSha,
+              status: existing.status,
+            },
+          },
+        };
+      } catch (err) {
+        return sourceError(err, reply);
+      }
+    }
+  );
+
+  // POST /skill-sources/:id/accept — new revisions from the diffed commit, one transaction.
+  app.post(
+    '/skill-sources/:id/accept',
+    { onRequest: adminOnly, schema: { body: AcceptBody, params: SourceIdParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const existing = await fastify.prisma.skillSource.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!existing) {
+        return notFound(reply);
+      }
+      try {
+        const summary = await acceptSkillUpdate(
+          fastify.prisma,
+          existing,
+          { actorId: actor.sub, names: request.body.skills, sha: request.body.sha },
+          (tx, s) =>
+            writeAuditLog(fastify, {
+              action: 'UPDATE',
+              actor,
+              after: {
+                ...s.after,
+                conflicts: s.conflicts,
+                sha: s.sha,
+                skills: s.accepted.map((a) => ({ name: a.name, revision: a.revision })),
+              },
+              before: s.before,
+              client: tx,
+              entityId: existing.id,
+              entityType: 'SkillSource',
+            })
+        );
+        return { data: summary };
+      } catch (err) {
+        if (err instanceof SkillUpdateRefusal) {
+          return reply.status(UPDATE_STATUS[err.code]).send({
+            error: {
+              code: err.code === 'SKILL_CHANGED' ? 'SKILL_CHANGED' : `SKILL_UPDATE_${err.code}`,
+              details: err.details,
+              message: UPDATE_MESSAGES[err.code],
+            },
+          });
+        }
+        return sourceError(err, reply);
+      }
+    }
+  );
+
   // PATCH /skill-sources/:id
   app.patch(
     '/skill-sources/:id',
@@ -351,4 +485,33 @@ const IMPORT_MESSAGES = {
   SCAN_WARNINGS:
     'Some chosen skills drew scanner warnings and skills.import.blockOnScanWarnings is on; nothing was imported.',
   UNKNOWN_SKILLS: 'Some chosen skills are not in the source at that commit; nothing was imported.',
+} as const;
+
+const SOURCE_DISABLED_MESSAGE = 'This source is disabled; re-enable it first.';
+
+const UPDATE_STATUS = {
+  DISABLED: 409,
+  NOT_CHECKED: 409,
+  NOT_INSTALLABLE: 422,
+  SCAN_WARNINGS: 422,
+  SKILL_CHANGED: 409,
+  SOURCE_CHANGED: 409,
+  STALE_SHA: 409,
+  UNKNOWN_SKILLS: 400,
+} as const;
+
+const UPDATE_MESSAGES = {
+  DISABLED: SOURCE_DISABLED_MESSAGE,
+  NOT_CHECKED: 'No newer commit has been recorded yet; check the source first.',
+  NOT_INSTALLABLE:
+    'Some chosen skills cannot be updated from this commit; nothing was changed. Leave them out.',
+  SCAN_WARNINGS:
+    'Some chosen skills drew scanner warnings and skills.import.blockOnScanWarnings is on; nothing was changed.',
+  SKILL_CHANGED:
+    'A skill changed while the update was being applied; nothing was changed. Review the diff again.',
+  SOURCE_CHANGED:
+    'The source changed while the update was being applied (a newer check, or it was disabled); nothing was changed. Review the diff again.',
+  STALE_SHA:
+    'The source has a different latest commit than the one you reviewed; run the diff again.',
+  UNKNOWN_SKILLS: 'Some named skills are not installed from this source; nothing was changed.',
 } as const;
