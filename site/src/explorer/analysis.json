@@ -1507,9 +1507,9 @@
     {
       "body": "Enrich agent prompts with past lessons, tracker/knowledge content, Figma summaries and repository dependency context.",
       "category": "Engineering",
-      "detail": "The dependency graph supports manifest detection plus inference; upstream checkout is optional. Context helpers generally degrade on enrichment failures rather than blocking core implementation.",
+      "detail": "The dependency graph supports manifest detection plus inference; upstream checkout is optional. Context helpers generally degrade on enrichment failures rather than blocking core implementation. The tracker and knowledge-base fetches check their base URL and handle redirects as described in the connector guard card.",
       "id": "context",
-      "refs": ["dependency", "tdd"],
+      "refs": ["dependency", "tdd", "connectorBaseUrl"],
       "status": "Implemented",
       "title": "Repository & design context"
     },
@@ -1686,7 +1686,7 @@
     {
       "body": "Launch scheduled repository work, template webhooks, GitHub event handling and maintenance sweeps.",
       "category": "Operations",
-      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration (repository access sync, eval regression and revalidation); lesson consolidation, repository dependency scans, provider model discovery and the run reaper, by contrast, are on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow.",
+      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration (repository access sync, eval regression and revalidation); lesson consolidation, repository dependency scans, provider model discovery, the run reaper and the skill-source update check, by contrast, are on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. The skill-source check is one system-wide schedule (daily by default) that asks each tracked source’s host which commit its ref names and only flags a newer one; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow.",
       "id": "schedules",
       "refs": [
         "gateway",
@@ -1700,7 +1700,10 @@
         "fireLedger",
         "fireConnection",
         "prLedger",
-        "sweepDefaults"
+        "sweepDefaults",
+        "skillUpdateSchedule",
+        "skillUpdateEnv",
+        "skillUpdateWorkflow"
       ],
       "status": "Implemented",
       "title": "Scheduled automation & webhooks"
@@ -1726,11 +1729,33 @@
     {
       "body": "Read and write Notion pages, Zendesk comments, tracker issues and Slack messages.",
       "category": "Integrations",
-      "detail": "These have concrete worker connectors. HubSpot and generic http_api branches in genericActions currently return placeholders. MCP has its own executor instead.",
+      "detail": "These have concrete worker connectors. HubSpot and generic http_api branches in genericActions currently return placeholders. MCP has its own executor instead. Their requests refuse redirects rather than follow them, so a credential cannot leave the configured host.",
       "id": "connectors",
-      "refs": ["generic", "write"],
+      "refs": ["generic", "write", "connectorRedirectError"],
       "status": "Implemented",
       "title": "Non-engineering API handlers"
+    },
+    {
+      "body": "Tracker and knowledge-base base URLs pass an SSRF guard whose private-network opt-in is narrow, and connector requests refuse or re-check every redirect.",
+      "category": "Integrations",
+      "detail": "Jira, GitHub Issues and Confluence base URLs are checked strictly first. Only when that check refuses a private address and the connector’s allowPrivateNetwork opt-in is on is the refusal waived, and the waiver is logged. The opt-in never reaches loopback, link-local (IPv4 and IPv6), cloud-metadata or unspecified addresses, nor a malformed URL or a scheme other than http(s). The worker’s Jira path honours the opt-in only for the exact origin an ADMIN configured. The tracker and knowledge-base save routes apply the same check and answer 400 BASE_URL_REFUSED for a stored target the connector would refuse, but only when the write touches the provider or URL or turns the opt-in on, so turning it off is never blocked. Redirects are never followed unchecked. Linear, Notion, Slack, Zendesk and Figma requests set redirect: error, and the Atlassian client treats any 3xx as a failure it does not retry. GitHub Issues and the CI-log download, which GitHub answers with redirects, go through a guarded fetch: redirects are followed by hand for at most three hops, the guard runs on every hop, the credential is sent only to the configured origin, only a short allowlist of benign headers crosses to another origin, a write cannot cross origins, and a 307 or 308 keeps the method and body. Figma has no opt-in: its host is a constant that is still run through the guard.",
+      "id": "connectorGuard",
+      "refs": [
+        "connectorProbe",
+        "connectorNever",
+        "connectorBaseUrl",
+        "connectorJiraOrigin",
+        "connectorSaveCheck",
+        "connectorSaveRoute",
+        "connectorGuardedFetch",
+        "connectorGuardedHeaders",
+        "connectorGithubIssues",
+        "connectorCiLog",
+        "connectorAtlassian",
+        "connectorRedirectError"
+      ],
+      "status": "Implemented",
+      "title": "Connector base URLs and redirects are guarded"
     },
     {
       "body": "Package agents, skills, scanner patterns and templates for export/install and SDK authoring.",
@@ -1808,7 +1833,7 @@
     {
       "body": "An ADMIN previews skills in a GitHub or GitHub Enterprise repository, then installs the chosen ones pinned to the commit that was previewed.",
       "category": "Agents",
-      "detail": "Preview writes nothing: it resolves the ref to a commit and reads each SKILL.md under the path. The install request names skills and the previewed commit, never text; the server fetches again at that commit and fails with 409 if the ref has moved. A non-github.com host must be an approved repository host, and one on a private network must also be listed in a separate setting; the platform credential for that host is the only one used, and a host with none is read anonymously. Fetches are bounded in requests, bytes, skills and time. Skills with scan warnings are refused while the blocking setting is on (it is on by default). One transaction takes a name lock, checks name conflicts across the scopes the skill would be visible in, and writes the source plus every skill at revision 1, unverified, with its source commit. Markdown and text siblings are kept as reference text unscanned and nothing is executed. Wherever a model reads an imported skill’s text, it is labelled third-party with its source and short commit while the revision it reads carries a source commit; an admin’s hand edit cuts a revision without one, which drops the label, and a deleted source drops the repository name (the label reads external@sha7).",
+      "detail": "Preview writes nothing: it resolves the ref to a commit and reads each SKILL.md under the path. The install request names skills and the previewed commit, never text; the server fetches again at that commit and fails with 409 if the ref has moved. A non-github.com host must be an approved repository host, and one on a private network must also be listed in a separate setting; the platform credential for that host is the only one used, and a host with none is read anonymously. Fetches are bounded in requests, bytes, skills and time. Skills with scan warnings are refused while the blocking setting is on (it is on by default). One transaction takes a name lock, checks name conflicts across the scopes the skill would be visible in, and writes the source plus every skill at revision 1, unverified, with its source commit. Markdown and text siblings are kept as reference text unscanned and nothing is executed. Wherever a model reads an imported skill’s text, it is labelled third-party with its source and short commit while the revision it reads carries a source commit; an admin’s hand edit cuts a revision without one, which drops the label, and a deleted source drops the repository name (the label reads external@sha7). Updates to an imported source are a separate, reviewed flow: a scheduled check flags a moved ref, and an ADMIN diffs and accepts it.",
       "id": "skillImport",
       "refs": [
         "skillImportRoutes",
@@ -1821,10 +1846,38 @@
         "skillImportPrompt",
         "skillImportSetting",
         "schema",
-        "skillProvenance"
+        "skillProvenance",
+        "skillUpdateRoutes"
       ],
       "status": "Implemented",
       "title": "Skill import from an external GitHub repository"
+    },
+    {
+      "body": "A schedule flags when an imported source’s ref names a newer commit; an ADMIN reads a per-skill diff and accepts it, which cuts new skill revisions. Nothing updates on its own.",
+      "category": "Agents",
+      "detail": "The gateway upserts one Temporal schedule, auto-swe-skill-source-sync, at startup; it runs ScheduledSkillSourceSyncWorkflow, a single syncSkillSources activity. It is on by default (SKILL_SOURCE_SYNC_ENABLED, cadence SKILL_SOURCE_SYNC_CRON, default 41 5 * * *), read from the environment at gateway start, and paused rather than removed when disabled. The sweep visits each source that is not disabled, one at a time. A check resolves the ref to a commit and fetches no tree or file. It writes only latestSha, status, lastError and lastCheckedAt, guarded on the pinned commit and on the source not being disabled, so a concurrent accept or disable wins and the check’s write is dropped. A failing source does not stop the others; a host reporting a low rate limit has its remaining sources skipped until the next run, which moves only their check time. The same check runs on demand for one source. The diff reads the source at the checked commit (or a given one), by commit and never through the ref, and writes nothing. Per installed skill it reports unchanged, changed or unreadable, with a unified text diff against the live text, description and reference-file changes, scan warnings and whether an admin hand-edited it since import; installed skills whose folder left the source are flagged as removed and folders nothing installed uses are listed as added. A skill whose diff passes a fixed size or work bound has no complete diff and its full text has to be read separately. The accept takes the commit and, per skill, the installed revision the admin saw. It refuses unless the commit is still the source’s latest, refuses with SKILL_CHANGED and writes nothing if a named skill was edited since, never overwrites a hand-edited skill unless it is named, refuses an unreadable diff unless the skill is named, and refuses scan warnings while the blocking setting is on. One transaction cuts a new revision per updated skill, unverified and carrying the source commit, moves the pin only when nothing that changed upstream was left behind, and writes the audit entry; a source row that changed meanwhile rolls it all back. Runs already started keep the revisions they pinned. The CLI shows the diff, asks for confirmation and sends the revisions it showed.",
+      "id": "skillUpdates",
+      "refs": [
+        "skillUpdateScheduleId",
+        "skillUpdateSchedule",
+        "skillUpdateEnv",
+        "skillUpdateWorkflow",
+        "skillUpdateResolve",
+        "skillUpdateCheckWrite",
+        "skillUpdateSweep",
+        "skillImportRoutes",
+        "skillUpdateRoutes",
+        "skillUpdateHandEdit",
+        "skillUpdateAccept",
+        "skillUpdateGate",
+        "skillUpdatePinRule",
+        "skillUpdateRevision",
+        "skillUpdateTx",
+        "skillUpdateDiffBounds",
+        "skillUpdateCli"
+      ],
+      "status": "Implemented",
+      "title": "Tracked skill-source updates: scheduled check, reviewed diff, bound accept"
     }
   ],
   "limits": [
@@ -2067,7 +2120,7 @@
     {
       "body": "Pinning to a commit fixes what is read; it does not vouch for the author, the files kept beside the text, or the host.",
       "category": "Agents",
-      "detail": "Reference files are stored unscanned, so whatever first reads them to an agent or a person must scan them first. The host check reads address text and literal addresses and does not resolve DNS, so a listed name is trusted to mean the intended server. Commit signatures are not checked. No update check runs: the install records the pinned commit as the source’s latest commit once, and nothing refreshes it afterwards, so the status never reports an update on its own. Only imports take the name-allocation lock, so the skill API can still create a name an import has just checked.",
+      "detail": "Reference files are stored unscanned, so whatever first reads them to an agent or a person must scan them first. The host check reads address text and literal addresses and does not resolve DNS, so a listed name is trusted to mean the intended server. Commit signatures are not checked. The scheduled check asks about the ref, not the history of the source’s path, so any commit on the ref flags the source, and in a monorepo an unrelated commit reads as an update whose diff shows nothing. A diff and an accept each read the whole new commit through the bounded fetch, so reviewing then accepting costs two budgeted fetches beside the check’s one request. An accept updates only skills already installed: a skill added upstream is listed and never installed, one removed upstream is flagged and stays, and an upstream rename is shown and not applied. Reference files from an accept are stored unscanned, like an import’s. There is no way to decline a change, so a skill left behind keeps the source flagged. Hand-edit detection compares content with the last revision an import or accept cut, so a revert to the same content reads as unedited. The review is an ADMIN API and CLI flow. Only imports take the name-allocation lock, so the skill API can still create a name an import has just checked.",
       "id": "skillImportBounds",
       "refs": [
         "skillImportAccess",
@@ -2075,10 +2128,34 @@
         "skillImportTx",
         "skillImportSetting",
         "skillImportInstallRow",
-        "skillImportStatusPatch"
+        "skillImportStatusPatch",
+        "skillUpdateResolve",
+        "skillUpdateHandEdit",
+        "skillUpdateAccept",
+        "skillUpdateGate",
+        "skillUpdatePinRule",
+        "skillUpdateRevision",
+        "skillUpdateDiffBounds",
+        "skillUpdateRoutes"
       ],
       "status": "Confirmed boundary",
       "title": "Skill import is pinned and bounded, not verified"
+    },
+    {
+      "body": "The guard reads URL text, so it blocks the obvious private targets and not every route to one.",
+      "category": "Integrations",
+      "detail": "The check never resolves a name: a public hostname that points at an internal address passes, which only network policy outside the platform can stop. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when the connector runs, so a refused one surfaces at run time. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code.",
+      "id": "connectorGuardBounds",
+      "refs": [
+        "connectorGuardText",
+        "connectorProbe",
+        "connectorSaveCheck",
+        "connectorBaseUrl",
+        "connectorGithubIssues",
+        "connectorGuardedFetch"
+      ],
+      "status": "Confirmed boundary",
+      "title": "The connector SSRF guard is text-level, and the opt-in is coarse"
     },
     {
       "body": "A team marked inactive keeps its members’ repository access and its shares.",
@@ -2160,7 +2237,7 @@
     "Session": "Schema entity; inspect fields and relationship declarations below.",
     "Skill": "Scoped reusable prompt fragment; its text mirrors currentRevision, with a verification flag that edits clear, and an optional link to the external source it was imported from.",
     "SkillRevision": "Immutable version of a skill’s text and description, with content hash, provenance and advisory scan warnings; runs pin one per skill.",
-    "SkillSource": "An external GitHub repository skills are imported from, pinned to one commit, with script mode, scope and a status; deleting it detaches its skills.",
+    "SkillSource": "An external GitHub repository skills are imported from, pinned to one commit, with the newest commit its ref resolved to at the last check, that check’s time and error, script mode, scope and a status; deleting it detaches its skills.",
     "SlackChannel": "Team/org-owned assistant configuration, optional proactivity and budget settings.",
     "SlackConfig": "Schema entity; inspect fields and relationship declarations below.",
     "SlackWorkspace": "Slack installation and organization binding.",
@@ -3782,7 +3859,7 @@
       "id": "skillImportStatusPatch",
       "lines": 8,
       "path": "packages/gateway/src/routes/skillSources.ts",
-      "title": "The PATCH route is the only other writer of the source status"
+      "title": "Re-enabling a source restores what the last check found"
     },
     {
       "anchor": "async function skillProvenance(",
@@ -3823,6 +3900,238 @@
       "lines": 12,
       "path": "packages/worker/src/activities/channelRun.ts",
       "title": "A channel run row is created with no skill-revision pin"
+    },
+    {
+      "anchor": "export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';",
+      "before": 0,
+      "id": "skillUpdateScheduleId",
+      "lines": 1,
+      "path": "packages/gateway/src/plugins/temporal.ts",
+      "title": "Skill-source sweep schedule id"
+    },
+    {
+      "anchor": "async syncSkillSourceSyncSchedule(config: SkillSourceSyncScheduleConfig): Promise<void> {",
+      "before": 0,
+      "id": "skillUpdateSchedule",
+      "lines": 8,
+      "path": "packages/gateway/src/plugins/temporal.ts",
+      "title": "Skill-source sweep schedule upsert (paused when disabled)"
+    },
+    {
+      "anchor": "cronExpression: envCron('SKILL_SOURCE_SYNC_CRON', '41 5 * * *'),",
+      "before": 1,
+      "id": "skillUpdateEnv",
+      "lines": 5,
+      "path": "packages/shared/src/lib/systemConfig.ts",
+      "title": "Skill-source sweep cadence read from the environment, on by default"
+    },
+    {
+      "anchor": "export async function ScheduledSkillSourceSyncWorkflow()",
+      "before": 0,
+      "id": "skillUpdateWorkflow",
+      "lines": 3,
+      "path": "packages/worker/src/workflows/scheduledSkillSourceSync.ts",
+      "title": "Scheduled skill-source sync workflow: one activity"
+    },
+    {
+      "anchor": "export async function resolveSourceSha(",
+      "before": 1,
+      "id": "skillUpdateResolve",
+      "lines": 8,
+      "path": "packages/shared/src/lib/skillSource/index.ts",
+      "title": "A check resolves the ref to a commit and reads nothing else"
+    },
+    {
+      "anchor": "where: { id: source.id, pinnedSha: source.pinnedSha, status: { not: 'DISABLED' } },",
+      "before": 14,
+      "id": "skillUpdateCheckWrite",
+      "lines": 17,
+      "path": "packages/shared/src/lib/skillSourceSync.ts",
+      "title": "A check writes only bookkeeping columns, guarded on the pin and on the source not being disabled"
+    },
+    {
+      "anchor": "if (limitedHosts.has(source.host)) {",
+      "before": 32,
+      "id": "skillUpdateSweep",
+      "lines": 52,
+      "path": "packages/shared/src/lib/skillSourceSync.ts",
+      "title": "The sweep checks sources one at a time and leaves a rate-limited host for the next run"
+    },
+    {
+      "anchor": "{ onRequest: adminOnly, schema: { body: AcceptBody, params: SourceIdParams } },",
+      "before": 2,
+      "id": "skillUpdateRoutes",
+      "lines": 5,
+      "path": "packages/gateway/src/routes/skillSources.ts",
+      "title": "The accept route is ADMIN-only and takes a commit and revision-bound skills"
+    },
+    {
+      "anchor": "const handEdited = baseline === null || baseline.contentHash !== liveHash;",
+      "before": 6,
+      "id": "skillUpdateHandEdit",
+      "lines": 14,
+      "path": "packages/gateway/src/lib/skillSourceUpdateService.ts",
+      "title": "Hand edits are detected by comparing live content with the latest pristine revision"
+    },
+    {
+      "anchor": "if (source.latestSha !== input.sha) {",
+      "before": 6,
+      "id": "skillUpdateAccept",
+      "lines": 44,
+      "path": "packages/gateway/src/lib/skillSourceUpdateService.ts",
+      "title": "An accept is bound to the checked commit and to the installed revision the admin saw"
+    },
+    {
+      "anchor": "const unread = chosen.filter(",
+      "before": 9,
+      "id": "skillUpdateGate",
+      "lines": 34,
+      "path": "packages/gateway/src/lib/skillSourceUpdateService.ts",
+      "title": "An unreadable diff must be named, and scan warnings refuse while the setting blocks them"
+    },
+    {
+      "anchor": "const leftBehind = plan.changed.length - chosen.length + plan.errors.length;",
+      "before": 0,
+      "id": "skillUpdatePinRule",
+      "lines": 8,
+      "path": "packages/gateway/src/lib/skillSourceUpdateService.ts",
+      "title": "The pin moves only when nothing that changed upstream was left behind"
+    },
+    {
+      "anchor": "const next = nextRevision(",
+      "before": 2,
+      "id": "skillUpdateRevision",
+      "lines": 22,
+      "path": "packages/gateway/src/lib/skillSourceUpdateService.ts",
+      "title": "Each accepted skill gets a new unverified revision carrying the source commit"
+    },
+    {
+      "anchor": "where: { id: source.id, latestSha: input.sha, status: { not: 'DISABLED' } },",
+      "before": 6,
+      "id": "skillUpdateTx",
+      "lines": 40,
+      "path": "packages/gateway/src/lib/skillSourceUpdateService.ts",
+      "title": "The source row write is guarded on the diffed commit; the audit entry is in the same transaction"
+    },
+    {
+      "anchor": "export const DIFF_WORK_PER_SKILL = DIFF_WORK_BUDGET / MAX_SKILLS;",
+      "before": 11,
+      "id": "skillUpdateDiffBounds",
+      "lines": 14,
+      "path": "packages/gateway/src/lib/textDiff.ts",
+      "title": "Diff size and work bounds, per skill"
+    },
+    {
+      "anchor": "const result = await apiRequest<AcceptResult>(env, 'POST', `${SOURCES_URL}/${id}/accept`, {",
+      "before": 10,
+      "id": "skillUpdateCli",
+      "lines": 14,
+      "path": "packages/cli/src/commands/skills.ts",
+      "title": "The CLI confirms, then sends the installed revisions the diff showed"
+    },
+    {
+      "anchor": "export function checkProbeUrl(apiBase: string, opts: { allowPrivate?: boolean } = {}) {",
+      "before": 8,
+      "id": "connectorProbe",
+      "lines": 18,
+      "path": "packages/shared/src/lib/ssrfGuard.ts",
+      "title": "The private-network opt-in waives only a private-address refusal"
+    },
+    {
+      "anchor": "function isNeverAllowedHost(url: URL): boolean {",
+      "before": 0,
+      "id": "connectorNever",
+      "lines": 24,
+      "path": "packages/shared/src/lib/ssrfGuard.ts",
+      "title": "Addresses no opt-in reaches"
+    },
+    {
+      "anchor": "const strict = checkProbeUrl(baseUrl);",
+      "before": 6,
+      "id": "connectorBaseUrl",
+      "lines": 20,
+      "path": "packages/shared/src/lib/integrations/registry.ts",
+      "title": "A connector base URL is checked strictly, then with the connector opt-in, and the waiver is logged"
+    },
+    {
+      "anchor": "async function assertSafeJiraBaseUrl(baseUrl: string): Promise<void> {",
+      "before": 0,
+      "id": "connectorJiraOrigin",
+      "lines": 22,
+      "path": "packages/worker/src/connectors/issueTracker.ts",
+      "title": "The worker honours the opt-in only for the origin an ADMIN configured"
+    },
+    {
+      "anchor": "function baseUrlRefusal(",
+      "before": 0,
+      "id": "connectorSaveCheck",
+      "lines": 14,
+      "path": "packages/gateway/src/lib/systemConfigService.ts",
+      "title": "A save is checked with the same guard only when it touches the provider, the URL or turns the opt-in on"
+    },
+    {
+      "anchor": "const refusal = await issueTrackerBaseUrlRefusal(fastify.prisma, req.body);",
+      "before": 3,
+      "id": "connectorSaveRoute",
+      "lines": 12,
+      "path": "packages/gateway/src/routes/systemConfig.ts",
+      "title": "The tracker save refuses a base URL the connector would refuse"
+    },
+    {
+      "anchor": "for (let hop = 0; ; hop++) {",
+      "before": 4,
+      "id": "connectorGuardedFetch",
+      "lines": 56,
+      "path": "packages/shared/src/lib/guardedFetch.ts",
+      "title": "Redirects are followed by hand: guard on every hop, hop cap, credentials only on the configured origin"
+    },
+    {
+      "anchor": "const CROSS_ORIGIN_HEADERS = [",
+      "before": 2,
+      "id": "connectorGuardedHeaders",
+      "lines": 12,
+      "path": "packages/shared/src/lib/guardedFetch.ts",
+      "title": "Only benign headers cross origins"
+    },
+    {
+      "anchor": "private request(url: string, init: RequestInit): Promise<Response> {",
+      "before": 8,
+      "id": "connectorGithubIssues",
+      "lines": 12,
+      "path": "packages/shared/src/lib/integrations/providers/githubIssues.ts",
+      "title": "GitHub Issues follows redirects only through the guarded fetch"
+    },
+    {
+      "anchor": "const response = await fetchGuarded(",
+      "before": 4,
+      "id": "connectorCiLog",
+      "lines": 18,
+      "path": "packages/worker/src/lib/scm/github.ts",
+      "title": "The CI-log download follows redirects through the guarded fetch"
+    },
+    {
+      "anchor": "if (res.status >= 300 && res.status < 400) {",
+      "before": 5,
+      "id": "connectorAtlassian",
+      "lines": 12,
+      "path": "packages/shared/src/lib/integrations/atlassianClient.ts",
+      "title": "The Atlassian client refuses any redirect without retrying"
+    },
+    {
+      "anchor": "redirect: 'error',",
+      "before": 12,
+      "id": "connectorRedirectError",
+      "lines": 14,
+      "path": "packages/worker/src/connectors/notion.ts",
+      "title": "Connector requests that never follow a redirect"
+    },
+    {
+      "anchor": "if (host === 'metadata') {",
+      "before": 12,
+      "id": "connectorGuardText",
+      "lines": 40,
+      "path": "packages/shared/src/lib/ssrfGuard.ts",
+      "title": "The guard reads the URL text; it never resolves a name"
     }
   ],
   "usecases": [
