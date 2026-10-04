@@ -22,20 +22,24 @@
 
   /* Text scale — cool blue-grey neutral.
      Contrast ratios are WCAG 2.x against the ink surfaces text sits on
-     (ink-950 / 900 / 800 / 700). paper-500 and paper-600 are used for real text —
-     nav group labels, placeholders, hints, muted badges — so both clear AA (4.5:1):
-       paper-500 #8a94ab  6.4 / 6.2 / 6.3 / 5.8   (also 5.3 on ink-600, 4.7 on ink-500)
-       paper-600 #7f8aa3  5.7 / 5.5 / 5.5 / 5.1   (4.7 on ink-600)
-     paper-600 stays the dimmest text tone and must not be dimmed further.
+     (ink-950 / 900 / 800 / 700). Every step is used for real text — nav group labels,
+     placeholders, hints, muted badges — so all clear AA (4.5:1), and the ramp keeps
+     visible steps between them:
+       paper-300 #c4cad9  11.9 / 11.5 / 11.7 / 10.7   (9.9 on ink-600, 8.8 on ink-500)
+       paper-400 #aeb6c9   9.6 /  9.3 /  9.4 /  8.6   (8.0 on ink-600, 7.1 on ink-500)
+       paper-500 #9aa3b8   7.7 /  7.5 /  7.6 /  6.9   (6.4 on ink-600, 5.7 on ink-500)
+       paper-600 #7f8aa3   5.7 /  5.5 /  5.5 /  5.1   (4.7 on ink-600)
+     paper-600 stays the dimmest text tone and must not be dimmed further; use it
+     on ink-700 or darker, never on ink-500 or lighter (4.2:1 there) — use paper-500.
      Ink ramp: ink-800 (#0c0f17, the page ground) is slightly darker than ink-900
      (#0e111a, recessed rails); swapping them would shift every surface, so the
      ordering is left as is. */
   --color-paper-50: #eef1f7; /* primary ink */
   --color-paper-100: #eef1f7;
   --color-paper-200: #eef1f7; /* main body text */
-  --color-paper-300: #aeb6c9; /* secondary */
+  --color-paper-300: #c4cad9; /* secondary */
   --color-paper-400: #aeb6c9; /* secondary / body */
-  --color-paper-500: #8a94ab; /* labels / muted */
+  --color-paper-500: #9aa3b8; /* labels / muted */
   --color-paper-600: #7f8aa3; /* faint / numerals / captions */
 
   /* Accent — violet, primary accent */
