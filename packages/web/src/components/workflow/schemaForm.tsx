@@ -2,6 +2,7 @@
 
 import type { InputSchema, InputSchemaProperty } from '@auto-swe/shared/lib/inputSchema';
 import Link from 'next/link';
+import { useId } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
@@ -12,6 +13,7 @@ import { useRepositories } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
 
 function ConnectionPicker({
+  id,
   label,
   hint,
   value,
@@ -20,6 +22,7 @@ function ConnectionPicker({
   required,
   error,
 }: {
+  id?: string;
   label: string;
   hint?: string;
   value: string;
@@ -55,6 +58,7 @@ function ConnectionPicker({
       emptyMessage="No connections match"
       error={error}
       hint={hint}
+      id={id}
       label={label}
       onChange={onChange}
       options={visible.map((c) => ({ label: connectionLabel(c), value: c.id }))}
@@ -81,6 +85,7 @@ export function SchemaFieldInput({
   required?: boolean;
   error?: string;
 }) {
+  const fieldId = useId();
   const base = name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
   const hint = prop.description;
 
@@ -90,6 +95,7 @@ export function SchemaFieldInput({
         connectionType={prop.connectionType}
         error={error}
         hint={hint}
+        id={fieldId}
         label={base}
         onChange={onChange}
         required={required}
@@ -102,16 +108,17 @@ export function SchemaFieldInput({
     return (
       <div className="space-y-1.5">
         <Checkbox
-          aria-errormessage={error ? `${name}-error` : undefined}
+          aria-errormessage={error ? `${fieldId}-error` : undefined}
           aria-invalid={error ? true : undefined}
           checked={Boolean(value)}
           hint={hint}
+          id={fieldId}
           label={base}
           marked={required}
           onChange={(e) => onChange(e.target.checked)}
         />
         {error && (
-          <div id={`${name}-error`}>
+          <div id={`${fieldId}-error`}>
             <Alert className="text-xs">{error}</Alert>
           </div>
         )}
@@ -124,6 +131,7 @@ export function SchemaFieldInput({
       <Select
         error={error}
         hint={hint}
+        id={fieldId}
         label={base}
         onChange={onChange}
         options={[
@@ -141,6 +149,7 @@ export function SchemaFieldInput({
       <Input
         error={error}
         hint={hint}
+        id={fieldId}
         label={base}
         onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
         required={required}
@@ -155,6 +164,7 @@ export function SchemaFieldInput({
     <Input
       error={error}
       hint={prop.format === 'uuid' ? `${hint ?? ''} (UUID)`.trim() : hint}
+      id={fieldId}
       label={base}
       onChange={(e) => onChange(e.target.value)}
       placeholder={prop.format === 'uuid' ? 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' : undefined}

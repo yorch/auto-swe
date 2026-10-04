@@ -36,6 +36,7 @@ import {
   sendRunCapRefusal,
 } from '../lib/mcpWriteGuard.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { retryTemplateRequest } from '../lib/retryTemplateRequest.js';
 import { isSystemTemplate } from '../lib/systemTemplate.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
@@ -790,11 +791,14 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
   // Re-run a finished work request: starts a fresh Temporal execution (with
   // an -rN workflow-ID suffix) against the same ticket/repo/branch, reusing
   // the recorded template snapshot so the retry is reproducible.
-  app.post<{ Params: { id: string } }>(
+  app.post<{ Params: { id: string }; Body: { instructions?: string } | null }>(
     '/:id/retry',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { params: z.object({ id: z.string().uuid() }) },
+      schema: {
+        body: z.object({ instructions: z.string().trim().max(4000).optional() }).nullish(),
+        params: z.object({ id: z.string().uuid() }),
+      },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -821,8 +825,25 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: { id: request.params.id },
       });
+      if (workRequest?.isCrossRepo) {
+        return reply.status(409).send({
+          error: {
+            code: 'EPIC_RETRY_REQUIRED',
+            message: 'Multi-repository work must be launched through the epic workflow',
+          },
+        });
+      }
       const latest = workRequest?.activeWorkflows.find((w) => w.repository);
       const repo = latest?.repository;
+      if (workRequest && repo?.type !== 'git_repo') {
+        return retryTemplateRequest(
+          fastify,
+          request,
+          reply,
+          workRequest,
+          request.body?.instructions
+        );
+      }
       if (!workRequest || !latest || !repo) {
         return reply.status(404).send({
           error: { code: 'WORK_REQUEST_NOT_FOUND', message: 'Work request not found' },
@@ -911,15 +932,33 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
 
       const repoWorkRequest: RepoWorkRequest = {
         budgetTier: latest.budgetTier as RepoWorkRequest['budgetTier'],
-        description: workRequest.description,
+        connectionId: repo.id,
+        description: request.body?.instructions
+          ? `${workRequest.description}\n\nAdditional instructions for this attempt:\n${request.body.instructions}`
+          : workRequest.description,
         externalTicketId: workRequest.externalTicketId,
         // Whoever re-runs it, not whoever first asked: the re-run acts as the
         // caller, including with their own saved GitHub token, never as the
         // original requester's.
         launchedById: user.sub,
+        payload:
+          workRequest.payload &&
+          typeof workRequest.payload === 'object' &&
+          !Array.isArray(workRequest.payload)
+            ? {
+                ...workRequest.payload,
+                ...(request.body?.instructions &&
+                typeof (workRequest.payload as Record<string, unknown>).description === 'string'
+                  ? {
+                      description: `${workRequest.description}\n\nAdditional instructions for this attempt:\n${request.body.instructions}`,
+                    }
+                  : {}),
+              }
+            : undefined,
         repoId: repo.id,
         requestPayload: workRequest.requestPayload,
         workRequestId: workRequest.id,
+        workspaceProvider: 'git_repo',
         ...(canaryPin ?? {}),
       };
       // Re-run: the RunInput already exists, so only the ActiveWorkflow row is

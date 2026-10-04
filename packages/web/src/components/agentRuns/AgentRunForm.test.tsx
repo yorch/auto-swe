@@ -208,6 +208,22 @@ describe('AgentRunForm', () => {
     );
   });
 
+  it('reviews before launch, preserves values on Back, and opens the request after launch', async () => {
+    const { launches } = stubGateway();
+    const launched = vi.fn();
+    render(withQuery(<AgentRunForm onLaunched={launched} reviewBeforeLaunch />));
+    await fill();
+    fireEvent.click(screen.getByRole('button', { name: 'Review agent run' }));
+    expect(screen.getByText('Review and launch')).toBeTruthy();
+    expect(launches).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Back to details' }));
+    expect((screen.getByLabelText(/prompt/i) as HTMLTextAreaElement).value).toBe('fix the typo');
+    fireEvent.click(screen.getByRole('button', { name: 'Review agent run' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Launch agent' }));
+    await waitFor(() => expect(launched).toHaveBeenCalledTimes(1));
+    expect(launches).toHaveLength(1);
+  });
+
   it('blocks launching when the platform has agent runs turned off', async () => {
     stubGateway({ limits: { ...LIMITS, enabled: false } });
     render(withQuery(<AgentRunForm />));

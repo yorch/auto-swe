@@ -39,7 +39,14 @@ const EMPTY: AgentRunFormValues = {
   repoId: '',
 };
 
-export function AgentRunForm() {
+export function AgentRunForm({
+  reviewBeforeLaunch = false,
+  onLaunched,
+}: {
+  reviewBeforeLaunch?: boolean;
+  onLaunched?: (requestId: string) => void;
+} = {}) {
+  const [reviewing, setReviewing] = useState(false);
   const [values, setValues] = useState<AgentRunFormValues>(EMPTY);
   const [attempted, setAttempted] = useState(false);
   // One idempotency key per distinct submission; see `idempotencyFor`.
@@ -100,7 +107,8 @@ export function AgentRunForm() {
         onSettled: () => {
           submitting.current = false;
         },
-        onSuccess: () => {
+        onSuccess: (result) => {
+          onLaunched?.(result.workRequestId);
           idempotency.current = null;
         },
       }
@@ -145,6 +153,64 @@ export function AgentRunForm() {
             variant="secondary"
           >
             Run another
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  const selectedRepo = gitRepos.find((repo) => repo.id === values.repoId);
+  if (reviewBeforeLaunch && reviewing) {
+    const failure = launch.isError ? describeLaunchError(launch.error) : null;
+    return (
+      <Card className="space-y-5">
+        <h2 className="text-lg font-semibold">Review and launch</h2>
+        <dl className="space-y-3 text-sm">
+          <div>
+            <dt className="text-paper-400">Repository</dt>
+            <dd>{selectedRepo ? connectionLabel(selectedRepo) : values.repoId}</dd>
+          </div>
+          <div>
+            <dt className="text-paper-400">Agent</dt>
+            <dd>
+              {agent?.name}{' '}
+              {effective.pinnedVersion !== null ? `· v${effective.pinnedVersion}` : '· latest'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-paper-400">Task</dt>
+            <dd className="whitespace-pre-wrap break-words">{values.prompt}</dd>
+          </div>
+          <div>
+            <dt className="text-paper-400">Delivery</dt>
+            <dd>{DELIVER_OPTIONS.find((option) => option.value === values.deliver)?.label}</dd>
+          </div>
+          <div>
+            <dt className="text-paper-400">Limits</dt>
+            <dd>
+              {values.maxSteps || limits.data?.maxSteps.ceiling || 'Platform default'} steps ·{' '}
+              {values.maxWallClockSeconds ||
+                limits.data?.maxWallClockSeconds.ceiling ||
+                'Platform default'}{' '}
+              seconds
+            </dd>
+          </div>
+        </dl>
+        <Alert variant="info">
+          {values.deliver === 'none'
+            ? 'The output stays in the temporary workspace. No branch or pull request is published.'
+            : values.deliver === 'branch'
+              ? 'A new branch may be pushed after checks pass.'
+              : 'A new branch and draft pull request may be published after checks pass.'}{' '}
+          Nothing is merged automatically.
+        </Alert>
+        {failure && <Alert title={failure.title}>{failure.message}</Alert>}
+        <div className="flex justify-end gap-3">
+          <Button disabled={launch.isPending} onClick={() => setReviewing(false)} variant="ghost">
+            Back to details
+          </Button>
+          <Button disabled={!canSubmit} onClick={submit} variant="primary">
+            {launch.isPending ? 'Starting…' : 'Launch agent'}
           </Button>
         </div>
       </Card>
@@ -285,8 +351,22 @@ export function AgentRunForm() {
       </div>
 
       <div className="flex justify-end">
-        <Button disabled={!canSubmit} onClick={submit} size="lg">
-          {launch.isPending ? 'Starting…' : 'Run agent →'}
+        <Button
+          disabled={!canSubmit}
+          onClick={
+            reviewBeforeLaunch
+              ? () => {
+                  setAttempted(true);
+                  if (!Object.keys(errors).length) {
+                    setReviewing(true);
+                  }
+                }
+              : submit
+          }
+          size="lg"
+          variant="primary"
+        >
+          {launch.isPending ? 'Starting…' : reviewBeforeLaunch ? 'Review agent run' : 'Run agent →'}
         </Button>
       </div>
     </Card>

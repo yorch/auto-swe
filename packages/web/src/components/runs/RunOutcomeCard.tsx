@@ -55,11 +55,27 @@ export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeC
     return null;
   }
 
-  const name = templateName;
-
   if (isAgentRun) {
     return <AgentRunOutcomeCard result={result} />;
   }
+
+  if (typeof result.prUrl === 'string' && isSafeWebUrl(result.prUrl)) {
+    return (
+      <Card className="space-y-3 p-4" variant="inset">
+        <h3 className="font-semibold">Pull request</h3>
+        <OutcomeLink
+          href={result.prUrl}
+          label={
+            typeof result.prNumber === 'number'
+              ? `Review PR #${result.prNumber}`
+              : 'Review pull request'
+          }
+        />
+      </Card>
+    );
+  }
+
+  const name = templateName;
 
   if (
     name === 'notion-content-draft' ||

@@ -101,3 +101,44 @@ through the **scope cascade**, so one platform can behave differently per team.
 
 - **Eval** — A measurement of output quality — scored inside a run by an `eval` node, or offline
   against a frozen dataset to catch regressions. See [evals.md](./evals.md).
+
+## Dashboard workspace
+
+**Home** presents the signed-in engineer's requests that need attention, work in progress, and
+recent successful results. The engineer can switch to team work; the team selector narrows the
+view. A successful execution is an output to review, not an acceptance of that output.
+
+**Requests** (`/workflows`) groups execution attempts by their work request. It defaults to the
+requester's own work, with team scope, task/ticket search, and status filters. Status filters apply
+to the latest visible attempt before pagination, so an earlier failure does not resurface after a
+successful retry. Pending human steps, failed or timed-out attempts, and engineering workflows
+waiting for a human merge appear under **Needs attention**. Search, filters, pagination, and the
+open request are encoded in the URL.
+
+Multi-repository requests summarize the latest visible execution for each repository; one
+completed child does not make a request with another running child appear finished. Their panel
+labels history as repository executions and does not offer a whole-request retry.
+
+Selecting a request opens a side panel with the current result or blocker, progress, and paginated
+attempt history. The panel fills narrow screens and offers the full run page for deeper inspection.
+Technical logs and the diagram are behind a disclosure; trace payloads are fetched when opened.
+The engineer can retry eligible finished attempts with optional additional instructions. Each
+attempt preserves the request identity, while an agent attempt allocates a fresh delivery branch.
+
+**Start work** (`/start`) offers **Run a workflow** and **Run an agent**. Both paths collect inputs,
+show a review screen, and open the launched request. Workflow input drafts remain available when
+switching templates or paths within the page. **Approvals**, the **Workflow library**, and
+**Connections** remain directly available in the main navigation. `/runs` remains a linkable
+execution-history screen for diagnostics.
+
+### Workspace limitations
+
+- Requests without a recorded execution attempt do not appear in the request list yet. After a
+  launch, the side panel polls for the first attempt and explains that execution has not appeared.
+- Request status is derived from the latest visible execution. The list reads execution identities
+  across the matching history before filtering and paginating, so large histories increase the
+  cost of the list query.
+- Additional retry instructions change the attempt's request description, and a payload's
+  `description` field when it has one. A custom workflow reading a different input field must
+  explicitly consume the description to use these instructions.
+- Launch drafts are kept within the mounted page; leaving or reloading the page discards them.

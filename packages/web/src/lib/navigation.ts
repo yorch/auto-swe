@@ -36,31 +36,19 @@ export interface NavGroup {
 
 export const NAV_GROUPS: NavGroup[] = [
   {
-    items: [{ href: '/', icon: 'dashboard', label: 'Home', minRole: 'ENGINEER' }],
-    label: 'Start',
-  },
-  {
     items: [
-      { href: '/workflows', icon: 'canvas', label: 'Request queue', minRole: 'ENGINEER' },
-      // POST /agent-runs is an ENGINEER route; the repository's team membership is checked per launch.
-      { href: '/agent-runs', icon: 'agents', label: 'Run an agent', minRole: 'ENGINEER' },
-    ],
-    label: 'Requests',
-  },
-  {
-    items: [
+      { href: '/', icon: 'dashboard', label: 'Home', minRole: 'ENGINEER' },
+      { href: '/workflows', icon: 'canvas', label: 'Requests', minRole: 'ENGINEER' },
+      { href: '/govern/approvals', icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       {
         href: '/workflows/library',
         icon: 'templates',
         label: 'Workflow library',
         minRole: 'ENGINEER',
       },
-      // Listing connections is an ENGINEER route; the page hides the LEAD-only
-      // add / import / edit controls itself.
       { href: '/connections', icon: 'connections', label: 'Connections', minRole: 'ENGINEER' },
-      { href: '/runs', icon: 'runs', label: 'Runs', minRole: 'ENGINEER' },
     ],
-    label: 'Workflows',
+    label: 'Work',
   },
   {
     // Everything under /studio sits behind the ADMIN-only studio layout.
@@ -109,7 +97,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/govern/organizations', icon: 'teams', label: 'Organizations', minRole: 'LEAD' },
       { href: '/govern/users', icon: 'users', label: 'Users', minRole: 'ADMIN' },
       { href: '/govern/api-tokens', icon: 'key', label: 'API tokens', minRole: 'ADMIN' },
-      { href: '/govern/approvals', icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       { href: '/govern/lessons', icon: 'memory', label: 'Lessons', minRole: 'ADMIN' },
       { href: '/govern/analytics', icon: 'analytics', label: 'Analytics', minRole: 'ENGINEER' },
       // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
@@ -188,6 +175,9 @@ export function activeNavHref(pathname: string, items: NavItem[]): string {
  */
 const EXTRA_PAGE_TITLES: [string, string][] = [
   ['/runs/', 'Run'],
+  ['/agent-runs', 'Start work'],
+  ['/start', 'Start work'],
+  ['/runs', 'Runs'],
   ['/govern/policies/decisions', 'Autonomy decisions'],
   ['/epics', 'Epics'],
   ['/docs', 'Docs'],

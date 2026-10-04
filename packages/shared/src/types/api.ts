@@ -48,6 +48,7 @@ export interface PullRequestSummary {
 }
 
 export interface WorkRequestSummary {
+  title?: string;
   id: string;
   externalTicketId: string;
   description: string;
@@ -504,10 +505,23 @@ export interface WorkflowRunSummary {
   outcomeType: string | null;
   costUsdAccrued: number;
   workRequest: {
+    title?: string;
     id: string;
     externalTicketId: string;
     description: string;
   } | null;
+}
+
+/** One request, represented by its latest visible execution attempt. */
+export interface WorkspaceRequestSummary extends WorkflowRunSummary {
+  failedExecutionCount: number;
+  attemptCount: number;
+  isCrossRepo: boolean;
+  visibleExecutionCount: number;
+  pendingStepCount: number;
+  stage: string | null;
+  reviewUrl: string | null;
+  target: string | null;
 }
 
 export interface WorkflowStepRecord {

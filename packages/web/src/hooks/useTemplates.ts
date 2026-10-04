@@ -12,6 +12,7 @@ import type {
   WorkflowTemplateVersionDetail,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef } from 'react';
 import { api } from '@/lib/api';
 
 export function useWorkflowTemplates(teamId?: string | null) {
@@ -281,15 +282,26 @@ export function useRevokeWebhook(templateId: string) {
 
 export function useRunTemplate(templateId: string) {
   const qc = useQueryClient();
+  const submission = useRef<{ body: string; key: string } | null>(null);
   return useMutation({
-    mutationFn: (body: { payload?: Record<string, unknown>; label?: string }) =>
-      api
-        .post<{ data: { temporalWorkflowId: string; workflowId: string; workRequestId: string } }>(
+    mutationFn: (body: { payload?: Record<string, unknown>; label?: string }) => {
+      const serialized = JSON.stringify(body);
+      if (!submission.current || submission.current.body !== serialized) {
+        submission.current = { body: serialized, key: crypto.randomUUID() };
+      }
+      return api
+        .fetch<{ data: { temporalWorkflowId: string; workflowId: string; workRequestId: string } }>(
           `/api/v1/workflow-templates/${templateId}/runs`,
-          body
+          {
+            body: serialized,
+            headers: { 'Idempotency-Key': submission.current.key },
+            method: 'POST',
+          }
         )
-        .then((r) => r.data),
+        .then((r) => r.data);
+    },
     onSuccess: () => {
+      submission.current = null;
       qc.invalidateQueries({ queryKey: ['workflow-template-runs', templateId] });
       qc.invalidateQueries({ queryKey: ['workflow-runs'] });
     },
