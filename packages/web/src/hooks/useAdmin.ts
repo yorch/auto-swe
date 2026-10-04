@@ -89,6 +89,8 @@ export function useDeleteScannerPattern() {
 
 interface AdminSessionSummary {
   id: string;
+  /** The caller's own browser session. */
+  current: boolean;
   token: string;
   createdAt: string;
   updatedAt: string;
@@ -118,6 +120,17 @@ export function useAdminRevokeToken() {
 export function useAdminPruneShellAudit(days = 90) {
   return useMutation({
     mutationFn: () => api.post(`/api/v1/platform/shell-audit/prune?days=${days}`, {}),
+  });
+}
+
+export function useAdminRevokeUserSessions() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) =>
+      api
+        .post<{ data: { revoked: number } }>('/api/v1/platform/sessions/revoke-user', { userId })
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-sessions'] }),
   });
 }
 

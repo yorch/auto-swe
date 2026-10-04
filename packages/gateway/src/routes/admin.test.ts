@@ -22,6 +22,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     },
     session: {
       delete: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
     },
     user: {
@@ -228,6 +229,73 @@ describe('adminRoutes', () => {
         headers: AUTH,
         method: 'DELETE',
         url: '/api/v1/platform/sessions/11111111-1111-4111-8111-111111111111',
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+  });
+
+  describe('session listing and bulk revoke', () => {
+    const row = (id: string, token: string, userId = 'user-1') => ({
+      createdAt: new Date('2026-01-01'),
+      expiresAt: new Date('2026-02-01'),
+      id,
+      ipAddress: null,
+      token,
+      updatedAt: new Date('2026-01-01'),
+      user: { email: 'a@example.com', id: userId },
+      userAgent: null,
+      userId,
+    });
+    const S1 = '44444444-4444-4444-8444-444444444444';
+    const S2 = '55555555-5555-4555-8555-555555555555';
+    const USER = '66666666-6666-4666-8666-666666666666';
+
+    it('marks the session whose cookie the caller sent as current', async () => {
+      const { app, mockPrisma } = await buildApp('ADMIN');
+      mockPrisma.session.findMany.mockResolvedValueOnce([
+        row(S1, 'mine-token-1234567890'),
+        row(S2, 'other-token-1234567890'),
+      ]);
+      const res = await app.inject({
+        headers: { ...AUTH, cookie: 'better-auth.session_token=mine-token-1234567890.sig' },
+        method: 'GET',
+        url: '/api/v1/platform/sessions',
+      });
+      const data = JSON.parse(res.payload).data;
+      expect(data.map((r: { current: boolean }) => r.current)).toEqual([true, false]);
+      expect(data[0].token).toBe('mine-tok…');
+      await app.close();
+    });
+
+    it("revokes every session of a user except the caller's own", async () => {
+      const { app, mockPrisma } = await buildApp('ADMIN');
+      mockPrisma.session.findMany.mockResolvedValueOnce([
+        row(S1, 'mine-token-1234567890', USER),
+        row(S2, 'other-token-1234567890', USER),
+      ]);
+      mockPrisma.session.delete.mockResolvedValue({});
+      const res = await app.inject({
+        headers: { ...AUTH, cookie: 'better-auth.session_token=mine-token-1234567890.sig' },
+        method: 'POST',
+        payload: { userId: USER },
+        url: '/api/v1/platform/sessions/revoke-user',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data.revoked).toBe(1);
+      expect(mockPrisma.session.delete).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.session.delete).toHaveBeenCalledWith({ where: { id: S2 } });
+      expect(mockPrisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+      await app.close();
+    });
+
+    it('refuses a non-admin caller', async () => {
+      const { app } = await buildApp('ENGINEER');
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { userId: USER },
+        url: '/api/v1/platform/sessions/revoke-user',
       });
       expect(res.statusCode).toBe(403);
       await app.close();

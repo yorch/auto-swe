@@ -5,7 +5,12 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { safePatAuditFields } from '../lib/patAuditFields.js';
-import { invalidateSessionCache, requireAuth, requireUser } from '../plugins/auth.js';
+import {
+  extractSessionCookieValue,
+  invalidateSessionCache,
+  requireAuth,
+  requireUser,
+} from '../plugins/auth.js';
 
 /**
  * Platform-admin routes.
@@ -17,12 +22,14 @@ import { invalidateSessionCache, requireAuth, requireUser } from '../plugins/aut
  *   DELETE /api/v1/platform/access-tokens/:id      — revoke any PAT
  *   GET    /api/v1/platform/sessions               — list active browser sessions
  *   DELETE /api/v1/platform/sessions/:id           — revoke a session
+ *   POST   /api/v1/platform/sessions/revoke-user   — revoke every session of one user (not the caller's own)
  *   GET    /api/v1/platform/audit-log               — config-audit rows, filtered + paginated
  *   POST   /api/v1/platform/shell-audit/prune      — delete old WorkflowShellAudit rows
  */
 
 const TokenIdParam = z.object({ id: z.string().uuid() });
 const SessionIdParam = z.object({ id: z.string().uuid() });
+const RevokeUserBody = z.object({ userId: z.string().uuid() });
 const PruneQuery = z.object({
   days: z.coerce.number().int().min(1).max(3650).default(90),
 });
@@ -152,7 +159,13 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── Better-auth session admin — list / revoke browser sessions ──
 
-  app.get('/sessions', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
+  /// The unsigned session token the caller's own browser cookie carries (`<token>.<signature>`),
+  /// or null when the caller authenticated some other way (a token, an API client).
+  const callerSessionToken = (headers: Parameters<typeof extractSessionCookieValue>[0]) =>
+    extractSessionCookieValue(headers)?.split('.')[0] ?? null;
+
+  app.get('/sessions', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async (request) => {
+    const own = callerSessionToken(request.headers);
     const rows = await fastify.prisma.session.findMany({
       orderBy: { createdAt: 'desc' },
       select: {
@@ -171,10 +184,48 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     return {
       data: rows.map((r) => ({
         ...r,
+        // Lets the list mark the caller's own session, which they should not revoke blind.
+        current: own !== null && r.token === own,
         token: `${r.token.slice(0, 8)}…`,
       })),
     };
   });
+
+  // Signs one user out everywhere. The caller's own session survives, so an admin
+  // clearing their own sessions is not logged out of the page they are using.
+  app.post(
+    '/sessions/revoke-user',
+    {
+      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { body: RevokeUserBody },
+    },
+    async (request) => {
+      const own = callerSessionToken(request.headers);
+      const sessions = await fastify.prisma.session.findMany({
+        where: { userId: request.body.userId },
+      });
+      const actor = requireUser(request);
+      let revoked = 0;
+      for (const existing of sessions) {
+        if (own !== null && existing.token === own) {
+          continue;
+        }
+        const before = safeSessionAuditFields(existing);
+        await fastify.prisma.session.delete({ where: { id: existing.id } });
+        invalidateSessionCache(existing.token);
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor,
+          after: { revoked: true },
+          before,
+          entityId: existing.id,
+          entityType: 'Session',
+        });
+        revoked += 1;
+      }
+      return { data: { revoked } };
+    }
+  );
 
   app.delete(
     '/sessions/:id',

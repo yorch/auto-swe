@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -15,11 +17,15 @@ import {
   type AuditAction,
   type AuditLogFilters,
   type AuditLogRow,
+  useAdminPruneShellAudit,
   useAuditLog,
 } from '@/hooks/useAdmin';
+import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
 
 const LIMIT = 50;
+
+const SHELL_AUDIT_KEEP_DAYS = 90;
 
 const ACTION_OPTIONS = [
   { label: 'All actions', value: '' },
@@ -31,6 +37,10 @@ const ACTION_OPTIONS = [
 export default function GovernAuditPage() {
   const [filters, setFilters] = useState<AuditLogFilters>({});
   const [offset, setOffset] = useState(0);
+  const pruneShellAudit = useAdminPruneShellAudit(SHELL_AUDIT_KEEP_DAYS);
+  const [pruneOpen, setPruneOpen] = useState(false);
+  const [pruned, setPruned] = useState<number | null>(null);
+  const [pruneError, setPruneError] = useState<string | null>(null);
   const { data, isLoading, isError, error } = useAuditLog({ ...filters, limit: LIMIT, offset });
   const rows = data?.data ?? [];
   const total = data?.meta.total ?? 0;
@@ -189,6 +199,53 @@ export default function GovernAuditPage() {
           />
         )}
       </section>
+
+      <section className="fade-up stagger-3">
+        <Card variant="inset">
+          <CardHeader>
+            <CardTitle eyebrow="Housekeeping">Shell command history</CardTitle>
+          </CardHeader>
+          <p className="mb-3 max-w-prose text-sm text-paper-400">
+            Every command an agent runs in a workspace is recorded separately from this log. Delete
+            entries older than {SHELL_AUDIT_KEEP_DAYS} days to keep that history small.
+          </p>
+          {pruneError && <Alert className="mb-3">{pruneError}</Alert>}
+          {pruned !== null && !pruneError && (
+            <Alert className="mb-3" variant="success">
+              Deleted {pruned} shell command {pruned === 1 ? 'entry' : 'entries'}.
+            </Alert>
+          )}
+          <Button
+            disabled={pruneShellAudit.isPending}
+            onClick={() => setPruneOpen(true)}
+            size="sm"
+            variant="secondary"
+          >
+            {pruneShellAudit.isPending
+              ? 'Deleting…'
+              : `Delete entries older than ${SHELL_AUDIT_KEEP_DAYS} days`}
+          </Button>
+        </Card>
+      </section>
+
+      <ConfirmModal
+        confirmLabel="Delete entries"
+        dangerous
+        message={`Delete shell command history older than ${SHELL_AUDIT_KEEP_DAYS} days? This cannot be undone.`}
+        onClose={() => setPruneOpen(false)}
+        onConfirm={async () => {
+          setPruneError(null);
+          setPruned(null);
+          try {
+            const res = (await pruneShellAudit.mutateAsync()) as { data: { deleted: number } };
+            setPruned(res.data.deleted);
+          } catch (err) {
+            setPruneError(errMsg(err, 'Could not delete the history'));
+          }
+        }}
+        open={pruneOpen}
+        title="Delete old shell command history"
+      />
     </div>
   );
 }
