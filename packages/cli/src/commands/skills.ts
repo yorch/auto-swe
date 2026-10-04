@@ -17,8 +17,13 @@ const SUB_HELP = `auto-swe skills — skill library (admin)
                      [--script-mode=text-only|reject] [--skills=a,b] [--yes]
                                            Preview a repository's skills, then import them
 
-  Imported skills start unverified and are labelled [external: owner/repo@sha] in the
-  skill menu. --script-mode=text-only (default) keeps .md/.txt files beside a SKILL.md as
+  Imported skills start unverified. Wherever their text reaches a model it is labelled
+  [external: owner/repo@sha7] (the skill menu, loadSkill, and every prompt the text is
+  inlined into). The repository is read with the platform's GitHub credential when the
+  host has one (the instance's own host, including github.com when that is the instance,
+  and any approved host with its own credential) and anonymously otherwise; a preview or
+  import spends at most 300 API requests and stops early if the host's rate limit runs low.
+  --script-mode=text-only (default) keeps .md/.txt files beside a SKILL.md as
   reference text and skips every other file; reject refuses a skill folder holding any
   other file. Nothing is ever executed. Without --skills, every installable skill is
   imported; without --yes you are asked to confirm.
@@ -33,6 +38,7 @@ interface PreviewSkill {
   scanWarnings: string[];
   conflicts: Array<{ name: string; scope: string }>;
   errors: string[];
+  ignoredKeys?: string[];
   blockedByScan: boolean;
   installable: boolean;
 }
@@ -102,9 +108,17 @@ export async function runSkillsCommand(
   return 1;
 }
 
-const short = (sha: string) => sha.slice(0, 7);
+// Everything below that came from the server describes a third-party repository: its
+// names can carry terminal escapes, so control characters never reach the terminal.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+const clean = (s: string) => s.replace(CONTROL, '?');
+
+const short = (sha: string) => clean(sha).slice(0, 7);
 const where = (s: { host: string; owner: string; repo: string; path: string }) =>
-  `${s.host === 'github.com' ? '' : `${s.host}/`}${s.owner}/${s.repo}${s.path ? `/${s.path}` : ''}`;
+  clean(
+    `${s.host === 'github.com' ? '' : `${s.host}/`}${s.owner}/${s.repo}${s.path ? `/${s.path}` : ''}`
+  );
 
 async function cmdList(env: CliEnv): Promise<number> {
   const rows = await apiRequest<SourceRow[]>(env, 'GET', '/api/v1/platform/skill-sources');
@@ -118,16 +132,16 @@ async function cmdList(env: CliEnv): Promise<number> {
   for (const r of rows) {
     process.stdout.write(
       `${
-        pad(r.id, 38) +
+        pad(clean(r.id), 38) +
         pad(where(r), 40) +
-        pad(r.ref, 14) +
+        pad(clean(r.ref), 14) +
         pad(short(r.pinnedSha), 9) +
-        pad(r.status, 18) +
-        pad(r.scriptMode, 11)
+        pad(clean(r.status), 18) +
+        pad(clean(r.scriptMode), 11)
       }${r.skillCount}\n`
     );
     if (r.lastError) {
-      process.stdout.write(`    last error: ${r.lastError}\n`);
+      process.stdout.write(`    last error: ${clean(r.lastError)}\n`);
     }
   }
   return 0;
@@ -135,16 +149,19 @@ async function cmdList(env: CliEnv): Promise<number> {
 
 function describe(s: PreviewSkill): string {
   const notes: string[] = [];
-  notes.push(...s.errors.map((e) => `error: ${e}`));
-  notes.push(...s.conflicts.map((c) => `name already used by a ${c.scope} skill`));
-  notes.push(...s.scanWarnings.map((w) => `scan: ${w}`));
+  notes.push(...s.errors.map((e) => `error: ${clean(e)}`));
+  notes.push(...s.conflicts.map((c) => `name already used by a ${clean(c.scope)} skill`));
+  notes.push(...s.scanWarnings.map((w) => `scan: ${clean(w)}`));
   if (s.blockedByScan) {
     notes.push('blocked: skills.import.blockOnScanWarnings is on');
   }
   if (s.skippedFiles.length > 0) {
     notes.push(
-      `skipped ${s.skippedFiles.length} file(s): ${s.skippedFiles.map((f) => f.path).join(', ')}`
+      `skipped ${s.skippedFiles.length} file(s): ${s.skippedFiles.map((f) => clean(f.path)).join(', ')}`
     );
+  }
+  if (s.ignoredKeys?.length) {
+    notes.push(`ignored frontmatter: ${s.ignoredKeys.map(clean).join(', ')}`);
   }
   return notes.map((n) => `      ${n}\n`).join('');
 }
@@ -185,7 +202,7 @@ async function cmdAdd(args: string[], env: CliEnv, confirm: Confirm): Promise<nu
   );
   for (const s of preview.skills) {
     process.stdout.write(
-      `  ${s.installable ? '+' : '-'} ${s.name ?? s.folder}  (${s.textLength} chars, ${s.referenceFileCount} reference file(s))\n${describe(s)}`
+      `  ${s.installable ? '+' : '-'} ${clean(s.name ?? s.folder)}  (${s.textLength} chars, ${s.referenceFileCount} reference file(s))\n${describe(s)}`
     );
   }
 
@@ -208,7 +225,7 @@ async function cmdAdd(args: string[], env: CliEnv, confirm: Confirm): Promise<nu
   if (
     !yes &&
     !(await confirm(
-      `Import ${names.length} skill(s) (${names.join(', ')}) at ${short(preview.sha)}?`
+      `Import ${names.length} skill(s) (${names.map(clean).join(', ')}) at ${short(preview.sha)}?`
     ))
   ) {
     process.stderr.write('Aborted; nothing was imported (pass --yes to skip the prompt).\n');
@@ -222,7 +239,7 @@ async function cmdAdd(args: string[], env: CliEnv, confirm: Confirm): Promise<nu
     { ...source, sha: preview.sha, skills: names }
   );
   process.stdout.write(
-    `Imported ${created.skills.length} skill(s) from ${where(preview.location)}@${short(preview.sha)} as source ${created.source.id}. They are unverified.\n`
+    `Imported ${created.skills.length} skill(s) from ${where(preview.location)}@${short(preview.sha)} as source ${clean(created.source.id)}. They are unverified.\n`
   );
   return 0;
 }

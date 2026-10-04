@@ -198,6 +198,44 @@ describe('skills sources', () => {
     expect(err.join('')).toContain('SKILL_SOURCE_NOT_FOUND');
   });
 
+  it('prints server-supplied names without control characters (no terminal escapes)', async () => {
+    const ESC = '\u001b[1A\u001b[2K\r';
+    reply((url) =>
+      url.endsWith('/preview')
+        ? {
+            body: {
+              data: {
+                ...PREVIEW,
+                skills: [
+                  skill(`n${ESC}ame`, {
+                    errors: [`bad${ESC}`],
+                    folder: `f${ESC}`,
+                    ignoredKeys: [`k${ESC}`],
+                    scanWarnings: [`w${ESC}`],
+                    skippedFiles: [{ path: `a/${ESC}x.sh`, reason: 'not-text' }],
+                  }),
+                ],
+              },
+            },
+          }
+        : { body: { data: {} } }
+    );
+    await runSkillsCommand(['sources', 'add', 'acme/pack', '--ref=main'], ENV, async () => false);
+    const text = out.join('');
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting there are none
+    expect(text).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(text).toContain('a/?[1A?[2K?x.sh');
+    expect(text).toContain('ignored frontmatter: k?[1A?[2K?');
+  });
+
+  it('help says where the label appears and which credential is used', async () => {
+    await runSkillsCommand([], ENV);
+    const text = out.join('');
+    expect(text).toContain('loadSkill');
+    expect(text).toContain('300 API requests');
+    expect(text).toContain("platform's GitHub credential");
+  });
+
   it('rejects unknown subcommands', async () => {
     expect(await runSkillsCommand(['sources', 'frobnicate'], ENV)).toBe(1);
     expect(await runSkillsCommand(['nope'], ENV)).toBe(1);
