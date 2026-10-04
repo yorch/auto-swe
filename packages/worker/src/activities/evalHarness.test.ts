@@ -232,15 +232,21 @@ describe('runEvalHarness', () => {
     const d = deps({
       runCase: vi.fn(async (c: EvalCaseRow, ref: string) => {
         if (c.id !== 'c1' && ref === 'cand') {
-          throw ApplicationFailure.nonRetryable('Organization monthly budget exhausted', 'BUDGET_EXCEEDED', {
-            cap: 'organization',
-          });
+          throw ApplicationFailure.nonRetryable(
+            'Organization monthly budget exhausted',
+            'BUDGET_EXCEEDED',
+            {
+              cap: 'organization',
+            }
+          );
         }
         return 1 as const;
       }) as HarnessDeps['runCase'],
     });
     await runEvalHarness(input, d);
-    expect(d.finals[0].summary).toMatchObject({ partial: { completedCases: 1, reason: 'org_budget' } });
+    expect(d.finals[0].summary).toMatchObject({
+      partial: { completedCases: 1, reason: 'org_budget' },
+    });
   });
 
   it('fails when the budget stops it before any case completed', async () => {
