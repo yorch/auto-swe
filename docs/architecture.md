@@ -754,7 +754,7 @@ the isolate.
 
 **Instrumentation.** The gateway and worker start the OpenTelemetry SDK from a preload,
 `src/instrument.ts`, passed to `node --import` — the Dockerfile `CMD`, `yarn start` and `yarn dev`
-all pass it. Both services are ESM, and an ESM entry point evaluates every static import before its
+all pass it, with `--disable-warning=DEP0205` beside it. Both services are ESM, and an ESM entry point evaluates every static import before its
 own first statement, so an SDK started from `index.ts` would find `http` already bound and patch
 nothing. The preload also registers the `import-in-the-middle` loader hook for exactly the modules
 the instrumentations patch (`http` and `https`, plus `fastify` on the gateway), because the
@@ -1017,9 +1017,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   run and dies before its next periodic export loses that increment.
 - **HTTP instrumentation depends on the preload.** A service started without
   `--import ./dist/instrument.js` (a hand-written `node dist/index.js`) still initialises the SDK
-  and exports spans and metrics, but `http` and `fastify` go unpatched. With telemetry enabled, Node
-  prints a `DEP0205` warning at boot: `import-in-the-middle` registers through `module.register()`,
-  which Node 26 deprecates in favour of `module.registerHooks()`.
+  and exports spans and metrics, but `http` and `fastify` go unpatched. With telemetry enabled, a
+  hand-written `node` command without `--disable-warning=DEP0205` prints that warning at boot:
+  `import-in-the-middle` registers through `module.register()`, which Node 26 deprecates in favour
+  of `module.registerHooks()`, and neither it nor the OpenTelemetry instrumentation package offers
+  that yet. The start scripts and Dockerfile `CMD`s pass the flag, which silences only that code.
 - **A run's trace has no workflow span.** Activities hang directly off the span that started the
   run; nothing represents the workflow itself or the time between activities, since producing one
   would mean running OpenTelemetry inside the isolate. A schedule-started run's derived trace has

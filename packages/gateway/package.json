@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "NODE_ENV=development tsx watch --env-file=../../.env --import ./src/instrument.ts src/index.ts",
+    "dev": "NODE_ENV=development tsx watch --env-file=../../.env --disable-warning=DEP0205 --import ./src/instrument.ts src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "start": "node --import ./dist/instrument.js dist/index.js"
+    "start": "node --disable-warning=DEP0205 --import ./dist/instrument.js dist/index.js"
   },
   "dependencies": {
     "@auto-swe/shared": "workspace:*",

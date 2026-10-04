@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --env-file=../../.env --import ./src/instrument.ts src/index.ts",
+    "dev": "tsx watch --env-file=../../.env --disable-warning=DEP0205 --import ./src/instrument.ts src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "start": "node --import ./dist/instrument.js dist/index.js"
+    "start": "node --disable-warning=DEP0205 --import ./dist/instrument.js dist/index.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.71",
