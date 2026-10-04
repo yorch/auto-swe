@@ -1565,7 +1565,7 @@
     {
       "body": "Scope resources by organization/team, share repositories with teams and apply role-based permissions.",
       "category": "Governance",
-      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization. A repository on another approved GitHub host is reached with that host’s own credentials, not the instance’s (see per-host GitHub credentials).",
+      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization. A repository on another approved GitHub host is reached only with that host’s own credentials or the launcher’s own token, never the instance’s; with neither, the run is refused (see per-host GitHub credentials).",
       "id": "tenancy",
       "refs": ["tenant", "auth", "schema", "hostCredential"],
       "status": "Implemented",
@@ -1583,7 +1583,7 @@
     {
       "body": "Launch scheduled repository work, template webhooks, GitHub event handling and maintenance sweeps.",
       "category": "Operations",
-      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration. Provider model discovery is one such sweep and is on by default; the schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409.",
+      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration; provider model discovery, by contrast, is on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409.",
       "id": "schedules",
       "refs": ["gateway", "worker", "cli", "modelDiscoverySync", "scheduleCas"],
       "status": "Implemented",
@@ -1628,7 +1628,7 @@
     {
       "body": "Reach repositories on other approved GitHub hosts with that host’s own PAT or App, and never send a platform credential to a host it does not belong to.",
       "category": "Governance",
-      "detail": "GitHubHostCredential holds, per approved non-instance host family, an optional PAT and/or a GitHub App (id and private key), encrypted with the platform envelope and managed by ADMINs through routes that return only whether a secret is set and its last four characters. resolvePlatformCredential returns instance, host, mismatch, misconfigured or installation-mismatch. A launcher’s own saved token still wins; a host’s set is built from its row alone (no instance PAT, App, auth mode or singleton installation) and lapses when the host leaves github.repositoryHosts. resolveGitHubToken refuses any API host outside the set’s credentialHost as a last line, for the PAT, installation tokens and the App JWT. GitHubInstallation is identified by (host, installationId) with the host fixed at creation, and a repository may point only at an installation on its own host: checked when the repository is written and again when a run token is minted (REPO_INSTALLATION_HOST_MISMATCH). The login-ownership check asks the host the account belongs to with that host’s credential and reports a non-github.com host with none as unverifiable, keeping the login; github.com is asked unauthenticated, so it is rate-limited, but a confirmed mismatch still clears the login and records a takeover.",
+      "detail": "GitHubHostCredential holds, per approved non-instance host family, an optional PAT and/or a GitHub App (id and private key), encrypted with the platform envelope and managed by ADMINs through routes that return only whether a secret is set and its last four characters. resolvePlatformCredential returns instance, host, mismatch, misconfigured or installation-mismatch. A launcher’s own saved token still wins; a host’s set is built from its row alone (no instance PAT, App, auth mode or singleton installation) and lapses when the host leaves github.repositoryHosts. resolveGitHubToken refuses any API host outside the set’s credentialHost as a last line, for the PAT, installation tokens and the App JWT. GitHubInstallation is identified by (host, installationId) with the host fixed at creation, and a repository may point only at an installation on its own host: checked when the repository is written and again when a run token is minted (REPO_INSTALLATION_HOST_MISMATCH). The login-ownership check asks the host the account belongs to with that host’s credential and reports a non-github.com host with none as unverifiable, keeping the login; a github.com account with no applicable credential is asked unauthenticated, so the check is rate-limited, but a confirmed mismatch still clears the login and records a takeover.",
       "id": "githubHosts",
       "refs": [
         "hostCredentialRow",
@@ -1638,7 +1638,9 @@
         "hostInstallScope",
         "hostInstallRepo",
         "hostRunToken",
-        "hostIdentity"
+        "hostIdentity",
+        "hostCredRoutes",
+        "hostCredDto"
       ],
       "status": "Implemented",
       "title": "Per-host GitHub credentials & installations"
@@ -1783,7 +1785,7 @@
     {
       "body": "Discovery lists ids from the keys the platform holds; it supplies no prices and judges retirement by what one key can see.",
       "category": "Coverage",
-      "detail": "No list-models response carries a price, so an admin still enters every number that feeds USD budgets. Only GLOBAL credentials are asked, so a model reachable through a team or organization key is not found. Listings follow a bounded number of pages and drop non-text models by a name filter; a listing past the cap, empty, or with a continuation it cannot follow is incomplete: it still records new suggestions but deletes nothing and flags no retirement candidates. A retirement flag is a hint measured against one key’s view, and an OpenAI-compatible apiBase on a private address is refused as blocked address. The schedule’s cron and enabled flag take effect only after a gateway restart.",
+      "detail": "Discovery reads no price from a listing, so an admin still enters every number that feeds USD budgets. Only GLOBAL credentials are asked, so a model reachable through a team or organization key is not found. Listings follow a bounded number of pages and drop non-text models by a name filter; a listing past the cap, empty, or with a continuation it cannot follow is incomplete: it still records new suggestions but deletes nothing and flags no retirement candidates. A retirement flag is a hint measured against one key’s view, and an OpenAI-compatible apiBase on a private address is refused as blocked address. The schedule’s cron and enabled flag take effect only after a gateway restart.",
       "id": "modelDiscoveryBounds",
       "refs": ["discoveryAll", "discoveryList", "modelDiscoveryEnv"],
       "status": "Confirmed boundary",
@@ -1808,11 +1810,11 @@
       "title": "Gated templates open a ready PR before the gate"
     },
     {
-      "body": "A host has one PAT and one App, and a repository on a host with none is reachable only with a user’s own token.",
+      "body": "A host has at most one PAT and at most one App, and a repository on a host with neither is reachable only with a user’s own token.",
       "category": "Coverage",
-      "detail": "A repository on another host with no recorded credentials fails with REPO_CREDENTIAL_HOST_MISMATCH unless its launcher saved their own token; two Apps or per-organization PATs on one host are not expressible. A user with several linked GitHub accounts is unverifiable for the takeover check because the stored login does not record its host, so no takeover is detected for them, and a non-github.com host with no credential gets none either (github.com is asked unauthenticated, rate-limited).",
+      "detail": "A repository on another host with no recorded credentials fails with REPO_CREDENTIAL_HOST_MISMATCH unless its launcher saved their own token; two Apps or per-organization PATs on one host are not expressible. A user with several linked GitHub accounts is unverifiable for the takeover check because the stored login does not record its host, so no takeover is detected for them, and a non-github.com host with no credential gets none either (a github.com account with no applicable credential is asked unauthenticated, so the check is rate-limited).",
       "id": "githubHostCoverage",
-      "refs": ["hostCredential", "hostRunToken", "hostIdentity"],
+      "refs": ["hostCredential", "hostRunToken", "hostIdentity", "multiAccount"],
       "status": "Confirmed boundary",
       "title": "Host credentials are one set per host"
     }
@@ -2846,6 +2848,30 @@
       "lines": 18,
       "path": "packages/gateway/src/routes/scheduledWorkRequests.ts",
       "title": "Schedule PATCH retry on a competing write"
+    },
+    {
+      "anchor": "if (accounts.length > 1) {",
+      "before": 6,
+      "id": "multiAccount",
+      "lines": 16,
+      "path": "packages/shared/src/lib/githubIdentityCheck.ts",
+      "title": "Several linked accounts are unverifiable"
+    },
+    {
+      "anchor": "const adminOnly = requireAuth({ requiredRole: 'ADMIN' });",
+      "before": 0,
+      "id": "hostCredRoutes",
+      "lines": 8,
+      "path": "packages/gateway/src/routes/githubHostCredentials.ts",
+      "title": "ADMIN-only host credential routes"
+    },
+    {
+      "anchor": "hasToken: row.tokenCiphertext !== null,",
+      "before": 8,
+      "id": "hostCredDto",
+      "lines": 12,
+      "path": "packages/gateway/src/routes/githubHostCredentials.ts",
+      "title": "Write-only host credential response"
     }
   ],
   "usecases": [
@@ -2960,16 +2986,16 @@
     {
       "body": "Keep auto-swe’s own built-in model price table current through a draft pull request that a person reviews.",
       "category": "Engineering",
-      "detail": "model-catalog-refresh is installed everywhere but runs only when launched or scheduled against a repository holding the catalog file, normally a fork. Before any workspace exists, the listProviderModels step fails if the file is missing and ends the run SUCCESS when the previous refresh’s branch has commits or an open pull request. It then lists model ids in the worker through GLOBAL credentials, only for providers already in the file, and hands the agent text with no key. The agent edits only the catalog file: allowedPaths compares the committed tree with the session’s starting commit before the push, and checkScope re-asserts the single path before a draft PR opens. There is no CI loop or approval inside the run; the draft and its cited price sources are the human gate.",
+      "detail": "model-catalog-refresh is installed everywhere but runs only when launched or scheduled against a repository holding the catalog file, normally a fork. Before any workspace exists, the listProviderModels step fails if the file is missing and ends the run SUCCESS when the previous refresh’s branch is ahead of the default branch or has an open pull request. It then lists model ids in the worker through GLOBAL credentials, only for providers already in the file, and hands the agent text with no key. The agent edits only the catalog file: allowedPaths compares the committed tree with the session’s starting commit before the push, and checkScope re-asserts the single path before a draft PR opens. There is no CI loop or approval inside the run; the draft and its cited price sources are the human gate.",
       "id": "catalogRefresh",
       "refs": ["catalogRefresh", "catalogScope", "catalogList", "pathGuard", "draftPr"],
       "status": "Seeded + executable",
       "title": "Refresh the built-in model catalog"
     },
     {
-      "body": "Require two human sign-offs, or two reviewer agents in agreement, on a change whose CI already passed.",
+      "body": "Require two human sign-offs, or two independent review-network calls in agreement, on a change whose CI already passed.",
       "category": "Governance",
-      "detail": "four-eyes and consensus-review open the pull request and run CI with a fix loop first (two fix attempts, a third failure fails the run); only then do two humans, or two parallel reviewer slots, judge the head commit. A rejection goes to a fix, CI again with a fresh budget, and the gate again, with every round creating new pending steps. four-eyes asks the rejecting person what should change (optional, 1 h) and ends FAILED on a third rejection; consensus-review allows three consensus attempts. A fix that changes nothing never waits for a CI event: a no-op CI fix spends an attempt and a no-op review fix returns straight to the gate.",
+      "detail": "four-eyes and consensus-review open the pull request and run CI with a fix loop first (two fix attempts, a third failure fails the run); only then do two humans, or two parallel review-network calls, judge the head commit. A rejection goes to a fix, CI again with a fresh budget, and the gate again, with every round creating new pending steps. four-eyes asks the rejecting person what should change (optional, 1 h) and ends FAILED on a third rejection; consensus-review allows three consensus attempts. A fix that changes nothing never waits for a CI event: a no-op CI fix spends an attempt and a no-op review fix returns straight to the gate.",
       "id": "signoff",
       "refs": ["fourEyes", "fourEyesReject", "consensus", "consensusNoop", "ciNoop"],
       "status": "Seeded + executable",
