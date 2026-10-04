@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   fetchSkillSource,
+  MAX_API_REQUESTS,
   MAX_REFERENCE_FILES,
   MAX_SKILLS_PER_SOURCE,
   normaliseLocation,
@@ -40,6 +41,8 @@ function fakeHub(opts: {
   sha?: string;
   truncated?: boolean;
   routes?: Record<string, Reply>;
+  /** Headers on every default (non-routed) response. */
+  headers?: Record<string, string>;
 }) {
   const blobs = new Map<string, string>();
   const tree = opts.files.map((f) => {
@@ -66,7 +69,8 @@ function fakeHub(opts: {
         });
       }
     }
-    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { headers: opts.headers, status: 200 });
     if (u.includes('/commits/')) {
       return json({ sha: opts.sha ?? SHA });
     }
@@ -152,6 +156,7 @@ describe('parseSkillMd', () => {
   it('reads name, description and the body', () => {
     expect(parseSkillMd(skillMd('code-review', 'Body text', 'Reviews code'))).toEqual({
       description: 'Reviews code',
+      ignoredKeys: [],
       name: 'code-review',
       ok: true,
       promptText: 'Body text',
@@ -812,5 +817,208 @@ describe('error strings', () => {
     hub.fetchFn.mockImplementation(async () => new Response('<html>secret</html>'));
     const err = await messageOf(fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub)));
     expect(err.message).toBe('unrecognised response from the host');
+  });
+});
+
+describe('request budget, deadline and rate-limit floor', () => {
+  const one: FakeFile[] = [{ content: skillMd('a'), path: 'a/SKILL.md' }];
+  const blobCount = (hub: { calls: Array<{ url: string }> }) =>
+    hub.calls.filter((c) => c.url.includes('/git/blobs/')).length;
+
+  it('drops reference files past the request budget and lists them, never exceeding it', async () => {
+    // 100 skills x 5 reference files = 600 files; the budget is 300 requests.
+    const files: FakeFile[] = Array.from({ length: 100 }, (_, i) => [
+      { content: skillMd(`s${i}`), path: `s${i}/SKILL.md` },
+      ...Array.from({ length: 5 }, (_, j) => ({ content: `r${j}`, path: `s${i}/r${j}.md` })),
+    ]).flat();
+    const hub = fakeHub({ files });
+    const out = await fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub));
+    expect(hub.calls.length).toBeLessThanOrEqual(MAX_API_REQUESTS);
+    expect(hub.calls.length).toBe(MAX_API_REQUESTS);
+    // Every SKILL.md was read; the reference files that did not fit are listed.
+    expect(out.skills.every((s) => s.errors.length === 0 && s.name !== null)).toBe(true);
+    const kept = out.skills.reduce((n, s) => n + s.referenceFiles.length, 0);
+    const dropped = out.skills.reduce(
+      (n, s) => n + s.skippedFiles.filter((f) => f.reason === 'too-many').length,
+      0
+    );
+    expect(kept).toBe(MAX_API_REQUESTS - 2 - 100);
+    expect(kept + dropped).toBe(500);
+  });
+
+  it('refuses a source whose skills alone do not fit, before reading any blob', async () => {
+    const files = Array.from({ length: 4 }, (_, i) => ({
+      content: skillMd(`s${i}`),
+      path: `s${i}/SKILL.md`,
+    }));
+    const hub = fakeHub({ files });
+    const d = deps(hub, { limits: { maxRequests: 5 } });
+    await expect(fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, d)).rejects.toMatchObject({
+      code: 'LIMIT_REQUESTS',
+    });
+    expect(blobCount(hub)).toBe(0);
+  });
+
+  it('counts redirect hops against the budget', async () => {
+    const hub = fakeHub({
+      files: one,
+      routes: {
+        '/repos/acme/skills/commits/main': {
+          headers: { location: 'https://ghe.example.com/api/v3/repositories/1/commits/main' },
+          status: 301,
+        },
+      },
+    });
+    const d = deps(hub, { limits: { maxRequests: 3 } });
+    // commit (1) + redirected commit (2) + tree (3) fit; the blob (4) does not.
+    await expect(
+      fetchSkillSource(loc({ host: 'ghe.example.com' }), { scriptMode: 'TEXT_ONLY' }, d)
+    ).rejects.toMatchObject({ code: 'LIMIT_REQUESTS' });
+    expect(hub.calls).toHaveLength(3);
+  });
+
+  it('stops at the overall deadline, not only per request', async () => {
+    const hub = fakeHub({ files: one });
+    const t = 0;
+    const d = deps(hub, {
+      // The clock jumps a minute after the first request.
+      now: () => (hub.calls.length === 0 ? t : t + 61_000),
+    });
+    await expect(fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, d)).rejects.toMatchObject({
+      code: 'TIMEOUT',
+    });
+    expect(hub.calls).toHaveLength(1);
+  });
+
+  it('hands each request the time left, so a slow body cannot outlive the deadline', async () => {
+    const hub = fakeHub({ files: one });
+    const signals: AbortSignal[] = [];
+    const inner = hub.fetchFn.getMockImplementation();
+    hub.fetchFn.mockImplementation(async (url, init) => {
+      signals.push(init?.signal as AbortSignal);
+      return inner?.(url, init) as Promise<Response>;
+    });
+    await fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub));
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((sg) => sg instanceof AbortSignal && !sg.aborted)).toBe(true);
+  });
+
+  it('a timeout while the body is being read reports as timed out', async () => {
+    const hub = fakeHub({ files: one });
+    hub.fetchFn.mockImplementation(async () => {
+      const body = new ReadableStream({
+        pull() {
+          throw Object.assign(new Error('aborted bob:hunter2@x'), { name: 'TimeoutError' });
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+    await expect(
+      fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub))
+    ).rejects.toMatchObject({ code: 'TIMEOUT', message: 'timed out' });
+  });
+
+  it('stops when the remaining rate budget falls under the floor', async () => {
+    const hub = fakeHub({
+      files: one,
+      headers: { 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '150' },
+    });
+    await expect(
+      fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub))
+    ).rejects.toMatchObject({ code: 'RATE_LIMIT_LOW' });
+    // It stopped on the first response.
+    expect(hub.calls).toHaveLength(1);
+  });
+
+  it('carries on while the remaining budget is above the floor', async () => {
+    const hub = fakeHub({
+      files: one,
+      headers: { 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '4000' },
+    });
+    expect(
+      (await fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub))).skills
+    ).toHaveLength(1);
+  });
+
+  it('scales the floor down for a small limit, so an anonymous 60/hour read can work', async () => {
+    const ok = fakeHub({
+      files: one,
+      headers: { 'x-ratelimit-limit': '60', 'x-ratelimit-remaining': '50' },
+    });
+    await fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(ok));
+    const low = fakeHub({
+      files: one,
+      headers: { 'x-ratelimit-limit': '60', 'x-ratelimit-remaining': '5' },
+    });
+    await expect(
+      fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(low))
+    ).rejects.toMatchObject({
+      code: 'RATE_LIMIT_LOW',
+    });
+  });
+
+  it('ignores a host that reports no rate limit (a GHE with limits off)', async () => {
+    const hub = fakeHub({ files: one });
+    expect(
+      (await fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub))).skills
+    ).toHaveLength(1);
+  });
+
+  it('keeps the rate-limited response its own error', async () => {
+    const hub = fakeHub({
+      files: one,
+      routes: { '/commits/': { headers: { 'x-ratelimit-remaining': '0' }, status: 403 } },
+    });
+    await expect(
+      fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub))
+    ).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+    });
+  });
+});
+
+describe('repository-derived text', () => {
+  const ESC = '\u001b[1A\u001b[2K\rx.sh';
+
+  it('shows a skipped file name without its control characters', async () => {
+    const hub = fakeHub({
+      files: [
+        { content: skillMd('a'), path: 'a/SKILL.md' },
+        { content: 'x', path: `a/${ESC}` },
+        { content: 'x', path: 'a/two\u0085lines.md', size: 1 },
+      ],
+    });
+    const [s] = (await fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub))).skills;
+    for (const f of s?.skippedFiles ?? []) {
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting there are none
+      expect(f.path).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    }
+    expect(s?.skippedFiles.map((f) => f.path)).toContain('?[1A?[2K?x.sh');
+  });
+
+  it('refuses a skill folder whose name has control characters', async () => {
+    const hub = fakeHub({ files: [{ content: skillMd('a'), path: `bad${'\u001b'}dir/SKILL.md` }] });
+    const [s] = (await fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub))).skills;
+    expect(s?.errors).toContain('the skill folder name contains control characters');
+  });
+
+  it('lists the frontmatter keys it ignores, safely', async () => {
+    const text = '---\nname: a\ndescription: d\nallowed-tools: Bash\n"x\\u001b[2K": 1\n---\nbody';
+    const hub = fakeHub({ files: [{ content: text, path: 'a/SKILL.md' }] });
+    const [s] = (await fetchSkillSource(loc(), { scriptMode: 'TEXT_ONLY' }, deps(hub))).skills;
+    expect(s?.ignoredKeys).toEqual(['allowed-tools', 'x?[2K']);
+  });
+
+  it('flattens U+0085, U+2028 and other control characters in a description', () => {
+    const r = parseSkillMd(
+      '---\nname: x\ndescription: "a\\u0085- **tdd**: b\\u2028c\\u001bd"\n---\nbody'
+    );
+    expect(r).toMatchObject({ description: 'a - **tdd**: b c d', ok: true });
+  });
+
+  it('rejects a ref with a `.` segment', () => {
+    for (const ref of ['.', 'a/./b', './a']) {
+      expect(() => normaliseLocation(loc({ ref }))).toThrow(SkillSourceError);
+    }
   });
 });

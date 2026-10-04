@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml';
 import { MAX_SKILL_PROMPT_TEXT_LENGTH } from '../regexSafety.js';
+import { safeDisplayPath } from './display.js';
 
 /** The admin API's description cap. */
 export const MAX_DESCRIPTION_LENGTH = 1000;
@@ -8,7 +9,14 @@ const MAX_FRONTMATTER_LENGTH = 10_000;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,199}$/;
 
 export type ParsedSkillMd =
-  | { ok: true; name: string; description: string; promptText: string }
+  | {
+      ok: true;
+      name: string;
+      description: string;
+      promptText: string;
+      /** Frontmatter keys other than name/description (e.g. `allowed-tools`): read by nothing here. */
+      ignoredKeys: string[];
+    }
   | { ok: false; error: string };
 
 /** Split `---`-fenced frontmatter from the body; null when there is none. */
@@ -65,7 +73,10 @@ export function parseSkillMd(text: string): ParsedSkillMd {
   if (typeof description !== 'string' || description.trim() === '') {
     return { error: 'frontmatter description is missing', ok: false };
   }
-  const flat = description.replace(/\s+/g, ' ').trim();
+  // Control characters (U+0085 NEL among them, which some renderers treat as a line break
+  // and `\s` does not match) become spaces.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: flattening control characters is the point
+  const flat = description.replace(/[\s\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim();
   if (flat.length > MAX_DESCRIPTION_LENGTH) {
     return {
       error: `frontmatter description exceeds ${MAX_DESCRIPTION_LENGTH} characters`,
@@ -79,5 +90,9 @@ export function parseSkillMd(text: string): ParsedSkillMd {
   if (promptText.length > MAX_SKILL_PROMPT_TEXT_LENGTH) {
     return { error: `SKILL.md body exceeds ${MAX_SKILL_PROMPT_TEXT_LENGTH} characters`, ok: false };
   }
-  return { description: flat, name: name.trim(), ok: true, promptText };
+  const ignoredKeys = Object.keys(data as Record<string, unknown>)
+    .filter((k) => k !== 'name' && k !== 'description')
+    .slice(0, 20)
+    .map((k) => safeDisplayPath(k).slice(0, 60));
+  return { description: flat, ignoredKeys, name: name.trim(), ok: true, promptText };
 }

@@ -1,4 +1,5 @@
 import { MAX_SKILL_PROMPT_TEXT_LENGTH } from '../regexSafety.js';
+import { safeDisplayPath } from './display.js';
 import { SkillSourceError } from './errors.js';
 import {
   apiGet,
@@ -9,13 +10,14 @@ import {
 } from './github.js';
 import { parseSkillMd } from './parse.js';
 
+export { safeDisplayPath } from './display.js';
 export {
   SKILL_SOURCE_ERRORS,
   SkillSourceError,
   type SkillSourceErrorCode,
   safeSourceErrorMessage,
 } from './errors.js';
-export { hostPermitted, type SkillSourceDeps } from './github.js';
+export { hostPermitted, MAX_API_REQUESTS, type SkillSourceDeps } from './github.js';
 export { MAX_DESCRIPTION_LENGTH, parseSkillMd } from './parse.js';
 
 export const MAX_SKILLS_PER_SOURCE = 100;
@@ -64,6 +66,8 @@ export interface SourceSkill {
   promptText: string;
   referenceFiles: ReferenceFile[];
   skippedFiles: SkippedFile[];
+  /** Frontmatter keys the import does not read (already safe to display). */
+  ignoredKeys: string[];
   errors: string[];
 }
 
@@ -105,6 +109,7 @@ function validRef(ref: string): boolean {
     // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point
     !/[\u0000- \u007f~^:?*[\\]/.test(ref) &&
     !ref.includes('..') &&
+    !ref.split('/').includes('.') &&
     !ref.startsWith('-') &&
     !ref.startsWith('/') &&
     !ref.endsWith('/') &&
@@ -218,13 +223,6 @@ const isText = (p: string) => /\.(md|txt)$/i.test(p) && !/[\u0000-\u001f\u007f]/
 const isSkillMd = (p: string) => basename(p) === 'SKILL.md';
 const dirname = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 
-/** Printable, bounded, so a hostile file name cannot reshape an error line. */
-export function safeDisplayPath(p: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
-  const clean = p.replace(/[\u0000-\u001f\u007f]/g, '?');
-  return clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
-}
-
 interface Plan {
   skill: SourceSkill;
   skillMd: TreeEntry;
@@ -258,6 +256,7 @@ function plan(entries: TreeEntry[], loc: SourceLocation, mode: ScriptMode): Plan
         description: null,
         errors: [],
         folder,
+        ignoredKeys: [],
         name: null,
         promptText: '',
         referenceFiles: [],
@@ -277,21 +276,25 @@ function plan(entries: TreeEntry[], loc: SourceLocation, mode: ScriptMode): Plan
     }
     const rel = folder === '' ? e.path : e.path.slice(folder.length + 1);
     if (e.mode === '120000') {
-      owner.skill.skippedFiles.push({ path: rel, reason: 'symlink' });
+      owner.skill.skippedFiles.push({ path: safeDisplayPath(rel), reason: 'symlink' });
     } else if (e.mode === '160000' || e.type === 'commit') {
-      owner.skill.skippedFiles.push({ path: rel, reason: 'submodule' });
+      owner.skill.skippedFiles.push({ path: safeDisplayPath(rel), reason: 'submodule' });
     } else if (e.type !== 'blob') {
     } else if (!isText(e.path)) {
-      owner.skill.skippedFiles.push({ path: rel, reason: 'not-text' });
+      owner.skill.skippedFiles.push({ path: safeDisplayPath(rel), reason: 'not-text' });
     } else if (e.size > MAX_REFERENCE_FILE_BYTES) {
-      owner.skill.skippedFiles.push({ path: rel, reason: 'too-large' });
+      owner.skill.skippedFiles.push({ path: safeDisplayPath(rel), reason: 'too-large' });
     } else if (owner.refs.length >= MAX_REFERENCE_FILES) {
-      owner.skill.skippedFiles.push({ path: rel, reason: 'too-many' });
+      owner.skill.skippedFiles.push({ path: safeDisplayPath(rel), reason: 'too-many' });
     } else {
       owner.refs.push({ entry: e, rel });
     }
   }
   for (const p of plans.values()) {
+    if (isUnprintable(p.skill.folder)) {
+      // The folder is stored as the skill's source path and shown to an admin.
+      p.skill.errors.push('the skill folder name contains control characters');
+    }
     const scripts = p.skill.skippedFiles.filter((f) => f.reason === 'not-text');
     if (mode === 'REJECT' && scripts.length > 0) {
       const shown = scripts.slice(0, 5).map((f) => safeDisplayPath(f.path));
@@ -304,6 +307,32 @@ function plan(entries: TreeEntry[], loc: SourceLocation, mode: ScriptMode): Plan
   }
   return [...plans.values()].sort((a, b) => a.skill.folder.localeCompare(b.skill.folder));
 }
+
+/**
+ * A source costs one request per `SKILL.md` and one per kept reference file,
+ * beside the two for the ref and the tree. When that exceeds the request
+ * budget, reference files are dropped (and listed as skipped) from the last
+ * skills first: the skills themselves come before their companion text. Only
+ * when the skills alone do not fit is the source refused.
+ */
+function fitRequestBudget(plans: Plan[], access: SourceAccess): void {
+  const spendable = access.budget.limits.maxRequests - 2 - plans.length;
+  if (spendable < 0) {
+    throw new SkillSourceError('LIMIT_REQUESTS');
+  }
+  let left = spendable;
+  for (const p of plans) {
+    const keep = p.refs.slice(0, left);
+    for (const dropped of p.refs.slice(keep.length)) {
+      p.skill.skippedFiles.push({ path: safeDisplayPath(dropped.rel), reason: 'too-many' });
+    }
+    left -= keep.length;
+    p.refs = keep;
+  }
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point
+const isUnprintable = (p: string) => /[\u0000-\u001f\u007f-\u009f]/.test(p);
 
 const isRegular = (e: TreeEntry) => e.mode !== '120000' && e.mode !== '160000';
 
@@ -377,6 +406,7 @@ export async function fetchSkillSource(
   if (plans.length > MAX_SKILLS_PER_SOURCE) {
     throw new SkillSourceError('LIMIT_SKILLS');
   }
+  fitRequestBudget(plans, access);
 
   // The total is over what would be fetched, known from the listing's sizes
   // before a single blob is requested.
@@ -408,11 +438,12 @@ export async function fetchSkillSource(
       }
       p.skill.name = parsed.name;
       p.skill.description = parsed.description;
+      p.skill.ignoredKeys = parsed.ignoredKeys;
       p.skill.promptText = parsed.promptText;
       for (const ref of p.refs) {
         const content = await fetchText(access, loc, ref.entry.sha, MAX_REFERENCE_FILE_BYTES);
         if (content === null) {
-          p.skill.skippedFiles.push({ path: ref.rel, reason: 'unreadable' });
+          p.skill.skippedFiles.push({ path: safeDisplayPath(ref.rel), reason: 'unreadable' });
         } else {
           p.skill.referenceFiles.push({ content, path: ref.rel });
         }

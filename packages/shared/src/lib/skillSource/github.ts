@@ -16,6 +16,9 @@ export interface SkillSourceDeps {
   githubConfig: typeof resolveGitHubConfig;
   platformCredential: typeof resolvePlatformCredential;
   githubToken: typeof resolveGitHubToken;
+  /** Clock, for the deadline. */
+  now?: () => number;
+  limits?: Partial<FetchLimits>;
 }
 
 export const defaultDeps: SkillSourceDeps = {
@@ -28,6 +31,28 @@ export const defaultDeps: SkillSourceDeps = {
 };
 
 const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * What one fetch of a source may spend. The platform token is shared with every
+ * workflow, so an import must not be able to drain it: a source costs at most
+ * `maxRequests` API calls (counting redirect hops), the whole fetch has a
+ * deadline, and it stops as soon as the host reports the remaining budget is
+ * under `rateFloor` — scaled down to a fifth of the limit when the limit is
+ * small (an anonymous 60/hour read), so that case can still work.
+ */
+export interface FetchLimits {
+  maxRequests: number;
+  deadlineMs: number;
+  rateFloor: number;
+}
+export const MAX_API_REQUESTS = 300;
+export const FETCH_DEADLINE_MS = 60_000;
+export const RATE_LIMIT_FLOOR = 200;
+export const DEFAULT_LIMITS: FetchLimits = {
+  deadlineMs: FETCH_DEADLINE_MS,
+  maxRequests: MAX_API_REQUESTS,
+  rateFloor: RATE_LIMIT_FLOOR,
+};
 const MAX_REDIRECTS = 5;
 /** Largest JSON response read: a full recursive tree is the big one. */
 const MAX_RESPONSE_BYTES = 12_000_000;
@@ -57,6 +82,8 @@ export interface SourceAccess {
    * otherwise. Everything else faces the full SSRF guard.
    */
   privateHosts: ReadonlySet<string>;
+  /** Spent so far by this fetch; shared by every request made with this access. */
+  budget: { requests: number; startedAt: number; limits: FetchLimits };
   deps: SkillSourceDeps;
 }
 
@@ -128,7 +155,9 @@ export async function resolveAccess(
       token = null;
     }
   }
-  return { apiBase, deps, host, privateHosts, token };
+  const limits = { ...DEFAULT_LIMITS, ...deps.limits };
+  const startedAt = (deps.now ?? Date.now)();
+  return { apiBase, budget: { limits, requests: 0, startedAt }, deps, host, privateHosts, token };
 }
 
 async function readCapped(res: Response, maxBytes: number): Promise<string> {
@@ -180,15 +209,30 @@ export async function apiGet(access: SourceAccess, path: string): Promise<unknow
     if (access.token && url.origin === origin) {
       headers.Authorization = `Bearer ${access.token}`;
     }
+    const { budget } = access;
+    const left = budget.startedAt + budget.limits.deadlineMs - (access.deps.now ?? Date.now)();
+    if (left <= 0) {
+      throw new SkillSourceError('TIMEOUT');
+    }
+    if (++budget.requests > budget.limits.maxRequests) {
+      throw new SkillSourceError('LIMIT_REQUESTS');
+    }
     let res: Response;
     try {
       res = await access.deps.fetch(url.toString(), {
         headers,
         redirect: 'manual',
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        // Per request, and for the whole fetch: the body read is covered too.
+        signal: AbortSignal.any([
+          AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          AbortSignal.timeout(left),
+        ]),
       });
     } catch (err) {
       throw networkError(err);
+    }
+    if (res.ok || (res.status >= 300 && res.status < 400)) {
+      assertRateBudget(res, budget.limits.rateFloor);
     }
     if (res.status >= 300 && res.status < 400) {
       if (hop >= MAX_REDIRECTS) {
@@ -213,8 +257,27 @@ export async function apiGet(access: SourceAccess, path: string): Promise<unknow
     try {
       return JSON.parse(await readCapped(res, MAX_RESPONSE_BYTES));
     } catch (err) {
-      throw err instanceof SkillSourceError ? err : new SkillSourceError('BAD_RESPONSE');
+      if (err instanceof SkillSourceError) {
+        throw err;
+      }
+      // The deadline or the request timeout fired while the body was being read.
+      const name = (err as { name?: unknown } | null)?.name;
+      throw new SkillSourceError(
+        name === 'TimeoutError' || name === 'AbortError' ? 'TIMEOUT' : 'BAD_RESPONSE'
+      );
     }
+  }
+}
+
+/** Stop while the host still has headroom for everyone else's calls. */
+function assertRateBudget(res: Response, floor: number): void {
+  const remaining = Number(res.headers.get('x-ratelimit-remaining') ?? Number.NaN);
+  const limit = Number(res.headers.get('x-ratelimit-limit') ?? Number.NaN);
+  if (!Number.isFinite(remaining) || !Number.isFinite(limit)) {
+    return;
+  }
+  if (remaining < Math.min(floor, Math.ceil(limit * 0.2))) {
+    throw new SkillSourceError('RATE_LIMIT_LOW');
   }
 }
 
