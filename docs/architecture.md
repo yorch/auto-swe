@@ -678,8 +678,8 @@ run. The scheduled-fire check reads the same figure, and the org budget endpoint
 returns it as `currentMonthSpend` beside the finalized `currentMonthUsage`. The cap is still
 best-effort under concurrency: launches that arrive together see the same total.
 A run already going meets the cap too: `assertBudgetAvailable` also reads `orgMonthSpend` for the
-run's organization (found through its ledger row's repository, or, for a workflow with no run, its
-spend owner) and refuses the next model call with a non-retryable `BUDGET_EXCEEDED` once spend
+run's organization (found as billing finds it: the work request's connection, else the run's own
+connection, else the ledger row's repository, else — for a workflow with no run — its spend owner) and refuses the next model call with a non-retryable `BUDGET_EXCEEDED` once spend
 reaches the cap. That read goes through a per-org cache of one config-cache window (30 s), holding
 the cap and the spend together, so a refusal clears within a window of the cap being raised.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
@@ -1089,7 +1089,8 @@ Current constraints of the system as built. Deliberate product boundaries are in
   cached org spend has reached the cap, so up to one cache window (30 s) of spend, from every run
   of the org at once, can land after the cap is crossed, and the figure does not include a call
   until its run's ledger row is written. A spend or cap read that fails lets the call through. A
-  channel task's cost is the channel's, so the org cap never refuses it.
+  repo-less channel task bills its channel, not an org, so the org cap never refuses it; a code-route
+  channel task and a PRD run bill their connection's org and are refused like any run.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a

@@ -6,36 +6,41 @@ import { logWarn } from './activityLog.js';
 import { currentSpendOwner } from './spendOwner.js';
 
 /**
- * The org whose monthly USD cap this call's spend counts against, or `null`.
+ * The org whose monthly USD cap this call's spend counts against, found the way
+ * billing finds it (`finalizeRun`, `orgMonthSpend`): the run's work request's
+ * connection, else — an epic child, whose request spans repositories — the run's
+ * own connection, else the ledger row's repository. So a PRD run and a code-route
+ * channel task, which bill their org through the request's connection, are capped
+ * like any run.
  *
- * Mirrors how the cap counts spend (`orgMonthSpend`): a run through its ledger
- * row's repository, and a workflow with neither a repository nor a run (an
- * epic's own planning, authoring, scheduled evals) through the spend owner its
- * trace rows are stamped with. A run with no repository on its ledger row is a
- * channel task, whose cost is the channel's, not an org's.
- *
- * Only the repository answer is cached by the caller: a spend owner is declared
- * per activity, and a workflow id can be reused across executions.
+ * `stable` is true once a run or a repository-bearing ledger row exists: the
+ * answer is then a property of rows that do not change, so the caller may cache
+ * it. A workflow with neither (epic planning, authoring, scheduled evals) has no
+ * rows to read, and its org is the spend owner the activity declared, which the
+ * caller reads from the ambient context and never caches.
  */
-async function resolveCappedOrg(
+async function resolveBilledOrg(
   workflowId: string
-): Promise<{ orgId: string | null; viaRepository: boolean }> {
-  const ledger = await prisma.activeWorkflow.findFirst({
-    select: { repository: { select: { team: { select: { orgId: true } } } } },
-    where: { temporalWorkflowId: workflowId },
-  });
-  const viaRepository = ledger?.repository?.team?.orgId;
-  if (viaRepository) {
-    return { orgId: viaRepository, viaRepository: true };
-  }
-  const run = await prisma.workflowRun.findUnique({
-    select: { id: true },
-    where: { workflowId },
-  });
-  if (run) {
-    return { orgId: null, viaRepository: false };
-  }
-  return { orgId: (await currentSpendOwner()).orgId ?? null, viaRepository: false };
+): Promise<{ orgId: string | null; stable: boolean }> {
+  const team = { select: { orgId: true } } as const;
+  const [run, ledger] = await Promise.all([
+    prisma.workflowRun.findUnique({
+      select: {
+        connection: { select: { team } },
+        workRequest: { select: { connection: { select: { team } }, connectionId: true } },
+      },
+      where: { workflowId },
+    }),
+    prisma.activeWorkflow.findFirst({
+      select: { repository: { select: { team } } },
+      where: { temporalWorkflowId: workflowId },
+    }),
+  ]);
+  const viaRequest = run?.workRequest?.connection?.team?.orgId;
+  const viaRun = run && !run.workRequest?.connectionId ? run.connection?.team?.orgId : undefined;
+  const viaLedger = ledger?.repository?.team?.orgId;
+  const orgId = viaRequest ?? viaRun ?? viaLedger ?? null;
+  return { orgId, stable: run != null || viaLedger != null };
 }
 
 interface OrgCapState {
@@ -66,12 +71,15 @@ export async function assertOrgBudgetAvailable(workflowId: string, label: string
   let state: OrgCapState;
   try {
     const ttl = configCacheTtlMs();
-    ({ orgId } = await withCache(
+    const resolved = await withCache(
       `org-budget-owner:${workflowId}`,
       ttl,
-      () => resolveCappedOrg(workflowId),
-      (resolved) => resolved.viaRepository
-    ));
+      () => resolveBilledOrg(workflowId),
+      (r) => r.stable
+    );
+    // Only the row-derived answer is shared: a spend owner is declared per
+    // activity, so concurrent activities of one workflow id can differ.
+    orgId = resolved.stable ? resolved.orgId : ((await currentSpendOwner()).orgId ?? null);
     if (!orgId) {
       return;
     }

@@ -38,8 +38,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
   _resetConfigCacheForTests();
+  // An engineering run: a ledger row naming a repository, and a run with no connection of its own.
   findLedger.mockResolvedValue({ repository: { team: { orgId: 'org-1' } } } as never);
-  findRun.mockResolvedValue(null as never);
+  findRun.mockResolvedValue({
+    connection: null,
+    workRequest: { connection: null, connectionId: null },
+  } as never);
   findOrg.mockResolvedValue({ monthlyBudgetUsdCents: 1000 } as never);
   orgMonthSpendMock.mockResolvedValue(spend(1));
   currentSpendOwnerMock.mockResolvedValue({});
@@ -96,16 +100,73 @@ describe('assertOrgBudgetAvailable', () => {
     await expect(assertOrgBudgetAvailable('wf-1', 'agent.x')).resolves.toBeUndefined();
   });
 
-  it('does not cap a channel task: a run whose ledger names no repository', async () => {
+  const request = (orgId: string | null) =>
+    ({
+      connection: null,
+      workRequest: {
+        connection: orgId ? { team: { orgId } } : null,
+        connectionId: orgId ? 'c' : null,
+      },
+    }) as never;
+
+  it('caps a PRD run or a code-route channel task: no ledger, billed through the request connection', async () => {
     findLedger.mockResolvedValue(null as never);
-    findRun.mockResolvedValue({ id: 'run-1' } as never);
+    findRun.mockResolvedValue(request('org-1'));
+    orgMonthSpendMock.mockResolvedValue(spend(10));
+    const err = await refusal(assertOrgBudgetAvailable('wf-1', 'agent.x'));
+    expect(err.details?.[0]).toMatchObject({ cap: 'organization', orgId: 'org-1' });
+  });
+
+  it('prefers the request connection to the ledger repository, as billing does', async () => {
+    findRun.mockResolvedValue(request('org-2'));
+    await assertOrgBudgetAvailable('wf-1', 'agent.x');
+    expect(findOrg).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'org-2' } }));
+  });
+
+  it('caps an epic child through its own run connection', async () => {
+    findLedger.mockResolvedValue(null as never);
+    findRun.mockResolvedValue({
+      connection: { team: { orgId: 'org-1' } },
+      workRequest: { connection: null, connectionId: null },
+    } as never);
+    orgMonthSpendMock.mockResolvedValue(spend(10));
+    await refusal(assertOrgBudgetAvailable('wf-1', 'agent.x'));
+  });
+
+  it('does not cap a repo-less channel task: a run that resolves to no org', async () => {
+    findLedger.mockResolvedValue(null as never);
+    findRun.mockResolvedValue(request(null));
     currentSpendOwnerMock.mockResolvedValue({ orgId: 'org-1' });
     orgMonthSpendMock.mockResolvedValue(spend(10));
     await expect(assertOrgBudgetAvailable('wf-1', 'agent.x')).resolves.toBeUndefined();
   });
 
+  it('resolves a run-backed workflow once per window, org or none', async () => {
+    findLedger.mockResolvedValue(null as never);
+    findRun.mockResolvedValue(request(null));
+    for (let i = 0; i < 4; i++) {
+      await assertOrgBudgetAvailable('wf-1', 'agent.x');
+    }
+    expect(findRun).toHaveBeenCalledTimes(1);
+    expect(findLedger).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not share a spend owner between concurrent activities of one workflow', async () => {
+    findLedger.mockResolvedValue(null as never);
+    findRun.mockResolvedValue(null as never);
+    currentSpendOwnerMock.mockResolvedValueOnce({ orgId: 'org-a' });
+    currentSpendOwnerMock.mockResolvedValueOnce({ orgId: 'org-b' });
+    await Promise.all([
+      assertOrgBudgetAvailable('wf-1', 'agent.x'),
+      assertOrgBudgetAvailable('wf-1', 'agent.x'),
+    ]);
+    const ids = findOrg.mock.calls.map((c) => (c[0] as { where: { id: string } }).where.id).sort();
+    expect(ids).toEqual(['org-a', 'org-b']);
+  });
+
   it('caps a runless workflow through its spend owner', async () => {
     findLedger.mockResolvedValue(null as never);
+    findRun.mockResolvedValue(null as never);
     currentSpendOwnerMock.mockResolvedValue({ orgId: 'org-1' });
     orgMonthSpendMock.mockResolvedValue(spend(10));
     const err = await refusal(assertOrgBudgetAvailable('wf-1', 'agent.x'));
@@ -114,6 +175,7 @@ describe('assertOrgBudgetAvailable', () => {
 
   it('does not cap a workflow with no owner at all', async () => {
     findLedger.mockResolvedValue(null as never);
+    findRun.mockResolvedValue(null as never);
     orgMonthSpendMock.mockResolvedValue(spend(10));
     await expect(assertOrgBudgetAvailable('wf-1', 'agent.x')).resolves.toBeUndefined();
     expect(findOrg).not.toHaveBeenCalled();
