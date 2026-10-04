@@ -144,6 +144,8 @@ export async function resolveAccess(
 
   let token: string | null = null;
   const credential = await deps.platformCredential(
+    // A skill source is read through no GitHub App installation, so there is
+    // no installation host to check against.
     { apiUrl: apiBase, baseUrl: `https://${host}`, installationHost: null },
     config
   );
