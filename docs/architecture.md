@@ -831,7 +831,12 @@ has recorded that its activities have not yet persisted. `assertBudgetAvailable`
 once the cap is reached, and `recordLlmUsage` fails the call that passes it with a non-retryable
 `BUDGET_EXCEEDED`. An eval dataset run multiplies the cap by its case count, and finishes with a
 partial verdict rather than failing when the cap runs out after some cases completed (see
-[evals.md](./evals.md)). Epic planning is not runless: it is debited to the epic's own ledger row.
+[evals.md](./evals.md)). Epic planning is not runless: it is held to the tier of the epic's own
+ledger row. Its calls also count toward the org cap, as runless spend: the planning activity
+declares the first named repository's team as the owner of its trace rows (only that activity — a
+child run is counted through its own run and ledger row, and stamping it too would count its spend
+twice), and the epic's ledger row itself is never read by `orgMonthSpend`, so nothing is counted
+twice.
 
 **Run reaper.** A run is finalized — ended and billed to its org — by its own workflow's last step,
 so a workflow that never reaches it would otherwise stay "in flight" for the org cap for ever. The
@@ -1077,8 +1082,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   disabled (`RUN_REAPER_ENABLED=false`) or Temporal is unreachable. A sweep looks at the 200 oldest
   such runs, so more than 200 live runs older than the grace can delay the reaper reaching a stale
   one behind them.
-  Spend with no org on it — a runless workflow with no derivable owner, an epic's own planning ledger
-  row, which no run finalizes — is outside the cap.
+  Spend with no org on it — a runless workflow with no derivable owner — is outside the cap. An
+  epic's planning is attributed to one team, the first repository the epic names, even when the
+  epic spans organizations; each child run is billed to its own repository's organization.
 - **The org cap is a gate with a one-window lag.** A run's next call is refused only once the
   cached org spend has reached the cap, so up to one cache window (30 s) of spend, from every run
   of the org at once, can land after the cap is crossed, and the figure does not include a call
