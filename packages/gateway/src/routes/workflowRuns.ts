@@ -177,6 +177,8 @@ function projectTrace(t: Prisma.AgentTraceGetPayload<object>, full: boolean) {
 const CHANNEL_TEMPLATE_NAMES = [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME];
 
 const ListRunsQuery = RunListPaginationQuery.extend({
+  /** Only runs in which this node (a spec node id) failed — the step analytics drill-down. */
+  failedNodeId: z.string().min(1).max(120).optional(),
   /**
    * Channel chatter runs (template names "Channel Assistant" / "Channel Task")
    * are excluded from the list by default so a busy channel can't bury
@@ -205,6 +207,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const user = requireUser(request);
       const {
+        failedNodeId,
         includeChannel,
         limit,
         offset,
@@ -227,6 +230,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         ...(templateId ? { templateId } : {}),
         ...(templateVersion ? { templateVersion } : {}),
         ...(workRequestId ? { workRequestId } : {}),
+        ...(failedNodeId ? { steps: { some: { nodeId: failedNodeId, status: 'FAILED' } } } : {}),
         // Hide channel chatter runs unless explicitly opted in. An explicit
         // templateId filter already narrows to one template, so the exclusion
         // only matters for the unfiltered list.

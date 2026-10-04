@@ -19,6 +19,7 @@ import { useUrlParams } from '@/hooks/useUrlParams';
 import { dateRangePatch, parseDateRange } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 import { outcomeTypeLabel } from '@/lib/govLabels';
+import { successTone } from '@/lib/tone';
 import { formatCost, formatDuration, formatPercent } from '@/lib/utils';
 
 type TemplateSort = 'name' | 'runs' | 'successRate' | 'totalCost' | 'avgCost';
@@ -35,17 +36,6 @@ type OutcomeSort = 'outcome' | 'runs' | 'cost';
 /** Minutes, as the analytics API reports time saved, rendered as a duration. */
 function formatMinutes(min: number): string {
   return formatDuration(Math.round(min) * 60_000);
-}
-
-/** Tone for a 0–1 success rate: healthy, worth a look, poor — and neutral when there is none. */
-function successTone(rate: number | null): 'moss' | 'amber' | 'brick' | 'default' {
-  if (rate === null) {
-    return 'default';
-  }
-  if (rate >= 0.8) {
-    return 'moss';
-  }
-  return rate >= 0.5 ? 'amber' : 'brick';
 }
 
 function successRateClass(rate: number): string {

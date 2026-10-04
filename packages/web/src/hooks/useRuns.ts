@@ -220,6 +220,8 @@ export function useAllWorkflowRuns(
     status?: string;
     templateId?: string;
     templateVersion?: number;
+    /** Only runs in which this spec node failed. */
+    failedNodeId?: string;
     scope?: 'ALL' | 'MINE' | 'TEAM';
     limit?: number;
     offset?: number;
@@ -235,6 +237,9 @@ export function useAllWorkflowRuns(
   }
   if (filters.templateVersion) {
     params.set('templateVersion', String(filters.templateVersion));
+  }
+  if (filters.failedNodeId) {
+    params.set('failedNodeId', filters.failedNodeId);
   }
   if (filters.scope) {
     params.set('scope', filters.scope);

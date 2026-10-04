@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, use, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -19,6 +20,7 @@ import {
 } from '@/components/workflow/templateNav';
 import { useAllWorkflowRuns } from '@/hooks/useRuns';
 import { useWorkflowTemplate } from '@/hooks/useTemplates';
+import { nodeTitlesOf } from '@/lib/nodeTitles';
 import { validateRouteParam } from '@/lib/routeParams';
 import { isRunStatus, runStatusOptions } from '@/lib/runStatusOptions';
 import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
@@ -39,12 +41,23 @@ function runDuration(start: string, end: string | null): string {
 }
 
 export default function TemplateRunsPage({ params }: PageProps) {
+  // `useSearchParams` needs a Suspense boundary for the page to prerender.
+  return (
+    <Suspense fallback={null}>
+      <TemplateRuns params={params} />
+    </Suspense>
+  );
+}
+
+function TemplateRuns({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
   const { data: template } = useWorkflowTemplate(id ?? '');
   const [offset, setOffset] = useState(0);
   const [statusFilter, setStatusFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
+  // Set by the step table on the analytics page: only runs in which that node failed.
+  const failedNodeId = useSearchParams().get('failedStep') ?? '';
 
   // Both filters run server-side, so the total and the pagination describe
   // the filtered set. This reads /workflow-runs (not the template-scoped
@@ -56,6 +69,7 @@ export default function TemplateRunsPage({ params }: PageProps) {
     status: isRunStatus(statusFilter) ? statusFilter : undefined,
     templateId: id ?? undefined,
     templateVersion: versionFilter ? Number(versionFilter) : undefined,
+    ...(failedNodeId ? { failedNodeId } : {}),
   });
 
   const rows = data?.data ?? [];
@@ -65,6 +79,8 @@ export default function TemplateRunsPage({ params }: PageProps) {
   // template query can fail for a shared-repository viewer; the dropdown then
   // has nothing to list and stays hidden, and the runs still load.
   const versions = (template?.versions ?? []).map((v) => v.version).sort((a, b) => b - a);
+
+  const nodeTitles = nodeTitlesOf(template?.activeVersionSpec?.spec);
 
   const handlePrev = () => setOffset(Math.max(0, offset - PAGE_SIZE));
   const handleNext = () => setOffset(offset + PAGE_SIZE);
@@ -117,6 +133,14 @@ export default function TemplateRunsPage({ params }: PageProps) {
             ]}
             value={versionFilter}
           />
+        )}
+        {failedNodeId && (
+          <span className="flex items-center gap-2 rounded-[9px] border border-ink-400 px-3 py-1.5 text-xs text-paper-300">
+            Runs where “{nodeTitles.get(failedNodeId) ?? failedNodeId}” failed
+            <Link className="text-ember-400 hover:underline" href={`/workflows/library/${id}/runs`}>
+              Clear
+            </Link>
+          </span>
         )}
         {(statusFilter || versionFilter) && (
           <Button
