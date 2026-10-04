@@ -78,6 +78,9 @@ function ScanWarnings({ warnings }: { warnings: string[] }) {
 
 function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: () => void }) {
   const update = useUpdateSkill();
+  const verify = useVerifySkill();
+  const isAdmin = useHasRole('ADMIN');
+  const [verifyError, setVerifyError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ description: '', isActive: true, name: '', promptText: '' });
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +141,21 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     }
   }
 
+  // Attests to the revision of the skill object this modal rendered, whose text is on screen.
+  async function handleVerify() {
+    setVerifyError(null);
+    try {
+      await verify.mutateAsync({ id: sk.id, revision: sk.currentRevision });
+      onClose();
+    } catch (err) {
+      setVerifyError(
+        err instanceof ApiError && err.code === 'SKILL_CHANGED'
+          ? 'This skill changed since you opened it. Close it, open it again and read its current text before verifying.'
+          : errMsg(err, 'Failed to verify the skill')
+      );
+    }
+  }
+
   const title = editing ? `Edit "${visibleText(skill.name)}"` : visibleText(skill.name);
 
   return (
@@ -145,6 +163,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
       onClose={() => {
         setEditing(false);
         setScanWarnings([]);
+        setVerifyError(null);
         onClose();
       }}
       open={!!skill}
@@ -217,6 +236,21 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
               {visibleText(skill.promptText, { multiline: true })}
             </pre>
+            {isAdmin && !skill.isVerified && !skill.isBuiltIn && (
+              <div className="mt-3 flex items-center gap-3">
+                <Button disabled={verify.isPending} onClick={handleVerify} variant="secondary">
+                  Verify revision {skill.currentRevision}
+                </Button>
+                <span className="text-xs text-paper-500">
+                  Attests that you read the text above, revision {skill.currentRevision}.
+                </span>
+              </div>
+            )}
+            {verifyError && (
+              <Alert className="mt-3" variant="error">
+                {verifyError}
+              </Alert>
+            )}
           </div>
           <div className="flex items-center justify-between border-t border-ink-600 pt-4">
             <div className="space-y-0.5 text-xs text-paper-500">
@@ -396,7 +430,6 @@ export default function StudioSkillsPage() {
   const deleteSkill = useDeleteSkill();
   const { data: skills, isLoading, isError, error: loadError } = useSkills();
   const update = useUpdateSkill();
-  const verify = useVerifySkill();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
 
@@ -407,23 +440,6 @@ export default function StudioSkillsPage() {
       await update.mutateAsync({ id: skill.id, isActive: !skill.isActive });
     } catch (err) {
       setToggleError(errMsg(err, `Failed to update "${skill.name}"`));
-    } finally {
-      setTogglingId(null);
-    }
-  }
-
-  async function handleVerify(skill: Skill) {
-    setToggleError(null);
-    setTogglingId(skill.id);
-    try {
-      // Attests to the revision the admin is looking at; a skill that moved on is a 409.
-      await verify.mutateAsync({ id: skill.id, revision: skill.currentRevision });
-    } catch (err) {
-      setToggleError(
-        err instanceof ApiError && err.code === 'SKILL_CHANGED'
-          ? `"${visibleText(skill.name)}" changed since this list loaded. Reload and read its current text before verifying.`
-          : errMsg(err, `Failed to verify "${visibleText(skill.name)}"`)
-      );
     } finally {
       setTogglingId(null);
     }
@@ -526,16 +542,6 @@ export default function StudioSkillsPage() {
                       </Td>
                       <Td className="py-2 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {isAdmin && !skill.isVerified && !skill.isBuiltIn && (
-                            <Button
-                              disabled={togglingId === skill.id}
-                              onClick={() => handleVerify(skill)}
-                              size="sm"
-                              variant="ghost"
-                            >
-                              Verify
-                            </Button>
-                          )}
                           <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
                             View / Edit
                           </Button>

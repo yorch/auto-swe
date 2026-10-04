@@ -83,22 +83,33 @@ describe('Skills studio page', () => {
     expect(within(rowOf('trusted')).getByText('verified')).toBeTruthy();
   });
 
-  it('verifies the revision that is shown', async () => {
+  const open = (name: string) => fireEvent.click(within(rowOf(name)).getByText('View / Edit'));
+
+  it('offers no Verify in the list: only after opening the skill and its text', () => {
     render(<StudioSkillsPage />);
-    fireEvent.click(within(rowOf('imported')).getByText('Verify'));
+    expect(screen.queryByText(/^Verify/)).toBeNull();
+  });
+
+  it('verifies, from the detail modal beside the text, the revision that modal shows', async () => {
+    render(<StudioSkillsPage />);
+    open('imported');
+    expect(screen.getByText('text')).toBeTruthy();
+    fireEvent.click(screen.getByText('Verify revision 4'));
     await waitFor(() => expect(verify).toHaveBeenCalledWith({ id: 'imported', revision: 4 }));
   });
 
   it('does not offer Verify on an already verified skill', () => {
     render(<StudioSkillsPage />);
-    expect(within(rowOf('trusted')).queryByText('Verify')).toBeNull();
+    open('trusted');
+    expect(screen.queryByText(/^Verify revision/)).toBeNull();
   });
 
-  it('a 409 on verify says the skill changed and to read it again', async () => {
+  it('a 409 on verify says the skill changed and to open it again', async () => {
     verify.mockRejectedValueOnce(new ApiError('changed', 409, 'SKILL_CHANGED'));
     render(<StudioSkillsPage />);
-    fireEvent.click(within(rowOf('imported')).getByText('Verify'));
-    expect(await screen.findByText(/changed since this list loaded/)).toBeTruthy();
+    open('imported');
+    fireEvent.click(screen.getByText('Verify revision 4'));
+    expect(await screen.findByText(/changed since you opened it/)).toBeTruthy();
   });
 
   it('shows hidden characters in skill names and descriptions', () => {
@@ -118,6 +129,7 @@ describe('Skills studio page', () => {
     state.admin = false;
     render(<StudioSkillsPage />);
     expect(screen.queryByText('External sources')).toBeNull();
-    expect(screen.queryByText('Verify')).toBeNull();
+    open('imported');
+    expect(screen.queryByText(/^Verify revision/)).toBeNull();
   });
 });
