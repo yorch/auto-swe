@@ -13,7 +13,6 @@
  * Prompt caching is priced separately, as multiples of these input prices
  * (`cacheMultipliers` below). Caveats these prices do NOT account for — set a
  * customized catalog price if any apply to your deployment:
- *  - Anthropic 1-hour cache writes (2x input; priced at the 5-minute 1.25x)
  *  - Batch API discount (50%) — nothing in this repo calls a batch API
  *  - Anthropic data-residency premium (1.1x for `inference_geo: us`)
  *  - Anthropic fast-mode premium (6x on Opus 4.6)

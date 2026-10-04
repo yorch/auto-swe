@@ -9,7 +9,8 @@ const TONE: Record<string, BadgeTone> = {
 
 /**
  * An offline harness run's status: RUNNING | SUCCESS | FAILED | REGRESSION. A
- * `partial` verdict covers only the cases the runless budget let run, so it is
+ * `partial` verdict covers only the cases the runless budget or the organization cap
+ * (`reason: 'org_budget'`) let run, so it is
  * labelled as such and drawn amber rather than as a plain pass.
  */
 export function EvalRunStatusBadge({ status, partial }: { status: string; partial?: boolean }) {

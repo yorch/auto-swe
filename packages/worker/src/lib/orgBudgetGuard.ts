@@ -20,7 +20,7 @@ import { currentSpendOwner } from './spendOwner.js';
  * rows to read, and its org is the spend owner the activity declared, which the
  * caller reads from the ambient context and never caches.
  */
-async function resolveBilledOrg(
+export async function resolveBilledOrg(
   workflowId: string
 ): Promise<{ orgId: string | null; stable: boolean }> {
   const team = { select: { orgId: true } } as const;

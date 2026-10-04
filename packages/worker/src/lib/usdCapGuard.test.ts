@@ -42,8 +42,23 @@ const findOrg = vi.mocked(prisma.organization.findUnique);
 
 const UNPRICED = 'openrouter/no-price-here';
 
-function ledgerRowWithOrgCap(cents: number | null) {
-  return { repository: { team: { organization: { monthlyBudgetUsdCents: cents } } } } as never;
+/** A ledger row whose repository's team is in org-1; the cap itself is `findOrg`'s. */
+function ledgerRowInOrg(orgId: string | null = 'org-1') {
+  return { repository: { team: { orgId } } } as never;
+}
+
+/** A run whose work request names a connection placing it in `orgId` (a PRD run, a code-route channel task). */
+function runViaRequestConnection(orgId: string | null = 'org-1') {
+  return {
+    connection: null,
+    connectionId: null,
+    id: 'run-1',
+    workRequest: { connection: { team: { orgId } }, connectionId: 'conn-1' },
+  } as never;
+}
+
+function capOrg(cents: number | null) {
+  findOrg.mockResolvedValue({ monthlyBudgetUsdCents: cents } as never);
 }
 
 beforeEach(() => {
@@ -57,8 +72,8 @@ beforeEach(() => {
   });
   findLedgerRow.mockResolvedValue(null as never);
   findChannel.mockResolvedValue(null as never);
-  // A run with no ledger row (a channel task) unless a test says otherwise.
-  findRun.mockResolvedValue({ id: 'run-1' } as never);
+  // A run no connection or repository places anywhere unless a test says otherwise.
+  findRun.mockResolvedValue({ id: 'run-1', workRequest: null } as never);
   findOrg.mockResolvedValue(null as never);
   currentSpendOwnerMock.mockResolvedValue({});
 });
@@ -81,7 +96,8 @@ describe('assertModelPricedForUsdCap', () => {
   });
 
   it('refuses an unpriced model under an organization USD cap, non-retryable and typed', async () => {
-    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(100_000));
+    findLedgerRow.mockResolvedValue(ledgerRowInOrg());
+    capOrg(100_000);
     const err = await refusal(assertModelPricedForUsdCap(UNPRICED));
     expect(err.type).toBe(MODEL_UNPRICED);
     expect(err.nonRetryable).toBe(true);
@@ -99,7 +115,8 @@ describe('assertModelPricedForUsdCap', () => {
       price: {},
       source: 'unknown',
     });
-    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(100_000));
+    findLedgerRow.mockResolvedValue(ledgerRowInOrg());
+    capOrg(100_000);
     const err = await refusal(assertModelPricedForUsdCap(UNPRICED));
     expect(err.type).toBe(MODEL_PRICE_UNAVAILABLE);
     expect(err.nonRetryable).toBe(false);
@@ -113,7 +130,8 @@ describe('assertModelPricedForUsdCap', () => {
       price: {},
       source: 'unknown',
     });
-    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(null));
+    findLedgerRow.mockResolvedValue(ledgerRowInOrg());
+    capOrg(null);
     await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
   });
 
@@ -131,7 +149,8 @@ describe('assertModelPricedForUsdCap', () => {
   });
 
   it('proceeds on an uncapped path: no org cap, no channel cap', async () => {
-    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(null));
+    findLedgerRow.mockResolvedValue(ledgerRowInOrg());
+    capOrg(null);
     await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
     await expect(
       assertModelPricedForUsdCap(UNPRICED, { channelCapCents: null })
@@ -141,11 +160,48 @@ describe('assertModelPricedForUsdCap', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('proceeds when there is no ledger row (a channel task never reaches the org ledger)', async () => {
+  it('proceeds for a channel task whose channel has no cap and whose run no org bills', async () => {
     findChannel.mockResolvedValue({ monthlyBudgetUsdCents: null } as never);
     await expect(
       assertModelPricedForUsdCap(UNPRICED, { channelId: 'chan-1' })
     ).resolves.toBeUndefined();
+    expect(findOrg).not.toHaveBeenCalled();
+  });
+
+  it('refuses a PRD-shaped run (no ledger row, request connection in a capped org)', async () => {
+    findRun.mockResolvedValue(runViaRequestConnection());
+    capOrg(100_000);
+    const err = await refusal(assertModelPricedForUsdCap(UNPRICED));
+    expect(err.type).toBe(MODEL_UNPRICED);
+    expect(err.message).toContain('organization');
+    expect(findOrg).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'org-1' } }));
+  });
+
+  it('refuses a code-route channel task billed through its connection, with no channel cap', async () => {
+    findRun.mockResolvedValue(runViaRequestConnection());
+    findChannel.mockResolvedValue({ monthlyBudgetUsdCents: null } as never);
+    capOrg(100_000);
+    const err = await refusal(assertModelPricedForUsdCap(UNPRICED, { channelId: 'chan-1' }));
+    expect(err.type).toBe(MODEL_UNPRICED);
+    expect(err.message).toContain('organization');
+  });
+
+  it('proceeds for a connection-placed run whose org has no cap, or whose team has no org', async () => {
+    findRun.mockResolvedValue(runViaRequestConnection());
+    capOrg(null);
+    await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
+    findOrg.mockClear();
+    findRun.mockResolvedValue(runViaRequestConnection(null));
+    await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
+    expect(findOrg).not.toHaveBeenCalled();
+  });
+
+  it('lets the request connection decide over the ledger row, as billing does', async () => {
+    findRun.mockResolvedValue(runViaRequestConnection(null));
+    findLedgerRow.mockResolvedValue(ledgerRowInOrg('org-2'));
+    capOrg(100_000);
+    await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
+    expect(findOrg).not.toHaveBeenCalled();
   });
 
   it('refuses a runless call whose spend owner is an organization with a USD cap', async () => {
@@ -168,9 +224,9 @@ describe('assertModelPricedForUsdCap', () => {
     await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
   });
 
-  it('does not consult the spend owner for a run with no ledger row', async () => {
+  it('does not consult the spend owner for a run that exists', async () => {
     currentSpendOwnerMock.mockResolvedValue({ orgId: 'org-1' });
-    findOrg.mockResolvedValue({ monthlyBudgetUsdCents: 100_000 } as never);
+    capOrg(100_000);
     await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
     expect(currentSpendOwnerMock).not.toHaveBeenCalled();
   });
@@ -186,7 +242,8 @@ describe('assertModelPricedForUsdCap', () => {
 describe('assertRolePricedForUsdCap', () => {
   it('prices the role the way the ledger will, and refuses under an org cap', async () => {
     getModelSpecMock.mockResolvedValue(UNPRICED);
-    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(100_000));
+    findLedgerRow.mockResolvedValue(ledgerRowInOrg());
+    capOrg(100_000);
     const err = await refusal(assertRolePricedForUsdCap('implementer'));
     expect(getModelSpecMock).toHaveBeenCalledWith('implementer');
     expect(err.type).toBe(MODEL_UNPRICED);
@@ -195,7 +252,8 @@ describe('assertRolePricedForUsdCap', () => {
 
   it('proceeds under an uncapped organization', async () => {
     getModelSpecMock.mockResolvedValue(UNPRICED);
-    findLedgerRow.mockResolvedValue(ledgerRowWithOrgCap(null));
+    findLedgerRow.mockResolvedValue(ledgerRowInOrg());
+    capOrg(null);
     await expect(assertRolePricedForUsdCap('implementer')).resolves.toBeUndefined();
   });
 });

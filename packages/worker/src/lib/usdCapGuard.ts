@@ -3,6 +3,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { currentWorkflowId } from './activityContext.js';
 import { getModelPrice } from './costTracking.js';
 import { getModelSpec } from './models.js';
+import { resolveBilledOrg } from './orgBudgetGuard.js';
 import { currentSpendOwner } from './spendOwner.js';
 
 /** The `ApplicationFailure` type of a refused call; the run viewer keys on it. */
@@ -28,7 +29,8 @@ const CAP_LABEL: Record<UsdCapKind, string> = {
  *
  * The USD-denominated caps are the channel monthly budget (held and settled by
  * the channel passes, accrued by `finalizeChannelTaskRun`) and the organization
- * monthly budget (accrued from the run ledger at finalize, gated at launch).
+ * monthly budget (accrued at finalize along `billedOrgId`, gated at launch and
+ * before each call).
  * The token tier budgets count tokens, so they bind at any price and are not
  * consulted here. A run's own `costUsdAccrued` is a display figure with no cap.
  */
@@ -50,40 +52,23 @@ async function findUsdCap(scope: {
     }
   }
 
-  // The org cap counts a run through its ledger row's repository — the same
-  // path `finalizeWorkflowRun` accrues `OrgMonthlyUsage` along — and a runless
-  // workflow through the owner its trace rows are stamped with
-  // (`orgMonthSpend`'s runless spend). A run with no ledger row (a channel
-  // task) reaches neither, so the org cap is not at stake for it.
+  // The org cap counts a run through the org billing attributes it to
+  // (`resolveBilledOrg`, the rule the mid-run guard caps by): the request's
+  // connection, else the run's own, else the ledger row's repository. A PRD run
+  // and a code-route channel task bill through a connection, so they are capped
+  // here too. A workflow with neither run nor repository-bearing ledger row is
+  // counted through the owner its trace rows are stamped with
+  // (`orgMonthSpend`'s runless spend).
   let workflowId: string;
   try {
     workflowId = currentWorkflowId();
   } catch {
     return null; // Outside an activity: no run, no ledger row.
   }
-  const row = await prisma.activeWorkflow.findFirst({
-    select: {
-      repository: {
-        select: { team: { select: { organization: { select: { monthlyBudgetUsdCents: true } } } } },
-      },
-    },
-    where: { temporalWorkflowId: workflowId },
-  });
-  if (row) {
-    return row.repository?.team?.organization?.monthlyBudgetUsdCents != null
-      ? 'organization'
-      : null;
-  }
-  const run = await prisma.workflowRun.findUnique({
-    select: { id: true },
-    where: { workflowId },
-  });
-  if (run) {
-    return null;
-  }
-  const { orgId } = await currentSpendOwner();
+  const resolved = await resolveBilledOrg(workflowId);
+  const orgId = resolved.stable ? resolved.orgId : ((await currentSpendOwner()).orgId ?? null);
   if (!orgId) {
-    return null; // No owner: the spend is stamped with no org, outside every cap.
+    return null; // No org bills this call: it is outside every org cap.
   }
   const org = await prisma.organization.findUnique({
     select: { monthlyBudgetUsdCents: true },
