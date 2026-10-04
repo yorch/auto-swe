@@ -236,14 +236,24 @@ export interface SecurityEvent {
   workRequestId: string | null;
 }
 
-export function useSecurityEvents(params: {
-  limit: number;
-  offset: number;
-  type?: SecurityEventType;
-}) {
+export interface SecurityEventWindow {
+  /** Inclusive start and exclusive end, as ISO instants. */
+  since?: string;
+  until?: string;
+}
+
+export function useSecurityEvents(
+  params: SecurityEventWindow & { limit: number; offset: number; type?: SecurityEventType }
+) {
   const qs = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
   if (params.type) {
     qs.set('type', params.type);
+  }
+  if (params.since) {
+    qs.set('since', params.since);
+  }
+  if (params.until) {
+    qs.set('until', params.until);
   }
   return useQuery({
     placeholderData: keepPreviousData,
@@ -256,18 +266,32 @@ export function useSecurityEvents(params: {
   });
 }
 
-/** Per-type totals across every security event, independent of the page shown. */
-export function useSecurityEventSummary() {
+export interface SecurityEventSummary {
+  /** Per-type counts in the window. */
+  counts: Record<SecurityEventType, number>;
+  /** The same counts for the window of equal length just before it; absent without a window. */
+  previous: Record<SecurityEventType, number> | null;
+}
+
+/** Per-type totals for a window (or all time), independent of the page shown. */
+export function useSecurityEventSummary(window: SecurityEventWindow = {}) {
+  const qs = new URLSearchParams();
+  if (window.since && window.until) {
+    qs.set('since', window.since);
+    qs.set('until', window.until);
+  }
   return useQuery({
+    placeholderData: keepPreviousData,
     queryFn: () =>
       api
-        .get<{ data: Record<SecurityEventType, number> }>(
-          '/api/v1/platform/security-events/summary'
-        )
-        .then((r) => r.data),
-    queryKey: ['security-events', 'summary'],
-    // Seven counts over all of agent_traces: refresh rarely, and on focus
-    // only once stale (the default), not every minute per open tab.
+        .get<{
+          data: Record<SecurityEventType, number>;
+          previous?: Record<SecurityEventType, number>;
+        }>(`/api/v1/platform/security-events/summary?${qs}`)
+        .then((r): SecurityEventSummary => ({ counts: r.data, previous: r.previous ?? null })),
+    queryKey: ['security-events', 'summary', window.since ?? null, window.until ?? null],
+    // Seven counts over all of agent_traces, twice with a window: refresh rarely,
+    // and on focus only once stale (the default), not every minute per open tab.
     refetchInterval: 5 * 60_000,
     staleTime: 5 * 60_000,
   });

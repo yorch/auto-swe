@@ -53,3 +53,24 @@ describe('SecurityEventList', () => {
     expect(screen.getAllByText(/curl -T/).length).toBeGreaterThan(before);
   });
 });
+
+describe('SecurityEventList rows', () => {
+  it('is only a toggle when the event has detail, and shows the absolute time on hover', () => {
+    const noDetail: SecurityEvent = {
+      ...base,
+      eventType: 'LLM_SUSPICIOUS',
+      id: 'e2',
+      inputJson: null,
+      outputJson: { warnings: [] },
+    };
+    render(<SecurityEventList events={[noDetail]} />);
+    expect(screen.queryByRole('button')).toBeNull();
+    const time = document.querySelector('time');
+    expect(time?.getAttribute('title')).toMatch(/2026/);
+  });
+
+  it('names an event type in words, not enum text', () => {
+    render(<SecurityEventList events={[base]} />);
+    expect(screen.getByText('Command blocked')).toBeTruthy();
+  });
+});

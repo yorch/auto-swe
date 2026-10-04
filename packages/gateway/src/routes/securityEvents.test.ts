@@ -164,3 +164,52 @@ describe('GET /security-events pagination', () => {
     expect(JSON.parse(res.payload).meta).toEqual({ limit: 50, offset: 100, total: 240 });
   });
 });
+
+describe('security events window', () => {
+  const since = '2026-09-01T00:00:00.000Z';
+  const until = '2026-09-08T00:00:00.000Z';
+
+  it('bounds the list to the window', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/security-events?since=${since}&until=${until}`,
+    });
+    expect(res.statusCode).toBe(200);
+    const where = prisma.agentTrace.findMany.mock.calls[0][0].where;
+    expect(where.createdAt).toEqual({ gte: new Date(since), lt: new Date(until) });
+    expect(prisma.agentTrace.count.mock.calls[0][0].where.createdAt).toEqual(where.createdAt);
+  });
+
+  it('counts the window and the equal-length window before it', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agentTrace.count.mockImplementation(
+      async ({ where }: { where: { createdAt?: { gte: Date } } }) =>
+        where.createdAt?.gte.toISOString() === since ? 5 : 2
+    );
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/security-events/summary?since=${since}&until=${until}`,
+    });
+    const body = JSON.parse(res.payload);
+    expect(body.data.SHELL_BLOCK).toBe(5);
+    expect(body.previous.SHELL_BLOCK).toBe(2);
+    const prevWhere = prisma.agentTrace.count.mock.calls.at(-1)?.[0].where.createdAt;
+    expect(prevWhere).toEqual({
+      gte: new Date('2026-08-25T00:00:00.000Z'),
+      lt: new Date(since),
+    });
+  });
+
+  it('rejects a window that is not an instant', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/security-events?since=yesterday',
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});

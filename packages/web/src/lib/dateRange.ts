@@ -73,3 +73,20 @@ export function rangeBounds(range: DateRange, now = new Date()): { since: string
 export function describeRange(range: DateRange): string {
   return range.kind === 'preset' ? `Last ${range.days} days` : `${range.from} to ${range.to} (UTC)`;
 }
+
+/**
+ * Whole-UTC-day bounds of a range, as ISO instants (start inclusive, end exclusive).
+ * A preset ends at the close of today, so the value is stable all day and a query
+ * keyed on it is not refetched on every render.
+ */
+export function dayBounds(range: DateRange, now = new Date()): { since: string; until: string } {
+  if (range.kind === 'custom') {
+    return rangeBounds(range);
+  }
+  const todayStart = Date.parse(`${utcDay(now)}T00:00:00.000Z`);
+  const until = todayStart + DAY_MS;
+  return {
+    since: new Date(until - range.days * DAY_MS).toISOString(),
+    until: new Date(until).toISOString(),
+  };
+}

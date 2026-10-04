@@ -2,50 +2,42 @@
 
 import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/securityTraceTags';
 import Link from 'next/link';
-import { useId, useState } from 'react';
+import { type ReactNode, useId, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { SecurityEvent, SecurityEventType } from '@/hooks/useAdmin';
-import { formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
 
-// ── Badge ────────────────────────────────────────────────────────────────────
+// ── Labels ───────────────────────────────────────────────────────────────────
 
-const EVENT_STYLE: Record<SecurityEventType, { tone: BadgeTone; dot: string; label: string }> = {
-  CHANNEL_SUSPICIOUS: {
-    dot: 'bg-violet-400',
-    label: 'Channel Suspicious',
-    tone: 'violet',
-  },
-  CODE_SECURITY: {
-    dot: 'bg-dust-400',
-    label: 'Code Security',
-    tone: 'dust',
-  },
-  CONTENT_SECURITY_BLOCK: {
-    dot: 'bg-brick-400',
-    label: 'Content Block',
-    tone: 'brick',
-  },
-  CONTENT_SECURITY_WARN: {
-    dot: 'bg-amber-400',
-    label: 'Content Warn',
-    tone: 'amber',
-  },
-  FILE_BLOCK: { dot: 'bg-brick-400', label: 'File Block', tone: 'brick' },
-  LLM_SUSPICIOUS: {
-    dot: 'bg-violet-400',
-    label: 'LLM Suspicious',
-    tone: 'violet',
-  },
-  SHELL_BLOCK: {
-    dot: 'bg-brick-400',
-    label: 'Shell Block',
-    tone: 'brick',
-  },
+/** Whether a scanner stopped the action or only flagged it. */
+export type SecurityEventGroup = 'blocked' | 'advisory';
+
+/**
+ * The one place an event type gets its name, colour and group — the filter, the
+ * badge and the summary all read it, so they cannot drift apart.
+ */
+export const SECURITY_EVENT_META: Record<
+  SecurityEventType,
+  { group: SecurityEventGroup; label: string; tone: BadgeTone }
+> = {
+  CHANNEL_SUSPICIOUS: { group: 'advisory', label: 'Suspicious channel input', tone: 'violet' },
+  CODE_SECURITY: { group: 'advisory', label: 'Code finding', tone: 'dust' },
+  CONTENT_SECURITY_BLOCK: { group: 'blocked', label: 'Content blocked', tone: 'brick' },
+  CONTENT_SECURITY_WARN: { group: 'advisory', label: 'Content warning', tone: 'amber' },
+  FILE_BLOCK: { group: 'blocked', label: 'File write blocked', tone: 'brick' },
+  LLM_SUSPICIOUS: { group: 'advisory', label: 'Suspicious model output', tone: 'violet' },
+  SHELL_BLOCK: { group: 'blocked', label: 'Command blocked', tone: 'brick' },
 };
 
+export const SECURITY_EVENT_TYPES = Object.keys(SECURITY_EVENT_META) as SecurityEventType[];
+
+export function securityEventLabel(type: SecurityEventType): string {
+  return SECURITY_EVENT_META[type].label;
+}
+
 export function SecurityEventBadge({ type }: { type: SecurityEventType }) {
-  const { tone, label } = EVENT_STYLE[type];
+  const { tone, label } = SECURITY_EVENT_META[type];
   return <Badge tone={tone}>{label}</Badge>;
 }
 
@@ -110,7 +102,8 @@ function extractDetail(event: SecurityEvent): { primary: string; secondary?: str
 
 // ── Expanded detail ──────────────────────────────────────────────────────────
 
-function ExpandedDetail({ event }: { event: SecurityEvent }) {
+/** The expanded view of an event, or null when it has nothing beyond its summary line. */
+function expandedDetail(event: SecurityEvent): ReactNode {
   const output = event.outputJson as Record<string, unknown> | null;
   const input = event.inputJson as Record<string, unknown> | null;
 
@@ -125,14 +118,14 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
       <ul className="space-y-1 mt-1.5">
         {findings.map((f) => (
           <li
-            className="font-mono text-[10px] text-paper-300 flex gap-2"
+            className="flex flex-wrap gap-x-2 font-mono text-[10px] text-paper-300"
             key={`${f.file}:${f.line}:${f.label}`}
           >
             <span className="text-dust-400 shrink-0">{f.label}</span>
             <span className="text-paper-400">
               {f.file}:{f.line}
             </span>
-            <code className="text-paper-500 truncate">{f.match}</code>
+            <code className="break-all text-paper-500">{f.match}</code>
           </li>
         ))}
       </ul>
@@ -141,10 +134,13 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
 
   if (event.eventType === 'LLM_SUSPICIOUS' || event.eventType === 'CHANNEL_SUSPICIOUS') {
     const warnings = (output?.warnings as string[]) ?? [];
+    if (warnings.length === 0) {
+      return null;
+    }
     return (
       <ul className="mt-1.5 space-y-0.5">
         {warnings.map((w) => (
-          <li className="font-mono text-[10px] text-violet-400" key={w}>
+          <li className="break-words font-mono text-[10px] text-violet-400" key={w}>
             {w}
           </li>
         ))}
@@ -164,7 +160,7 @@ function ExpandedDetail({ event }: { event: SecurityEvent }) {
     return (
       <ul className="mt-1.5 space-y-0.5">
         {relevantLines.map((l) => (
-          <li className="font-mono text-[10px] text-paper-300 truncate" key={l}>
+          <li className="break-words font-mono text-[10px] text-paper-300" key={l}>
             {l.trim()}
           </li>
         ))}
@@ -193,34 +189,45 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
   const [expanded, setExpanded] = useState(false);
   const detailId = useId();
   const { primary, secondary } = extractDetail(event);
-  const { dot } = EVENT_STYLE[event.eventType];
+  const detail = expandedDetail(event);
+  const summary = (
+    <div className="flex items-center gap-2 text-xs">
+      <SecurityEventBadge type={event.eventType} />
+      <span className="font-mono text-paper-200 truncate">{primary}</span>
+      {secondary && (
+        <span className="font-mono text-paper-500 text-[10px] truncate hidden sm:block">
+          {secondary}
+        </span>
+      )}
+      <time
+        className="ml-auto text-[10px] text-paper-500 shrink-0"
+        dateTime={event.createdAt}
+        title={formatDate(event.createdAt, { showSeconds: true })}
+      >
+        {formatRelativeTime(event.createdAt)}
+      </time>
+    </div>
+  );
 
   return (
     <li>
-      <button
-        aria-controls={detailId}
-        aria-expanded={expanded}
-        className="w-full text-left rounded hover:bg-ink-800 px-2 py-1.5 transition-colors"
-        onClick={() => setExpanded((e) => !e)}
-        type="button"
-      >
-        <div className="flex items-center gap-2 text-xs">
-          <span aria-hidden className={`inline-block w-2 h-2 rounded-sm shrink-0 ${dot}`} />
-          <SecurityEventBadge type={event.eventType} />
-          <span className="font-mono text-paper-200 truncate">{primary}</span>
-          {secondary && (
-            <span className="font-mono text-paper-500 text-[10px] truncate hidden sm:block">
-              {secondary}
-            </span>
-          )}
-          <span className="ml-auto text-[10px] text-paper-500 shrink-0">
-            {formatRelativeTime(event.createdAt)}
-          </span>
-        </div>
-      </button>
+      {/* Only a row with more to show is a button: the others have nothing to toggle. */}
+      {detail ? (
+        <button
+          aria-controls={detailId}
+          aria-expanded={expanded}
+          className="w-full text-left rounded hover:bg-ink-800 px-2 py-1.5 transition-colors"
+          onClick={() => setExpanded((e) => !e)}
+          type="button"
+        >
+          {summary}
+        </button>
+      ) : (
+        <div className="px-2 py-1.5">{summary}</div>
+      )}
       {/* Outside the button: a link cannot nest inside one. */}
       {showRunLink && (
-        <div className="flex items-center gap-2 px-2 pl-6 text-[10px] font-mono">
+        <div className="flex flex-wrap items-center gap-2 px-2 text-[10px] font-mono">
           {event.runId ? (
             <Link className="text-ember-400 hover:underline" href={`/runs/${event.runId}`}>
               {event.externalTicketId ?? 'view run'}
@@ -237,9 +244,11 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
       )}
       {/* A sibling of the toggle, not inside it: content in a <button> is not
           selectable, and block content there is invalid. */}
-      <div className="px-2 pl-6" hidden={!expanded} id={detailId}>
-        {expanded && <ExpandedDetail event={event} />}
-      </div>
+      {detail && (
+        <div className="px-2" hidden={!expanded} id={detailId}>
+          {expanded && detail}
+        </div>
+      )}
     </li>
   );
 }
