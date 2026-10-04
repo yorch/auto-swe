@@ -55,6 +55,7 @@ function parseList(draft: string): string[] {
 export function SettingRow({
   setting,
   scope,
+  scopeKey,
   canWriteHere,
   onSave,
   onClear,
@@ -63,6 +64,12 @@ export function SettingRow({
   setting: SettingView;
   /// The scope currently being viewed, used only to word the disabled reason.
   scope: SettingScope;
+  /// Identity of the whole selection being viewed (scope plus team), which
+  /// `scope` alone cannot give: two teams are the same `TEAM`. A change drops
+  /// the draft even when the inherited value is equal across the two views,
+  /// so Save can never write an override the operator did not mean at the
+  /// new scope.
+  scopeKey: string;
   /// The server's verdict on whether this actor may write this key at this
   /// scope — role floor, allowed scopes and grants together. The row stays
   /// visible when false, because seeing the inherited value is the point of
@@ -75,12 +82,14 @@ export function SettingRow({
   const [draft, setDraft] = useState<string>(() => formatValue(setting.value));
   const [boolDraft, setBoolDraft] = useState<boolean>(() => setting.value === true);
 
-  // Re-seed from the server whenever the resolved value changes — after a save,
-  // or after switching scope — so the field never shows a stale edit.
+  // Re-seed from the server whenever the resolved value changes (after a save)
+  // or the viewed scope does, so the field never shows a stale edit. The scope
+  // is a dependency of its own because the value can be identical in both views.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `scopeKey` is a reset trigger, not a value read in the body
   useEffect(() => {
     setDraft(formatValue(setting.value));
     setBoolDraft(setting.value === true);
-  }, [setting.value]);
+  }, [setting.value, scopeKey]);
 
   const isBoolean = typeof setting.defaultValue === 'boolean';
   const isNumber = typeof setting.defaultValue === 'number';
