@@ -509,13 +509,13 @@ The warnings of the save-time and install-time scans are stored on the `SkillRev
 
 `Skill.promptText` and `description` are the live copy. Every change to either also writes an immutable `SkillRevision` (`skill_revisions`, unique on `(skillId, revision)`) and sets `Skill.currentRevision` to its number, in one statement. The paths that do so are: skill create (revision 1), skill edit (when the text or the description changes — a rename or an `isActive` toggle does not), the built-in sync when shipped text changes, and bundle install when a skill's text or description changes. A revision stores the text, the description, a content hash, the scan warnings, the author, and — for content imported from a source — provenance (`sourceSha`, `sourcePath`, `referenceFiles`). Revisions are never updated.
 
-An edit is guarded on the revision number the editor read, so two concurrent edits cannot both produce revision N+1: the second gets `409 SKILL_CHANGED`. Startup sync gives any skill that has no revision row the row for the revision it already names.
+An edit is guarded on the revision number it read, so two concurrent edits cannot both produce revision N+1: the second gets `409 SKILL_CHANGED`. `PUT /api/v1/platform/skills/:id` also accepts `expectedRevision`, the revision the editor had on screen; when it is present and the skill has moved on, the edit is refused with the same 409 before anything is written. A guarded write that finds the skill deleted answers 404. A built-in sync that loses the race to another replica booting alongside it skips the skill, since that replica wrote the same shipped text. Startup sync gives any skill that has no revision row the row for the revision it already names.
 
-**A run pins the skill text it started with.** `createWorkflowRun` records `WorkflowRun.skillRevisions`, a `{ skillId: revision }` map, beside `agentVersions`. It covers every skill referenced by the GLOBAL agents at the versions the run pinned (a canary's candidate version included), and by the active agents the cascade can reach at the run's own template, team and organization. `currentRequestContext()` returns the map on `ResolveCtx.skillRevisions`; `resolveAgent` and `loadAgentSkills` then read a pinned skill's text and description from its `SkillRevision`, so editing a skill mid-run changes nothing a retry or a replay sees. Agent-run activities carry the pin into their own context the same way they carry `agentVersions`. The map is part of the `resolveAgent` cache key. The pin is activity-side data: nothing in the workflow isolate reads it, so replay histories are unaffected.
+**A run pins the skill text it started with.** `createWorkflowRun` records `WorkflowRun.skillRevisions`, a `{ skillId: currentRevision }` map, beside `agentVersions`. It covers every skill visible to the run's tenant at that moment — GLOBAL, plus its team's and organization's own — keyed by skill id, so it holds whichever agent later references the skill: an explicit `key@version` agent ref, a CHANNEL-scope agent, or a skill attached to an agent after the run began. `currentRequestContext()` returns the map on `ResolveCtx.skillRevisions`; `resolveAgent` and `loadAgentSkills` then read a pinned skill's text and description from its `SkillRevision`, so a skill edited after the run began is not read at its new text by a retry or a replay of that run. Agent-run activities carry the pin into their own context the same way they carry `agentVersions`, and the map is part of the `resolveAgent` cache key. The pin is activity-side data: nothing in the workflow isolate reads it, so replay histories are unaffected.
 
-What is deliberately not pinned: `isActive` is read live, so disabling a harmful skill still takes effect inside a run already under way; and `isVerified` describes the current text, so a pinned revision older than the current one is never reported as verified.
+What is deliberately not pinned: `isActive` is read live, so disabling a harmful skill still takes effect inside a run already under way; and `isVerified` describes the current text, so a pinned revision older than the current one is never reported as verified. A pin whose revision row is missing resolves the live text, with a warning in the activity log and a `skill.pinned_revision_missing` event on the run's trace.
 
-**Verification.** `POST /api/v1/platform/skills/:id/verify` (ADMIN, audited) sets `isVerified` on the skill's current revision. It is the only place a custom skill becomes verified, and any later content edit clears it. The call is guarded on the revision the admin read, so text edited in between is not verified unseen.
+**Verification.** `POST /api/v1/platform/skills/:id/verify` (ADMIN, audited) takes `{ "revision": n }`, the revision the admin read, and sets `isVerified` only if that is still the skill's current revision; otherwise it answers `409 SKILL_CHANGED` and verifies nothing. A body without `revision` is a 400. It is the only place a custom skill becomes verified, and any later edit that cuts a revision — a description-only edit included — clears it; a rename or an `isActive` toggle does not.
 
 ---
 
@@ -754,10 +754,11 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
-- **Skill pins cover the agents known at run start.** A skill attached to an agent after the run began,
-  and the skills of a CHANNEL-scope agent (the channel is not known when the run's pin is taken), have
-  no entry and resolve their current revision. A run created before the `skillRevisions` column
-  existed has no pin at all. Eval-harness cases are not runs and always read current text.
+- **A skill created after a run starts is not in its pin.** It resolves its current revision, which is
+  also its only one. An epic's children are runs of their own and pin at their own start, so an edit
+  between the epic's start and a child's start reaches that child. A run created before the
+  `skillRevisions` column existed has no pin, and neither does a channel-resident run, which does not
+  go through `createWorkflowRun`. Eval-harness cases are not runs and always read current text.
 - **A skill's `isActive` flag is not pinned.** It is read live on purpose, so a pinned run cannot keep
   using a skill an admin has disabled; the cost is that disabling and re-enabling mid-run changes
   which skills a retry sees.
