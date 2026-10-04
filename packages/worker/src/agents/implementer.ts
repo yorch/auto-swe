@@ -12,6 +12,7 @@ import {
   type ResolvedSkill,
 } from '../lib/config/agentSkills.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import { skillMenuLine, skillPromptBlock } from '../lib/config/skillPrompt.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getModel, type LanguageModel } from '../lib/models.js';
 import { isMcpToolEnabled, loadMcpTools, type McpToolRecord } from './mcpTools.js';
@@ -66,16 +67,7 @@ export interface ImplementerAgentOptions {
   resolveCtx?: ResolveCtx;
 }
 
-/**
- * One entry of the skill menu. An imported skill is prefixed with where its text
- * came from (`[external: owner/repo@sha7]`) so the agent weighs it as third-party.
- */
-export function skillMenuLine(
-  s: Pick<ResolvedSkill, 'name' | 'description' | 'provenance'>
-): string {
-  const tag = s.provenance ? `[${s.provenance}] ` : '';
-  return `- **${s.name}**: ${tag}${s.description || s.name}`;
-}
+export { skillMenuLine };
 
 export async function createImplementerAgent(
   workspace: Workspace,
@@ -134,7 +126,7 @@ export async function createImplementerAgent(
         });
         return result;
       }
-      const result = { promptText: skill.promptText };
+      const result = { promptText: skillPromptBlock(skill) };
       tracer?.addToolCall({
         durationMs: Date.now() - start,
         inputJson: { name },

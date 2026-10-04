@@ -5,6 +5,7 @@ import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec } from '../lib/models.js';
@@ -37,10 +38,7 @@ export type SecurityScanResult = z.infer<typeof SecurityScanResultSchema>;
 export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityScanResult> {
   const activityCtx = await currentRequestContext();
   const skills = await loadAgentSkills('securityReview', activityCtx);
-  const skillSuffix = skills
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
+  const skillSuffix = joinSkillPrompts(skills);
   const instructions = skillSuffix
     ? `${SECURITY_REVIEW_PROMPT}\n\n${skillSuffix}`
     : SECURITY_REVIEW_PROMPT;

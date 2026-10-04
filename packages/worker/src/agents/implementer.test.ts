@@ -323,3 +323,29 @@ describe('skill menu provenance', () => {
     );
   });
 });
+
+describe('loadSkill provenance', () => {
+  it('returns imported text labelled as third-party, and authored text as it is', async () => {
+    vi.mocked(loadAgentSkills).mockResolvedValue([
+      {
+        description: 'd',
+        name: 'ext',
+        promptText: 'IMPORTED',
+        provenance: 'external: acme/skills@0123456',
+        sortOrder: 0,
+      },
+      { description: 'd', name: 'own', promptText: 'AUTHORED', sortOrder: 1 },
+    ] as never);
+    const built = await buildImplementerForActivity(workspace, new AgentTracer(), { teamId: 't' });
+    const tools = (
+      built.agent as unknown as {
+        tools: Record<string, { execute: (a: { name: string }) => Promise<unknown> }>;
+      }
+    ).tools;
+
+    expect(await tools.loadSkill?.execute({ name: 'ext' })).toEqual({
+      promptText: '[external: acme/skills@0123456 — third-party text]\nIMPORTED',
+    });
+    expect(await tools.loadSkill?.execute({ name: 'own' })).toEqual({ promptText: 'AUTHORED' });
+  });
+});

@@ -8,6 +8,7 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 
 /**
  * Does `from` already depend on `to`, directly or transitively, under `graph`?
@@ -147,10 +148,7 @@ export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEn
   const tracer = new AgentTracer();
   const activityCtx = await currentRequestContext();
   const skills = await loadAgentSkills('planner', activityCtx);
-  const skillSuffix = skills
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
+  const skillSuffix = joinSkillPrompts(skills);
 
   try {
     const plannedRepos = await decomposeEpic(

@@ -33,6 +33,7 @@ import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
@@ -56,10 +57,7 @@ export async function planDecomposition(
   const tracer = new AgentTracer();
   const activityCtx = await currentRequestContext();
   const skills = await loadAgentSkills('decomposer', activityCtx);
-  const skillSuffix = skills
-    .map((s) => s.promptText)
-    .filter(Boolean)
-    .join('\n\n');
+  const skillSuffix = joinSkillPrompts(skills);
 
   try {
     const result = await decomposerPlan(
