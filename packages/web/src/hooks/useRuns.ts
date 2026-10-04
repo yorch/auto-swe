@@ -104,7 +104,7 @@ export function mergeTraces(
  */
 export function useWorkflowRun(id: string, includeTraces = true, fullTraces = false) {
   const qc = useQueryClient();
-  const query = fullTraces ? '?fullTraces=true' : includeTraces ? '?includeTraces=true' : '';
+  const param = fullTraces ? 'fullTraces=true' : includeTraces ? 'includeTraces=true' : '';
   const queryKey = ['workflow-run', id, includeTraces, fullTraces];
   return useQuery<LiveWorkflowRunDetail>({
     enabled: !!id,
@@ -113,17 +113,23 @@ export function useWorkflowRun(id: string, includeTraces = true, fullTraces = fa
     placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === id ? prev : undefined),
     queryFn: async () => {
       const held = qc.getQueryData<LiveWorkflowRunDetail>(queryKey);
+      // A run's spec is fixed when it starts, so once held it is not fetched
+      // again: the read skips it and the held copy is carried over.
+      const withHeldSpec = (run: WorkflowRunDetail): WorkflowRunDetail =>
+        held ? { ...run, specSnapshot: held.specSnapshot } : run;
+      const runUrl = (extra = '') => {
+        const qs = [extra, held ? 'includeSpec=false' : ''].filter(Boolean).join('&');
+        return `/api/v1/workflow-runs/${id}${qs ? `?${qs}` : ''}`;
+      };
       const readAll = () =>
-        api
-          .get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}${query}`)
-          .then((r) => r.data);
+        api.get<{ data: WorkflowRunDetail }>(runUrl(param)).then((r) => withHeldSpec(r.data));
       if (fullTraces || !includeTraces || !held) {
         return readAll();
       }
       const heldTraces = held.traces ?? [];
       const since = traceTailCursor(heldTraces, held.tracesReadAt);
       const [run, tail] = await Promise.all([
-        api.get<{ data: WorkflowRunDetail }>(`/api/v1/workflow-runs/${id}`),
+        api.get<{ data: WorkflowRunDetail }>(runUrl()),
         api.get<{ data: AgentTraceRecord[]; serverTime: string; total: number }>(
           `/api/v1/workflow-runs/${id}/traces${since ? `?since=${encodeURIComponent(since)}` : ''}`
         ),
@@ -137,7 +143,7 @@ export function useWorkflowRun(id: string, includeTraces = true, fullTraces = fa
       if (traces.length !== tail.total || justFinished) {
         return { ...(await readAll()), tracesReadAt };
       }
-      return { ...run.data, traces, tracesReadAt };
+      return { ...withHeldSpec(run.data), traces, tracesReadAt };
     },
     queryKey,
     refetchInterval: (q) => {

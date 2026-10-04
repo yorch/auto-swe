@@ -4,6 +4,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
+import { auditLog } from '../lib/activityLog.js';
 import { type AgentTracer, redactString } from '../lib/agentTracer.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
@@ -204,7 +205,7 @@ export function buildWorkspaceTools(
     execute: async ({ command }) => {
       // Redact likely tokens/secrets before they reach stdout/logs.
       const auditCommand = redactString(command);
-      console.log(
+      auditLog(
         `[bash:audit] container=${workspace.containerId} cmd=${JSON.stringify(auditCommand)}`
       );
       const start = Date.now();

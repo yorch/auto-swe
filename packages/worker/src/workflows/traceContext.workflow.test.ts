@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   TRACE_CONTEXT_HEADER as CLIENT_HEADER,
+  TRACE_SIGNAL_HEADER as CLIENT_SIGNAL_HEADER,
   traceContextClientInterceptor,
 } from '@auto-swe/shared/lib/temporalTracing';
 import { trace } from '@opentelemetry/api';
@@ -19,7 +20,10 @@ import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, type TestContext } from 'vitest';
 import { activitySpanInterceptor } from '../lib/activitySpans.js';
-import { TRACE_CONTEXT_HEADER as WORKFLOW_HEADER } from './traceContextInterceptor.js';
+import {
+  TRACE_CONTEXT_HEADER as WORKFLOW_HEADER,
+  TRACE_SIGNAL_HEADER as WORKFLOW_SIGNAL_HEADER,
+} from './traceContextInterceptor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TASK_QUEUE = 'trace-context-test';
@@ -79,6 +83,7 @@ const activitySpans = () => exporter.getFinishedSpans().filter((s) => s.name ===
 describe('trace context propagation through a workflow', () => {
   it('uses one header name on both sides of the isolate', () => {
     expect(WORKFLOW_HEADER).toBe(CLIENT_HEADER);
+    expect(WORKFLOW_SIGNAL_HEADER).toBe(CLIENT_SIGNAL_HEADER);
   });
 
   it("parents every activity of the run, a child workflow's included, on the starter's span", async () => {
@@ -101,7 +106,7 @@ describe('trace context propagation through a workflow', () => {
     }
   }, 60_000);
 
-  it('gives each activity its own trace when the workflow was started outside any span', async () => {
+  it('puts every activity of a run started outside any span in one derived trace', async () => {
     await client.workflow.execute('TraceParentWorkflow', {
       taskQueue: TASK_QUEUE,
       workflowId: 'trace-parent-2',
@@ -109,9 +114,87 @@ describe('trace context propagation through a workflow', () => {
 
     const spans = activitySpans();
     expect(spans).toHaveLength(2);
-    expect(spans.every((s) => s.parentSpanContext === undefined)).toBe(true);
-    expect(new Set(spans.map((s) => s.spanContext().traceId)).size).toBe(2);
+    expect(new Set(spans.map((s) => s.spanContext().traceId)).size).toBe(1);
+    expect(spans[0]?.spanContext().traceId).toMatch(/^[0-9a-f]{32}$/);
+    // Not a root: the derived carrier names a parent span that is never exported.
+    const traceId = spans[0]?.spanContext().traceId as string;
+    for (const sp of spans) {
+      expect(sp.parentSpanContext?.spanId).toBe(traceId.slice(0, 16));
+    }
+
+    // A different run derives a different trace.
+    exporter.reset();
+    await client.workflow.execute('TraceParentWorkflow', {
+      taskQueue: TASK_QUEUE,
+      workflowId: 'trace-parent-2b',
+    });
+    expect(activitySpans()[0]?.spanContext().traceId).not.toBe(spans[0]?.spanContext().traceId);
   }, 60_000);
+
+  it('links activities scheduled after a signal to the signal sender, without re-parenting them', async () => {
+    const handle = await client.workflow.start('TraceSignalWorkflow', {
+      taskQueue: TASK_QUEUE,
+      workflowId: 'trace-signal-1',
+    });
+    const approval = await trace
+      .getTracer('test')
+      .startActiveSpan('POST /approve', async (span) => {
+        await handle.signal('poke');
+        span.end();
+        return span.spanContext();
+      });
+    await handle.result();
+
+    const [before, after] = activitySpans().sort(
+      (a, b) => a.startTime[0] - b.startTime[0] || a.startTime[1] - b.startTime[1]
+    );
+    expect(before?.links).toHaveLength(0);
+    expect(after?.links).toHaveLength(1);
+    expect(after?.links[0]?.context.spanId).toBe(approval.spanId);
+    expect(after?.links[0]?.context.traceId).toBe(approval.traceId);
+    expect(after?.spanContext().traceId).not.toBe(approval.traceId);
+
+    // The signal header and the derived carrier are headers too: the history
+    // replays with the interceptor and without it.
+    const history = await handle.fetchHistory();
+    for (const workerOptions of [
+      { workflowsPath },
+      { interceptors: { workflowModules: [interceptorPath] }, workflowsPath },
+    ]) {
+      await expect(
+        Worker.runReplayHistory(workerOptions, history, 'trace-signal-1')
+      ).resolves.toBeUndefined();
+    }
+  }, 60_000);
+
+  it("keeps a signal's link on the activities of a child workflow started after it", async () => {
+    const handle = await client.workflow.start('TraceSignalParentWorkflow', {
+      taskQueue: TASK_QUEUE,
+      workflowId: 'trace-signal-2',
+    });
+    const approval = await trace
+      .getTracer('test')
+      .startActiveSpan('POST /approve', async (span) => {
+        await handle.signal('poke');
+        span.end();
+        return span.spanContext();
+      });
+    await handle.result();
+
+    const [child] = activitySpans();
+    expect(child?.links).toHaveLength(1);
+    expect(child?.links[0]?.context.spanId).toBe(approval.spanId);
+  }, 60_000);
+
+  it('stamps signals only when the client propagates them', () => {
+    expect(traceContextClientInterceptor().signal).toBeTypeOf('function');
+    expect(traceContextClientInterceptor().startUpdate).toBeTypeOf('function');
+    const quiet = traceContextClientInterceptor({ propagateSignals: false });
+    expect(quiet.signal).toBeUndefined();
+    expect(quiet.startUpdate).toBeUndefined();
+    expect(quiet.startWithDetails).toBeTypeOf('function');
+    expect(quiet.signalWithStart).toBeTypeOf('function');
+  });
 
   it('replays a history that carries the header with or without the interceptor', async () => {
     await trace.getTracer('test').startActiveSpan('request', async (span) => {

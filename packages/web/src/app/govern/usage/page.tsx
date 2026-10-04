@@ -12,9 +12,12 @@ import { Select, type SelectOption } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { type UsageBucket, type UsageScope, usePlatformUsage, useUserOrgs } from '@/hooks/useAdmin';
-import { useHasRole } from '@/hooks/useHasRole';
-import { useLedTeamIds, useTeams } from '@/hooks/useTeams';
+import {
+  type UsageBucket,
+  type UsageScope,
+  usePlatformUsage,
+  useUsageScopes,
+} from '@/hooks/useAdmin';
 import { formatCost, formatCount, formatDuration, formatPercent, formatTokens } from '@/lib/utils';
 
 const WINDOW_OPTIONS = [7, 30, 90].map((days) => ({ label: `${days}d`, value: String(days) }));
@@ -26,29 +29,21 @@ function scopeOf(value: string): UsageScope {
 }
 
 /**
- * The scopes the caller may read, mirroring what the gateway enforces: an
- * ADMIN everything, anyone else the teams they lead and the organizations they
- * administer. `null` until the caller's teams are known.
+ * The scopes the caller may read, as the gateway reports them. `null` until
+ * they are known.
  */
 function useScopeOptions(): SelectOption[] | null {
-  const isAdmin = useHasRole('ADMIN');
-  const teams = useTeams();
-  const ledTeamIds = useLedTeamIds();
-  const orgs = useUserOrgs();
+  const scopes = useUsageScopes();
   return useMemo(() => {
-    if (!teams.data || (!isAdmin && ledTeamIds === null)) {
+    if (!scopes.data) {
       return null;
     }
     return [
-      ...(isAdmin ? [{ label: 'Whole platform', value: '' }] : []),
-      ...teams.data
-        .filter((t) => isAdmin || ledTeamIds?.has(t.id))
-        .map((t) => ({ label: `Team: ${t.name}`, value: `team:${t.id}` })),
-      ...(orgs.data ?? [])
-        .filter((o) => isAdmin || o.role === 'ORG_ADMIN')
-        .map((o) => ({ label: `Organization: ${o.name}`, value: `org:${o.id}` })),
+      ...(scopes.data.platform ? [{ label: 'Whole platform', value: '' }] : []),
+      ...scopes.data.teams.map((t) => ({ label: `Team: ${t.name}`, value: `team:${t.id}` })),
+      ...scopes.data.orgs.map((o) => ({ label: `Organization: ${o.name}`, value: `org:${o.id}` })),
     ];
-  }, [isAdmin, teams.data, ledTeamIds, orgs.data]);
+  }, [scopes.data]);
 }
 
 function errorRate(b: UsageBucket): number | null {
@@ -129,7 +124,7 @@ export default function UsagePage() {
   const scopeOptions = useScopeOptions();
   const [chosenScope, setChosenScope] = useState<string | null>(null);
   // Until the caller picks one, the first scope they may read: the whole
-  // platform for an ADMIN, their first team for a LEAD.
+  // platform for an ADMIN, their first team (or organization) otherwise.
   const scopeValue = chosenScope ?? scopeOptions?.[0]?.value ?? null;
   const { data, error, isError, isLoading } = usePlatformUsage(
     windowDays,
@@ -165,7 +160,7 @@ export default function UsagePage() {
       />
 
       {scopeOptions?.length === 0 && (
-        <EmptyState title="You lead no team, so there is no usage you can see." />
+        <EmptyState title="You lead no team or organization, so there is no usage you can see." />
       )}
 
       {/* A failed request has no data and is not loading: show the error, not a spinner. */}

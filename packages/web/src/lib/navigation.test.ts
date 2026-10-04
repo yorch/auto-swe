@@ -74,6 +74,19 @@ describe('visibleNavGroups', () => {
     expect(visibleNavGroups('LEAD').map((g) => g.label)).not.toContain('Studio');
   });
 
+  it('offers LLM usage by usage scope, not by platform role', () => {
+    const offered = (role: string, scoped?: boolean) =>
+      visibleNavGroups(role, scoped)
+        .flatMap((g) => g.items)
+        .some((i) => i.href === '/govern/usage');
+    expect(offered('ENGINEER')).toBe(false);
+    expect(offered('ENGINEER', true)).toBe(true);
+    // A LEAD who leads no team has no scope, so the page would bounce them.
+    expect(offered('LEAD')).toBe(false);
+    expect(offered('LEAD', true)).toBe(true);
+    expect(offered('ADMIN')).toBe(true);
+  });
+
   it('shows an ADMIN everything', () => {
     const count = visibleNavGroups('ADMIN').flatMap((g) => g.items).length;
     expect(count).toBe(NAV_ITEMS.length);

@@ -103,10 +103,61 @@ describe('runAgent tool-call rows against the real Mastra loop', () => {
     expect(r.text).toBe('done');
     const rows = addToolCall.mock.calls.map(([c]) => c);
     expect(rows).toEqual([
-      expect.objectContaining({ error: 'kaboom', outputJson: undefined, toolName: 'boom' }),
-      expect.objectContaining({ error: undefined, outputJson: { v: 1 }, toolName: 'ok' }),
+      expect.objectContaining({ error: 'kaboom', toolName: 'boom' }),
+      expect.objectContaining({ outputJson: { v: 1 }, toolName: 'ok' }),
     ]);
+    expect(rows[0]?.outputJson).toBeUndefined();
+    expect(rows[1]?.error).toBeUndefined();
     addToolCall.mockRestore();
+  });
+
+  it('records each tool call once, with its real duration', async () => {
+    const addToolCall = vi.spyOn(AgentTracer.prototype, 'addToolCall');
+    const slow = createTool({
+      description: 'takes a moment',
+      execute: async () => {
+        await new Promise((r) => setTimeout(r, 25));
+        return { v: 1 };
+      },
+      id: 'ok',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ v: z.number() }),
+    });
+    const s = spec();
+    s.tools = { boom, ok: slow } as unknown as AgentSpec['tools'];
+
+    await runAgent(s, 'go');
+
+    const rows = addToolCall.mock.calls.map(([c]) => c);
+    expect(rows.map((c) => c.toolName)).toEqual(['boom', 'ok']);
+    expect(rows[1]?.durationMs).toBeGreaterThanOrEqual(20);
+    addToolCall.mockRestore();
+  });
+
+  it('keeps the rows of tool calls made before a generate that then throws', async () => {
+    const tracer = new AgentTracer();
+    const addToolCall = vi.spyOn(tracer, 'addToolCall');
+    const s = spec();
+    // The tools run, then the model's next turn fails: no result, so no steps to read.
+    let turns = 0;
+    s.model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        turns += 1;
+        if (turns > 1) {
+          throw new Error('provider down');
+        }
+        return {
+          content: [{ input: '{}', toolCallId: 'c2', toolName: 'ok', type: 'tool-call' }],
+          finishReason: { raw: 'tool_use', unified: 'tool-calls' },
+          usage: USAGE,
+          warnings: [],
+        };
+      },
+    } as never) as unknown as AgentSpec['model'];
+
+    await expect(runAgent(s, 'go', { tracer })).rejects.toThrow('provider down');
+
+    expect(addToolCall.mock.calls.map(([c]) => [c.toolName, c.error])).toEqual([['ok', undefined]]);
   });
 
   it("with a caller's tracer, records the tools that do not record themselves, once", async () => {
@@ -129,8 +180,8 @@ describe('runAgent tool-call rows against the real Mastra loop', () => {
     await runAgent(s, 'go', { selfRecordingTools: new Set(['ok']), tracer });
 
     expect(addToolCall.mock.calls.map(([c]) => [c.toolName, c.error])).toEqual([
-      ['ok', undefined],
       ['boom', 'kaboom'],
+      ['ok', undefined],
     ]);
   });
 });

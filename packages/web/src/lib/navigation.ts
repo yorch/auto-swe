@@ -22,6 +22,11 @@ export interface NavItem {
   label: string;
   icon: string;
   minRole: Role;
+  /**
+   * Offered only to someone who may read a usage scope (`GET /platform/usage/scopes`),
+   * whatever their platform role: a team LEAD or ORG_ADMIN by membership qualifies.
+   */
+  needsUsageScope?: true;
 }
 
 export interface NavGroup {
@@ -107,8 +112,15 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/govern/approvals', icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       { href: '/govern/lessons', icon: 'memory', label: 'Lessons', minRole: 'ADMIN' },
       { href: '/govern/analytics', icon: 'analytics', label: 'Analytics', minRole: 'ENGINEER' },
-      // A LEAD sees the teams they lead; the platform-wide view is ADMIN-only.
-      { href: '/govern/usage', icon: 'analytics', label: 'LLM usage', minRole: 'LEAD' },
+      // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
+      // the platform role; the gateway enforces which scopes each may read.
+      {
+        href: '/govern/usage',
+        icon: 'analytics',
+        label: 'LLM usage',
+        minRole: 'ENGINEER',
+        needsUsageScope: true,
+      },
       // The baselines API and layout both require LEAD.
       { href: '/govern/baselines', icon: 'analytics', label: 'Error baselines', minRole: 'LEAD' },
       { href: '/govern/sessions', icon: 'clock', label: 'Sessions', minRole: 'ADMIN' },
@@ -138,11 +150,21 @@ export const NAV_GROUPS: NavGroup[] = [
 
 export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
-/** The groups, each narrowed to the items `role` may open; empty groups dropped. */
-export function visibleNavGroups(role: string | null | undefined): NavGroup[] {
+/**
+ * The groups, each narrowed to the items `role` may open; empty groups dropped.
+ * `hasUsageScope` unlocks the items gated on a usage scope; an ADMIN always has one.
+ */
+export function visibleNavGroups(
+  role: string | null | undefined,
+  hasUsageScope = false
+): NavGroup[] {
   return NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => hasRole(role, item.minRole)),
+    items: group.items.filter(
+      (item) =>
+        hasRole(role, item.minRole) &&
+        (!item.needsUsageScope || hasUsageScope || hasRole(role, 'ADMIN'))
+    ),
   })).filter((group) => group.items.length > 0);
 }
 

@@ -46,6 +46,11 @@ export function initTelemetry(opts: InitTelemetryOptions): { shutdown: () => Pro
   });
 
   if (opts.esmModules?.length) {
+    // DEP0205: Node 26 deprecates `register()` for `registerHooks()`, which
+    // neither import-in-the-middle nor @opentelemetry/instrumentation offers
+    // yet. The services' start scripts and Dockerfile CMDs pass
+    // `--disable-warning=DEP0205` — only that code — until upstream moves; drop
+    // the flags with this call.
     // Resolved against this file, which is why `@opentelemetry/instrumentation`
     // is a dependency of this package. Has to precede the app's imports, which
     // a `--import` preload guarantees.

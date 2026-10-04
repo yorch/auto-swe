@@ -153,6 +153,50 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const prisma = fastify.prisma;
 
+  // Which reports the caller may read, by the same rules as `mayReadUsage`.
+  // The page gates on this being non-empty, so the two cannot disagree; the
+  // report route still checks every request itself.
+  app.get('/usage/scopes', { onRequest: requireAuth() }, async (request) => {
+    const user = requireUser(request);
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+    if (user.role === 'ADMIN') {
+      const [teams, orgs] = await Promise.all([
+        runUnscoped('an ADMIN lists every team they may report on', ['Team'], () =>
+          prisma.team.findMany({ select: { id: true, name: true } })
+        ),
+        prisma.organization.findMany({ select: { id: true, name: true } }),
+      ]);
+      return {
+        data: { orgs: orgs.sort(byName), platform: true, teams: teams.sort(byName) },
+      };
+    }
+    const [teamMemberships, orgMemberships] = await runUnscoped(
+      "the caller's own memberships",
+      ['TeamMembership', 'OrganizationMembership'],
+      () =>
+        Promise.all([
+          prisma.teamMembership.findMany({
+            select: { role: true, team: { select: { id: true, name: true } } },
+            where: { userId: user.sub },
+          }),
+          prisma.organizationMembership.findMany({
+            select: { organization: { select: { id: true, name: true } }, role: true },
+            where: { role: 'ORG_ADMIN', userId: user.sub },
+          }),
+        ])
+    );
+    return {
+      data: {
+        orgs: orgMemberships.map((m) => m.organization).sort(byName),
+        platform: false,
+        teams: teamMemberships
+          .filter((m) => hasRole(m.role, 'LEAD'))
+          .map((m) => m.team)
+          .sort(byName),
+      },
+    };
+  });
+
   app.get(
     '/usage',
     {

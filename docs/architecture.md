@@ -189,8 +189,10 @@ already read. The cursor trails the gateway's time at the previous tail read (th
 the first poll) by 10 s and the page merges by trace id, which covers the common case and lets an
 idle run's poll come back empty. For the rest, the tail also returns `total`, the run's trace count read in
 the same snapshot as the rows: when the merged set does not match it, that poll re-reads every
-trimmed trace instead. The page also re-reads them all once when the run turns terminal. Nothing
-streams: updates arrive on the poll, not as they are written.
+trimmed trace instead. The page also re-reads them all once when the run turns terminal. The spec
+snapshot is fixed when a run starts, so the page reads it once and every later read passes
+`includeSpec=false` — the gateway then leaves the column out of the query — and carries the held
+copy over; the flag defaults to true for other callers. Nothing streams: updates arrive on the poll, not as they are written.
 
 ---
 
@@ -737,13 +739,16 @@ that never load OpenTelemetry into the workflow isolate:
 
 | Hop | Where | What it does |
 |---|---|---|
-| Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start and signal-with-start |
-| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new |
-| Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the starter's span |
+| Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start and signal-with-start, and — on the gateway's client only — every signal and update |
+| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new. A run that arrives without one gets a derived carrier: a trace id hashed from its workflow id and first run id (pure arithmetic, so replay-stable), whose span id is derived too, so the parent is a span that was never exported. The newest signal's or update's header travels beside it as `x-auto-swe-trace-signal` |
+| Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the starter's span, with a span link to the signal's span when the signal header is present |
 
 So a gateway request — its Fastify and HTTP server spans — and every activity of the run it
 started, child workflows included, are one trace in Tempo. A workflow started without a span around
-it (a Temporal schedule) gives each activity a trace of its own. Headers are not part of the command
+it (a Temporal schedule) gets one trace per run from the derived carrier; its activities are children of a derived parent span that is never exported, and the carrier is flagged sampled so a parent-based sampler keeps them. An
+approval or steering signal does not move the run into the sender's trace: activities scheduled after
+it link to the signal's span instead, so the approval request is one click from the work it released.
+Headers are not part of the command
 stream Temporal compares on replay: `runnable.traceContext.replay.test.ts` replays every committed
 fixture with both workflow interceptors registered. `@temporalio/interceptors-opentelemetry` is not
 used: it pins the 1.x OpenTelemetry SDK beside this repo's 2.x one, and runs OpenTelemetry inside
@@ -751,7 +756,7 @@ the isolate.
 
 **Instrumentation.** The gateway and worker start the OpenTelemetry SDK from a preload,
 `src/instrument.ts`, passed to `node --import` — the Dockerfile `CMD`, `yarn start` and `yarn dev`
-all pass it. Both services are ESM, and an ESM entry point evaluates every static import before its
+all pass it, with `--disable-warning=DEP0205` beside it. Both services are ESM, and an ESM entry point evaluates every static import before its
 own first statement, so an SDK started from `index.ts` would find `http` already bound and patch
 nothing. The preload also registers the `import-in-the-middle` loader hook for exactly the modules
 the instrumentations patch (`http` and `https`, plus `fastify` on the gateway), because the
@@ -775,7 +780,13 @@ attempt — becomes their attributes. An `Error` in that metadata, at any depth 
 `cause`, is exported with its name, message and stack rather than as `{}`, and the first top-level
 one also sets the OpenTelemetry `exception.type`, `exception.message` and `exception.stacktrace`
 attributes. Temporal's `taskToken` is not exported: it is an opaque per-attempt token nobody
-searches by.
+searches by. The `[bash:audit]` and `[mcp:audit]` lines go through `auditLog` (`lib/activityLog.ts`):
+stdout as before and, inside an activity, the same text through that logger, so they reach Loki
+with the activity's trace and workflow id.
+
+The gateway's Fastify logger is pino. `@opentelemetry/instrumentation-pino` stamps `trace_id`,
+`span_id` and `trace_flags` on every line it writes to stdout and emits each as an OTLP log record,
+exported to Loki beside the worker's, so a request's log lines share its trace id.
 
 The worker exports metrics (`lib/metrics.ts`), and the gateway exports its share of the run counter
 (`gateway/src/lib/metrics.ts`), labelled only by low-cardinality keys — model, agent, activity,
@@ -832,8 +843,11 @@ run, and the ten runs that spent most inside the window. With no filter the repo
 platform-wide and ADMIN-only, since it includes spend no team owns; a team LEAD (by team
 membership) may read their team and an ORG_ADMIN their organization, and every query of a scoped
 report carries the `teamId`/`orgId` predicate the tenant guard checks. The dashboard renders it at
-`/govern/usage` with a scope picker: the whole platform for an ADMIN, otherwise the teams the
-caller leads and the organizations they administer.
+`/govern/usage` with a scope picker. `GET /api/v1/platform/usage/scopes` returns what the caller may
+read — `platform` (ADMIN), the teams they lead, the organizations they administer — by the same rules
+as the report. The page, its layout, and the sidebar entry all gate on that list being non-empty
+rather than on the platform role, so a team LEAD or ORG_ADMIN whose platform role is ENGINEER reaches
+it; the report route still checks every request.
 
 ### Workspace hardening
 
@@ -1008,18 +1022,22 @@ Current constraints of the system as built. Deliberate product boundaries are in
   run and dies before its next periodic export loses that increment.
 - **HTTP instrumentation depends on the preload.** A service started without
   `--import ./dist/instrument.js` (a hand-written `node dist/index.js`) still initialises the SDK
-  and exports spans and metrics, but `http` and `fastify` go unpatched. With telemetry enabled, Node
-  prints a `DEP0205` warning at boot: `import-in-the-middle` registers through `module.register()`,
-  which Node 26 deprecates in favour of `module.registerHooks()`.
+  and exports spans and metrics, but `http` and `fastify` go unpatched. With telemetry enabled, a
+  hand-written `node` command without `--disable-warning=DEP0205` prints that warning at boot:
+  `import-in-the-middle` registers through `module.register()`, which Node 26 deprecates in favour
+  of `module.registerHooks()`, and neither it nor the OpenTelemetry instrumentation package offers
+  that yet. The start scripts and Dockerfile `CMD`s pass the flag, which silences only that code.
 - **A run's trace has no workflow span.** Activities hang directly off the span that started the
   run; nothing represents the workflow itself or the time between activities, since producing one
-  would mean running OpenTelemetry inside the isolate. Signals and updates sent to a running
-  workflow (approvals, steering) carry no trace context, and runs started by a Temporal schedule
-  have no starting span, so each of their activities is its own trace.
-- **Only the worker's Temporal logger reaches Loki.** Plain `console` output — the `[bash:audit]`
-  and `[mcp:audit]` lines among it — and all of the gateway's logging stay on stdout. Workflow-code
-  logs arrive through the SDK's sink after the activation that produced them, so they carry no
-  trace context.
+  would mean running OpenTelemetry inside the isolate. A schedule-started run's derived trace has
+  no root span either, so Tempo shows its activities as orphans of a parent that was never recorded.
+  A signal's link reaches only activities scheduled after it, and only the newest signal's: work
+  already running when it arrives, and earlier signals, are not linked.
+- **Log export is limited to pino and the Temporal logger.** Plain `console` output other than the
+  audit lines stays on stdout only. An audit line outside an activity (the unit-test path) is stdout
+  only. Workflow-code logs arrive through the SDK's sink after the activation that produced them, so
+  they carry no trace context. Inside an activity an audit line appears twice in a container's
+  output — once on stdout, once on the Temporal logger's stderr.
 - **Usage is attributed at write time, not by repository.** The team and org breakdowns read the
   owner each trace row was written with, so rows older than those columns, spend with no
   derivable owner, and rows written while the run lookup failed land under "no team". The last are
@@ -1073,7 +1091,7 @@ Current constraints of the system as built. Deliberate product boundaries are in
   activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
 - **The run page polls; nothing is pushed.** A running run's page learns of a new trace, step, or
   status up to 3 s after it is written. Only traces are fetched incrementally: each poll still
-  re-reads the run's steps and spec snapshot whole, and the 10 s overlap re-reads a trace on each
+  re-reads the run's steps whole, and the 10 s overlap re-reads a trace on each
   poll for up to 10 s after the read that first returned it. A trace that commits behind the cursor is not lost, but it costs a full
   re-read of every trimmed trace on the poll that notices it; a worker whose clock lags the others
   by more than 10 s triggers one on every poll it writes during.

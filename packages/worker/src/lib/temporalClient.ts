@@ -15,9 +15,10 @@ export async function initTemporalClient(): Promise<void> {
     address: resolveTemporalAddress(),
   });
   // A run an activity starts (a PRD's child runs) joins that activity's trace.
+  // Its signals are not stamped: see traceContextClientInterceptor.
   _client = new Client({
     connection,
-    interceptors: { workflow: [traceContextClientInterceptor()] },
+    interceptors: { workflow: [traceContextClientInterceptor({ propagateSignals: false })] },
   });
 }
 
