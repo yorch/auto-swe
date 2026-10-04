@@ -1958,6 +1958,14 @@ model ModelCatalogEntry {
   displayName      String?     @map("display_name")
   inputUsdPerMTok  Float       @map("input_usd_per_mtok")
   outputUsdPerMTok Float       @map("output_usd_per_mtok")
+  /// Prompt-cache rates as multiples of `inputUsdPerMTok`. Null means "no
+  /// override": pricing then uses the code table (`cacheMultipliers`), so a
+  /// built-in row seeded without them follows the table as it is corrected.
+  cacheReadMultiplier    Float?    @map("cache_read_multiplier")
+  /// Input written to the cache with the 5-minute TTL.
+  cacheWrite5mMultiplier Float?    @map("cache_write_5m_multiplier")
+  /// Input written to the cache with the 1-hour TTL (Anthropic: 2x input).
+  cacheWrite1hMultiplier Float?    @map("cache_write_1h_multiplier")
   status           ModelStatus @default(ACTIVE)
   notes            String?
   isBuiltIn        Boolean     @default(false) @map("is_built_in")

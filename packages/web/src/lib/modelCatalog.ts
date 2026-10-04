@@ -18,6 +18,16 @@ export interface ModelCatalogEntry {
   notes: string | null;
   isBuiltIn: boolean;
   isCustomized: boolean;
+  /** Cache rates as multiples of the input price; null falls back to `cacheDefaults`. */
+  cacheReadMultiplier?: number | null;
+  cacheWrite5mMultiplier?: number | null;
+  cacheWrite1hMultiplier?: number | null;
+  /** The code-table rates a null multiplier stands for. */
+  cacheDefaults?: {
+    cacheReadMultiplier: number;
+    cacheWrite5mMultiplier: number;
+    cacheWrite1hMultiplier: number;
+  };
   /** For a built-in row: the values code ships, which a customized row may diverge from. */
   builtin: {
     inputUsdPerMTok: number;

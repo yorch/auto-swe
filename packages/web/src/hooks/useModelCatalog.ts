@@ -18,6 +18,10 @@ export interface CatalogEntryInput {
   status?: ModelStatus;
   displayName?: string | null;
   notes?: string | null;
+  /** Multiples of the input price; null clears the override. */
+  cacheReadMultiplier?: number | null;
+  cacheWrite5mMultiplier?: number | null;
+  cacheWrite1hMultiplier?: number | null;
 }
 
 const BASE = '/api/v1/platform/model-catalog';

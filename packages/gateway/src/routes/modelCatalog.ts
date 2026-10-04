@@ -1,3 +1,4 @@
+import { cacheMultipliers } from '@auto-swe/shared/lib/builtinModels';
 import { knownModels } from '@auto-swe/shared/lib/modelDiscovery';
 import { runModelDiscovery } from '@auto-swe/shared/lib/modelSuggestions';
 import { DEFAULT_ROLE_PRICING } from '@auto-swe/shared/workflow/costEstimator';
@@ -21,10 +22,15 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  */
 
 const Price = z.number().finite().min(0).max(100_000);
+/** A cache rate as a multiple of the input price; null clears the override. */
+const Multiplier = z.number().finite().min(0).max(20).nullable().optional();
 const KindSchema = z.enum(['CHAT', 'EMBEDDING']);
 const StatusSchema = z.enum(['ACTIVE', 'DEPRECATED', 'RETIRED']);
 
 const CatalogFields = {
+  cacheReadMultiplier: Multiplier,
+  cacheWrite1hMultiplier: Multiplier,
+  cacheWrite5mMultiplier: Multiplier,
   displayName: z.string().trim().min(1).max(200).nullable().optional(),
   inputUsdPerMTok: Price,
   kind: KindSchema.optional(),
@@ -74,6 +80,8 @@ type CatalogRow = {
 /** A row plus, for a built-in, the values code ships — so a customized row can show what it diverges from. */
 function toDto(row: CatalogRow) {
   const builtin = row.isBuiltIn ? builtinModelFor(`${row.provider}/${row.modelId}`) : undefined;
+  // What a null multiplier means: the code table's rate for this spec.
+  const defaults = cacheMultipliers(`${row.provider}/${row.modelId}`);
   return {
     ...row,
     builtin: builtin
@@ -84,6 +92,11 @@ function toDto(row: CatalogRow) {
           status: builtin.status,
         }
       : null,
+    cacheDefaults: {
+      cacheReadMultiplier: defaults.read,
+      cacheWrite1hMultiplier: defaults.write1h,
+      cacheWrite5mMultiplier: defaults.write,
+    },
   };
 }
 
@@ -316,6 +329,10 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const updated = await fastify.prisma.modelCatalogEntry.update({
         data: {
+          // Back to "use the code table", which is what a seeded row holds.
+          cacheReadMultiplier: null,
+          cacheWrite1hMultiplier: null,
+          cacheWrite5mMultiplier: null,
           inputUsdPerMTok: builtin.inputUsdPerMTok,
           isCustomized: false,
           kind: builtin.kind,

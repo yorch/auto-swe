@@ -120,9 +120,24 @@ async function inActivity<T>(fn: () => Promise<T>): Promise<{ result: T; warn: M
   return { result, warn };
 }
 
-function catalogRow(spec: string, input: number, output: number) {
+function catalogRow(
+  spec: string,
+  input: number,
+  output: number,
+  cache: {
+    cacheReadMultiplier?: number | null;
+    cacheWrite5mMultiplier?: number | null;
+    cacheWrite1hMultiplier?: number | null;
+  } = {}
+) {
   const [provider, ...rest] = spec.split('/');
-  return { inputUsdPerMTok: input, modelId: rest.join('/'), outputUsdPerMTok: output, provider };
+  return {
+    inputUsdPerMTok: input,
+    modelId: rest.join('/'),
+    outputUsdPerMTok: output,
+    provider,
+    ...cache,
+  };
 }
 
 const originalEnv = { ...process.env };
@@ -454,6 +469,89 @@ describe('recordLlmUsage', () => {
           inputTokens: 1_000_000,
           outputTokens: 0,
         },
+        'llm.usage',
+        opus
+      );
+      expect(priced.costUsd).toBeCloseTo(0.5, 6);
+    });
+
+    it('prices 1-hour cache writes at the 1-hour rate and the rest of the writes at the 5-minute rate', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        {
+          cacheCreationInputTokens: 200_000,
+          cacheCreationInputTokens1h: 150_000,
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+        },
+        'llm.usage',
+        opus
+      );
+      // 800k uncached × $5 + 50k × $6.25 (5-minute) + 150k × $10 (1-hour)
+      expect(priced.costUsd).toBeCloseTo(4 + 0.3125 + 1.5, 6);
+    });
+
+    it('prices every write at the 5-minute rate when the provider reports no TTL split', async () => {
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { cacheCreationInputTokens: 200_000, inputTokens: 1_000_000, outputTokens: 0 },
+        'llm.usage',
+        opus
+      );
+      expect(priced.costUsd).toBeCloseTo(4 + 1.25, 6);
+    });
+
+    it("reads the catalog row's cache multipliers before the code table, field by field", async () => {
+      // Only the 1-hour rate is overridden; read and 5-minute write keep the table's.
+      catalogFindMany.mockResolvedValue([
+        catalogRow('anthropic/claude-opus-4-8', 5, 25, { cacheWrite1hMultiplier: 3 }),
+      ]);
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        {
+          cacheCreationInputTokens: 200_000,
+          cacheCreationInputTokens1h: 100_000,
+          cachedInputTokens: 600_000,
+          inputTokens: 1_000_000,
+          outputTokens: 0,
+        },
+        'llm.usage',
+        opus
+      );
+      // 200k × $5 + 600k × $0.5 + 100k × $6.25 + 100k × $15
+      expect(priced.costUsd).toBeCloseTo(1 + 0.3 + 0.625 + 1.5, 6);
+    });
+
+    it('prices a model only the catalog knows at its own cache multipliers', async () => {
+      catalogFindMany.mockResolvedValue([
+        catalogRow('ollama/llama-4', 2, 4, { cacheReadMultiplier: 0.25 }),
+      ]);
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { cachedInputTokens: 1_000_000, inputTokens: 1_000_000, outputTokens: 0 },
+        'llm.usage',
+        'ollama/llama-4'
+      );
+      expect(priced.costUsd).toBeCloseTo(0.5, 6);
+    });
+
+    it('ignores a negative catalog multiplier rather than inverting the cost', async () => {
+      catalogFindMany.mockResolvedValue([
+        catalogRow('anthropic/claude-opus-4-8', 5, 25, { cacheReadMultiplier: -1 }),
+      ]);
+      ledger({});
+      const priced = await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { cachedInputTokens: 1_000_000, inputTokens: 1_000_000, outputTokens: 0 },
         'llm.usage',
         opus
       );

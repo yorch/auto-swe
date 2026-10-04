@@ -318,6 +318,51 @@ describe('PUT /model-catalog/:id', () => {
   });
 });
 
+describe('cache multipliers', () => {
+  it('are stored on create and edit, cleared by null, and bounded', async () => {
+    const { call, rows } = await buildApp();
+    const created = await call('POST', '/model-catalog', {
+      cacheReadMultiplier: 0.25,
+      cacheWrite1hMultiplier: 2,
+      inputUsdPerMTok: 0.5,
+      modelId: 'qwen-3',
+      outputUsdPerMTok: 1,
+      provider: 'vllm',
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().data).toMatchObject({
+      cacheReadMultiplier: 0.25,
+      cacheWrite1hMultiplier: 2,
+    });
+
+    await call('PUT', `/model-catalog/${CUSTOM_ID}`, { cacheReadMultiplier: 0.5 });
+    expect(rows[1]).toMatchObject({ cacheReadMultiplier: 0.5 });
+    await call('PUT', `/model-catalog/${CUSTOM_ID}`, { cacheReadMultiplier: null });
+    expect(rows[1]).toMatchObject({ cacheReadMultiplier: null });
+
+    const bad = await call('PUT', `/model-catalog/${CUSTOM_ID}`, { cacheWrite5mMultiplier: -1 });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it('are shown beside the code-table rates a null falls back to', async () => {
+    const { call } = await buildApp();
+    const [row] = (await call('GET', '/model-catalog?includeRetired=true')).json().data;
+    expect(row.cacheDefaults).toEqual({
+      cacheReadMultiplier: 0.1,
+      cacheWrite1hMultiplier: 2,
+      cacheWrite5mMultiplier: 1.25,
+    });
+  });
+
+  it('are cleared by a reset, back to the code table', async () => {
+    const { call, rows } = await buildApp();
+    await call('PUT', `/model-catalog/${BUILTIN_ID}`, { cacheWrite1hMultiplier: 3 });
+    expect(rows[0]).toMatchObject({ cacheWrite1hMultiplier: 3 });
+    await call('POST', `/model-catalog/${BUILTIN_ID}/reset`);
+    expect(rows[0]).toMatchObject({ cacheWrite1hMultiplier: null, isCustomized: false });
+  });
+});
+
 describe('POST /model-catalog/:id/reset', () => {
   it('restores a customized built-in to the shipped values and clears the flag', async () => {
     const { call, rows } = await buildApp();
