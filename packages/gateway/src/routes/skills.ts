@@ -107,11 +107,31 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     async () => {
       const skills = await runUnscoped('admin skill library spans every team', ['Skill'], () =>
         fastify.prisma.skill.findMany({
-          include: { _count: { select: { agentSkillRefs: true } } },
+          include: {
+            _count: { select: { agentSkillRefs: true } },
+            // Which agents reference it, so a delete or deactivate can name what it affects.
+            agentSkillRefs: { select: { agent: { select: { isActive: true, key: true } } } },
+            // The newest revision is the current one; its scan findings are what a reviewer
+            // reads before verifying.
+            revisions: {
+              orderBy: { revision: 'desc' },
+              select: { scanWarnings: true },
+              take: 1,
+            },
+          },
           orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],
         })
       );
-      return { data: skills.map((s) => ({ ...s, usedByCount: s._count.agentSkillRefs })) };
+      return {
+        data: skills.map(({ agentSkillRefs, revisions, ...s }) => ({
+          ...s,
+          scanWarnings: Array.isArray(revisions[0]?.scanWarnings) ? revisions[0].scanWarnings : [],
+          usedBy: [
+            ...new Set(agentSkillRefs.filter((r) => r.agent.isActive).map((r) => r.agent.key)),
+          ].sort(),
+          usedByCount: s._count.agentSkillRefs,
+        })),
+      };
     }
   );
 

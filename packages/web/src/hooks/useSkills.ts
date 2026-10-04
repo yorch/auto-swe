@@ -16,6 +16,12 @@ export interface Skill {
   /** The revision this row's text is; send it back as `expectedRevision` on edit. */
   currentRevision: number;
   usedByCount: number;
+  /** Keys of the active agents that reference this skill. */
+  usedBy: string[];
+  /** Advisory scanner findings recorded on the current revision. */
+  scanWarnings: string[];
+  /** The tracked source this skill was imported from, if any. */
+  sourceId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -134,5 +140,15 @@ export function useDeleteSkill() {
       // Agents reference skills by key; the library view shows those refs.
       qc.invalidateQueries({ queryKey: ['admin-agent-library'] });
     },
+  });
+}
+
+/** Marks the revision the admin read as human-verified; a skill that moved on answers 409. */
+export function useVerifySkill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, revision }: { id: string; revision: number }) =>
+      api.post<{ data: Skill }>(`/api/v1/platform/skills/${id}/verify`, { revision }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   });
 }

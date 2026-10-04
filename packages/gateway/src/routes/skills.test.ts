@@ -58,6 +58,19 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
           1
         );
       }),
+      findMany: vi.fn(async () => [
+        {
+          _count: { agentSkillRefs: 3 },
+          agentSkillRefs: [
+            { agent: { isActive: true, key: 'reviewer' } },
+            { agent: { isActive: true, key: 'reviewer' } },
+            { agent: { isActive: false, key: 'old' } },
+          ],
+          id: CUSTOM_ID,
+          name: 'n',
+          revisions: [{ scanWarnings: ['looks like an instruction override'] }],
+        },
+      ]),
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
         const row = skills.find((s) => s.id === where.id);
         return row ? { ...row } : null;
@@ -113,7 +126,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   } as unknown as never);
   await app.register(skillsRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
-  const call = (method: 'POST' | 'PUT', url: string, payload?: unknown) =>
+  const call = (method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown) =>
     app.inject({
       headers: { authorization: 'Bearer token' },
       method,
@@ -430,5 +443,19 @@ describe('POST /skills/:id/verify', () => {
     const res = await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });
     expect(res.statusCode).toBe(409);
     expect(audit).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /skills usage and scan findings', () => {
+  it('names the active agents using a skill and carries the current revision scan findings', async () => {
+    const { call } = await buildApp();
+    const res = await call('GET', '/skills');
+    expect(res.statusCode).toBe(200);
+    const [row] = JSON.parse(res.payload).data;
+    expect(row.usedBy).toEqual(['reviewer']);
+    expect(row.usedByCount).toBe(3);
+    expect(row.scanWarnings).toEqual(['looks like an instruction override']);
+    expect(row).not.toHaveProperty('agentSkillRefs');
+    expect(row).not.toHaveProperty('revisions');
   });
 });

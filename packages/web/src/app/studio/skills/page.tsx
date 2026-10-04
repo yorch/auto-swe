@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
+import { SkillImportModal } from '@/components/skills/SkillImportModal';
+import { SkillSourcesCard } from '@/components/skills/SkillSourcesCard';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -23,6 +25,7 @@ import {
   useSkillEffectiveness,
   useSkills,
   useUpdateSkill,
+  useVerifySkill,
 } from '@/hooks/useSkills';
 import { errMsg } from '@/lib/errors';
 import { formatCost, formatDate, formatPercent } from '@/lib/utils';
@@ -55,10 +58,21 @@ function ScanWarnings({ warnings }: { warnings: string[] }) {
   );
 }
 
+/** Names the agents that reference a skill, for the confirmations that affect them. */
+function usageText(skill: Skill): string | null {
+  if (skill.usedByCount === 0) {
+    return null;
+  }
+  const names = skill.usedBy.length > 0 ? ` (${skill.usedBy.join(', ')})` : '';
+  return `It is used by ${skill.usedByCount} agent ${skill.usedByCount === 1 ? 'version' : 'versions'}${names}.`;
+}
+
 // ── Skill Detail / Edit Modal ────────────────────────────────────────────────
 
 function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: () => void }) {
   const update = useUpdateSkill();
+  const verify = useVerifySkill();
+  const [confirmVerify, setConfirmVerify] = useState(false);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ description: '', isActive: true, name: '', promptText: '' });
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +204,15 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             </Badge>
           </EntityMetaBadges>
           {skill.description && <p className="text-sm text-paper-300">{skill.description}</p>}
+          {skill.scanWarnings.length > 0 && (
+            <Alert title="Scanner findings on this text" variant="warning">
+              <ul className="list-disc space-y-0.5 pl-4 text-xs">
+                {skill.scanWarnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </Alert>
+          )}
           <div>
             <div className="label-mono mb-1.5">Prompt text</div>
             <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
@@ -201,12 +224,32 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
               <div>Created {formatDate(skill.createdAt)}</div>
               <div>Updated {formatDate(skill.updatedAt)}</div>
             </div>
-            <Button onClick={startEdit} variant="secondary">
-              Edit
-            </Button>
+            <div className="flex items-center gap-2">
+              {!skill.isVerified && (
+                <Button onClick={() => setConfirmVerify(true)} variant="primary">
+                  Mark verified
+                </Button>
+              )}
+              <Button onClick={startEdit} variant="secondary">
+                Edit
+              </Button>
+            </div>
           </div>
         </div>
       )}
+      <ConfirmModal
+        confirmLabel="Mark verified"
+        message="You are confirming that you read the prompt text above, and the scanner findings if any, and that it is safe for agents to use. Any later edit to the text or description clears this."
+        onClose={() => setConfirmVerify(false)}
+        onConfirm={async () => {
+          await verify.mutateAsync({ id: sk.id, revision: sk.currentRevision });
+          setConfirmVerify(false);
+          onClose();
+        }}
+        open={confirmVerify}
+        pendingLabel="Verifying…"
+        title={`Mark "${skill.name}" verified?`}
+      />
     </Modal>
   );
 }
@@ -372,6 +415,18 @@ export default function StudioSkillsPage() {
   const update = useUpdateSkill();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [imported, setImported] = useState<string | null>(null);
+  // A skill that agents use is not switched off without a confirmation.
+  const [deactivateTarget, setDeactivateTarget] = useState<Skill | null>(null);
+
+  function requestToggle(skill: Skill) {
+    if (skill.isActive && skill.usedByCount > 0) {
+      setDeactivateTarget(skill);
+      return;
+    }
+    void handleToggleActive(skill);
+  }
 
   async function handleToggleActive(skill: Skill) {
     setToggleError(null);
@@ -389,14 +444,21 @@ export default function StudioSkillsPage() {
     <div className="space-y-8">
       <PageHeader
         actions={
-          <Button onClick={() => setNewOpen(true)} variant="primary">
-            Create skill
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setImportOpen(true)} variant="secondary">
+              Import from GitHub
+            </Button>
+            <Button onClick={() => setNewOpen(true)} variant="primary">
+              Create skill
+            </Button>
+          </div>
         }
         chapter="§ Studio"
         subtitle="Reusable prompt-fragment instructions injected into an agent's system prompt. Assigned to agent roles at any scope. Tool access control is managed separately via Agent Tool Access."
         title="Skill library"
       />
+
+      {imported && <Alert variant="success">{imported}</Alert>}
 
       <Card>
         <CardHeader>
@@ -455,7 +517,8 @@ export default function StudioSkillsPage() {
                       <ToggleSwitch
                         checked={skill.isActive}
                         disabled={togglingId === skill.id}
-                        onChange={() => handleToggleActive(skill)}
+                        onChange={() => requestToggle(skill)}
+                        title={`${skill.isActive ? 'Deactivate' : 'Activate'} ${skill.name}`}
                       />
                     </Td>
                     <Td className="py-2 text-right">
@@ -478,14 +541,37 @@ export default function StudioSkillsPage() {
         </QueryBoundary>
       </Card>
 
+      <SkillSourcesCard />
+
       <EffectivenessCard />
 
       <SkillFormModal onClose={() => setNewOpen(false)} open={newOpen} />
+      {importOpen && (
+        <SkillImportModal onClose={() => setImportOpen(false)} onImported={setImported} />
+      )}
+      <ConfirmModal
+        confirmLabel="Deactivate"
+        dangerous
+        message={`Agents stop receiving "${deactivateTarget?.name ?? ''}" while it is inactive. ${deactivateTarget ? (usageText(deactivateTarget) ?? '') : ''} This takes effect in runs already in progress too.`}
+        onClose={() => setDeactivateTarget(null)}
+        onConfirm={async () => {
+          if (deactivateTarget) {
+            await handleToggleActive(deactivateTarget);
+          }
+        }}
+        open={deactivateTarget !== null}
+        pendingLabel="Deactivating…"
+        title={`Deactivate "${deactivateTarget?.name ?? ''}"?`}
+      />
       <SkillDetailModal onClose={() => setViewTarget(null)} skill={viewTarget} />
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message="This will remove the skill and all its assignments. This cannot be undone."
+        message={
+          deleteTarget
+            ? `Delete "${deleteTarget.name}" and remove it from every agent that uses it. ${usageText(deleteTarget) ?? 'No agent uses it.'} This cannot be undone.`
+            : ''
+        }
         onClose={() => setDeleteTarget(null)}
         onConfirm={async () => {
           if (deleteTarget) {
