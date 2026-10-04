@@ -282,6 +282,49 @@ describe('scanSkillContent — pattern loading behavior', () => {
     await expect(scanSkillContent(`NEEDLE${beyondCap}`)).resolves.toMatchObject({ safe: false });
   });
 
+  it('with full:true covers text past the advisory cap, in overlapping windows', async () => {
+    findMany.mockReset();
+    findMany.mockResolvedValue([
+      { flags: '', id: 'x', isActive: true, label: 'needle', pattern: 'NEEDLE', type: 'INJECTION' },
+    ] as never);
+    const tail = `${'.'.repeat(MAX_SCAN_TEXT_LENGTH * 2)}NEEDLE`;
+    await expect(scanSkillContent(tail, { full: true })).resolves.toEqual({
+      incomplete: false,
+      safe: false,
+      warnings: ['injection:needle'],
+    });
+    // A match straddling a window boundary is still found.
+    const straddle = `${'.'.repeat(MAX_SCAN_TEXT_LENGTH - 3)}NEEDLE${'.'.repeat(100)}`;
+    await expect(scanSkillContent(straddle, { full: true })).resolves.toMatchObject({
+      safe: false,
+    });
+  });
+
+  it('reports a scan that skipped a quarantined pattern as incomplete', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      findMany.mockReset();
+      findMany.mockResolvedValue([
+        {
+          flags: '',
+          id: 'evil',
+          isActive: true,
+          label: 'redos',
+          pattern: '(a+)+$',
+          type: 'INJECTION',
+        },
+      ] as never);
+      const text = `${'a'.repeat(40)}!`;
+      await scanSkillContent(text); // overruns twice, then the pattern is quarantined
+      const second = await scanSkillContent(text);
+      expect(second.warnings).toEqual([]);
+      expect(second.incomplete).toBe(true);
+    } finally {
+      resetRegexExecutor();
+      errorSpy.mockRestore();
+    }
+  });
+
   it('caches patterns across calls within the TTL', async () => {
     await scanSkillContent('first');
     await scanSkillContent('second');

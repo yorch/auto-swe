@@ -11,6 +11,7 @@ import {
   type InstallResult,
   installBundle,
   listInstalledBundles,
+  SkillChangedError,
 } from '../lib/bundleService.js';
 import { resolveBundleAllowUnverified, resolveBundleTrustedKeys } from '../lib/bundleTrust.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -117,6 +118,15 @@ async function runInstall(
     }
     if (err instanceof BundleIntegrityError || err instanceof BundleDependencyError) {
       return reply.status(400).send({ error: { code: 'INVALID_BUNDLE', message: err.message } });
+    }
+    if (err instanceof SkillChangedError) {
+      // A skill was edited while the install ran; the transaction rolled back whole.
+      return reply.status(409).send({
+        error: {
+          code: 'SKILL_CHANGED',
+          message: 'A skill changed while the bundle installed; nothing was installed. Retry.',
+        },
+      });
     }
     if (err instanceof z.ZodError) {
       return reply

@@ -90,6 +90,7 @@ vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({
     agentVersions: { contentWriter: 3 },
     orgId: 'org-1',
+    skillRevisions: { 'skill-1': 4 },
     teamId: 'team-1',
     workflowTemplateId: 'tpl-1',
   })),
@@ -442,7 +443,12 @@ describe('tool grants and agent scope', () => {
       request: request({ payload: { agentRef: 'contentWriter@2', deliver: 'none' } }),
     });
     const ctx = m.resolveAgentSpec.mock.calls[0]?.[1];
-    expect(ctx).toEqual({ agentVersions: { contentWriter: 2 }, orgId: 'org-1' });
+    // The run's skill pins travel with its agent pins into the agent-run context.
+    expect(ctx).toEqual({
+      agentVersions: { contentWriter: 2 },
+      orgId: 'org-1',
+      skillRevisions: { 'skill-1': 4 },
+    });
     expect(ctx).not.toHaveProperty('teamId');
     expect(ctx).not.toHaveProperty('workflowTemplateId');
   });

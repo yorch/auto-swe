@@ -1,6 +1,11 @@
+import { createHash } from 'node:crypto';
 import { configCacheTtlMs, invalidate, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { asyncLocalStorage } from '@temporalio/activity';
+import { persistActivityTrace } from '../activityContext.js';
+import { logWarn } from '../activityLog.js';
+import { AgentTracer } from '../agentTracer.js';
 import { ConfigMissingError, resolveProviderCredential } from './resolver.js';
 import { parseToolKeys } from './toolKeys.js';
 import type { ResolveCtx, ResolvedModelConfig, ResolvedSkill } from './types.js';
@@ -108,18 +113,83 @@ export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
   });
 }
 
-/** Map an Agent row's skillRefs to ResolvedSkills (ordered by sortOrder). */
-export function skillsFromAgent(agent: AgentRow): ResolvedSkill[] {
-  return agent.skillRefs
-    .filter((ref) => ref.skill.isActive)
+/**
+ * Map an Agent row's skillRefs to ResolvedSkills (ordered by sortOrder).
+ *
+ * A run that pinned a skill revision at start (`ctx.skillRevisions`) reads that
+ * revision's text and description, so editing the skill mid-run changes nothing
+ * the run sees — across retries and replays too. A skill with no pin, or no
+ * ctx, resolves its current revision. `isActive` is read live on purpose: it is
+ * the admin's off-switch for a skill that turns out to be harmful, and a run
+ * already under way should honour it. `isVerified` describes the current text,
+ * so a pinned older revision never reports as verified.
+ *
+ * A pin whose revision row is missing (a skill that pre-dates revisions)
+ * falls back to the live text rather than failing the run.
+ */
+export async function skillsFromAgent(agent: AgentRow, ctx?: ResolveCtx): Promise<ResolvedSkill[]> {
+  const refs = agent.skillRefs.filter((ref) => ref.skill.isActive);
+  const stale = refs.filter((ref) => {
+    const pinned = ctx?.skillRevisions?.[ref.skill.id];
+    return pinned !== undefined && pinned !== ref.skill.currentRevision;
+  });
+  const pinnedRows =
+    stale.length > 0
+      ? await prisma.skillRevision.findMany({
+          select: { description: true, promptText: true, revision: true, skillId: true },
+          where: {
+            OR: stale.map((ref) => ({
+              revision: ctx?.skillRevisions?.[ref.skill.id] as number,
+              skillId: ref.skill.id,
+            })),
+          },
+        })
+      : [];
+  const pinnedBySkill = new Map(pinnedRows.map((r) => [r.skillId, r]));
+  const missing = stale
+    .filter((ref) => !pinnedBySkill.has(ref.skill.id))
     .map((ref) => ({
-      description: ref.skill.description ?? '',
-      id: ref.skill.id,
-      isVerified: ref.skill.isVerified,
-      name: ref.skill.name,
-      promptText: ref.skill.promptText,
-      sortOrder: ref.sortOrder,
+      currentRevision: ref.skill.currentRevision,
+      pinnedRevision: ctx?.skillRevisions?.[ref.skill.id] as number,
+      skillId: ref.skill.id,
     }));
+  if (missing.length > 0) {
+    await reportMissingPinnedRevisions(missing);
+  }
+
+  return refs.map((ref) => {
+    const pinned = pinnedBySkill.get(ref.skill.id);
+    return {
+      description: (pinned ? pinned.description : ref.skill.description) ?? '',
+      id: ref.skill.id,
+      isVerified: ref.skill.isVerified && !pinned,
+      name: ref.skill.name,
+      promptText: pinned ? pinned.promptText : ref.skill.promptText,
+      sortOrder: ref.sortOrder,
+    };
+  });
+}
+
+/**
+ * A pinned revision whose row is gone resolves the live text, which is the swap
+ * pinning exists to prevent — so it is loud: a warning in the activity log and
+ * a `skill.pinned_revision_missing` event on the run's trace. Only inside an
+ * activity (there is no run to attribute it to elsewhere); never throws.
+ */
+async function reportMissingPinnedRevisions(
+  missing: Array<{ skillId: string; pinnedRevision: number; currentRevision: number }>
+): Promise<void> {
+  logWarn('pinned skill revision missing; using the live text', { missing });
+  if (!asyncLocalStorage.getStore()) {
+    return;
+  }
+  try {
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: 'skill.pinned_revision_missing', outputJson: { missing } });
+    await persistActivityTrace(tracer, 'skillResolver');
+  } catch {
+    // Observability must never fail a resolution.
+  }
 }
 
 /**
@@ -176,7 +246,7 @@ export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<Resol
   // so two canary arms pinning different parent versions would otherwise share
   // one entry for the child within the TTL.
   const pins = stablePins(ctx?.agentVersions);
-  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.channelId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pins}`;
+  const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.channelId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pins}:${skillPinsDigest(ctx?.skillRevisions)}`;
   const resolved = await withCache(cacheKey, configCacheTtlMs(), () =>
     resolveAgentUncached(key, ctx)
   );
@@ -228,6 +298,18 @@ function stablePins(pins: Record<string, number> | undefined): string {
   );
 }
 
+/**
+ * Skill pins belong in the cache key for the same reason agent pins do: the
+ * resolved skills carry the pinned text. A run's map names every skill its
+ * agents use, so it is digested rather than spelled out.
+ */
+function skillPinsDigest(pins: Record<string, number> | undefined): string {
+  if (!pins) {
+    return '';
+  }
+  return createHash('sha1').update(stablePins(pins)).digest('hex').slice(0, 16);
+}
+
 async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<ResolvedAgent> {
   const agent = await fetchActiveAgent(key, ctx);
   if (!agent) {
@@ -244,7 +326,7 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
     mcpConnectionId: agent.mcpConnectionId ?? null,
     model,
     origin: agent.origin ?? null,
-    skills: skillsFromAgent(agent),
+    skills: await skillsFromAgent(agent, ctx),
     toolKeys: parseToolKeys(agent.toolKeys),
     version: agent.version,
   };

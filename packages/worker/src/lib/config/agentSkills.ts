@@ -18,7 +18,7 @@ export async function loadAgentSkills(
   ctx?: ResolveCtx
 ): Promise<ResolvedSkill[]> {
   const agent = await fetchActiveAgent(role, ctx);
-  return agent ? skillsFromAgent(agent) : [];
+  return agent ? skillsFromAgent(agent, ctx) : [];
 }
 
 /**

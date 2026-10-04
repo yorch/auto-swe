@@ -1,5 +1,5 @@
 import { resolveRegexBudgetMs, runRegexBatch, toRegexSpecs } from './regexExec.js';
-import { capScanText } from './regexSafety.js';
+import { capScanText, chunkScanText } from './regexSafety.js';
 import { makePatternLoader } from './scannerPatternLoader.js';
 
 const { load: loadPatterns, invalidate } = makePatternLoader(
@@ -27,20 +27,32 @@ export interface SkillScanResult {
  * the text is truncated at {@link capScanText}'s cap, and a pattern that burns
  * the executor's budget degrades the scan instead of blocking anything.
  */
-export async function scanSkillContent(promptText: string): Promise<SkillScanResult> {
+export async function scanSkillContent(
+  promptText: string,
+  opts: { full?: boolean } = {}
+): Promise<SkillScanResult> {
   const patterns = await loadPatterns();
   const injection = patterns.filter((p) => p.type === 'INJECTION');
   const exfiltration = patterns.filter((p) => p.type === 'EXFILTRATION');
-  const text = capScanText(promptText);
+  // `full` covers every character in overlapping windows instead of truncating,
+  // for a caller whose "clean" result is relied on rather than merely shown.
+  const targets = opts.full
+    ? chunkScanText(promptText).map((text, i) => ({ key: `text:${i}`, text }))
+    : [{ key: 'text', text: capScanText(promptText) }];
   const specs = [
     ...toRegexSpecs(injection, 'injection:'),
     ...toRegexSpecs(exfiltration, 'exfiltration:'),
   ];
   const budgetMs = resolveRegexBudgetMs();
-  const { hits, incomplete } = await runRegexBatch(specs, [{ key: 'text', text }], {
+  const { hits, incomplete, quarantinedPatternKeys } = await runRegexBatch(specs, targets, {
     budgetMs,
     label: 'skillScanner',
   });
-  const warnings = hits.map((h) => h.patternKey);
-  return { incomplete, safe: warnings.length === 0, warnings };
+  const warnings = [...new Set(hits.map((h) => h.patternKey))];
+  return {
+    // A quarantined pattern was skipped, so the scan did not run every rule.
+    incomplete: incomplete || quarantinedPatternKeys.length > 0,
+    safe: warnings.length === 0,
+    warnings,
+  };
 }

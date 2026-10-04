@@ -95,6 +95,7 @@ function makeMockPrisma() {
         return { id: 'skill-id' };
       }),
       findFirst: vi.fn(async () => null),
+      findMany: vi.fn(async () => []),
       update: vi.fn(async () => ({ id: 'skill-id' })),
     },
     workflowTemplate: {

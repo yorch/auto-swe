@@ -414,7 +414,7 @@ The code security scanner findings (`codeResult.codeSecurityFindings`) are forma
 
 A **skill** is a named prompt fragment (`promptText`) injected into an agent's system message. Skills control *how* an agent reasons — they do not grant new capabilities. Each skill has:
 
-Skills are an intentionally **global, ADMIN-curated library** — the `Skill` table carries no `teamId`/`orgId`/tenant column, and creation (`POST /api/v1/platform/skills`) and edits are ADMIN-only routes. Tenant isolation is enforced one layer up: which Agents (themselves tenant-scoped) reference a skill via `skillRefs`, not by row ownership on `Skill` itself.
+Skills are an **ADMIN-curated library**: creation (`POST /api/v1/platform/skills`) and edits are ADMIN-only routes. A skill carries `scope` (`GLOBAL`, `ORGANIZATION` or `TEAM`) with `orgId`/`teamId`, mirroring `Agent`. Built-ins and admin-created skills default to `GLOBAL` and are visible everywhere; a team- or org-scoped skill is visible only within its tenant, because `promptText` is where a team is most likely to encode internal process knowledge. Which agents use a skill is decided separately, by the agent's `skillRefs`.
 
 | Field | Purpose |
 |---|---|
@@ -422,7 +422,8 @@ Skills are an intentionally **global, ADMIN-curated library** — the `Skill` ta
 | `description` | One-line summary shown in the L1 menu |
 | `promptText` | Full reasoning guidance (max 50 KB) |
 | `isBuiltIn` | `true` for seeds from `packages/shared/src/skills/` |
-| `isVerified` | `true` for built-ins; reset to `false` whenever `promptText` is updated |
+| `isVerified` | `true` for built-ins; set on a custom skill only by an ADMIN through `POST /api/v1/platform/skills/:id/verify`; reset to `false` by any edit that cuts a revision (a `promptText` or `description` change) — a rename or an `isActive` toggle does not reset it |
+| `currentRevision` | The `SkillRevision` number that `promptText` and `description` currently mirror (§6.5) |
 | `isActive` | Toggle to enable/disable without deleting |
 
 **Table:** `skills` in `packages/shared/src/prisma/schema.prisma`
@@ -498,8 +499,23 @@ Custom skills' `promptText` is scanned by `scanSkillContent(text)` in `packages/
 - **Non-blocking advisory** — warnings are returned but never prevent saving or execution. Scan failures are caught so a DB outage cannot abort a run.
 
 The scan runs:
-1. At skill save time (gateway `POST /api/v1/platform/skills`).
-2. After each TDD iteration in `executeImplementation` (scans LLM output for prompt injection attempts).
+1. At skill create and edit (gateway `POST`/`PUT /api/v1/platform/skills`): the description and the prompt text are scanned together over the whole text, and a scanner failure is returned as a `scan-incomplete` warning rather than an error.
+2. For every skill in a bundle at install time. Findings come back in the install response's `warnings` (one entry per finding, prefixed with the skill name) and are recorded on the new revision; an install is never refused for them.
+3. After each TDD iteration in `executeImplementation` (scans LLM output for prompt injection attempts).
+
+The warnings of the save-time and install-time scans are stored on the `SkillRevision` that holds the scanned text (`scanWarnings`).
+
+### 6.5 Skill revisions and run pinning
+
+`Skill.promptText` and `description` are the live copy. Every change to either also writes an immutable `SkillRevision` (`skill_revisions`, unique on `(skillId, revision)`) and sets `Skill.currentRevision` to its number, in one statement. The paths that do so are: skill create (revision 1), skill edit (when the text or the description changes — a rename or an `isActive` toggle does not), the built-in sync when shipped text changes, and bundle install when a skill's text or description changes. A revision stores the text, the description, a content hash, the scan warnings, the author, and — for content imported from a source — provenance (`sourceSha`, `sourcePath`, `referenceFiles`). Revisions are never updated.
+
+An edit is guarded on the revision number it read, so two concurrent edits cannot both produce revision N+1: the second gets `409 SKILL_CHANGED`. `PUT /api/v1/platform/skills/:id` also accepts `expectedRevision`, the revision the editor had on screen; when it is present and the skill has moved on, the edit is refused with the same 409 before anything is written. A guarded write that finds the skill deleted answers 404. A built-in sync that loses the race to another replica booting alongside it skips the skill, since that replica wrote the same shipped text. Startup sync gives any skill that has no revision row the row for the revision it already names.
+
+**A run pins the skill text it started with.** `createWorkflowRun` records `WorkflowRun.skillRevisions`, a `{ skillId: currentRevision }` map, beside `agentVersions`. It covers every skill visible to the run's tenant at that moment — GLOBAL, plus its team's and organization's own — keyed by skill id, so it holds whichever agent later references the skill: an explicit `key@version` agent ref, a CHANNEL-scope agent, or a skill attached to an agent after the run began. `currentRequestContext()` returns the map on `ResolveCtx.skillRevisions`; `resolveAgent` and `loadAgentSkills` then read a pinned skill's text and description from its `SkillRevision`, so a skill edited after the run began is not read at its new text by a retry or a replay of that run. Agent-run activities carry the pin into their own context the same way they carry `agentVersions`, and the map is part of the `resolveAgent` cache key. The pin is activity-side data: nothing in the workflow isolate reads it, so replay histories are unaffected.
+
+What is deliberately not pinned: `isActive` is read live, so disabling a harmful skill still takes effect inside a run already under way; and `isVerified` describes the current text, so a pinned revision older than the current one is never reported as verified. A pin whose revision row is missing resolves the live text, with a warning in the activity log and a `skill.pinned_revision_missing` event on the run's trace.
+
+**Verification.** `POST /api/v1/platform/skills/:id/verify` (ADMIN, audited) takes `{ "revision": n }`, the revision the admin read, and sets `isVerified` only if that is still the skill's current revision; otherwise it answers `409 SKILL_CHANGED` and verifies nothing. A body without `revision` is a 400. It is the only place a custom skill becomes verified, and any later edit that cuts a revision — a description-only edit included — clears it; a rename or an `isActive` toggle does not.
 
 ---
 
@@ -692,9 +708,10 @@ on the `Agent` payload below.
 | `POST` | `/api/v1/platform/skills` | `ADMIN` | Create a custom skill |
 | `GET` | `/api/v1/platform/skills/:id` | `ADMIN` | Get skill detail |
 | `PUT` | `/api/v1/platform/skills/:id` | `ADMIN` | Update name / description / promptText / isActive |
+| `POST` | `/api/v1/platform/skills/:id/verify` | `ADMIN` | Mark the current revision human-verified (audited) |
 | `DELETE` | `/api/v1/platform/skills/:id` | `ADMIN` | Delete (built-in skills are rejected with 400) |
 
-Updating `promptText` automatically resets `isVerified` to `false` and triggers a security scan (the scan result is returned in the response but does not block the save).
+Any edit that cuts a revision (a `promptText` or `description` change) automatically resets `isVerified` to `false`, whether or not the skill is flagged built-in (bundle-installed skills are); a rename or an `isActive` toggle leaves it. The edit triggers a security scan (the scan result is returned in the response but does not block the save). A change to `promptText` or `description` cuts a new revision (§6.5).
 
 ### 9.2 Agent library (model / prompt / skills / tools)
 
@@ -721,7 +738,8 @@ Writes cut a new immutable `version`.
 
 | Model | Table | Purpose |
 |---|---|---|
-| `Skill` | `skills` | Skill definitions (name, promptText, isBuiltIn, isVerified, isActive) |
+| `Skill` | `skills` | Skill definitions (name, promptText, isBuiltIn, isVerified, isActive, scope, currentRevision) |
+| `SkillRevision` | `skill_revisions` | Immutable history of a skill's text and description; what a run's `skillRevisions` pin reads |
 | `Agent` | `agents` | Single source of truth per key/scope: model spec, system prompt, credential pin, tool keys, skill refs (versioned) |
 | `AgentSkillRef` | `agent_skill_refs` | Join from an `Agent` to a `Skill` with `sortOrder` |
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |
@@ -736,6 +754,20 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
+- **A skill created after a run starts is not in its pin.** It resolves its current revision, which is
+  also its only one. An epic's children are runs of their own and pin at their own start, so an edit
+  between the epic's start and a child's start reaches that child. A run created before the
+  `skillRevisions` column existed has no pin. A channel-resident run started by the channel assistant
+  (`startChannelRun`) writes its own `WorkflowRun` and has no pin; a channel task run through
+  `createWorkflowRun` with no repository pins GLOBAL skills plus those of the team and organization
+  of the Slack channel its request came from (matched on Slack's channel id). Eval-harness cases are not runs and always read current text.
+- **A skill's `isActive` flag is not pinned.** It is read live on purpose, so a pinned run cannot keep
+  using a skill an admin has disabled; the cost is that disabling and re-enabling mid-run changes
+  which skills a retry sees.
+- **A pinned revision whose row is missing falls back to the live text** rather than failing the run.
+  Deleting a skill deletes its revisions with it, along with the agents' references to it.
+- **Verification attests to text, not to a source.** `isVerified` says an admin approved the current
+  revision; it carries no signature and nothing re-checks it against provenance.
 - **Node attribution needs the worker's workflow interceptor.** A worker built without
   `workflowModules: [nodeTagInterceptor]` writes traces with null `specNodeId` — every test harness
   that builds its own `Worker`, and a worker still running older code during a rolling deploy. So

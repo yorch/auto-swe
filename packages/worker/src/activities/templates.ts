@@ -228,6 +228,12 @@ export async function createWorkflowRun(
   const settingsCtx = await runSettingsContext(input);
   const pinnedSettings = await snapshotPinnedSettings(settingsCtx);
 
+  // Skill text is a second input to every agent: freeze the revision of every
+  // skill visible to this run so a mid-run edit cannot reach a retry or a replay.
+  // An epic's children are runs of their own and pin at their own start, so an
+  // edit between the epic's start and a child's reaches that child.
+  const skillRevisions = await snapshotSkillRevisions(await skillTenantContext(input, settingsCtx));
+
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
   // same workflowId should not create duplicate rows. `update: {}` preserves the
   // original spec, agentVersions and pinnedSettings snapshots across Temporal
@@ -250,6 +256,7 @@ export async function createWorkflowRun(
       launchedById: input.launchedById ?? null,
       outcomeDomain: version.template?.workspaceProvider ?? null,
       pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
+      skillRevisions,
       specSnapshot: spec as unknown as object,
       status: 'RUNNING',
       templateId: input.templateId,
@@ -291,6 +298,65 @@ export async function createWorkflowRun(
     runId: run.id,
     spec: (run.specSnapshot as unknown as WorkflowSpec) ?? spec,
   };
+}
+
+/// `{ skillId: currentRevision }` for every active-or-not skill visible to the run's
+/// tenant: GLOBAL, plus the run's team's and organization's own. Keyed by skill
+/// id, so it does not matter which agent later references a skill — an explicit
+/// `key@version` ref, a CHANNEL-scope agent, or a skill attached to an agent
+/// after the run began all find their pin. One query, however many agent
+/// versions have accumulated. A skill created after this point has no entry
+/// and resolves its current revision, which is also its only one.
+async function snapshotSkillRevisions(scope: SettingResolveCtx): Promise<Prisma.InputJsonObject> {
+  const visible: Prisma.SkillWhereInput[] = [{ scope: 'GLOBAL' }];
+  if (scope.teamId) {
+    visible.push({ scope: 'TEAM', teamId: scope.teamId });
+  }
+  if (scope.orgId) {
+    visible.push({ orgId: scope.orgId, scope: 'ORGANIZATION' });
+  }
+  const skills = await runUnscoped(
+    'GLOBAL skills have no tenant by definition; the team and org rows are the run’s own',
+    ['Skill'],
+    () =>
+      prisma.skill.findMany({
+        select: { currentRevision: true, id: true },
+        where: { OR: visible },
+      })
+  );
+  const pins: Record<string, number> = {};
+  for (const skill of skills) {
+    pins[skill.id] = skill.currentRevision;
+  }
+  return pins;
+}
+
+/// The tenant whose skills a run can see. Normally the settings context's team and
+/// org. A repo-less channel task has neither (no connection, no ledger repo), so
+/// fall back to the tenant of the Slack channel the request came from: the same
+/// channel row the channel's own activities scope to. Deliberately not folded into
+/// `runSettingsContext`: that one must keep matching `currentRequestContext()`.
+async function skillTenantContext(
+  input: CreateWorkflowRunInput,
+  settingsCtx: SettingResolveCtx
+): Promise<SettingResolveCtx> {
+  if (settingsCtx.teamId || settingsCtx.orgId || !input.workRequestId) {
+    return settingsCtx;
+  }
+  const request = await prisma.runInput.findUnique({
+    select: { slackChannelId: true },
+    where: { id: input.workRequestId },
+  });
+  if (!request?.slackChannelId) {
+    return settingsCtx;
+  }
+  const channel = await prisma.slackChannel.findFirst({
+    select: { orgId: true, teamId: true },
+    where: { slackChannelId: request.slackChannelId },
+  });
+  return channel
+    ? { ...settingsCtx, orgId: channel.orgId ?? undefined, teamId: channel.teamId ?? undefined }
+    : settingsCtx;
 }
 
 /// Scope context for the run's pinned-settings snapshot. The template comes from

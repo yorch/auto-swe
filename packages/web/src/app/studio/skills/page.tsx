@@ -90,7 +90,10 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     e.preventDefault();
     setError(null);
     try {
-      const patch: Parameters<typeof update.mutateAsync>[0] = { id: sk.id };
+      const patch: Parameters<typeof update.mutateAsync>[0] = {
+        expectedRevision: sk.currentRevision,
+        id: sk.id,
+      };
       if (form.name !== sk.name) {
         patch.name = form.name;
       }

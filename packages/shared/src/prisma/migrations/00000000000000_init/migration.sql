@@ -616,6 +616,7 @@ CREATE TABLE "workflow_runs" (
     "context_snapshot" JSONB,
     "agent_versions" JSONB,
     "pinned_settings" JSONB,
+    "skill_revisions" JSONB,
     "is_canary" BOOLEAN NOT NULL DEFAULT false,
     "baseline_sha" TEXT,
     "launched_by_id" UUID,
@@ -1191,8 +1192,27 @@ CREATE TABLE "skills" (
     "org_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "current_revision" INTEGER NOT NULL DEFAULT 1,
 
     CONSTRAINT "skills_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "skill_revisions" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "skill_id" UUID NOT NULL,
+    "revision" INTEGER NOT NULL,
+    "prompt_text" TEXT NOT NULL,
+    "description" TEXT,
+    "content_hash" TEXT NOT NULL,
+    "source_sha" TEXT,
+    "source_path" TEXT,
+    "reference_files" JSONB,
+    "scan_warnings" JSONB NOT NULL DEFAULT '[]',
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "skill_revisions_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -1862,6 +1882,12 @@ CREATE INDEX "skills_team_id_idx" ON "skills"("team_id");
 CREATE INDEX "skills_org_id_idx" ON "skills"("org_id");
 
 -- CreateIndex
+CREATE INDEX "skill_revisions_created_by_id_idx" ON "skill_revisions"("created_by_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "skill_revisions_skill_id_revision_key" ON "skill_revisions"("skill_id", "revision");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "scanner_patterns_label_key" ON "scanner_patterns"("label");
 
 -- CreateIndex
@@ -2214,6 +2240,12 @@ ALTER TABLE "skills" ADD CONSTRAINT "skills_team_id_fkey" FOREIGN KEY ("team_id"
 
 -- AddForeignKey
 ALTER TABLE "skills" ADD CONSTRAINT "skills_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skill_revisions" ADD CONSTRAINT "skill_revisions_skill_id_fkey" FOREIGN KEY ("skill_id") REFERENCES "skills"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "skill_revisions" ADD CONSTRAINT "skill_revisions_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "agents" ADD CONSTRAINT "agents_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;

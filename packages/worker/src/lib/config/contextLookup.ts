@@ -45,7 +45,12 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
           where: { temporalWorkflowId: wid },
         }),
         prisma.workflowRun.findUnique({
-          select: { agentVersions: true, pinnedSettings: true, templateId: true },
+          select: {
+            agentVersions: true,
+            pinnedSettings: true,
+            skillRevisions: true,
+            templateId: true,
+          },
           where: { workflowId: wid },
         }),
       ]);
@@ -60,12 +65,17 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
         run?.pinnedSettings && typeof run.pinnedSettings === 'object'
           ? (run.pinnedSettings as Record<string, unknown>)
           : undefined;
+      const skillRevisions =
+        run?.skillRevisions && typeof run.skillRevisions === 'object'
+          ? (run.skillRevisions as Record<string, number>)
+          : undefined;
       return {
         agentVersions,
         // Org is derived transitively (team → org); the ORGANIZATION cascade
         // tier sits between TEAM and GLOBAL.
         orgId: active?.repository?.team?.orgId,
         pinnedSettings,
+        skillRevisions,
         teamId: active?.repository?.teamId,
         workflowTemplateId: run?.templateId,
       };
@@ -75,6 +85,7 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
       ctx.orgId !== undefined ||
       ctx.workflowTemplateId !== undefined ||
       ctx.agentVersions !== undefined ||
+      ctx.skillRevisions !== undefined ||
       ctx.pinnedSettings !== undefined
   );
 }
