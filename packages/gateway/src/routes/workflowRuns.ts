@@ -495,7 +495,6 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const { fullTraces, includeSpec } = request.query;
       const includeTraces = request.query.includeTraces || fullTraces;
       const run = await fastify.prisma.workflowRun.findFirst({
-        ...(includeSpec ? {} : { omit: { specSnapshot: true } }),
         include: {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
           template: { select: { name: true, origin: true, teamId: true } },
@@ -503,6 +502,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             select: { description: true, externalTicketId: true, id: true },
           },
         },
+        omit: { specSnapshot: !includeSpec },
         where: {
           id: request.params.id,
           ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
@@ -536,7 +536,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             run.template.teamId === null && run.template.origin === AGENT_RUN_TEMPLATE_ORIGIN,
           result: (run.contextSnapshot as { result?: unknown })?.result ?? null,
           // Absent, not null, when the caller declined it: null is a spec a run can have.
-          specSnapshot: includeSpec ? run.specSnapshot : undefined,
+          specSnapshot: includeSpec ? (run as { specSnapshot?: unknown }).specSnapshot : undefined,
           startedAt: run.startedAt,
           status: run.status,
           steps: run.steps.map((s) => ({

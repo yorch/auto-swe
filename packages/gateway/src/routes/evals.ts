@@ -417,7 +417,9 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         _count: { _all: true },
         by: ['datasetId', 'quarantined', 'flakeScreened'],
       }),
-      fastify.prisma.evalDataset.findMany({ select: { id: true, name: true, slug: true } }),
+      runUnscoped('admin suite health spans every team', ['EvalDataset'], () =>
+        fastify.prisma.evalDataset.findMany({ select: { id: true, name: true, slug: true } })
+      ),
       resolveWorkflowDefaults(),
     ]);
     const perDataset = new Map<string, { cases: number; quarantined: number; screened: number }>();

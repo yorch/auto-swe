@@ -211,7 +211,9 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
       });
       expect(res.json().data.specSnapshot).toEqual({});
     }
-    expect(prisma.workflowRun.findFirst.mock.calls[0]?.[0]).not.toHaveProperty('omit');
+    expect(prisma.workflowRun.findFirst.mock.calls[0]?.[0]).toMatchObject({
+      omit: { specSnapshot: false },
+    });
   });
 
   it('neither reads nor sends the spec snapshot when includeSpec=false, but still returns steps', async () => {
