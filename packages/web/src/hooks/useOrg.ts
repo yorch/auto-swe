@@ -118,31 +118,6 @@ export function useRemoveOrgMember(orgId: string) {
   });
 }
 
-export interface BudgetAlertOrg {
-  alert: { percent: number | null; triggered: boolean };
-  budgetAlertThresholdPercent: number | null;
-  currentMonthUsage: {
-    costUsdAccrued: number;
-    runsCompleted: number;
-    yearMonth: string;
-  } | null;
-  id: string;
-  monthlyBudgetUsdCents: number | null;
-  name: string;
-  slug: string;
-}
-
-export function useBudgetAlerts() {
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: BudgetAlertOrg[] }>('/api/v1/platform/organizations/budget-alerts')
-        .then((r) => r.data),
-    queryKey: ['budget-alerts'],
-    refetchInterval: 30_000,
-  });
-}
-
 export function useInviteOrgMember(orgId: string) {
   const qc = useQueryClient();
   return useMutation({

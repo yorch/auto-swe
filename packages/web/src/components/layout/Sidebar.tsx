@@ -2,10 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { type RefObject, useMemo } from 'react';
+import { type RefObject, useEffect, useMemo, useState } from 'react';
 import { useUsageScopes } from '@/hooks/useAdmin';
 import { useApprovalsCount } from '@/hooks/useApprovals';
-import { activeNavHref, visibleNavGroups } from '@/lib/navigation';
+import { activeNavHref, type NavItem, navSections, visibleNavGroups } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -14,29 +14,42 @@ const ICONS: Record<string, string> = {
   admin: 'M12 9a3 3 0 100 6 3 3 0 000-6zM5 12l-2 1 2 3 2-1M19 12l2 1-2 3-2-1M12 5V3M12 21v-2',
   agents:
     'M12 3a3.5 3.5 0 013.5 3.5V8a3.5 3.5 0 01-7 0V6.5A3.5 3.5 0 0112 3zM5 21v-1a7 7 0 0114 0v1',
+  alert:
+    'M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z',
   analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+  building:
+    'M4 21V4a1 1 0 011-1h9a1 1 0 011 1v17M15 9h4a1 1 0 011 1v11M3 21h18M8 7h3M8 11h3M8 15h3',
   canvas: 'M4 7h7M4 12h16M13 17h7',
+  chat: 'M21 12a8 8 0 01-11.7 7.1L4 20l1-4.6A8 8 0 1121 12z',
   clock: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+  coin: 'M12 3a9 9 0 100 18 9 9 0 000-18zM14.8 9.2c-.5-.8-1.5-1.2-2.8-1.2-1.5 0-2.6.7-2.6 1.8 0 2.5 5.4 1.2 5.4 3.9 0 1.2-1.2 2-2.8 2-1.3 0-2.4-.5-3-1.4M12 6.5V8M12 16v1.5',
   connections: 'M9 15l6-6M10 6l1-1a4 4 0 016 6l-1 1M14 18l-1 1a4 4 0 01-6-6l1-1',
   dashboard: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
   docs: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2',
   epics:
     'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M12 12v4M12 12l-2-2M12 12l2-2',
+  flask: 'M9 3h6M10 3v6L4.5 19a1.5 1.5 0 001.3 2.2h12.4a1.5 1.5 0 001.3-2.2L14 9V3M7.5 15h9',
+  gavel: 'M14 13l-8.5 8.5a2.1 2.1 0 01-3-3L11 10M16 16l6-6M8 8l6-6M9 7l8 8M21 11l-8-8',
   inbox: 'M3 13l2-7h14l2 7M3 13v6h18v-6M3 13h5l1 2h6l1-2h5',
   key: 'M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4',
+  list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  lock: 'M6 11h12a1 1 0 011 1v8a1 1 0 01-1 1H6a1 1 0 01-1-1v-8a1 1 0 011-1zM8 11V7a4 4 0 118 0v4',
   memory:
     'M12 3c4 0 8 1.3 8 3v12c0 1.7-4 3-8 3s-8-1.3-8-3V6c0-1.7 4-3 8-3zM4 6c0 1.7 4 3 8 3s8-1.3 8-3M4 12c0 1.7 4 3 8 3s8-1.3 8-3',
+  monitor: 'M3 5h18a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V6a1 1 0 011-1zM8 21h8M12 17v4',
   repositories: 'M9 15l6-6M10 6l1-1a4 4 0 016 6l-1 1M14 18l-1 1a4 4 0 01-6-6l1-1',
   runs: 'M3 12h4l3 8 4-16 3 8h4',
+  scan: 'M11 4a7 7 0 100 14 7 7 0 000-14zM21 21l-5-5M8 11h6M11 8v6',
   security: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z',
   settings:
     'M12 9a3 3 0 100 6 3 3 0 000-6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z',
   skills: 'M12 3l2.4 4.9 5.4.8-3.9 3.8.9 5.3L12 15.3 7.2 17.8l.9-5.3L4.2 8.7l5.4-.8z',
+  target:
+    'M12 3a9 9 0 100 18 9 9 0 000-18zM12 8a4 4 0 100 8 4 4 0 000-8zM12 11.5a.5.5 0 100 1 .5.5 0 000-1z',
   teams:
     'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75',
   templates: 'M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5',
-  users:
-    'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75',
+  users: 'M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z',
   workflows: 'M4 7h7M4 12h16M13 17h7',
 };
 
@@ -57,6 +70,68 @@ function NavIcon({ name }: { name: string }) {
     >
       <path d={d} />
     </svg>
+  );
+}
+
+const SECTIONS_KEY = 'auto-swe.nav.sections';
+
+/** Which collapsible nav sections the user has opened, remembered per user in this browser. */
+function useOpenSections(userKey: string) {
+  const key = `${SECTIONS_KEY}.${userKey}`;
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      setOpen(raw ? (JSON.parse(raw) as Record<string, boolean>) : {});
+    } catch {
+      setOpen({});
+    }
+  }, [key]);
+  const toggle = (label: string, current: boolean) => {
+    setOpen((prev) => {
+      const next = { ...prev, [label]: !current };
+      try {
+        window.localStorage.setItem(key, JSON.stringify(next));
+      } catch {
+        // Storage is a convenience; the section still toggles for this visit.
+      }
+      return next;
+    });
+  };
+  return { open, toggle };
+}
+
+function NavLink({
+  item,
+  active,
+  badge,
+  indent,
+}: {
+  item: NavItem;
+  active: boolean;
+  badge?: number;
+  indent?: boolean;
+}) {
+  return (
+    <Link
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'flex items-center gap-[11px] border-l-2 py-[8px] text-[13.5px] font-[550] no-underline transition-all',
+        indent ? 'pl-[26px] pr-[18px]' : 'px-[18px]',
+        active
+          ? 'border-ember-400 bg-ink-700 text-paper-100'
+          : 'border-transparent text-paper-500 hover:text-paper-200'
+      )}
+      href={item.href}
+    >
+      <NavIcon name={item.icon} />
+      <span className="flex-1">{item.label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className="rounded-full bg-ember-400 px-[7px] py-px text-[10.5px] font-bold text-paper-50">
+          {badge}
+        </span>
+      )}
+    </Link>
   );
 }
 
@@ -95,6 +170,8 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
       ),
     [pathname, groups]
   );
+
+  const sections = useOpenSections(user?.sub ?? 'anonymous');
 
   const avatarLetter = (user?.email ?? 'G')[0].toUpperCase();
 
@@ -188,28 +265,50 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
             <div className="px-5 pb-[6px] pt-[14px] text-[10px] font-bold uppercase tracking-[0.12em] text-paper-600">
               {group.label}
             </div>
-            {group.items.map((item) => {
-              const active = activeHref === item.href;
+            {navSections(group.items).map((section) => {
+              const links = (indent: boolean) =>
+                section.items.map((item) => (
+                  <NavLink
+                    active={activeHref === item.href}
+                    badge={item.href === '/govern/approvals' ? inboxCount : undefined}
+                    indent={indent}
+                    item={item}
+                    key={item.href}
+                  />
+                ));
+              if (section.label === null) {
+                return links(false);
+              }
+              const label = section.label;
+              const holdsActive = section.items.some((i) => i.href === activeHref);
+              const isOpen = holdsActive || (sections.open[label] ?? false);
               return (
-                <Link
-                  aria-current={active ? 'page' : undefined}
-                  className={cn(
-                    'flex items-center gap-[11px] border-l-2 px-[18px] py-[8px] text-[13.5px] font-[550] no-underline transition-all',
-                    active
-                      ? 'border-ember-400 bg-ink-700 text-paper-100'
-                      : 'border-transparent text-paper-500 hover:text-paper-200'
-                  )}
-                  href={item.href}
-                  key={item.href}
-                >
-                  <NavIcon name={item.icon} />
-                  <span className="flex-1">{item.label}</span>
-                  {item.href === '/govern/approvals' && inboxCount > 0 && (
-                    <span className="rounded-full bg-ember-400 px-[7px] py-px text-[10.5px] font-bold text-paper-50">
-                      {inboxCount}
-                    </span>
-                  )}
-                </Link>
+                <div key={label}>
+                  <button
+                    aria-expanded={isOpen}
+                    className="flex w-full items-center gap-2 px-[18px] py-[7px] text-left text-[12px] font-semibold text-paper-400 hover:text-paper-200 disabled:cursor-default"
+                    disabled={holdsActive}
+                    onClick={() => sections.toggle(label, isOpen)}
+                    type="button"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      className={cn('shrink-0 transition-transform', isOpen && 'rotate-90')}
+                      fill="none"
+                      height={12}
+                      stroke="currentColor"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2.2}
+                      viewBox="0 0 24 24"
+                      width={12}
+                    >
+                      <path d="M9 6l6 6-6 6" />
+                    </svg>
+                    {label}
+                  </button>
+                  {isOpen && links(true)}
+                </div>
               );
             })}
           </div>

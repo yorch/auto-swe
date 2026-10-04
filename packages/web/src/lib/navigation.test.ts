@@ -3,7 +3,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Role } from '@auto-swe/shared';
 import { describe, expect, it } from 'vitest';
-import { activeNavHref, NAV_ITEMS, navLabel, pageTitle, visibleNavGroups } from './navigation';
+import {
+  activeNavHref,
+  NAV_ITEMS,
+  navLabel,
+  navSections,
+  pageTitle,
+  visibleNavGroups,
+} from './navigation';
 
 const APP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
 const RANK: Record<Role, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
@@ -125,5 +132,31 @@ describe('pageTitle', () => {
 
   it('throws for an href with no nav entry', () => {
     expect(() => navLabel('/nope')).toThrow();
+  });
+});
+
+describe('navSections', () => {
+  it('groups the Govern items into the five decided sections, in order', () => {
+    const govern = visibleNavGroups('ADMIN', true).find((g) => g.label === 'Govern');
+    expect(govern).toBeDefined();
+    expect(navSections(govern?.items ?? []).map((s) => s.label)).toEqual([
+      'Access',
+      'Security',
+      'Spend & insights',
+      'Configuration',
+      'Knowledge',
+    ]);
+  });
+
+  it('gives every Govern item its own icon within a section', () => {
+    const govern = visibleNavGroups('ADMIN', true).find((g) => g.label === 'Govern');
+    for (const section of navSections(govern?.items ?? [])) {
+      const icons = section.items.map((i) => i.icon);
+      expect(new Set(icons).size).toBe(icons.length);
+    }
+  });
+
+  it('no longer offers Budget alerts', () => {
+    expect(NAV_ITEMS.some((i) => i.href === '/govern/budget-alerts')).toBe(false);
   });
 });

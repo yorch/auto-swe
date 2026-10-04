@@ -28,6 +28,7 @@ import {
 import { useLedTeamIds } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { BUDGET_TIER_OPTIONS } from '@/lib/govLabels';
 import { formatDate } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -173,11 +174,7 @@ function ScheduleFormModal({ open, onClose }: { open: boolean; onClose: () => vo
                 budgetTier: v as ScheduleForm['budgetTier'],
               }))
             }
-            options={[
-              { label: 'STANDARD', value: 'STANDARD' },
-              { label: 'LARGE', value: 'LARGE' },
-              { label: 'EPIC', value: 'EPIC' },
-            ]}
+            options={BUDGET_TIER_OPTIONS}
             value={form.budgetTier}
           />
         </div>

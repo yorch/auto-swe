@@ -17,6 +17,9 @@ const ConsolidateBody = z.object({
 
 const LessonListQuery = paginationQuery({ defaultLimit: 100, maxLimit: 200 }).extend({
   includeConsolidated: booleanQueryParam(false),
+  // Narrow to one repository, and/or to lessons whose summary or rationale contains `q`.
+  q: z.string().trim().min(1).max(200).optional(),
+  repoId: z.string().uuid().optional(),
 });
 
 const LessonSearchQuery = z.object({
@@ -40,7 +43,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { includeConsolidated, limit, offset } = request.query;
+      const { includeConsolidated, limit, offset, q, repoId } = request.query;
 
       const accessFilter: Prisma.MemoryItemWhereInput =
         user.role === 'ADMIN'
@@ -50,6 +53,15 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       const where: Prisma.MemoryItemWhereInput = {
         ...accessFilter,
         ...(!includeConsolidated && { consolidatedAt: null }),
+        // Combined with the access filter, never replacing it: a repoId the caller cannot
+        // reach matches nothing rather than widening the result.
+        ...(repoId && { repoId }),
+        ...(q && {
+          OR: [
+            { lessonSummary: { contains: q, mode: 'insensitive' } },
+            { rationale: { contains: q, mode: 'insensitive' } },
+          ],
+        }),
       };
 
       // `accessFilter` is `{}` for a platform admin, which is the intent — but

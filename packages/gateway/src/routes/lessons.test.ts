@@ -69,6 +69,32 @@ describe('GET /lessons (list)', () => {
     expect(lastListWhere(prisma).consolidatedAt).toBeUndefined();
   });
 
+  it('narrows to one repository and a search term', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/lessons?repoId=${REPO_ID}&q=retry`,
+    });
+    expect(res.statusCode).toBe(200);
+    const where = lastListWhere(prisma);
+    expect(where.repoId).toBe(REPO_ID);
+    expect(where.OR).toEqual([
+      { lessonSummary: { contains: 'retry', mode: 'insensitive' } },
+      { rationale: { contains: 'retry', mode: 'insensitive' } },
+    ]);
+  });
+
+  it('rejects a repoId that is not a UUID', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/lessons?repoId=nope',
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('rejects an includeConsolidated value other than true/false', async () => {
     const { app } = await buildApp();
     const res = await app.inject({
