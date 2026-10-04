@@ -1,11 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import type { SettingScope, SettingSource, SettingView } from '@/hooks/useConfigSettings';
+import { platformRoleLabel } from '@/lib/govLabels';
 
 /**
  * One editable setting, rendered from its definition rather than hand-written.
@@ -18,7 +20,7 @@ const SOURCE_LABELS: Record<SettingSource, string> = {
   CHANNEL: 'Channel override',
   DEFAULT: 'Built-in default',
   GLOBAL: 'Platform-wide',
-  ORGANIZATION: 'Organisation override',
+  ORGANIZATION: 'Organization override',
   PINNED: 'Frozen by the run',
   TEAM: 'Team override',
   WORKFLOW_TEMPLATE: 'Template override',
@@ -34,6 +36,14 @@ const SOURCE_TONE: Record<SettingSource, string> = {
   PINNED: 'text-amber-400',
   TEAM: 'text-ember-400',
   WORKFLOW_TEMPLATE: 'text-ember-400',
+};
+
+const SCOPE_NOUN: Record<SettingScope, string> = {
+  CHANNEL: 'per channel',
+  GLOBAL: 'platform-wide',
+  ORGANIZATION: 'per organization',
+  TEAM: 'per team',
+  WORKFLOW_TEMPLATE: 'per workflow template',
 };
 
 function formatValue(value: unknown): string {
@@ -52,13 +62,22 @@ function parseList(draft: string): string[] {
     .filter((item) => item.length > 0);
 }
 
+/** What happened to this one row's last save or removal. */
+export type SettingRowStatus =
+  | { phase: 'saving' }
+  | { phase: 'saved' }
+  | { phase: 'error'; message: string };
+
 export function SettingRow({
   setting,
   scope,
   canWriteHere,
   onSave,
   onClear,
-  busy,
+  onEdit,
+  status,
+  sourceHref,
+  grantsHref,
 }: {
   setting: SettingView;
   /// The scope currently being viewed, used only to word the disabled reason.
@@ -70,8 +89,15 @@ export function SettingRow({
   canWriteHere: boolean;
   onSave: (value: unknown) => void;
   onClear: () => void;
-  busy: boolean;
+  /// Called when the person starts editing, so a stale saved/error line clears.
+  onEdit: () => void;
+  status?: SettingRowStatus;
+  /// Where the value shown was set, when that is a view the page can open.
+  sourceHref?: string;
+  /// Set for someone who may open Config grants; the "needs a role" line then links there.
+  grantsHref?: string;
 }) {
+  const busy = status?.phase === 'saving';
   const [draft, setDraft] = useState<string>(() => formatValue(setting.value));
   const [boolDraft, setBoolDraft] = useState<boolean>(() => setting.value === true);
 
@@ -119,9 +145,21 @@ export function SettingRow({
             {setting.description}
           </p>
           <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wider">
-            <span className={SOURCE_TONE[setting.source]}>{SOURCE_LABELS[setting.source]}</span>
+            {sourceHref ? (
+              <Link
+                className={`${SOURCE_TONE[setting.source]} underline-offset-2 hover:underline`}
+                href={sourceHref}
+              >
+                {SOURCE_LABELS[setting.source]}
+              </Link>
+            ) : (
+              <span className={SOURCE_TONE[setting.source]}>{SOURCE_LABELS[setting.source]}</span>
+            )}
             <span className="text-paper-600"> · default {formatValue(setting.defaultValue)}</span>
-            <span className="text-paper-600"> · needs {setting.requiredRole}</span>
+            <span className="text-paper-600">
+              {' '}
+              · needs {platformRoleLabel(setting.requiredRole).toLowerCase()}
+            </span>
           </p>
         </div>
 
@@ -138,7 +176,10 @@ export function SettingRow({
                   {boolDraft ? 'Enabled' : 'Disabled'}
                 </>
               }
-              onChange={() => setBoolDraft((current) => !current)}
+              onChange={() => {
+                onEdit();
+                setBoolDraft((current) => !current);
+              }}
             />
           ) : (
             <Input
@@ -148,9 +189,16 @@ export function SettingRow({
               hint={setting.unit ?? (isList ? 'comma-separated' : undefined)}
               id={`setting-${setting.key}`}
               inputMode={isNumber ? 'numeric' : undefined}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                onEdit();
+                setDraft(e.target.value);
+              }}
               // Withheld by the server for anyone below the setting's role.
-              placeholder={setting.redacted ? `hidden — ${setting.requiredRole} only` : undefined}
+              placeholder={
+                setting.redacted
+                  ? `Hidden — ${platformRoleLabel(setting.requiredRole).toLowerCase()} only`
+                  : undefined
+              }
               value={setting.redacted ? '' : draft}
             />
           )}
@@ -160,7 +208,7 @@ export function SettingRow({
               onClick={() => onSave(parsedDraft)}
               size="sm"
             >
-              Save
+              {status?.phase === 'saving' ? 'Saving…' : 'Save'}
             </Button>
             <Button
               disabled={!canWriteHere || busy || !hasOverrideHere}
@@ -168,22 +216,46 @@ export function SettingRow({
               size="sm"
               variant="ghost"
             >
-              Reset
+              Remove override
             </Button>
           </div>
+          {status?.phase === 'saved' && !dirty && (
+            <p className="text-xs text-moss-400" role="status">
+              ✓ Saved
+            </p>
+          )}
+          {status?.phase === 'error' && (
+            <p className="text-xs text-brick-400" role="alert">
+              {status.message}
+            </p>
+          )}
           {!canWriteHere && (
-            <p className="font-mono text-[10px] uppercase tracking-wider text-paper-600">
-              {!setting.overridableAt.includes(scope) && scope !== 'GLOBAL'
-                ? setting.overridableAt.length
-                  ? `Set at ${['GLOBAL', ...setting.overridableAt].join(', ')}`
-                  : 'Platform-wide only'
-                : `Requires ${setting.requiredRole}`}
+            <p className="text-xs text-paper-500">
+              {!setting.overridableAt.includes(scope) && scope !== 'GLOBAL' ? (
+                setting.overridableAt.length ? (
+                  `Can only be set ${['platform-wide', ...setting.overridableAt.map((o) => SCOPE_NOUN[o])].join(', ')}.`
+                ) : (
+                  'Can only be set platform-wide.'
+                )
+              ) : (
+                <>
+                  Changing this needs the {platformRoleLabel(setting.requiredRole).toLowerCase()}{' '}
+                  role.
+                  {grantsHref && (
+                    <>
+                      {' '}
+                      <Link className="text-ember-400 hover:underline" href={grantsHref}>
+                        Delegate it with a config grant
+                      </Link>
+                      .
+                    </>
+                  )}
+                </>
+              )}
             </p>
           )}
           {canWriteHere && hasOverrideHere && setting.source !== 'DEFAULT' && (
-            <p className="font-mono text-[10px] uppercase tracking-wider text-paper-600">
-              Override set here
-            </p>
+            <p className="text-xs text-paper-500">Override set here</p>
           )}
         </div>
       </div>

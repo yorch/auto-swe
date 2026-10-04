@@ -1,13 +1,15 @@
 'use client';
 
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
-import { SettingRow } from '@/components/settings/SettingRow';
+import { SettingRow, type SettingRowStatus } from '@/components/settings/SettingRow';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
+import { useUserOrgs } from '@/hooks/useAdmin';
 import {
   type ScopeSelection,
   type SettingView,
@@ -15,8 +17,11 @@ import {
   useConfigSettings,
   useSetConfigSetting,
 } from '@/hooks/useConfigSettings';
+import { useHasRole } from '@/hooks/useHasRole';
+import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 
 /**
  * Every configurable knob, rendered from the registry definitions rather than
@@ -48,18 +53,59 @@ const GROUP_BLURBS: Record<string, string> = {
     'Container images and isolation for agent workspaces, plus worker capacity. Mostly platform-wide.',
 };
 
+type ViewScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL';
+
+const SCOPE_OPTIONS: { label: string; value: ViewScope }[] = [
+  { label: 'Platform-wide', value: 'GLOBAL' },
+  { label: 'An organization', value: 'ORGANIZATION' },
+  { label: 'A team', value: 'TEAM' },
+  { label: 'A Slack channel', value: 'CHANNEL' },
+];
+
+/** The id parameter each narrower scope carries in the URL and in the settings query. */
+const SCOPE_ID_PARAM = {
+  CHANNEL: 'channelId',
+  ORGANIZATION: 'orgId',
+  TEAM: 'teamId',
+} as const;
+
 export default function GovernSettingsPage() {
-  const [scope, setScope] = useState<ScopeSelection['scope']>('GLOBAL');
-  const [teamId, setTeamId] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const params = useSearchParams();
+  const isAdmin = useHasRole('ADMIN');
+  // The viewed scope lives in the URL so a view can be linked to and survives a reload.
+  const rawScope = params.get('scope');
+  const scope: ViewScope =
+    rawScope === 'ORGANIZATION' || rawScope === 'TEAM' || rawScope === 'CHANNEL'
+      ? rawScope
+      : 'GLOBAL';
+  const scopeId = scope === 'GLOBAL' ? '' : (params.get(SCOPE_ID_PARAM[scope]) ?? '');
+  const [rowStatus, setRowStatus] = useState<Record<string, SettingRowStatus>>({});
 
   const teams = useTeams();
+  const orgs = useUserOrgs();
+  const channels = useSlackChannels();
 
-  // A TEAM view needs a team chosen before it means anything; until then keep
-  // showing the platform-wide values rather than an empty page.
+  const showScope = (nextScope: ViewScope, id = '') => {
+    const qs = new URLSearchParams();
+    if (nextScope !== 'GLOBAL') {
+      qs.set('scope', nextScope);
+      if (id) {
+        qs.set(SCOPE_ID_PARAM[nextScope], id);
+      }
+    }
+    setRowStatus({});
+    router.replace(qs.size ? `/govern/platform-settings?${qs}` : '/govern/platform-settings');
+  };
+
+  // A narrower view needs its team / organization / channel chosen before it means
+  // anything; until then keep showing the platform-wide values rather than an empty page.
   const selection: ScopeSelection = useMemo(
-    () => (scope === 'TEAM' && teamId ? { scope: 'TEAM', teamId } : { scope: 'GLOBAL' }),
-    [scope, teamId]
+    () =>
+      scope !== 'GLOBAL' && scopeId
+        ? ({ scope, [SCOPE_ID_PARAM[scope]]: scopeId } as ScopeSelection)
+        : { scope: 'GLOBAL' },
+    [scope, scopeId]
   );
 
   const settings = useConfigSettings(selection);
@@ -76,15 +122,40 @@ export default function GovernSettingsPage() {
     return [...byGroup.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [settings.data]);
 
-  const busy = setSetting.isPending || clearSetting.isPending;
-  const awaitingTeam = scope === 'TEAM' && !teamId;
+  const awaitingChoice = scope !== 'GLOBAL' && !scopeId;
+
+  // Each row tracks its own save, so one slow or failing write neither freezes
+  // the page nor reports against the wrong setting.
+  const track = (key: string, run: (callbacks: MutationCallbacks) => void) => {
+    setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saving' } }));
+    run({
+      onError: (err) =>
+        setRowStatus((prev) => ({
+          ...prev,
+          [key]: { message: errMsg(err, 'The change could not be saved.'), phase: 'error' },
+        })),
+      onSuccess: () => setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saved' } })),
+    });
+  };
+
+  // Where a value came from, when this page can show that scope: the platform-wide view
+  // always, and the narrower scope currently being viewed.
+  const sourceHrefFor = (source: SettingView['source']): string | undefined => {
+    if (source === 'GLOBAL') {
+      return '/govern/platform-settings';
+    }
+    if (scope !== 'GLOBAL' && source === scope && scopeId) {
+      return `/govern/platform-settings?scope=${scope}&${SCOPE_ID_PARAM[scope]}=${scopeId}`;
+    }
+    return undefined;
+  };
 
   return (
     <div className="space-y-8">
       <PageHeader
         chapter="§ Govern"
         subtitle="Operator policy that used to be compiled into the worker. Values shown are what this scope resolves to; each row says where its value came from."
-        title="Platform settings"
+        title={navLabel('/govern/platform-settings')}
       />
 
       <Card>
@@ -94,31 +165,47 @@ export default function GovernSettingsPage() {
         <div className="flex flex-wrap gap-4">
           <Select
             label="View settings for"
-            onChange={(v) => setScope(v as ScopeSelection['scope'])}
-            options={[
-              { label: 'Platform-wide', value: 'GLOBAL' },
-              { label: 'A team', value: 'TEAM' },
-            ]}
+            onChange={(v) => showScope(v as ViewScope)}
+            options={SCOPE_OPTIONS}
             value={scope}
           />
           {scope === 'TEAM' && (
             <Combobox
               label="Team"
-              onChange={setTeamId}
+              onChange={(id) => showScope('TEAM', id)}
               options={(teams.data ?? []).map((team) => ({ label: team.name, value: team.id }))}
               placeholder="Choose a team…"
-              value={teamId}
+              value={scopeId}
+            />
+          )}
+          {scope === 'ORGANIZATION' && (
+            <Combobox
+              label="Organization"
+              onChange={(id) => showScope('ORGANIZATION', id)}
+              options={(orgs.data ?? []).map((org) => ({ label: org.name, value: org.id }))}
+              placeholder="Choose an organization…"
+              value={scopeId}
+            />
+          )}
+          {scope === 'CHANNEL' && (
+            <Combobox
+              label="Slack channel"
+              onChange={(id) => showScope('CHANNEL', id)}
+              options={(channels.data ?? []).map((c) => ({
+                label: c.name ? `#${c.name}` : 'Unnamed channel',
+                value: c.id,
+              }))}
+              placeholder="Choose a channel…"
+              value={scopeId}
             />
           )}
         </div>
-        {awaitingTeam && (
-          <p className="mt-3 font-mono text-[10px] uppercase tracking-wider text-paper-500">
-            Showing platform-wide values until a team is chosen.
+        {awaitingChoice && (
+          <p className="mt-3 text-xs text-paper-500">
+            Showing platform-wide values until you choose one.
           </p>
         )}
       </Card>
-
-      {error && <Alert variant="error">{error}</Alert>}
 
       {settings.isLoading && <LoadingState />}
       {settings.isError && (
@@ -137,32 +224,39 @@ export default function GovernSettingsPage() {
           )}
           {items.map((setting) => (
             <SettingRow
-              busy={busy}
               // Decided by the server, which is the only side that knows the
               // grants. Re-deriving it from the role here could only ever see
               // the floor, so a lead holding a grant would be shown a disabled
               // control for a key they are entitled to change.
               canWriteHere={setting.canWrite}
+              grantsHref={isAdmin ? '/govern/config-grants' : undefined}
               key={setting.key}
-              onClear={() => {
-                setError(null);
-                clearSetting.mutate(setting.key, {
-                  onError: (err) => setError(errMsg(err, 'The change could not be saved.')),
-                });
-              }}
-              onSave={(value) => {
-                setError(null);
-                setSetting.mutate(
-                  { key: setting.key, value },
-                  { onError: (err) => setError(errMsg(err, 'The change could not be saved.')) }
-                );
-              }}
+              onClear={() => track(setting.key, (cb) => clearSetting.mutate(setting.key, cb))}
+              onEdit={() =>
+                setRowStatus((prev) => {
+                  if (!prev[setting.key] || prev[setting.key].phase === 'saving') {
+                    return prev;
+                  }
+                  const { [setting.key]: _cleared, ...rest } = prev;
+                  return rest;
+                })
+              }
+              onSave={(value) =>
+                track(setting.key, (cb) => setSetting.mutate({ key: setting.key, value }, cb))
+              }
               scope={selection.scope}
               setting={setting}
+              sourceHref={sourceHrefFor(setting.source)}
+              status={rowStatus[setting.key]}
             />
           ))}
         </Card>
       ))}
     </div>
   );
+}
+
+interface MutationCallbacks {
+  onError: (err: unknown) => void;
+  onSuccess: () => void;
 }
