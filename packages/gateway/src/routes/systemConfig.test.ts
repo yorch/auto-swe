@@ -152,6 +152,8 @@ import {
   detectJiraFields,
   issueTrackerBaseUrlRefusal,
   knowledgeBaseBaseUrlRefusal,
+  testGitHubConnection,
+  testSlackConnection,
   updateCanaryConfig,
   updateConsolidationConfig,
   updateIssueTrackerConfig,
@@ -246,6 +248,57 @@ describe('POST /config/issue-tracker/detect-fields', () => {
       url: '/api/v1/platform/config/issue-tracker/detect-fields',
     });
     expect(res.statusCode).toBe(500);
+    await app.close();
+  });
+});
+
+describe('connection tests with unsaved form values', () => {
+  it('passes the GitHub draft through to the test and rejects an invalid mode', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: { authMode: 'pat', token: 'ghp_typed' },
+      url: '/api/v1/platform/config/github/test',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(testGitHubConnection)).toHaveBeenCalledWith({
+      authMode: 'pat',
+      token: 'ghp_typed',
+    });
+    const bad = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: { authMode: 'nope' },
+      url: '/api/v1/platform/config/github/test',
+    });
+    expect(bad.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('still tests the stored GitHub config when the draft is empty', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: {},
+      url: '/api/v1/platform/config/github/test',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(testGitHubConnection)).toHaveBeenCalledWith({});
+    await app.close();
+  });
+
+  it('passes the Slack draft token through to the test', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: { botToken: 'xoxb-typed' },
+      url: '/api/v1/platform/config/slack/test',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(testSlackConnection)).toHaveBeenCalledWith({ botToken: 'xoxb-typed' });
     await app.close();
   });
 });

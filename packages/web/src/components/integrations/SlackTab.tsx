@@ -74,7 +74,12 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
   };
 
   const handleTest = () => {
-    runTest(() => testSlackConnection());
+    // Only the bot token matters to the probe; a blank field tests the stored one.
+    const unsaved = botToken !== '';
+    runTest(async () => ({
+      ...(await testSlackConnection(unsaved ? { botToken } : {})),
+      unsaved,
+    }));
   };
 
   if (isLoading || isError) {

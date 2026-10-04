@@ -9,6 +9,7 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
   type GitHubConfigInput,
+  type GitHubTestDraft,
   testGitHubConnection,
   useGitHubConfig,
   useUpdateGitHubConfig,
@@ -39,7 +40,9 @@ export function GitHubTab() {
   const [appClientSecret, setAppClientSecret] = useState('');
   const [appPrivateKey, setAppPrivateKey] = useState('');
   const [appInstallationId, setAppInstallationId] = usePrefilledField(data?.appInstallationId);
-  const [authMode, setAuthMode] = useState<string | null>(null);
+  // Seeded from the saved value so the select shows what is stored; an unset
+  // mode reads as `auto`, which is what the worker treats it as.
+  const [authMode, setAuthMode] = usePrefilledField(data?.authMode ?? 'auto');
 
   const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
 
@@ -68,7 +71,7 @@ export function GitHubTab() {
       body.appPrivateKey = appPrivateKey;
     }
     body.appInstallationId = clearableField(appInstallationId, data?.appInstallationId);
-    if (authMode !== null) {
+    if (authMode !== (data?.authMode ?? 'auto')) {
       body.authMode = authMode;
     }
 
@@ -84,7 +87,32 @@ export function GitHubTab() {
   };
 
   const handleTest = () => {
-    runTest(() => testGitHubConnection());
+    // Send what is on screen so the result describes what Save would store. A
+    // blank secret means the stored one; unchanged fields are left out.
+    const draft: GitHubTestDraft = {};
+    if (token) {
+      draft.token = token;
+    }
+    if (appPrivateKey) {
+      draft.appPrivateKey = appPrivateKey;
+    }
+    const apiUrlDraft = clearableField(apiUrl, data?.apiUrl);
+    if (apiUrlDraft !== undefined) {
+      draft.apiUrl = apiUrlDraft;
+    }
+    const appIdDraft = clearableField(appId, data?.appId);
+    if (appIdDraft !== undefined) {
+      draft.appId = appIdDraft;
+    }
+    const installationDraft = clearableField(appInstallationId, data?.appInstallationId);
+    if (installationDraft !== undefined) {
+      draft.appInstallationId = installationDraft;
+    }
+    if (authMode !== (data?.authMode ?? 'auto')) {
+      draft.authMode = authMode;
+    }
+    const unsaved = Object.keys(draft).length > 0;
+    runTest(async () => ({ ...(await testGitHubConnection(draft)), unsaved }));
   };
 
   if (isLoading || isError) {
@@ -242,7 +270,7 @@ export function GitHubTab() {
                   { label: 'pat (always use PAT)', value: 'pat' },
                   { label: 'app (always use App)', value: 'app' },
                 ]}
-                value={authMode ?? 'auto'}
+                value={authMode}
               />
             </ConfigField>
           </div>

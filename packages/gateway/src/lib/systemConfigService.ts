@@ -329,8 +329,45 @@ export async function updateGitHubConfig(
   };
 }
 
-export async function testGitHubConnection(): Promise<{ detail: string; ok: boolean }> {
-  const config = await resolveGitHubConfig();
+/**
+ * Values typed into the form but not saved. A field left out (or a secret left
+ * blank) means "use the stored value"; `null` on a non-secret clears it.
+ */
+export type GitHubTestDraft = {
+  apiUrl?: string | null;
+  appId?: string | null;
+  appInstallationId?: string | null;
+  appPrivateKey?: string;
+  authMode?: 'auto' | 'pat' | 'app' | null;
+  token?: string;
+};
+
+const GITHUB_DEFAULT_API_URL = 'https://api.github.com';
+
+export async function testGitHubConnection(
+  draft: GitHubTestDraft = {}
+): Promise<{ detail: string; ok: boolean }> {
+  const stored = await resolveGitHubConfig();
+  const config = {
+    ...stored,
+    apiUrl: draft.apiUrl === undefined ? stored.apiUrl : (draft.apiUrl ?? GITHUB_DEFAULT_API_URL),
+    appId: draft.appId === undefined ? stored.appId : draft.appId,
+    appInstallationId:
+      draft.appInstallationId === undefined ? stored.appInstallationId : draft.appInstallationId,
+    appPrivateKey: draft.appPrivateKey ?? stored.appPrivateKey,
+    authMode: draft.authMode === undefined ? stored.authMode : draft.authMode,
+    token: draft.token ?? stored.token,
+  };
+
+  // The stored token is valid on the stored API host only. Pointing it at a
+  // different typed host would send the saved credential somewhere it was
+  // never saved for, so a changed URL needs the token typed alongside it.
+  if (!draft.token && config.apiUrl !== stored.apiUrl) {
+    return {
+      detail: 'Enter the token again to test against a different API URL.',
+      ok: false,
+    };
+  }
 
   const appConfigured = config.appId && config.appPrivateKey && config.appInstallationId;
   const mode = config.authMode ?? 'auto';
@@ -453,8 +490,10 @@ export async function updateSlackConfig(
   };
 }
 
-export async function testSlackConnection(): Promise<{ detail: string; ok: boolean }> {
-  const { botToken } = await resolveSlackConfig();
+export async function testSlackConnection(
+  draft: { botToken?: string } = {}
+): Promise<{ detail: string; ok: boolean }> {
+  const botToken = draft.botToken ?? (await resolveSlackConfig()).botToken;
   if (!botToken) {
     return { detail: 'No Slack bot token configured.', ok: false };
   }

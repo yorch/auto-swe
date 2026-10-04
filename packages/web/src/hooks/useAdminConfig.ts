@@ -109,7 +109,21 @@ export const useGitHubConfig = sourcedConfigQuery<GitHubConfig>('github');
 
 export const useUpdateGitHubConfig = configMutation<GitHubConfig, GitHubConfigInput>('github');
 
-export const testGitHubConnection = () => postConfigTest('github');
+/**
+ * The unsaved GitHub form values a connection test may use. Anything left out
+ * (and any secret left blank) is tested as stored.
+ */
+export interface GitHubTestDraft {
+  token?: string;
+  apiUrl?: string | null;
+  appId?: string | null;
+  appInstallationId?: string | null;
+  appPrivateKey?: string;
+  authMode?: string | null;
+}
+
+export const testGitHubConnection = (draft: GitHubTestDraft = {}) =>
+  api.post<{ ok: boolean; detail: string }>(`${configPath('github')}/test`, draft);
 
 // ── Slack config ──
 
@@ -131,7 +145,8 @@ export const useSlackConfig = sourcedConfigQuery<SlackConfig>('slack');
 
 export const useUpdateSlackConfig = configMutation<SlackConfig, SlackConfigInput>('slack');
 
-export const testSlackConnection = () => postConfigTest('slack');
+export const testSlackConnection = (draft: { botToken?: string } = {}) =>
+  api.post<{ ok: boolean; detail: string }>(`${configPath('slack')}/test`, draft);
 
 // ── Workflow defaults ──
 

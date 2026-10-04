@@ -46,8 +46,8 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 ///   GET/PUT /api/v1/platform/config/knowledge-base
 ///
 /// Also:
-///   POST /api/v1/platform/config/github/test          — live connection test
-///   POST /api/v1/platform/config/slack/test           — live connection test
+///   POST /api/v1/platform/config/github/test          — live connection test (optional unsaved draft body)
+///   POST /api/v1/platform/config/slack/test           — live connection test (optional unsaved draft body)
 ///   POST /api/v1/platform/config/issue-tracker/test   — fetch a sample ticket
 ///   POST /api/v1/platform/config/knowledge-base/test  — knowledge base connectivity test
 ///   GET  /api/v1/platform/config/audit-log            — config change history
@@ -70,6 +70,21 @@ const GitHubPutBody = z.object({
   baseUrl: z.string().url().max(500).nullable().optional(),
   token: z.string().min(1).max(500).optional(),
   webhookSecret: z.string().min(1).max(500).optional(),
+});
+
+/// The unsaved form values a connection test may use. Secrets omitted or blank
+/// mean "test the stored one"; nothing here is persisted.
+const GitHubTestBody = z.object({
+  apiUrl: z.string().url().max(500).nullable().optional(),
+  appId: z.string().max(100).nullable().optional(),
+  appInstallationId: z.string().max(100).nullable().optional(),
+  appPrivateKey: z.string().min(1).max(10_000).optional(),
+  authMode: z.enum(['auto', 'pat', 'app']).nullable().optional(),
+  token: z.string().min(1).max(500).optional(),
+});
+
+const SlackTestBody = z.object({
+  botToken: z.string().min(1).max(500).optional(),
 });
 
 const SlackPutBody = z.object({
@@ -265,8 +280,10 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     }
   );
 
-  f.post('/config/github/test', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await testGitHubConnection())
+  f.post(
+    '/config/github/test',
+    { schema: { body: GitHubTestBody.optional(), response: { 200: z.any() } } },
+    async (req, reply) => reply.send(await testGitHubConnection(req.body ?? {}))
   );
 
   // ── Slack ───────────────────────────────────────────────────────────────────
@@ -285,8 +302,10 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     }
   );
 
-  f.post('/config/slack/test', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await testSlackConnection())
+  f.post(
+    '/config/slack/test',
+    { schema: { body: SlackTestBody.optional(), response: { 200: z.any() } } },
+    async (req, reply) => reply.send(await testSlackConnection(req.body ?? {}))
   );
 
   // ── Workflow defaults ────────────────────────────────────────────────────────

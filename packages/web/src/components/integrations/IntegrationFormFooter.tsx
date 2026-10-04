@@ -10,6 +10,7 @@ export function TestResultAlert({ result }: { result: TestResult | null }) {
   return (
     <Alert className="mt-3" variant={result.ok ? 'success' : 'error'}>
       {result.detail}
+      {result.unsaved && <span className="mt-1 block text-xs">Tested with unsaved values.</span>}
     </Alert>
   );
 }
