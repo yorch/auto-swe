@@ -29,9 +29,14 @@ export type SourceCheckInput = Pick<
 
 export interface SourceCheckResult {
   id: string;
-  status: 'OK' | 'UPDATE_AVAILABLE' | 'ERROR';
+  /**
+   * What the host said. `SKIPPED` is a rate-limit answer: the source's status and
+   * latestSha are left as they were (only `lastCheckedAt` moves), because the host
+   * being busy says nothing about the source.
+   */
+  status: 'OK' | 'UPDATE_AVAILABLE' | 'ERROR' | 'SKIPPED';
   latestSha: string | null;
-  /** One of the fixed strings; null unless `status` is `ERROR`. */
+  /** One of the fixed strings; null unless `status` is `ERROR` or `SKIPPED`. */
   error: string | null;
   /** The error code, so a caller can tell a rate limit from a broken source. */
   code: string | null;
@@ -52,20 +57,29 @@ export async function checkSkillSource(
     // Anything that is not already a fixed-vocabulary failure is the generic one.
     failure = err instanceof SkillSourceError ? err : new SkillSourceError('NETWORK');
   }
-  const status = failure ? 'ERROR' : latestSha === source.pinnedSha ? 'OK' : 'UPDATE_AVAILABLE';
+  const rateLimited = failure?.code === 'RATE_LIMIT_LOW' || failure?.code === 'RATE_LIMITED';
+  const status = rateLimited
+    ? 'SKIPPED'
+    : failure
+      ? 'ERROR'
+      : latestSha === source.pinnedSha
+        ? 'OK'
+        : 'UPDATE_AVAILABLE';
   const error = failure ? safeSourceErrorMessage(failure) : null;
   let recorded = true;
   try {
     // Guarded on the pin and on not being disabled: an accept or a disable that
     // landed while the host was being asked wins, and this write is dropped.
     await prisma.skillSource.update({
-      data: {
-        lastCheckedAt: new Date(),
-        lastError: error,
-        // A failed check keeps the last sha it did learn.
-        ...(latestSha === null ? {} : { latestSha }),
-        status,
-      },
+      data: rateLimited
+        ? { lastCheckedAt: new Date() }
+        : {
+            lastCheckedAt: new Date(),
+            lastError: error,
+            // A failed check keeps the last sha it did learn.
+            ...(latestSha === null ? {} : { latestSha }),
+            status: status as 'OK' | 'UPDATE_AVAILABLE' | 'ERROR',
+          },
       where: { id: source.id, pinnedSha: source.pinnedSha, status: { not: 'DISABLED' } },
     });
   } catch (err) {
@@ -89,7 +103,7 @@ export interface SourceSweepResult {
   ok: number;
   updateAvailable: number;
   errors: number;
-  /** Not asked at all: the host's rate limit ran low, so its remaining sources wait for the next run. */
+  /** Not recorded: the host's rate limit ran low (this source's answer, and the rest of the host's sources, wait for the next run). */
   skipped: number;
   /** Per source: ids, statuses and fixed strings only. */
   sources: Array<{ id: string; status: SourceCheckResult['status']; error: string | null }>;
@@ -151,6 +165,11 @@ export async function sweepSkillSources(
     }
     if (result.code === 'RATE_LIMIT_LOW' || result.code === 'RATE_LIMITED') {
       limitedHosts.add(source.host);
+    }
+    if (result.status === 'SKIPPED') {
+      out.skipped++;
+      out.sources.push({ error: result.error, id: result.id, status: result.status });
+      continue;
     }
     out.checked++;
     if (result.status === 'OK') {

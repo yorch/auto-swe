@@ -232,11 +232,30 @@ describe('sweepSkillSources', () => {
     const result = await sweepSkillSources(f.prisma, f.deps);
     // github.com: the first answer reports the floor was crossed, so the second is not asked.
     expect(f.calls.some((u) => u.includes('/b/'))).toBe(false);
-    expect(result.skipped).toBe(1);
+    // a (rate-limit answer) and b (host spent) are skipped; only the other host's c counts.
+    expect(result).toMatchObject({ checked: 1, errors: 0, skipped: 2, updateAvailable: 1 });
     expect(result.sources.find((s) => s.id === 'a')).toMatchObject({
       error: "the host's API rate limit is nearly spent; try again later",
-      status: 'ERROR',
+      status: 'SKIPPED',
     });
+    // Neither skipped source was recorded as broken, and a keeps its flag and latestSha.
+    expect(f.rows.find((r) => r.id === 'a')).toMatchObject({ latestSha: SHA, status: 'OK' });
+    expect(f.rows.find((r) => r.id === 'b')?.lastCheckedAt).toBeNull();
+  });
+
+  it('a rate-limit answer keeps UPDATE_AVAILABLE and latestSha, moving only lastCheckedAt', async () => {
+    const f = fake([row('a', { latestSha: NEW, status: 'UPDATE_AVAILABLE' })], {
+      a: commit(NEW, { 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '10' }),
+    });
+    const result = await checkSkillSource(f.prisma, f.rows[0] as Row, f.deps);
+    expect(result).toMatchObject({ code: 'RATE_LIMIT_LOW', recorded: true, status: 'SKIPPED' });
+    expect(f.rows[0]).toMatchObject({
+      lastError: null,
+      latestSha: NEW,
+      status: 'UPDATE_AVAILABLE',
+    });
+    expect(f.rows[0]?.lastCheckedAt).toBeInstanceOf(Date);
+    expect(Object.keys(f.updates[0]?.data ?? {})).toEqual(['lastCheckedAt']);
   });
 
   it('a result carries ids, statuses and fixed strings only', async () => {
