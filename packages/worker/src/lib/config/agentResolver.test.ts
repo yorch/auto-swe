@@ -1,11 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { agentFindFirst, cacheKeys, invalidateMock, revisionFindMany } = vi.hoisted(() => ({
+const {
+  agentFindFirst,
+  cacheKeys,
+  inActivity,
+  invalidateMock,
+  persistTrace,
+  revisionFindMany,
+  warn,
+} = vi.hoisted(() => ({
   agentFindFirst: vi.fn(),
   cacheKeys: [] as string[],
+  inActivity: { value: false },
   invalidateMock: vi.fn(),
+  persistTrace: vi.fn(async () => undefined),
   revisionFindMany: vi.fn(),
+  warn: vi.fn(),
 }));
+vi.mock('@temporalio/activity', () => ({
+  asyncLocalStorage: { getStore: () => (inActivity.value ? {} : undefined) },
+}));
+vi.mock('../activityContext.js', () => ({ persistActivityTrace: persistTrace }));
+vi.mock('../activityLog.js', () => ({ logWarn: warn }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: { agent: { findFirst: agentFindFirst }, skillRevision: { findMany: revisionFindMany } },
 }));
@@ -283,13 +299,30 @@ describe('resolveAgent — run-start skill revision pin', () => {
     expect(r.skills[0]?.promptText).toBe('PROMPT_tdd (edited mid-run)');
   });
 
-  it('falls back to the live text when the pinned revision row is missing', async () => {
+  it('falls back to the live text when the pinned revision row is missing, and says so', async () => {
     agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
     revisionFindMany.mockResolvedValue([]);
 
     const r = await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
 
     expect(r.skills[0]?.promptText).toBe('PROMPT_tdd (edited mid-run)');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('pinned skill revision missing'), {
+      missing: [{ currentRevision: 3, pinnedRevision: 1, skillId: 'sk-tdd' }],
+    });
+    // Outside an activity there is no run to attach a trace event to.
+    expect(persistTrace).not.toHaveBeenCalled();
+  });
+
+  it('also records a trace event when it happens inside an activity', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [editedSkillRef()] }));
+    revisionFindMany.mockResolvedValue([]);
+    inActivity.value = true;
+    try {
+      await resolveAgent('reviewer', { skillRevisions: { 'sk-tdd': 1 } });
+    } finally {
+      inActivity.value = false;
+    }
+    expect(persistTrace).toHaveBeenCalledTimes(1);
   });
 
   it('keys the cache on the skill pins so two pins never share an entry', async () => {

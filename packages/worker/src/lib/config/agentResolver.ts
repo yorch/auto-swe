@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import { configCacheTtlMs, invalidate, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { asyncLocalStorage } from '@temporalio/activity';
+import { persistActivityTrace } from '../activityContext.js';
+import { logWarn } from '../activityLog.js';
+import { AgentTracer } from '../agentTracer.js';
 import { ConfigMissingError, resolveProviderCredential } from './resolver.js';
 import { parseToolKeys } from './toolKeys.js';
 import type { ResolveCtx, ResolvedModelConfig, ResolvedSkill } from './types.js';
@@ -142,6 +146,16 @@ export async function skillsFromAgent(agent: AgentRow, ctx?: ResolveCtx): Promis
         })
       : [];
   const pinnedBySkill = new Map(pinnedRows.map((r) => [r.skillId, r]));
+  const missing = stale
+    .filter((ref) => !pinnedBySkill.has(ref.skill.id))
+    .map((ref) => ({
+      currentRevision: ref.skill.currentRevision,
+      pinnedRevision: ctx?.skillRevisions?.[ref.skill.id] as number,
+      skillId: ref.skill.id,
+    }));
+  if (missing.length > 0) {
+    await reportMissingPinnedRevisions(missing);
+  }
 
   return refs.map((ref) => {
     const pinned = pinnedBySkill.get(ref.skill.id);
@@ -154,6 +168,28 @@ export async function skillsFromAgent(agent: AgentRow, ctx?: ResolveCtx): Promis
       sortOrder: ref.sortOrder,
     };
   });
+}
+
+/**
+ * A pinned revision whose row is gone resolves the live text, which is the swap
+ * pinning exists to prevent — so it is loud: a warning in the activity log and
+ * a `skill.pinned_revision_missing` event on the run's trace. Only inside an
+ * activity (there is no run to attribute it to elsewhere); never throws.
+ */
+async function reportMissingPinnedRevisions(
+  missing: Array<{ skillId: string; pinnedRevision: number; currentRevision: number }>
+): Promise<void> {
+  logWarn('pinned skill revision missing; using the live text', { missing });
+  if (!asyncLocalStorage.getStore()) {
+    return;
+  }
+  try {
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: 'skill.pinned_revision_missing', outputJson: { missing } });
+    await persistActivityTrace(tracer, 'skillResolver');
+  } catch {
+    // Observability must never fail a resolution.
+  }
 }
 
 /**
