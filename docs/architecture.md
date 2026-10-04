@@ -1087,9 +1087,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   owner each trace row was written with, so rows older than those columns, spend with no
   derivable owner, and rows written while the run lookup failed land under "no team". The last are
   left ownerless on purpose: a row with an org and no run counts toward the org cap as runless
-  spend, which would bill a run already counted from its ledger a second time. There is no per-repository breakdown. The page is open to
-  platform ADMINs and LEADs; an ORG_ADMIN or team LEAD with a lower platform role can call the
-  endpoint but not open the page. The daily series is one aggregate per UTC day, so a 90-day window
+  spend, which would bill a run already counted from its ledger a second time. There is no per-repository breakdown. The page opens for anyone holding a usage
+  scope (`GET /usage/scopes`, checked by `requireUsageScope()` in the page layout), so an ORG_ADMIN
+  or team LEAD with a lower platform role can open it; the gateway limits which scopes each may read. The daily series is one aggregate per UTC day, so a 90-day window
   costs 90 small queries.
   A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call
   succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
