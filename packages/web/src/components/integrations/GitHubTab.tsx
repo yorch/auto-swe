@@ -22,7 +22,7 @@ import { ConfigField } from './ConfigField';
 import { GitHubHostCredentialsCard } from './GitHubHostCredentialsCard';
 import { GitHubHostSecretsCard } from './GitHubHostSecretsCard';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
-import { SecretInput } from './SecretInput';
+import { SecretInput, SecretStatus } from './SecretInput';
 import { UrlRow } from './UrlRow';
 
 export function GitHubTab() {
@@ -135,6 +135,7 @@ export function GitHubTab() {
           </CardHeader>
           <div className="space-y-4">
             <SecretInput
+              clear={{ field: 'token', integration: 'github' }}
               current={data?.token ?? null}
               id="gh-token"
               label="Personal access token"
@@ -144,6 +145,7 @@ export function GitHubTab() {
               value={token}
             />
             <SecretInput
+              clear={{ field: 'webhookSecret', integration: 'github' }}
               current={data?.webhookSecret ?? null}
               id="gh-webhook-secret"
               label="Webhook secret"
@@ -217,6 +219,7 @@ export function GitHubTab() {
               />
             </ConfigField>
             <SecretInput
+              clear={{ field: 'appClientSecret', integration: 'github' }}
               current={data?.appClientSecret ?? null}
               id="gh-app-client-secret"
               label="Client secret"
@@ -238,6 +241,12 @@ export function GitHubTab() {
                 placeholder={'-----BEGIN RSA PRIVATE KEY-----\n...'}
                 rows={4}
                 value={appPrivateKey}
+              />
+              <SecretStatus
+                clear={{ field: 'appPrivateKey', integration: 'github' }}
+                current={data?.appPrivateKey}
+                label="Private key"
+                source={sources.appPrivateKey}
               />
             </ConfigField>
             <ConfigField

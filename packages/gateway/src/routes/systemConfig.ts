@@ -10,9 +10,13 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
   auditConfigWrite,
+  CLEARABLE_SECRETS,
+  type ClearableIntegration,
+  clearStoredSecret,
   detectJiraFields,
   getFigmaConfig,
   getGitHubConfig,
+  getIntegrationConfig,
   getIssueTrackerConfig,
   getKnowledgeBaseConfig,
   getSlackConfig,
@@ -263,6 +267,47 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   // All routes below require ADMIN
   f.addHook('onRequest', requireAuth({ requiredRole: 'ADMIN' }));
+
+  // ── Clear a stored secret ───────────────────────────────────────────────────
+
+  // A PUT can only replace a secret. This removes the stored one, which hands the value back
+  // to its environment variable when one is set, and to "not configured" when it is not.
+  f.delete(
+    '/config/:integration/secrets/:field',
+    {
+      schema: {
+        params: z.object({
+          field: z.string().max(40),
+          integration: z.enum(Object.keys(CLEARABLE_SECRETS) as [ClearableIntegration]),
+        }),
+        response: { 200: z.any(), 400: z.any(), 404: z.any() },
+      },
+    },
+    async (req, reply) => {
+      const { field, integration } = req.params;
+      if (!(CLEARABLE_SECRETS[integration] as readonly string[]).includes(field)) {
+        return reply.status(400).send({
+          error: {
+            code: 'NOT_A_SECRET',
+            message: `'${field}' is not a secret field of ${integration}`,
+          },
+        });
+      }
+      const cleared = await clearStoredSecret(
+        fastify.prisma,
+        fastify.log,
+        requireUser(req).sub,
+        integration,
+        field
+      );
+      if (!cleared) {
+        return reply.status(404).send({
+          error: { code: 'NOT_STORED', message: 'No value is stored for this field' },
+        });
+      }
+      return reply.send(await getIntegrationConfig(fastify.prisma, integration));
+    }
+  );
 
   // ── GitHub ──────────────────────────────────────────────────────────────────
 

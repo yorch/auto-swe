@@ -1350,3 +1350,111 @@ export async function testDecryptSecrets(prisma: PrismaClient): Promise<Record<s
   }
   return results;
 }
+
+// ─── Clearing a stored secret ─────────────────────────────────────────────────
+
+/// Which secret fields each singleton integration holds. A field absent here is not
+/// clearable, so the route's allowlist and the columns it nulls cannot drift apart.
+export const CLEARABLE_SECRETS = {
+  figma: ['apiToken'],
+  github: ['token', 'webhookSecret', 'appClientSecret', 'appPrivateKey'],
+  'issue-tracker': ['apiToken', 'webhookSecret'],
+  'knowledge-base': ['apiToken'],
+  slack: ['botToken', 'clientSecret', 'signingSecret'],
+} as const satisfies Record<string, readonly string[]>;
+
+export type ClearableIntegration = keyof typeof CLEARABLE_SECRETS;
+
+interface SingletonDelegate {
+  findUnique(args: { where: { id: string } }): Promise<Record<string, unknown> | null>;
+  update(args: { data: Record<string, unknown>; where: { id: string } }): Promise<unknown>;
+}
+
+function singletonFor(
+  prisma: PrismaClient,
+  integration: ClearableIntegration
+): { delegate: SingletonDelegate; entityId: string; entityType: string } {
+  switch (integration) {
+    case 'figma':
+      return {
+        delegate: prisma.figmaConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.figma,
+        entityType: 'FigmaConfig',
+      };
+    case 'github':
+      return {
+        delegate: prisma.gitHubConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.github,
+        entityType: 'GitHubConfig',
+      };
+    case 'issue-tracker':
+      return {
+        delegate: prisma.issueTrackerConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.tracker,
+        entityType: 'IssueTrackerConfig',
+      };
+    case 'knowledge-base':
+      return {
+        delegate: prisma.knowledgeBaseConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.knowledgeBase,
+        entityType: 'KnowledgeBaseConfig',
+      };
+    case 'slack':
+      return {
+        delegate: prisma.slackConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.slack,
+        entityType: 'SlackConfig',
+      };
+  }
+}
+
+/// Removes one stored secret from an integration's singleton row, so the resolver falls
+/// back to the environment variable when one is set. Returns false when nothing was stored.
+export async function clearStoredSecret(
+  prisma: PrismaClient,
+  log: FastifyBaseLogger,
+  actorId: string,
+  integration: ClearableIntegration,
+  field: string
+): Promise<boolean> {
+  const { delegate, entityId, entityType } = singletonFor(prisma, integration);
+  const existing = await delegate.findUnique({ where: { id: 'default' } });
+  if (!existing?.[`${field}Ciphertext`]) {
+    return false;
+  }
+  await delegate.update({
+    data: {
+      [`${field}AuthTag`]: null,
+      [`${field}Ciphertext`]: null,
+      [`${field}KeyVersion`]: null,
+      [`${field}LastFour`]: null,
+      [`${field}Nonce`]: null,
+    },
+    where: { id: 'default' },
+  });
+  await writeSystemConfigAudit(prisma, log, {
+    action: 'UPDATE',
+    actorId,
+    afterJson: { [`${field}LastFour`]: null, changedFields: [field], cleared: true },
+    beforeJson: { [`${field}LastFour`]: existing[`${field}LastFour`] ?? null },
+    entityId,
+    entityType,
+  });
+  return true;
+}
+
+/// The masked view of an integration, as its GET route returns it.
+export function getIntegrationConfig(prisma: PrismaClient, integration: ClearableIntegration) {
+  switch (integration) {
+    case 'figma':
+      return getFigmaConfig(prisma);
+    case 'github':
+      return getGitHubConfig(prisma);
+    case 'issue-tracker':
+      return getIssueTrackerConfig(prisma);
+    case 'knowledge-base':
+      return getKnowledgeBaseConfig(prisma);
+    case 'slack':
+      return getSlackConfig(prisma);
+  }
+}

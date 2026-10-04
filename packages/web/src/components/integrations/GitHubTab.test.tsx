@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { bodyOf, setupFetchMock, withQuery } from '@/test/rtl-helpers';
+import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { GitHubTab } from './GitHubTab';
 
 vi.mock('./GitHubHostCredentialsCard', () => ({ GitHubHostCredentialsCard: () => null }));
@@ -43,7 +43,7 @@ describe('GitHubTab', () => {
       }),
     });
     render(withQuery(<GitHubTab />));
-    const token = await screen.findByLabelText(/personal access token/i);
+    const token = await screen.findByLabelText(/personal access token/i, { selector: 'input' });
     fireEvent.change(token, { target: { value: 'ghp_typed' } });
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
     await waitFor(() => expect(screen.getByText('Tested with unsaved values.')).toBeTruthy());
@@ -59,10 +59,35 @@ describe('GitHubTab', () => {
       }),
     });
     render(withQuery(<GitHubTab />));
-    await screen.findByLabelText(/personal access token/i);
+    await screen.findByLabelText(/personal access token/i, { selector: 'input' });
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
     await waitFor(() => expect(screen.getByText(/Authenticated as me/)).toBeTruthy());
     expect(bodyOf(spy, '/config/github/test')).toEqual({});
     expect(screen.queryByText('Tested with unsaved values.')).toBeNull();
+  });
+});
+
+describe('GitHubTab secret clearing', () => {
+  it('shows where a secret comes from and clears a stored one after confirmation', async () => {
+    stubDialogPrototype();
+    const spy = setupFetchMock({
+      '/api/v1/platform/config/github': () => config('pat'),
+      'DELETE /api/v1/platform/config/github/secrets/token': () => ({ data: {}, sources: {} }),
+    });
+    render(withQuery(<GitHubTab />));
+    expect(await screen.findByText(/Stored in DB \(ending abcd\)/)).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Clear stored value for Personal access token' })
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear value' }));
+    await waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith('/config/github/secrets/token') &&
+            (init as RequestInit | undefined)?.method === 'DELETE'
+        )
+      ).toBe(true)
+    );
   });
 });

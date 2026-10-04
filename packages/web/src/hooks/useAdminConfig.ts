@@ -67,6 +67,20 @@ function configMutation<TConfig, TInput>(slug: string) {
   };
 }
 
+/**
+ * DELETE one stored secret of an integration (`github`, `slack`, `issue-tracker`,
+ * `knowledge-base`, `figma`). The value falls back to its environment variable when
+ * one is set. Refetches that integration's config so the field's status updates.
+ */
+export function useClearConfigSecret(integration: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (field: string) =>
+      api.delete<unknown>(`${configPath(integration)}/secrets/${field}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: configKey(integration) }),
+  });
+}
+
 /** POST `…/test`. The body is empty for connectors that need no probe input. */
 function postConfigTest(slug: string, body: Record<string, string> = {}) {
   return api.post<{ ok: boolean; detail: string }>(`${configPath(slug)}/test`, body);

@@ -215,6 +215,7 @@ export function KnowledgeBaseTab() {
             </ConfigField>
           )}
           <SecretInput
+            clear={{ field: 'apiToken', integration: 'knowledge-base' }}
             current={data?.apiToken ?? null}
             id="kb-api-token"
             label="API token"

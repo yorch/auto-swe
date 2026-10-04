@@ -219,6 +219,7 @@ export function IssueTrackerTab() {
             />
           </ConfigField>
           <SecretInput
+            clear={{ field: 'apiToken', integration: 'issue-tracker' }}
             current={data?.apiToken ?? null}
             id="tracker-api-token"
             label="API token"
@@ -339,6 +340,7 @@ export function IssueTrackerTab() {
           </p>
           <div className="space-y-4">
             <SecretInput
+              clear={{ field: 'webhookSecret', integration: 'issue-tracker' }}
               current={data?.webhookSecret ?? null}
               id="tracker-webhook-secret"
               label="Webhook secret"

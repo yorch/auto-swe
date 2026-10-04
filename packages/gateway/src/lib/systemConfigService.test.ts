@@ -1317,3 +1317,54 @@ describe('systemConfigService', () => {
     });
   });
 });
+
+describe('clearStoredSecret', () => {
+  const log = { warn: vi.fn() } as unknown as FastifyBaseLogger;
+
+  function prismaWith(row: Record<string, unknown> | null) {
+    return {
+      configAuditLog: { create: vi.fn().mockResolvedValue({}) },
+      slackConfig: {
+        findUnique: vi.fn().mockResolvedValue(row),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+  }
+
+  it('nulls the envelope columns and audits the clear without recording the secret', async () => {
+    const prisma = prismaWith({ botTokenCiphertext: Buffer.from('x'), botTokenLastFour: 'abcd' });
+    const { clearStoredSecret } = await import('./systemConfigService.js');
+    const cleared = await clearStoredSecret(
+      prisma as unknown as PrismaClient,
+      log,
+      'admin-1',
+      'slack',
+      'botToken'
+    );
+    expect(cleared).toBe(true);
+    expect(prisma.slackConfig.update.mock.calls[0][0].data).toEqual({
+      botTokenAuthTag: null,
+      botTokenCiphertext: null,
+      botTokenKeyVersion: null,
+      botTokenLastFour: null,
+      botTokenNonce: null,
+    });
+    const audit = prisma.configAuditLog.create.mock.calls[0][0].data;
+    expect(audit.entityType).toBe('SlackConfig');
+    expect(audit.afterJson.cleared).toBe(true);
+  });
+
+  it('does nothing when no value is stored', async () => {
+    const prisma = prismaWith({ botTokenCiphertext: null });
+    const { clearStoredSecret } = await import('./systemConfigService.js');
+    const cleared = await clearStoredSecret(
+      prisma as unknown as PrismaClient,
+      log,
+      'admin-1',
+      'slack',
+      'botToken'
+    );
+    expect(cleared).toBe(false);
+    expect(prisma.slackConfig.update).not.toHaveBeenCalled();
+  });
+});

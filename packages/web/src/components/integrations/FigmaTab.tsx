@@ -100,6 +100,7 @@ export function FigmaTab() {
             />
           </ConfigField>
           <SecretInput
+            clear={{ field: 'apiToken', integration: 'figma' }}
             current={data?.apiToken ?? null}
             id="figma-api-token"
             label="API token"
