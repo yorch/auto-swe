@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { createContext, type ReactNode, useContext } from 'react';
 import { cn } from '@/lib/utils';
 
 type Align = 'left' | 'right' | 'center';
@@ -8,15 +8,55 @@ const ALIGN: Record<Align, string> = {
   right: 'text-right',
 };
 
+const StackedContext = createContext(false);
+
+/** Below `sm`, a stacked table turns each body row into a card; see `Table`. */
+const STACKED_TABLE =
+  'max-sm:[&_thead]:sr-only max-sm:[&_tbody]:block max-sm:[&_thead_tr]:block ' +
+  'max-sm:[&_tbody_tr]:mb-3 max-sm:[&_tbody_tr]:block max-sm:[&_tbody_tr]:rounded-md ' +
+  'max-sm:[&_tbody_tr]:border max-sm:[&_tbody_tr]:border-ink-600 max-sm:[&_tbody_tr]:px-3 ' +
+  'max-sm:[&_tbody_tr]:py-2 max-sm:[&_tbody_tr:last-child]:mb-0 max-sm:block';
+
 /**
  * The table scrolls inside its own wrapper, so a wide table on a narrow screen
  * never widens the page itself.
+ *
+ * Pass `stacked` for a table with many columns (6+): below the `sm` breakpoint
+ * each body row renders as a card instead of scrolling sideways, so a row's
+ * actions never sit off-screen. The header row is kept for screen readers only.
+ * Tell each `Td` what it is:
+ *
+ *   <Table stacked>
+ *     <THead>...</THead>
+ *     <tbody>
+ *       <TRow>
+ *         <Td primary>{name}</Td>                  // the card title, no label
+ *         <Td label="Status">{status}</Td>         // a "Status  value" line
+ *         <Td align="right">{actions}</Td>         // unlabelled: full width, left-aligned
+ *       </TRow>
+ *     </tbody>
+ *   </Table>
+ *
+ * From `sm` up nothing changes, so `label` and `primary` cost nothing on a wide
+ * screen. A `Td` without either still renders, as a plain full-width line.
  */
-export function Table({ children, className }: { children: ReactNode; className?: string }) {
+export function Table({
+  children,
+  className,
+  stacked = false,
+}: {
+  children: ReactNode;
+  className?: string;
+  stacked?: boolean;
+}) {
   return (
-    <div className="w-full overflow-x-auto">
-      <table className={cn('w-full text-sm', className)}>{children}</table>
-    </div>
+    <StackedContext.Provider value={stacked}>
+      <div className="w-full overflow-x-auto">
+        <table className={cn('w-full text-sm', stacked && STACKED_TABLE, className)}>
+          {children}
+        </table>
+      </div>
+    </StackedContext.Provider>
   );
 }
 
@@ -132,16 +172,38 @@ export function Td({
   children,
   className,
   colSpan,
+  label,
+  primary = false,
   title,
 }: {
   align?: Align;
   children?: ReactNode;
   className?: string;
   colSpan?: number;
+  /** In a `stacked` table below `sm`: the caption shown beside this cell's value. */
+  label?: string;
+  /** In a `stacked` table below `sm`: this cell is the card's title. */
+  primary?: boolean;
   title?: string;
 }) {
+  const stacked = useContext(StackedContext);
   return (
-    <td className={cn(align && ALIGN[align], className)} colSpan={colSpan} title={title}>
+    <td
+      className={cn(
+        align && ALIGN[align],
+        stacked &&
+          cn(
+            'max-sm:block max-sm:px-0! max-sm:py-1! max-sm:text-left',
+            primary && 'max-sm:text-base max-sm:font-medium',
+            label &&
+              'max-sm:flex max-sm:items-baseline max-sm:justify-between max-sm:gap-3 max-sm:before:shrink-0 max-sm:before:text-xs max-sm:before:text-paper-500 max-sm:before:content-[attr(data-label)]'
+          ),
+        className
+      )}
+      colSpan={colSpan}
+      data-label={stacked ? label : undefined}
+      title={title}
+    >
       {children}
     </td>
   );

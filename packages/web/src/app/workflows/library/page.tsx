@@ -470,7 +470,7 @@ export default function TemplatesPage() {
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="workflows">
           {
             <Card className="overflow-hidden p-0" variant="inset">
-              <Table>
+              <Table stacked>
                 <THead>
                   <Th>Name</Th>
                   <Th>Team</Th>
@@ -483,7 +483,7 @@ export default function TemplatesPage() {
                 <tbody>
                   {(templates ?? []).map((t) => (
                     <TRow className="hover:bg-ink-700/40" hover key={t.id}>
-                      <Td className="px-4 py-3">
+                      <Td className="px-4 py-3" primary>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Link
                             className="font-medium text-paper-100 hover:text-ember-400"
@@ -507,16 +507,19 @@ export default function TemplatesPage() {
                           <div className="text-xs text-paper-500">{t.description}</div>
                         )}
                       </Td>
-                      <Td className="px-4 py-3 text-paper-400">
+                      <Td className="px-4 py-3 text-paper-400" label="Team">
                         {t.team?.name ?? <em className="text-paper-500">global</em>}
                       </Td>
-                      <Td className="px-4 py-3">
+                      <Td className="px-4 py-3" label="Status">
                         <StatusBadge status={t.status} />
                       </Td>
-                      <Td className="px-4 py-3 font-mono text-xs text-paper-300">
+                      <Td
+                        className="px-4 py-3 font-mono text-xs text-paper-300"
+                        label="Active version"
+                      >
                         {t.activeVersion !== null ? `v${t.activeVersion}` : '—'}
                       </Td>
-                      <Td className="px-4 py-3">
+                      <Td className="px-4 py-3" label="Last run">
                         {t.lastRun ? (
                           <Link
                             className="inline-flex items-center gap-2"
@@ -533,11 +536,14 @@ export default function TemplatesPage() {
                           </span>
                         )}
                       </Td>
-                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-500">
+                      <Td
+                        className="px-4 py-3 font-mono text-[11px] text-paper-500"
+                        label="Updated"
+                      >
                         {formatRelativeTime(t.updatedAt)}
                       </Td>
                       <Td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">
                           {t.status === 'ARCHIVED' ? null : t.status === 'ACTIVE' &&
                             t.activeVersion !== null ? (
                             <ButtonLink

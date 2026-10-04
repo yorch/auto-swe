@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { Table, THead, Th } from './Table';
+import { Table, Td, THead, Th, TRow } from './Table';
 
 describe('Th sorting', () => {
   it('sets aria-sort per column, hides the arrow, and reports clicks', () => {
@@ -32,5 +32,35 @@ describe('Th sorting', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
     expect(onSort).toHaveBeenCalledOnce();
     expect(screen.queryByRole('button', { name: 'Name' })).toBeNull();
+  });
+});
+
+describe('stacked Table', () => {
+  it('labels cells for the card layout only when stacked', () => {
+    const { rerender } = render(
+      <Table stacked>
+        <tbody>
+          <TRow>
+            <Td label="Status" primary>
+              Open
+            </Td>
+          </TRow>
+        </tbody>
+      </Table>
+    );
+    expect(screen.getByRole('cell').getAttribute('data-label')).toBe('Status');
+    expect(screen.getByRole('table').className).toContain('max-sm:');
+
+    rerender(
+      <Table>
+        <tbody>
+          <TRow>
+            <Td label="Status">Open</Td>
+          </TRow>
+        </tbody>
+      </Table>
+    );
+    expect(screen.getByRole('cell').getAttribute('data-label')).toBeNull();
+    expect(screen.getByRole('table').className).not.toContain('max-sm:');
   });
 });
