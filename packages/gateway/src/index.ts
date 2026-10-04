@@ -42,6 +42,7 @@ import temporalPlugin from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrary.js';
 import { agentRunRoutes } from './routes/agentRuns.js';
+import { agentVersionRoutes } from './routes/agentVersions.js';
 import { autonomyPolicyRoutes } from './routes/autonomyPolicies.js';
 import { bundleRoutes } from './routes/bundles.js';
 import { configSettingsRoutes } from './routes/configSettings.js';
@@ -69,6 +70,7 @@ import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
 import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
 import { securityEventRoutes } from './routes/securityEvents.js';
+import { skillRevisionRoutes } from './routes/skillRevisions.js';
 import { skillSourceRoutes } from './routes/skillSources.js';
 import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
@@ -373,6 +375,8 @@ async function start() {
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
   await app.register(skillSourceRoutes, { prefix: '/api/v1/platform' });
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/platform' });
+  await app.register(agentVersionRoutes, { prefix: '/api/v1/platform' });
+  await app.register(skillRevisionRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/admin' });
   await app.register(evalRoutes, { prefix: '/api/v1/platform' });
