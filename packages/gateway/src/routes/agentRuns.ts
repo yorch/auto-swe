@@ -95,6 +95,8 @@ interface LaunchInput {
   repoId: string;
   /** The user the run acts as and is charged through. */
   user: JwtPayload;
+  /** Re-runs keep their request identity while allocating a fresh delivery branch. */
+  workRequestId?: string;
 }
 
 export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
@@ -314,8 +316,9 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       maxSteps: input.maxSteps,
       maxWallClockSeconds: input.maxWallClockSeconds,
     });
-    const workRequestId = crypto.randomUUID();
-    const externalTicketId = agentRunTicketId(workRequestId);
+    const attemptId = crypto.randomUUID();
+    const workRequestId = input.workRequestId ?? attemptId;
+    const externalTicketId = agentRunTicketId(attemptId);
     const repo8 = repo.id.replace(/-/g, '').slice(0, 8);
     // The key is scoped to the caller as well as the repo: two users who pick the
     // same key on one repo must not collide, and a 409 must not reveal the other's run.
@@ -362,17 +365,21 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
           temporalWorkflowId,
           workRequestId,
         },
-        runInput: {
-          connectionId: repo.id,
-          description: input.prompt,
-          externalTicketId,
-          id: workRequestId,
-          payload: payload as object,
-          requestedById: user.sub,
-          requestPayload,
-          templateId: template.id,
-          templateVersion: template.activeVersion,
-        },
+        ...(input.workRequestId
+          ? {}
+          : {
+              runInput: {
+                connectionId: repo.id,
+                description: input.prompt,
+                externalTicketId,
+                id: workRequestId,
+                payload: payload as object,
+                requestedById: user.sub,
+                requestPayload,
+                templateId: template.id,
+                templateVersion: template.activeVersion,
+              },
+            }),
       },
       () =>
         fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
@@ -577,7 +584,11 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:workRequestId/rerun',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
-      schema: { headers: IdempotencyHeaderSchema, params: RerunParams },
+      schema: {
+        body: z.object({ instructions: z.string().trim().max(4000).optional() }).nullish(),
+        headers: IdempotencyHeaderSchema,
+        params: RerunParams,
+      },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -601,6 +612,17 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         return error(reply, 404, 'AGENT_RUN_NOT_FOUND', 'Agent run not found');
       }
       const p = parsed.data;
+      const prompt = request.body?.instructions
+        ? `${prev.description}\n\nAdditional instructions for this attempt:\n${request.body.instructions}`
+        : prev.description;
+      if (prompt.length > AGENT_RUN_MAX_PROMPT_CHARS) {
+        return error(
+          reply,
+          400,
+          'PROMPT_TOO_LONG',
+          'The task and additional instructions exceed the prompt limit'
+        );
+      }
       return launch(request, reply, {
         agent: p.agentRef,
         // A re-run takes the default tier: the original's is on its ledger row and
@@ -610,9 +632,10 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         idempotencyKey: request.headers['idempotency-key'],
         maxSteps: p.maxSteps,
         maxWallClockSeconds: p.maxWallClockSeconds,
-        prompt: prev.description,
+        prompt,
         repoId: prev.connectionId,
         user,
+        workRequestId: request.params.workRequestId,
       });
     }
   );

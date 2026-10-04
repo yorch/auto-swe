@@ -11,6 +11,7 @@ const StepIdParam = z.object({ id: z.string().uuid() });
 
 const ListQuery = z.object({
   overdue: booleanQueryParam(false),
+  runId: z.string().uuid().optional(),
   sort: z
     .enum(['requestedAt:asc', 'requestedAt:desc', 'timeoutAt:asc', 'timeoutAt:desc'])
     .default('requestedAt:desc'),
@@ -145,7 +146,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { overdue, sort, status } = request.query;
+      const { overdue, sort, status, runId } = request.query;
       const orderBy =
         sort === 'requestedAt:asc'
           ? { requestedAt: 'asc' as const }
@@ -170,6 +171,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         take: status === 'ALL' ? 200 : 100,
         where: {
           ...(status === 'ALL' ? {} : { status: 'PENDING' }),
+          ...(runId ? { runId } : {}),
           ...(overdue ? { timeoutAt: { lt: new Date() } } : {}),
           ...buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate),
         },

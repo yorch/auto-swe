@@ -47,7 +47,30 @@ export interface RunWithWorkRequest {
     id: string;
     externalTicketId: string;
     description: string;
+    requestPayload?: string;
   } | null;
+}
+
+/** A launch label is presentation data; never return the raw launch body. */
+export function projectWorkRequest(wr: RunWithWorkRequest['workRequest']) {
+  if (!wr) {
+    return null;
+  }
+  let title: string | undefined;
+  try {
+    const body: unknown = JSON.parse(wr.requestPayload ?? '{}');
+    if (body && typeof body === 'object' && 'label' in body && typeof body.label === 'string') {
+      title = body.label.trim().slice(0, 200) || undefined;
+    }
+  } catch {
+    /* Legacy request payloads are not necessarily JSON. */
+  }
+  return {
+    description: wr.description,
+    externalTicketId: wr.externalTicketId,
+    id: wr.id,
+    ...(title ? { title } : {}),
+  };
 }
 
 /** `viewerId` makes the summary caller-relative: `isMine` is whether the viewer launched the run. */
@@ -66,7 +89,7 @@ export function projectRunSummary(r: RunWithWorkRequest, viewerId?: string) {
     templateName: r.template?.name ?? null,
     templateVersion: r.templateVersion,
     workflowId: r.workflowId,
-    workRequest: r.workRequest,
+    workRequest: projectWorkRequest(r.workRequest),
   };
 }
 

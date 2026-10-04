@@ -23,11 +23,13 @@ import {
 } from '../lib/runVisibility.js';
 import { isTerminalSignalError } from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import { requestWorkspaceRoutes } from './requestWorkspace.js';
 import {
   AutonomyDecisionSchema,
   projectAutonomyDecision,
   projectEvalResult,
   projectRunSummary,
+  projectWorkRequest,
   RunListPaginationQuery,
 } from './workflowProjections.js';
 
@@ -184,6 +186,7 @@ const ListRunsQuery = RunListPaginationQuery.extend({
 });
 
 export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
+  await fastify.register(requestWorkspaceRoutes);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   // ── List runs ──
@@ -231,7 +234,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           include: {
             template: { select: { name: true, workspaceProvider: true } },
             workRequest: {
-              select: { description: true, externalTicketId: true, id: true },
+              select: { description: true, externalTicketId: true, id: true, requestPayload: true },
             },
           },
           orderBy: { startedAt: 'desc' },
@@ -494,7 +497,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
           template: { select: { name: true, origin: true, teamId: true } },
           workRequest: {
-            select: { description: true, externalTicketId: true, id: true },
+            select: { description: true, externalTicketId: true, id: true, requestPayload: true },
           },
         },
         where: {
@@ -550,7 +553,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           tokensOutputTotal: Number(run.tokensOutputTotal),
           traces: traces.map((t) => projectTrace(t, fullTraces)),
           workflowId: run.workflowId,
-          workRequest: run.workRequest,
+          workRequest: projectWorkRequest(run.workRequest),
         },
       };
     }

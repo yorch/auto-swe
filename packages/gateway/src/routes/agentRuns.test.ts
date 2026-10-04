@@ -538,13 +538,34 @@ describe('POST /api/v1/agent-runs/:id/rerun', () => {
     });
     expect(res.statusCode).toBe(201);
     const req = started[0]?.input.request as Record<string, unknown>;
-    expect(req.workRequestId).not.toBe(PREV_RUN);
+    expect(req.workRequestId).toBe(PREV_RUN);
     expect(req.externalTicketId).toMatch(/^agent-[0-9a-f]{32}$/);
     expect(req).toMatchObject({
       description: 'original prompt',
       launchedById: 'user-2',
       payload: { agentRef: 'contentWriter', deliver: 'branch', maxSteps: 7 },
     });
+    await app.close();
+  });
+
+  it('keeps the request identity while allocating a fresh branch for each retry', async () => {
+    const { app, started } = await build(prevRun);
+    for (let i = 0; i < 2; i++) {
+      const response = await app.inject({
+        headers: { authorization: 'Bearer fake' },
+        method: 'POST',
+        payload: { instructions: 'Use the older dependency' },
+        url: `/api/v1/agent-runs/${PREV_RUN}/rerun`,
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().data.workRequestId).toBe(PREV_RUN);
+    }
+    const first = started[0].input.request as Record<string, unknown>;
+    const second = started[1].input.request as Record<string, unknown>;
+    expect(first.workRequestId).toBe(second.workRequestId);
+    expect(first.externalTicketId).not.toBe(second.externalTicketId);
+    expect(first.description).toContain('Use the older dependency');
+    expect(prevRun.description).toBe('original prompt');
     await app.close();
   });
 
