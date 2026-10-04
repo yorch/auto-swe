@@ -4,9 +4,9 @@ import {
   nextRevision,
   skillContentChanged,
 } from '@auto-swe/shared/lib/skillRevision';
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { WORKFLOW_RUN_FAILURE_STATUSES } from '@auto-swe/shared/types/api';
+import { scanSkillAdvisory } from './skillScan.js';
 
 /**
  * Skill-library service: create/update flows (with the injection/exfiltration
@@ -47,7 +47,7 @@ export async function createSkill(
     orgId?: string | null;
   }
 ): Promise<{ scanWarnings: string[]; skill: SkillRow }> {
-  const scanResult = await scanSkillContent(input.promptText);
+  const scanWarnings = await scanSkillAdvisory(input.description, input.promptText);
   // Default GLOBAL preserves the admin-curated library; a caller that supplies
   // a tenant gets a scoped row. The DB CHECK rejects a mismatched combination.
   const skill = await prisma.skill.create({
@@ -55,7 +55,7 @@ export async function createSkill(
       description: input.description,
       ...initialRevision(
         { description: input.description ?? null, promptText: input.promptText },
-        { createdById: input.createdById, scanWarnings: scanResult.warnings }
+        { createdById: input.createdById, scanWarnings }
       ),
       isBuiltIn: false,
       isVerified: false,
@@ -66,7 +66,7 @@ export async function createSkill(
       teamId: input.scope === 'TEAM' ? input.teamId : null,
     },
   });
-  return { scanWarnings: scanResult.warnings, skill };
+  return { scanWarnings, skill };
 }
 
 /// Updates a skill.
@@ -87,15 +87,17 @@ export async function updateSkill(
 ): Promise<{ scanWarnings: string[]; updated: SkillRow }> {
   const { name, description, promptText, isActive } = body;
 
-  const scanResult =
-    !existing.isBuiltIn && promptText
-      ? await scanSkillContent(promptText)
-      : { safe: true, warnings: [] };
-
   const nextContent = {
     description: description ?? existing.description,
     promptText: existing.isBuiltIn ? existing.promptText : (promptText ?? existing.promptText),
   };
+  // Scan whenever model-visible text is being written: a custom skill's prompt
+  // text, or either kind of skill's description.
+  const scanWarnings =
+    description !== undefined || (!existing.isBuiltIn && promptText !== undefined)
+      ? await scanSkillAdvisory(nextContent.description, nextContent.promptText)
+      : [];
+
   const contentChanged = skillContentChanged(existing, nextContent);
   // Verification attests to the text of one revision, so any edit that cuts a
   // new one clears it — a description-only edit included, since the description
@@ -112,13 +114,13 @@ export async function updateSkill(
   if (contentChanged) {
     const next = nextRevision(existing, nextContent, {
       createdById: actorId,
-      scanWarnings: scanResult.warnings,
+      scanWarnings,
     });
     updated = await prisma.skill.update({ data: { ...base, ...next.data }, where: next.where });
   } else {
     updated = await prisma.skill.update({ data: base, where: { id: existing.id } });
   }
-  return { scanWarnings: scanResult.warnings, updated };
+  return { scanWarnings, updated };
 }
 
 /// Marks the skill's CURRENT content as human-verified. Verification is a

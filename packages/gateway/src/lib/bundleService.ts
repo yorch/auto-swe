@@ -22,8 +22,9 @@ import {
   nextRevision,
   skillContentChanged,
 } from '@auto-swe/shared/lib/skillRevision';
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+
+import { scanSkillAdvisory } from './skillScan.js';
 
 /**
  * Bundle export/install service (P4/WS1+WS2). A bundle is a versioned, secret-free
@@ -442,23 +443,6 @@ export async function exportBundle(
   });
 }
 
-const SCAN_INCOMPLETE = 'scan-incomplete: some patterns could not be evaluated';
-
-/**
- * Scan one skill for the install response. Never throws and never reports a
- * partial scan as clean: a scanner failure, an overrun or a quarantined pattern
- * adds `scan-incomplete`, so an empty list means every rule ran over every
- * character.
- */
-async function scanSkillForInstall(text: string): Promise<string[]> {
-  try {
-    const scan = await scanSkillContent(text, { full: true });
-    return scan.incomplete ? [...scan.warnings, SCAN_INCOMPLETE] : scan.warnings;
-  } catch {
-    return [SCAN_INCOMPLETE];
-  }
-}
-
 /**
  * Install a bundle as a GLOBAL managed base layer (idempotent; re-install = upgrade).
  * Validates the schema + content hash and the dependency manifest *before* any
@@ -557,7 +541,7 @@ export async function installBundle(
   for (const s of manifest.entities.skills) {
     // The description is model-visible too (the skill menu), so it is scanned
     // with the text, and the whole text up to the length limit is covered.
-    const found = await scanSkillForInstall(`${s.description ?? ''}\n${s.promptText}`);
+    const found = await scanSkillAdvisory(s.description, s.promptText);
     skillScans.set(s.name, found);
     warnings.push(...found.map((w) => `skill '${s.name}': ${w}`));
   }

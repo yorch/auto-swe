@@ -499,7 +499,7 @@ Custom skills' `promptText` is scanned by `scanSkillContent(text)` in `packages/
 - **Non-blocking advisory** — warnings are returned but never prevent saving or execution. Scan failures are caught so a DB outage cannot abort a run.
 
 The scan runs:
-1. At skill save time (gateway `POST /api/v1/platform/skills`).
+1. At skill create and edit (gateway `POST`/`PUT /api/v1/platform/skills`): the description and the prompt text are scanned together over the whole text, and a scanner failure is returned as a `scan-incomplete` warning rather than an error.
 2. For every skill in a bundle at install time. Findings come back in the install response's `warnings` (one entry per finding, prefixed with the skill name) and are recorded on the new revision; an install is never refused for them.
 3. After each TDD iteration in `executeImplementation` (scans LLM output for prompt injection attempts).
 
