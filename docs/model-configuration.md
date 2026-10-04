@@ -196,12 +196,15 @@ config, and the models recorded LLM calls used in the last 30 days.
 
 At run time a model with no price is refused only where a USD-denominated cap would otherwise stop
 counting: an organization with a monthly budget and a channel with a monthly budget. The
-organization's cap covers every run whose ledger row reaches it (the implementer and its fix
-sessions, the review network, planner, decomposers, security gate, memory passes, and generic
-`agent` nodes) and every runless workflow whose spend owner is it (lesson consolidation, and
-workflow authoring and explaining through `runAgent`), since runless spend counts toward the cap
-through the owner stamped on its trace rows. A run with no ledger row — a channel task — reaches
-the organization's cap through neither, so only a channel budget refuses it. The
+organization's cap covers every run billed to that organization by the rule billing and the mid-run
+cap guard use (the work request's connection, else the run's own, else the ledger row's repository):
+the implementer and its fix sessions, the review network, planner, decomposers, security gate,
+memory passes, and generic `agent` nodes, including a PRD run and a code-route channel task, which
+bill through a connection. It also covers every runless workflow whose spend owner is the
+organization (lesson consolidation, and workflow authoring and explaining through `runAgent`),
+since runless spend counts toward the cap through the owner stamped on its trace rows. A run no
+connection or repository places in an organization is outside that cap, so only a channel budget
+refuses it. The
 refusal is a non-retryable `MODEL_UNPRICED` naming the model; while the catalog cannot be read it is
 a retryable `MODEL_PRICE_UNAVAILABLE`. Without such a cap the call proceeds at $0.
 
