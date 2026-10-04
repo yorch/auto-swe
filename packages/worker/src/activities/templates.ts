@@ -457,9 +457,13 @@ export async function finalizeWorkflowRun(
 /**
  * The finalization core: ends the run, bills its org, and fires the terminal
  * side effects, exactly once however many callers race (`endWorkflowRun`
- * guards the write). `source` only labels `workflow_runs_finalized_total`; the
- * run reaper reaches the same core as the workflow's own finalize step, so a
- * run it ends is billed and notified identically.
+ * guards the write). `source` labels `workflow_runs_finalized_total`; the run
+ * reaper reaches the same core as the workflow's own finalize step, so a run it
+ * ends is billed identically. The reaper is bookkeeping, though: it bills into
+ * the run's own month and fires no user-facing side effect (Slack run-complete
+ * notice, in-thread channel report, tracker sync), because the runs it reaches
+ * may be months old, and a first sweep over history would otherwise post them
+ * all at once, possibly against tickets a later run already completed.
  */
 export async function finalizeRun(
   runId: string,
@@ -472,6 +476,7 @@ export async function finalizeRun(
   const run = await prisma.workflowRun.findUnique({
     select: {
       endedAt: true,
+      startedAt: true,
       workflowId: true,
       workRequest: {
         select: {
@@ -612,7 +617,13 @@ export async function finalizeRun(
 
   let outcome: EndRunOutcome;
   if (orgId) {
-    const yearMonth = currentYearMonth();
+    // A run the reaper ends may have stranded long ago (or before the reaper
+    // existed): its spend belongs to the month it was spent in, not to the month
+    // the sweep happened to reach it, or an old purge would inflate this month.
+    const yearMonth =
+      source === 'reaper' && run?.startedAt
+        ? run.startedAt.toISOString().slice(0, 7)
+        : currentYearMonth();
     outcome = await prisma.$transaction(async (tx) => {
       // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises
       // concurrent finalisations for one org; Prisma has no API for it.
@@ -691,7 +702,7 @@ export async function finalizeRun(
   // redundant completion message into the SAME thread (double-post). For ordinary
   // SWE runs this still fires (gated on the team's `slackNotifySuccess` opt-in).
   const channelTaskPayload = readChannelTaskPayload(run?.workRequest?.payload);
-  if (!channelTaskPayload) {
+  if (!channelTaskPayload && source !== 'reaper') {
     await notifySlackRunComplete({ runId, status: finalStatus });
   }
 
@@ -705,12 +716,14 @@ export async function finalizeRun(
   // re-reads neither.
   await finalizeChannelTaskRun(runId, finalStatus, run?.workRequest, channelTaskPayload, {
     contextSnapshot,
+    report: source !== 'reaper',
     traceCostUsd: channelTraceCostUsd,
   });
 
   // Best-effort tracker sync on workflow terminal status.
   const externalTicketId = run?.workRequest?.externalTicketId;
   if (
+    source !== 'reaper' &&
     externalTicketId &&
     (finalStatus === 'SUCCESS' || finalStatus === 'FAILED' || finalStatus === 'TIMED_OUT')
   ) {
@@ -777,7 +790,7 @@ async function finalizeChannelTaskRun(
     | null
     | undefined,
   payload: ChannelTaskPayload | null,
-  ctx: { contextSnapshot: unknown; traceCostUsd: number | undefined }
+  ctx: { contextSnapshot: unknown; report: boolean; traceCostUsd: number | undefined }
 ): Promise<void> {
   // `payload` is the already-narrowed channel-task discriminant from
   // `finalizeWorkflowRun` (`readChannelTaskPayload`). Null → not a channel task.
@@ -809,6 +822,11 @@ async function finalizeChannelTaskRun(
   }
 
   // 2. Report the result back into the originating thread (opt-in-independent).
+  //    Not for a run the reaper ended: the accrual above is billing, this is a
+  //    notice the user would meet long after the fact.
+  if (!ctx.report) {
+    return;
+  }
   const slackChannelId = workRequest?.slackChannelId;
   const threadTs = workRequest?.slackMessageTs;
   if (!slackChannelId || !threadTs) {

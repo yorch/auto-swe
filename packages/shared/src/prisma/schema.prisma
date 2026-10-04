@@ -1373,6 +1373,10 @@ model WorkflowRun {
   status            WorkflowRunStatus @default(RUNNING)
   startedAt         DateTime          @default(now()) @map("started_at") @db.Timestamptz
   endedAt           DateTime?         @map("ended_at") @db.Timestamptz
+  /// When the run reaper last asked Temporal about this run and found it still
+  /// running. The sweep orders by it (never-checked first), so a crowd of
+  /// long-lived live runs cannot keep newer stranded ones out of its batch.
+  reapCheckedAt     DateTime?         @map("reap_checked_at") @db.Timestamptz
   /// Phase-8 cost denormalization. Populated by `finalizeWorkflowRun` from
   /// `WorkRequest → ActiveWorkflow.costUsdAccrued` so analytics queries don't
   /// have to re-join through the work-request graph (also keeps numbers stable

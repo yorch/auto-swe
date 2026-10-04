@@ -23,7 +23,7 @@ import { finalizeRun } from './templates.js';
 
 /** A run younger than this is never looked up: its workflow is still starting up. */
 export const REAPER_GRACE_MS = 10 * 60 * 1000;
-/** Most runs asked about per sweep, oldest first. */
+/** Most runs asked about per sweep: never-checked first, then least recently checked. */
 export const REAPER_MAX_CHECKS = 200;
 const LOOKUP_TIMEOUT_MS = 5_000;
 const LOOKUP_CONCURRENCY = 10;
@@ -83,12 +83,16 @@ export interface ReapStrandedRunsResult {
 
 export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRunsResult> {
   const runs = await prisma.workflowRun.findMany({
-    orderBy: { startedAt: 'asc' },
+    // Never-checked runs first, then the longest since a check: a run confirmed
+    // live goes to the back, so a crowd of long-lived live runs cannot hold the
+    // batch and keep newer stranded runs from ever being reached.
+    orderBy: [{ reapCheckedAt: { nulls: 'first', sort: 'asc' } }, { startedAt: 'asc' }],
     select: { channelId: true, id: true, workflowId: true, workRequestId: true },
     take: REAPER_MAX_CHECKS,
     where: { endedAt: null, startedAt: { lt: new Date(now.getTime() - REAPER_GRACE_MS) } },
   });
   const result: ReapStrandedRunsResult = { checked: runs.length, reaped: 0, unreachable: 0 };
+  const stillRunning: string[] = [];
   for (let i = 0; i < runs.length; i += LOOKUP_CONCURRENCY) {
     await Promise.all(
       runs.slice(i, i + LOOKUP_CONCURRENCY).map(async (run) => {
@@ -97,6 +101,7 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
           // never ended, and so never billed, on a Temporal hiccup.
           const status = await endedStatusOf(run.workflowId);
           if (!status) {
+            stillRunning.push(run.id);
             return;
           }
           // A channel turn has no work request and bills its channel, not an
@@ -118,8 +123,21 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
       })
     );
   }
+  if (stillRunning.length > 0) {
+    try {
+      await prisma.workflowRun.updateMany({
+        data: { reapCheckedAt: now },
+        where: { endedAt: null, id: { in: stillRunning } },
+      });
+    } catch (err) {
+      // Only the rotation suffers: these runs are asked about again next sweep.
+      logWarn('run reaper could not record which runs it checked', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
   if (runs.length === REAPER_MAX_CHECKS) {
-    logWarn('run reaper checked a full batch; runs beyond it wait for a later sweep', {
+    logWarn('run reaper checked a full batch; the rest are reached by later sweeps in rotation', {
       max: REAPER_MAX_CHECKS,
     });
   }

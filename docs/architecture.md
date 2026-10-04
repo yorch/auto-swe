@@ -842,13 +842,22 @@ twice.
 so a workflow that never reaches it would otherwise stay "in flight" for the org cap for ever. The
 `auto-swe-run-reaper` Temporal Schedule (`RUN_REAPER_ENABLED`, default `true`; `RUN_REAPER_CRON`,
 default every 15 minutes) starts `ScheduledRunReaperWorkflow`, whose one activity (`reapStrandedRuns`)
-takes up to 200 unfinalized runs older than 10 minutes, oldest first, and asks Temporal about each.
+takes up to 200 unfinalized runs older than 10 minutes and asks Temporal about each. It picks them
+never-checked first, then least recently checked (`WorkflowRun.reapCheckedAt`, stamped on every run
+found still running), so a crowd of long-lived live runs rotates behind newer ones rather than
+holding the batch.
 A run whose execution is finished or no longer exists is ended through `finalizeRun`, the same core
-as the workflow's own finalize step, so billing, the terminal side effects and the
-`workflow_runs_finalized_total` count (`source=reaper`) happen exactly once however the two race. A
+as the workflow's own finalize step, so billing and the `workflow_runs_finalized_total` count
+(`source=reaper`) happen exactly once however the two race. The reaper is bookkeeping: it fires no
+Slack run-complete notice, in-thread channel report or tracker sync (a channel task's cost still
+accrues to its channel), because a run it reaches may be months old and a first sweep over history
+would otherwise post them all, even against tickets a later run completed. It also bills a run
+into the month the run started in, not the month the sweep reached it, so an old purge does not
+inflate the current month's usage or cap. A
 Temporal status maps to a run status as `COMPLETED` → `SUCCESS`, `TIMED_OUT` → `TIMED_OUT`,
 `CANCELLED` and `TERMINATED` → `CANCELLED` (stopped on purpose), `FAILED` and an execution Temporal
-has forgotten → `FAILED`; a run the dashboard already cancelled stays `CANCELLED`. A lookup that
+has forgotten → `FAILED` (`COMPLETED` means the workflow returned; a channel turn whose own
+finalize failed is therefore recorded `SUCCESS` whatever its turn's outcome); a run the dashboard already cancelled stays `CANCELLED`. A lookup that
 fails or exceeds its 5 s deadline leaves the run alone, so a live run is never billed on a Temporal
 hiccup. Channel turns end through `finalizeChannelRun`, which bills their channel, not an org. A
 dashboard cancel that finds the execution gone leaves the run for the reaper rather than ending it
@@ -1079,9 +1088,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   finalizing it — terminated outside the worker, or cancelled before its first activity was
   recorded — keeps its accrued cost in the in-flight figure until the run reaper ends it, so it
   counts for up to the 10-minute grace plus a sweep interval, and for as long as the reaper is
-  disabled (`RUN_REAPER_ENABLED=false`) or Temporal is unreachable. A sweep looks at the 200 oldest
-  such runs, so more than 200 live runs older than the grace can delay the reaper reaching a stale
-  one behind them.
+  disabled (`RUN_REAPER_ENABLED=false`) or Temporal is unreachable. A sweep checks 200 runs, so with
+  more unfinalized runs than that a stranded one is reached after at most
+  `ceil(unfinalized / 200)` sweeps. The first sweep over a long history reaps 200 per interval and
+  bills each into the month it started in, with no notifications.
   Spend with no org on it — a runless workflow with no derivable owner — is outside the cap. An
   epic's planning is attributed to one team, the first repository the epic names, even when the
   epic spans organizations; each child run is billed to its own repository's organization.

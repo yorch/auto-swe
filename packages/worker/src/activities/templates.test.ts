@@ -139,7 +139,11 @@ vi.mock('@auto-swe/shared/db', () => {
 import { prisma } from '@auto-swe/shared/db';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { recordRunFinalized } from '../lib/metrics.js';
-import { notifySlackRunComplete, notifySlackStepFailure } from '../lib/slackNotify.js';
+import {
+  notifySlackRunComplete,
+  notifySlackStepFailure,
+  postSlackThreadMessage,
+} from '../lib/slackNotify.js';
 import { assertScheduledFireAuthorized } from './scheduledFireAuthorization.js';
 import {
   buildChannelTaskResultText,
@@ -822,6 +826,85 @@ describe('finalizeWorkflowRun', () => {
     updateManyRuns.mockResolvedValueOnce({ count: 1 } as never);
     await finalizeRun('run-c', 'FAILED', undefined, 'reaper');
     expect(recorded).not.toHaveBeenCalled();
+    findRun.mockReset();
+  });
+
+  it('bills a reaped run into its own month and fires no user-facing side effect', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+    const notify = vi.mocked(notifySlackRunComplete);
+    const tracker = vi.mocked(syncTrackerOnEvent);
+    orgUpsert.mockClear();
+    notify.mockClear();
+    tracker.mockClear();
+    tracker.mockResolvedValue(undefined as never);
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue({
+      endedAt: null,
+      startedAt: new Date('2026-03-14T10:00:00Z'),
+      workflowId: 'eng-old',
+      workRequest: {
+        activeWorkflows: [
+          {
+            costUsdAccrued: 2,
+            temporalWorkflowId: 'eng-old',
+            tokensInputUsed: 1n,
+            tokensOutputUsed: 1n,
+          },
+        ],
+        connection: { team: { orgId: 'org-1' } },
+        externalTicketId: 'T-1',
+        payload: null,
+      },
+    } as never);
+
+    await finalizeRun('run-old', 'FAILED', undefined, 'reaper');
+
+    const usage = orgUpsert.mock.calls[0]?.[0] as {
+      create: { yearMonth: string };
+      where: { orgId_yearMonth: { yearMonth: string } };
+    };
+    expect(usage.create.yearMonth).toBe('2026-03');
+    expect(usage.where.orgId_yearMonth.yearMonth).toBe('2026-03');
+    expect(notify).not.toHaveBeenCalled();
+    expect(tracker).not.toHaveBeenCalled();
+
+    // The workflow's own finalize still notifies and syncs the tracker.
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    await finalizeWorkflowRun('run-old', 'FAILED');
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(tracker).toHaveBeenCalledTimes(1);
+    findRun.mockReset();
+    orgUpsert.mockReset();
+  });
+
+  it('does not post a reaped channel task into its Slack thread, but the worker finalize does', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const post = vi.mocked(postSlackThreadMessage);
+    const channelRun = {
+      endedAt: null,
+      startedAt: new Date('2026-03-14T10:00:00Z'),
+      workflowId: 'ct-1',
+      workRequest: {
+        activeWorkflows: [],
+        connection: null,
+        externalTicketId: null,
+        payload: { channelId: 'chan-1', kind: 'channel-task' },
+        slackChannelId: 'C1',
+        slackMessageTs: '1.2',
+      },
+    };
+    post.mockClear();
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue(channelRun as never);
+    await finalizeRun('run-ct', 'FAILED', undefined, 'reaper');
+    expect(post).not.toHaveBeenCalled();
+
+    findRun.mockResolvedValue(channelRun as never);
+    await finalizeWorkflowRun('run-ct', 'FAILED');
+    expect(post).toHaveBeenCalledTimes(1);
     findRun.mockReset();
   });
 

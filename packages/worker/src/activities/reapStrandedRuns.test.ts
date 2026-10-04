@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
-vi.mock('@auto-swe/shared/db', () => ({ prisma: { workflowRun: { findMany } } }));
+const { updateMany } = vi.hoisted(() => ({ updateMany: vi.fn() }));
+vi.mock('@auto-swe/shared/db', () => ({ prisma: { workflowRun: { findMany, updateMany } } }));
 
 const describeWf = vi.fn();
 vi.mock('../lib/temporalClient.js', () => ({
@@ -46,12 +47,15 @@ describe('reapedStatusFor', () => {
 });
 
 describe('reapStrandedRuns', () => {
-  it('asks only for old unfinalized runs, oldest first', async () => {
+  it('asks only for old unfinalized runs, never-checked first, then the longest unchecked', async () => {
     findMany.mockResolvedValue([]);
     const now = new Date('2026-10-04T12:00:00Z');
     await reapStrandedRuns(now);
     const args = findMany.mock.calls[0]?.[0];
-    expect(args.orderBy).toEqual({ startedAt: 'asc' });
+    expect(args.orderBy).toEqual([
+      { reapCheckedAt: { nulls: 'first', sort: 'asc' } },
+      { startedAt: 'asc' },
+    ]);
     expect(args.where).toEqual({
       endedAt: null,
       startedAt: { lt: new Date(now.getTime() - REAPER_GRACE_MS) },
@@ -83,6 +87,26 @@ describe('reapStrandedRuns', () => {
       ['gone', 'FAILED', undefined, 'reaper'],
       ['done', 'SUCCESS', undefined, 'reaper'],
     ]);
+  });
+
+  it('stamps the runs it found live, so they rotate behind newer ones', async () => {
+    findMany.mockResolvedValue([run('live1'), run('live2'), run('dead')]);
+    describeWf.mockImplementation(async (id: string) => ({
+      status: { name: id === 'wf-dead' ? 'FAILED' : 'RUNNING' },
+    }));
+    const now = new Date('2026-10-04T12:00:00Z');
+    await reapStrandedRuns(now);
+    expect(updateMany).toHaveBeenCalledWith({
+      data: { reapCheckedAt: now },
+      where: { endedAt: null, id: { in: ['live1', 'live2'] } },
+    });
+  });
+
+  it('does not stamp a run whose lookup failed: it must stay first in line', async () => {
+    findMany.mockResolvedValue([run('a')]);
+    describeWf.mockRejectedValue(new Error('unavailable'));
+    await reapStrandedRuns();
+    expect(updateMany).not.toHaveBeenCalled();
   });
 
   it('leaves a run alone when Temporal cannot be asked', async () => {

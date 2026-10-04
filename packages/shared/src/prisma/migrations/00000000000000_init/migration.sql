@@ -632,6 +632,7 @@ CREATE TABLE "workflow_runs" (
     "status" "WorkflowRunStatus" NOT NULL DEFAULT 'RUNNING',
     "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "ended_at" TIMESTAMPTZ,
+    "reap_checked_at" TIMESTAMPTZ,
     "cost_usd_accrued" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "tokens_input_total" BIGINT NOT NULL DEFAULT 0,
     "tokens_output_total" BIGINT NOT NULL DEFAULT 0,
