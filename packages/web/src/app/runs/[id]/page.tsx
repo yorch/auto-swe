@@ -14,10 +14,9 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { LayoutToggle } from '@/components/LayoutToggle';
-import { FailureCard } from '@/components/runs/FailureCard';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
+import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -64,35 +63,21 @@ const CONSOLE_MODE_OPTIONS: SegmentedOption<'split' | 'stream'>[] = [
 function LayoutA({
   linker,
   dagOverlay,
-  failedStep,
-  onJumpToFailure,
-  onReRun,
   run,
   selectedNodeId,
   setSelectedNodeId,
   spec,
   traces,
-  pendingSteps,
 }: {
   linker: TraceLinker;
   dagOverlay: { byNodeId: Record<string, { status: string; attempt: number }> } | undefined;
-  failedStep: WorkflowStepRecord | null;
-  onJumpToFailure: () => void;
-  onReRun?: () => void;
   run: WorkflowRunDetail;
   selectedNodeId: string | null;
   setSelectedNodeId: (id: string | null) => void;
   spec: WorkflowSpec;
   traces: AgentTraceRecord[];
-  pendingSteps: NonNullable<ReturnType<typeof useApprovals>['data']>;
 }) {
   const [consoleMode, setConsoleMode] = useState<'split' | 'stream'>('split');
-  const traceAnchorRef = useRef<HTMLDivElement>(null);
-
-  const handleJumpToFailure = () => {
-    onJumpToFailure();
-    traceAnchorRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -122,7 +107,7 @@ function LayoutA({
         </div>
 
         {/* Console panel */}
-        <div className="flex-1 flex flex-col overflow-hidden" ref={traceAnchorRef}>
+        <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex items-center justify-between px-5 py-2.5 border-b border-ink-600/30 shrink-0">
             <div className="flex items-center gap-3">
               <h3 className="font-display text-[15px] font-medium tracking-[-0.01em] text-paper-100">
@@ -133,11 +118,6 @@ function LayoutA({
               )}
             </div>
             <div className="flex items-center gap-3">
-              {pendingSteps.length > 0 && (
-                <Badge className="rounded-full px-2" dot="pulse" tone="amber" variant="outline">
-                  {pendingSteps.length} pending
-                </Badge>
-              )}
               <SegmentedControl
                 ariaLabel="Console mode"
                 onChange={setConsoleMode}
@@ -148,13 +128,6 @@ function LayoutA({
           </div>
 
           <div className="flex-1 overflow-hidden">
-            {pendingSteps.length > 0 && (
-              <div className="px-4 py-3 border-b border-amber-400/20 bg-amber-400/5 space-y-3">
-                {pendingSteps.map((step) => (
-                  <HumanStepCard key={step.id} showRunLink={false} step={step} />
-                ))}
-              </div>
-            )}
             {consoleMode === 'split' ? (
               <SplitRunPanel
                 linker={linker}
@@ -178,12 +151,7 @@ function LayoutA({
       </div>
 
       {/* Right meta rail */}
-      <RunMetaRail
-        failedStep={failedStep}
-        onJumpToFailure={handleJumpToFailure}
-        onReRun={onReRun}
-        run={run}
-      />
+      <RunMetaRail run={run} />
     </div>
   );
 }
@@ -249,16 +217,10 @@ function StepSpine({
 
 function LayoutB({
   linker,
-  failedStep,
-  onJumpToFailure,
-  onReRun,
   run,
   traces,
 }: {
   linker: TraceLinker;
-  failedStep: WorkflowStepRecord | null;
-  onJumpToFailure: () => void;
-  onReRun?: () => void;
   run: WorkflowRunDetail;
   traces: AgentTraceRecord[];
 }) {
@@ -340,19 +302,6 @@ function LayoutB({
                       : `Step is ${step.status.toLowerCase()}.`}
               </p>
 
-              {/* Failure card inline */}
-              {/* The failure card (with re-run) only on the step that failed the run. */}
-              {step.id === failedStep?.id && (
-                <div className="mb-4">
-                  <FailureCard
-                    onJumpToFailure={onJumpToFailure}
-                    onReRun={onReRun}
-                    size="inline"
-                    step={step}
-                  />
-                </div>
-              )}
-
               {/* Trace events panel */}
               {stepTraces.length > 0 && (
                 <div className="rounded border border-ink-600/40 bg-ink-700">
@@ -372,12 +321,7 @@ function LayoutB({
       </div>
 
       {/* Right meta rail */}
-      <RunMetaRail
-        failedStep={failedStep}
-        onJumpToFailure={onJumpToFailure}
-        onReRun={onReRun}
-        run={run}
-      />
+      <RunMetaRail run={run} />
     </div>
   );
 }
@@ -451,18 +395,12 @@ function WaterfallBar({
 function LayoutC({
   linker,
   dagOverlay,
-  failedStep,
-  onJumpToFailure,
-  onReRun,
   run,
   spec,
   traces,
 }: {
   linker: TraceLinker;
   dagOverlay: { byNodeId: Record<string, { status: string; attempt: number }> } | undefined;
-  failedStep: WorkflowStepRecord | null;
-  onJumpToFailure: () => void;
-  onReRun?: () => void;
   run: WorkflowRunDetail;
   spec: WorkflowSpec;
   traces: AgentTraceRecord[];
@@ -688,16 +626,6 @@ function LayoutC({
               statuses={dagOverlay}
             />
           </div>
-          {failedStep && (
-            <div className="px-4 py-4">
-              <FailureCard
-                onJumpToFailure={onJumpToFailure}
-                onReRun={onReRun}
-                size="inline"
-                step={failedStep}
-              />
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -927,16 +855,21 @@ export default function RunDetailPage({ params }: PageProps) {
         </div>
       </div>
 
+      {/* ── Pending approvals + result or failure, whichever layout is chosen ── */}
+      <RunSummaryBand
+        failedStep={failedStep}
+        onJumpToFailure={handleJumpToFailure}
+        onReRun={failureCardReRun}
+        pendingSteps={pendingSteps}
+        run={run}
+      />
+
       {/* ── Layout body ───────────────────────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden" ref={traceAnchorRef}>
         {layout === 'A' && (
           <LayoutA
             dagOverlay={dagOverlay}
-            failedStep={failedStep}
             linker={linker}
-            onJumpToFailure={handleJumpToFailure}
-            onReRun={failureCardReRun}
-            pendingSteps={pendingSteps}
             run={run}
             selectedNodeId={selectedNodeId}
             setSelectedNodeId={setSelectedNodeId}
@@ -944,27 +877,9 @@ export default function RunDetailPage({ params }: PageProps) {
             traces={traces}
           />
         )}
-        {layout === 'B' && (
-          <LayoutB
-            failedStep={failedStep}
-            linker={linker}
-            onJumpToFailure={handleJumpToFailure}
-            onReRun={failureCardReRun}
-            run={run}
-            traces={traces}
-          />
-        )}
+        {layout === 'B' && <LayoutB linker={linker} run={run} traces={traces} />}
         {layout === 'C' && (
-          <LayoutC
-            dagOverlay={dagOverlay}
-            failedStep={failedStep}
-            linker={linker}
-            onJumpToFailure={handleJumpToFailure}
-            onReRun={failureCardReRun}
-            run={run}
-            spec={spec}
-            traces={traces}
-          />
+          <LayoutC dagOverlay={dagOverlay} linker={linker} run={run} spec={spec} traces={traces} />
         )}
       </div>
 
