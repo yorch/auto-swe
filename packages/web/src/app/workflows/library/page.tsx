@@ -61,6 +61,52 @@ const TONE_CLASS: Record<StarterTemplate['tone'], string> = {
   violet: 'border-l-violet-400',
 };
 
+type StatusFilter = 'current' | 'active' | 'draft' | 'archived';
+
+function matchesStatusFilter(t: WorkflowTemplateSummary, filter: StatusFilter): boolean {
+  switch (filter) {
+    case 'active':
+      return t.status === 'ACTIVE';
+    case 'draft':
+      return t.status === 'DRAFT';
+    case 'archived':
+      return t.status === 'ARCHIVED';
+    default:
+      return t.status !== 'ARCHIVED';
+  }
+}
+
+/** Brings an archived template back: active when it has an active version, otherwise a draft. */
+function RestoreButton({
+  template,
+  onError,
+}: {
+  template: WorkflowTemplateSummary;
+  onError: (message: string | null) => void;
+}) {
+  const update = useUpdateWorkflowTemplate(template.id);
+  return (
+    <Button
+      aria-label={`Restore ${template.name}`}
+      disabled={update.isPending}
+      onClick={async () => {
+        onError(null);
+        try {
+          await update.mutateAsync({
+            status: template.activeVersion !== null ? 'ACTIVE' : 'DRAFT',
+          });
+        } catch (err) {
+          onError(`Could not restore "${template.name}": ${errMsg(err, 'restore failed')}`);
+        }
+      }}
+      size="sm"
+      variant="secondary"
+    >
+      {update.isPending ? 'Restoring…' : 'Restore'}
+    </Button>
+  );
+}
+
 function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
   const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
@@ -406,6 +452,9 @@ export default function TemplatesPage() {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
   const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('current');
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const visibleTemplates = (templates ?? []).filter((t) => matchesStatusFilter(t, statusFilter));
 
   const handleFork = async (starter: StarterTemplate) => {
     setForkingId(starter.id);
@@ -470,6 +519,11 @@ export default function TemplatesPage() {
       {/* Starter gallery */}
       <section>
         <SectionHeader hint="fork to edit" number="01" title="Start from a template" />
+        {manageTitle && (
+          <p className="mb-4 text-xs text-paper-500" id="manage-reason">
+            {manageTitle}.
+          </p>
+        )}
         {forkError && <Alert className="mb-4">{forkError}</Alert>}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {STARTER_TEMPLATES.map((s) => {
@@ -490,6 +544,7 @@ export default function TemplatesPage() {
                 </p>
                 <span className="self-start" title={manageTitle}>
                   <Button
+                    aria-describedby={manageTitle ? 'manage-reason' : undefined}
                     disabled={!canManage || isForking || createTemplate.isPending}
                     onClick={() => handleFork(s)}
                     size="sm"
@@ -507,10 +562,24 @@ export default function TemplatesPage() {
       {/* Existing templates table */}
       <section>
         <SectionHeader
-          hint={`${(templates ?? []).length} total`}
+          actions={
+            <SegmentedControl
+              ariaLabel="Filter templates by status"
+              onChange={setStatusFilter}
+              options={[
+                { label: 'Active & drafts', value: 'current' },
+                { label: 'Active', value: 'active' },
+                { label: 'Drafts', value: 'draft' },
+                { label: 'Archived', value: 'archived' },
+              ]}
+              value={statusFilter}
+            />
+          }
+          hint={`${visibleTemplates.length} shown`}
           number="02"
           title="Existing templates"
         />
+        {restoreError && <Alert className="mb-4">{restoreError}</Alert>}
         <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="templates">
           {
             <Card className="overflow-hidden p-0" variant="inset">
@@ -525,7 +594,7 @@ export default function TemplatesPage() {
                   <Th align="right">Actions</Th>
                 </THead>
                 <tbody>
-                  {(templates ?? []).map((t) => (
+                  {visibleTemplates.map((t) => (
                     <TRow className="hover:bg-ink-700/40" hover key={t.id}>
                       <Td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
@@ -593,15 +662,21 @@ export default function TemplatesPage() {
                               Run →
                             </Button>
                           ) : (
-                            <span
-                              className="cursor-not-allowed"
-                              title={
-                                t.status === 'DRAFT'
-                                  ? 'Activate this template before running'
-                                  : 'No active version — promote a version first'
-                              }
-                            >
-                              <Button disabled size="sm" variant="ghost">
+                            <span className="flex cursor-not-allowed items-center gap-2">
+                              <span
+                                className="text-[11px] text-paper-500"
+                                id={`run-reason-${t.id}`}
+                              >
+                                {t.status === 'DRAFT'
+                                  ? 'Activate it to run'
+                                  : 'Promote a version to run'}
+                              </span>
+                              <Button
+                                aria-describedby={`run-reason-${t.id}`}
+                                disabled
+                                size="sm"
+                                variant="ghost"
+                              >
                                 Run
                               </Button>
                             </span>
@@ -613,6 +688,9 @@ export default function TemplatesPage() {
                           >
                             {canWrite(t.team?.id) ? 'Edit' : 'View'}
                           </ButtonLink>
+                          {canWrite(t.team?.id) && t.status === 'ARCHIVED' && (
+                            <RestoreButton onError={setRestoreError} template={t} />
+                          )}
                           {canWrite(t.team?.id) && t.status !== 'ARCHIVED' && (
                             <Button
                               onClick={() => setArchiveTarget({ id: t.id, name: t.name })}
@@ -626,11 +704,19 @@ export default function TemplatesPage() {
                       </Td>
                     </TRow>
                   ))}
-                  {(templates ?? []).length === 0 && (
+                  {visibleTemplates.length === 0 && (
                     <TableStatusRow colSpan={7}>
                       <EmptyState
-                        hint="Fork a starter above or create a blank template."
-                        title="No templates yet."
+                        hint={
+                          (templates ?? []).length === 0
+                            ? 'Fork a starter above or create a blank template.'
+                            : 'Try another status filter.'
+                        }
+                        title={
+                          (templates ?? []).length === 0
+                            ? 'No templates yet.'
+                            : 'No templates with this status.'
+                        }
                       />
                     </TableStatusRow>
                   )}
@@ -665,7 +751,7 @@ function ArchiveConfirmModal({
     <ConfirmModal
       confirmLabel="Archive"
       dangerous
-      message={`Archive "${target?.name ?? ''}"? It will no longer be available for new runs. You can restore it by changing its status back to Active.`}
+      message={`Archive "${target?.name ?? ''}"? It will no longer be available for new runs. You can restore it later from the Archived filter.`}
       onClose={onClose}
       onConfirm={handleArchive}
       open={target !== null}
