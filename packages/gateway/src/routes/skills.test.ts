@@ -291,6 +291,16 @@ describe('PUT /skills/:id — conflicts and verification', () => {
     });
   });
 
+  it('clears verification on a description edit of a built-in-flagged skill (bundle installs are)', async () => {
+    const { call, skills } = await buildApp();
+    expect(skills.find((s) => s.id === BUILTIN_ID)?.isVerified).toBe(true);
+    await call('PUT', `/skills/${BUILTIN_ID}`, { description: 'edited after verification' });
+    expect(skills.find((s) => s.id === BUILTIN_ID)).toMatchObject({
+      currentRevision: 2,
+      isVerified: false,
+    });
+  });
+
   it('keeps verification across a rename, which cuts no revision', async () => {
     const { call, skills } = await buildApp();
     await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });

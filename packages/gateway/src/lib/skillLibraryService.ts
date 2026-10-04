@@ -101,14 +101,15 @@ export async function updateSkill(
   const contentChanged = skillContentChanged(existing, nextContent);
   // Verification attests to the text of one revision, so any edit that cuts a
   // new one clears it — a description-only edit included, since the description
-  // is model-visible (the skill menu). A built-in's verified flag is the seed's.
-  const base = existing.isBuiltIn
-    ? { isActive, name }
-    : {
-        isActive,
-        name,
-        ...(promptText !== undefined || contentChanged ? { isVerified: false } : {}),
-      };
+  // is model-visible (the skill menu) — whether or not the skill is `isBuiltIn`
+  // (bundle installs are). The boot sync re-verifies the seeded built-ins itself.
+  const clearVerified =
+    contentChanged || (!existing.isBuiltIn && promptText !== undefined);
+  const base = {
+    isActive,
+    name,
+    ...(clearVerified ? { isVerified: false } : {}),
+  };
 
   let updated: SkillRow;
   if (contentChanged) {
