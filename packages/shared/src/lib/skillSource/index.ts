@@ -8,7 +8,7 @@ import {
   type SkillSourceDeps,
   type SourceAccess,
 } from './github.js';
-import { parseSkillMd } from './parse.js';
+import { normaliseSkillName, parseSkillMd } from './parse.js';
 
 export { safeDisplayPath } from './display.js';
 export {
@@ -18,7 +18,7 @@ export {
   safeSourceErrorMessage,
 } from './errors.js';
 export { hostPermitted, MAX_API_REQUESTS, type SkillSourceDeps } from './github.js';
-export { MAX_DESCRIPTION_LENGTH, parseSkillMd } from './parse.js';
+export { MAX_DESCRIPTION_LENGTH, normaliseSkillName, parseSkillMd } from './parse.js';
 
 export const MAX_SKILLS_PER_SOURCE = 100;
 export const MAX_SOURCE_BYTES = 2_000_000;
@@ -454,11 +454,12 @@ export async function fetchSkillSource(
   const seen = new Map<string, number>();
   for (const p of plans) {
     if (p.skill.name !== null) {
-      seen.set(p.skill.name.toLowerCase(), (seen.get(p.skill.name.toLowerCase()) ?? 0) + 1);
+      const key = normaliseSkillName(p.skill.name);
+      seen.set(key, (seen.get(key) ?? 0) + 1);
     }
   }
   for (const p of plans) {
-    if (p.skill.name !== null && (seen.get(p.skill.name.toLowerCase()) ?? 0) > 1) {
+    if (p.skill.name !== null && (seen.get(normaliseSkillName(p.skill.name)) ?? 0) > 1) {
       p.skill.errors.push('another skill in this source has the same name');
     }
   }

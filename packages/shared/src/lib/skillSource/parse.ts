@@ -8,6 +8,20 @@ const MAX_FRONTMATTER_LENGTH = 10_000;
 /** Same bounds as `POST /platform/skills` (1–200), narrowed to a menu-safe charset. */
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,199}$/;
 
+/**
+ * A skill name as the conflict checks compare it: case, spacing and trailing
+ * punctuation folded away, so `TDD`, `tdd.` and `tdd -` are one name. Look-alike
+ * names are how a second skill gets picked in place of the one an admin meant.
+ */
+export function normaliseSkillName(name: string): string {
+  return name
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[\p{P}\p{S}\s]+$/u, '');
+}
+
 export type ParsedSkillMd =
   | {
       ok: true;

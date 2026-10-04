@@ -4,10 +4,12 @@ import { initialRevision } from '@auto-swe/shared/lib/skillRevision';
 import {
   fetchSkillSource,
   normaliseLocation,
+  normaliseSkillName,
   type ScriptMode,
   type SkillSourceDeps,
   type SourceLocation,
   type SourceSkill,
+  safeDisplayPath,
 } from '@auto-swe/shared/lib/skillSource';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { scanSkillAdvisory } from './skillScan.js';
@@ -30,7 +32,10 @@ export interface SkillConflict {
 }
 
 export interface PreviewSkill {
+  /** Control characters replaced: the folder is repository-controlled text. */
   folder: string;
+  /** Frontmatter keys (e.g. `allowed-tools`) that the import reads nothing from. */
+  ignoredKeys: string[];
   name: string | null;
   description: string | null;
   textLength: number;
@@ -44,33 +49,57 @@ export interface PreviewSkill {
   installable: boolean;
 }
 
-/** GLOBAL skills plus the target tenant's own: the names an agent there could see twice. */
-function conflictWhere(target: SourceScope): Prisma.SkillWhereInput {
-  if (target.scope === 'TEAM' && target.teamId) {
-    return { OR: [{ scope: 'GLOBAL' }, { scope: 'TEAM', teamId: target.teamId }] };
-  }
+/**
+ * Every skill an agent in the target tenant could see beside the new one — and,
+ * for a GLOBAL or ORGANIZATION import, every tenant it would become visible to:
+ *
+ * - GLOBAL: every skill, at any scope (it is visible to every team).
+ * - ORGANIZATION: GLOBAL, the organization's own, and those of every team in it.
+ * - TEAM: GLOBAL, its organization's, and its own team's.
+ */
+async function conflictWhere(
+  db: Pick<PrismaClient, 'team'>,
+  target: SourceScope
+): Promise<Prisma.SkillWhereInput> {
   if (target.scope === 'ORGANIZATION' && target.orgId) {
-    return { OR: [{ scope: 'GLOBAL' }, { orgId: target.orgId, scope: 'ORGANIZATION' }] };
+    return {
+      OR: [
+        { scope: 'GLOBAL' },
+        { orgId: target.orgId, scope: 'ORGANIZATION' },
+        { scope: 'TEAM', team: { orgId: target.orgId } },
+      ],
+    };
   }
-  return { scope: 'GLOBAL' };
+  if (target.scope === 'TEAM' && target.teamId) {
+    const team = await db.team.findUnique({
+      select: { orgId: true },
+      where: { id: target.teamId },
+    });
+    return {
+      OR: [
+        { scope: 'GLOBAL' },
+        ...(team?.orgId ? [{ orgId: team.orgId, scope: 'ORGANIZATION' as const }] : []),
+        { scope: 'TEAM', teamId: target.teamId },
+      ],
+    };
+  }
+  return {};
 }
 
-/** Existing skills a new one named `name` would collide with, in the target's own tenant view. */
+/** Existing skills a new one named `name` would collide with (see {@link conflictWhere}). */
 async function findConflicts(
-  db: Pick<PrismaClient, 'skill'>,
+  db: Pick<PrismaClient, 'skill' | 'team'>,
   names: string[],
   target: SourceScope
 ): Promise<Map<string, SkillConflict[]>> {
-  const wanted = new Set(names.map((n) => n.toLowerCase()));
+  const wanted = new Set(names.map(normaliseSkillName));
+  const where = await conflictWhere(db, target);
   const existing = await runUnscoped('skill import checks name conflicts', ['Skill'], () =>
-    db.skill.findMany({
-      select: { id: true, name: true, scope: true },
-      where: conflictWhere(target),
-    })
+    db.skill.findMany({ select: { id: true, name: true, scope: true }, where })
   );
   const out = new Map<string, SkillConflict[]>();
   for (const row of existing) {
-    const key = row.name.toLowerCase();
+    const key = normaliseSkillName(row.name);
     if (wanted.has(key)) {
       out.set(key, [...(out.get(key) ?? []), { id: row.id, name: row.name, scope: row.scope }]);
     }
@@ -107,14 +136,16 @@ export async function previewSkillSource(
     sha: fetched.sha,
     skills: fetched.skills.map((s) => {
       const scanWarnings = scans.get(s) ?? [];
-      const skillConflicts = s.name === null ? [] : (conflicts.get(s.name.toLowerCase()) ?? []);
+      const skillConflicts =
+        s.name === null ? [] : (conflicts.get(normaliseSkillName(s.name)) ?? []);
       const blockedByScan = block && scanWarnings.length > 0;
       return {
         blockedByScan,
         conflicts: skillConflicts,
         description: s.description,
         errors: s.errors,
-        folder: s.folder,
+        folder: safeDisplayPath(s.folder),
+        ignoredKeys: s.ignoredKeys,
         installable: s.errors.length === 0 && skillConflicts.length === 0 && !blockedByScan,
         name: s.name,
         referenceFileCount: s.referenceFiles.length,
@@ -168,7 +199,7 @@ export async function installSkillSource(
     },
   audit: (
     tx: Prisma.TransactionClient,
-    source: { id: string },
+    source: SkillSourceRow,
     skills: InstalledSkill[]
   ) => Promise<void>,
   deps?: SkillSourceDeps
@@ -184,6 +215,12 @@ export async function installSkillSource(
     fetched.skills.flatMap((s) => (s.name === null ? [] : [[s.name, s] as const]))
   );
   const wanted = [...new Set(input.skills)];
+  if (new Set(wanted.map(normaliseSkillName)).size !== wanted.length) {
+    throw new SkillImportRefusal(
+      'NAME_CONFLICT',
+      wanted.map((name) => ({ name, scope: 'this import' }))
+    );
+  }
   const unknown = wanted.filter((n) => !byName.has(n));
   if (unknown.length > 0) {
     throw new SkillImportRefusal('UNKNOWN_SKILLS', unknown);
@@ -214,6 +251,10 @@ export async function installSkillSource(
     async (tx) => {
       // Inside the transaction, immediately before the writes, so the decision
       // is taken on the rows the writes then sit beside.
+      // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
+      // `skills` has no unique name, so two concurrent imports could both find a name
+      // free; this serialises the check-then-create of every import.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('skill-name-allocation', 0))`;
       const conflicts = await findConflicts(tx, wanted, input);
       if (conflicts.size > 0) {
         throw new SkillImportRefusal(
@@ -248,6 +289,9 @@ export async function installSkillSource(
             ...content,
             ...initialRevision(content, {
               createdById: input.createdById,
+              // Reference files are stored UNSCANNED (the scan covers description and
+              // text). Nothing reads them back to an agent or a UI; whatever first does
+              // must scan them, with blockOnScanWarnings applying, before it may.
               referenceFiles: s.referenceFiles as unknown as Prisma.InputJsonValue,
               scanWarnings: scans.get(s) ?? [],
               sourcePath: s.folder,

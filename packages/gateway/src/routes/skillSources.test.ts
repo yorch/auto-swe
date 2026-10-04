@@ -25,6 +25,7 @@ vi.mock('@auto-swe/shared/lib/skillSource', async (importOriginal) => ({
 import { skillSourceRoutes } from './skillSources.js';
 
 const TEAM_ID = '00000000-0000-4000-a000-0000000000a1';
+const ORG_ID = '00000000-0000-4000-a000-0000000000b1';
 const SOURCE_ID = '00000000-0000-4000-a000-0000000000c1';
 
 type Row = Record<string, unknown> & { id: string };
@@ -34,6 +35,7 @@ function sourceSkill(name: string, over: Record<string, unknown> = {}) {
     description: `${name} description`,
     errors: [] as string[],
     folder: `skills/${name}`,
+    ignoredKeys: [] as string[],
     name,
     promptText: `Prompt for ${name}`,
     referenceFiles: [{ content: 'ref text', path: 'notes.md' }],
@@ -63,7 +65,11 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     if (Array.isArray(where.OR)) {
       return (where.OR as Array<Record<string, unknown>>).some((w) => whereMatches(row, w));
     }
-    return Object.entries(where).every(([k, v]) => row[k] === v);
+    return Object.entries(where).every(([k, v]) =>
+      v && typeof v === 'object' && row[k] && typeof row[k] === 'object'
+        ? whereMatches(row[k] as Row, v as Record<string, unknown>)
+        : row[k] === v
+    );
   };
 
   const model = (rows: Row[], extra: (r: Row) => Row = (r) => r) => ({
@@ -82,6 +88,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       if (data.name === 'boom') {
         throw new Error('database exploded');
       }
+      order.push(`skill.create:${String(data.name)}`);
       const { revisions, ...rest } = data as { revisions?: unknown } & Record<string, unknown>;
       const row = { id: id('5'), ...rest, revisionRows: revisions } as Row;
       state.skills.push(row);
@@ -139,7 +146,12 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       }
     ),
   };
+  const order: string[] = [];
   const prisma = {
+    $executeRaw: vi.fn(async () => {
+      order.push('lock');
+      return 0;
+    }),
     $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
       const snapshot = {
         audit: [...state.audit],
@@ -164,7 +176,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     organization: { findUnique: vi.fn(async () => ({ id: 'org' })) },
     skill: skillModel,
     skillSource: sourceModel,
-    team: { findUnique: vi.fn(async () => ({ id: TEAM_ID })) },
+    team: { findUnique: vi.fn(async () => ({ id: TEAM_ID, orgId: ORG_ID })) },
   };
 
   const app = Fastify();
@@ -183,7 +195,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       payload: payload as never,
       url: `/api/v1/platform/skill-sources${url}`,
     });
-  return { call, prisma, state };
+  return { call, order, prisma, state };
 }
 
 const SOURCE = { owner: 'Acme', path: 'skills', ref: 'main', repo: 'Skills' };
@@ -257,6 +269,22 @@ describe('POST /preview', () => {
     expect(state.audit).toHaveLength(0);
   });
 
+  it('shows repository-derived text without control characters, and the ignored keys', async () => {
+    fetchSkillSource.mockResolvedValue(
+      fetched([
+        sourceSkill('alpha', {
+          folder: 'bad\u001b[2Kdir',
+          ignoredKeys: ['allowed-tools'],
+          skippedFiles: [{ path: 'x', reason: 'not-text' }],
+        }),
+      ])
+    );
+    const { call } = await buildApp();
+    const { data } = (await call('POST', '/preview', SOURCE)).json();
+    expect(data.skills[0].folder).toBe('bad?[2Kdir');
+    expect(data.skills[0].ignoredKeys).toEqual(['allowed-tools']);
+  });
+
   it('scans the description with the text in full', async () => {
     const { call } = await buildApp();
     await call('POST', '/preview', SOURCE);
@@ -303,6 +331,8 @@ describe('POST /preview', () => {
     ['TREE_TRUNCATED', 422],
     ['UNAUTHORIZED', 502],
     ['TIMEOUT', 504],
+    ['LIMIT_REQUESTS', 422],
+    ['RATE_LIMIT_LOW', 503],
   ] as const)('maps a %s failure to %i with a fixed message', async (code, status) => {
     fetchSkillSource.mockRejectedValue(new SkillSourceError(code, 'ghp_SECRET bob:hunter2@x'));
     const { call } = await buildApp();
@@ -383,6 +413,8 @@ describe('POST /skill-sources', () => {
       'alpha',
       'beta',
     ]);
+    // The audit entry records what was stored (normalised), not the request spelling.
+    expect(state.audit[0]?.afterJson).toMatchObject({ owner: 'acme', repo: 'skills' });
     // One transaction held the lot.
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(res.json().data.skills.map((s: { name: string }) => s.name)).toEqual(['alpha', 'beta']);
@@ -515,6 +547,74 @@ describe('POST /skill-sources', () => {
     expect(res.statusCode).toBe(201);
     expect(state.sources[0]).toMatchObject({ orgId: null, scope: 'TEAM', teamId: TEAM_ID });
     expect(state.skills[0]).toMatchObject({ orgId: null, scope: 'TEAM', teamId: TEAM_ID });
+  });
+
+  it('a GLOBAL import conflicts with a same-named skill at any scope', async () => {
+    const { call, state } = await buildApp();
+    state.skills.push({ id: 'e1', name: 'alpha', scope: 'TEAM', teamId: 'some-team' });
+    const res = await create(call, { skills: ['alpha'] });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.details).toEqual([{ existingId: 'e1', name: 'alpha', scope: 'TEAM' }]);
+  });
+
+  it('a TEAM import conflicts with GLOBAL, its organization and its own team', async () => {
+    for (const existing of [
+      { scope: 'GLOBAL' },
+      { orgId: ORG_ID, scope: 'ORGANIZATION' },
+      { scope: 'TEAM', teamId: TEAM_ID },
+    ]) {
+      const { call, state } = await buildApp();
+      state.skills.push({ id: 'e1', name: 'alpha', ...existing });
+      const res = await create(call, { scope: 'TEAM', skills: ['alpha'], teamId: TEAM_ID });
+      expect(res.statusCode, JSON.stringify(existing)).toBe(409);
+    }
+  });
+
+  it('an ORGANIZATION import conflicts with GLOBAL, the organization and every team in it', async () => {
+    const mine = '00000000-0000-4000-a000-0000000000b1';
+    for (const existing of [
+      { scope: 'GLOBAL' },
+      { orgId: mine, scope: 'ORGANIZATION' },
+      { scope: 'TEAM', team: { orgId: mine }, teamId: 'a-team-in-the-org' },
+    ]) {
+      const { call, state } = await buildApp();
+      state.skills.push({ id: 'e1', name: 'alpha', ...existing });
+      const res = await create(call, { orgId: mine, scope: 'ORGANIZATION', skills: ['alpha'] });
+      expect(res.statusCode, JSON.stringify(existing)).toBe(409);
+    }
+    // A team in another organization is none of its business.
+    const { call, state } = await buildApp();
+    state.skills.push({ id: 'e2', name: 'alpha', scope: 'TEAM', team: { orgId: 'other-org' } });
+    expect(
+      (await create(call, { orgId: mine, scope: 'ORGANIZATION', skills: ['alpha'] })).statusCode
+    ).toBe(201);
+  });
+
+  it('compares names case-insensitively with trailing punctuation and spacing folded away', async () => {
+    for (const existing of ['ALPHA', 'alpha.', 'alpha -', ' alpha  ', 'Alpha!!']) {
+      const { call, state } = await buildApp();
+      state.skills.push({ id: 'e1', name: existing, scope: 'GLOBAL' });
+      const res = await create(call, { skills: ['alpha'] });
+      expect(res.statusCode, existing).toBe(409);
+    }
+    const { call, state } = await buildApp();
+    state.skills.push({ id: 'e1', name: 'alphabet', scope: 'GLOBAL' });
+    expect((await create(call, { skills: ['alpha'] })).statusCode).toBe(201);
+  });
+
+  it('refuses two chosen skills whose names fold to one', async () => {
+    fetchSkillSource.mockResolvedValue(fetched([sourceSkill('beta'), sourceSkill('Beta.')]));
+    const { call, state } = await buildApp();
+    const res = await create(call, { skills: ['beta', 'Beta.'] });
+    expect(res.statusCode).toBe(409);
+    expect(state.sources).toHaveLength(0);
+  });
+
+  it('takes the skill-name lock inside the transaction before any skill is written', async () => {
+    const { call, order, prisma } = await buildApp();
+    await create(call);
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['lock', 'skill.create:alpha', 'skill.create:beta']);
   });
 
   it('does not conflict with another team’s skill of the same name', async () => {
