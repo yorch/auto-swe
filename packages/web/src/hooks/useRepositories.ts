@@ -56,11 +56,18 @@ export interface UpdateRepoBody {
   config?: unknown;
 }
 
-export function useRepositories(opts: ListOptions & { includeInactive?: boolean } = {}) {
-  const { includeInactive, ...page } = opts;
-  const path = includeInactive
-    ? '/api/v1/repositories?includeInactive=true'
-    : '/api/v1/repositories';
+export function useRepositories(
+  opts: ListOptions & { includeInactive?: boolean; q?: string } = {}
+) {
+  const { includeInactive, q, ...page } = opts;
+  const filters = new URLSearchParams();
+  if (includeInactive) {
+    filters.set('includeInactive', 'true');
+  }
+  if (q) {
+    filters.set('q', q);
+  }
+  const path = `/api/v1/repositories${filters.size ? `?${filters.toString()}` : ''}`;
   return useListQuery<RepositorySummary>({
     queryFn: () => api.get(listUrl(path, page)),
     queryKey: ['repositories', opts],

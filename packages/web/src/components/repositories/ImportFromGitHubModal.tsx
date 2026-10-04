@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -43,6 +44,7 @@ export function ImportFromGitHubModal({
     >
       <div className="space-y-4">
         <Input
+          aria-label="Search GitHub repositories"
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by org, repo name, or description…"
           value={search}
@@ -53,9 +55,9 @@ export function ImportFromGitHubModal({
         {error && !isLoading && (
           <Alert>
             {errMsg(error, 'Failed to load repositories.')}{' '}
-            <a className="underline" href="/studio/integrations">
+            <Link className="underline" href="/studio/integrations?tab=github">
               Check GitHub integration.
-            </a>
+            </Link>
           </Alert>
         )}
 

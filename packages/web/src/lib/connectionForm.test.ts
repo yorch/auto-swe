@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   initialConnectionType,
   parseConnectionConfig,
+  secretLikeConfigKeys,
   selectableConnectionTypes,
 } from './connectionForm';
 
@@ -37,5 +38,23 @@ describe('parseConnectionConfig', () => {
     expect(parseConnectionConfig('{').ok).toBe(false);
     expect(parseConnectionConfig('[1]').ok).toBe(false);
     expect(parseConnectionConfig('null').ok).toBe(false);
+  });
+});
+
+describe('secretLikeConfigKeys', () => {
+  it('finds credential-looking keys that hold a value, at any depth', () => {
+    expect(
+      secretLikeConfigKeys({
+        auth: { apiKey: 'abc', type: 'bearer' },
+        baseUrl: 'https://x.test',
+        token: 'ghp_1',
+      })
+    ).toEqual(['auth.apiKey', 'token']);
+  });
+
+  it('ignores empty values and ordinary keys', () => {
+    expect(secretLikeConfigKeys({ baseUrl: 'https://x.test', token: '' })).toEqual([]);
+    expect(secretLikeConfigKeys(null)).toEqual([]);
+    expect(secretLikeConfigKeys([{ token: 'x' }])).toEqual([]);
   });
 });

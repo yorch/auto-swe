@@ -3,8 +3,15 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mcpConnectionRoutes } from './mcpConnections.js';
 
+vi.mock('../lib/mcpProbe.js', () => ({
+  probeMcpServer: vi.fn(async () => ({ durationMs: 12, ok: true, toolCount: 3, toolNames: ['a'] })),
+}));
+
+import { probeMcpServer } from '../lib/mcpProbe.js';
+
 function newMockPrisma() {
   return {
+    agent: { findMany: vi.fn().mockResolvedValue([]), groupBy: vi.fn().mockResolvedValue([]) },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: {
       create: vi.fn(),
@@ -51,6 +58,71 @@ describe('mcpConnectionRoutes', () => {
       expect.objectContaining({ where: { isActive: true, type: 'mcp' } })
     );
     await app.close();
+  });
+
+  it('lists the agents whose current version binds each connection', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.connection.findMany.mockResolvedValue([{ id: ID, name: 'docs', type: 'mcp' }]);
+    const lineage = {
+      channelId: null,
+      key: 'reviewer',
+      orgId: null,
+      scope: 'GLOBAL',
+      teamId: null,
+      workflowTemplateId: null,
+    };
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { ...lineage, mcpConnectionId: ID, name: 'Reviewer', version: 2 },
+      // An older version that still binds it: history, not use.
+      { ...lineage, key: 'planner', mcpConnectionId: ID, name: 'Planner', version: 1 },
+    ]);
+    mockPrisma.agent.groupBy.mockResolvedValue([
+      { ...lineage, _max: { version: 2 } },
+      { ...lineage, _max: { version: 3 }, key: 'planner' },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/mcp-connections',
+    });
+    expect(JSON.parse(res.payload).data[0].usedBy).toEqual([
+      { key: 'reviewer', name: 'Reviewer', scope: 'GLOBAL' },
+    ]);
+  });
+
+  describe('POST /mcp-connections/:id/test', () => {
+    const url = `/api/v1/platform/mcp-connections/${ID}/test`;
+
+    it('probes the saved URL within the connection timeout', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: { listTimeoutMs: 4000, url: 'https://mcp.example.com/mcp' },
+        id: ID,
+      });
+      const res = await app.inject({ headers: AUTH, method: 'POST', url });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data).toMatchObject({ ok: true, toolCount: 3 });
+      expect(probeMcpServer).toHaveBeenCalledWith('https://mcp.example.com/mcp', 4000);
+    });
+
+    it('does not probe an address the SSRF guard refuses', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: { url: 'http://169.254.169.254/' },
+        id: ID,
+      });
+      const res = await app.inject({ headers: AUTH, method: 'POST', url });
+      expect(JSON.parse(res.payload).data.ok).toBe(false);
+      expect(probeMcpServer).not.toHaveBeenCalled();
+    });
+
+    it('404s an unknown connection and rejects a non-admin', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(null);
+      expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(404);
+      const other = await buildApp('ENGINEER');
+      expect((await other.app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(403);
+    });
   });
 
   it('rejects a non-admin', async () => {

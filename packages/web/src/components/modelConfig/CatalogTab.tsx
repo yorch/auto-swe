@@ -502,7 +502,7 @@ function EntryModal({
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
         {!existing && (
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
               className="font-mono text-xs"
               id="catalogProvider"
@@ -523,7 +523,7 @@ function EntryModal({
             />
           </div>
         )}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             hint="USD per million tokens. 0 and 0 marks a free model."
             id="catalogInput"
@@ -579,7 +579,7 @@ function EntryModal({
             value={cacheWrite1h}
           />
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Select
             id="catalogKind"
             label="Kind"

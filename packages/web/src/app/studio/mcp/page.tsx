@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
@@ -14,12 +15,15 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type McpConnectionRow,
+  type McpTestResult,
   useCreateMcpConnection,
   useDeleteMcpConnection,
   useMcpConnections,
+  useTestMcpConnection,
   useUpdateMcpConnection,
 } from '@/hooks/useMcpConnections';
 import { useTeams } from '@/hooks/useTeams';
+import { scopeLabel } from '@/lib/agentDisplay';
 import { errMsg } from '@/lib/errors';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
@@ -56,7 +60,7 @@ function McpTimeoutFields({
   onChange: (patch: { listTimeoutMs?: string; callTimeoutMs?: string }) => void;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <Input
         id={`${idPrefix}-list-timeout`}
         label="List timeout (ms)"
@@ -133,6 +137,7 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
           value={form.url}
         />
         <Combobox
+          hint="The team owns the connection and manages it. Platform-wide agents can use any connection; a team's own agents can only use that team's."
           id="mcp-new-team"
           label="Team"
           onChange={(v) => setForm((f) => ({ ...f, teamId: v }))}
@@ -253,6 +258,24 @@ export default function StudioMcpConnectionsPage() {
   const [deleteTarget, setDeleteTarget] = useState<McpConnectionRow | null>(null);
   const { data: connections, isLoading, isError, error: loadError } = useMcpConnections();
   const del = useDeleteMcpConnection();
+  const test = useTestMcpConnection();
+  const [testing, setTesting] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, McpTestResult>>({});
+
+  async function runTest(id: string) {
+    setTesting(id);
+    try {
+      const result = await test.mutateAsync(id);
+      setResults((r) => ({ ...r, [id]: result }));
+    } catch (err) {
+      setResults((r) => ({
+        ...r,
+        [id]: { durationMs: 0, error: errMsg(err, 'The check could not run.'), ok: false },
+      }));
+    } finally {
+      setTesting(null);
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -265,10 +288,9 @@ export default function StudioMcpConnectionsPage() {
         chapter="§ Studio"
         subtitle={
           <>
-            MCP servers (http/https) that an Agent can bind tools from. Attach one to an Agent via
-            its <code className="text-paper-300">mcpConnectionId</code> and add{' '}
-            <code className="text-paper-300">mcp</code> to its tool keys; the server&apos;s tools
-            then load at run time alongside the agent&apos;s built-in tools.
+            MCP servers (http or https) whose tools an agent can call. Choose one in an agent&apos;s
+            MCP connection field in the Agent library; its tools then load at run time alongside the
+            agent&apos;s built-in tools. Use Test to check the server is reachable.
           </>
         }
         title="MCP connections"
@@ -297,6 +319,7 @@ export default function StudioMcpConnectionsPage() {
                   <Th variant="compact">URL</Th>
                   <Th variant="compact">Timeouts (list/call ms)</Th>
                   <Th variant="compact">Team</Th>
+                  <Th variant="compact">Used by</Th>
                   <Th variant="compact" />
                 </THead>
                 <tbody>
@@ -313,8 +336,42 @@ export default function StudioMcpConnectionsPage() {
                         {c.config?.callTimeoutMs ?? 'default'}
                       </Td>
                       <Td className="py-2 pr-4 text-xs text-paper-300">{c.team?.name ?? '—'}</Td>
+                      <Td className="py-2 pr-4 text-xs text-paper-300">
+                        {(c.usedBy ?? []).length === 0
+                          ? 'No agents'
+                          : (c.usedBy ?? []).map((a) => (
+                              <div key={`${a.key}-${a.scope}`}>
+                                {a.name}{' '}
+                                <span className="text-paper-500">({scopeLabel(a.scope)})</span>
+                              </div>
+                            ))}
+                      </Td>
                       <Td className="py-2 text-right">
+                        {results[c.id] && (
+                          <div className="mb-1 flex justify-end">
+                            <Badge tone={results[c.id].ok ? 'moss' : 'brick'} variant="text">
+                              {results[c.id].ok
+                                ? `Reachable · ${results[c.id].toolCount} ${
+                                    results[c.id].toolCount === 1 ? 'tool' : 'tools'
+                                  }`
+                                : (results[c.id].error ?? 'Not reachable')}
+                            </Badge>
+                          </div>
+                        )}
+                        {results[c.id]?.ok && (results[c.id].toolNames ?? []).length > 0 && (
+                          <div className="mb-1 text-right text-[11px] text-paper-500">
+                            {(results[c.id].toolNames ?? []).join(', ')}
+                          </div>
+                        )}
                         <div className="flex justify-end gap-2">
+                          <Button
+                            disabled={testing === c.id}
+                            onClick={() => runTest(c.id)}
+                            size="sm"
+                            variant="ghost"
+                          >
+                            {testing === c.id ? 'Testing…' : 'Test'}
+                          </Button>
                           <Button onClick={() => setEditTarget(c)} size="sm" variant="secondary">
                             Edit
                           </Button>
@@ -341,7 +398,11 @@ export default function StudioMcpConnectionsPage() {
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message="Agents referencing this connection will fall back to their built-in tools. This deactivates the connection; it cannot be undone."
+        message={
+          (deleteTarget?.usedBy ?? []).length > 0
+            ? `${(deleteTarget?.usedBy ?? []).map((a) => a.name).join(', ')} use this connection and will fall back to their built-in tools. This deactivates the connection; it cannot be undone.`
+            : 'No agent uses this connection. This deactivates it; it cannot be undone.'
+        }
         onClose={() => setDeleteTarget(null)}
         onConfirm={async () => {
           if (deleteTarget) {

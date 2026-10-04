@@ -2,7 +2,7 @@
 
 import { getConnectionTypeMetadata, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
@@ -15,8 +15,11 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useHasRole } from '@/hooks/useHasRole';
 import {
@@ -50,6 +53,8 @@ function ConnectionTypeBadge({ type }: { type: string }) {
   );
 }
 
+const PAGE_SIZE = 30;
+
 export default function ConnectionsPage() {
   // Connection writes are LEAD routes that also require LEAD membership on the
   // connection's team (canManageTeamRepos); a platform ADMIN bypasses that.
@@ -67,28 +72,33 @@ export default function ConnectionsPage() {
   // Deactivating a connection must not make it vanish for the people who can
   // reactivate it — they can opt into seeing inactive rows.
   const [showInactive, setShowInactive] = useState(false);
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  const [offset, setOffset] = useState(0);
+  // Search the server after a pause in typing, so each keystroke is not a request.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setQuery(search.trim());
+      setOffset(0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
   const {
     data: repos,
     meta,
     isLoading,
     isError,
     error: loadError,
-  } = useRepositories({ includeInactive: canManage && showInactive });
+  } = useRepositories({
+    includeInactive: canManage && showInactive,
+    limit: PAGE_SIZE,
+    offset,
+    q: query || undefined,
+  });
   const suggestions = useRepoDependencySuggestions();
   const scan = useTriggerRepoDependencyScan();
   const myCredentials = useMyCredentials();
   const [mode, setMode] = useState<ModalMode>(null);
-
-  if (isLoading || isError) {
-    return (
-      <QueryBoundary
-        error={loadError}
-        isError={isError}
-        isLoading={isLoading}
-        label="connections"
-      />
-    );
-  }
 
   function handleImportSelect(repo: GitHubRepoInfo) {
     setMode({
@@ -118,14 +128,14 @@ export default function ConnectionsPage() {
         actions={
           canManage ? (
             <>
-              <label className="flex items-center gap-1.5 text-xs text-paper-400">
-                <input
-                  checked={showInactive}
-                  onChange={(e) => setShowInactive(e.target.checked)}
-                  type="checkbox"
-                />
-                Show inactive
-              </label>
+              <Checkbox
+                checked={showInactive}
+                label="Show inactive"
+                onChange={(e) => {
+                  setShowInactive(e.target.checked);
+                  setOffset(0);
+                }}
+              />
               <Button onClick={() => setMode({ kind: 'import' })} size="sm" variant="secondary">
                 Import from GitHub
               </Button>
@@ -135,109 +145,127 @@ export default function ConnectionsPage() {
             </>
           ) : undefined
         }
-        chapter="§ Workflows"
+        chapter="§ Work"
         subtitle="External systems — git repos, REST APIs, and other integrations — available to your workflows."
         title="Connections"
       />
       <SetupBanner items={['connections']} />
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {(repos ?? []).map((r) => {
-          const isGitRepo = !r.type || r.type === 'git_repo';
-          const myCredential = isGitRepo ? credentialFor(r.id) : undefined;
-          // Offered when the feature is on, and kept reachable when it is off
-          // but a token is still saved, so it can always be removed.
-          const showCredential = isGitRepo && (credentialsEnabled || !!myCredential);
-          return (
-            <Card key={r.id}>
-              <div className="flex items-start justify-between gap-2">
-                <h3 className="min-w-0 truncate font-semibold">{connectionLabel(r)}</h3>
-                <ConnectionTypeBadge type={r.type ?? 'git_repo'} />
-              </div>
-              <div className="mt-2 space-y-1 text-sm text-paper-400">
-                {isGitRepo && <p>Branch: {r.defaultBranch}</p>}
-                <p>Team: {r.team?.name ?? 'None'}</p>
-                {(r.shares?.length ?? 0) > 0 && (
-                  <p className="truncate">
-                    Shared with: {(r.shares ?? []).map((s) => s.team.name).join(', ')}
-                  </p>
-                )}
-                <p>Workflows: {r._count?.activeWorkflows ?? 0}</p>
-                {isGitRepo && <p>Image: {r.executorImage ?? 'default'}</p>}
-                {showCredential && (
-                  <p>
-                    My token:{' '}
-                    {myCredential
-                      ? `…${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
-                      : 'none — platform credential'}
-                  </p>
-                )}
-                {r.description && <p className="truncate text-xs">{r.description}</p>}
-              </div>
-              <div className="mt-3 flex items-center justify-between">
-                <Badge dot tone={r.isActive ? 'moss' : 'brick'} uppercase>
-                  {r.isActive ? 'Active' : 'Inactive'}
-                </Badge>
-                <div className="flex items-center gap-1">
-                  {showCredential && (
-                    <Button
-                      onClick={() => setMode({ kind: 'credential', repo: r })}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      My token
-                    </Button>
-                  )}
-                  {isGitRepo && (
-                    <Button
-                      onClick={() => setMode({ kind: 'dependencies', repo: r })}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      Dependencies
-                    </Button>
-                  )}
-                  {canManageTeam(r.team?.id) && isGitRepo && (
-                    // The server decides: only the owning team's leads (and
-                    // platform admins) may change sharing.
-                    <Button
-                      onClick={() => setMode({ kind: 'share', repo: r })}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      Share
-                    </Button>
-                  )}
-                  {canManageTeam(r.team?.id) && (
-                    <Button
-                      onClick={() => setMode({ kind: 'edit', repo: r })}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      Edit
-                    </Button>
-                  )}
+      <Input
+        aria-label="Search connections"
+        className="max-w-sm"
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search connections…"
+        type="search"
+        value={search}
+      />
+      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="connections">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          {(repos ?? []).map((r) => {
+            const isGitRepo = !r.type || r.type === 'git_repo';
+            const myCredential = isGitRepo ? credentialFor(r.id) : undefined;
+            // Offered when the feature is on, and kept reachable when it is off
+            // but a token is still saved, so it can always be removed.
+            const showCredential = isGitRepo && (credentialsEnabled || !!myCredential);
+            return (
+              <Card key={r.id}>
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="min-w-0 truncate font-semibold">{connectionLabel(r)}</h3>
+                  <ConnectionTypeBadge type={r.type ?? 'git_repo'} />
                 </div>
-              </div>
-            </Card>
-          );
-        })}
-        {meta !== undefined && meta.total > (repos ?? []).length && (
-          <p className="col-span-full text-center font-mono text-[11px] uppercase tracking-wider text-paper-500">
-            showing the first {(repos ?? []).length} of {meta.total} connections
-          </p>
-        )}
-        {(repos ?? []).length === 0 && (
-          <EmptyState
-            className="col-span-full py-12"
-            hint={
-              canManage
-                ? 'Use "Import from GitHub" or "Add connection" above.'
-                : 'Ask a team lead or admin to add one.'
-            }
-            title="No connections yet."
+                <div className="mt-2 space-y-1 text-sm text-paper-400">
+                  {isGitRepo && <p>Branch: {r.defaultBranch}</p>}
+                  <p>Team: {r.team?.name ?? 'None'}</p>
+                  {(r.shares?.length ?? 0) > 0 && (
+                    <p className="truncate">
+                      Shared with: {(r.shares ?? []).map((s) => s.team.name).join(', ')}
+                    </p>
+                  )}
+                  <p>Workflows: {r._count?.activeWorkflows ?? 0}</p>
+                  {isGitRepo && <p>Image: {r.executorImage ?? 'default'}</p>}
+                  {showCredential && (
+                    <p>
+                      My token:{' '}
+                      {myCredential
+                        ? `…${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
+                        : 'none — platform credential'}
+                    </p>
+                  )}
+                  {r.description && <p className="truncate text-xs">{r.description}</p>}
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <Badge dot tone={r.isActive ? 'moss' : 'brick'} uppercase>
+                    {r.isActive ? 'Active' : 'Inactive'}
+                  </Badge>
+                  <div className="flex items-center gap-1">
+                    {showCredential && (
+                      <Button
+                        onClick={() => setMode({ kind: 'credential', repo: r })}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        My token
+                      </Button>
+                    )}
+                    {isGitRepo && (
+                      <Button
+                        onClick={() => setMode({ kind: 'dependencies', repo: r })}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Dependencies
+                      </Button>
+                    )}
+                    {canManageTeam(r.team?.id) && isGitRepo && (
+                      // The server decides: only the owning team's leads (and
+                      // platform admins) may change sharing.
+                      <Button
+                        onClick={() => setMode({ kind: 'share', repo: r })}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Share
+                      </Button>
+                    )}
+                    {canManageTeam(r.team?.id) && (
+                      <Button
+                        onClick={() => setMode({ kind: 'edit', repo: r })}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+          {(repos ?? []).length === 0 && (
+            <EmptyState
+              className="col-span-full py-12"
+              hint={
+                query
+                  ? 'Try a different search.'
+                  : canManage
+                    ? 'Use "Import from GitHub" or "Add connection" above.'
+                    : 'Ask a team lead or admin to add one.'
+              }
+              title={query ? 'No connections match your search.' : 'No connections yet.'}
+            />
+          )}
+        </div>
+        {meta !== undefined && meta.total > PAGE_SIZE && (
+          <Pagination
+            hasNext={offset + (repos ?? []).length < meta.total}
+            hasPrev={offset > 0}
+            onNext={() => setOffset(offset + PAGE_SIZE)}
+            onPrev={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            rangeEnd={Math.min(offset + PAGE_SIZE, meta.total)}
+            rangeStart={offset + 1}
+            total={meta.total}
           />
         )}
-      </div>
+      </QueryBoundary>
 
       <section className="space-y-2">
         <SectionHeader

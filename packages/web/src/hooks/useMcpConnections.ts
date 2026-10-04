@@ -11,6 +11,16 @@ export interface McpConnectionRow {
   teamId: string;
   team?: { id: string; name: string; slug: string } | null;
   createdAt?: string;
+  /** Agents whose current version binds this server. */
+  usedBy?: { key: string; name: string; scope: string }[];
+}
+
+export interface McpTestResult {
+  ok: boolean;
+  error?: string;
+  toolCount?: number;
+  toolNames?: string[];
+  durationMs: number;
 }
 
 export interface CreateMcpConnectionBody {
@@ -71,5 +81,13 @@ export function useDeleteMcpConnection() {
   return useMutation({
     mutationFn: (id: string) => api.delete<{ data: { deactivated: boolean } }>(`${BASE}/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** Connect to the saved server and list its tools; the result says why when it cannot. */
+export function useTestMcpConnection() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: McpTestResult }>(`${BASE}/${id}/test`, {}).then((r) => r.data),
   });
 }
