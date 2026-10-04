@@ -1727,7 +1727,7 @@
     {
       "body": "The dashboard lists work by request, with the latest visible attempt standing for each, and retries a request without losing its identity.",
       "category": "Operations",
-      "detail": "Run visibility is applied first, then executions are grouped by request. A single-repository request is represented by its newest visible execution; a cross-repository request summarizes every visible child and keeps failed children visible while others run. Filtering and paging happen after grouping, so an old failure cannot resurface behind a successful retry. A retry of a git request starts a new execution of the same request; a connection-free or non-git request starts again from its recorded template version, applying the checks a fresh launch applies (the template must be ACTIVE and visible through the caller’s team membership, the input is validated against its input schema) together with run visibility, the connection and the organization budget, and an agent re-run reuses the request id with a fresh delivery branch. Optional instructions are appended to the new attempt’s description only. A cross-repository request is not retried as a whole.",
+      "detail": "Run visibility is applied first, then executions are grouped by request. A single-repository request is represented by its newest visible execution; a cross-repository request summarizes every visible child and keeps failed children visible while others run. Filtering and paging happen after grouping, so an old failure cannot resurface behind a successful retry. A retry starts a new execution of the same request from its recorded template version. Whether the request targeted a repository or not, it applies the template checks a fresh launch applies (the template must be ACTIVE and visible through the caller’s team membership, a recorded input is validated against its input schema); a repository request additionally re-checks repository access, and a connection-free or non-repository one re-checks the connection and the organization budget. An agent re-run reuses the request id with a fresh delivery branch. Optional instructions are appended to the new attempt’s description only. A cross-repository request is not retried as a whole.",
       "id": "requestWorkspace",
       "refs": [
         "requestGroup",
@@ -4076,7 +4076,7 @@
       "id": "connectorBaseUrl",
       "lines": 22,
       "path": "packages/shared/src/lib/ssrfGuard.ts",
-      "title": "A connector base URL is checked strictly, then with the connector opt-in, and the waiver is logged"
+      "title": "A connector base URL is checked strictly, then with the connector opt-in that waives only private addresses"
     },
     {
       "anchor": "async function assertSafeJiraBaseUrl(baseUrl: string): Promise<void> {",

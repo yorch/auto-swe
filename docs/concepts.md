@@ -125,9 +125,10 @@ Technical logs and the diagram are behind a disclosure; trace payloads are fetch
 The engineer can retry eligible finished attempts with optional additional instructions. Each
 attempt preserves the request identity, while an agent attempt allocates a fresh delivery branch.
 Retrying a request that ran a workflow template applies the checks a fresh launch applies: the
-template must be `ACTIVE` and visible to the caller through team membership, the connection and
-organization budget are re-checked, and the run inputs are validated against the template's input
-schema. The attempt still runs the template version the request recorded; the status and input
+template must be `ACTIVE` and visible to the caller through team membership, and a recorded run
+input is validated against the template's input schema. This holds whether the request targeted a
+repository or no repository; access to the repository or connection and the organization budget are
+re-checked as well. The attempt still runs the template version the request recorded; the status and input
 schema are read from the template as it is now. A refused retry answers `TEMPLATE_NOT_FOUND` (404)
 or `INVALID_INPUT` (400), as a launch does.
 

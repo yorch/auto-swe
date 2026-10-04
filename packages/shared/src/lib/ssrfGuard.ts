@@ -216,9 +216,11 @@ export function checkProbeUrl(apiBase: string, opts: { allowPrivate?: boolean } 
 /**
  * The guard a connector runs on its operator-supplied base URL: strict first,
  * then the connector's `allowPrivateNetwork` opt-in, which waives only the
- * private-address refusal. `waived` is set when the opt-in was what let the URL
- * through, so the caller can log it. Every place that builds a connector client
- * from a configured URL goes through this, so none can skip the opt-in rules.
+ * private-address refusal. `waivedReason` is set when the opt-in was what let
+ * the URL through, so the caller can log it. The connector registry and the
+ * admin Jira field detection use this. The worker's Jira connection check
+ * (a deliberately narrower, same-origin opt-in) and the save-time check call
+ * `checkProbeUrl` directly.
  */
 export function checkConnectorBaseUrl(
   baseUrl: string,
