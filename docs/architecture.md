@@ -658,8 +658,9 @@ finalizes it in a non-cancellable scope, keeping `CANCELLED` whatever outcome it
 everything the run spent — what it spent while stopping included. A channel turn (the global
 Channel Assistant template) finalizes in a cancellable scope, so the cancel would reject its
 finalization; the cancel ends it directly, which costs the org cap nothing because channel turns
-bill their channel, not an org. A cancel that finds no execution left to stop (it never started,
-or closed without finalizing) sets `endedAt` itself, since nothing else will, and bills nothing. `Organization.monthlyBudgetUsdCents` caps monthly spend —
+bill their channel, not an org. A cancel that finds no execution left to stop leaves a non-channel
+run for the run reaper (§8), which finalizes and bills it; a channel turn is ended by the cancel
+itself. `Organization.monthlyBudgetUsdCents` caps monthly spend —
 every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap.
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
@@ -675,8 +676,12 @@ on exactly one side. When the connection pool cannot start that transaction in t
 during them then counts twice or not at all, which is off by one run rather than every in-flight
 run. The scheduled-fire check reads the same figure, and the org budget endpoint
 returns it as `currentMonthSpend` beside the finalized `currentMonthUsage`. The cap is still
-best-effort under concurrency: launches that arrive together see the same total, and a running
-run keeps spending after the cap is reached — it stops new work, not work already started.
+best-effort under concurrency: launches that arrive together see the same total.
+A run already going meets the cap too: `assertBudgetAvailable` also reads `orgMonthSpend` for the
+run's organization (found through its ledger row's repository, or, for a workflow with no run, its
+spend owner) and refuses the next model call with a non-retryable `BUDGET_EXCEEDED` once spend
+reaches the cap. That read goes through a per-org cache of one config-cache window (30 s), holding
+the cap and the spend together, so a refusal clears within a window of the cap being raised.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
 `/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
 so the worker writer and the gateway reader cannot disagree about which month a run lands in.
@@ -1074,6 +1079,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   one behind them.
   Spend with no org on it — a runless workflow with no derivable owner, an epic's own planning ledger
   row, which no run finalizes — is outside the cap.
+- **The org cap is a gate with a one-window lag.** A run's next call is refused only once the
+  cached org spend has reached the cap, so up to one cache window (30 s) of spend, from every run
+  of the org at once, can land after the cap is crossed, and the figure does not include a call
+  until its run's ledger row is written. A spend or cap read that fails lets the call through. A
+  channel task's cost is the channel's, so the org cap never refuses it.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a

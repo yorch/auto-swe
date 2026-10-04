@@ -70,6 +70,10 @@ const runless = vi.hoisted(() => ({
 }));
 vi.mock('./runlessBudget.js', () => runless);
 
+// The organization USD cap has its own tests; here only its wiring is checked.
+const orgGuard = vi.hoisted(() => ({ assertOrgBudgetAvailable: vi.fn(async () => {}) }));
+vi.mock('./orgBudgetGuard.js', () => orgGuard);
+
 // The unregistered-agent check only judges activities the boot gate walked, so
 // it needs the gate to have run. `gatedStepNames()` returns null in a bare
 // process, which is "cannot judge" — a test asserting the warning has to say
@@ -567,6 +571,17 @@ describe('recordLlmUsage', () => {
   it('does not gate a workflow that is still under its tier', async () => {
     ledger({ tokensInputUsed: 10 });
     await expect(assertBudgetAvailable('implementer')).resolves.toBeUndefined();
+  });
+
+  it('asks the organization cap before each call, and its refusal stops the call', async () => {
+    ledger({ tokensInputUsed: 10 });
+    await assertBudgetAvailable('implementer');
+    expect(orgGuard.assertOrgBudgetAvailable).toHaveBeenCalledWith('wf-temporal-1', 'implementer');
+
+    orgGuard.assertOrgBudgetAvailable.mockRejectedValueOnce(
+      ApplicationFailure.nonRetryable('org spent', 'BUDGET_EXCEEDED')
+    );
+    await expect(assertBudgetAvailable('implementer')).rejects.toThrow(/org spent/);
   });
 
   it('refuses a call once the tier is already spent', async () => {

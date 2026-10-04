@@ -16,6 +16,7 @@ import { gatedStepNames } from './config/deploymentAgents.js';
 import { STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
 import { recordBudgetExceeded, recordLlmCallMetrics } from './metrics.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
+import { assertOrgBudgetAvailable } from './orgBudgetGuard.js';
 import { assertRunlessBudgetAvailable, recordRunlessUsage } from './runlessBudget.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -302,6 +303,9 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
   // string that matched no ledger row, so its gate was a permanent silent
   // no-op. `persistActivityTrace` resolves its run the same way.
   const temporalWorkflowId = currentWorkflowId();
+  // The organization's monthly USD cap binds the next call of a run already
+  // going, not only the launch of a new one.
+  await assertOrgBudgetAvailable(temporalWorkflowId, label);
   const workflow = await prisma.activeWorkflow.findFirst({
     select: {
       budgetTier: true,
