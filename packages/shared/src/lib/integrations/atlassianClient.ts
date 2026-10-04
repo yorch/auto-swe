@@ -92,11 +92,21 @@ export class AtlassianClient {
               body: body !== undefined ? JSON.stringify(body) : undefined,
               headers,
               method,
-              redirect: 'error',
+              redirect: 'manual',
               signal: AbortSignal.timeout(this.timeoutMs),
             });
 
             span.setAttribute('http.status_code', res.status);
+
+            // Redirects are never followed (the credential must stay on the
+            // configured host) and retrying cannot change the answer.
+            if (res.status >= 300 && res.status < 400) {
+              throw new AtlassianError(
+                res.status,
+                'redirect',
+                'Atlassian request refused: the server answered with a redirect, which is not followed'
+              );
+            }
 
             if (res.status === 429) {
               const raw = res.headers.get('Retry-After') ?? '5';
@@ -142,17 +152,6 @@ export class AtlassianClient {
           } catch (err) {
             if (err instanceof AtlassianError) {
               throw err;
-            }
-            // `redirect: 'error'` surfaces as a TypeError whose cause names the
-            // redirect. Retrying cannot change the answer, so fail at once.
-            if (
-              /redirect/i.test(String((err as { cause?: { message?: unknown } })?.cause?.message))
-            ) {
-              throw new AtlassianError(
-                0,
-                'redirect',
-                'Atlassian request refused: the server answered with a redirect, which is not followed'
-              );
             }
             lastError = new AtlassianError(0, 'network', String(err));
           }

@@ -379,6 +379,10 @@ function checkMcpCodeHasNoDatabaseAccess() {
 // Nothing fails: the request succeeds and returns data. The call must write `redirect` (`'error'`,
 // or `'manual'` with its own per-hop check); GitHub Issues goes through `fetchGuarded`, which
 // does it internally.
+//
+// This is a tripwire, not a proof: it reads source text for `fetch(` and `globalThis.fetch(`, so an
+// aliased or injected fetch (`const f = fetch; f(…)`, a `fetchImpl` parameter, another HTTP
+// client) is not seen. It catches the common omission, not a determined bypass.
 // ---------------------------------------------------------------------------
 
 function checkConnectorFetchesSetRedirect() {
@@ -391,7 +395,7 @@ function checkConnectorFetchesSetRedirect() {
   ];
   for (const file of files) {
     const src = read(file);
-    for (const m of src.matchAll(/(?<![.\w])fetch\s*\(/g)) {
+    for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\s*\(/g)) {
       const open = m.index + m[0].length - 1;
       const init = callArgs(src, open)[1] ?? '';
       if (!/\bredirect\b/.test(init)) {

@@ -4,13 +4,25 @@
  * A transparent redirect would carry a request to a host nobody validated, and
  * would let a credential travel with it. Here each hop must pass `check`, the
  * hop count is capped, and the credential headers are sent only while the hop
- * is on `credentialOrigin` — a hop elsewhere is made without them. A 307/308
+ * is on `credentialOrigin` — a hop elsewhere forwards only an allowlist of
+ * benign headers, and only for GET/HEAD. A 307/308
  * keeps the method and body; any other redirect of a non-GET/HEAD request is
  * refused rather than rewritten.
  */
 export const MAX_GUARDED_REDIRECTS = 3;
 
-const CREDENTIAL_HEADERS = ['authorization', 'x-figma-token'];
+// On a hop to another origin only these request headers are forwarded. An
+// allowlist, because credentials come in many spellings (Authorization, cookies,
+// API-key headers) and any header not named here could be one.
+const CROSS_ORIGIN_HEADERS = [
+  'accept',
+  'accept-encoding',
+  'accept-language',
+  'content-length',
+  'content-type',
+  'user-agent',
+  'x-github-api-version',
+];
 
 export class RedirectRefusedError extends Error {
   constructor(message: string) {
@@ -32,7 +44,7 @@ function headerRecord(init: RequestInit['headers']): Record<string, string> {
 export interface GuardedFetchOptions {
   /** Returns true when the URL may be requested. Run on the first URL and on every hop. */
   check: (url: URL) => boolean;
-  /** Credential headers are sent only to this origin. Omit to send them nowhere on a hop. */
+  /** Credential headers are sent only to this origin; elsewhere only an allowlist of benign headers is. */
   credentialOrigin?: string;
   maxHops?: number;
   fetchImpl?: typeof fetch;
@@ -48,6 +60,7 @@ export async function fetchGuarded(
   const baseHeaders = headerRecord(init.headers);
   const method = (init.method ?? 'GET').toUpperCase();
   let current = new URL(url);
+  const startOrigin = current.origin;
   for (let hop = 0; ; hop++) {
     if (!opts.check(current)) {
       throw new RedirectRefusedError(
@@ -55,9 +68,12 @@ export async function fetchGuarded(
       );
     }
     const headers = { ...baseHeaders };
+    if (hop > 0 && current.origin !== startOrigin && method !== 'GET' && method !== 'HEAD') {
+      throw new RedirectRefusedError('redirect to another origin refused for a write');
+    }
     if (opts.credentialOrigin !== current.origin) {
       for (const name of Object.keys(headers)) {
-        if (CREDENTIAL_HEADERS.includes(name.toLowerCase())) {
+        if (!CROSS_ORIGIN_HEADERS.includes(name.toLowerCase())) {
           delete headers[name];
         }
       }

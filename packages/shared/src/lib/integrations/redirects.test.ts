@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe('connector requests do not follow redirects', () => {
-  it('Atlassian client', async () => {
+  it('Atlassian client does not follow redirects', async () => {
     const fetchMock = stubFetch();
     const client = new AtlassianClient({
       apiToken: 't',
@@ -37,7 +37,8 @@ describe('connector requests do not follow redirects', () => {
       email: 'a@b.com',
     });
     await client.get('/rest/api/3/myself');
-    expectNoRedirects(fetchMock);
+    // Followed by hand: any 3xx is refused (see the behavioural test below).
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ redirect: 'manual' }));
   });
 
   it('Linear', async () => {

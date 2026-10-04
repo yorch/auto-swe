@@ -732,8 +732,11 @@ export async function getKnowledgeBaseConfig(prisma: PrismaClient) {
  * be accepted. It is the check the connector itself runs
  * (`checkProbeUrl` with the connector's opt-in), applied at save time so a
  * refused target is reported to the admin instead of silently disabling the
- * connector later. Only a write that touches the provider, the URL or the
- * opt-in is checked, so an unrelated edit is never blocked by a stored value.
+ * connector later. Only a write that touches the provider or the URL, or
+ * turns the opt-in on, is checked: an unrelated edit, or one that only removes
+ * the opt-in, is never blocked by a stored value. Only the stored (database)
+ * config is validated here; the environment-variable fallbacks are still
+ * checked by the connector at run time.
  */
 function baseUrlRefusal(
   touched: boolean,
@@ -755,9 +758,7 @@ export async function issueTrackerBaseUrlRefusal(
   const existing = await prisma.issueTrackerConfig.findUnique({ where: { id: 'default' } });
   const provider = body.provider !== undefined ? body.provider : existing?.provider;
   return baseUrlRefusal(
-    body.provider !== undefined ||
-      body.baseUrl !== undefined ||
-      body.allowPrivateNetwork !== undefined,
+    body.provider !== undefined || body.baseUrl !== undefined || body.allowPrivateNetwork === true,
     provider === 'jira' || provider === 'github',
     body.baseUrl !== undefined ? body.baseUrl : existing?.baseUrl,
     body.allowPrivateNetwork ?? existing?.allowPrivateNetwork ?? false
@@ -771,9 +772,7 @@ export async function knowledgeBaseBaseUrlRefusal(
   const existing = await prisma.knowledgeBaseConfig.findUnique({ where: { id: 'default' } });
   const provider = body.provider !== undefined ? body.provider : existing?.provider;
   return baseUrlRefusal(
-    body.provider !== undefined ||
-      body.baseUrl !== undefined ||
-      body.allowPrivateNetwork !== undefined,
+    body.provider !== undefined || body.baseUrl !== undefined || body.allowPrivateNetwork === true,
     provider === 'confluence',
     body.baseUrl !== undefined ? body.baseUrl : existing?.baseUrl,
     body.allowPrivateNetwork ?? existing?.allowPrivateNetwork ?? false

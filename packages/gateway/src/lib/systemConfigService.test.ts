@@ -1223,6 +1223,13 @@ describe('systemConfigService', () => {
       ).toBeNull();
     });
 
+    it('never blocks a write that only removes the opt-in', async () => {
+      tracker({ allowPrivateNetwork: true, baseUrl: 'http://127.0.0.1:8080', provider: 'jira' });
+      expect(await issueTrackerBaseUrlRefusal(prisma, { allowPrivateNetwork: false })).toBeNull();
+      kb({ allowPrivateNetwork: true, baseUrl: 'http://127.0.0.1:8090', provider: 'confluence' });
+      expect(await knowledgeBaseBaseUrlRefusal(prisma, { allowPrivateNetwork: false })).toBeNull();
+    });
+
     it('ignores a provider with a fixed host and writes that do not touch the URL', async () => {
       tracker(null);
       expect(
