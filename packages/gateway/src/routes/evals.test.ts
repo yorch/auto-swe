@@ -7,6 +7,13 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
 }));
 
 const { recordRunFinalized } = vi.hoisted(() => ({ recordRunFinalized: vi.fn() }));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveWorkflowDefaults: vi.fn(async () => ({
+    evalHealthMaxFlakeRate: 0.1,
+    evalHealthMaxStaleRate: 0.2,
+    evalHealthMinKappa: 0.4,
+  })),
+}));
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
 
 import { evalRoutes } from './evals.js';
@@ -14,6 +21,7 @@ import { evalRoutes } from './evals.js';
 function newMockPrisma() {
   return {
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
+    evalCase: { groupBy: vi.fn().mockResolvedValue([]) },
     evalDataset: {
       create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
@@ -332,6 +340,54 @@ describe('evalRoutes', () => {
       }
     });
 
+    it('splits each scorer by the requested dimension and filters by template', async () => {
+      vi.useFakeTimers({ now: new Date('2026-09-10T12:00:00Z'), toFake: ['Date'] });
+      try {
+        const { app, prisma } = await buildApp();
+        const TEMPLATE = '22222222-2222-4222-8222-222222222222';
+        prisma.evalResult.groupBy.mockImplementation(
+          async ({ where }: { where: { createdAt: { gte: Date } } }) =>
+            where.createdAt.gte.toISOString().startsWith('2026-09-10')
+              ? [
+                  { _avg: { value: 1 }, _count: { _all: 1 }, judgeModel: 'a/x', scorer: 'judge' },
+                  { _avg: { value: 0 }, _count: { _all: 3 }, judgeModel: 'b/y', scorer: 'judge' },
+                  { _avg: { value: 0.5 }, _count: { _all: 2 }, judgeModel: null, scorer: 'judge' },
+                ]
+              : []
+        );
+        const res = await app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: `/api/v1/platform/evals/trends?window=7&by=judgeModel&templateId=${TEMPLATE}`,
+        });
+        expect(res.statusCode).toBe(200);
+        const call = prisma.evalResult.groupBy.mock.calls[0][0];
+        expect(call.by).toEqual(['scorer', 'judgeModel']);
+        expect(call.where.run).toEqual({ templateId: TEMPLATE });
+        const { data } = JSON.parse(res.payload);
+        expect(data.by).toBe('judgeModel');
+        expect(
+          data.scorers.map((s: { breakdown: string | null; n: number }) => [s.breakdown, s.n])
+        ).toEqual([
+          [null, 2],
+          ['a/x', 1],
+          ['b/y', 3],
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('rejects an unknown breakdown dimension', async () => {
+      const { app } = await buildApp();
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/trends?by=scorer',
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
     it('rejects a window outside 7/30/90', async () => {
       const { app } = await buildApp();
       const res = await app.inject({
@@ -419,6 +475,60 @@ describe('evalRoutes', () => {
         headers: AUTH,
         method: 'GET',
         url: '/api/v1/platform/evals/runs',
+      });
+      expect(res.statusCode).toBe(403);
+    });
+  });
+
+  describe('GET /evals/suite-health', () => {
+    it('reports each dataset’s quarantined share beside the gate thresholds', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalDataset.findMany.mockResolvedValue([
+        { id: 'd2', name: 'Empty', slug: 'empty' },
+        { id: 'd1', name: 'Bench', slug: 'bench' },
+      ]);
+      prisma.evalCase.groupBy.mockResolvedValue([
+        { _count: { _all: 6 }, datasetId: 'd1', flakeScreened: true, quarantined: false },
+        { _count: { _all: 1 }, datasetId: 'd1', flakeScreened: true, quarantined: true },
+        { _count: { _all: 1 }, datasetId: 'd1', flakeScreened: false, quarantined: true },
+      ]);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/suite-health',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data).toEqual({
+        datasets: [
+          {
+            cases: 8,
+            datasetId: 'd1',
+            flakeScreened: 7,
+            name: 'Bench',
+            quarantined: 2,
+            slug: 'bench',
+            staleRate: 0.25,
+          },
+          {
+            cases: 0,
+            datasetId: 'd2',
+            flakeScreened: 0,
+            name: 'Empty',
+            quarantined: 0,
+            slug: 'empty',
+            staleRate: 0,
+          },
+        ],
+        thresholds: { maxFlakeRate: 0.1, maxStaleRate: 0.2, minKappa: 0.4 },
+      });
+    });
+
+    it('is ADMIN-only', async () => {
+      const { app } = await buildApp('ENGINEER');
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/suite-health',
       });
       expect(res.statusCode).toBe(403);
     });

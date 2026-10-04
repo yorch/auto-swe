@@ -126,6 +126,9 @@ split. A routed run is stamped `isCanary` and gets the candidate version applied
 **Suite health.** Flake rate, stale rate, and judge/human agreement (kappa) are tracked against the
 thresholds in the Tier-2 defaults (`evalHealthMaxFlakeRate`, `evalHealthMaxStaleRate`,
 `evalHealthMinKappa`, `evalJudgeThreshold`). An unhealthy suite is not a trustworthy gate.
+`GET /api/v1/platform/evals/suite-health` returns each dataset's case count, how many cases
+re-validation quarantined as stale and how many are flake-screened, with the three thresholds, and
+`/govern/evals` charts the stale rate per dataset against its ceiling.
 
 ---
 
@@ -183,10 +186,14 @@ verdicts into trends per template, model, and prompt version.
   gate rests on the frozen benchmark plus online scoring and canary instead.
 - **End-to-end paths need real infrastructure.** The unit suite covers orchestration against mocked
   Docker, Temporal, and LLM calls; the harness has not been exercised against a live stack.
-- **Suite health is not charted.** The flake-rate, stale-rate, and kappa thresholds are set at
-  `/govern/workflow-defaults` and gate runs, but the dashboard does not plot them over time.
-- **Trends are per scorer only.** The dashboard does not break a scorer's trend down by template,
-  model, or prompt version, though `EvalResult` carries the joins to do so.
+- **Only the stale rate of suite health is measured, and only as it is now.** The flake-rate and
+  kappa thresholds are set at `/govern/workflow-defaults`, but nothing stores a flake rate per run or
+  a judge/human agreement figure, so there is nothing to chart for them; the stale rate is the
+  quarantined share of cases today, with no history, so it is a bar per dataset and not a trend.
+- **Trend breakdowns cover judge model and agent, and templates only for online signals.**
+  `GET /api/v1/platform/evals/trends` accepts `by=judgeModel|agentKey` and `templateId`. A template
+  filter keeps results of runs of that template, so offline harness rows, which have no run, drop
+  out of it; there is no breakdown by prompt version.
 - **A budget-limited verdict covers a prefix of the dataset.** The cap is shared by the whole run,
   so one expensive case can spend another's allowance, and the cases that did not run are the ones
   at the end of the dataset, not a sample. The run's status is still `SUCCESS` or `REGRESSION`, so

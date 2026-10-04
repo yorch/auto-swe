@@ -7,6 +7,7 @@ import type {
   EvalResultDto,
   EvalRunDto,
   EvalSignalSourceValue,
+  EvalSuiteHealthDto,
   EvalTrendsDto,
 } from '@auto-swe/shared/types/api';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -444,20 +445,42 @@ export function useEvalResults(filters: EvalResultFilters & { limit: number; off
   });
 }
 
-export function useEvalTrends(windowDays: number, source?: EvalSignalSourceValue) {
+export interface EvalTrendFilters {
+  source?: EvalSignalSourceValue;
+  /** Split each scorer's series by this column of the result rows. */
+  by?: 'judgeModel' | 'agentKey';
+  /** Only results of runs of this workflow template. */
+  templateId?: string;
+}
+
+export function useEvalTrends(windowDays: number, filters: EvalTrendFilters = {}) {
+  const { by, source, templateId } = filters;
   const qs = new URLSearchParams({ window: String(windowDays) });
-  if (source) {
-    qs.set('source', source);
+  for (const [key, value] of Object.entries({ by, source, templateId })) {
+    if (value) {
+      qs.set(key, value);
+    }
   }
   return useQuery({
     placeholderData: keepPreviousData,
     queryFn: () =>
       api.get<{ data: EvalTrendsDto }>(`/api/v1/platform/evals/trends?${qs}`).then((r) => r.data),
-    queryKey: ['eval-trends', windowDays, source],
+    queryKey: ['eval-trends', windowDays, source, by, templateId],
     // Up to one grouped query per day of the window: refresh rarely, and on
     // focus only once stale (the default), not every minute per open tab.
     refetchInterval: 5 * 60_000,
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useEvalSuiteHealth() {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: EvalSuiteHealthDto }>('/api/v1/platform/evals/suite-health')
+        .then((r) => r.data),
+    queryKey: ['eval-suite-health'],
+    staleTime: 60_000,
   });
 }
 

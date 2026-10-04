@@ -865,6 +865,8 @@ export interface EvalRunDto {
 /** One scorer's daily mean over a trend window (GET /platform/evals/trends). */
 export interface EvalScorerTrend {
   scorer: string;
+  /** Present when the request set `by`: the column's value for this series; null = rows without one. */
+  breakdown?: string | null;
   /** Signals in the whole window. */
   n: number;
   /** Mean normalized score over the whole window. */
@@ -874,10 +876,29 @@ export interface EvalScorerTrend {
 }
 
 export interface EvalTrendsDto {
+  /** The dimension each scorer's series is split by, when the request set one. */
+  by?: 'judgeModel' | 'agentKey';
   windowDays: number;
   since: string;
   until: string;
   scorers: EvalScorerTrend[];
+}
+
+/** GET /platform/evals/suite-health: what the stored data says about each benchmark's health. */
+export interface EvalSuiteHealthDto {
+  datasets: Array<{
+    datasetId: string;
+    slug: string;
+    name: string;
+    cases: number;
+    /** Cases quarantined by re-validation: their reference stopped passing. */
+    quarantined: number;
+    flakeScreened: number;
+    /** `quarantined / cases`, 0 for an empty dataset. */
+    staleRate: number;
+  }>;
+  /** The Tier-2 gate thresholds. Only the stale rate has a stored measurement. */
+  thresholds: { maxFlakeRate: number; maxStaleRate: number; minKappa: number };
 }
 
 export interface EvalRubricDto {
