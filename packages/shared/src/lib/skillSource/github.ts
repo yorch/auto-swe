@@ -143,8 +143,9 @@ export async function resolveAccess(
   assertSafeUrl(apiBase, privateHosts);
 
   let token: string | null = null;
+  // A skill source is not a repository: it has no GitHub App installation.
   const credential = await deps.platformCredential(
-    { apiUrl: apiBase, baseUrl: `https://${host}` },
+    { apiUrl: apiBase, baseUrl: `https://${host}`, installationHost: null },
     config
   );
   if (credential.scope === 'instance' || credential.scope === 'host') {
