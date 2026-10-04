@@ -93,6 +93,16 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
         }
       ),
     },
+    skillRevision: {
+      findUnique: vi.fn(
+        async ({ where }: { where: { skillId_revision: { skillId: string; revision: number } } }) =>
+          revisions.find(
+            (r) =>
+              r.skillId === where.skillId_revision.skillId &&
+              r.revision === where.skillId_revision.revision
+          ) ?? null
+      ),
+    },
   };
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
@@ -176,6 +186,47 @@ describe('skill revisions on the write paths', () => {
     const res = await call('PUT', `/skills/${CUSTOM_ID}`, { promptText: 'racing' });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('SKILL_CHANGED');
+  });
+});
+
+describe('provenance of imported text across edits', () => {
+  async function importedApp() {
+    const app = await buildApp();
+    const row = app.skills.find((s) => s.id === CUSTOM_ID) as Row;
+    row.sourcePath = 'skills/x';
+    const rev = app.revisionsOf(CUSTOM_ID)[0] as Revision;
+    Object.assign(rev, {
+      referenceFiles: [{ content: 'r', path: 'n.md' }],
+      sourcePath: 'skills/x',
+      sourceSha: 'a'.repeat(40),
+    });
+    return app;
+  }
+
+  it('a description-only edit keeps the source sha, path and reference files (the text is unchanged)', async () => {
+    const { call, revisionsOf } = await importedApp();
+    const res = await call('PUT', `/skills/${CUSTOM_ID}`, { description: 'fixed a typo' });
+    expect(res.statusCode).toBe(200);
+    const revs = revisionsOf(CUSTOM_ID);
+    expect(revs).toHaveLength(2);
+    expect(revs[1]).toMatchObject({
+      referenceFiles: [{ content: 'r', path: 'n.md' }],
+      revision: 2,
+      sourcePath: 'skills/x',
+      sourceSha: 'a'.repeat(40),
+    });
+  });
+
+  it('a change to the text drops the provenance', async () => {
+    const { call, revisionsOf } = await importedApp();
+    await call('PUT', `/skills/${CUSTOM_ID}`, { promptText: 'our own text now' });
+    expect(revisionsOf(CUSTOM_ID)[1]).toMatchObject({ sourcePath: null, sourceSha: null });
+  });
+
+  it('a skill that was never imported does not even look', async () => {
+    const { call, prisma } = await buildApp();
+    await call('PUT', `/skills/${CUSTOM_ID}`, { description: 'new' });
+    expect(prisma.skillRevision.findUnique).not.toHaveBeenCalled();
   });
 });
 
