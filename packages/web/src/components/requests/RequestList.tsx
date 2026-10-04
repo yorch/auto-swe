@@ -1,8 +1,9 @@
 import type { WorkspaceRequestSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { requestHref, requestProgress } from '@/lib/requestDisplay';
+import { attentionReasons, requestHref, requestProgress } from '@/lib/requestDisplay';
 import { formatRelativeTime } from '@/lib/utils';
 
 export function RequestList({
@@ -32,6 +33,15 @@ export function RequestList({
                       'Untitled request'}
                   </div>
                   <div className="mt-1 text-sm text-paper-400">{requestProgress(request)}</div>
+                  {attentionReasons(request).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {attentionReasons(request).map((reason) => (
+                        <Badge key={reason.label} tone={reason.tone} variant="outline">
+                          {reason.label}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <StatusBadge status={request.status} />
               </div>

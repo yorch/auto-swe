@@ -8,11 +8,12 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
-import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRespondToApproval } from '@/hooks/useApprovals';
+import { errMsg } from '@/lib/errors';
 import { formatDuration, formatRelativeTime } from '@/lib/utils';
 import { DiffRenderer } from './DiffRenderer';
 
@@ -115,6 +116,36 @@ function getTimeoutColor(timeoutAt: string): string {
   return 'text-paper-500';
 }
 
+const ACTION_LABEL: Record<string, string> = {
+  approve: 'Approved',
+  reject: 'Rejected',
+};
+
+/** A reject must carry enough of a reason to be useful to whoever reads it. */
+const MIN_REJECT_REASON = 5;
+
+function isExpired(step: HumanStepSummary): boolean {
+  return (
+    step.status === 'PENDING' &&
+    !!step.timeoutAt &&
+    new Date(step.timeoutAt).getTime() <= Date.now()
+  );
+}
+
+/** What approving does, in the words of the person deciding. */
+function approveConsequence(step: HumanStepSummary): string {
+  const required = step.requiredApprovers ?? 1;
+  const current = step.currentApprovers ?? 0;
+  if (required > 1 && current + 1 < required) {
+    const left = required - current - 1;
+    return `This records your approval. ${left} more ${left === 1 ? 'approval is' : 'approvals are'} needed before the run continues.`;
+  }
+  if (required > 1) {
+    return 'This is the final required approval. The run continues to the next step.';
+  }
+  return 'The run continues to the next step.';
+}
+
 export interface HumanStepCardProps {
   step: HumanStepSummary;
   showRunLink?: boolean;
@@ -123,7 +154,6 @@ export interface HumanStepCardProps {
 export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) {
   const respond = useRespondToApproval();
   const [expanded, setExpanded] = useState(false);
-  const [showContext, setShowContext] = useState(false);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
   const [inputError, setInputError] = useState<string | null>(null);
   const [reviewText, setReviewText] = useState('');
@@ -132,7 +162,9 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   // respond.isPending flips to true in the component's closure.
   const inFlight = useRef(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [confirmReject, setConfirmReject] = useState(false);
+  const [dialog, setDialog] = useState<'approve' | 'reject' | null>(null);
+  const [comment, setComment] = useState('');
+  const [dialogError, setDialogError] = useState<string | null>(null);
 
   function toggleExpanded() {
     if (!expanded) {
@@ -160,25 +192,46 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
     );
   }
 
-  // Reject goes through a ConfirmModal, which needs a promise to show its
-  // pending state and render a failure inline.
-  async function handleReject() {
+  // Approve and reject go through a dialog that carries the comment, and need a
+  // promise to show their pending state and render a failure inline.
+  async function handleDialogSubmit(action: 'approve' | 'reject') {
     if (inFlight.current) {
       return;
     }
+    const text = comment.trim();
+    if (action === 'reject' && text.length < MIN_REJECT_REASON) {
+      setDialogError('Say why you are rejecting this so the requester knows what to change.');
+      return;
+    }
     inFlight.current = true;
-    setPendingAction('reject');
+    setPendingAction(action);
+    setDialogError(null);
     try {
-      await respond.mutateAsync({ action: 'reject', id: step.id });
+      await respond.mutateAsync({ action, comment: text || undefined, id: step.id });
+      setDialog(null);
+      setComment('');
       setExpanded(false);
+    } catch (err) {
+      setDialogError(errMsg(err, 'Submission failed. Please try again.'));
     } finally {
       inFlight.current = false;
       setPendingAction(null);
     }
   }
 
+  function openDialog(next: 'approve' | 'reject') {
+    setComment('');
+    setDialogError(null);
+    setDialog(next);
+  }
+
   const contextStr = contextToString(step.context);
   const hasContext = contextStr.length > 0;
+  const expired = isExpired(step);
+  const youApproved = step.status === 'PENDING' && step.myResponse === 'approve';
+  const canRespond = step.status === 'PENDING' && !expired && !youApproved;
+  const responses = step.responses ?? [];
+  const requestId = step.run.workRequestId;
 
   return (
     <Card className="space-y-3 p-4" variant="inset">
@@ -198,7 +251,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             <span className={getTimestampColor(step.requestedAt)}>
               {formatRelativeTime(step.requestedAt)}
             </span>
-            {step.status === 'PENDING' && step.timeoutAt && (
+            {step.status === 'PENDING' && step.timeoutAt && !expired && (
               <>
                 <span>·</span>
                 <span className={getTimeoutColor(String(step.timeoutAt))}>
@@ -219,24 +272,58 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 <span>·</span>
                 {step.run.workRequest?.externalTicketId && (
                   <>
-                    <span className="font-mono">{step.run.workRequest.externalTicketId}</span>
+                    {requestId ? (
+                      <Link
+                        className="font-mono underline text-paper-400 hover:text-paper-200"
+                        href={`/workflows?request=${encodeURIComponent(requestId)}`}
+                      >
+                        {step.run.workRequest.externalTicketId}
+                      </Link>
+                    ) : (
+                      <span className="font-mono">{step.run.workRequest.externalTicketId}</span>
+                    )}
                     <span>·</span>
                   </>
                 )}
                 <Link
                   className="underline text-paper-400 hover:text-paper-200"
-                  href={`/runs/${step.run.id}`}
+                  href={
+                    requestId
+                      ? `/workflows?request=${encodeURIComponent(requestId)}`
+                      : `/runs/${step.run.id}`
+                  }
                 >
-                  View run
+                  View request
                 </Link>
+                {requestId && (
+                  <>
+                    <span>·</span>
+                    <Link
+                      className="underline text-paper-500 hover:text-paper-200"
+                      href={`/runs/${step.run.id}`}
+                    >
+                      Full diagnostics
+                    </Link>
+                  </>
+                )}
               </>
             )}
           </div>
         </div>
-        {step.status === 'PENDING' && (
+        {canRespond && (
           <Button onClick={toggleExpanded} size="sm" variant="ghost">
-            {expanded ? 'Cancel' : 'Respond'}
+            {expanded ? 'Collapse' : 'Respond'}
           </Button>
+        )}
+        {youApproved && (
+          <Badge className="shrink-0" tone="moss" uppercase variant="text">
+            You approved
+          </Badge>
+        )}
+        {expired && (
+          <Badge className="shrink-0" tone="muted" uppercase variant="text">
+            Expired
+          </Badge>
         )}
         {step.status !== 'PENDING' && (
           <Badge
@@ -250,30 +337,36 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         )}
       </div>
 
-      {expanded && step.status === 'PENDING' && (
+      {responses.length > 0 && (
+        <ul className="space-y-1 border-t border-ink-600 pt-3 text-xs">
+          {responses.map((r, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: responses are an ordered, append-only list
+            <li className="text-paper-300" key={i}>
+              <span className="font-medium">
+                {r.byName ?? 'Someone'} · {ACTION_LABEL[r.action] ?? r.action}
+              </span>
+              {r.comment && (
+                <p className="mt-0.5 whitespace-pre-wrap text-paper-400">{r.comment}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {expanded && canRespond && (
         <div className="border-t border-ink-600 pt-3 space-y-3">
-          {/* A failed reject is already shown inside its ConfirmModal. */}
-          {respond.isError && respond.variables?.action !== 'reject' && (
+          {/* A failed approve or reject is already shown inside its dialog. */}
+          {respond.isError && !['approve', 'reject'].includes(respond.variables?.action ?? '') && (
             <Alert variant="error">
               {respond.error?.message ?? 'Submission failed. Please try again.'}
             </Alert>
           )}
 
-          {/* Context panel for APPROVAL / DECISION */}
+          {/* Context for APPROVAL / DECISION is what the decision rests on, so it is open. */}
           {(step.kind === 'APPROVAL' || step.kind === 'DECISION') && hasContext && (
-            <div>
-              <button
-                className="text-xs text-paper-400 hover:text-paper-200 underline underline-offset-2"
-                onClick={() => setShowContext((v) => !v)}
-                type="button"
-              >
-                {showContext ? 'Hide context' : 'Show context'}
-              </button>
-              {showContext && (
-                <div className="mt-2 max-h-64 overflow-auto rounded bg-ink-900 p-3">
-                  <DiffRenderer content={contextStr} />
-                </div>
-              )}
+            <div className="space-y-1">
+              <span className="label-mono">Context</span>
+              <DiffRenderer content={contextStr} />
             </div>
           )}
 
@@ -281,19 +374,19 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             <div className="flex gap-2">
               <Button
                 disabled={respond.isPending}
-                onClick={() => handleRespond('approve')}
+                onClick={() => openDialog('approve')}
                 size="sm"
                 variant="primary"
               >
-                {pendingAction === 'approve' ? 'Submitting…' : 'Approve'}
+                Approve
               </Button>
               <Button
                 disabled={respond.isPending}
-                onClick={() => setConfirmReject(true)}
+                onClick={() => openDialog('reject')}
                 size="sm"
                 variant="danger"
               >
-                {pendingAction === 'reject' ? 'Rejecting…' : 'Reject'}
+                Reject
               </Button>
             </div>
           )}
@@ -411,13 +504,11 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           )}
 
           {step.kind === 'REVIEW' && (
-            <div className={hasContext ? 'flex gap-4 min-h-0' : 'space-y-2'}>
+            <div className={hasContext ? 'flex flex-col gap-4 min-h-0 md:flex-row' : 'space-y-2'}>
               {hasContext && (
                 <div className="flex-[3] min-w-0 flex flex-col gap-1">
                   <span className="label-mono">Context</span>
-                  <div className="max-h-72 flex-1 overflow-auto rounded bg-ink-900 p-3">
-                    <DiffRenderer content={contextStr} />
-                  </div>
+                  <DiffRenderer content={contextStr} />
                 </div>
               )}
               <div className={hasContext ? 'flex-[2] flex flex-col gap-2' : 'space-y-2'}>
@@ -445,16 +536,38 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         </div>
       )}
 
-      <ConfirmModal
-        confirmLabel="Reject"
-        dangerous
-        message="The workflow is told this step was rejected and continues down its rejection path. This cannot be undone."
-        onClose={() => setConfirmReject(false)}
-        onConfirm={handleReject}
-        open={confirmReject}
-        pendingLabel="Rejecting…"
-        title={`Reject ${step.title}?`}
-      />
+      <Modal
+        onClose={() => setDialog(null)}
+        open={dialog !== null}
+        title={dialog === 'reject' ? `Reject ${step.title}?` : `Approve ${step.title}?`}
+      >
+        <p className="text-sm text-paper-400">
+          {dialog === 'reject'
+            ? 'The workflow is told this step was rejected and continues down its rejection path. This cannot be undone.'
+            : approveConsequence(step)}
+        </p>
+        <Textarea
+          compact
+          id={`human-step-${step.id}-comment`}
+          label={dialog === 'reject' ? 'Reason (required)' : 'Comment (optional)'}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder={
+            dialog === 'reject' ? 'What needs to change?' : 'Add a note for the requester…'
+          }
+          rows={3}
+          value={comment}
+        />
+        {dialogError && <Alert>{dialogError}</Alert>}
+        <ModalFooter
+          dangerous={dialog === 'reject'}
+          disabled={dialog === 'reject' && comment.trim().length < MIN_REJECT_REASON}
+          isPending={pendingAction === 'approve' || pendingAction === 'reject'}
+          onCancel={() => setDialog(null)}
+          onSubmit={() => dialog && handleDialogSubmit(dialog)}
+          pendingLabel={dialog === 'reject' ? 'Rejecting…' : 'Approving…'}
+          submitLabel={dialog === 'reject' ? 'Reject' : 'Approve'}
+        />
+      </Modal>
     </Card>
   );
 }

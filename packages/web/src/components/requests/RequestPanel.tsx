@@ -228,8 +228,12 @@ function AttemptContent({
     }
   }, [started.runId, onStarted]);
   const failedStep = findFailedStep(run.status, run.steps);
-  const approvalQuery = useApprovals('PENDING', 'requestedAt:desc', false, run.id);
-  const pending = approvalQuery.data ?? [];
+  const approvalQuery = useApprovals('ALL', 'requestedAt:desc', false, run.id);
+  const pending = (approvalQuery.data ?? []).filter((step) => step.status === 'PENDING');
+  // Answered steps stay visible so the requester sees who decided and what they said.
+  const answered = (approvalQuery.data ?? []).filter(
+    (step) => step.status !== 'PENDING' && (step.responses?.length ?? 0) > 0
+  );
   const consequence = run.isAgentRun
     ? rerunConsequence(agentRunDeliver(run))
     : 'This starts another attempt and may update the branch or pull request. Platform checks and approvals still apply.';
@@ -277,7 +281,15 @@ function AttemptContent({
         <section className="space-y-3">
           <h3 className="font-semibold">Needs a response</h3>
           {pending.map((step) => (
-            <HumanStepCard key={step.id} step={step} />
+            <HumanStepCard key={step.id} showRunLink={false} step={step} />
+          ))}
+        </section>
+      )}
+      {answered.length > 0 && (
+        <section className="space-y-3">
+          <h3 className="font-semibold">Responses</h3>
+          {answered.map((step) => (
+            <HumanStepCard key={step.id} showRunLink={false} step={step} />
           ))}
         </section>
       )}
