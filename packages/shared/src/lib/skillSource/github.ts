@@ -144,7 +144,7 @@ export async function resolveAccess(
 
   let token: string | null = null;
   const credential = await deps.platformCredential(
-    { apiUrl: apiBase, baseUrl: `https://${host}` },
+    { apiUrl: apiBase, baseUrl: `https://${host}`, installationHost: null },
     config
   );
   if (credential.scope === 'instance' || credential.scope === 'host') {
