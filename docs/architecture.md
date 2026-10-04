@@ -1110,7 +1110,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   no organization: the run is then billed to no one, never to the next source. A
   scheduled fire gets its connection and ledger row at its first activity, from the schedule's
   repository (and its branch and budget tier), so it is capped, counted in flight and billed to that
-  repository's organization like any other run.
+  repository's organization like any other run. For the same reason a running fire counts against
+  its creator's MCP concurrency cap and appears in team-scoped workflow lists, as any launched run
+  does.
   Spend with no org on it — a runless workflow with no derivable owner — is outside the cap. An
   epic's planning is attributed to one team, the first repository the epic names, even when the
   epic spans organizations; each child run is billed to its own repository's organization.
