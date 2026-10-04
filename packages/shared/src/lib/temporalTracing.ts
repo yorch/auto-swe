@@ -56,13 +56,23 @@ function withTraceHeader<T extends { headers: Record<string, Payload> }>(input: 
 
 /**
  * Client interceptor: stamp the caller's trace context on every workflow it
- * starts, and on every signal and update it sends to a running one.
+ * starts, and — unless `propagateSignals` is false — on every signal and update
+ * it sends to a running one. The worker's own client turns it off: its signals
+ * come from activities, and a link to a sibling activity span says nothing
+ * about the human action the link exists to point at.
  */
-export function traceContextClientInterceptor(): WorkflowClientInterceptor {
+export function traceContextClientInterceptor(
+  opts: { propagateSignals?: boolean } = {}
+): WorkflowClientInterceptor {
+  const signals = opts.propagateSignals ?? true;
   return {
-    signal: (input, next) => next(withTraceHeader(input)),
+    ...(signals
+      ? {
+          signal: (input, next) => next(withTraceHeader(input)),
+          startUpdate: (input, next) => next(withTraceHeader(input)),
+        }
+      : {}),
     signalWithStart: (input, next) => next(withTraceHeader(input)),
-    startUpdate: (input, next) => next(withTraceHeader(input)),
     startWithDetails: (input, next) => next(withTraceHeader(input)),
   };
 }
