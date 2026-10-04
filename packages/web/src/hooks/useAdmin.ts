@@ -558,6 +558,18 @@ export function useEvalRuns(datasetId: string | null, limit: number, offset: num
   });
 }
 
+/** The newest harness runs across every dataset, each carrying its dataset's name. */
+export function useLatestEvalRuns(limit: number) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: EvalRunDto[] }>(`/api/v1/platform/evals/runs?limit=${limit}`)
+        .then((r) => r.data),
+    queryKey: ['eval-runs', 'latest', limit],
+    refetchInterval: 30_000,
+  });
+}
+
 /** A running harness run is polled until it reaches a verdict. */
 export function useEvalRun(id: string | null) {
   return useQuery({

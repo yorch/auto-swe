@@ -884,6 +884,9 @@ export interface EvalDatasetDetail extends EvalDatasetSummary {
 export interface EvalRunDto {
   id: string;
   datasetId: string;
+  /** The benchmark's name and slug; present on the run list, not on a single run. */
+  datasetName?: string;
+  datasetSlug?: string;
   candidateRef: string;
   baselineRef: string;
   status: string;

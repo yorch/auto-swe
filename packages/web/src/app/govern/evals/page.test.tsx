@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetNavigation } from '@/test/mockNavigation';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
+
+vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 
 // Recharts needs a laid-out container; record what the chart was handed instead.
 const chartData = vi.fn();
@@ -30,6 +33,7 @@ vi.mock('@/components/charts/SuiteHealthChart', () => ({
 
 import GovernEvalsPage from './page';
 
+beforeEach(() => resetNavigation('', '/govern/evals'));
 afterEach(() => {
   vi.unstubAllGlobals();
   chartData.mockReset();
@@ -84,6 +88,23 @@ function mock(
       ],
       meta: { limit: 25, offset: 0, total: 60 },
     }),
+    'GET /api/v1/platform/evals/runs': () => ({
+      data: [
+        {
+          baselineRef: 'main',
+          candidateRef: 'feat/x',
+          datasetId: 'ds-1',
+          datasetName: 'Bench',
+          datasetSlug: 'bench',
+          endedAt: '2026-09-02T01:00:00.000Z',
+          id: 'er-1',
+          partial: false,
+          startedAt: '2026-09-02T00:00:00.000Z',
+          status: 'REGRESSION',
+          summary: null,
+        },
+      ],
+    }),
     'GET /api/v1/platform/evals/suite-health': () => ({
       data: {
         datasets: [
@@ -132,55 +153,86 @@ function mock(
 const urls = (spy: ReturnType<typeof vi.fn>) => spy.mock.calls.map(([u]) => String(u));
 
 describe('GovernEvalsPage', () => {
-  it('lists each scorer with window and latest means, and charts none until one is picked', async () => {
+  it('lists each scorer with window mean, latest day and change, and charts the busiest by default', async () => {
     mock();
     render(withQuery(<GovernEvalsPage />));
 
     await screen.findByText('Window mean');
     // gate:runTests had no signal on the last day, so "latest" falls back a day.
     expect(screen.getAllByText('0.25')).toHaveLength(2);
-    // The results show every scorer, so no scorer's chart may stand in for them.
-    expect(screen.getByText(/Pick a scorer to chart/)).toBeTruthy();
-    expect(screen.queryByTestId('trend-chart')).toBeNull();
-    for (const name of ['gate:runTests', 'merge']) {
-      expect(screen.getByRole('button', { name }).getAttribute('aria-pressed')).toBe('false');
-    }
+    expect(screen.getByText('Change')).toBeTruthy();
+    // Nothing fell, so the scorer with the most signals is charted rather than an empty card.
+    await screen.findByTestId('trend-chart');
+    expect(screen.getByRole('button', { name: 'merge' }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('charts a clicked scorer and filters the results table to it', async () => {
+  it('charts the scorer that fell furthest, and shows its change with an arrow', async () => {
+    mock(
+      () => [],
+      [
+        {
+          daily: [day('2026-09-01', 2, 0.9), day('2026-09-02', 2, 0.6)],
+          mean: 0.75,
+          n: 4,
+          scorer: 'review',
+        },
+        {
+          daily: [day('2026-09-01', 2, 0.5), day('2026-09-02', 2, 0.9)],
+          mean: 0.7,
+          n: 40,
+          scorer: 'merge',
+        },
+      ]
+    );
+    render(withQuery(<GovernEvalsPage />));
+
+    await screen.findByText('Window mean');
+    await screen.findByTestId('trend-chart');
+    expect(screen.getByRole('button', { name: 'review' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    expect(screen.getByText('▼ −0.30')).toBeTruthy();
+    expect(screen.getByText('▲ +0.40')).toBeTruthy();
+  });
+
+  it('charts a clicked scorer without narrowing the results to it', async () => {
     const spy = mock();
     render(withQuery(<GovernEvalsPage />));
 
     await screen.findByText('Window mean');
-    fireEvent.click(screen.getByRole('button', { name: 'merge' }));
+    fireEvent.click(screen.getByRole('button', { name: 'gate:runTests' }));
 
-    await screen.findByTestId('trend-chart');
-    expect(screen.getByRole('button', { name: 'merge' }).getAttribute('aria-pressed')).toBe('true');
-    expect(chartData).toHaveBeenLastCalledWith([
-      day('2026-09-01', 0, null),
-      day('2026-09-02', 3, 0.25),
-    ]);
     await waitFor(() =>
       expect(
-        urls(spy).some((u) => u.includes('evals/results?') && u.includes('scorer=merge'))
-      ).toBe(true)
+        screen.getByRole('button', { name: 'gate:runTests' }).getAttribute('aria-pressed')
+      ).toBe('true')
+    );
+    expect(chartData).toHaveBeenLastCalledWith([
+      day('2026-09-01', 2, 1),
+      day('2026-09-02', 0, null),
+    ]);
+    expect(urls(spy).some((u) => u.includes('evals/results?') && u.includes('scorer='))).toBe(
+      false
     );
   });
 
-  it('names the selected scorer instead of charting another when it has no trend', async () => {
-    let scorers = ['gate:runTests', 'merge'];
-    mock(() => scorers);
+  it('falls back to the default scorer when the chosen one has no signal in the window', async () => {
+    resetNavigation('scorer=gone', '/govern/evals');
+    mock();
     render(withQuery(<GovernEvalsPage />));
     await screen.findByText('Window mean');
-    fireEvent.click(screen.getByRole('button', { name: 'merge' }));
     await screen.findByTestId('trend-chart');
+    expect(screen.getByRole('button', { name: 'merge' }).getAttribute('aria-pressed')).toBe('true');
+  });
 
-    // A window in which merge recorded nothing.
-    scorers = ['gate:runTests'];
-    fireEvent.click(screen.getByRole('button', { name: '90d' }));
+  it('shows the latest benchmark runs with a plain verdict and no kappa footnote', async () => {
+    mock();
+    render(withQuery(<GovernEvalsPage />));
 
-    await screen.findByText('No merge signals in this window.');
-    expect(screen.queryByTestId('trend-chart')).toBeNull();
+    await screen.findByText('Latest eval runs');
+    expect(await screen.findByText('Regression')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Bench/ })).toBeTruthy();
+    expect(screen.queryByText(/kappa/)).toBeNull();
   });
 
   it('switches the trend window', async () => {
