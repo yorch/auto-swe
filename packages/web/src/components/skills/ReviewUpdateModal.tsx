@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -18,6 +18,7 @@ import {
 } from '@/hooks/useSkillSources';
 import { errMsg } from '@/lib/errors';
 import { visibleOrNull, visibleText } from '@/lib/visibleText';
+import { FullText } from './FullText';
 import { describeApiError, keyed, shortSha } from './sourceDisplay';
 import { UnifiedDiff } from './UnifiedDiff';
 
@@ -60,19 +61,6 @@ function FileChanges({ files }: { files: DiffChangedSkill['referenceFiles'] }) {
     </>
   );
 }
-
-/** The complete text (up to 50 000 characters), made visible once, not on every click. */
-const FullText = memo(function FullText({ label, text }: { label: string; text: string }) {
-  const shown = useMemo(() => visibleText(text, { multiline: true }), [text]);
-  return (
-    <section
-      aria-label={label}
-      className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-[9px] border border-ink-600 bg-ink-900 p-3 font-mono text-xs text-paper-200"
-    >
-      {shown}
-    </section>
-  );
-});
 
 function ChangedSkill({
   confirms,

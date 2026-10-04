@@ -261,6 +261,14 @@ export function useReadIncomingSkill() {
   });
 }
 
+/** One skill's complete text from a preview (the source does not exist yet), at the commit the ref resolves to. */
+export function useReadPreviewSkill() {
+  return useMutation({
+    mutationFn: ({ skill, ...body }: SourceLocationInput & { skill: string }) =>
+      api.post<{ data: IncomingSkill }>(`${BASE}/preview`, { ...body, skill }).then((r) => r.data),
+  });
+}
+
 export function useAcceptUpdate() {
   const invalidate = useInvalidate();
   return useMutation({
