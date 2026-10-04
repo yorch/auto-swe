@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
+import { SkillHistory } from '@/components/skills/SkillHistory';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -63,12 +64,15 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
   const [form, setForm] = useState({ description: '', isActive: true, name: '', promptText: '' });
   const [error, setError] = useState<string | null>(null);
   const [scanWarnings, setScanWarnings] = useState<string[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  // The row handed in is a snapshot; the list is live, so a restore shows at once.
+  const { data: allSkills } = useSkills();
 
   if (!skill) {
     return null;
   }
 
-  const sk = skill;
+  const sk = allSkills?.find((s) => s.id === skill.id) ?? skill;
 
   function startEdit() {
     setForm({
@@ -119,12 +123,13 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     }
   }
 
-  const title = editing ? `Edit "${skill.name}"` : skill.name;
+  const title = editing ? `Edit "${sk.name}"` : sk.name;
 
   return (
     <Modal
       onClose={() => {
         setEditing(false);
+        setShowHistory(false);
         setScanWarnings([]);
         onClose();
       }}
@@ -147,10 +152,10 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             value={form.description}
           />
-          {skill.isBuiltIn ? (
+          {sk.isBuiltIn ? (
             <FieldWrapper hint="Prompt text is locked for built-in skills." label="Prompt text">
               <pre className="w-full rounded-[9px] border border-ink-500 bg-ink-900 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
-                {skill.promptText}
+                {sk.promptText}
               </pre>
             </FieldWrapper>
           ) : (
@@ -180,31 +185,37 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
         <div className="space-y-5">
           <ScanWarnings warnings={scanWarnings} />
           <EntityMetaBadges
-            isActive={skill.isActive}
-            isBuiltIn={skill.isBuiltIn}
-            isVerified={skill.isVerified}
-            origin={skill.origin}
+            isActive={sk.isActive}
+            isBuiltIn={sk.isBuiltIn}
+            isVerified={sk.isVerified}
+            origin={sk.origin}
           >
             <Badge tone="neutral">
-              used by {skill.usedByCount} agent{skill.usedByCount !== 1 ? 's' : ''}
+              used by {sk.usedByCount} agent{sk.usedByCount !== 1 ? 's' : ''}
             </Badge>
           </EntityMetaBadges>
-          {skill.description && <p className="text-sm text-paper-300">{skill.description}</p>}
+          {sk.description && <p className="text-sm text-paper-300">{sk.description}</p>}
           <div>
             <div className="label-mono mb-1.5">Prompt text</div>
             <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
-              {skill.promptText}
+              {sk.promptText}
             </pre>
           </div>
           <div className="flex items-center justify-between border-t border-ink-600 pt-4">
             <div className="space-y-0.5 text-xs text-paper-500">
-              <div>Created {formatDate(skill.createdAt)}</div>
-              <div>Updated {formatDate(skill.updatedAt)}</div>
+              <div>Created {formatDate(sk.createdAt)}</div>
+              <div>Updated {formatDate(sk.updatedAt)}</div>
             </div>
-            <Button onClick={startEdit} variant="secondary">
-              Edit
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => setShowHistory((v) => !v)} variant="ghost">
+                {showHistory ? 'Hide history' : 'History'}
+              </Button>
+              <Button onClick={startEdit} variant="secondary">
+                Edit
+              </Button>
+            </div>
           </div>
+          {showHistory && <SkillHistory skill={sk} />}
         </div>
       )}
     </Modal>
@@ -394,7 +405,7 @@ export default function StudioSkillsPage() {
           </Button>
         }
         chapter="§ Studio"
-        subtitle="Reusable prompt-fragment instructions injected into an agent's system prompt. Assigned to agent roles at any scope. Tool access control is managed separately via Agent Tool Access."
+        subtitle="Reusable prompt-fragment instructions injected into an agent's system prompt. Attach them to agents in the Agent library. Every text change is saved as a revision you can compare and restore."
         title="Skill library"
       />
 
