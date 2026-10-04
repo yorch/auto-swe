@@ -36,6 +36,38 @@ const BUILTIN_PROVIDER_HINTS: Record<BuiltinProvider, string> = {
   openai: 'Built-in — no API base needed. Key format: sk-…',
 };
 
+function deleteMessage(target: ProviderCredentialRow, all: ProviderCredentialRow[]) {
+  const usedBy = target.usage?.agents ?? [];
+  const embedding = target.usage?.embedding ?? false;
+  const isLast = !all.some((c) => c.id !== target.id && c.provider === target.provider);
+  return (
+    <div className="space-y-2">
+      <p>
+        Delete the {target.provider} credential ending {target.lastFour}? This cannot be undone.
+      </p>
+      {(usedBy.length > 0 || embedding) && (
+        <p>
+          Used by{' '}
+          {[
+            ...(usedBy.length > 0
+              ? [`${usedBy.length === 1 ? 'agent' : 'agents'} ${usedBy.join(', ')}`]
+              : []),
+            ...(embedding ? ['semantic memory embeddings'] : []),
+          ].join(' and ')}
+          . They will use another {target.provider} credential if one applies, otherwise they will
+          fail.
+        </p>
+      )}
+      {isLast && (
+        <p className="font-medium text-brick-400">
+          This is the last {target.provider} credential. Every agent using {target.provider} models
+          will fail.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function CredentialsTab() {
   const { data: credentials, error: loadError, isError, isLoading } = useAdminCredentials();
   const [editing, setEditing] = useState<ProviderCredentialRow | null>(null);
@@ -178,7 +210,7 @@ export function CredentialsTab() {
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message={`Delete ${deleting?.provider} credential? Roles pinning it will fall back to the cascade.`}
+        message={deleting ? deleteMessage(deleting, credentials ?? []) : ''}
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
           if (deleting) {
@@ -218,8 +250,30 @@ function CredentialModal({
   const { error, saving, submit } = useIntegrationConfigForm();
   const { data: teams } = useTeams();
 
+  const [clientError, setClientError] = useState<string | null>(null);
+  const providerName = (existing?.provider ?? provider).trim();
+  const needsApiBase =
+    providerName !== '' && !BUILTIN_PROVIDERS.includes(providerName as BuiltinProvider);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const problem = existing
+      ? needsApiBase && !apiBase.trim()
+        ? `${providerName} is not a built-in provider, so it needs an API base URL.`
+        : null
+      : !provider.trim()
+        ? 'Enter a provider name.'
+        : needsApiBase && !apiBase.trim()
+          ? `${providerName} is not a built-in provider, so it needs an API base URL.`
+          : scope === 'TEAM' && !teamId
+            ? 'Choose a team for a team-scoped credential.'
+            : !apiKey.trim()
+              ? 'Enter the API key.'
+              : null;
+    setClientError(problem);
+    if (problem) {
+      return;
+    }
     void submit(() => {
       if (existing) {
         // Update: only apiBase + apiKey are editable. When the user clears
@@ -302,7 +356,7 @@ function CredentialModal({
         <Input
           className="font-mono text-xs"
           id="apiBase"
-          label="API base URL (optional)"
+          label={needsApiBase ? 'API base URL' : 'API base URL (optional)'}
           onChange={(e) => setApiBase(e.target.value)}
           placeholder="https://opencode.ai/zen/go/v1"
           value={apiBase}
@@ -316,11 +370,8 @@ function CredentialModal({
           type="password"
           value={apiKey}
         />
-        <Alert variant="warning">
-          Stored encrypted at rest. You won't see this value again — copy it from your password
-          manager before saving.
-        </Alert>
-        {error && <Alert>{error}</Alert>}
+        <Alert variant="warning">Stored encrypted; it can't be shown again after saving.</Alert>
+        {(clientError ?? error) && <Alert>{clientError ?? error}</Alert>}
         <ModalFooter
           isPending={saving}
           onCancel={onClose}

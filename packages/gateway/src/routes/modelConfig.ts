@@ -5,6 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import {
+  BUILTIN_PROVIDERS,
   createCredential,
   credentialInputProblem,
   redactCredential,
@@ -109,6 +110,14 @@ async function createCredentialAndAudit(
       });
     }
   }
+  if (!BUILTIN_PROVIDERS.includes(input.provider) && !input.apiBase) {
+    return reply.status(400).send({
+      error: {
+        code: 'API_BASE_REQUIRED',
+        message: `Provider '${input.provider}' is not built in, so it needs an API base URL`,
+      },
+    });
+  }
   const result = await createCredential(fastify.prisma, input);
   if (result.outcome === 'conflict') {
     return reply.status(409).send({
@@ -148,6 +157,14 @@ async function updateCredentialAndAudit(
         error: { code: 'UNSAFE_API_BASE', message: `apiBase rejected: ${safety.reason}` },
       });
     }
+  }
+  if (!BUILTIN_PROVIDERS.includes(existing.provider) && body.apiBase === null) {
+    return reply.status(400).send({
+      error: {
+        code: 'API_BASE_REQUIRED',
+        message: `Provider '${existing.provider}' is not built in, so its API base URL cannot be cleared`,
+      },
+    });
   }
   const updated = await updateCredential(fastify.prisma, existing.id, body);
   await writeAuditLog(fastify, {
@@ -196,7 +213,37 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
           orderBy: [{ scope: 'asc' }, { provider: 'asc' }],
         })
     );
-    return { data: rows.map(redactCredential) };
+    // What each credential backs, so the delete confirmation can say what stops working.
+    const ids = rows.map((r) => r.id);
+    const [agentRows, embedding] =
+      ids.length === 0
+        ? [[], null]
+        : await runUnscoped(
+            'credential usage spans every scope',
+            ['Agent', 'EmbeddingConfig'],
+            () =>
+              Promise.all([
+                fastify.prisma.agent.findMany({
+                  select: { credentialId: true, key: true },
+                  where: { credentialId: { in: ids }, isActive: true },
+                }),
+                fastify.prisma.embeddingConfig.findFirst({
+                  select: { credentialId: true },
+                  where: { credentialId: { in: ids } },
+                }),
+              ])
+          );
+    return {
+      data: rows.map((row) => ({
+        ...redactCredential(row),
+        usage: {
+          agents: [
+            ...new Set(agentRows.filter((a) => a.credentialId === row.id).map((a) => a.key)),
+          ].sort(),
+          embedding: embedding?.credentialId === row.id,
+        },
+      })),
+    };
   });
 
   app.post(
