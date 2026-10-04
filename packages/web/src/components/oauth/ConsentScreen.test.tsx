@@ -193,6 +193,8 @@ describe('ConsentScreen', () => {
     );
     render(withQuery(<ConsentScreen search={signed('mcp:read')} />));
     await screen.findByText('127.0.0.1:33333');
+    // Approve stays disabled until the permissions have loaded.
+    await waitFor(() => expect(approve().hasAttribute('disabled')).toBe(false));
 
     fireEvent.click(approve());
     expect(await screen.findByText(/write access is not enabled/i)).toBeTruthy();

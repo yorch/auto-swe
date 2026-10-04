@@ -28,7 +28,7 @@ export const TOKEN = {
   paper200: '#eef1f7',
   paper300: '#aeb6c9',
   paper400: '#aeb6c9',
-  paper500: '#6f7990',
+  paper500: '#8a94ab',
   violet400: '#34d8c0',
 } as const;
 

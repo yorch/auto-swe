@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { useMcpGrants } from '@/hooks/useMcpGrants';
 import { useConsentDecision, useOAuthClientName } from '@/hooks/useOAuthConsent';
 import { errMsg } from '@/lib/errors';
@@ -53,12 +54,16 @@ export function ConsentScreen({ search }: { search: string }) {
   }, [hydrate, attempt]);
 
   if (session === 'checking') {
-    return null;
+    return (
+      <AuthLayout>
+        <LoadingState message="Checking your session…" />
+      </AuthLayout>
+    );
   }
   if (session !== 'authenticated') {
     return (
       <AuthLayout>
-        <AuthHeading kicker="¶ § oauth/consent" title="Sign in to continue.">
+        <AuthHeading title="Sign in to continue">
           <p className="mb-6 text-sm leading-relaxed text-paper-400">
             {session === 'unknown'
               ? 'The gateway did not answer, so your session could not be checked.'
@@ -92,7 +97,7 @@ function ConsentDecision({ search }: { search: string }) {
   if (!request) {
     return (
       <AuthLayout>
-        <AuthHeading kicker="¶ § oauth/consent" title="Nothing to approve.">
+        <AuthHeading title="Nothing to approve">
           <p className="mb-6 text-sm leading-relaxed text-paper-400">
             This page opens from an app that wants to connect to auto-swe. The link you followed
             does not carry a request, or it has expired. Start the connection again from the app.
@@ -115,6 +120,9 @@ function ConsentDecision({ search }: { search: string }) {
   );
   const grantsAnything = scope.some((s) => s === MCP_SCOPE_READ || s === MCP_SCOPE_WRITE);
   const disabled = grants.data?.mcp.enabled === false;
+  // What the app may do depends on the operator's settings; approving before they load
+  // could grant a different set than the one shown.
+  const grantsReady = grants.isSuccess;
   const name = client.data ?? null;
 
   async function submit(accept: boolean) {
@@ -133,7 +141,7 @@ function ConsentDecision({ search }: { search: string }) {
 
   return (
     <AuthLayout>
-      <AuthHeading kicker="¶ § oauth/consent" title="Connect an app.">
+      <AuthHeading title="Connect an app">
         <p className="mb-6 text-sm leading-relaxed text-paper-400">
           <span className="font-semibold text-paper-100">{name ?? 'An app'}</span> wants to act on
           your behalf in auto-swe.
@@ -211,12 +219,19 @@ function ConsentDecision({ search }: { search: string }) {
           continue.
         </Alert>
       )}
+      {grants.isError && (
+        <Alert className="mt-4">
+          Could not load what this app may be allowed to do, so it cannot be approved yet. Reload
+          the page to try again.
+        </Alert>
+      )}
+      {grants.isLoading && <LoadingState compact message="Loading permissions…" />}
       {error && <Alert className="mt-4">{error}</Alert>}
 
       <div className="mt-6 flex gap-3">
         <Button
           className="flex-1"
-          disabled={decide.isPending || disabled || !grantsAnything}
+          disabled={decide.isPending || disabled || !grantsReady || !grantsAnything}
           onClick={() => submit(true)}
           size="lg"
           variant="primary"

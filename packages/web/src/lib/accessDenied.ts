@@ -27,7 +27,7 @@ const ROLE_NAMES: Record<Role, string> = {
 /** The notice Home shows, or null when the query carries no (valid) denial. */
 export function deniedMessage(denied: string | null, need: string | null): string | null {
   // Only same-origin paths: this text is shown to the user, and the value is attacker-controllable.
-  if (!denied || !denied.startsWith('/') || denied.startsWith('//')) {
+  if (!denied?.startsWith('/') || denied.startsWith('//')) {
     return null;
   }
   const page = pageTitle(denied.split('?')[0]);

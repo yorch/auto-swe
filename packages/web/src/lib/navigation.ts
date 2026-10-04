@@ -130,7 +130,10 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Govern',
   },
   {
-    items: [{ href: '/settings', icon: 'settings', label: 'Settings', minRole: 'ENGINEER' }],
+    items: [
+      { href: '/settings', icon: 'settings', label: 'Settings', minRole: 'ENGINEER' },
+      { href: '/docs', icon: 'docs', label: 'Docs', minRole: 'ENGINEER' },
+    ],
     label: 'Account',
   },
 ];
