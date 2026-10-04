@@ -15,10 +15,24 @@ import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Tabl
 import { CreateUserModal } from '@/components/users/CreateUserModal';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
+import { platformRoleLabel, roleChangeNeedsConfirm } from '@/lib/govLabels';
+import { navLabel } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
+
+const ROLE_OPTIONS: { label: string; value: Role }[] = [
+  { label: platformRoleLabel('ENGINEER'), value: 'ENGINEER' },
+  { label: platformRoleLabel('LEAD'), value: 'LEAD' },
+  { label: platformRoleLabel('ADMIN'), value: 'ADMIN' },
+];
+
+const ROLE_CONSEQUENCE: Record<Role, string> = {
+  ADMIN: 'full access to every team and all platform settings',
+  ENGINEER: 'access limited to their own teams and repositories',
+  LEAD: 'access to the teams they lead, plus organization and baseline views',
+};
 
 export default function UsersPage() {
   const { data: users, isLoading, isError, error: loadError } = useUsers();
@@ -32,6 +46,13 @@ export default function UsersPage() {
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approveError, setApproveError] = useState<string | null>(null);
   const currentUserId = useAuthStore((s) => s.user?.sub ?? null);
+  const [roleChange, setRoleChange] = useState<{
+    email: string;
+    from: Role;
+    id: string;
+    to: Role;
+  } | null>(null);
+  const [roleError, setRoleError] = useState<string | null>(null);
   const [suspendTarget, setSuspendTarget] = useState<{ email: string; id: string } | null>(null);
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
@@ -50,17 +71,38 @@ export default function UsersPage() {
     return { active: a, pending: p };
   }, [users]);
 
+  const header = (
+    <PageHeader
+      chapter="§ Govern"
+      subtitle="Manage who can sign in to the control plane. People who sign up with GitHub, Google or an email link wait in the pending queue until an admin approves them."
+      title={navLabel('/govern/users')}
+    />
+  );
+
   if (isLoading || isError) {
     return (
-      <QueryBoundary
-        error={loadError}
-        isError={isError}
-        isLoading={isLoading}
-        label="users"
-        loadingMessage="loading users…"
-      />
+      <div className="space-y-8">
+        {header}
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isLoading={isLoading}
+          label="users"
+          loadingMessage="loading users…"
+        />
+      </div>
     );
   }
+
+  const applyRole = async (id: string, role: Role) => {
+    setRoleError(null);
+    try {
+      await updateUser.mutateAsync({ id, patch: { role } });
+    } catch (err) {
+      setRoleError(errMsg(err, 'Could not change the role'));
+      throw err;
+    }
+  };
 
   const handleApprove = async (id: string) => {
     setApproveError(null);
@@ -90,11 +132,7 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        chapter="§ Govern"
-        subtitle="Manage who can sign in to the control plane. Sign-ups via GitHub / Google / magic link start in the pending queue and need admin approval."
-        title="Members"
-      />
+      {header}
 
       {/* Invite by email — admin sends a magic-link to the address. The
           invitee lands pre-active + pre-membered to the default team.
@@ -141,11 +179,7 @@ export default function UsersPage() {
                 id="invite-role"
                 label="Role"
                 onChange={(v) => setInviteRole(v as Role)}
-                options={[
-                  { label: 'ENGINEER', value: 'ENGINEER' },
-                  { label: 'LEAD', value: 'LEAD' },
-                  { label: 'ADMIN', value: 'ADMIN' },
-                ]}
+                options={ROLE_OPTIONS}
                 value={inviteRole}
               />
             </div>
@@ -179,10 +213,10 @@ export default function UsersPage() {
                     <div>
                       <div className="text-sm text-paper-100">{u.email}</div>
                       <div className="font-mono text-[11px] text-paper-500">
-                        role: {u.role}
+                        Role: {platformRoleLabel(u.role)}
                         {u.memberships && u.memberships.length > 0 && (
                           <>
-                            {' · teams: '}
+                            {' · Teams: '}
                             {u.memberships
                               .map((m) => m.team?.name)
                               .filter(Boolean)
@@ -213,7 +247,12 @@ export default function UsersPage() {
           number={pending.length > 0 ? '03' : '02'}
           title="Active members"
         />
-        <Card className="overflow-hidden p-0" variant="inset">
+        {roleError && (
+          <Alert className="mb-3" variant="error">
+            {roleError}
+          </Alert>
+        )}
+        <Card className="overflow-x-auto p-0" variant="inset">
           <Table>
             <THead>
               <Th>Email</Th>
@@ -227,9 +266,32 @@ export default function UsersPage() {
                 <TRow key={u.id}>
                   <Td className="px-4 py-3 text-sm text-paper-100">{u.email}</Td>
                   <Td className="px-4 py-3">
-                    <Badge tone="ember" uppercase variant="outline">
-                      {u.role}
-                    </Badge>
+                    {/* Changing your own role could lock you out mid-session. */}
+                    {u.id === currentUserId ? (
+                      <Badge tone="ember" uppercase variant="outline">
+                        {platformRoleLabel(u.role)}
+                      </Badge>
+                    ) : (
+                      <Select
+                        aria-label={`Role for ${u.email}`}
+                        className="w-32"
+                        compact
+                        onChange={(v) => {
+                          const to = v as Role;
+                          const from = u.role as Role;
+                          if (to === from) {
+                            return;
+                          }
+                          if (roleChangeNeedsConfirm(from, to)) {
+                            setRoleChange({ email: u.email, from, id: u.id, to });
+                          } else {
+                            void applyRole(u.id, to).catch(() => undefined);
+                          }
+                        }}
+                        options={ROLE_OPTIONS}
+                        value={u.role}
+                      />
+                    )}
                   </Td>
                   <Td className="px-4 py-3 font-mono text-xs text-paper-400">
                     {u.slackId ?? <span className="text-paper-500">—</span>}
@@ -269,6 +331,23 @@ export default function UsersPage() {
       </section>
 
       <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
+      <ConfirmModal
+        confirmLabel={roleChange?.to === 'ADMIN' ? 'Make admin' : 'Change role'}
+        dangerous={roleChange?.to === 'ADMIN'}
+        message={
+          roleChange
+            ? `${roleChange.email} will go from ${platformRoleLabel(roleChange.from)} to ${platformRoleLabel(roleChange.to)}: ${ROLE_CONSEQUENCE[roleChange.to]}. The change applies immediately.`
+            : ''
+        }
+        onClose={() => setRoleChange(null)}
+        onConfirm={async () => {
+          if (roleChange) {
+            await applyRole(roleChange.id, roleChange.to);
+          }
+        }}
+        open={roleChange !== null}
+        title="Change role?"
+      />
       <ConfirmModal
         confirmLabel="Suspend"
         dangerous

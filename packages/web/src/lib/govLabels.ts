@@ -44,3 +44,10 @@ const PLATFORM_ROLE_LABELS: Record<string, string> = {
 export function platformRoleLabel(role: string): string {
   return PLATFORM_ROLE_LABELS[role] ?? role;
 }
+
+const PLATFORM_ROLE_RANK: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
+
+/** A platform-role change needs a second look when it grants admin or takes access away. */
+export function roleChangeNeedsConfirm(from: string, to: string): boolean {
+  return to === 'ADMIN' || (PLATFORM_ROLE_RANK[to] ?? 0) < (PLATFORM_ROLE_RANK[from] ?? 0);
+}

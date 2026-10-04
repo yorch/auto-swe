@@ -1,10 +1,12 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { EligibleUserSelect } from '@/components/EligibleUserSelect';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -12,6 +14,7 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { useUserOrgs } from '@/hooks/useAdmin';
 import {
   type ConfigGrant,
   useConfigGrantPreview,
@@ -19,7 +22,11 @@ import {
   useCreateConfigGrant,
   useRevokeConfigGrant,
 } from '@/hooks/useConfigSettings';
+import { useTeams } from '@/hooks/useTeams';
+import { useEligibleUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
+import { platformRoleLabel } from '@/lib/govLabels';
+import { navLabel } from '@/lib/navigation';
 import { formatRelativeTime } from '@/lib/utils';
 
 type GrantScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
@@ -42,6 +49,9 @@ export default function GovernConfigGrantsPage() {
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
   const preview = useConfigGrantPreview(pattern);
+  const eligibleUsers = useEligibleUsers([]);
+  const { data: teams } = useTeams();
+  const { data: orgs } = useUserOrgs();
 
   const examplePatterns = useMemo(
     () => ['*', 'channel.*', 'workflow.runConcurrency', 'memory.*', 'workspace.*'],
@@ -52,6 +62,19 @@ export default function GovernConfigGrantsPage() {
     e.preventDefault();
     setFormError(null);
     setFormSuccess(null);
+    // Comboboxes cannot be natively `required`, so check the picks here.
+    if (granteeType === 'user' && !userId) {
+      setFormError('Pick the user this grant is for.');
+      return;
+    }
+    if (scope === 'TEAM' && !teamId) {
+      setFormError('Pick the team this grant is limited to.');
+      return;
+    }
+    if (scope === 'ORGANIZATION' && !orgId) {
+      setFormError('Pick the organization this grant is limited to.');
+      return;
+    }
     const body: Parameters<typeof createGrant.mutateAsync>[0] = {
       keyPattern: pattern,
       scope,
@@ -84,7 +107,7 @@ export default function GovernConfigGrantsPage() {
         <PageHeader
           chapter="§ Govern"
           subtitle="Delegate fine-grained permission to change platform settings. Grants are bounded to known keys or groups — they never grant generic IAM or the ability to mint further grants."
-          title="Configuration grants"
+          title={navLabel('/govern/config-grants')}
         />
       </div>
 
@@ -111,20 +134,20 @@ export default function GovernConfigGrantsPage() {
                 label="Scope"
                 onChange={(v) => setScope(v as GrantScope)}
                 options={[
-                  { label: 'GLOBAL', value: 'GLOBAL' },
-                  { label: 'ORGANIZATION', value: 'ORGANIZATION' },
-                  { label: 'TEAM', value: 'TEAM' },
+                  { label: 'Whole platform', value: 'GLOBAL' },
+                  { label: 'One organization', value: 'ORGANIZATION' },
+                  { label: 'One team', value: 'TEAM' },
                 ]}
                 value={scope}
               />
             </div>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <Select
-                label="Grantee type"
+                label="Grant to"
                 onChange={(v) => setGranteeType(v as 'role' | 'user')}
                 options={[
-                  { label: 'role', value: 'role' },
-                  { label: 'userId', value: 'user' },
+                  { label: 'A role', value: 'role' },
+                  { label: 'A specific user', value: 'user' },
                 ]}
                 value={granteeType}
               />
@@ -133,32 +156,41 @@ export default function GovernConfigGrantsPage() {
                   label="Role"
                   onChange={(v) => setRole(v as GrantRole)}
                   options={[
-                    { label: 'ADMIN', value: 'ADMIN' },
-                    { label: 'LEAD', value: 'LEAD' },
-                    { label: 'ENGINEER', value: 'ENGINEER' },
+                    { label: platformRoleLabel('ADMIN'), value: 'ADMIN' },
+                    { label: platformRoleLabel('LEAD'), value: 'LEAD' },
+                    { label: platformRoleLabel('ENGINEER'), value: 'ENGINEER' },
                   ]}
                   value={role}
                 />
               ) : (
-                <Input
-                  label="User ID"
-                  onChange={(e) => setUserId(e.target.value)}
-                  required
+                <EligibleUserSelect
+                  eligible={eligibleUsers}
+                  id="grant-user"
+                  label="User"
+                  onChange={setUserId}
                   value={userId}
                 />
               )}
               {scope === 'TEAM' && (
-                <Input
-                  label="Team ID"
-                  onChange={(e) => setTeamId(e.target.value)}
+                <Combobox
+                  emptyMessage="No team matches"
+                  id="grant-team"
+                  label="Team"
+                  onChange={setTeamId}
+                  options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
+                  placeholder="Search teams…"
                   required
                   value={teamId}
                 />
               )}
               {scope === 'ORGANIZATION' && (
-                <Input
-                  label="Org ID"
-                  onChange={(e) => setOrgId(e.target.value)}
+                <Combobox
+                  emptyMessage="No organization matches"
+                  id="grant-org"
+                  label="Organization"
+                  onChange={setOrgId}
+                  options={(orgs ?? []).map((o) => ({ label: o.name, value: o.id }))}
+                  placeholder="Search organizations…"
                   required
                   value={orgId}
                 />
@@ -189,7 +221,9 @@ export default function GovernConfigGrantsPage() {
                     <>
                       {' · '}
                       highest role floor:{' '}
-                      <span className="text-ember-400">{preview.data.requiredRole}</span>
+                      <span className="text-ember-400">
+                        {platformRoleLabel(preview.data.requiredRole)}
+                      </span>
                     </>
                   )}
                 </p>
@@ -202,7 +236,7 @@ export default function GovernConfigGrantsPage() {
                       <li className="flex justify-between py-1" key={s.key}>
                         <span className="font-mono text-paper-300">{s.key}</span>
                         <span className="text-paper-500">
-                          {s.group} · {s.requiredRole}
+                          {s.group} · {platformRoleLabel(s.requiredRole)}
                         </span>
                       </li>
                     ))}
@@ -255,11 +289,15 @@ export default function GovernConfigGrantsPage() {
                       <Td className="px-4 py-3 font-mono text-[11px] text-paper-200">
                         {g.keyPattern}
                       </Td>
-                      <Td className="px-4 py-3 font-mono text-[10px] uppercase text-paper-400">
-                        {g.scope}
+                      <Td className="px-4 py-3 text-xs text-paper-400">
+                        {g.scope === 'GLOBAL'
+                          ? 'Platform'
+                          : g.scope === 'ORGANIZATION'
+                            ? 'Organization'
+                            : 'Team'}
                       </Td>
                       <Td className="px-4 py-3 font-mono text-[11px] text-paper-300">
-                        {g.user?.email ?? g.role ?? '—'}
+                        {g.user?.email ?? (g.role ? `${platformRoleLabel(g.role)} role` : '—')}
                       </Td>
                       <Td className="px-4 py-3 text-xs text-paper-500">
                         {g.team?.name ?? g.organization?.name ?? '—'}
