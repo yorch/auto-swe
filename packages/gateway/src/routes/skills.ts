@@ -1,7 +1,7 @@
 import { MAX_SKILL_PROMPT_TEXT_LENGTH } from '@auto-swe/shared/lib/regexSafety';
 import { isRevisionConflict } from '@auto-swe/shared/lib/skillRevision';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -49,6 +49,16 @@ const UpdateSkillSchema = z.object({
   promptText: z.string().min(1).max(MAX_SKILL_PROMPT_TEXT_LENGTH).optional(),
 });
 
+const UpdateSkillWithRevisionSchema = UpdateSkillSchema.extend({
+  // The revision the editor read. When present, an edit of a skill that has moved
+  // on is refused with 409 instead of overwriting text the editor never saw.
+  expectedRevision: z.number().int().positive().optional(),
+});
+
+// The revision the admin read and is attesting to; there is no default, because
+// "verify whatever is current" is exactly the unseen-text hole.
+const VerifySkillSchema = z.object({ revision: z.number().int().positive() });
+
 const ListSkillsQuery = z.object({});
 
 // ── Skills CRUD routes (admin) ──────────────────────────────────────────────
@@ -56,6 +66,39 @@ const ListSkillsQuery = z.object({});
 export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+
+  const skillChanged = (reply: FastifyReply) =>
+    reply.status(409).send({
+      error: {
+        code: 'SKILL_CHANGED',
+        message: 'The skill changed since you read it; reload it and try again.',
+      },
+    });
+
+  // A revision-guarded write that matched no row (P2025) means one of three
+  // things, and only one of them is a lost race: the skill was deleted (404), a
+  // newer revision exists (409), or neither — e.g. the author row to connect is
+  // gone — which is a real failure and must not read as a conflict.
+  async function revisionErrorReply(
+    err: unknown,
+    readRow: { id: string; currentRevision: number },
+    reply: FastifyReply
+  ) {
+    if (!isRevisionConflict(err)) {
+      throw err;
+    }
+    const now = await fastify.prisma.skill.findUnique({
+      select: { currentRevision: true },
+      where: { id: readRow.id },
+    });
+    if (!now) {
+      return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
+    }
+    if (now.currentRevision === readRow.currentRevision) {
+      throw err;
+    }
+    return skillChanged(reply);
+  }
 
   // GET /api/v1/platform/skills — `usedByCount` is how many Agents reference it.
   app.get(
@@ -132,7 +175,10 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   // PUT /api/v1/platform/skills/:id
   app.put(
     '/skills/:id',
-    { onRequest: adminOnly, schema: { body: UpdateSkillSchema, params: SkillIdParams } },
+    {
+      onRequest: adminOnly,
+      schema: { body: UpdateSkillWithRevisionSchema, params: SkillIdParams },
+    },
     async (request, reply) => {
       const actor = requireUser(request);
       const existing = await fastify.prisma.skill.findUnique({
@@ -142,19 +188,18 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
       }
 
+      if (
+        request.body.expectedRevision !== undefined &&
+        request.body.expectedRevision !== existing.currentRevision
+      ) {
+        return skillChanged(reply);
+      }
+
       let result: Awaited<ReturnType<typeof updateSkill>>;
       try {
         result = await updateSkill(fastify.prisma, existing, request.body, actor.sub);
       } catch (err) {
-        if (isRevisionConflict(err)) {
-          return reply.status(409).send({
-            error: {
-              code: 'SKILL_CHANGED',
-              message: 'The skill was edited by someone else; reload it and retry.',
-            },
-          });
-        }
-        throw err;
+        return revisionErrorReply(err, existing, reply);
       }
       const { updated, scanWarnings } = result;
       await writeAuditLog(fastify, {
@@ -187,7 +232,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   // edit clears it (updateSkill).
   app.post(
     '/skills/:id/verify',
-    { onRequest: adminOnly, schema: { params: SkillIdParams } },
+    { onRequest: adminOnly, schema: { body: VerifySkillSchema, params: SkillIdParams } },
     async (request, reply) => {
       const actor = requireUser(request);
       const existing = await fastify.prisma.skill.findUnique({
@@ -196,19 +241,14 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
       }
+      if (request.body.revision !== existing.currentRevision) {
+        return skillChanged(reply);
+      }
       let verified: Awaited<ReturnType<typeof verifySkill>>;
       try {
-        verified = await verifySkill(fastify.prisma, existing);
+        verified = await verifySkill(fastify.prisma, existing.id, request.body.revision);
       } catch (err) {
-        if (isRevisionConflict(err)) {
-          return reply.status(409).send({
-            error: {
-              code: 'SKILL_CHANGED',
-              message: 'The skill was edited while you were reviewing it; reload and verify again.',
-            },
-          });
-        }
-        throw err;
+        return revisionErrorReply(err, existing, reply);
       }
       await writeAuditLog(fastify, {
         action: 'UPDATE',

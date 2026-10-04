@@ -52,6 +52,12 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
         }
         return row;
       }),
+      delete: vi.fn(async ({ where }: { where: { id: string } }) => {
+        skills.splice(
+          skills.findIndex((s) => s.id === where.id),
+          1
+        );
+      }),
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
         const row = skills.find((s) => s.id === where.id);
         return row ? { ...row } : null;
@@ -162,18 +168,81 @@ describe('skill revisions on the write paths', () => {
   });
 
   it('answers 409 when a concurrent edit took the revision first', async () => {
-    const { call, prisma } = await buildApp();
-    prisma.skill.update.mockRejectedValueOnce(Object.assign(new Error('x'), { code: 'P2025' }));
+    const { call, prisma, skills } = await buildApp();
+    prisma.skill.update.mockImplementationOnce(async () => {
+      (skills.find((s) => s.id === CUSTOM_ID) as Row).currentRevision = 2;
+      throw Object.assign(new Error('x'), { code: 'P2025' });
+    });
     const res = await call('PUT', `/skills/${CUSTOM_ID}`, { promptText: 'racing' });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('SKILL_CHANGED');
   });
 });
 
+describe('PUT /skills/:id — conflicts and verification', () => {
+  it('refuses an edit whose expectedRevision is stale, writing nothing', async () => {
+    const { call, prisma, revisionsOf } = await buildApp();
+    await call('PUT', `/skills/${CUSTOM_ID}`, { promptText: 'other admin edit' });
+    const res = await call('PUT', `/skills/${CUSTOM_ID}`, {
+      expectedRevision: 1,
+      promptText: 'my edit on revision 1',
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_CHANGED');
+    expect(revisionsOf(CUSTOM_ID)).toHaveLength(2);
+    expect(prisma.skill.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts an edit whose expectedRevision is current', async () => {
+    const { call } = await buildApp();
+    const res = await call('PUT', `/skills/${CUSTOM_ID}`, {
+      expectedRevision: 1,
+      promptText: 'ok',
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('answers 404, not 409, when the skill was deleted between the read and the write', async () => {
+    const { call, prisma, skills } = await buildApp();
+    prisma.skill.update.mockImplementationOnce(async () => {
+      skills.splice(0, skills.length);
+      throw Object.assign(new Error('x'), { code: 'P2025' });
+    });
+    const res = await call('PUT', `/skills/${CUSTOM_ID}`, { promptText: 'racing a delete' });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('does not report a failure that is not a lost race (author row missing) as SKILL_CHANGED', async () => {
+    const { call, prisma } = await buildApp();
+    // Revision unchanged afterwards: the P2025 came from something else.
+    prisma.skill.update.mockRejectedValueOnce(Object.assign(new Error('x'), { code: 'P2025' }));
+    const res = await call('PUT', `/skills/${CUSTOM_ID}`, { promptText: 'edit' });
+    expect(res.statusCode).toBe(500);
+  });
+
+  it('clears verification on a description-only edit, which cuts a revision', async () => {
+    const { call, skills } = await buildApp();
+    await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });
+    expect(skills.find((s) => s.id === CUSTOM_ID)?.isVerified).toBe(true);
+    await call('PUT', `/skills/${CUSTOM_ID}`, { description: 'new model-visible text' });
+    expect(skills.find((s) => s.id === CUSTOM_ID)).toMatchObject({
+      currentRevision: 2,
+      isVerified: false,
+    });
+  });
+
+  it('keeps verification across a rename, which cuts no revision', async () => {
+    const { call, skills } = await buildApp();
+    await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });
+    await call('PUT', `/skills/${CUSTOM_ID}`, { name: 'renamed' });
+    expect(skills.find((s) => s.id === CUSTOM_ID)?.isVerified).toBe(true);
+  });
+});
+
 describe('POST /skills/:id/verify', () => {
   it('is ADMIN-only', async () => {
     const { audit, call, skills } = await buildApp('ENGINEER');
-    const res = await call('POST', `/skills/${CUSTOM_ID}/verify`);
+    const res = await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });
     expect(res.statusCode).toBe(403);
     expect(skills.find((s) => s.id === CUSTOM_ID)?.isVerified).toBe(false);
     expect(audit).not.toHaveBeenCalled();
@@ -181,12 +250,22 @@ describe('POST /skills/:id/verify', () => {
 
   it('is 404 for an unknown skill', async () => {
     const { call } = await buildApp();
-    expect((await call('POST', `/skills/${MISSING_ID}/verify`)).statusCode).toBe(404);
+    expect((await call('POST', `/skills/${MISSING_ID}/verify`, { revision: 1 })).statusCode).toBe(
+      404
+    );
   });
 
-  it('verifies the current revision and writes an audit row naming it', async () => {
+  it('is 400 without a revision: there is no "verify whatever is current"', async () => {
     const { audit, call, skills } = await buildApp();
-    const res = await call('POST', `/skills/${CUSTOM_ID}/verify`);
+    expect((await call('POST', `/skills/${CUSTOM_ID}/verify`, {})).statusCode).toBe(400);
+    expect((await call('POST', `/skills/${CUSTOM_ID}/verify`)).statusCode).toBe(400);
+    expect(skills.find((s) => s.id === CUSTOM_ID)?.isVerified).toBe(false);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('verifies the named revision and writes an audit row naming it', async () => {
+    const { audit, call, skills } = await buildApp();
+    const res = await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.isVerified).toBe(true);
     expect(skills.find((s) => s.id === CUSTOM_ID)?.isVerified).toBe(true);
@@ -201,17 +280,33 @@ describe('POST /skills/:id/verify', () => {
     });
   });
 
+  it('refuses to verify a revision that is no longer current, even though the row now exists at a newer one', async () => {
+    const { audit, call, skills } = await buildApp();
+    // The admin read revision 1; someone else edits before the click.
+    await call('PUT', `/skills/${CUSTOM_ID}`, { promptText: 'malicious text' });
+    audit.mockClear();
+    const res = await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_CHANGED');
+    expect(skills.find((s) => s.id === CUSTOM_ID)?.isVerified).toBe(false);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
   it('is cleared again by a later content edit', async () => {
     const { call, skills } = await buildApp();
-    await call('POST', `/skills/${CUSTOM_ID}/verify`);
+    await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });
     await call('PUT', `/skills/${CUSTOM_ID}`, { promptText: 'changed after review' });
     expect(skills.find((s) => s.id === CUSTOM_ID)?.isVerified).toBe(false);
   });
 
-  it('refuses to verify text the reviewer did not read (edited in between)', async () => {
-    const { audit, call, prisma } = await buildApp();
-    prisma.skill.update.mockRejectedValueOnce(Object.assign(new Error('x'), { code: 'P2025' }));
-    const res = await call('POST', `/skills/${CUSTOM_ID}/verify`);
+  it('answers 409 when an edit lands between the check and the write', async () => {
+    const { audit, call, prisma, skills } = await buildApp();
+    prisma.skill.update.mockImplementationOnce(async () => {
+      const row = skills.find((s) => s.id === CUSTOM_ID) as Row;
+      row.currentRevision = 2;
+      throw Object.assign(new Error('x'), { code: 'P2025' });
+    });
+    const res = await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });
     expect(res.statusCode).toBe(409);
     expect(audit).not.toHaveBeenCalled();
   });

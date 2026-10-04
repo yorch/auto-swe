@@ -1,6 +1,8 @@
 import { prisma } from '@auto-swe/shared/db';
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 // Scanning has its own suite and would otherwise need the pattern table + a
@@ -9,6 +11,7 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
   scanSkillContent: vi.fn(async () => ({ incomplete: false, safe: true, warnings: [] })),
 }));
 
+import { skillsRoutes } from '../routes/skills.js';
 import { createSkill, updateSkill, verifySkill } from './skillLibraryService.js';
 
 /**
@@ -43,10 +46,30 @@ describe.skipIf(!enabled)('skill revisions against Postgres', () => {
     return skill;
   };
 
+  let app: FastifyInstance;
+  const adminId = '00000000-0000-4000-a000-0000000000a1';
+  const verifyViaRoute = (id: string, body: unknown) =>
+    app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      payload: body as never,
+      url: `/api/v1/platform/skills/${id}/verify`,
+    });
+
   beforeAll(async () => {
     await syncBuiltins(prisma);
+    app = Fastify();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    app.decorate('prisma', prisma as unknown as never);
+    app.decorate('auth', {
+      verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ADMIN', sub: adminId }),
+    } as unknown as never);
+    await app.register(skillsRoutes, { prefix: '/api/v1/platform' });
+    await app.ready();
   });
   afterAll(async () => {
+    await app.close();
     await runUnscoped('test cleanup of the skills this suite created', ['Skill'], () =>
       prisma.skill.deleteMany({ where: { id: { in: created } } })
     );
@@ -97,13 +120,47 @@ describe.skipIf(!enabled)('skill revisions against Postgres', () => {
     ).rejects.toMatchObject({ code: 'P2002' });
   });
 
-  it('verifies only the revision the reviewer read', async () => {
+  it('guards the verify write on the revision it is given', async () => {
     const skill = await fresh('reviewed');
     await updateSkill(prisma, skill, { promptText: 'changed under the reviewer' });
-    await expect(verifySkill(prisma, skill)).rejects.toMatchObject({ code: 'P2025' });
-    const live = await prisma.skill.findUniqueOrThrow({ where: { id: skill.id } });
-    expect(live.isVerified).toBe(false);
-    expect((await verifySkill(prisma, live)).isVerified).toBe(true);
+    await expect(verifySkill(prisma, skill.id, 1)).rejects.toMatchObject({ code: 'P2025' });
+    expect((await verifySkill(prisma, skill.id, 2)).isVerified).toBe(true);
+  });
+
+  it('verify through the route refuses a revision another admin has since replaced', async () => {
+    // Admin A reads revision 1 in the UI; admin B edits; A clicks Verify.
+    const skill = await fresh('reviewed text');
+    await updateSkill(prisma, skill, { promptText: 'malicious text' });
+
+    const stale = await verifyViaRoute(skill.id, { revision: 1 });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.code).toBe('SKILL_CHANGED');
+    const after = await prisma.skill.findUniqueOrThrow({ where: { id: skill.id } });
+    expect(after).toMatchObject({ isVerified: false, promptText: 'malicious text' });
+
+    // A client that omits the revision is refused outright.
+    expect((await verifyViaRoute(skill.id, {})).statusCode).toBe(400);
+    // Verifying what is actually current works.
+    expect((await verifyViaRoute(skill.id, { revision: 2 })).statusCode).toBe(200);
+  });
+
+  it('survives two replicas syncing the same changed built-in at once: one new revision, no throw', async () => {
+    const def = await runUnscoped('test: pick a built-in', ['Skill'], () =>
+      prisma.skill.findFirstOrThrow({ where: { isBuiltIn: true } })
+    );
+    // Simulate a release that changed this built-in's text: the stored copy is older.
+    await prisma.skill.update({
+      data: { promptText: 'stale text from last release' },
+      where: { id: def.id },
+    });
+    const before = await prisma.skillRevision.count({ where: { skillId: def.id } });
+
+    const results = await Promise.allSettled([syncBuiltins(prisma), syncBuiltins(prisma)]);
+
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    expect(await prisma.skillRevision.count({ where: { skillId: def.id } })).toBe(before + 1);
+    const live = await prisma.skill.findUniqueOrThrow({ where: { id: def.id } });
+    expect(live.promptText).not.toBe('stale text from last release');
   });
 
   it('deletes revisions with their skill', async () => {

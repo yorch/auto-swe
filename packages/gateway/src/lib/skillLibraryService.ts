@@ -87,14 +87,6 @@ export async function updateSkill(
 ): Promise<{ scanWarnings: string[]; updated: SkillRow }> {
   const { name, description, promptText, isActive } = body;
 
-  const base = existing.isBuiltIn
-    ? { isActive, name }
-    : {
-        isActive,
-        name,
-        ...(promptText !== undefined ? { isVerified: false } : {}),
-      };
-
   const scanResult =
     !existing.isBuiltIn && promptText
       ? await scanSkillContent(promptText)
@@ -104,8 +96,20 @@ export async function updateSkill(
     description: description ?? existing.description,
     promptText: existing.isBuiltIn ? existing.promptText : (promptText ?? existing.promptText),
   };
+  const contentChanged = skillContentChanged(existing, nextContent);
+  // Verification attests to the text of one revision, so any edit that cuts a
+  // new one clears it — a description-only edit included, since the description
+  // is model-visible (the skill menu). A built-in's verified flag is the seed's.
+  const base = existing.isBuiltIn
+    ? { isActive, name }
+    : {
+        isActive,
+        name,
+        ...(promptText !== undefined || contentChanged ? { isVerified: false } : {}),
+      };
+
   let updated: SkillRow;
-  if (skillContentChanged(existing, nextContent)) {
+  if (contentChanged) {
     const next = nextRevision(existing, nextContent, {
       createdById: actorId,
       scanWarnings: scanResult.warnings,
@@ -120,13 +124,18 @@ export async function updateSkill(
 /// Marks the skill's CURRENT content as human-verified. Verification is a
 /// property of the text a reviewer read, so it is only ever set here — never by
 /// a create, a bundle install or a sync of custom content — and every content
-/// edit clears it again (see `updateSkill`). Guarded on `currentRevision` so a
-/// concurrent edit between the read and this write cannot be verified unseen
-/// (Prisma raises P2025; see `isRevisionConflict`).
-export async function verifySkill(prisma: PrismaClient, existing: SkillRow): Promise<SkillRow> {
+/// edit clears it again (see `updateSkill`). `revision` is the one the admin
+/// read, supplied by the client; the write is guarded on it, so text edited
+/// after they read it cannot be verified unseen (Prisma raises P2025; see
+/// `isRevisionConflict`).
+export async function verifySkill(
+  prisma: PrismaClient,
+  skillId: string,
+  revision: number
+): Promise<SkillRow> {
   return prisma.skill.update({
     data: { isVerified: true },
-    where: { currentRevision: existing.currentRevision, id: existing.id },
+    where: { currentRevision: revision, id: skillId },
   });
 }
 

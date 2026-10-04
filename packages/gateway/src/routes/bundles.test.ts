@@ -225,6 +225,39 @@ describe('bundleRoutes', () => {
     await app.close();
   });
 
+  it('409s, not 500, when a skill was edited while the install ran', async () => {
+    const app = await buildApp();
+    const prisma = (app as unknown as { prisma: Record<string, unknown> }).prisma;
+    prisma.$transaction = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('x'), { code: 'P2025' }));
+    const entities = { agents: [], scannerPatterns: [], skills: [], templates: [] };
+    const metadata = { createdAt: 'now', name: 'n', version: '1' };
+    const bundle = {
+      bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+      dependencies: [],
+      entities,
+      metadata: {
+        ...metadata,
+        contentHash: computeContentHash({
+          bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+          dependencies: [],
+          entities,
+          metadata,
+        }),
+      },
+    };
+    const res = await app.inject({
+      body: { bundle },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/bundles/install',
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('SKILL_CHANGED');
+    await app.close();
+  });
+
   it('409s when a bundle agent would overwrite a built-in, unless overwriteProtected', async () => {
     const app = await buildApp();
     const prisma = (app as unknown as { prisma: Record<string, Record<string, unknown>> }).prisma;
