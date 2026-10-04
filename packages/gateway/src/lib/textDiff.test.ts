@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DIFF_WORK_BUDGET, MAX_DIFF_EDITS, unifiedDiff } from './textDiff.js';
+import { DIFF_WORK_BUDGET, DIFF_WORK_PER_SKILL, MAX_DIFF_EDITS, unifiedDiff } from './textDiff.js';
 
 const lines = (n: number, p = 'l') => Array.from({ length: n }, (_, i) => `${p}${i}`);
 const alternate = (l: string[]) => l.map((x, i) => (i % 2 ? `${x}!` : x));
@@ -68,14 +68,14 @@ describe('unifiedDiff', () => {
 
   it('a rewrite within the cap is a complete diff showing both sides', () => {
     const { text, tooLarge, truncated } = unifiedDiff(
-      lines(400, 'old').join('\n'),
-      lines(400, 'new').join('\n'),
+      lines(250, 'old').join('\n'),
+      lines(250, 'new').join('\n'),
       { maxChars: 1_000_000 }
     );
     expect(tooLarge).toBe(false);
     expect(truncated).toBe(false);
-    expect(text).toContain('-old399');
-    expect(text).toContain('+new399');
+    expect(text).toContain('-old249');
+    expect(text).toContain('+new249');
   });
 
   it('truncation keeps the head of the diff and says so', () => {
@@ -122,7 +122,7 @@ describe('unifiedDiff', () => {
 
   it('a hundred 18 KB skills in one request cost a bounded total', () => {
     const budget = { left: DIFF_WORK_BUDGET };
-    const base = lines(900, 'a-fairly-long-line-of-text');
+    const base = lines(400, 'a-fairly-long-line-of-text');
     const t0 = performance.now();
     for (let i = 0; i < 100; i++) {
       unifiedDiff(
@@ -135,5 +135,22 @@ describe('unifiedDiff', () => {
     }
     expect(performance.now() - t0).toBeLessThan(3000);
     expect(budget.left).toBeLessThan(DIFF_WORK_BUDGET);
+  });
+});
+
+describe('per-skill budget', () => {
+  it('a skill diff is complete or not by its own texts alone, whatever was diffed before it', () => {
+    const a = lines(500, 'a-fairly-long-line-of-text');
+    const b = alternate(a);
+    const alone = unifiedDiff(a.join('\n'), b.join('\n'));
+    for (let i = 0; i < 150; i++) {
+      unifiedDiff(lines(12000, 'p').join('\n'), alternate(lines(12000, 'q')).join('\n'));
+    }
+    expect(unifiedDiff(a.join('\n'), b.join('\n'))).toEqual(alone);
+    expect(alone.tooLarge).toBe(false);
+  });
+
+  it('a request of 100 skills cannot exceed the 20M total', () => {
+    expect(DIFF_WORK_PER_SKILL * 100).toBeLessThanOrEqual(DIFF_WORK_BUDGET);
   });
 });

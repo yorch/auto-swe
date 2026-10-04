@@ -4,17 +4,24 @@
  *
  * It is Myers' O(ND) algorithm, so its cost follows how much changed, not how
  * long the texts are, and it is bounded two ways: a per-diff cap on the edit
- * distance (`maxEdits`) and a work budget that one request shares across every
- * skill. Past either, the diff is reported `tooLarge` instead of computed: a
+ * distance (`maxEdits`) and a work budget (a fixed share per skill by default). Past either, the diff is reported `tooLarge` instead of computed: a
  * partial or approximate diff would show a reviewer something other than what
  * an accept installs. Removed and added lines come out interleaved in file
  * order, as in any unified diff.
  */
 
-export const MAX_DIFF_EDITS = 1000;
+/** Line edits (a replaced line is two); about what one skill's work budget covers. */
+export const MAX_DIFF_EDITS = 600;
 export const MAX_DIFF_CHARS = 60_000;
-/** Inner-loop steps one request may spend across all its skills (~100 ms of CPU). */
+/** A source holds at most this many skills (`MAX_SKILLS_PER_SOURCE`). */
+const MAX_SKILLS = 100;
+/**
+ * Inner-loop steps one request may spend across all its skills (~100 ms of CPU).
+ * Each skill gets a fixed share, so whether a skill's diff is complete depends
+ * only on that skill's own old and new text, never on the other skills.
+ */
 export const DIFF_WORK_BUDGET = 20_000_000;
+export const DIFF_WORK_PER_SKILL = DIFF_WORK_BUDGET / MAX_SKILLS;
 
 export interface DiffBudget {
   left: number;
@@ -25,7 +32,7 @@ export interface TextDiff {
   text: string;
   /** The diff was longer than `maxChars` and the rest is not included. */
   truncated: boolean;
-  /** Not computed: more than `maxEdits` lines differ, or the request's work budget ran out. */
+  /** Not computed: more than `maxEdits` lines differ, or the work budget ran out. */
   tooLarge: boolean;
 }
 
@@ -133,7 +140,7 @@ export function unifiedDiff(
     a.slice(head, a.length - tail),
     b.slice(head, b.length - tail),
     opts.maxEdits ?? MAX_DIFF_EDITS,
-    opts.budget ?? { left: DIFF_WORK_BUDGET }
+    opts.budget ?? { left: DIFF_WORK_PER_SKILL }
   );
   if (middle === null) {
     return { text: '', tooLarge: true, truncated: false };

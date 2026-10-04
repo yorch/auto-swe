@@ -435,14 +435,16 @@ describe('skills sources', () => {
         body: {
           data: {
             ...DIFF,
-            changed: [changed('alpha', { textDiff: '+if (x) \u202eevil\u202c\n+a\u200bb' })],
+            changed: [
+              changed('alpha', { textDiff: '+if (x) \u202eevil\u202c\n+a\u200bb\u061cc\u180ed' }),
+            ],
           },
         },
       }));
       await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
       const text = out.join('');
       expect(text).toContain('<U+202E>evil<U+202C>');
-      expect(text).toContain('a<U+200B>b');
+      expect(text).toContain('a<U+200B>b<U+061C>c<U+180E>d');
       expect(text).not.toMatch(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/);
     });
 

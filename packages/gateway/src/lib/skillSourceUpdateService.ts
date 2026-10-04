@@ -14,7 +14,7 @@ import {
 } from '@auto-swe/shared/lib/skillSource';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { type SkillSourceRow, scanAll } from './skillSourceService.js';
-import { DIFF_WORK_BUDGET, type TextDiff, unifiedDiff } from './textDiff.js';
+import { type TextDiff, unifiedDiff } from './textDiff.js';
 
 /**
  * Reviewing and accepting an update to a tracked skill source.
@@ -186,14 +186,14 @@ const locationOf = (s: SkillSourceRow) => ({
 });
 
 /**
- * The text diff of every changed skill, computed under one work budget shared
- * by all of them. The diff and the accept both call this over the same list in
- * the same order, so they agree on which skills' diffs were cut or not computed.
+ * The text diff of each given skill. Every skill gets its own fixed work budget,
+ * so whether its diff is complete depends only on its own old and new text: the
+ * diff the admin read and the accept's check agree whatever the other skills
+ * (or the live text of ones that are not chosen) look like.
  */
 function computeDiffs(changed: ChangedItem[]): Map<ChangedItem, TextDiff> {
-  const budget = { left: DIFF_WORK_BUDGET };
   return new Map(
-    changed.map((c) => [c, unifiedDiff(c.installed.promptText, c.upstream.promptText, { budget })])
+    changed.map((c) => [c, unifiedDiff(c.installed.promptText, c.upstream.promptText)])
   );
 }
 
@@ -471,7 +471,7 @@ export async function acceptSkillUpdate(
 
   // A diff the admin could not read in full cannot be accepted by default: it has to
   // be named, which says the full text (`full=true` on the diff) was read.
-  const diffs = computeDiffs(plan.changed);
+  const diffs = computeDiffs(chosen);
   const unread = chosen.filter(
     (c) => incomplete(diffs.get(c)) && !(explicit ?? []).includes(c.installed.name)
   );

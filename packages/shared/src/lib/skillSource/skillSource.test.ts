@@ -1050,6 +1050,7 @@ describe('safeDisplayPath', () => {
     expect(safeDisplayPath('a\u202eb\u2066c\u2069d\u200be\u200ff\ufeffg\u2060h')).toBe(
       'a?b?c?d?e?f?g?h'
     );
+    expect(safeDisplayPath('a\u061cb\u180ec')).toBe('a?b?c');
     expect(safeDisplayPath('plain/path.md')).toBe('plain/path.md');
     expect(safeDisplayPath('x\u001b[2Ky')).toBe('x?[2Ky');
   });

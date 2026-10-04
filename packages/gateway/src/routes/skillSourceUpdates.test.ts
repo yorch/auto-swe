@@ -799,7 +799,7 @@ describe('review bounds and binding', () => {
   });
 
   it('a diff cut at the size cap is flagged incomplete and still starts at the first change', async () => {
-    const a = Array.from({ length: 800 }, (_, i) => `line ${i} ${'y'.repeat(100)}`);
+    const a = Array.from({ length: 500 }, (_, i) => `line ${i} ${'y'.repeat(400)}`);
     const b = a.map((l, i) => (i % 2 ? `${l}!` : l));
     fetchSkillSource.mockResolvedValue(
       fetched([upstream('alpha', { promptText: b.join('\n') }), upstream('beta')])
