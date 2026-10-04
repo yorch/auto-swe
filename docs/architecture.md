@@ -1116,10 +1116,12 @@ Current constraints of the system as built. Deliberate product boundaries are in
   Spend with no org on it — a runless workflow with no derivable owner — is outside the cap. An
   epic's planning is attributed to one team, the first repository the epic names, even when the
   epic spans organizations; each child run is billed to its own repository's organization.
-- **The org cap is a gate with a one-window lag.** A run's next call is refused only once the
-  cached org spend has reached the cap, so up to one cache window (30 s) of spend, from every run
-  of the org at once, can land after the cap is crossed, and the figure does not include a call
-  until its run's ledger row is written. A spend or cap read that fails lets the call through. A
+- **The org cap is checked before each call, so spend can overshoot it.** A run's next call is
+  refused only once the cached org spend has reached the cap. Up to one cache window (30 s) of new
+  calls, from every run of the org at once, plus the full cost of every call or Claude Code harness
+  turn already admitted, can land after the cap is crossed: an admitted call completes and bills in
+  full, its cost reaches the ledger only after it returns, and a harness turn reports usage only
+  when the turn ends. A spend or cap read that fails lets the call through. A
   repo-less channel task bills its channel, not an org, so the org cap never refuses it; a code-route
   channel task and a PRD run bill their connection's org and are refused like any run.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
