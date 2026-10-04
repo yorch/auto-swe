@@ -1,68 +1,78 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
+import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Stat } from '@/components/ui/Stat';
-import { type SortDirection, Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { useSort } from '@/hooks/useSort';
 import { useGlobalAnalytics } from '@/hooks/useTemplates';
+import { useUrlParams } from '@/hooks/useUrlParams';
+import { dateRangePatch, parseDateRange } from '@/lib/dateRange';
+import { formatDelta } from '@/lib/delta';
+import { outcomeTypeLabel } from '@/lib/govLabels';
 import { formatCost, formatDuration, formatPercent } from '@/lib/utils';
 
-const WINDOWS = [
-  { label: '7d', value: '7' },
-  { label: '30d', value: '30' },
-  { label: '90d', value: '90' },
-];
-
-type SortKey = 'runs' | 'successRate' | 'totalCost' | 'avgCost';
+type TemplateSort = 'name' | 'runs' | 'successRate' | 'totalCost' | 'avgCost';
+type DomainSort =
+  | 'domain'
+  | 'runs'
+  | 'cost'
+  | 'timeSaved'
+  | 'agentError'
+  | 'humanError'
+  | 'vsHuman';
+type OutcomeSort = 'outcome' | 'runs' | 'cost';
 
 /** Minutes, as the analytics API reports time saved, rendered as a duration. */
 function formatMinutes(min: number): string {
   return formatDuration(Math.round(min) * 60_000);
 }
 
-/** Text colour for a 0–1 success rate. */
-function successRateClass(rate: number): string {
-  if (rate >= 0.8) {
-    return 'text-moss-400';
+/** Tone for a 0–1 success rate: healthy, worth a look, poor — and neutral when there is none. */
+function successTone(rate: number | null): 'moss' | 'amber' | 'brick' | 'default' {
+  if (rate === null) {
+    return 'default';
   }
-  return rate >= 0.5 ? 'text-amber-400' : 'text-brick-400';
+  if (rate >= 0.8) {
+    return 'moss';
+  }
+  return rate >= 0.5 ? 'amber' : 'brick';
+}
+
+function successRateClass(rate: number): string {
+  const tone = successTone(rate);
+  return tone === 'moss' ? 'text-moss-400' : tone === 'amber' ? 'text-amber-400' : 'text-brick-400';
+}
+
+/** The agent's error rate against the human baseline, in percentage points. */
+function formatPoints(diff: number): string {
+  const pts = diff * 100;
+  return `${pts > 0 ? '+' : ''}${pts.toFixed(1)} pts`;
 }
 
 const PAGE_SIZE = 25;
+/** Fewer baseline cases than this and the comparison with humans is not reliable. */
+const MIN_BASELINE_SAMPLE = 30;
 
-export default function GlobalAnalyticsPage() {
-  const [windowDays, setWindowDays] = useState(30);
-  const [filter, setFilter] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('runs');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+function AnalyticsWorkspace() {
+  const { params, update } = useUrlParams();
+  const range = parseDateRange(params);
+  const windowDays = range.kind === 'preset' ? range.days : 30;
+  const filter = (params.get('q') ?? '').slice(0, 100);
   const [page, setPage] = useState(0);
+  const templateSort = useSort<TemplateSort>('runs', { ascendingFirst: ['name'] });
+  const domainSort = useSort<DomainSort>('runs', { ascendingFirst: ['domain'] });
+  const outcomeSort = useSort<OutcomeSort>('runs', { ascendingFirst: ['outcome'] });
   const { data, isLoading, isError, error } = useGlobalAnalytics(windowDays);
-
-  const handleSort = (k: SortKey) => {
-    if (k === sortKey) {
-      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-    } else {
-      setSortKey(k);
-      setSortDir('desc');
-    }
-    setPage(0);
-  };
-
-  const sortDirection = (k: SortKey): SortDirection =>
-    k !== sortKey ? 'none' : sortDir === 'desc' ? 'descending' : 'ascending';
-
-  const handleFilter = (v: string) => {
-    setFilter(v);
-    setPage(0);
-  };
 
   const rows = useMemo(() => {
     if (!data) {
@@ -72,41 +82,77 @@ export default function GlobalAnalyticsPage() {
     const filtered = filter
       ? data.perTemplate.filter((r) => r.templateName.toLowerCase().includes(filterLower))
       : data.perTemplate;
-    return [...filtered].sort((a, b) => {
-      let av: number;
-      let bv: number;
-      if (sortKey === 'runs') {
-        av = a.totalRuns;
-        bv = b.totalRuns;
-      } else if (sortKey === 'successRate') {
-        av = a.successRate ?? -1;
-        bv = b.successRate ?? -1;
-      } else if (sortKey === 'totalCost') {
-        av = a.totalCost;
-        bv = b.totalCost;
-      } else {
-        av = a.totalRuns > 0 ? a.totalCost / a.totalRuns : -1;
-        bv = b.totalRuns > 0 ? b.totalCost / b.totalRuns : -1;
+    const value = (r: (typeof filtered)[number]): number | string => {
+      switch (templateSort.key) {
+        case 'name':
+          return r.templateName.toLowerCase();
+        case 'runs':
+          return r.totalRuns;
+        case 'successRate':
+          return r.successRate ?? -1;
+        case 'totalCost':
+          return r.totalCost;
+        case 'avgCost':
+          return r.totalRuns > 0 ? r.totalCost / r.totalRuns : -1;
       }
-      return sortDir === 'desc' ? bv - av : av - bv;
-    });
-  }, [data, filter, sortKey, sortDir]);
+    };
+    return [...filtered].sort((a, b) => templateSort.compare(value(a), value(b)));
+  }, [data, filter, templateSort.key, templateSort.compare]);
+
+  const domains = useMemo(() => {
+    const value = (d: NonNullable<typeof data>['perDomain'][number]): number | string => {
+      switch (domainSort.key) {
+        case 'domain':
+          return d.domain.toLowerCase();
+        case 'runs':
+          return d.totalRuns;
+        case 'cost':
+          return d.totalCost;
+        case 'timeSaved':
+          return d.estimatedHumanTimeSavedTotal ?? -1;
+        case 'agentError':
+          return d.agentErrorRate ?? -1;
+        case 'humanError':
+          return d.humanErrorRate ?? -1;
+        case 'vsHuman':
+          return d.errorRateVsHuman ?? -999;
+      }
+    };
+    return [...(data?.perDomain ?? [])].sort((a, b) => domainSort.compare(value(a), value(b)));
+  }, [data, domainSort.key, domainSort.compare]);
+
+  const outcomes = useMemo(() => {
+    const value = (o: NonNullable<typeof data>['perOutcome'][number]): number | string => {
+      switch (outcomeSort.key) {
+        case 'outcome':
+          return outcomeTypeLabel(o.outcomeType).toLowerCase();
+        case 'runs':
+          return o.runCount;
+        case 'cost':
+          return o.totalCost;
+      }
+    };
+    return [...(data?.perOutcome ?? [])].sort((a, b) => outcomeSort.compare(value(a), value(b)));
+  }, [data, outcomeSort.key, outcomeSort.compare]);
 
   const totalPages = Math.ceil(rows.length / PAGE_SIZE);
   const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const noun = `vs previous ${windowDays} days`;
+  const prev = data?.previous ?? null;
 
   return (
     <div className="space-y-8">
       <PageHeader
         actions={
-          <SegmentedControl
-            ariaLabel="Time window"
-            onChange={(v) => {
-              setWindowDays(Number(v));
-              setPage(0);
+          <DateRangeControl
+            allowCustom={false}
+            onChange={(r) => {
+              if (r) {
+                update(dateRangePatch(r));
+                setPage(0);
+              }
             }}
-            options={WINDOWS}
-            value={String(windowDays)}
+            value={range}
           />
         }
         chapter="§ Govern"
@@ -126,40 +172,103 @@ export default function GlobalAnalyticsPage() {
               </Alert>
             )}
 
-            <div className="grid grid-cols-2 gap-y-8 lg:grid-cols-4">
-              <Stat label="Total runs" value={data.totalRuns} />
-              <Stat label="Completed runs" value={data.completedRuns} />
-              <Stat label="Running runs" value={data.runningRuns} />
+            <div className="grid grid-cols-2 gap-x-4 gap-y-8 lg:grid-cols-4">
               <Stat
-                label="Success rate (completed)"
-                tone="moss"
+                delta={
+                  prev
+                    ? formatDelta(data.totalRuns, prev.totalRuns, { higherIsBetter: null, noun })
+                    : null
+                }
+                hint={`${data.completedRuns} finished, ${data.runningRuns} running`}
+                label="Runs"
+                value={data.totalRuns}
+              />
+              <Stat
+                delta={
+                  prev
+                    ? formatDelta(data.successRate, prev.successRate, {
+                        higherIsBetter: true,
+                        noun,
+                        unit: 'pp',
+                      })
+                    : null
+                }
+                hint={`${data.succeeded} succeeded, ${data.failed} failed`}
+                label="Success rate"
+                tone={successTone(data.successRate)}
                 value={formatPercent(data.successRate)}
               />
-              <Stat label="Succeeded" tone="moss" value={data.succeeded} />
-              <Stat label="Failed" tone="brick" value={data.failed} />
-              <Stat label="Total cost" value={formatCost(data.totalCost)} />
               <Stat
-                label="Avg cost/run"
-                value={data.totalRuns > 0 ? formatCost(data.totalCost / data.totalRuns) : '—'}
+                delta={
+                  prev
+                    ? formatDelta(data.totalCost, prev.totalCost, { higherIsBetter: false, noun })
+                    : null
+                }
+                hint={
+                  <>
+                    Workflow-run spend only.{' '}
+                    <Link className="text-ember-400 hover:underline" href="/govern/usage">
+                      See all spend
+                    </Link>
+                  </>
+                }
+                label="Run cost"
+                value={formatCost(data.totalCost)}
               />
               <Stat
-                label="Time saved"
+                delta={
+                  prev
+                    ? formatDelta(
+                        data.estimatedHumanTimeSavedTotal ?? 0,
+                        prev.estimatedHumanTimeSavedTotal ?? 0,
+                        { higherIsBetter: true, noun }
+                      )
+                    : null
+                }
+                hint="Estimated from each template's expected human effort"
+                label="Time saved (estimate)"
                 tone="moss"
                 value={formatMinutes(data.estimatedHumanTimeSavedTotal ?? 0)}
               />
-              <Stat label="Autonomy rate" value={formatPercent(data.autonomyRate)} />
-              <Stat label="Human review rate" value={formatPercent(data.humanReviewRate)} />
             </div>
 
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>Templates — ranked by traffic</CardTitle>
-                  <div className="w-48">
+                <CardTitle>Runs over time</CardTitle>
+              </CardHeader>
+              <WorkflowsOverTimeChart data={data.daily ?? []} />
+            </Card>
+
+            <div className="grid grid-cols-2 gap-x-4 gap-y-8 lg:grid-cols-4">
+              <Stat
+                hint="Average cost of a run in this window"
+                label="Avg cost per run"
+                value={data.totalRuns > 0 ? formatCost(data.totalCost / data.totalRuns) : '—'}
+              />
+              <Stat
+                hint="Share of finished runs that needed no human step"
+                label="Autonomy rate"
+                value={formatPercent(data.autonomyRate)}
+              />
+              <Stat
+                hint="Share of finished runs where a person reviewed or approved"
+                label="Human review rate"
+                value={formatPercent(data.humanReviewRate)}
+              />
+            </div>
+
+            <Card>
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <CardTitle>Templates, ranked by traffic</CardTitle>
+                  <div className="w-full sm:w-48">
                     <Input
                       aria-label="Filter templates by name"
                       compact
-                      onChange={(e) => handleFilter(e.target.value)}
+                      onChange={(e) => {
+                        update({ q: e.target.value || null });
+                        setPage(0);
+                      }}
                       placeholder="Filter templates…"
                       type="text"
                       value={filter}
@@ -177,78 +286,82 @@ export default function GlobalAnalyticsPage() {
                 />
               ) : (
                 <>
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <THead className="text-left text-xs text-paper-400">
-                        <Th variant="dense">Template</Th>
-                        <Th
-                          align="right"
-                          onSort={() => handleSort('runs')}
-                          sort={sortDirection('runs')}
-                          variant="dense"
-                        >
-                          Runs
-                        </Th>
-                        <Th
-                          align="right"
-                          onSort={() => handleSort('successRate')}
-                          sort={sortDirection('successRate')}
-                          variant="dense"
-                        >
-                          Success rate
-                        </Th>
-                        <Th
-                          align="right"
-                          onSort={() => handleSort('totalCost')}
-                          sort={sortDirection('totalCost')}
-                          variant="dense"
-                        >
-                          Total cost
-                        </Th>
-                        <Th
-                          align="right"
-                          onSort={() => handleSort('avgCost')}
-                          sort={sortDirection('avgCost')}
-                          variant="dense"
-                        >
-                          Avg cost/run
-                        </Th>
-                      </THead>
-                      <tbody>
-                        {pageRows.map((row) => {
-                          const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
-                          return (
-                            <TRow hover key={row.templateId}>
-                              <Td className="px-4 py-2">
-                                <Link
-                                  className="text-ember-400 hover:underline"
-                                  href={`/workflows/library/${row.templateId}`}
-                                >
-                                  {row.templateName}
-                                </Link>
-                              </Td>
-                              <Td className="px-4 py-2 text-right tabular-nums">{row.totalRuns}</Td>
-                              <Td className="px-4 py-2 text-right tabular-nums">
-                                {row.successRate !== null ? (
-                                  <span className={successRateClass(row.successRate)}>
-                                    {formatPercent(row.successRate)}
-                                  </span>
-                                ) : (
-                                  '—'
-                                )}
-                              </Td>
-                              <Td className="px-4 py-2 text-right tabular-nums">
-                                {formatCost(row.totalCost)}
-                              </Td>
-                              <Td className="px-4 py-2 text-right tabular-nums">
-                                {avgCost !== null ? formatCost(avgCost) : '—'}
-                              </Td>
-                            </TRow>
-                          );
-                        })}
-                      </tbody>
-                    </Table>
-                  </div>
+                  <Table>
+                    <THead className="text-left text-xs text-paper-400">
+                      <Th
+                        onSort={() => templateSort.toggle('name')}
+                        sort={templateSort.direction('name')}
+                        variant="dense"
+                      >
+                        Template
+                      </Th>
+                      <Th
+                        align="right"
+                        onSort={() => templateSort.toggle('runs')}
+                        sort={templateSort.direction('runs')}
+                        variant="dense"
+                      >
+                        Runs
+                      </Th>
+                      <Th
+                        align="right"
+                        onSort={() => templateSort.toggle('successRate')}
+                        sort={templateSort.direction('successRate')}
+                        variant="dense"
+                      >
+                        Success rate
+                      </Th>
+                      <Th
+                        align="right"
+                        onSort={() => templateSort.toggle('totalCost')}
+                        sort={templateSort.direction('totalCost')}
+                        variant="dense"
+                      >
+                        Total cost
+                      </Th>
+                      <Th
+                        align="right"
+                        onSort={() => templateSort.toggle('avgCost')}
+                        sort={templateSort.direction('avgCost')}
+                        variant="dense"
+                      >
+                        Avg cost per run
+                      </Th>
+                    </THead>
+                    <tbody>
+                      {pageRows.map((row) => {
+                        const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
+                        return (
+                          <TRow hover key={row.templateId}>
+                            <Td className="px-4 py-2">
+                              <Link
+                                className="text-ember-400 hover:underline"
+                                href={`/workflows/library/${row.templateId}`}
+                              >
+                                {row.templateName}
+                              </Link>
+                            </Td>
+                            <Td className="px-4 py-2 text-right tabular-nums">{row.totalRuns}</Td>
+                            <Td className="px-4 py-2 text-right tabular-nums">
+                              {row.successRate !== null ? (
+                                <span className={successRateClass(row.successRate)}>
+                                  {formatPercent(row.successRate)}
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </Td>
+                            <Td className="px-4 py-2 text-right tabular-nums">
+                              {formatCost(row.totalCost)}
+                            </Td>
+                            <Td className="px-4 py-2 text-right tabular-nums">
+                              {avgCost !== null ? formatCost(avgCost) : '—'}
+                            </Td>
+                          </TRow>
+                        );
+                      })}
+                    </tbody>
+                  </Table>
                   {totalPages > 1 && (
                     <Pagination
                       hasNext={page < totalPages - 1}
@@ -264,107 +377,175 @@ export default function GlobalAnalyticsPage() {
               )}
             </Card>
 
-            {data.perDomain.length > 0 && (
+            {domains.length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle>By domain</CardTitle>
                 </CardHeader>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <THead className="text-left text-xs text-paper-400">
-                      <Th variant="dense">Domain</Th>
-                      <Th align="right" variant="dense">
-                        Runs
-                      </Th>
-                      <Th align="right" variant="dense">
-                        Total cost
-                      </Th>
-                      <Th align="right" variant="dense">
-                        Time saved
-                      </Th>
-                      <Th align="right" variant="dense">
-                        Agent error
-                      </Th>
-                      <Th align="right" variant="dense">
-                        Human error
-                      </Th>
-                      <Th align="right" variant="dense">
-                        vs human
-                      </Th>
-                    </THead>
-                    <tbody>
-                      {data.perDomain.map((d) => (
-                        <TRow key={d.domain}>
-                          <Td className="px-4 py-2">{d.domain}</Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">{d.totalRuns}</Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {formatCost(d.totalCost)}
-                          </Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {d.estimatedHumanTimeSavedTotal != null
-                              ? formatMinutes(d.estimatedHumanTimeSavedTotal)
-                              : '—'}
-                          </Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {formatPercent(d.agentErrorRate ?? null)}
-                          </Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {formatPercent(d.humanErrorRate ?? null)}
-                          </Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {d.errorRateVsHuman != null ? (
-                              // Percentage points — no shared formatter carries the "pp" unit.
-                              `${(d.errorRateVsHuman * 100).toFixed(1)}pp`
-                            ) : d.baselineSampleSize != null && d.baselineSampleSize < 30 ? (
-                              <span className="text-paper-400" title="Baseline sample too small">
-                                n={d.baselineSampleSize}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                          </Td>
-                        </TRow>
-                      ))}
-                    </tbody>
-                  </Table>
-                </div>
+                <Table>
+                  <THead className="text-left text-xs text-paper-400">
+                    <Th
+                      onSort={() => domainSort.toggle('domain')}
+                      sort={domainSort.direction('domain')}
+                      variant="dense"
+                    >
+                      Domain
+                    </Th>
+                    <Th
+                      align="right"
+                      onSort={() => domainSort.toggle('runs')}
+                      sort={domainSort.direction('runs')}
+                      variant="dense"
+                    >
+                      Runs
+                    </Th>
+                    <Th
+                      align="right"
+                      onSort={() => domainSort.toggle('cost')}
+                      sort={domainSort.direction('cost')}
+                      variant="dense"
+                    >
+                      Total cost
+                    </Th>
+                    <Th
+                      align="right"
+                      onSort={() => domainSort.toggle('timeSaved')}
+                      sort={domainSort.direction('timeSaved')}
+                      variant="dense"
+                    >
+                      Time saved
+                    </Th>
+                    <Th
+                      align="right"
+                      onSort={() => domainSort.toggle('agentError')}
+                      sort={domainSort.direction('agentError')}
+                      variant="dense"
+                    >
+                      Agent error rate
+                    </Th>
+                    <Th
+                      align="right"
+                      onSort={() => domainSort.toggle('humanError')}
+                      sort={domainSort.direction('humanError')}
+                      variant="dense"
+                    >
+                      Human error rate
+                    </Th>
+                    <Th
+                      align="right"
+                      onSort={() => domainSort.toggle('vsHuman')}
+                      sort={domainSort.direction('vsHuman')}
+                      variant="dense"
+                    >
+                      <span title="Agent error rate minus the human baseline, in percentage points. Needs at least 30 baseline cases.">
+                        Agent vs human
+                      </span>
+                    </Th>
+                  </THead>
+                  <tbody>
+                    {domains.map((d) => (
+                      <TRow key={d.domain}>
+                        <Td className="px-4 py-2">{outcomeTypeLabel(d.domain)}</Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">{d.totalRuns}</Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {formatCost(d.totalCost)}
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {d.estimatedHumanTimeSavedTotal != null
+                            ? formatMinutes(d.estimatedHumanTimeSavedTotal)
+                            : '—'}
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {formatPercent(d.agentErrorRate ?? null)}
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {formatPercent(d.humanErrorRate ?? null)}
+                        </Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {d.errorRateVsHuman != null ? (
+                            // Positive means the agent errs more than the human baseline.
+                            <span
+                              className={
+                                d.errorRateVsHuman > 0 ? 'text-brick-400' : 'text-moss-400'
+                              }
+                            >
+                              {formatPoints(d.errorRateVsHuman)}
+                            </span>
+                          ) : d.baselineSampleSize != null &&
+                            d.baselineSampleSize < MIN_BASELINE_SAMPLE ? (
+                            <span
+                              className="text-paper-400"
+                              title={`Only ${d.baselineSampleSize} baseline cases; at least ${MIN_BASELINE_SAMPLE} are needed to compare.`}
+                            >
+                              Too few baseline cases ({d.baselineSampleSize})
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </Td>
+                      </TRow>
+                    ))}
+                  </tbody>
+                </Table>
               </Card>
             )}
 
-            {data.perOutcome.length > 0 && (
+            {outcomes.length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle>By outcome</CardTitle>
                 </CardHeader>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <THead className="text-left text-xs text-paper-400">
-                      <Th variant="dense">Outcome</Th>
-                      <Th align="right" variant="dense">
-                        Runs
-                      </Th>
-                      <Th align="right" variant="dense">
-                        Total cost
-                      </Th>
-                    </THead>
-                    <tbody>
-                      {data.perOutcome.map((o) => (
-                        <TRow key={o.outcomeType}>
-                          <Td className="px-4 py-2">{o.outcomeType}</Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">{o.runCount}</Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
-                            {formatCost(o.totalCost)}
-                          </Td>
-                        </TRow>
-                      ))}
-                    </tbody>
-                  </Table>
-                </div>
+                <Table>
+                  <THead className="text-left text-xs text-paper-400">
+                    <Th
+                      onSort={() => outcomeSort.toggle('outcome')}
+                      sort={outcomeSort.direction('outcome')}
+                      variant="dense"
+                    >
+                      Outcome
+                    </Th>
+                    <Th
+                      align="right"
+                      onSort={() => outcomeSort.toggle('runs')}
+                      sort={outcomeSort.direction('runs')}
+                      variant="dense"
+                    >
+                      Runs
+                    </Th>
+                    <Th
+                      align="right"
+                      onSort={() => outcomeSort.toggle('cost')}
+                      sort={outcomeSort.direction('cost')}
+                      variant="dense"
+                    >
+                      Total cost
+                    </Th>
+                  </THead>
+                  <tbody>
+                    {outcomes.map((o) => (
+                      <TRow key={o.outcomeType}>
+                        <Td className="px-4 py-2">{outcomeTypeLabel(o.outcomeType)}</Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">{o.runCount}</Td>
+                        <Td className="px-4 py-2 text-right tabular-nums">
+                          {formatCost(o.totalCost)}
+                        </Td>
+                      </TRow>
+                    ))}
+                  </tbody>
+                </Table>
               </Card>
             )}
           </>
         )}
       </QueryBoundary>
     </div>
+  );
+}
+
+export default function GlobalAnalyticsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AnalyticsWorkspace />
+    </Suspense>
   );
 }

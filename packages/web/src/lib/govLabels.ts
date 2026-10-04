@@ -65,3 +65,8 @@ export function humanizeKey(key: string): string {
     .toLowerCase();
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : key;
 }
+
+/** An outcome type as people read it; a run with none recorded is "Not classified". */
+export function outcomeTypeLabel(outcomeType: string): string {
+  return outcomeType === 'unknown' ? 'Not classified' : humanizeKey(outcomeType);
+}

@@ -1681,6 +1681,82 @@ describe('GET /workflow-templates/analytics', () => {
   });
 });
 
+describe('GET /workflow-templates/analytics trend', () => {
+  it('reports the window before this one and a per-day series', async () => {
+    const state: Parameters<typeof buildApp>[0] = { runs: [], templates: [], versions: new Map() };
+    const app = buildApp(state);
+    await app.ready();
+    const DAY = 24 * 60 * 60 * 1000;
+    const run = (id: string, daysAgo: number, status: string, cost: number) =>
+      ({
+        costUsdAccrued: cost,
+        endedAt: new Date(),
+        hadHumanStep: false,
+        hasError: false,
+        id,
+        outcomeDomain: 'code',
+        outcomeType: null,
+        startedAt: new Date(Date.now() - daysAgo * DAY),
+        status,
+        template: { id: 'tpl-a', name: 'a' },
+        templateId: 'tpl-a',
+        wasAutonomous: true,
+      }) as (typeof state.runs)[number];
+    // Newest first, as the query orders them: two in the 30-day window, one in the 30 before it.
+    state.runs = [
+      run('r1', 1, 'SUCCESS', 2),
+      run('r2', 3, 'FAILED', 1),
+      run('r3', 40, 'SUCCESS', 5),
+    ];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: '/api/v1/workflow-templates/analytics?window=30',
+    });
+    const data = res.json().data;
+    expect(data.totalRuns).toBe(2);
+    expect(data.totalCost).toBe(3);
+    expect(data.previous).toMatchObject({ successRate: 1, totalCost: 5, totalRuns: 1 });
+    const daily = data.daily as { completed: number; failed: number }[];
+    expect(daily.length).toBeGreaterThanOrEqual(30);
+    expect(daily.reduce((n, d) => n + d.completed, 0)).toBe(1);
+    expect(daily.reduce((n, d) => n + d.failed, 0)).toBe(1);
+    await app.close();
+  });
+
+  it('withholds the previous window when the row cap cut into it', async () => {
+    const state: Parameters<typeof buildApp>[0] = { runs: [], templates: [], versions: new Map() };
+    const app = buildApp(state);
+    await app.ready();
+    const DAY = 24 * 60 * 60 * 1000;
+    state.runs = Array.from({ length: 10_001 }, (_, i) => ({
+      costUsdAccrued: 0,
+      endedAt: new Date(),
+      hadHumanStep: false,
+      hasError: false,
+      id: `run-${i}`,
+      outcomeDomain: 'code',
+      outcomeType: null,
+      // The newest rows are in this window; the oldest kept ones spill into the previous one.
+      startedAt: new Date(Date.now() - (i < 5_000 ? 1 : 40) * DAY),
+      status: 'SUCCESS',
+      template: { id: 'tpl-b', name: 'b' },
+      templateId: 'tpl-b',
+      wasAutonomous: true,
+    })) as (typeof state.runs)[number][];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: '/api/v1/workflow-templates/analytics?window=30',
+    });
+    const data = res.json().data;
+    expect(data.isTruncated).toBe(false);
+    expect(data.totalRuns).toBe(5_000);
+    expect(data.previous).toBeNull();
+    await app.close();
+  });
+});
+
 describe('workflow refinement (POST /:id/refine)', () => {
   let app: FastifyInstance;
   let state: Parameters<typeof buildApp>[0];

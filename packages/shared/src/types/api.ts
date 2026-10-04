@@ -466,6 +466,17 @@ export interface GlobalAnalyticsResponse {
   }>;
   perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
   isTruncated: boolean;
+  /** Headline figures for the window of equal length just before this one; null when unavailable. */
+  previous?: {
+    totalRuns: number;
+    successRate: number | null;
+    totalCost: number;
+    estimatedHumanTimeSavedTotal: number | null;
+    autonomyRate: number | null;
+    humanReviewRate: number | null;
+  } | null;
+  /** Runs started per UTC day in the window, oldest first. */
+  daily?: Array<{ date: string; completed: number; failed: number; active: number }>;
 }
 
 export interface SpecDiffResponse {

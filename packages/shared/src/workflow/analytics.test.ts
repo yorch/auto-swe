@@ -7,7 +7,7 @@ import {
   WORKFLOW_RUN_STATUSES,
   WORKFLOW_RUN_TERMINAL_STATUSES,
 } from '../types/api.js';
-import { computeAnalytics, computeGlobalAnalytics } from './analytics.js';
+import { computeAnalytics, computeDailyRunSeries, computeGlobalAnalytics } from './analytics.js';
 
 const at = new Date('2026-01-01T00:00:00Z');
 const end = new Date('2026-01-01T00:10:00Z');
@@ -74,5 +74,30 @@ describe('analytics agree on SKIPPED', () => {
     expect(result.failed).toBe(1);
     expect(result.successRate).toBe(0.5);
     expect(result.perTemplate[0]?.successRate).toBe(0.5);
+  });
+});
+
+describe('computeDailyRunSeries', () => {
+  it('fills every UTC day, splits outcomes, and ignores rows outside the window', () => {
+    const day = (s: string) => new Date(`${s}T12:00:00.000Z`);
+    const series = computeDailyRunSeries(
+      [
+        { startedAt: day('2026-09-02'), status: 'SUCCESS' },
+        { startedAt: day('2026-09-02'), status: 'FAILED' },
+        { startedAt: day('2026-09-04'), status: 'RUNNING' },
+        { startedAt: day('2026-08-01'), status: 'SUCCESS' },
+      ],
+      day('2026-09-01'),
+      day('2026-09-04')
+    );
+    expect(series.map((d) => d.date)).toEqual([
+      '2026-09-01',
+      '2026-09-02',
+      '2026-09-03',
+      '2026-09-04',
+    ]);
+    expect(series[1]).toEqual({ active: 0, completed: 1, date: '2026-09-02', failed: 1 });
+    expect(series[3]).toMatchObject({ active: 1, completed: 0 });
+    expect(series[0]).toMatchObject({ completed: 0 });
   });
 });

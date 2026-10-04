@@ -12,6 +12,7 @@ import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import {
   assertShellImageAllowed,
   computeAnalytics,
+  computeDailyRunSeries,
   computeGlobalAnalytics,
   diffSpecs,
   findInternalSteps,
@@ -672,7 +673,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const windowStart = new Date(Date.now() - request.query.window * 24 * 60 * 60 * 1000);
+      const DAY = 24 * 60 * 60 * 1000;
+      const windowStart = new Date(Date.now() - request.query.window * DAY);
+      // The window before this one is read in the same query, for the "vs previous" figures.
+      const previousStart = new Date(windowStart.getTime() - request.query.window * DAY);
       const ANALYTICS_ROW_CAP = 10_000;
       const rowsQuery = fastify.prisma.workflowRun.findMany({
         orderBy: { startedAt: 'desc' },
@@ -702,7 +706,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         },
         take: ANALYTICS_ROW_CAP + 1,
         where: {
-          startedAt: { gte: windowStart },
+          startedAt: { gte: previousStart },
           // Visibility: same run-level visibility predicate used on /runs so
           // global templates do not leak cross-team work-request runs.
           ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
@@ -715,37 +719,64 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           where: { organization: memberOrgs(user) },
         }),
       ]);
-      const isTruncated = rows.length > ANALYTICS_ROW_CAP;
-      const runs = rows.slice(0, ANALYTICS_ROW_CAP);
+      const capped = rows.length > ANALYTICS_ROW_CAP;
+      const kept = rows.slice(0, ANALYTICS_ROW_CAP);
+      // Newest first, so a capped read loses the previous window before it loses this one.
+      // Only when it reaches into this window are this window's figures themselves partial.
+      const oldestKept = kept[kept.length - 1]?.startedAt;
+      const isTruncated = capped && oldestKept !== undefined && oldestKept >= windowStart;
+      const toRow = (r: (typeof kept)[number]) => ({
+        costUsdAccrued:
+          r.costUsdAccrued > 0
+            ? r.costUsdAccrued
+            : (r.workRequest?.activeWorkflows ?? [])
+                .filter((aw) => aw.temporalWorkflowId === r.workflowId)
+                .reduce((sum, aw) => sum + aw.costUsdAccrued, 0),
+        endedAt: r.endedAt,
+        estimatedHumanTimeSaved: r.estimatedHumanTimeSaved,
+        hadHumanStep: r.hadHumanStep,
+        hasError: r.hasError,
+        outcomeDomain: r.outcomeDomain,
+        outcomeType: r.outcomeType,
+        startedAt: r.startedAt,
+        status: r.status,
+        templateId: r.template.id,
+        templateName: r.template.name,
+        wasAutonomous: r.wasAutonomous,
+      });
+      const current = kept.filter((r) => r.startedAt >= windowStart);
+      const baselineRows = baselines.map((b) => ({
+        domain: b.domain,
+        errorRate: b.errorRate,
+        outcomeType: b.outcomeType,
+        sampleSize: b.sampleSize,
+      }));
       const analytics = computeGlobalAnalytics(
-        runs.map((r) => ({
-          costUsdAccrued:
-            r.costUsdAccrued > 0
-              ? r.costUsdAccrued
-              : (r.workRequest?.activeWorkflows ?? [])
-                  .filter((aw) => aw.temporalWorkflowId === r.workflowId)
-                  .reduce((sum, aw) => sum + aw.costUsdAccrued, 0),
-          endedAt: r.endedAt,
-          estimatedHumanTimeSaved: r.estimatedHumanTimeSaved,
-          hadHumanStep: r.hadHumanStep,
-          hasError: r.hasError,
-          outcomeDomain: r.outcomeDomain,
-          outcomeType: r.outcomeType,
-          startedAt: r.startedAt,
-          status: r.status,
-          templateId: r.template.id,
-          templateName: r.template.name,
-          wasAutonomous: r.wasAutonomous,
-        })),
+        current.map(toRow),
         request.query.window,
-        baselines.map((b) => ({
-          domain: b.domain,
-          errorRate: b.errorRate,
-          outcomeType: b.outcomeType,
-          sampleSize: b.sampleSize,
-        }))
+        baselineRows
       );
-      return { data: { ...analytics, isTruncated } };
+      // The previous window is only trustworthy when the cap did not cut into it.
+      const previousRows = kept.filter((r) => r.startedAt < windowStart);
+      const previousComplete = !capped;
+      const prev = previousComplete
+        ? computeGlobalAnalytics(previousRows.map(toRow), request.query.window)
+        : null;
+      return {
+        data: {
+          ...analytics,
+          daily: computeDailyRunSeries(current, windowStart, new Date()),
+          isTruncated,
+          previous: prev && {
+            autonomyRate: prev.autonomyRate,
+            estimatedHumanTimeSavedTotal: prev.estimatedHumanTimeSavedTotal,
+            humanReviewRate: prev.humanReviewRate,
+            successRate: prev.successRate,
+            totalCost: prev.totalCost,
+            totalRuns: prev.totalRuns,
+          },
+        },
+      };
     }
   );
 
