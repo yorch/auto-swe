@@ -31,8 +31,7 @@ export function Alert({
   return (
     <div
       className={cn(
-        'border px-3 py-2.5 text-sm',
-        'rounded-[9px]',
+        'rounded-md border px-3 py-2.5 text-sm',
         VARIANT_CLASSES[variant],
         className
       )}
@@ -41,13 +40,13 @@ export function Alert({
       {title ? (
         <>
           <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em]">
-            {VARIANT_PREFIX[variant]} {title}
+            <span aria-hidden="true">{VARIANT_PREFIX[variant]}</span> {title}
           </div>
           <div className="text-xs leading-relaxed text-paper-300">{children}</div>
         </>
       ) : (
         <>
-          {VARIANT_PREFIX[variant]} {children}
+          <span aria-hidden="true">{VARIANT_PREFIX[variant]}</span> {children}
         </>
       )}
     </div>

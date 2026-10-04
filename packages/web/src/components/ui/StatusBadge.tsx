@@ -6,13 +6,10 @@ export function StatusBadge({ status, showDot = true }: { status: string; showDo
 
   return (
     <span
-      className={cn('inline-flex items-center gap-1.5 border px-1.5 py-0.5', meta.classes)}
-      style={{
-        borderRadius: '6px',
-        fontFamily: 'var(--font-mono)',
-        fontSize: '11.5px',
-        letterSpacing: '0.06em',
-      }}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 font-mono text-[11.5px] tracking-[0.06em]',
+        meta.classes
+      )}
     >
       {showDot && (
         <span

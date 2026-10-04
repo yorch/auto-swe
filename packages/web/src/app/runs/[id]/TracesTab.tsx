@@ -92,7 +92,7 @@ function CollapsibleSection({
     <div>
       <button
         aria-expanded={open}
-        className="mb-1 flex items-center gap-1 font-mono text-[9px] tracking-[0.08em] text-paper-500 transition-colors hover:text-paper-300"
+        className="mb-1 flex items-center gap-1 font-mono text-[10px] tracking-[0.08em] text-paper-500 transition-colors hover:text-paper-300"
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
@@ -100,7 +100,7 @@ function CollapsibleSection({
         onKeyDown={(e) => e.stopPropagation()}
         type="button"
       >
-        <span className="text-[7px]">{open ? '▼' : '▶'}</span>
+        <span className="text-[10px]">{open ? '▼' : '▶'}</span>
         {label.toUpperCase()}
       </button>
       {open && children}
@@ -152,7 +152,7 @@ function CappedPre({ text }: { text: string }) {
       <TracePre>{expanded ? text : capped(text)}</TracePre>
       {isCapped && (
         <button
-          className="mt-0.5 font-mono text-[9px] text-dust-400 transition-colors hover:text-dust-600"
+          className="mt-0.5 font-mono text-[10px] text-dust-400 transition-colors hover:text-dust-600"
           onClick={() => setExpanded((v) => !v)}
           type="button"
         >
@@ -185,7 +185,7 @@ function TruncatedText({ text }: { text: string }) {
       </TracePre>
       {isTruncated && (
         <button
-          className="mt-0.5 font-mono text-[9px] text-dust-400 transition-colors hover:text-dust-600"
+          className="mt-0.5 font-mono text-[10px] text-dust-400 transition-colors hover:text-dust-600"
           onClick={(e) => {
             e.stopPropagation();
             setExpanded((v) => !v);
@@ -237,13 +237,13 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
             <div className="space-y-1.5">
               {systemPrompt !== null && (
                 <div>
-                  <div className="mb-0.5 font-mono text-[9px] text-paper-600">system</div>
+                  <div className="mb-0.5 font-mono text-[10px] text-paper-600">system</div>
                   <TruncatedText text={systemPrompt} />
                 </div>
               )}
               {userMessage !== null && (
                 <div>
-                  <div className="mb-0.5 font-mono text-[9px] text-paper-600">user</div>
+                  <div className="mb-0.5 font-mono text-[10px] text-paper-600">user</div>
                   <TruncatedText text={userMessage} />
                 </div>
               )}
@@ -278,7 +278,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
         {trace.error && <TraceErrorBanner>{trace.error}</TraceErrorBanner>}
         {inputText && (
           <div>
-            <div className="mb-0.5 font-mono text-[9px] text-paper-600">INPUT</div>
+            <div className="mb-0.5 font-mono text-[10px] text-paper-600">INPUT</div>
             <CappedPre text={inputText} />
           </div>
         )}
@@ -306,7 +306,7 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
       {trace.error && <TraceErrorBanner>{trace.error}</TraceErrorBanner>}
       {toolInputText && (
         <div>
-          <div className="mb-0.5 font-mono text-[9px] text-paper-600">INPUT</div>
+          <div className="mb-0.5 font-mono text-[10px] text-paper-600">INPUT</div>
           <CappedPre text={toolInputText} />
         </div>
       )}
@@ -361,7 +361,7 @@ function OtelLink({ trace }: { trace: AgentTraceRecord }) {
     ? `${GRAFANA_URL}/explore?left=${encodeURIComponent(JSON.stringify({ queries: [{ datasource: { type: 'tempo' }, query: trace.otelTraceId, queryType: 'traceId', refId: 'A' }] }))}`
     : null;
 
-  const inner = 'shrink-0 font-mono text-[9px] tracking-[0.04em] text-paper-600';
+  const inner = 'shrink-0 font-mono text-[10px] tracking-[0.04em] text-paper-600';
 
   return href ? (
     <a
@@ -412,7 +412,7 @@ function EventRow({
             type="button"
           >
             {/* Disclosure caret */}
-            <span className="w-3 shrink-0 text-center font-mono text-[8px] text-paper-600">
+            <span className="w-3 shrink-0 text-center font-mono text-[10px] text-paper-600">
               {isExpanded ? '▼' : '▶'}
             </span>
 
@@ -449,7 +449,7 @@ function EventRow({
               <span className="num text-[10px] text-paper-600">{durationLabel}</span>
             )}
             {hasError && (
-              <Badge className="text-[9px] tracking-[0.1em]" tone="brick" variant="text">
+              <Badge className="text-[10px] tracking-[0.1em]" tone="brick" variant="text">
                 ERR
               </Badge>
             )}
@@ -666,7 +666,7 @@ export function TracesTab({
                       {group.ambiguous && (
                         <span
                           aria-describedby={noteId}
-                          className="rounded-[5px] bg-amber-400/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-400"
+                          className="rounded-[5px] bg-amber-400/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-400"
                         >
                           ambiguous
                         </span>

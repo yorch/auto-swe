@@ -315,6 +315,7 @@ function PatternRow({
       </Td>
       <Td className="py-2 pr-4">
         <ToggleSwitch
+          ariaLabel={`Active: ${pattern.label}`}
           checked={pattern.isActive}
           disabled={update.isPending}
           onChange={toggleActive}

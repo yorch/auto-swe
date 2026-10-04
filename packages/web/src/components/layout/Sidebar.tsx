@@ -225,7 +225,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs text-paper-400">{user?.email ?? 'guest'}</div>
           </div>
-          <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-ember-400">
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ember-400">
             {user?.role ?? '—'}
           </span>
         </div>

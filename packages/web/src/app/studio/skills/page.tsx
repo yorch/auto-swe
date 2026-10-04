@@ -535,6 +535,7 @@ export default function StudioSkillsPage() {
                       <Td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</Td>
                       <Td className="py-2 pr-4">
                         <ToggleSwitch
+                          ariaLabel={`Active: ${skill.name}`}
                           checked={skill.isActive}
                           disabled={togglingId === skill.id}
                           onChange={() => handleToggleActive(skill)}

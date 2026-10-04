@@ -33,7 +33,26 @@ describe('TabBar', () => {
         ]}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'B' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'B' }));
+    expect(onChange).toHaveBeenCalledWith('b');
+  });
+
+  it('marks the active in-page tab selected and moves with the arrow keys', () => {
+    const onChange = vi.fn();
+    render(
+      <TabBar
+        active="a"
+        ariaLabel="Filters"
+        onChange={onChange}
+        tabs={[
+          { id: 'a', label: 'A' },
+          { id: 'b', label: 'B' },
+        ]}
+      />
+    );
+    expect(screen.getByRole('tablist', { name: 'Filters' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'A' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'A' }), { key: 'ArrowRight' });
     expect(onChange).toHaveBeenCalledWith('b');
   });
 });

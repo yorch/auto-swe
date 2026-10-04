@@ -52,7 +52,7 @@ export function FieldWrapper({ id, label, hint, error, required, children }: Fie
       {children}
       {hint && !error && (
         <p
-          className="font-mono text-[10px] uppercase tracking-wider text-paper-500"
+          className="text-xs text-paper-500"
           id={id ? `${id}-hint` : undefined}
         >
           {hint}
@@ -60,7 +60,7 @@ export function FieldWrapper({ id, label, hint, error, required, children }: Fie
       )}
       {error && (
         <p
-          className="font-mono text-[10px] uppercase tracking-wider text-brick-400"
+          className="text-xs text-brick-400"
           id={id ? `${id}-error` : undefined}
         >
           {error}

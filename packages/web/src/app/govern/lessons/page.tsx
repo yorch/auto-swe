@@ -219,7 +219,7 @@ export default function GovernLessonsPage() {
                         {lesson.repository.organizationName}/{lesson.repository.repoName}
                       </span>
                       {lesson.failureType && (
-                        <Badge className="text-[9px]" tone="muted" uppercase>
+                        <Badge className="text-[10px]" tone="muted" uppercase>
                           {lesson.failureType}
                         </Badge>
                       )}

@@ -1122,6 +1122,7 @@ function ChannelRow({
       <Td align="center" className="px-4 py-3">
         <div className="flex justify-center">
           <ToggleSwitch
+            ariaLabel={`Active: ${channel.name ?? channel.slackChannelId}`}
             checked={channel.isActive}
             disabled={update.isPending}
             onChange={handleToggleActive}

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { cn } from '@/lib/utils';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 export interface SegmentedOption<T extends string> {
   value: T;
@@ -31,7 +31,7 @@ export function SegmentedControl<T extends string>({
     <fieldset
       aria-label={ariaLabel}
       className={cn(
-        'm-0 inline-flex min-w-0 items-center gap-0.5 rounded-[9px] border border-ink-400 bg-ink-900/60 p-0.5',
+        'm-0 inline-flex min-w-0 items-center gap-0.5 rounded-md border border-ink-400 bg-ink-900/60 p-0.5',
         className
       )}
     >
@@ -41,7 +41,8 @@ export function SegmentedControl<T extends string>({
           <button
             aria-pressed={selected}
             className={cn(
-              'rounded-[7px] px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors',
+              'rounded-sm px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors',
+              FOCUS_RING,
               selected
                 ? 'bg-ember-400/15 text-ember-400'
                 : 'text-paper-500 hover:bg-ink-600/50 hover:text-paper-200'

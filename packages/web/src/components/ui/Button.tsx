@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { cn } from '@/lib/utils';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 type Size = 'sm' | 'md' | 'lg';
@@ -10,7 +10,8 @@ const VARIANTS: Record<Variant, string> = {
   ghost:
     'border-transparent bg-transparent text-paper-400 hover:text-paper-200 hover:bg-ink-600/50',
   primary:
-    'border-transparent bg-gradient-to-br from-ember-400 to-ember-600 text-white hover:brightness-110',
+    // White text on the gradient needs 4.5:1 at its lightest stop: ember-500 is 4.6:1, ember-400 only 3.9:1.
+    'border-transparent bg-gradient-to-br from-ember-500 to-ember-600 text-white hover:brightness-110',
   secondary:
     'border-ink-400 bg-ink-600 text-paper-300 hover:bg-ink-500 hover:text-paper-100 hover:border-ink-300',
 };
@@ -30,8 +31,9 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: Size;
 };
 
+// Radius is the `rounded-lg` token (10px) in `buttonClassName`, not an inline style, so a
+// caller's className can override it.
 export const BUTTON_STYLE = {
-  borderRadius: '10px',
   fontSize: '13.5px',
   letterSpacing: '0.01em',
 } as const;
@@ -45,7 +47,8 @@ export function buttonClassName(variant: Variant, size: Size, className?: string
   return cn(
     // `whitespace-nowrap`: a label is one action, so it never wraps — in a
     // tight table cell "Run →" otherwise broke its arrow onto a second line.
-    'inline-flex items-center justify-center gap-2 whitespace-nowrap border transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+    'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+    FOCUS_RING,
     VARIANTS[variant],
     SIZES[size],
     className
