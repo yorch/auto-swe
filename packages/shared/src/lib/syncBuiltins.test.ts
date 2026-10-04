@@ -514,6 +514,46 @@ describe('syncBuiltins — skill revisions', () => {
     expect(revs[1]?.promptText).toBe(skill.promptText);
   });
 
+  it('skips, rather than throws, when another replica cut the revision first', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const def = BUILTIN_SKILLS[0] as { name: string; promptText: string };
+    const original = def.promptText;
+    const realUpdate = prisma.skill.update;
+    let raced = false;
+    (prisma.skill as { update: unknown }).update = async (args: never) => {
+      if (!raced) {
+        raced = true;
+        throw Object.assign(new Error('no row matched the revision guard'), { code: 'P2025' });
+      }
+      return realUpdate(args);
+    };
+    try {
+      def.promptText = `${original}\nchanged`;
+      await expect(seedSweStarter(prisma)).resolves.toBeUndefined();
+    } finally {
+      def.promptText = original;
+    }
+    expect(raced).toBe(true);
+    expect(tables.skillRevision.filter((r) => r.revision === 2)).toHaveLength(0);
+  });
+
+  it('still throws a failure that is not a lost revision race', async () => {
+    const { prisma } = makeFake();
+    await seedSweStarter(prisma);
+    const def = BUILTIN_SKILLS[0] as { name: string; promptText: string };
+    const original = def.promptText;
+    (prisma.skill as { update: unknown }).update = async () => {
+      throw Object.assign(new Error('connection lost'), { code: 'P1001' });
+    };
+    try {
+      def.promptText = `${original}\nchanged`;
+      await expect(seedSweStarter(prisma)).rejects.toThrow('connection lost');
+    } finally {
+      def.promptText = original;
+    }
+  });
+
   it('backfills revision 1 for a skill that has none, idempotently', async () => {
     const { prisma, tables } = makeFake();
     tables.skill.push({

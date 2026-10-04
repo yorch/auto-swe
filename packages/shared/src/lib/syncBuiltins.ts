@@ -34,6 +34,7 @@ import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
 import { CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME } from './channelTask.js';
 import {
   initialRevision,
+  isRevisionConflict,
   nextRevision,
   skillContentChanged,
   skillContentHash,
@@ -1116,7 +1117,15 @@ async function syncSkills(prisma: PrismaClient): Promise<Set<string>> {
       const base = { isVerified: true, origin: SWE_ORIGIN };
       if (skillContentChanged(existingSkill, content)) {
         const next = nextRevision(existingSkill, content);
-        await prisma.skill.update({ data: { ...base, ...next.data }, where: next.where });
+        try {
+          await prisma.skill.update({ data: { ...base, ...next.data }, where: next.where });
+        } catch (err) {
+          // Another replica booting alongside this one cut the same revision
+          // from the same shipped text first; its write is the one we wanted.
+          if (!isRevisionConflict(err)) {
+            throw err;
+          }
+        }
       } else {
         await prisma.skill.update({ data: base, where: { id: existingSkill.id } });
       }
