@@ -150,6 +150,7 @@ export class FigmaProvider implements FigmaDesignProvider {
       method: 'GET',
       // Fetched best-effort at submit time; a stalled upstream must not hold
       // the submission open. Same bound as the Linear client.
+      redirect: 'error',
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {

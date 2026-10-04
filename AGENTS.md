@@ -190,6 +190,7 @@ install, and every rule in it is there because that bug already shipped past a g
 | No `createWorkspace(…)` call writes its image argument as a string literal | A literal wins `image ?? infra.image`, so the operator's configured image is silently never read. Both types are `string`; a wrong image is a working image. A named constant is allowed — it forces somewhere to write down why (`EVAL_WORKSPACE_IMAGE`) |
 | Every Dockerfile stage that runs `yarn` provisions one first — and no other stage does | `node:26` ships no Corepack and no `yarn`, so the stage exits 127 at build time. Nothing else runs inside an image, so tests, typecheck, lint and the doc check all stay green while no image can be built |
 | The root layout renders per request (`dynamic = 'force-dynamic'`) while it reads `NEXT_PUBLIC_*` | Otherwise Next prerenders it at `next build`, where the variable is unset, and bakes the `localhost` fallback into every page; the env var on the running container is never read. The page renders and the gateway is healthy — sign-in just fails in the browser. Invisible locally, because the fallback is the dev gateway's address |
+| Every `fetch(…)` under `shared/lib/integrations/**` and `worker/src/connectors/**` writes a `redirect` option | `fetch` follows redirects by default, so a credentialed request to a checked host can be bounced to an unchecked one and still succeed. A call that says nothing type-checks and returns data; only reading the call shows the policy is missing. A tripwire, not a proof: it matches `fetch(` and `globalThis.fetch(` in source text, so an aliased or injected fetch is not seen |
 | MCP code (`lib/mcp/**`, `routes/mcp.ts`) imports only an allowlist of modules (`node:*`, the MCP SDK, Fastify, Zod, and two pure gateway files) and never names `prisma`; `import()`, `require()` and re-exports count as imports | A tool reaches data only through a REST route, called in-process, so the route's role check, visibility filter, tenant guard and audit apply to it. A tool that queried the database itself would type-check and pass its own tests while ignoring a visibility rule the route enforces. Unlike the rules above this one is a standing constraint on a new surface, not a past incident |
 
 Add a rule only when its violation is **silent** under the existing gates and **decidable** by
@@ -296,9 +297,22 @@ Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential`, so
 `CONFIG_ENCRYPTION_KEY` is required to start either service.
 
 **Tracker, knowledge-base, and Figma connectors** are fetched server-side at work-request submit
-time and seed `ContextSnapshot`. They are best-effort: a failure never blocks submission. Each
-carries an `allowPrivateNetwork` flag — an explicit opt-in required before the SSRF guard will
-accept a self-hosted base URL on a private or internal address.
+time and seed `ContextSnapshot`. They are best-effort: a failure never blocks submission. The
+tracker and knowledge-base configs carry an `allowPrivateNetwork` flag — an explicit opt-in
+required before the SSRF guard will accept a self-hosted base URL on a private address. The opt-in
+waives only that refusal (`checkProbeUrl` in `shared/lib/ssrfGuard.ts`): loopback, unspecified,
+IPv4 and IPv6 link-local (`169.254.0.0/16`, `fe80::/10`) and cloud-metadata addresses and names
+(including the bare host `metadata`), malformed URLs and non-http(s) schemes are refused whatever
+the flag says. The admin save endpoints answer `400 BASE_URL_REFUSED` for a stored target that would be
+refused at run time (a write that only removes the opt-in is never blocked; the environment-variable
+fallbacks are not validated at save and are still checked when the connector runs). Figma has no such flag: its API host is a fixed constant and is still
+checked by the guard.
+
+Connector requests never follow a redirect unchecked. Most set `redirect: 'error'`; GitHub Issues
+answers a renamed repository or transferred issue with a same-origin redirect, so it follows
+redirects through `fetchGuarded` (`shared/lib/guardedFetch.ts`): at most 3 hops, the guard re-run
+on every hop, the credential sent only to the configured origin (any other origin gets an allowlist of benign
+headers, and only for GET/HEAD), and the method and body kept on 307/308. `yarn invariants:check` fails a connector `fetch` that states no `redirect` policy.
 
 **Tier-2 resource & tuning defaults** live on the `WorkflowDefaults` singleton with a
 `row?.x ?? default` fallback, so an unconfigured deployment keeps the built-in constants. They are

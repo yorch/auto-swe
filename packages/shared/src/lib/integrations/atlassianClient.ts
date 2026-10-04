@@ -13,7 +13,7 @@ export interface AtlassianClientConfig {
 export class AtlassianError extends Error {
   constructor(
     public readonly status: number,
-    public readonly code: 'auth' | 'not_found' | 'rate_limited' | 'server' | 'network',
+    public readonly code: 'auth' | 'not_found' | 'rate_limited' | 'server' | 'network' | 'redirect',
     message: string
   ) {
     super(message);
@@ -92,10 +92,21 @@ export class AtlassianClient {
               body: body !== undefined ? JSON.stringify(body) : undefined,
               headers,
               method,
+              redirect: 'manual',
               signal: AbortSignal.timeout(this.timeoutMs),
             });
 
             span.setAttribute('http.status_code', res.status);
+
+            // Redirects are never followed (the credential must stay on the
+            // configured host) and retrying cannot change the answer.
+            if (res.status >= 300 && res.status < 400) {
+              throw new AtlassianError(
+                res.status,
+                'redirect',
+                'Atlassian request refused: the server answered with a redirect, which is not followed'
+              );
+            }
 
             if (res.status === 429) {
               const raw = res.headers.get('Retry-After') ?? '5';

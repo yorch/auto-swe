@@ -2,6 +2,7 @@ import type { PrismaClient } from '@auto-swe/shared';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
+import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
   resolveFigmaConfig,
   resolveGitHubConfig,
@@ -726,6 +727,58 @@ export async function getKnowledgeBaseConfig(prisma: PrismaClient) {
   };
 }
 
+/**
+ * Why a connector base URL would be refused at runtime, or null when it would
+ * be accepted. It is the check the connector itself runs
+ * (`checkProbeUrl` with the connector's opt-in), applied at save time so a
+ * refused target is reported to the admin instead of silently disabling the
+ * connector later. Only a write that touches the provider or the URL, or
+ * turns the opt-in on, is checked: an unrelated edit, or one that only removes
+ * the opt-in, is never blocked by a stored value. Only the stored (database)
+ * config is validated here; the environment-variable fallbacks are still
+ * checked by the connector at run time.
+ */
+function baseUrlRefusal(
+  touched: boolean,
+  usesBaseUrl: boolean,
+  baseUrl: string | null | undefined,
+  allowPrivate: boolean
+): string | null {
+  if (!touched || !usesBaseUrl || !baseUrl) {
+    return null;
+  }
+  const safety = checkProbeUrl(baseUrl, { allowPrivate });
+  return safety.ok ? null : safety.reason;
+}
+
+export async function issueTrackerBaseUrlRefusal(
+  prisma: PrismaClient,
+  body: IssueTrackerConfigInput
+): Promise<string | null> {
+  const existing = await prisma.issueTrackerConfig.findUnique({ where: { id: 'default' } });
+  const provider = body.provider !== undefined ? body.provider : existing?.provider;
+  return baseUrlRefusal(
+    body.provider !== undefined || body.baseUrl !== undefined || body.allowPrivateNetwork === true,
+    provider === 'jira' || provider === 'github',
+    body.baseUrl !== undefined ? body.baseUrl : existing?.baseUrl,
+    body.allowPrivateNetwork ?? existing?.allowPrivateNetwork ?? false
+  );
+}
+
+export async function knowledgeBaseBaseUrlRefusal(
+  prisma: PrismaClient,
+  body: KnowledgeBaseConfigInput
+): Promise<string | null> {
+  const existing = await prisma.knowledgeBaseConfig.findUnique({ where: { id: 'default' } });
+  const provider = body.provider !== undefined ? body.provider : existing?.provider;
+  return baseUrlRefusal(
+    body.provider !== undefined || body.baseUrl !== undefined || body.allowPrivateNetwork === true,
+    provider === 'confluence',
+    body.baseUrl !== undefined ? body.baseUrl : existing?.baseUrl,
+    body.allowPrivateNetwork ?? existing?.allowPrivateNetwork ?? false
+  );
+}
+
 export async function updateKnowledgeBaseConfig(
   prisma: PrismaClient,
   body: KnowledgeBaseConfigInput
@@ -799,9 +852,22 @@ export async function testKnowledgeBaseConnection(): Promise<{ detail: string; o
     };
   }
   try {
-    const kbProvider = createKnowledgeBaseProvider(config);
+    const refusals: string[] = [];
+    const kbProvider = createKnowledgeBaseProvider(config, {
+      log: {
+        warn: (obj) => {
+          const reason = (obj as { reason?: unknown } | null)?.reason;
+          refusals.push(typeof reason === 'string' ? reason : 'refused by the SSRF guard');
+        },
+      },
+    });
     if (!kbProvider) {
-      return { detail: `Provider ${config.provider} not supported.`, ok: false };
+      return {
+        detail: refusals.length
+          ? `Base URL refused: ${refusals.at(-1)}.`
+          : `Provider ${config.provider} not supported.`,
+        ok: false,
+      };
     }
     await kbProvider.searchPages('', config.spaces?.slice(0, 1) ?? []);
     return { detail: `${config.provider} connection successful.`, ok: true };
@@ -895,6 +961,8 @@ export async function testFigmaConnection(): Promise<{ detail: string; ok: boole
     const res = await fetch('https://api.figma.com/v1/me', {
       headers: { 'X-Figma-Token': config.apiToken },
       method: 'GET',
+      redirect: 'error',
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       return { detail: `Figma API returned ${res.status}.`, ok: false };

@@ -206,6 +206,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoDependency.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/guardedFetch',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedFetch.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/ssrfGuard',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ssrfGuard.ts'),
       },

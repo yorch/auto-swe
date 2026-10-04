@@ -25,6 +25,7 @@ import {
 import { hostKey, installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
 import { PlatformCredentialHostError } from '@auto-swe/shared/lib/githubInstallation';
 import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
+import { fetchGuarded } from '@auto-swe/shared/lib/guardedFetch';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -454,13 +455,23 @@ export class GitHubScmProvider implements ScmProvider {
         // No token configured at all: proceed unauthenticated for public repos.
       }
     }
-    const response = await fetch(target.url, {
-      headers: {
-        Accept: 'application/vnd.github.v3+json',
-        ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
+    // Log downloads redirect (to blob storage), so redirects are followed by
+    // hand: every hop passes the SSRF guard and the token goes only to the
+    // origin it was resolved for.
+    const response = await fetchGuarded(
+      target.url.toString(),
+      {
+        headers: {
+          Accept: 'application/vnd.github.v3+json',
+          ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
+        },
+        signal: AbortSignal.timeout(CI_LOG_FETCH_TIMEOUT_MS),
       },
-      signal: AbortSignal.timeout(CI_LOG_FETCH_TIMEOUT_MS),
-    });
+      {
+        check: (hop) => isSafeProbeUrl(hop.toString()).ok,
+        credentialOrigin: target.url.origin,
+      }
+    );
 
     if (!response.ok) {
       return `Failed to fetch CI logs (HTTP ${response.status}): ${await response.text().catch(() => 'no body')}`;

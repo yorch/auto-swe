@@ -170,6 +170,26 @@ describe('jira baseUrl SSRF guard', () => {
     }
   });
 
+  it.each([
+    'http://127.0.0.1:8080',
+    'http://localhost:8080',
+    'http://169.254.169.254',
+    'http://metadata.google.internal',
+    'ftp://jira.corp.internal',
+  ])('refuses %s even for the opted-in origin', async (baseUrl) => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+    adminTracker.allowPrivateNetwork = true;
+    adminTracker.baseUrl = baseUrl;
+    try {
+      await expect(fetchIssue(jira(baseUrl), 'PROJ-1')).rejects.toThrow(/SSRF guard/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      adminTracker.allowPrivateNetwork = false;
+      adminTracker.baseUrl = null;
+    }
+  });
+
   it('does not follow redirects with the credential', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({ fields: { summary: 's' }, id: '1', key: 'PROJ-1' }),

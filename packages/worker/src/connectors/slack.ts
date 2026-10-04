@@ -20,6 +20,7 @@ async function slackFetch<T>(
       'Content-Type': 'application/json',
       ...(init.headers ?? {}),
     },
+    redirect: 'error',
     signal: init.signal ? AbortSignal.any([timeoutSignal, init.signal]) : timeoutSignal,
   });
 

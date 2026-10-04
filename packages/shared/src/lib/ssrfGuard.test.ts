@@ -211,6 +211,12 @@ describe('isSafeProbeUrl', () => {
   });
 });
 
+describe('bare metadata host', () => {
+  it('is refused without the opt-in', () => {
+    expect(isSafeProbeUrl('http://metadata/').ok).toBe(false);
+  });
+});
+
 describe('checkProbeUrl (per-host private-network opt-in)', () => {
   it('behaves as isSafeProbeUrl without the opt-in', () => {
     expect(checkProbeUrl('https://10.0.0.5/api').ok).toBe(false);
@@ -238,6 +244,10 @@ describe('checkProbeUrl (per-host private-network opt-in)', () => {
     'https://localhost/',
     'https://0.0.0.0/',
     'https://2130706433/',
+    'https://[fe80::1]/',
+    'https://[febf::1]/',
+    'https://metadata/',
+    'https://metadata./',
   ])('never waives %s', (u) => {
     expect(checkProbeUrl(u, { allowPrivate: true }).ok).toBe(false);
   });
