@@ -1130,3 +1130,23 @@ describe('POST /:id/install', () => {
     expect(fetchSkillSource).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /:id/diff — added skills', () => {
+  it('reports name conflicts and scan blocking for each added skill, as an install would decide them', async () => {
+    fetchSkillSource.mockResolvedValue(
+      fetched([upstream('alpha'), upstream('beta'), upstream('gamma'), upstream('delta')])
+    );
+    scanSkillContent.mockImplementation(async (text: string) => ({
+      incomplete: false,
+      safe: !text.includes('delta'),
+      warnings: text.includes('delta') ? ['injection:x'] : [],
+    }));
+    const f = await buildApp();
+    f.state.skills.push(installedSkill('gamma', { sourceId: null, sourcePath: null }));
+    const { data } = (await f.call('GET', '/diff')).json();
+    const byName = Object.fromEntries(data.added.map((a: { name: string }) => [a.name, a]));
+    expect(byName.gamma.conflicts).toMatchObject([{ name: 'gamma', scope: 'GLOBAL' }]);
+    expect(byName.gamma.blockedByScan).toBe(false);
+    expect(byName.delta).toMatchObject({ blockedByScan: true, conflicts: [] });
+  });
+});

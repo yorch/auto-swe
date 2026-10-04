@@ -65,3 +65,7 @@ export function describeApiError(err: unknown, fallback: string) {
     status: 0,
   };
 }
+
+/** Strings with a key that stays unique when two of them are identical. */
+export const keyed = (xs: readonly string[]) =>
+  xs.map((text, i) => ({ key: `${i}:${text}`, text }));

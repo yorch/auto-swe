@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -9,18 +9,16 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import {
   type AcceptResult,
-  type DiffAddedSkill,
   type DiffChangedSkill,
   type IncomingSkill,
   type SourceDiff,
   useAcceptUpdate,
-  useInstallIntoSource,
   useReadIncomingSkill,
   useSourceDiff,
 } from '@/hooks/useSkillSources';
 import { errMsg } from '@/lib/errors';
 import { visibleOrNull, visibleText } from '@/lib/visibleText';
-import { describeApiError, shortSha } from './sourceDisplay';
+import { describeApiError, keyed, shortSha } from './sourceDisplay';
 import { UnifiedDiff } from './UnifiedDiff';
 
 /** Refusals that all mean "what you reviewed is no longer what is there". */
@@ -62,6 +60,19 @@ function FileChanges({ files }: { files: DiffChangedSkill['referenceFiles'] }) {
     </>
   );
 }
+
+/** The complete text (up to 50 000 characters), made visible once, not on every click. */
+const FullText = memo(function FullText({ label, text }: { label: string; text: string }) {
+  const shown = useMemo(() => visibleText(text, { multiline: true }), [text]);
+  return (
+    <section
+      aria-label={label}
+      className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-[9px] border border-ink-600 bg-ink-900 p-3 font-mono text-xs text-paper-200"
+    >
+      {shown}
+    </section>
+  );
+});
 
 function ChangedSkill({
   confirms,
@@ -127,9 +138,9 @@ function ChangedSkill({
         </div>
       )}
       <FileChanges files={c.referenceFiles} />
-      {c.scanWarnings.map((w) => (
-        <div className="text-xs text-amber-400" key={w}>
-          scan: {visibleText(w)}
+      {keyed(c.scanWarnings).map((w) => (
+        <div className="text-xs text-amber-400" key={w.key}>
+          scan: {visibleText(w.text)}
         </div>
       ))}
       {c.diffIncomplete && (
@@ -137,14 +148,7 @@ function ChangedSkill({
           <Button disabled={reading} onClick={onReadFull} size="sm">
             {reading ? 'Reading…' : 'Read full incoming text'}
           </Button>
-          {full && (
-            <section
-              aria-label={`Full incoming text of ${name}`}
-              className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-[9px] border border-ink-600 bg-ink-900 p-3 font-mono text-xs text-paper-200"
-            >
-              {visibleText(full.promptText, { multiline: true })}
-            </section>
-          )}
+          {full && <FullText label={`Full incoming text of ${name}`} text={full.promptText} />}
           <Checkbox
             checked={!!confirms.read}
             disabled={!full}
@@ -164,53 +168,10 @@ function ChangedSkill({
   );
 }
 
-function AddedSkill({
-  error,
-  installing,
-  onInstall,
-  skill: a,
-}: {
-  error: string | undefined;
-  installing: boolean;
-  onInstall: () => void;
-  skill: DiffAddedSkill;
-}) {
-  const label = visibleText(a.name ?? a.folder);
-  return (
-    <li className="space-y-1 rounded-[9px] border border-ink-600 p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-paper-100">{label}</span>
-        <span className="font-mono text-[11px] text-paper-500">{visibleText(a.folder)}</span>
-        <Button
-          aria-label={`Install ${label}`}
-          disabled={installing || a.name === null || a.errors.length > 0}
-          onClick={onInstall}
-          size="sm"
-        >
-          {installing ? 'Installing…' : 'Install'}
-        </Button>
-      </div>
-      {a.description && <div className="text-xs text-paper-400">{visibleText(a.description)}</div>}
-      {a.errors.map((e) => (
-        <div className="text-xs text-brick-400" key={e}>
-          error: {visibleText(e)}
-        </div>
-      ))}
-      {a.scanWarnings.map((w) => (
-        <div className="text-xs text-amber-400" key={w}>
-          scan: {visibleText(w)}
-        </div>
-      ))}
-      {error && <div className="text-xs text-brick-400">{error}</div>}
-    </li>
-  );
-}
-
 function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: string }) {
   const diffQuery = useSourceDiff(sourceId);
   const accept = useAcceptUpdate();
   const readFull = useReadIncomingSkill();
-  const install = useInstallIntoSource();
   // Only what the admin changed is stored; everything else derives from the diff.
   const [picks, setPicks] = useState<Record<string, boolean>>({});
   const [confirms, setConfirms] = useState<Record<string, Confirms>>({});
@@ -218,18 +179,18 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
   const [reading, setReading] = useState<string | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [result, setResult] = useState<AcceptResult | null>(null);
-  const [installing, setInstalling] = useState<string | null>(null);
-  const [installedFolders, setInstalledFolders] = useState<string[]>([]);
-  const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
 
   const diff: SourceDiff | undefined = diffQuery.data;
 
+  // Everything the admin chose is about exactly this commit, this skill and this installed
+  // revision. Keyed by all three, a confirmation can never be carried over to different data.
+  const idOf = (c: DiffChangedSkill) => `${diff?.sha}:${c.skillId}:${c.installedRevision}`;
   const confirmedOf = (c: DiffChangedSkill) =>
-    (!c.diffIncomplete || !!confirms[c.name]?.read) &&
-    (!c.handEdited || !!confirms[c.name]?.overwrite);
+    (!c.diffIncomplete || !!confirms[idOf(c)]?.read) &&
+    (!c.handEdited || !!confirms[idOf(c)]?.overwrite);
   // Hand-edited and incomplete skills start unselected and need their confirmations.
   const pickedOf = (c: DiffChangedSkill) =>
-    !c.blockedByScan && confirmedOf(c) && (picks[c.name] ?? (!c.handEdited && !c.diffIncomplete));
+    !c.blockedByScan && confirmedOf(c) && (picks[idOf(c)] ?? (!c.handEdited && !c.diffIncomplete));
 
   function reload() {
     setPicks({});
@@ -247,7 +208,16 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
     setReading(c.name);
     try {
       const r = await readFull.mutateAsync({ id: sourceId, name: c.name, sha: diff.sha });
-      setFulls((cur) => ({ ...cur, [c.name]: r }));
+      // A text read at another commit is not the text of this diff.
+      if (r.sha === diff.sha) {
+        setFulls((cur) => ({ ...cur, [idOf(c)]: r }));
+      } else {
+        setFailure({
+          lines: [],
+          message: 'The source moved while the text was being read. Reload the diff.',
+          reopen: true,
+        });
+      }
     } catch (err) {
       setFailure({
         lines: [],
@@ -280,27 +250,6 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
       } else {
         setFailure({ lines: d.lines, message: d.message, reopen: false });
       }
-    }
-  }
-
-  async function doInstall(a: DiffAddedSkill) {
-    if (!diff || a.name === null) {
-      return;
-    }
-    setInstalling(a.folder);
-    setInstallErrors((cur) => ({ ...cur, [a.folder]: '' }));
-    try {
-      await install.mutateAsync({ id: sourceId, sha: diff.source.pinnedSha, skills: [a.name] });
-      setInstalledFolders((cur) => [...cur, a.folder]);
-    } catch (err) {
-      const d = describeApiError(err, 'Failed to install the skill');
-      const message =
-        d.code === 'SKILL_IMPORT_UNKNOWN_SKILLS'
-          ? 'This skill is not in the commit the source is pinned to yet. Accept the update first (the pin advances once every changed skill is updated), then install it.'
-          : [d.message, ...d.lines].join(' ');
-      setInstallErrors((cur) => ({ ...cur, [a.folder]: message }));
-    } finally {
-      setInstalling(null);
     }
   }
 
@@ -350,7 +299,6 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
     );
   }
 
-  const added = diff.added.filter((a) => !installedFolders.includes(a.folder));
   const selectedCount = diff.changed.filter(pickedOf).length;
 
   return (
@@ -365,13 +313,13 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
       {diff.changed.length === 0 && <Alert variant="info">No installed skill changed.</Alert>}
       {diff.changed.map((c) => (
         <ChangedSkill
-          confirms={confirms[c.name] ?? {}}
-          full={fulls[c.name]}
+          confirms={confirms[idOf(c)] ?? {}}
+          full={fulls[idOf(c)]}
           key={c.skillId}
           onConfirm={(key, value) =>
-            setConfirms((cur) => ({ ...cur, [c.name]: { ...cur[c.name], [key]: value } }))
+            setConfirms((cur) => ({ ...cur, [idOf(c)]: { ...cur[idOf(c)], [key]: value } }))
           }
-          onPick={(value) => setPicks((cur) => ({ ...cur, [c.name]: value }))}
+          onPick={(value) => setPicks((cur) => ({ ...cur, [idOf(c)]: value }))}
           onReadFull={() => doReadFull(c)}
           picked={pickedOf(c)}
           reading={reading === c.name}
@@ -398,20 +346,12 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
         </div>
       )}
 
-      {added.length > 0 && (
-        <div className="space-y-2">
-          <div className="label-mono">In the source, not installed</div>
-          <ul className="space-y-2">
-            {added.map((a) => (
-              <AddedSkill
-                error={installErrors[a.folder] || undefined}
-                installing={installing === a.folder}
-                key={a.folder}
-                onInstall={() => doInstall(a)}
-                skill={a}
-              />
-            ))}
-          </ul>
+      {diff.added.length > 0 && (
+        <div className="text-xs text-paper-400">
+          In the source at {shortSha(diff.sha)}, not installed:{' '}
+          {diff.added.map((a) => visibleText(a.name ?? a.folder)).join(', ')}. An accept never
+          installs them; use <em>Install more skills</em> on the source (it installs what the pinned
+          commit holds).
         </div>
       )}
 
@@ -420,8 +360,8 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
           {failure.message}
           {failure.lines.length > 0 && (
             <ul className="mt-1 list-disc pl-5">
-              {failure.lines.map((l) => (
-                <li key={l}>{l}</li>
+              {keyed(failure.lines).map((l) => (
+                <li key={l.key}>{l.text}</li>
               ))}
             </ul>
           )}

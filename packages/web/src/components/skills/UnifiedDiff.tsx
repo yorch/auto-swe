@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
 
@@ -24,9 +25,18 @@ const KIND_CLASS: Record<Kind, string> = {
  * (never HTML) and has its invisible and direction-changing characters shown,
  * so a reordered or hidden line cannot read differently from what is stored.
  */
-export function UnifiedDiff({ text }: { text: string }) {
-  // A diff's lines repeat and never reorder, so their position is their identity.
-  const lines = text.split('\n').map((line, id) => ({ id, kind: kindOf(line), line }));
+export const UnifiedDiff = memo(function UnifiedDiff({ text }: { text: string }) {
+  // A diff's lines repeat and never reorder, so their position is their identity. Up to
+  // 60 000 characters per skill: processed once per text, not on every checkbox click.
+  const lines = useMemo(
+    () =>
+      text.split('\n').map((line, id) => ({
+        id,
+        kind: kindOf(line),
+        line: visibleText(line, { multiline: true }),
+      })),
+    [text]
+  );
   return (
     <section
       aria-label="Text diff"
@@ -38,9 +48,9 @@ export function UnifiedDiff({ text }: { text: string }) {
           data-kind={kind}
           key={id}
         >
-          {visibleText(line, { multiline: true }) || ' '}
+          {line || ' '}
         </div>
       ))}
     </section>
   );
-}
+});

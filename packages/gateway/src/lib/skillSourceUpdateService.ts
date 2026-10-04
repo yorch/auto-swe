@@ -8,12 +8,19 @@ import {
 } from '@auto-swe/shared/lib/skillRevision';
 import {
   fetchSkillSource,
+  normaliseSkillName,
   type SkillSourceDeps,
   type SourceSkill,
   safeDisplayPath,
 } from '@auto-swe/shared/lib/skillSource';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { lockSkillSource, type SkillSourceRow, scanAll } from './skillSourceService.js';
+import {
+  findConflicts,
+  lockSkillSource,
+  type SkillSourceRow,
+  type SourceScope,
+  scanAll,
+} from './skillSourceService.js';
 import { type TextDiff, unifiedDiff } from './textDiff.js';
 
 /**
@@ -245,10 +252,21 @@ export async function diffSkillSource(
   ]);
   const scanOf = (s: SourceSkill) => scans.get(s) ?? [];
   const diffs = computeDiffs(plan.changed);
+  // What an install of each added skill would collide with, decided as the install decides it.
+  const conflicts = await findConflicts(
+    prisma,
+    plan.added.flatMap((s) => (s.name === null ? [] : [s.name])),
+    {
+      orgId: source.orgId,
+      scope: source.scope as SourceScope['scope'],
+      teamId: source.teamId,
+    }
+  );
 
   return {
     added: plan.added.map((s) => ({
       blockedByScan: block && scanOf(s).length > 0,
+      conflicts: s.name === null ? [] : (conflicts.get(normaliseSkillName(s.name)) ?? []),
       description: s.description,
       errors: s.errors,
       folder: safeDisplayPath(s.folder),

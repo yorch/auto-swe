@@ -94,6 +94,9 @@ export interface DiffChangedSkill {
 
 export interface DiffAddedSkill {
   folder: string;
+  /** Skills an install of this one would collide with by name. */
+  conflicts: Array<{ id: string; name: string; scope: string }>;
+  blockedByScan: boolean;
   name: string | null;
   description: string | null;
   textLength: number;
@@ -217,16 +220,32 @@ export function useDeleteSource() {
   });
 }
 
-/** The per-skill diff against the source's latest commit. Reads the host; writes nothing. */
-export function useSourceDiff(id: string | null) {
+/**
+ * The per-skill diff against the source's latest commit, or against `sha`. Reads the
+ * host; writes nothing.
+ *
+ * A review is a point-in-time read: everything the admin ticks (confirmations, picks,
+ * the full text read) is about exactly this data, so it is frozen. It is read fresh when
+ * the review opens and never again on its own: no refetch on focus, reconnect or after a
+ * mutation (the key has its own root, outside the `skill-sources` invalidations). Only an
+ * explicit `refetch()` re-reads it, and the caller then discards everything chosen.
+ */
+export function useSourceDiff(id: string | null, sha?: string) {
   return useQuery({
     enabled: id !== null,
-    // A review is a point-in-time read of a remote repository: never serve one from cache.
     gcTime: 0,
-    queryFn: () => api.get<{ data: SourceDiff }>(`${BASE}/${id}/diff`).then((r) => r.data),
-    queryKey: ['skill-sources', 'diff', id],
+    queryFn: () =>
+      api
+        .get<{ data: SourceDiff }>(
+          `${BASE}/${id}/diff${sha ? `?${new URLSearchParams({ sha })}` : ''}`
+        )
+        .then((r) => r.data),
+    queryKey: ['skill-source-diff', id, sha ?? 'latest'],
+    refetchOnMount: 'always',
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
     retry: false,
-    staleTime: 0,
+    staleTime: Number.POSITIVE_INFINITY,
   });
 }
 

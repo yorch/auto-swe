@@ -87,7 +87,7 @@ async function conflictWhere(
 }
 
 /** Existing skills a new one named `name` would collide with (see {@link conflictWhere}). */
-async function findConflicts(
+export async function findConflicts(
   db: Pick<PrismaClient, 'skill' | 'team'>,
   names: string[],
   target: SourceScope

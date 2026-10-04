@@ -19,7 +19,7 @@ import {
 } from '@/hooks/useSkillSources';
 import { useTeams } from '@/hooks/useTeams';
 import { visibleText } from '@/lib/visibleText';
-import { describeApiError, shortSha, sourceLabel } from './sourceDisplay';
+import { describeApiError, keyed, shortSha, sourceLabel } from './sourceDisplay';
 
 interface FormState {
   host: string;
@@ -60,9 +60,9 @@ export function unselectableReason(s: PreviewSkill): string | null {
 function Notes({ skill }: { skill: PreviewSkill }) {
   return (
     <ul className="space-y-0.5 text-xs">
-      {skill.errors.map((e) => (
-        <li className="text-brick-400" key={`e-${e}`}>
-          error: {visibleText(e)}
+      {keyed(skill.errors).map((e) => (
+        <li className="text-brick-400" key={`e-${e.key}`}>
+          error: {visibleText(e.text)}
         </li>
       ))}
       {skill.conflicts.map((c) => (
@@ -70,9 +70,9 @@ function Notes({ skill }: { skill: PreviewSkill }) {
           name already used by a {visibleText(c.scope)} skill
         </li>
       ))}
-      {skill.scanWarnings.map((w) => (
-        <li className="text-amber-400" key={`w-${w}`}>
-          scan: {visibleText(w)}
+      {keyed(skill.scanWarnings).map((w) => (
+        <li className="text-amber-400" key={`w-${w.key}`}>
+          scan: {visibleText(w.text)}
         </li>
       ))}
       {skill.skippedFiles.length > 0 && (
@@ -192,8 +192,8 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
       {error.message}
       {error.lines.length > 0 && (
         <ul className="mt-1 list-disc pl-5">
-          {error.lines.map((l) => (
-            <li key={l}>{l}</li>
+          {keyed(error.lines).map((l) => (
+            <li key={l.key}>{l.text}</li>
           ))}
         </ul>
       )}

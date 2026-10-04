@@ -21,6 +21,7 @@ import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
 import { AddSourceModal } from './AddSourceModal';
+import { InstallSkillsModal } from './InstallSkillsModal';
 import { ReviewUpdateModal } from './ReviewUpdateModal';
 import { shortSha, sourceLabel } from './sourceDisplay';
 
@@ -45,6 +46,7 @@ export function SkillSourcesTab() {
   const remove = useDeleteSource();
   const [addOpen, setAddOpen] = useState(false);
   const [reviewId, setReviewId] = useState<string | null>(null);
+  const [installFor, setInstallFor] = useState<SkillSource | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SkillSource | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: 'error' | 'info'; text: string } | null>(null);
@@ -152,6 +154,11 @@ export function SkillSourcesTab() {
                             Review update
                           </Button>
                         )}
+                        {(s.status === 'OK' || s.status === 'UPDATE_AVAILABLE') && (
+                          <Button onClick={() => setInstallFor(s)} size="sm" variant="ghost">
+                            Install more skills
+                          </Button>
+                        )}
                         <Button
                           disabled={busyId === s.id}
                           onClick={() =>
@@ -207,6 +214,7 @@ export function SkillSourcesTab() {
 
       <AddSourceModal onClose={() => setAddOpen(false)} open={addOpen} />
       <ReviewUpdateModal onClose={() => setReviewId(null)} sourceId={reviewId} />
+      <InstallSkillsModal onClose={() => setInstallFor(null)} source={installFor} />
       <ConfirmModal
         confirmLabel="Delete source"
         dangerous

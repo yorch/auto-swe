@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DiffAddedSkill, DiffChangedSkill, SourceDiff } from '@/hooks/useSkillSources';
 import { ApiError } from '@/lib/api';
@@ -8,16 +8,14 @@ import { ApiError } from '@/lib/api';
 const PINNED = 'a'.repeat(40);
 const LATEST = 'b'.repeat(40);
 
-const { accept, install, readFull, refetch, state } = vi.hoisted(() => ({
+const { accept, readFull, refetch, state } = vi.hoisted(() => ({
   accept: vi.fn(),
-  install: vi.fn(),
   readFull: vi.fn(),
   refetch: vi.fn(),
   state: { diff: undefined as unknown, error: null as unknown, loading: false },
 }));
 vi.mock('@/hooks/useSkillSources', () => ({
   useAcceptUpdate: () => ({ isPending: false, mutateAsync: accept }),
-  useInstallIntoSource: () => ({ isPending: false, mutateAsync: install }),
   useReadIncomingSkill: () => ({ isPending: false, mutateAsync: readFull }),
   useSourceDiff: () => ({
     data: state.diff,
@@ -61,6 +59,8 @@ const changed = (name: string, over: Partial<DiffChangedSkill> = {}): DiffChange
 });
 
 const added = (name: string, over: Partial<DiffAddedSkill> = {}): DiffAddedSkill => ({
+  blockedByScan: false,
+  conflicts: [],
   description: `${name} d`,
   errors: [],
   folder: `skills/${name}`,
@@ -103,7 +103,6 @@ beforeEach(() => {
   state.error = null;
   state.loading = false;
   accept.mockResolvedValue(accepted());
-  install.mockResolvedValue({ skills: [] });
 });
 
 describe('diff rendering', () => {
@@ -349,33 +348,10 @@ describe('accepting', () => {
 });
 
 describe('skills in the source that are not installed', () => {
-  it('installs one at the pinned sha, and it leaves the list', async () => {
-    state.diff = diff({ added: [added('fresh'), added('broken', { errors: ['bad'] })] });
-    show();
-    const broken = screen.getByLabelText('Install broken') as HTMLButtonElement;
-    expect(broken.disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText('Install fresh'));
-    await waitFor(() =>
-      expect(install).toHaveBeenCalledWith({ id: 'src-1', sha: PINNED, skills: ['fresh'] })
-    );
-    await waitFor(() => expect(screen.queryByLabelText('Install fresh')).toBeNull());
-  });
-
-  it('explains an unknown skill (first added after the pin) and shows other refusals', async () => {
-    install.mockRejectedValueOnce(
-      new ApiError('unknown', 400, 'SKILL_IMPORT_UNKNOWN_SKILLS', ['fresh'])
-    );
-    install.mockRejectedValueOnce(
-      new ApiError('Some chosen skills drew scanner warnings', 422, 'SKILL_IMPORT_SCAN_WARNINGS', [
-        { name: 'fresh', warnings: ['exfil:curl'] },
-      ])
-    );
+  it('only lists them, naming the commit, and offers no install (that reads the pinned commit elsewhere)', () => {
     state.diff = diff({ added: [added('fresh')] });
     show();
-    fireEvent.click(screen.getByLabelText('Install fresh'));
-    expect(await screen.findByText(/not in the commit the source is pinned to yet/)).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('Install fresh'));
-    const item = (await screen.findByText(/exfil:curl/)).closest('li') as HTMLElement;
-    expect(within(item).getByText(/drew scanner warnings/)).toBeTruthy();
+    expect(screen.getByText(/In the source at bbbbbbb, not installed: fresh/)).toBeTruthy();
+    expect(screen.queryByLabelText('Install fresh')).toBeNull();
   });
 });
