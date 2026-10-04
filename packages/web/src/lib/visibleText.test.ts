@@ -55,6 +55,33 @@ describe('visibleText hidden-character classes', () => {
   });
 });
 
+describe('visibleText variation selectors and joiners, tightened', () => {
+  it.each([
+    ['a keycap', '1\ufe0f\u20e3'],
+    ['a keycap on # and *', '#\ufe0f\u20e3 *\ufe0f\u20e3'],
+    ['a skin-toned ZWJ sequence', '\u{1f469}\u{1f3fd}\u200d\u{1f4bb}'],
+    ['an emoji-presentation character with a selector', '\u{1f600}\ufe0f'],
+  ])('leaves %s unmarked', (_n, text) => {
+    expect(visibleText(text)).toBe(text);
+  });
+
+  it('marks selectors threaded through digits, which is how a year can hide text', () => {
+    expect(visibleText('2\ufe0f0\ufe0e2\ufe0f6\ufe0e')).toBe(
+      '2⟨U+FE0F⟩0⟨U+FE0E⟩2⟨U+FE0F⟩6⟨U+FE0E⟩'
+    );
+  });
+
+  it.each([
+    ['copyright', '\u00a9\ufe0f', '\u00a9⟨U+FE0F⟩'],
+    ['registered', '\u00ae\ufe0f', '\u00ae⟨U+FE0F⟩'],
+    ['trade mark', '\u2122\ufe0f', '\u2122⟨U+FE0F⟩'],
+    ['a digit alone', '5\ufe0f', '5⟨U+FE0F⟩'],
+    ['a text selector on a digit before a keycap mark', '5\ufe0e\u20e3', '5⟨U+FE0E⟩\u20e3'],
+  ])('marks the selector after %s', (_n, text, shown) => {
+    expect(visibleText(text)).toBe(shown);
+  });
+});
+
 describe('visibleText emoji sequences', () => {
   const ZWJ = '\u200d';
   const VS16 = '\ufe0f';

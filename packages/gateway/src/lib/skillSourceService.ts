@@ -166,11 +166,12 @@ export async function previewSkillSource(
 export async function readPreviewSkill(
   input: SourceLocation & { scriptMode: ScriptMode },
   name: string,
+  expectSha?: string,
   deps?: SkillSourceDeps
 ) {
   const fetched = await fetchSkillSource(
     normaliseLocation(input),
-    { scriptMode: input.scriptMode },
+    { expectSha, scriptMode: input.scriptMode },
     deps
   );
   const skill = fetched.skills.find((s) => s.name === name);

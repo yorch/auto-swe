@@ -264,6 +264,7 @@ describe('AddSourceModal', () => {
       repo: 'pack',
       scope: 'GLOBAL',
       scriptMode: 'TEXT_ONLY',
+      sha: SHA,
       skill: 'good',
     });
     const panel = screen.getByLabelText('Full text of good');

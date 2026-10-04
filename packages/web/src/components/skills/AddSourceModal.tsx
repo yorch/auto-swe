@@ -162,7 +162,7 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
     setReading(skill.folder);
     setReadErrors((cur) => ({ ...cur, [skill.folder]: '' }));
     try {
-      const r = await readPreview.mutateAsync({ ...body(), skill: skill.name });
+      const r = await readPreview.mutateAsync({ ...body(), sha: previewed.sha, skill: skill.name });
       if (r.sha === previewed.sha) {
         setFulls((cur) => ({ ...cur, [`${previewed.sha}:${skill.folder}`]: r }));
       } else {
@@ -185,7 +185,17 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
     }
     setError(null);
     try {
-      await create.mutateAsync({ ...body(), sha: previewed.sha, skills: [...selected] });
+      // Only skills whose full text was read at this commit are sent, whatever the selection holds.
+      const skills = previewed.skills.flatMap((s) =>
+        s.name !== null && selected.has(s.name) && fulls[`${previewed.sha}:${s.folder}`]
+          ? [s.name]
+          : []
+      );
+      if (skills.length === 0) {
+        setError({ lines: [], message: 'Read the full text of a skill before installing it.' });
+        return;
+      }
+      await create.mutateAsync({ ...body(), sha: previewed.sha, skills });
       close();
     } catch (err) {
       const d = describeApiError(err, 'Failed to import the skills');

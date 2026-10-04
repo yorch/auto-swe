@@ -565,7 +565,7 @@ Everything shown to the admin that came from the repository (folder and file nam
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/skill-sources/preview` | Read a source and report each skill; writes nothing. With `skill: <name>`, returns that one skill's complete incoming text at the resolved commit instead |
+| `POST` | `/skill-sources/preview` | Read a source and report each skill; writes nothing. With `skill: <name>` (and the previewed `sha`, refused with 409 SHA_MOVED if the ref moved), returns that one skill's complete incoming text instead |
 | `POST` | `/skill-sources` | Import the chosen skills at the previewed commit |
 | `GET` | `/skill-sources` | List sources with their skill counts |
 | `GET` | `/skill-sources/:id` | One source with its skills |

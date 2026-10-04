@@ -264,6 +264,24 @@ describe('POST /preview with skill (full text)', () => {
     expect(failed.json().error.code).toBe('SKILL_SOURCE_NOT_FOUND');
   });
 
+  it('with a sha, reads the source expecting that commit; a moved ref is 409 SHA_MOVED', async () => {
+    const { call } = await buildApp();
+    const ok = await call('POST', '/preview', { ...SOURCE, sha: SHA, skill: 'alpha' });
+    expect(ok.statusCode).toBe(200);
+    expect(fetchSkillSource).toHaveBeenCalledWith(
+      expect.anything(),
+      { expectSha: SHA, scriptMode: 'TEXT_ONLY' },
+      undefined
+    );
+    fetchSkillSource.mockRejectedValueOnce(new SkillSourceError('SHA_MOVED'));
+    const moved = await call('POST', '/preview', { ...SOURCE, sha: OTHER_SHA, skill: 'alpha' });
+    expect(moved.statusCode).toBe(409);
+    expect(moved.json().error.code).toBe('SKILL_SOURCE_SHA_MOVED');
+    expect(
+      (await call('POST', '/preview', { ...SOURCE, sha: 'nothex', skill: 'alpha' })).statusCode
+    ).toBe(400);
+  });
+
   it('is ADMIN-only', async () => {
     const { call } = await buildApp('ENGINEER');
     expect((await call('POST', '/preview', { ...SOURCE, skill: 'alpha' })).statusCode).toBe(403);

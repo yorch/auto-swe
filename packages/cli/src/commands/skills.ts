@@ -131,10 +131,10 @@ export async function runSkillsCommand(
 
 // Everything below that came from the server describes a third-party repository: its
 // names can carry terminal escapes, so control characters never reach the terminal.
-// An emoji renders as one: a variation selector right after an emoji-capable character and a
-// joiner between two pictographs are left alone; everywhere else they are replaced or shown.
+// An emoji renders as one: a variation selector after a pictograph (not (c), (r), TM), a keycap's
+// selector and a joiner between two pictographs are left alone; the rest is replaced or shown.
 const CONTROL =
-  /(?!(?<=\p{Emoji})[\uFE0E\uFE0F])(?!(?<=\p{Extended_Pictographic}\uFE0F?)\u200D(?=\p{Extended_Pictographic}))[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
+  /(?!(?:(?<=[0-9#*])\uFE0F(?=\u20E3)|(?<=[\p{Emoji_Presentation}\p{Extended_Pictographic}])(?<![\u00A9\u00AE\u2122])[\uFE0E\uFE0F]))(?!(?<=\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}]?\uFE0F?)\u200D(?=\p{Extended_Pictographic}))[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 const clean = (s: string) => s.replace(CONTROL, '?');
 
 const short = (sha: string) => clean(sha).slice(0, 7);
@@ -382,7 +382,7 @@ async function cmdCheck(args: string[], env: CliEnv): Promise<number> {
 
 /** A unified diff as text for a terminal: each line cleaned on its own so line breaks survive. */
 const INVISIBLE =
-  /(?!(?<=\p{Emoji})[\uFE0E\uFE0F])(?!(?<=\p{Extended_Pictographic}\uFE0F?)\u200D(?=\p{Extended_Pictographic}))[\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
+  /(?!(?:(?<=[0-9#*])\uFE0F(?=\u20E3)|(?<=[\p{Emoji_Presentation}\p{Extended_Pictographic}])(?<![\u00A9\u00AE\u2122])[\uFE0E\uFE0F]))(?!(?<=\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}]?\uFE0F?)\u200D(?=\p{Extended_Pictographic}))[\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 /** Bidi overrides and zero-width characters in review text are shown, not hidden or dropped. */
 const visible = (l: string) =>
   l.replace(

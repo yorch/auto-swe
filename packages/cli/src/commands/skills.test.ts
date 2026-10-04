@@ -490,6 +490,26 @@ describe('skills sources', () => {
       expect(text).toContain('bad a<U+FE0F> b<U+200D>c');
     });
 
+    it('keeps keycaps and skin-toned ZWJ emoji, and marks selectors threaded through digits or after (c)', async () => {
+      reply(() => ({
+        body: {
+          data: {
+            ...DIFF,
+            changed: [
+              changed('alpha', {
+                textDiff:
+                  '+ok 1\ufe0f\u20e3 \u{1f469}\u{1f3fd}\u200d\u{1f4bb}\\n+bad 2\ufe0f0\ufe0e2\ufe0f6 \u00a9\ufe0f',
+              }),
+            ],
+          },
+        },
+      }));
+      await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
+      const text = out.join('');
+      expect(text).toContain('ok 1\ufe0f\u20e3 \u{1f469}\u{1f3fd}\u200d\u{1f4bb}');
+      expect(text).toContain('bad 2<U+FE0F>0<U+FE0E>2<U+FE0F>6 \u00a9<U+FE0F>');
+    });
+
     it('names are cleaned of bidi controls, and a rename is shown and reported', async () => {
       reply((_url, method) =>
         method === 'POST'

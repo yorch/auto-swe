@@ -67,6 +67,11 @@ const SCOPE_MESSAGE =
   'scope GLOBAL takes no teamId/orgId; TEAM needs teamId; ORGANIZATION needs orgId';
 
 const PreviewBody = SourceFields.extend({
+  /** With `skill`: the commit the preview showed; the ref must still resolve to it (else 409 SHA_MOVED). */
+  sha: z
+    .string()
+    .regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/)
+    .optional(),
   /** With a name: return that one skill's complete incoming text instead of the preview. */
   skill: z.string().min(1).max(200).optional(),
 }).refine(scopeIsConsistent, SCOPE_MESSAGE);
@@ -199,10 +204,10 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
     '/skill-sources/preview',
     { onRequest: adminOnly, schema: { body: PreviewBody } },
     async (request, reply) => {
-      const { skill, ...body } = request.body;
+      const { skill, sha, ...body } = request.body;
       try {
         if (skill !== undefined) {
-          return { data: await readPreviewSkill(body, skill) };
+          return { data: await readPreviewSkill(body, skill, sha) };
         }
         const result = await previewSkillSource(fastify.prisma, {
           ...body,

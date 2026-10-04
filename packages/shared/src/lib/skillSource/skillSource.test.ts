@@ -1059,6 +1059,16 @@ describe('safeDisplayPath hidden-character classes', () => {
   });
 });
 
+describe('safeDisplayPath variation selectors, tightened', () => {
+  it('keeps a keycap and a skin-toned ZWJ sequence, and marks selectors in a year or after (c)', () => {
+    for (const ok of ['1\ufe0f\u20e3', '\u{1f469}\u{1f3fd}\u200d\u{1f4bb}']) {
+      expect(safeDisplayPath(ok)).toBe(ok);
+    }
+    expect(safeDisplayPath('2\ufe0f0\ufe0e2\ufe0f6\ufe0e')).toBe('2?0?2?6?');
+    expect(safeDisplayPath('\u00a9\ufe0f\u2122\ufe0f5\ufe0f')).toBe('\u00a9?\u2122?5?');
+  });
+});
+
 describe('safeDisplayPath emoji sequences', () => {
   it('leaves an emoji presentation selector and a ZWJ between pictographs alone', () => {
     for (const ok of [

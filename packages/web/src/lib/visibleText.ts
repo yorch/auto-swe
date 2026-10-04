@@ -18,12 +18,12 @@
 // `u` flag matches whole code points, so an astral character gets one marker. A text body
 // keeps newline and tab, which are layout.
 const HIDDEN = '[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}]';
-// An emoji must render as one: a single variation selector right after a character that has
-// an emoji presentation (warning sign, keycap base) and a joiner between two pictographs
-// (optionally after a variation selector) are left alone. Everywhere else they are marked,
-// and tag characters always are.
+// An emoji must render as one. Left alone: a variation selector right after a pictograph or
+// emoji-presentation character (but not after (c), (r) or TM), the selector of a keycap (a
+// digit, # or * then U+20E3), and a joiner between two pictographs (a skin tone modifier or a
+// variation selector may sit before it). Everything else is marked, and tag characters always.
 const EMOJI_OK =
-  '(?!(?<=\\p{Emoji})[\\uFE0E\\uFE0F])(?!(?<=\\p{Extended_Pictographic}\\uFE0F?)\\u200D(?=\\p{Extended_Pictographic}))';
+  '(?!(?:(?<=[0-9#*])\\uFE0F(?=\\u20E3)|(?<=[\\p{Emoji_Presentation}\\p{Extended_Pictographic}])(?<![\\u00A9\\u00AE\\u2122])[\\uFE0E\\uFE0F]))(?!(?<=\\p{Extended_Pictographic}[\\u{1F3FB}-\\u{1F3FF}]?\\uFE0F?)\\u200D(?=\\p{Extended_Pictographic}))';
 const INVISIBLE = new RegExp(`(?![\\n\\t])${EMOJI_OK}${HIDDEN}`, 'gu');
 const INVISIBLE_OR_LAYOUT = new RegExp(`${EMOJI_OK}${HIDDEN}`, 'gu');
 
