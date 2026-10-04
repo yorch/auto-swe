@@ -860,9 +860,8 @@ Writes cut a new immutable `version`.
 - **Reference files from an accept are stored unscanned,** like the ones from an import; only the
   description and text are scanned.
 - **A diff costs a full budgeted fetch.** It reads the whole new commit (up to 300 requests), on top of
-  the one request of the check. The old side comes from stored revisions, which is why a hand edit
-  made before the first accept can be told apart from an upstream change only if the import's revision
-  still exists; a skill with no identifiable import revision is treated as hand-edited.
+  the one request of the check. The old side comes from stored revisions, so a skill with no identifiable import revision is treated as
+  hand-edited.
 - **External skill sources are GitHub and GitHub Enterprise only,** read through the GitHub REST API.
   There is no GitLab, Bitbucket or plain-git support.
 - **A source's commit is not verified.** The commit sha pins what was read, but the platform does not

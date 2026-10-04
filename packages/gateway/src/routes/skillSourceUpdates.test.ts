@@ -158,12 +158,10 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
           }
           const { revisions, ...rest } = data;
           Object.assign(row, rest);
-          (row.revisions as Rev[]).push({
-            ...(revisions?.create as Rev),
-            createdById: (
-              revisions?.create as unknown as { createdBy?: { connect: { id: string } } }
-            ).createdBy?.connect.id,
-          });
+          const created = (revisions?.create ?? {}) as unknown as Rev & {
+            createdBy?: { connect: { id: string } };
+          };
+          (row.revisions as Rev[]).push({ ...created, createdById: created.createdBy?.connect.id });
           return clone(row);
         }
       ),
@@ -215,7 +213,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     });
   const skill = (name: string) => state.skills.find((s) => s.name === name) as Row;
   const revisions = (name: string) => skill(name).revisions as Rev[];
-  return { call, prisma, skill, revisions, state, writes };
+  return { call, prisma, revisions, skill, state, writes };
 }
 
 beforeEach(() => {
@@ -600,9 +598,9 @@ describe('POST /:id/accept', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json().data).toMatchObject({
         accepted: [],
+        after: { pinnedSha: OLD, status: 'UPDATE_AVAILABLE' },
         conflicts: ['alpha'],
         pinAdvanced: false,
-        after: { pinnedSha: OLD, status: 'UPDATE_AVAILABLE' },
       });
       expect(f.skill('alpha').promptText).toBe('my edit');
       expect(f.revisions('alpha')).toHaveLength(2);

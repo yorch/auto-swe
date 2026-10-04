@@ -264,8 +264,8 @@ describe('skills sources', () => {
       sha: NEW,
       source: {
         id: 'src-1',
-        latestSha: NEW,
         lastError: null,
+        latestSha: NEW,
         pinnedSha: SHA,
         status: 'UPDATE_AVAILABLE',
       },

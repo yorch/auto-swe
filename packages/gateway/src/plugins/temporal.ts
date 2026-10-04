@@ -942,16 +942,6 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
-    // ── Skill-source update check (one system-wide Temporal Schedule) ──
-
-    async syncSkillSourceSyncSchedule(config: SkillSourceSyncScheduleConfig): Promise<void> {
-      await upsertSchedule(SKILL_SOURCE_SYNC_SCHEDULE_ID, {
-        action: makeSkillSourceSyncScheduleAction(),
-        cronExpression: config.cronExpression,
-        paused: !config.enabled,
-      });
-    },
-
     // ── Repo-access permission sweep (one system-wide Temporal Schedule) ──
 
     async syncRepoAccessSyncSchedule(config: RepoAccessSyncScheduleConfig): Promise<void> {
@@ -990,6 +980,16 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
     async syncRunReaperSchedule(config: RunReaperScheduleConfig): Promise<void> {
       await upsertSchedule(RUN_REAPER_SCHEDULE_ID, {
         action: makeRunReaperScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Skill-source update check (one system-wide Temporal Schedule) ──
+
+    async syncSkillSourceSyncSchedule(config: SkillSourceSyncScheduleConfig): Promise<void> {
+      await upsertSchedule(SKILL_SOURCE_SYNC_SCHEDULE_ID, {
+        action: makeSkillSourceSyncScheduleAction(),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

@@ -562,7 +562,7 @@ describe.skipIf(!enabled)('skill sources against Postgres', () => {
         status: 'UPDATE_AVAILABLE',
       });
       expect(
-        await prisma.configAuditLog.count({ where: { entityId: row.id, action: 'UPDATE' } })
+        await prisma.configAuditLog.count({ where: { action: 'UPDATE', entityId: row.id } })
       ).toBe(0);
     });
 
