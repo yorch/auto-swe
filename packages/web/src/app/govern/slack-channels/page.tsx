@@ -526,6 +526,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         min="0"
         onChange={(e) => set('budgetDollars', e.target.value)}
         placeholder="50.00"
+        prefix="$"
         step="0.01"
         type="number"
         value={form.budgetDollars}
