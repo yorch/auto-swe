@@ -873,9 +873,8 @@ describe('finalizeWorkflowRun', () => {
     } as never);
     await finalizeWorkflowRun('run-child', 'SUCCESS');
     expect(orgUpsert).toHaveBeenCalledTimes(1);
-    expect((orgUpsert.mock.calls[0]?.[0] as { create: { orgId: string } }).create.orgId).toBe(
-      'org-child'
-    );
+    const billed = orgUpsert.mock.calls[0]?.[0] as { create: { orgId: string } };
+    expect(billed.create.orgId).toBe('org-child');
     findRun.mockReset();
     orgUpsert.mockReset();
   });
