@@ -18,8 +18,14 @@
 // `u` flag matches whole code points, so an astral character gets one marker. A text body
 // keeps newline and tab, which are layout.
 const HIDDEN = '[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}]';
-const INVISIBLE = new RegExp(`(?![\\n\\t])${HIDDEN}`, 'gu');
-const INVISIBLE_OR_LAYOUT = new RegExp(HIDDEN, 'gu');
+// An emoji must render as one: a single variation selector right after a character that has
+// an emoji presentation (warning sign, keycap base) and a joiner between two pictographs
+// (optionally after a variation selector) are left alone. Everywhere else they are marked,
+// and tag characters always are.
+const EMOJI_OK =
+  '(?!(?<=\\p{Emoji})[\\uFE0E\\uFE0F])(?!(?<=\\p{Extended_Pictographic}\\uFE0F?)\\u200D(?=\\p{Extended_Pictographic}))';
+const INVISIBLE = new RegExp(`(?![\\n\\t])${EMOJI_OK}${HIDDEN}`, 'gu');
+const INVISIBLE_OR_LAYOUT = new RegExp(`${EMOJI_OK}${HIDDEN}`, 'gu');
 
 const marker = (c: string) =>
   `⟨U+${(c.codePointAt(0) as number).toString(16).toUpperCase().padStart(4, '0')}⟩`;

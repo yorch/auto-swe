@@ -131,7 +131,10 @@ export async function runSkillsCommand(
 
 // Everything below that came from the server describes a third-party repository: its
 // names can carry terminal escapes, so control characters never reach the terminal.
-const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
+// An emoji renders as one: a variation selector right after an emoji-capable character and a
+// joiner between two pictographs are left alone; everywhere else they are replaced or shown.
+const CONTROL =
+  /(?!(?<=\p{Emoji})[\uFE0E\uFE0F])(?!(?<=\p{Extended_Pictographic}\uFE0F?)\u200D(?=\p{Extended_Pictographic}))[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 const clean = (s: string) => s.replace(CONTROL, '?');
 
 const short = (sha: string) => clean(sha).slice(0, 7);
@@ -378,7 +381,8 @@ async function cmdCheck(args: string[], env: CliEnv): Promise<number> {
 }
 
 /** A unified diff as text for a terminal: each line cleaned on its own so line breaks survive. */
-const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
+const INVISIBLE =
+  /(?!(?<=\p{Emoji})[\uFE0E\uFE0F])(?!(?<=\p{Extended_Pictographic}\uFE0F?)\u200D(?=\p{Extended_Pictographic}))[\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 /** Bidi overrides and zero-width characters in review text are shown, not hidden or dropped. */
 const visible = (l: string) =>
   l.replace(

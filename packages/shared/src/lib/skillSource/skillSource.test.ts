@@ -1059,6 +1059,26 @@ describe('safeDisplayPath hidden-character classes', () => {
   });
 });
 
+describe('safeDisplayPath emoji sequences', () => {
+  it('leaves an emoji presentation selector and a ZWJ between pictographs alone', () => {
+    for (const ok of [
+      '\u26a0\ufe0f.md',
+      '1\ufe0f\u20e3',
+      '\u{1f469}\u200d\u{1f469}',
+      '\u{1f469}\u200d\u2764\ufe0f\u200d\u{1f469}',
+    ]) {
+      expect(safeDisplayPath(ok)).toBe(ok);
+    }
+  });
+  it('still replaces them anywhere else, and tag characters always', () => {
+    expect(safeDisplayPath('a\ufe0f')).toBe('a?');
+    expect(safeDisplayPath('a\u200db')).toBe('a?b');
+    expect(safeDisplayPath('\u{1f469}\u200db')).toBe('\u{1f469}?b');
+    expect(safeDisplayPath('\u26a0\ufe0f\ufe0f')).toBe('\u26a0\ufe0f?');
+    expect(safeDisplayPath('\u{1f3f4}\u{e0067}')).toBe('\u{1f3f4}?');
+  });
+});
+
 describe('safeDisplayPath', () => {
   it('replaces bidirectional overrides and zero-width characters, not just control characters', () => {
     expect(safeDisplayPath('a\u202eb\u2066c\u2069d\u200be\u200ff\ufeffg\u2060h')).toBe(

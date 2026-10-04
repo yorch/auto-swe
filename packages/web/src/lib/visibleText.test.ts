@@ -55,6 +55,34 @@ describe('visibleText hidden-character classes', () => {
   });
 });
 
+describe('visibleText emoji sequences', () => {
+  const ZWJ = '\u200d';
+  const VS16 = '\ufe0f';
+  it.each([
+    ['warning sign with emoji presentation', `\u26a0${VS16} careful`],
+    ['text presentation selector', 'sun \u2600\ufe0e'],
+    ['keycap', `1${VS16}\u20e3`],
+    ['ZWJ family', `\u{1f469}${ZWJ}\u{1f469}${ZWJ}\u{1f467}`],
+    ['ZWJ sequence through a variation selector', `\u{1f469}${ZWJ}\u2764${VS16}${ZWJ}\u{1f469}`],
+  ])('leaves %s unmarked', (_n, text) => {
+    expect(visibleText(text)).toBe(text);
+    expect(visibleText(text, { multiline: true })).toBe(text);
+  });
+
+  it.each([
+    ['a selector after a non-emoji', 'a\ufe0f', 'a⟨U+FE0F⟩'],
+    ['a selector at the start', '\ufe0f', '⟨U+FE0F⟩'],
+    ['a doubled selector', `\u26a0${VS16}${VS16}`, `\u26a0${VS16}⟨U+FE0F⟩`],
+    ['a joiner between letters', `a${ZWJ}b`, 'a⟨U+200D⟩b'],
+    ['a joiner after an emoji and before a letter', `\u{1f469}${ZWJ}b`, '\u{1f469}⟨U+200D⟩b'],
+    ['a leading joiner', `${ZWJ}\u{1f469}`, '⟨U+200D⟩\u{1f469}'],
+    ['a trailing joiner', `\u{1f469}${ZWJ}`, '\u{1f469}⟨U+200D⟩'],
+    ['a tag character inside an emoji', `\u{1f3f4}\u{e0067}`, '\u{1f3f4}⟨U+E0067⟩'],
+  ])('still marks %s', (_n, text, shown) => {
+    expect(visibleText(text)).toBe(shown);
+  });
+});
+
 describe('visibleText', () => {
   it.each([
     ['\u202e', '⟨U+202E⟩'],

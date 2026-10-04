@@ -7,7 +7,10 @@
  * hide text only a model reads, reorder what a reviewer reads or reshape a log or
  * error line. The dashboard and the CLI use the same classes.
  */
-export const HIDDEN_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
+// A variation selector right after an emoji-capable character and a joiner between two
+// pictographs are left alone, so an emoji renders as one; everywhere else they are replaced.
+export const HIDDEN_CHARACTERS =
+  /(?!(?<=\p{Emoji})[\uFE0E\uFE0F])(?!(?<=\p{Extended_Pictographic}\uFE0F?)\u200D(?=\p{Extended_Pictographic}))[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 
 export function safeDisplayPath(p: string): string {
   const clean = p.replace(HIDDEN_CHARACTERS, '?');

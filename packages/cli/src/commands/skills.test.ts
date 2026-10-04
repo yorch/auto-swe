@@ -470,6 +470,26 @@ describe('skills sources', () => {
       expect(text).not.toContain(ch);
     });
 
+    it('leaves emoji sequences intact in names and diff lines, and still marks stray selectors and joiners', async () => {
+      reply(() => ({
+        body: {
+          data: {
+            ...DIFF,
+            changed: [
+              changed('warn\u26a0\ufe0f', {
+                textDiff: '+ok \u{1f469}\u200d\u{1f469} 1\ufe0f\u20e3\n+bad a\ufe0f b\u200dc',
+              }),
+            ],
+          },
+        },
+      }));
+      await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
+      const text = out.join('');
+      expect(text).toContain('warn\u26a0\ufe0f');
+      expect(text).toContain('ok \u{1f469}\u200d\u{1f469} 1\ufe0f\u20e3');
+      expect(text).toContain('bad a<U+FE0F> b<U+200D>c');
+    });
+
     it('names are cleaned of bidi controls, and a rename is shown and reported', async () => {
       reply((_url, method) =>
         method === 'POST'
