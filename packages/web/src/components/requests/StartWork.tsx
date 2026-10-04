@@ -5,12 +5,14 @@ import { useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
 import { EpicLaunchForm } from '@/components/epics/EpicLaunchForm';
 import { WorkflowLaunchForm } from '@/components/requests/WorkflowLaunchForm';
+import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RadioGroup } from '@/components/ui/RadioGroup';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { requestHref } from '@/lib/requestDisplay';
 import { useTeamStore } from '@/stores/teamStore';
@@ -26,6 +28,8 @@ export function StartWork({
   initialTemplateId?: string;
 }) {
   const router = useRouter();
+  // POST /epics requires LEAD, so the option is shown but disabled below that.
+  const canStartEpic = useHasRole('LEAD');
   const [mode, setMode] = useState<Mode>(initialMode);
   const [visited, setVisited] = useState<string[]>(initialTemplateId ? [initialTemplateId] : []);
   const [templateId, setTemplateId] = useState(initialTemplateId);
@@ -35,6 +39,8 @@ export function StartWork({
     (template) => template.status === 'ACTIVE' && template.activeVersion !== null
   );
   const template = runnable.find((item) => item.id === templateId);
+  const unrunnableTemplate =
+    !!initialTemplateId && !templates.isLoading && !templates.isError && !template;
   const onLaunched = (requestId: string) => router.push(requestHref(requestId));
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -47,6 +53,12 @@ export function StartWork({
         subtitle="Choose how to work, enter the details, then review before launching."
         title="Start work"
       />
+      {unrunnableTemplate && (
+        <Alert variant="warning">
+          The workflow you picked is not available to run. It may be inactive, archived or not
+          visible to your team. Choose another workflow below.
+        </Alert>
+      )}
       <RadioGroup
         legend="How do you want to work?"
         name="work-mode"
@@ -64,8 +76,10 @@ export function StartWork({
             value: 'agent',
           },
           {
-            description:
-              'Change several repositories at once. A planner splits the brief into ordered per-repository work.',
+            description: canStartEpic
+              ? 'Change several repositories at once. A planner splits the brief into ordered per-repository work.'
+              : 'Needs a team lead or administrator.',
+            disabled: !canStartEpic,
             label: 'Run a multi-repo epic',
             value: 'epic',
           },
@@ -121,7 +135,7 @@ export function StartWork({
         <AgentRunForm onLaunched={onLaunched} reviewBeforeLaunch />
       </div>
       <div hidden={mode !== 'epic'}>
-        <EpicLaunchForm onLaunched={(path) => router.push(path)} />
+        <EpicLaunchForm onLaunched={(path) => router.push(path)} reviewBeforeLaunch />
       </div>
     </div>
   );

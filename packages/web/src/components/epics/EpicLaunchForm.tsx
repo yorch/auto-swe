@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
@@ -11,8 +12,17 @@ import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
 
-/** Launches a multi-repository epic; `onLaunched` receives the epic's page path. */
-export function EpicLaunchForm({ onLaunched }: { onLaunched: (path: string) => void }) {
+/**
+ * Launches a multi-repository epic; `onLaunched` receives the epic's page path.
+ * With `reviewBeforeLaunch` the form first shows a summary to confirm.
+ */
+export function EpicLaunchForm({
+  onLaunched,
+  reviewBeforeLaunch = false,
+}: {
+  onLaunched: (path: string) => void;
+  reviewBeforeLaunch?: boolean;
+}) {
   // POST /epics requires LEAD.
   const canCreate = useHasRole('LEAD');
   const { data: repos = [] } = useRepositories();
@@ -21,6 +31,7 @@ export function EpicLaunchForm({ onLaunched }: { onLaunched: (path: string) => v
   const [description, setDescription] = useState('');
   const [repoIds, setRepoIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
 
   if (!canCreate) {
     return <Alert variant="info">Launching an epic needs a team lead or administrator.</Alert>;
@@ -30,19 +41,14 @@ export function EpicLaunchForm({ onLaunched }: { onLaunched: (path: string) => v
     setRepoIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    if (repoIds.length < 2) {
-      setError('Pick at least two repositories — single-repository work is a workflow or agent.');
-      return;
-    }
+  async function launch() {
     try {
       const res = await create.mutateAsync({
         description: description.trim(),
         externalTicketId: externalTicketId.trim(),
         repoIds,
       });
+      setReviewing(false);
       setExternalTicketId('');
       setDescription('');
       setRepoIds([]);
@@ -50,6 +56,64 @@ export function EpicLaunchForm({ onLaunched }: { onLaunched: (path: string) => v
     } catch (err) {
       setError(errMsg(err, 'Failed to create epic'));
     }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (repoIds.length < 2) {
+      setError('Pick at least two repositories — single-repository work is a workflow or agent.');
+      return;
+    }
+    if (reviewBeforeLaunch && !reviewing) {
+      setReviewing(true);
+      return;
+    }
+    void launch();
+  }
+
+  if (reviewBeforeLaunch && reviewing) {
+    const chosen = repos.filter((repo) => repoIds.includes(repo.id));
+    return (
+      <Card className="space-y-5">
+        <h2 className="text-lg font-semibold">Review and launch</h2>
+        <dl className="space-y-3 text-sm">
+          <div>
+            <dt className="text-paper-400">Ticket</dt>
+            <dd className="break-words">{externalTicketId}</dd>
+          </div>
+          <div>
+            <dt className="text-paper-400">Description</dt>
+            <dd className="whitespace-pre-wrap break-words">{description}</dd>
+          </div>
+          <div>
+            <dt className="text-paper-400">Repositories ({chosen.length})</dt>
+            <dd>
+              <ul className="list-disc pl-5">
+                {chosen.map((repo) => (
+                  <li key={repo.id}>
+                    {repo.organizationName}/{repo.repoName}
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        </dl>
+        <Alert variant="info">
+          A planner will split this into per-repository requests and run them in dependency order.
+          Nothing is merged automatically.
+        </Alert>
+        {error && <Alert>{error}</Alert>}
+        <div className="flex justify-end gap-3">
+          <Button disabled={create.isPending} onClick={() => setReviewing(false)} variant="ghost">
+            Back to details
+          </Button>
+          <Button disabled={create.isPending} onClick={() => void launch()} variant="primary">
+            {create.isPending ? 'Launching…' : 'Launch epic'}
+          </Button>
+        </div>
+      </Card>
+    );
   }
 
   return (
@@ -101,8 +165,13 @@ export function EpicLaunchForm({ onLaunched }: { onLaunched: (path: string) => v
         </div>
       </div>
       {error && <Alert>{error}</Alert>}
+      {repos.length < 2 && (
+        <Alert variant="info">
+          An epic spans at least two repositories, and fewer than two are available to your team.
+        </Alert>
+      )}
       <Button disabled={create.isPending || repos.length < 2} type="submit" variant="primary">
-        {create.isPending ? 'Launching…' : 'Launch epic'}
+        {create.isPending ? 'Launching…' : reviewBeforeLaunch ? 'Review epic' : 'Launch epic'}
       </Button>
     </form>
   );
