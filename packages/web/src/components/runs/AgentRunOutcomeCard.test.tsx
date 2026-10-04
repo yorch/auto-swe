@@ -80,7 +80,8 @@ describe('AgentRunOutcomeCard', () => {
     );
     expect(container.textContent).toContain('Agent run outcome');
     rerender(<RunOutcomeCard result={DELIVERED} templateName="Agent Run" />);
-    expect(container.firstChild).toBeNull();
+    expect(container.textContent).not.toContain('Agent run outcome');
+    expect(container.textContent).toContain('Review PR #7');
   });
 });
 

@@ -280,8 +280,15 @@ export function useCancelWorkflowRun(runId: string) {
 export function useRetryWorkRequest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (workRequestId: string) =>
-      api.post<RetryWorkRequestResponse>(`/api/v1/work-requests/${workRequestId}/retry`, {}),
+    mutationFn: (input: string | { workRequestId: string; instructions?: string }) => {
+      const workRequestId = typeof input === 'string' ? input : input.workRequestId;
+      return api
+        .post<{ data: RetryWorkRequestResponse }>(
+          `/api/v1/work-requests/${workRequestId}/retry`,
+          typeof input === 'string' ? {} : { instructions: input.instructions }
+        )
+        .then((response) => response.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workflows'] });
       qc.invalidateQueries({ queryKey: ['workflow-runs'] });

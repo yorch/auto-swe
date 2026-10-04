@@ -75,14 +75,18 @@ export function useRerunAgentRun() {
   const qc = useQueryClient();
   return useMutation({
     // A fresh key per confirmed re-run: it is a new run by intent, never a retry of one.
-    mutationFn: (workRequestId: string) =>
-      api
+    mutationFn: (input: string | { workRequestId: string; instructions?: string }) => {
+      const workRequestId = typeof input === 'string' ? input : input.workRequestId;
+      return api
         .fetch<{ data: AgentRunLaunchResponse }>(`/api/v1/agent-runs/${workRequestId}/rerun`, {
-          body: JSON.stringify({}),
+          body: JSON.stringify(
+            typeof input === 'string' ? {} : { instructions: input.instructions }
+          ),
           headers: { 'Idempotency-Key': newIdempotencyKey() },
           method: 'POST',
         })
-        .then((r) => r.data),
+        .then((r) => r.data);
+    },
     onSuccess: () => invalidateRuns(qc),
   });
 }

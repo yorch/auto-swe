@@ -16,9 +16,13 @@ export type ApprovalSort =
 export function useApprovals(
   filter: ApprovalFilter = 'PENDING',
   sort: ApprovalSort = 'requestedAt:desc',
-  overdueOnly = false
+  overdueOnly = false,
+  runId?: string
 ) {
   const params = new URLSearchParams();
+  if (runId) {
+    params.set('runId', runId);
+  }
   if (filter === 'ALL') {
     params.set('status', 'ALL');
   }
@@ -35,7 +39,7 @@ export function useApprovals(
       api
         .get<{ data: HumanStepSummary[] }>(`/api/v1/human-steps${qs ? `?${qs}` : ''}`)
         .then((r) => r.data),
-    queryKey: ['approvals', filter, sort, overdueOnly],
+    queryKey: ['approvals', filter, sort, overdueOnly, runId],
     // Keep a fallback poll (30 s for pending, disabled for history).
     refetchInterval: filter === 'PENDING' ? 30_000 : false,
   });
@@ -78,6 +82,7 @@ export function useRespondToApproval() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['approvals'] });
       qc.invalidateQueries({ queryKey: ['workflow-run'] });
+      qc.invalidateQueries({ queryKey: ['workflow-runs'] });
     },
   });
 }

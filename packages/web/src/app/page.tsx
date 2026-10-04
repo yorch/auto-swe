@@ -1,234 +1,111 @@
 'use client';
 
-import type { HumanStepSummary, WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
-import { WorkflowStatusChart } from '@/components/charts/WorkflowStatusChart';
-import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
-import { DashboardOnboarding } from '@/components/dashboard/DashboardOnboarding';
-import { Badge } from '@/components/ui/Badge';
-import { Button, ButtonLink } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { useState } from 'react';
+import { RequestList } from '@/components/requests/RequestList';
+import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Stat } from '@/components/ui/Stat';
-import { StatusBadge } from '@/components/ui/StatusBadge';
-import { NewRequestModal } from '@/components/workflow/NewRequestModal';
-import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
-import { useApprovals } from '@/hooks/useApprovals';
-import { useAllWorkflowRuns, useWorkflows } from '@/hooks/useRuns';
-import {
-  groupWorkflowsByDate,
-  groupWorkflowsByStatus,
-  workflowStatusClass,
-} from '@/lib/chartUtils';
-import { formatRelativeTime } from '@/lib/utils';
-import { useAuthStore } from '@/stores/authStore';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { type RequestScope, type RequestState, useRequests } from '@/hooks/useRequests';
 
-function InboxWidget({ steps }: { steps: HumanStepSummary[] }) {
-  if (steps.length === 0) {
-    return null;
-  }
+function WorkSection({
+  title,
+  state,
+  scope,
+  empty,
+}: {
+  title: string;
+  state: RequestState;
+  scope: RequestScope;
+  empty: string;
+}) {
+  const query = useRequests({ limit: 5, scope, state });
+  const requests = query.data?.data ?? [];
   return (
-    <section className="fade-up stagger-1">
+    <section>
       <SectionHeader
-        hint={`${steps.length} awaiting response`}
-        number="00"
-        title="Pending approvals"
+        actions={
+          <Link
+            className="text-sm text-ember-400 hover:underline"
+            href={`/workflows?scope=${scope}&state=${state === 'success' ? 'finished' : state}`}
+          >
+            View all →
+          </Link>
+        }
+        title={title}
       />
-      <Card variant="inset">
-        <ul className="divide-y divide-ink-600">
-          {steps.slice(0, 5).map((step) => (
-            <li key={step.id}>
-              <Link
-                className="group flex items-center justify-between gap-4 py-3 transition-colors hover:text-ember-400"
-                href={`/runs/${step.runId}`}
-              >
-                <div className="flex min-w-0 items-baseline gap-3">
-                  <Badge className="shrink-0" tone="amber" uppercase>
-                    {step.kind}
-                  </Badge>
-                  <span className="truncate text-sm text-paper-200 group-hover:text-ember-400">
-                    {step.title}
-                  </span>
-                </div>
-                <span className="shrink-0 font-mono text-[11px] text-paper-500">
-                  {formatRelativeTime(step.requestedAt)}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-        {steps.length > 5 && (
-          <div className="border-t border-ink-600 px-4 py-2 text-right">
-            <Link
-              className="font-mono text-[11px] uppercase tracking-wider text-ember-400 hover:text-ember-300"
-              href="/govern/approvals"
-            >
-              View all {steps.length} →
-            </Link>
-          </div>
+      <QueryBoundary
+        error={query.error}
+        isError={query.isError}
+        isLoading={query.isLoading}
+        label={title.toLowerCase()}
+      >
+        {requests.length ? (
+          <RequestList
+            hrefFor={(id) => `/workflows?${new URLSearchParams({ request: id, scope }).toString()}`}
+            requests={requests}
+          />
+        ) : (
+          <EmptyState title={empty} />
         )}
-      </Card>
+      </QueryBoundary>
     </section>
   );
 }
 
-export default function DashboardPage() {
-  const workflowsQuery = useWorkflows();
-  const { data: workflows, isLoading } = workflowsQuery;
-  const loadFailed = workflowsQuery.isError;
-  const { data: approvalSteps } = useApprovals();
-  const role = useAuthStore((s) => s.user?.role ?? 'ENGINEER');
-  const [newOpen, setNewOpen] = useState(false);
-  const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
-
-  const all = workflows ?? [];
-  const active = all.filter((w) => workflowStatusClass(w.currentStatus) === 'active');
-  const completed = all.filter((w) => workflowStatusClass(w.currentStatus) === 'completed');
-  const failed = all.filter((w) => workflowStatusClass(w.currentStatus) === 'failed');
-  const pendingApprovals = approvalSteps ?? [];
-
-  const statusData = useMemo(() => groupWorkflowsByStatus(all), [all]);
-  const timeData = useMemo(() => groupWorkflowsByDate(all), [all]);
-  const { data: myOutcomes } = useAllWorkflowRuns({
-    limit: 10,
-    scope: 'MINE',
-    status: 'SUCCESS',
-  });
-  const outcomes = myOutcomes?.data ?? [];
-
-  if (isLoading || loadFailed) {
-    return (
-      <QueryBoundary
-        error={workflowsQuery.error}
-        isError={loadFailed}
-        isLoading={isLoading}
-        label="dashboard"
-        loadingMessage="loading…"
-      />
-    );
-  }
-
-  // The request modals live outside both branches: the onboarding view's
-  // "New request" button toggles `newOpen` too, and an early return that
-  // omitted the modal left that button doing nothing on a fresh deployment.
-  const requestModals = (
-    <>
-      <NewRequestModal
-        onClose={() => setNewOpen(false)}
-        onSelect={(t) => {
-          setRunTarget(t);
-          setNewOpen(false);
-        }}
-        open={newOpen}
-      />
-      {runTarget && (
-        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
-      )}
-    </>
-  );
-
-  if (all.length === 0) {
-    return (
-      <>
-        <DashboardOnboarding onNewRequest={() => setNewOpen(true)} role={role} />
-        {requestModals}
-      </>
-    );
-  }
-
-  const now = new Date();
-  const today = new Intl.DateTimeFormat(undefined, {
-    day: 'numeric',
-    month: 'long',
-    weekday: 'long',
-    year: 'numeric',
-  }).format(now);
-
+export default function HomePage() {
+  const [scope, setScope] = useState<RequestScope>('MINE');
   return (
     <div className="space-y-8">
       <PageHeader
         actions={
-          <>
-            <ButtonLink href="/workflows/library" size="sm" variant="secondary">
-              Browse workflows
-            </ButtonLink>
-            <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
-              New request
-            </Button>
-          </>
+          <ButtonLink href="/start" variant="primary">
+            Start work
+          </ButtonLink>
         }
-        chapter={`§ Start · ${today}`}
-        subtitle="Describe what you need and let the platform reach a validated outcome."
-        title="What do you want to achieve?"
+        subtitle="See what needs your attention, follow your work, and review the results."
+        title="Home"
       />
-      {requestModals}
-
-      {/* HITL inbox — shown first so approvals are never missed */}
-      <InboxWidget steps={pendingApprovals} />
-
-      {/* KPI row */}
-      <section className="fade-up stagger-2 grid grid-cols-2 gap-y-8 border-y border-ink-600 py-8 sm:grid-cols-4">
-        <Stat label="Active" tone="ember" unit="runs" value={active.length} />
-        <Stat label="Completed" tone="moss" unit="runs" value={completed.length} />
-        <Stat label="Failed" tone="brick" unit="runs" value={failed.length} />
-        <Stat label="Approvals" tone="amber" unit="pending" value={pendingApprovals.length} />
-      </section>
-
-      {/* Charts grid */}
-      <section className="fade-up stagger-3">
-        <SectionHeader hint={`${all.length} runs · last 30 days`} number="01" title="Telemetry" />
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle eyebrow="distribution">By status</CardTitle>
-            </CardHeader>
-            <WorkflowStatusChart data={statusData} />
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle eyebrow="velocity">Over time</CardTitle>
-            </CardHeader>
-            <WorkflowsOverTimeChart data={timeData} />
-          </Card>
+      <SegmentedControl
+        ariaLabel="Home scope"
+        onChange={setScope}
+        options={[
+          { label: 'My work', value: 'MINE' },
+          { label: 'Team work', value: 'TEAM' },
+        ]}
+        value={scope}
+      />
+      <WorkSection
+        empty="No requests need attention right now."
+        scope={scope}
+        state="attention"
+        title="Needs your attention"
+      />
+      <WorkSection
+        empty="No work in progress. Start a workflow or give an agent a task."
+        scope={scope}
+        state="active"
+        title="In progress"
+      />
+      <WorkSection
+        empty="Finished work will appear here. Execution success still needs your review."
+        scope={scope}
+        state="success"
+        title="Recent results"
+      />
+      <section className="rounded-xl border border-ink-400 bg-ink-700 p-6">
+        <h2 className="text-lg font-semibold">Ready to start something?</h2>
+        <p className="mt-2 text-sm text-paper-400">
+          Run a workflow with defined checks and approvals, or give an agent a task on a repository.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <ButtonLink href="/start" variant="primary">
+            Start work
+          </ButtonLink>
+          <ButtonLink href="/workflows/library">Browse workflows</ButtonLink>
         </div>
-      </section>
-
-      {/* My outcomes */}
-      <section className="fade-up stagger-4">
-        <SectionHeader hint="recent · 10" number="02" title="My outcomes" />
-        <Card variant="inset">
-          {outcomes.length === 0 ? (
-            <EmptyState
-              hint="Runs you started that finished successfully appear here."
-              title="No outcomes yet"
-            />
-          ) : (
-            <ul className="divide-y divide-ink-600">
-              {outcomes.slice(0, 10).map((r) => (
-                <li key={r.id}>
-                  <Link
-                    className="group grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 py-3 transition-colors hover:text-ember-400"
-                    href={`/runs/${r.id}`}
-                  >
-                    <StatusBadge showDot status={r.status} />
-                    <span className="min-w-0 truncate text-sm text-paper-200 group-hover:text-ember-400">
-                      {r.workRequest?.description || r.templateName || '—'}
-                    </span>
-                    <span className="hidden font-mono text-[11px] text-paper-500 sm:inline">
-                      {r.outcomeDomain ?? r.domain ?? '—'}
-                    </span>
-                    <span className="tabular font-mono text-[11px] uppercase tracking-wider text-paper-500">
-                      {formatRelativeTime(r.endedAt ?? r.startedAt)}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
       </section>
     </div>
   );
