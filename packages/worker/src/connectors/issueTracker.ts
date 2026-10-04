@@ -1,5 +1,5 @@
 import type { IssueTrackerConnectionConfig } from '@auto-swe/shared';
-import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 
@@ -47,18 +47,25 @@ function requireBaseUrl(config: IssueTrackerConnectionConfig): string {
  * worker (and the token) at loopback, a cloud metadata endpoint or any
  * internal service.
  *
- * The same `isSafeProbeUrl` guard as the platform's own tracker integration.
+ * The same SSRF guard as the platform's own tracker integration.
  * Its `allowPrivateNetwork` opt-in is honoured only for the exact origin an
  * ADMIN configured at /studio/integrations → Tracker: an opt-in a LEAD could
- * set on their own connection would be no guard at all.
+ * set on their own connection would be no guard at all. The opt-in waives
+ * only the private-address refusal (`checkProbeUrl`); loopback, metadata and
+ * unspecified addresses and malformed or non-http(s) URLs are always refused.
  */
 async function assertSafeJiraBaseUrl(baseUrl: string): Promise<void> {
-  const safety = isSafeProbeUrl(baseUrl);
+  const safety = checkProbeUrl(baseUrl);
   if (safety.ok) {
     return;
   }
   const admin = await resolveIssueTrackerConfig().catch(() => null);
-  if (admin?.allowPrivateNetwork && admin.baseUrl && sameOrigin(admin.baseUrl, baseUrl)) {
+  if (
+    admin?.allowPrivateNetwork &&
+    admin.baseUrl &&
+    sameOrigin(admin.baseUrl, baseUrl) &&
+    checkProbeUrl(baseUrl, { allowPrivate: true }).ok
+  ) {
     return;
   }
   throw ApplicationFailure.nonRetryable(
@@ -93,6 +100,7 @@ async function linearFetch<T>(
       'Content-Type': 'application/json',
     },
     method: 'POST',
+    redirect: 'error',
     signal: AbortSignal.timeout(ISSUE_TRACKER_TIMEOUT_MS),
   });
 

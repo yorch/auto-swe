@@ -78,6 +78,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}`;
       const res = await fetch(url, {
         headers: this.headers(),
+        redirect: 'error',
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -126,6 +127,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         }),
         headers: { ...this.headers(), 'Content-Type': 'application/json' },
         method: 'POST',
+        redirect: 'error',
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -161,6 +163,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         body: JSON.stringify({ state }),
         headers: { ...this.headers(), 'Content-Type': 'application/json' },
         method: 'PATCH',
+        redirect: 'error',
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
@@ -179,6 +182,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         body: JSON.stringify({ body: bodyText }),
         headers: { ...this.headers(), 'Content-Type': 'application/json' },
         method: 'POST',
+        redirect: 'error',
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {

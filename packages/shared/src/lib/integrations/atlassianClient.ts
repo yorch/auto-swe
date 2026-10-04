@@ -92,6 +92,7 @@ export class AtlassianClient {
               body: body !== undefined ? JSON.stringify(body) : undefined,
               headers,
               method,
+              redirect: 'error',
               signal: AbortSignal.timeout(this.timeoutMs),
             });
 

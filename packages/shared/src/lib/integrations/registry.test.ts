@@ -88,3 +88,47 @@ describe('createKnowledgeBaseProvider — SSRF guard opt-in (Confluence)', () =>
     );
   });
 });
+
+describe('allowPrivateNetwork waives only the private-address refusal', () => {
+  const refused = [
+    'http://127.0.0.1:8080',
+    'http://localhost:8080',
+    'http://169.254.169.254',
+    'http://metadata.google.internal',
+    'http://0.0.0.0',
+    'ftp://jira.internal',
+    'not a url',
+  ];
+  const cases: [string, (baseUrl: string) => unknown][] = [
+    [
+      'Jira',
+      (baseUrl) => createIssueTrackerProvider(jiraConfig({ allowPrivateNetwork: true, baseUrl })),
+    ],
+    [
+      'GitHub Issues',
+      (baseUrl) =>
+        createIssueTrackerProvider({
+          allowPrivateNetwork: true,
+          apiToken: 'token',
+          baseUrl,
+          email: null,
+          provider: 'github',
+        }),
+    ],
+    [
+      'Confluence',
+      (baseUrl) =>
+        createKnowledgeBaseProvider(confluenceConfig({ allowPrivateNetwork: true, baseUrl })),
+    ],
+  ];
+
+  describe.each(cases)('%s', (_name, create) => {
+    it('still accepts a private address', () => {
+      expect(create('http://10.0.0.5')).not.toBeNull();
+    });
+
+    it.each(refused)('refuses %s even with the opt-in', (baseUrl) => {
+      expect(create(baseUrl)).toBeNull();
+    });
+  });
+});

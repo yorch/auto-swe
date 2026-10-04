@@ -1,4 +1,4 @@
-import { isSafeProbeUrl } from '../ssrfGuard.js';
+import { checkProbeUrl } from '../ssrfGuard.js';
 import { AtlassianClient } from './atlassianClient.js';
 import type { FigmaDesignProvider } from './figmaDesign.js';
 import type { IssueTrackerProvider } from './issueTracker.js';
@@ -52,8 +52,11 @@ export interface ResolvedFigmaConfig {
  * `allowPrivate` is the per-connector operator opt-in (`allowPrivateNetwork`
  * on `IssueTrackerConfig` / `KnowledgeBaseConfig`) for legitimate self-hosted
  * instances on internal/`.local`/private-IP base URLs. When set, the guard's
- * rejection is bypassed — but the bypass itself is logged (at warn level, the
- * only level this shared logger shape exposes) so it stays auditable.
+ * only the private-address refusal is waived (see `checkProbeUrl`): loopback,
+ * link-local, cloud-metadata and unspecified addresses, malformed URLs and
+ * non-http(s) schemes stay refused. The waiver itself is logged (at warn
+ * level, the only level this shared logger shape exposes) so it stays
+ * auditable.
  */
 function checkBaseUrlSafety(
   baseUrl: string,
@@ -61,19 +64,20 @@ function checkBaseUrlSafety(
   allowPrivate: boolean,
   opts?: { log?: { warn: (obj: unknown, msg?: string) => void } }
 ): boolean {
-  const safety = isSafeProbeUrl(baseUrl);
-  if (!safety.ok) {
-    if (allowPrivate) {
-      opts?.log?.warn(
-        { baseUrl, reason: safety.reason },
-        `${label} baseUrl is on a private network but permitted by explicit allowPrivateNetwork opt-in`
-      );
-      return true;
-    }
-    opts?.log?.warn({ baseUrl, reason: safety.reason }, `${label} baseUrl rejected by SSRF guard`);
-    return false;
+  const strict = checkProbeUrl(baseUrl);
+  if (strict.ok) {
+    return true;
   }
-  return true;
+  const safety = checkProbeUrl(baseUrl, { allowPrivate });
+  if (safety.ok) {
+    opts?.log?.warn(
+      { baseUrl, reason: strict.reason },
+      `${label} baseUrl is on a private network but permitted by explicit allowPrivateNetwork opt-in`
+    );
+    return true;
+  }
+  opts?.log?.warn({ baseUrl, reason: safety.reason }, `${label} baseUrl rejected by SSRF guard`);
+  return false;
 }
 
 export function createIssueTrackerProvider(

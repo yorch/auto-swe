@@ -50,6 +50,7 @@ async function notionFetch<T>(
       ...notionHeaders(connection.apiToken),
       ...(init.headers ?? {}),
     },
+    redirect: 'error',
     signal: init.signal ? AbortSignal.any([timeoutSignal, init.signal]) : timeoutSignal,
   });
 
