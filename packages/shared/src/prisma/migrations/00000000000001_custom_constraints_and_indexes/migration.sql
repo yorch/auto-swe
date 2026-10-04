@@ -68,6 +68,38 @@ DO $$ BEGIN
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- ── Skill sources: scope-discriminator rule + one source per place per scope ─
+-- Same tenancy rule as `skills`: a GLOBAL source carries no owner, a TEAM/ORG
+-- one carries exactly its own.
+DO $$ BEGIN
+  ALTER TABLE "skill_sources"
+    ADD CONSTRAINT "skill_sources_scope_keys_check"
+    CHECK (
+        ("scope" = 'GLOBAL' AND "team_id" IS NULL AND "org_id" IS NULL)
+        OR ("scope" = 'ORGANIZATION' AND "org_id" IS NOT NULL AND "team_id" IS NULL)
+        OR ("scope" = 'TEAM' AND "team_id" IS NOT NULL AND "org_id" IS NULL)
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- A repository location (host, owner, repo, subdirectory) is imported once per
+-- scope: a second source over the same place would install the same skill names
+-- twice. `ref` is deliberately not part of the key — two refs of one location
+-- produce the same names, and the way to move a source is to update it. The
+-- nullable owner columns need one partial index per scope, because NULLs are
+-- distinct in a unique index (the Agent library's pattern). Prisma cannot
+-- express `WHERE scope = …`.
+CREATE UNIQUE INDEX IF NOT EXISTS "skill_sources_location_global_uidx"
+    ON "skill_sources" ("host", "owner", "repo", "path")
+    WHERE "scope" = 'GLOBAL';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "skill_sources_location_org_uidx"
+    ON "skill_sources" ("host", "owner", "repo", "path", "org_id")
+    WHERE "scope" = 'ORGANIZATION';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "skill_sources_location_team_uidx"
+    ON "skill_sources" ("host", "owner", "repo", "path", "team_id")
+    WHERE "scope" = 'TEAM';
+
 -- ── Connections: git_repo identity uniqueness (partial) ─────────────────────
 -- A git_repo connection is identified by (host, owner, name). org/repo are
 -- nullable so non-git connection types (e.g. `mcp`) need not set them;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSafeProbeUrl } from './ssrfGuard.js';
+import { checkProbeUrl, isSafeProbeUrl } from './ssrfGuard.js';
 
 /** Convenience: assert a URL is refused, optionally checking the reason text. */
 function expectBlocked(url: string, reasonMatch?: RegExp) {
@@ -208,5 +208,42 @@ describe('isSafeProbeUrl', () => {
     if (res.ok) {
       expect(res.url.hostname).toBe('api.example.com');
     }
+  });
+});
+
+describe('checkProbeUrl (per-host private-network opt-in)', () => {
+  it('behaves as isSafeProbeUrl without the opt-in', () => {
+    expect(checkProbeUrl('https://10.0.0.5/api').ok).toBe(false);
+    expect(checkProbeUrl('https://ghe.example.com/api').ok).toBe(true);
+  });
+
+  it.each([
+    'https://10.0.0.5/',
+    'https://ghe.corp.internal/',
+    'https://192.168.1.2:8443/',
+    'https://[fd12::1]/',
+  ])('waives a private address with the opt-in: %s', (u) => {
+    expect(checkProbeUrl(u, { allowPrivate: true }).ok).toBe(true);
+  });
+
+  it.each([
+    'https://169.254.169.254/latest/meta-data',
+    'https://[::ffff:169.254.169.254]/',
+    'https://[::ffff:a9fe:a9fe]/',
+    'https://[fd00:ec2::254]/',
+    'https://100.100.100.200/',
+    'https://metadata.google.internal/',
+    'https://127.0.0.1/',
+    'https://[::1]/',
+    'https://localhost/',
+    'https://0.0.0.0/',
+    'https://2130706433/',
+  ])('never waives %s', (u) => {
+    expect(checkProbeUrl(u, { allowPrivate: true }).ok).toBe(false);
+  });
+
+  it('never waives a non-private refusal', () => {
+    expect(checkProbeUrl('ftp://10.0.0.5/', { allowPrivate: true }).ok).toBe(false);
+    expect(checkProbeUrl('not a url', { allowPrivate: true }).ok).toBe(false);
   });
 });

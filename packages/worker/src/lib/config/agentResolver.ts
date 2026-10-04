@@ -51,7 +51,10 @@ export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>
  */
 export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
   const include = {
-    skillRefs: { include: { skill: true }, orderBy: { sortOrder: 'asc' as const } },
+    skillRefs: {
+      include: { skill: { include: { source: { select: { owner: true, repo: true } } } } },
+      orderBy: { sortOrder: 'asc' as const },
+    },
   };
   const pinnedVersion = ctx?.agentVersions?.[key];
   const versionClause = pinnedVersion !== undefined ? { version: pinnedVersion } : {};
@@ -157,6 +160,8 @@ export async function skillsFromAgent(agent: AgentRow, ctx?: ResolveCtx): Promis
     await reportMissingPinnedRevisions(missing);
   }
 
+  const provenance = await skillProvenance(refs, ctx);
+
   return refs.map((ref) => {
     const pinned = pinnedBySkill.get(ref.skill.id);
     return {
@@ -165,9 +170,52 @@ export async function skillsFromAgent(agent: AgentRow, ctx?: ResolveCtx): Promis
       isVerified: ref.skill.isVerified && !pinned,
       name: ref.skill.name,
       promptText: pinned ? pinned.promptText : ref.skill.promptText,
+      provenance: provenance.get(ref.skill.id),
       sortOrder: ref.sortOrder,
     };
   });
+}
+
+/**
+ * `external: owner/repo@sha7` for each skill whose revision-in-use was imported
+ * from a git source, so the skill menu tells the agent (and anyone reading the
+ * trace) that the text is third-party. Read off the revision the run uses (its
+ * pin, else the current one): a skill an admin has since edited by hand carries
+ * no source sha on that revision and is no longer labelled. A skill whose
+ * source was deleted keeps the label, without the repository name.
+ */
+async function skillProvenance(
+  refs: AgentRow['skillRefs'],
+  ctx?: ResolveCtx
+): Promise<Map<string, string>> {
+  const imported = refs.filter((ref) => typeof ref.skill.sourcePath === 'string');
+  if (imported.length === 0) {
+    return new Map();
+  }
+  const rows = await prisma.skillRevision.findMany({
+    select: { skillId: true, sourceSha: true },
+    where: {
+      OR: imported.map((ref) => ({
+        revision: ctx?.skillRevisions?.[ref.skill.id] ?? ref.skill.currentRevision,
+        skillId: ref.skill.id,
+      })),
+    },
+  });
+  const shaBySkill = new Map(rows.map((r) => [r.skillId, r.sourceSha]));
+  const out = new Map<string, string>();
+  for (const ref of imported) {
+    const sha = shaBySkill.get(ref.skill.id);
+    if (sha) {
+      const short = sha.slice(0, 7);
+      out.set(
+        ref.skill.id,
+        ref.skill.source
+          ? `external: ${ref.skill.source.owner}/${ref.skill.source.repo}@${short}`
+          : `external@${short}`
+      );
+    }
+  }
+  return out;
 }
 
 /**

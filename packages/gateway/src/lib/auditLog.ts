@@ -28,6 +28,7 @@ export type AuditEntityType =
   | 'ScheduledWorkRequest'
   | 'Session'
   | 'Skill'
+  | 'SkillSource'
   | 'SlackChannel'
   | 'SlackConfig'
   | 'StorageConfig'
@@ -44,9 +45,11 @@ export async function writeAuditLog(
     before?: unknown;
     entityId: string;
     entityType: AuditEntityType;
+    /** A transaction client, so the entry commits or rolls back with the change it records. */
+    client?: Pick<FastifyInstance['prisma'], 'configAuditLog'>;
   }
 ): Promise<void> {
-  await fastify.prisma.configAuditLog.create({
+  await (args.client ?? fastify.prisma).configAuditLog.create({
     data: {
       action: args.action,
       actorId: args.actor?.sub ?? null,

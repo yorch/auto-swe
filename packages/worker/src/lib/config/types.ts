@@ -82,4 +82,7 @@ export interface ResolvedSkill {
   promptText: string;
   sortOrder: number;
   isVerified: boolean;
+  /// Set when the text in use was imported from an external git source, e.g.
+  /// `external: acme/skills@1a2b3c4`; shown in front of the skill's menu entry.
+  provenance?: string;
 }

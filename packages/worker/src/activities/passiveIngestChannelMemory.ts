@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
+import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { insertMemoryItem, searchMemoryItemsByVector } from '../lib/memoryStore.js';
@@ -167,10 +168,7 @@ export async function passiveIngestChannelMemory(
 
       // Resolve skills + build agent.
       const skills = await loadAgentSkills('commitToMemory', agentCtx);
-      const skillSuffix = skills
-        .map((s) => s.promptText)
-        .filter(Boolean)
-        .join('\n\n');
+      const skillSuffix = joinSkillPrompts(skills);
       const instructions = skillSuffix
         ? `${CHANNEL_PASSIVE_INGEST_PROMPT}\n\n${skillSuffix}`
         : CHANNEL_PASSIVE_INGEST_PROMPT;

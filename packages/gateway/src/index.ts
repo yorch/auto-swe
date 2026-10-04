@@ -68,6 +68,7 @@ import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
 import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
 import { securityEventRoutes } from './routes/securityEvents.js';
+import { skillSourceRoutes } from './routes/skillSources.js';
 import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
 import { slackChannelRoutes } from './routes/slackChannels.js';
@@ -357,6 +358,7 @@ async function start() {
   await app.register(skillsRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
+  await app.register(skillSourceRoutes, { prefix: '/api/v1/platform' });
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/admin' });

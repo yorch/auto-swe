@@ -28,6 +28,7 @@ export const SETTING_GROUPS = [
   'memory',
   'repoAccess',
   'repoDependency',
+  'skills',
   'workflow',
   'workspace',
 ] as const;

@@ -671,6 +671,7 @@ __metadata:
     prisma: "npm:7.10.0"
     tsx: "npm:4.23.15"
     typescript: "npm:7.0.2"
+    yaml: "npm:2.9.0"
     zod: "npm:4.6.5"
   languageName: unknown
   linkType: soft
@@ -15183,7 +15184,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"yaml@npm:^2.4.2, yaml@npm:^2.8.3":
+"yaml@npm:2.9.0, yaml@npm:^2.4.2, yaml@npm:^2.8.3":
   version: 2.9.0
   resolution: "yaml@npm:2.9.0"
   bin:

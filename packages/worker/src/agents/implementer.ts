@@ -12,6 +12,7 @@ import {
   type ResolvedSkill,
 } from '../lib/config/agentSkills.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import { skillMenuLine, skillPromptBlock } from '../lib/config/skillPrompt.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getModel, type LanguageModel } from '../lib/models.js';
 import { isMcpToolEnabled, loadMcpTools, type McpToolRecord } from './mcpTools.js';
@@ -65,6 +66,8 @@ export interface ImplementerAgentOptions {
   /** Scope for the model lookup; merged over the ambient activity context. */
   resolveCtx?: ResolveCtx;
 }
+
+export { skillMenuLine };
 
 export async function createImplementerAgent(
   workspace: Workspace,
@@ -123,7 +126,7 @@ export async function createImplementerAgent(
         });
         return result;
       }
-      const result = { promptText: skill.promptText };
+      const result = { promptText: skillPromptBlock(skill) };
       tracer?.addToolCall({
         durationMs: Date.now() - start,
         inputJson: { name },
@@ -188,7 +191,7 @@ export async function createImplementerAgent(
         '## Available Skills',
         'Use the `loadSkill` tool to load the full guidance for any skill before applying it.',
         '',
-        ...resolvedSkills.map((s) => `- **${s.name}**: ${s.description || s.name}`),
+        ...resolvedSkills.map((s) => skillMenuLine(s)),
       ].join('\n')
     : '';
 

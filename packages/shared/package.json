@@ -28,6 +28,7 @@
     "./lib/agentRunFailure": "./dist/lib/agentRunFailure.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/skillRevision": "./dist/lib/skillRevision.js",
+    "./lib/skillSource": "./dist/lib/skillSource/index.js",
     "./lib/regexSafety": "./dist/lib/regexSafety.js",
     "./lib/modelSpec": "./dist/lib/modelSpec.js",
     "./lib/builtinModels": "./dist/lib/builtinModels.js",
@@ -121,6 +122,7 @@
     "bcrypt": "6.0.0",
     "dotenv-expand": "13.0.0",
     "pg": "8.23.1",
+    "yaml": "2.9.0",
     "zod": "4.6.5"
   },
   "devDependencies": {

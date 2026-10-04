@@ -303,6 +303,34 @@ export const SETTING_DEFINITIONS = {
     unit: '0–1',
   }),
 
+  // ── Skills ─────────────────────────────────────────────────────────────────
+  'skills.import.blockOnScanWarnings': defineSetting({
+    defaultValue: true,
+    description:
+      'Whether importing skills from an external source refuses a skill whose text or description draws any scanner warning, an incomplete scan included. On, the import response names the refused skills and why, and an admin installs only the rest. Off, such a skill is installed (unverified) with its warnings recorded on its first revision. A skill imported from a repository you do not control is the case this exists for: the scan is advisory everywhere else, but here the text was written by someone else.',
+    group: 'skills',
+    label: 'Block external skill imports with scan warnings',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+
+  'skills.import.privateNetworkHosts': defineSetting({
+    defaultValue: [],
+    description:
+      "Hosts a skill source may live on even though the host is, or resolves to, a private-network address (comma-separated host or host:port). A host is allowed only if it is ALSO an approved repository host (the GitHub integration's hosts or github.repositoryHosts); listing it here alone does nothing. Cloud metadata addresses (169.254.0.0/16, fd00:ec2::254, 100.100.100.200) and loopback stay refused whatever is listed. The text-level address check does not resolve DNS, so a listed name is trusted to mean the server you intend.",
+    group: 'skills',
+    label: 'Private-network skill source hosts',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: hostList,
+    sensitive: true,
+  }),
+
   // ── Workflow interpreter ───────────────────────────────────────────────────
   // These bound how a single run may expand. They are run-pinned: the
   // interpreter runs inside the Temporal V8 isolate and cannot read the

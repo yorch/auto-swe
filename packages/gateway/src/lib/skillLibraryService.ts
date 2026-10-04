@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@auto-swe/shared';
+import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import {
   initialRevision,
   nextRevision,
@@ -69,6 +69,24 @@ export async function createSkill(
   return { scanWarnings, skill };
 }
 
+/// Where the current revision's text came from, when it was imported.
+async function importedProvenance(
+  prisma: PrismaClient,
+  skill: { id: string; currentRevision: number }
+) {
+  const rev = await prisma.skillRevision.findUnique({
+    select: { referenceFiles: true, sourcePath: true, sourceSha: true },
+    where: { skillId_revision: { revision: skill.currentRevision, skillId: skill.id } },
+  });
+  return rev?.sourceSha
+    ? {
+        referenceFiles: (rev.referenceFiles ?? null) as Prisma.InputJsonValue | null,
+        sourcePath: rev.sourcePath,
+        sourceSha: rev.sourceSha,
+      }
+    : {};
+}
+
 /// Updates a skill.
 /// Built-in skills: only name, description, and isActive may be updated.
 /// promptText is locked for built-ins to preserve the verified content guarantee.
@@ -112,9 +130,17 @@ export async function updateSkill(
 
   let updated: SkillRow;
   if (contentChanged) {
+    // A description-only edit leaves the imported text as it was, so the new
+    // revision still says where that text came from (and keeps its label). A
+    // change to the text itself makes it ours: the provenance is dropped.
+    const carried =
+      typeof existing.sourcePath === 'string' && nextContent.promptText === existing.promptText
+        ? await importedProvenance(prisma, existing)
+        : {};
     const next = nextRevision(existing, nextContent, {
       createdById: actorId,
       scanWarnings,
+      ...carried,
     });
     updated = await prisma.skill.update({ data: { ...base, ...next.data }, where: next.where });
   } else {
