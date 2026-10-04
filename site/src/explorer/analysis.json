@@ -1616,7 +1616,7 @@
     {
       "body": "Track tokens and catalog-priced USD across runs, runless workflows, teams, organizations and Slack channels, and stop a capped organization’s spend at launch and before each model call.",
       "category": "Operations",
-      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. The organization USD cap is checked at launch and again before every budgeted model call, which refuses with a non-retryable BUDGET_EXCEEDED naming the organization. Both read finalized, in-flight and runless spend; the mid-run read goes through a per-organization cache of one config window. One rule, billedOrgId, places a run for the in-flight count, the mid-run guard and finalization billing: the work request’s connection, else the run’s own connection, else the repository of its own ledger row, and the first source that exists decides. A scheduled fire gets its own ledger row and run connection from its schedule’s repository, and epic planning declares the first repository’s team as its spend owner, so neither sits outside the cap. A scheduled run reaper finalizes and bills runs whose workflow ended without finalizing them. Prompt-cache reads and writes are priced at cache rates: a model’s catalog row may set read, 5-minute-write and 1-hour-write multipliers, each falling back to the code table, where Anthropic 1-hour writes cost twice input. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization, and the usage page opens for anyone who holds at least one of those scopes rather than by platform role. A model with no catalog price is refused on a path watched by a USD cap and otherwise recorded at zero USD with token usage retained.",
+      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. The organization USD cap is checked at launch and again before every budgeted model call, which refuses with a non-retryable BUDGET_EXCEEDED naming the organization. Both read finalized, in-flight and runless spend; the mid-run read goes through a per-organization cache of one config window. One rule, billedOrgId, places a run for the in-flight count, the mid-run guard and finalization billing: the work request’s connection, else the run’s own connection, else the repository of its own ledger row, and the first source that exists decides. A scheduled fire gets its own ledger row and run connection from its schedule’s repository, and epic planning declares the first repository’s team as its spend owner, so neither sits outside the cap. A scheduled run reaper finalizes and bills runs whose workflow ended without finalizing them. Prompt-cache reads and writes are priced at cache rates: a model’s catalog row may set read, 5-minute-write and 1-hour-write multipliers, each falling back to the code table, where Anthropic 1-hour writes cost twice input. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization, and the usage page opens for anyone who holds at least one of those scopes rather than by platform role. A model with no catalog price is refused when the organization its run bills to has a monthly USD cap (resolved by the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection), when a runless workflow’s spend owner is a capped organization, and when the call belongs to a channel with a monthly cap; a repo-less channel task bills its channel, so only the channel cap refuses it. Anywhere else it is recorded at zero USD with token usage retained.",
       "id": "budget",
       "refs": [
         "trace",
@@ -1633,7 +1633,8 @@
         "cacheCatalog",
         "cacheRates",
         "usageScopes",
-        "usageGate"
+        "usageGate",
+        "usdCapGuard"
       ],
       "status": "Implemented",
       "title": "Cost, budgets & usage"
@@ -1685,7 +1686,7 @@
     {
       "body": "Launch scheduled repository work, template webhooks, GitHub event handling and maintenance sweeps.",
       "category": "Operations",
-      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration; provider model discovery and the run reaper, by contrast, are on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow.",
+      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration (repository access sync, eval regression and revalidation); lesson consolidation, repository dependency scans, provider model discovery and the run reaper, by contrast, are on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow.",
       "id": "schedules",
       "refs": [
         "gateway",
@@ -1698,7 +1699,8 @@
         "reaperEnv",
         "fireLedger",
         "fireConnection",
-        "prLedger"
+        "prLedger",
+        "sweepDefaults"
       ],
       "status": "Implemented",
       "title": "Scheduled automation & webhooks"
@@ -1706,7 +1708,7 @@
     {
       "body": "The dashboard lists work by request, with the latest visible attempt standing for each, and retries a request without losing its identity.",
       "category": "Operations",
-      "detail": "Run visibility is applied first, then executions are grouped by request. A single-repository request is represented by its newest visible execution; a cross-repository request summarizes every visible child and keeps failed children visible while others run. Filtering and paging happen after grouping, so an old failure cannot resurface behind a successful retry. A retry of a git request starts a new execution of the same request; connection-free and non-git requests re-run their recorded template version through the launch checks again, and an agent re-run reuses the request id with a fresh delivery branch. Optional instructions are appended to the new attempt’s description only. A cross-repository request is not retried as a whole.",
+      "detail": "Run visibility is applied first, then executions are grouped by request. A single-repository request is represented by its newest visible execution; a cross-repository request summarizes every visible child and keeps failed children visible while others run. Filtering and paging happen after grouping, so an old failure cannot resurface behind a successful retry. A retry of a git request starts a new execution of the same request; a connection-free or non-git request starts again from its recorded template version, re-checking only that an earlier run is still visible, the connection and the organization budget (not the template’s status, the caller’s team membership or the input schema), and an agent re-run reuses the request id with a fresh delivery branch. Optional instructions are appended to the new attempt’s description only. A cross-repository request is not retried as a whole.",
       "id": "requestWorkspace",
       "refs": [
         "requestGroup",
@@ -1714,7 +1716,9 @@
         "retryRoute",
         "retryTemplate",
         "retryEpic",
-        "agentRerun"
+        "agentRerun",
+        "retryTemplateChecks",
+        "launchTemplateChecks"
       ],
       "status": "Implemented",
       "title": "Request-centred work inbox and retry"
@@ -1804,7 +1808,7 @@
     {
       "body": "An ADMIN previews skills in a GitHub or GitHub Enterprise repository, then installs the chosen ones pinned to the commit that was previewed.",
       "category": "Agents",
-      "detail": "Preview writes nothing: it resolves the ref to a commit and reads each SKILL.md under the path. The install request names skills and the previewed commit, never text; the server fetches again at that commit and fails with 409 if the ref has moved. A non-github.com host must be an approved repository host, and one on a private network must also be listed in a separate setting; the platform credential for that host is the only one used, and a host with none is read anonymously. Fetches are bounded in requests, bytes, skills and time. Skills with scan warnings are refused while the blocking setting is on (it is on by default). One transaction takes a name lock, checks name conflicts across the scopes the skill would be visible in, and writes the source plus every skill at revision 1, unverified, with its source commit. Markdown and text siblings are kept as reference text unscanned and nothing is executed. Wherever a model reads an imported skill’s text, it is labelled third-party with its source and short commit.",
+      "detail": "Preview writes nothing: it resolves the ref to a commit and reads each SKILL.md under the path. The install request names skills and the previewed commit, never text; the server fetches again at that commit and fails with 409 if the ref has moved. A non-github.com host must be an approved repository host, and one on a private network must also be listed in a separate setting; the platform credential for that host is the only one used, and a host with none is read anonymously. Fetches are bounded in requests, bytes, skills and time. Skills with scan warnings are refused while the blocking setting is on (it is on by default). One transaction takes a name lock, checks name conflicts across the scopes the skill would be visible in, and writes the source plus every skill at revision 1, unverified, with its source commit. Markdown and text siblings are kept as reference text unscanned and nothing is executed. Wherever a model reads an imported skill’s text, it is labelled third-party with its source and short commit while the revision it reads carries a source commit; an admin’s hand edit cuts a revision without one, which drops the label, and a deleted source drops the repository name (the label reads external@sha7).",
       "id": "skillImport",
       "refs": [
         "skillImportRoutes",
@@ -1816,7 +1820,8 @@
         "skillImportRefs",
         "skillImportPrompt",
         "skillImportSetting",
-        "schema"
+        "schema",
+        "skillProvenance"
       ],
       "status": "Implemented",
       "title": "Skill import from an external GitHub repository"
@@ -1916,7 +1921,7 @@
     {
       "body": "Launches and each later model call are refused once cached spend has reached the cap, so spend can still land after it is crossed, and some spend is outside it.",
       "category": "Cost control",
-      "detail": "A call is refused only when the cached organization spend has reached the cap, so up to one cache window of spend from every run of the organization at once can land after the cap is crossed, and concurrent launches see the same total. A spend or cap read that fails lets the call through. Spend with no derivable organization is outside the cap, and a repo-less channel task bills its channel, so the organization cap never refuses it. An epic’s planning is attributed to the first repository it names even when the epic spans organizations; each child is billed to its own repository’s. An unpriced model is refused for a capped organization through a run’s ledger or a runless workflow’s spend owner; a run with no ledger row, such as a channel task, is not refused on the organization’s account.",
+      "detail": "The guard runs before each budgeted model call and refuses only when the cached organization spend has already reached the cap. Up to one cache window of new calls from every run of the organization at once, plus the full cost of every call or harness turn already admitted, can land after the cap is crossed: an admitted call completes and bills in full, its cost accrues to the ledger only after it returns, and a Claude Code harness turn reports usage only when the turn ends. Concurrent launches see the same total. A spend or cap read that fails lets the call through. Spend with no derivable organization is outside the cap, and a repo-less channel task bills its channel, so the organization cap never refuses it. An epic’s planning is attributed to the first repository it names even when the epic spans organizations; each child is billed to its own repository’s. An unpriced model is refused when the run’s billed organization (the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection) has a cap, or when a runless workflow’s spend owner does, and under a channel cap; a repo-less channel task bills its channel, so it is not refused on the organization’s account.",
       "id": "orgCap",
       "refs": [
         "orgCap",
@@ -1929,7 +1934,7 @@
         "epicOwner"
       ],
       "status": "Confirmed boundary",
-      "title": "The organization USD cap is a gate with a one-window lag"
+      "title": "The organization USD cap is checked before each call, so spend can overshoot it"
     },
     {
       "body": "A run whose workflow ended without finalizing still counts as in flight until a sweep reaches it, and only while the sweep is enabled.",
@@ -1959,7 +1964,7 @@
     {
       "body": "A run’s trace has no workflow span, a schedule-started run’s trace hangs off a parent that was never exported, and a signal is a link rather than a parent.",
       "category": "Observability",
-      "detail": "Activities hang off the span that started the run; nothing represents the workflow or the time between activities, since that would mean running OpenTelemetry in the isolate. A schedule-started run’s activities share one derived trace whose parent span was never recorded, so a trace backend shows them under a missing parent. A signal or update context reaches only activities scheduled after it, and only the newest one is linked; work already running and earlier signals are not. The worker’s own signals are not stamped. Worker and gateway structured logs export over OTLP, and audit lines do only inside an activity; other plain console output stays on stdout. A tool call that fails input validation or names no tool never executes, so it is recorded from the step results with zero duration. HTTP instrumentation requires the --import preload, and the start scripts silence one Node deprecation code only.",
+      "detail": "Activities hang off the span that started the run; nothing represents the workflow or the time between activities, since that would mean running OpenTelemetry in the isolate. A schedule-started run’s activities share one derived trace whose parent span was never recorded, so a trace backend shows them under a missing parent. A signal or update context reaches only activities scheduled after it, and only the newest one is linked; work already running and earlier signals are not. The worker’s own signals are not stamped. Worker and gateway structured logs export over OTLP, and audit lines do only inside an activity; other plain console output stays on stdout. A tool call that fails input validation or names no tool never executes, so it is recorded from the step results with zero duration, and only when generation returned: if it throws, those calls are lost. HTTP instrumentation requires the --import preload, and the start scripts and Dockerfile commands silence one Node deprecation code only (DEP0205, the module register hook the OpenTelemetry loader still uses).",
       "id": "telemetryGaps",
       "refs": [
         "traceProp",
@@ -1971,7 +1976,9 @@
         "signalSpanLink",
         "gatewayLogs",
         "auditLine",
-        "toolRecord"
+        "toolRecord",
+        "toolRecordSteps",
+        "deprecationFlag"
       ],
       "status": "Confirmed boundary",
       "title": "Tracing and log export have deliberate gaps"
@@ -2042,9 +2049,9 @@
     {
       "body": "Skill pinning covers runs that have a WorkflowRun row, and it is not a freeze of every skill input.",
       "category": "Coverage",
-      "detail": "The channel assistant’s own conversational runs have no WorkflowRun and read skills unpinned. An epic’s children are runs of their own and pin at their own start. A skill with no entry in the map, such as one created after the run began, resolves its current revision. isActive is read live, within the config cache window. A missing pinned revision row falls back to the live text, with a warning in the log and, inside an activity, a skill.pinned_revision_missing trace event, which is the swap pinning exists to prevent. A repo-less channel task finds its tenant by Slack channel id, which is unique only per workspace.",
+      "detail": "The channel assistant’s own conversational runs do have a WorkflowRun, but it is created without a skill-revision pin, so they read skills unpinned. An epic’s children are runs of their own and pin at their own start. A skill with no entry in the map, such as one created after the run began, resolves its current revision. isActive is read live, within the config cache window. A missing pinned revision row falls back to the live text, with a warning in the log and, inside an activity, a skill.pinned_revision_missing trace event, which is the swap pinning exists to prevent. A repo-less channel task finds its tenant by Slack channel id, which is unique only per workspace.",
       "id": "skillPinGaps",
-      "refs": ["skillSnapshot", "skillTenant", "skillPinRead", "skillPinMissing"],
+      "refs": ["skillSnapshot", "skillTenant", "skillPinRead", "skillPinMissing", "channelRunRow"],
       "status": "Confirmed boundary",
       "title": "Skill revision pins have gaps"
     },
@@ -2060,9 +2067,16 @@
     {
       "body": "Pinning to a commit fixes what is read; it does not vouch for the author, the files kept beside the text, or the host.",
       "category": "Agents",
-      "detail": "Reference files are stored unscanned, so whatever first reads them to an agent or a person must scan them first. The host check reads address text and literal addresses and does not resolve DNS, so a listed name is trusted to mean the intended server. Commit signatures are not checked. No update check runs: the source row carries a latest-commit field and status, but nothing in the import fills them. Only imports take the name-allocation lock, so the skill API can still create a name an import has just checked.",
+      "detail": "Reference files are stored unscanned, so whatever first reads them to an agent or a person must scan them first. The host check reads address text and literal addresses and does not resolve DNS, so a listed name is trusted to mean the intended server. Commit signatures are not checked. No update check runs: the install records the pinned commit as the source’s latest commit once, and nothing refreshes it afterwards, so the status never reports an update on its own. Only imports take the name-allocation lock, so the skill API can still create a name an import has just checked.",
       "id": "skillImportBounds",
-      "refs": ["skillImportAccess", "skillImportRefs", "skillImportTx", "skillImportSetting"],
+      "refs": [
+        "skillImportAccess",
+        "skillImportRefs",
+        "skillImportTx",
+        "skillImportSetting",
+        "skillImportInstallRow",
+        "skillImportStatusPatch"
+      ],
       "status": "Confirmed boundary",
       "title": "Skill import is pinned and bounded, not verified"
     },
@@ -2074,6 +2088,15 @@
       "refs": ["teamMembers", "tenant"],
       "status": "Confirmed boundary",
       "title": "Deactivating a team does not remove repository access"
+    },
+    {
+      "body": "Retrying a connection-free template request re-checks less than launching it fresh does.",
+      "category": "Access",
+      "detail": "The retry re-checks only that an earlier run of the request is still visible to the caller, the connection and the organization budget. The fresh launch also requires the template to be ACTIVE and visible through the caller’s team membership and validates the input against the template’s input schema; the retry skips all three. A user removed from the template’s team can therefore still retry their earlier request, including on an archived template, and the recorded input is not re-validated against the schema.",
+      "id": "templateRetryChecks",
+      "refs": ["retryTemplateChecks", "launchTemplateChecks", "retryTemplate"],
+      "status": "Confirmed boundary",
+      "title": "A template-request retry skips the fresh launch’s template checks"
     }
   ],
   "modelDescriptions": {
@@ -3650,7 +3673,7 @@
       "anchor": "export const MAX_API_REQUESTS = 300;",
       "before": 4,
       "id": "skillImportLimits",
-      "lines": 12,
+      "lines": 16,
       "path": "packages/shared/src/lib/skillSource/github.ts",
       "title": "Skill source fetch limits"
     },
@@ -3706,7 +3729,7 @@
       "anchor": "'skills.import.blockOnScanWarnings': defineSetting({",
       "before": 1,
       "id": "skillImportSetting",
-      "lines": 14,
+      "lines": 28,
       "path": "packages/shared/src/config/registry.ts",
       "title": "Import scan blocking and private-network host settings"
     },
@@ -3725,6 +3748,78 @@
       "lines": 14,
       "path": "packages/web/src/hooks/useRuns.ts",
       "title": "The run page holds the spec snapshot instead of refetching it"
+    },
+    {
+      "anchor": "const template = await app.prisma.workflowTemplate.findFirst({",
+      "before": 0,
+      "id": "retryTemplateChecks",
+      "lines": 52,
+      "path": "packages/gateway/src/lib/retryTemplateRequest.ts",
+      "title": "Template-request retry re-checks only run visibility, connection and org budget"
+    },
+    {
+      "anchor": "where: { id: request.params.id, status: 'ACTIVE', ...teamMembershipFilter(user) },",
+      "before": 18,
+      "id": "launchTemplateChecks",
+      "lines": 50,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "A fresh template launch also requires an ACTIVE template, team membership and a valid input"
+    },
+    {
+      "anchor": "lastCheckedAt: new Date(),",
+      "before": 3,
+      "id": "skillImportInstallRow",
+      "lines": 9,
+      "path": "packages/gateway/src/lib/skillSourceService.ts",
+      "title": "The install writes the pinned commit as latestSha and a check time once"
+    },
+    {
+      "anchor": "// Re-enabling restores what the last check found rather than guessing OK.",
+      "before": 0,
+      "id": "skillImportStatusPatch",
+      "lines": 8,
+      "path": "packages/gateway/src/routes/skillSources.ts",
+      "title": "The PATCH route is the only other writer of the source status"
+    },
+    {
+      "anchor": "async function skillProvenance(",
+      "before": 9,
+      "id": "skillProvenance",
+      "lines": 42,
+      "path": "packages/worker/src/lib/config/agentResolver.ts",
+      "title": "The third-party label depends on the read revision carrying a source commit"
+    },
+    {
+      "anchor": "function recordStepToolCalls(",
+      "before": 10,
+      "id": "toolRecordSteps",
+      "lines": 36,
+      "path": "packages/worker/src/activities/runAgent.ts",
+      "title": "Calls recorded from step results get zero duration"
+    },
+    {
+      "anchor": "// DEP0205: Node 26 deprecates",
+      "before": 0,
+      "id": "deprecationFlag",
+      "lines": 10,
+      "path": "packages/shared/src/lib/telemetry.ts",
+      "title": "The one deprecation warning the start scripts silence"
+    },
+    {
+      "anchor": "export function resolveScheduledSweeps(): ScheduledSweepsConfig {",
+      "before": 0,
+      "id": "sweepDefaults",
+      "lines": 22,
+      "path": "packages/shared/src/lib/systemConfig.ts",
+      "title": "Which gateway-started sweeps are on by default"
+    },
+    {
+      "anchor": "await prisma.workflowRun.create({",
+      "before": 1,
+      "id": "channelRunRow",
+      "lines": 12,
+      "path": "packages/worker/src/activities/channelRun.ts",
+      "title": "A channel run row is created with no skill-revision pin"
     }
   ],
   "usecases": [
