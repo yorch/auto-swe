@@ -228,10 +228,11 @@ export async function createWorkflowRun(
   const settingsCtx = await runSettingsContext(input);
   const pinnedSettings = await snapshotPinnedSettings(settingsCtx);
 
-  // Skill text is a second input to every agent, and unlike the Agent row it was
-  // never versioned: freeze the revision of every skill this run's agents
-  // reference so a mid-run edit cannot reach a retry or a replay.
-  const skillRevisions = await snapshotSkillRevisions(agentVersions, settingsCtx);
+  // Skill text is a second input to every agent: freeze the revision of every
+  // skill visible to this run so a mid-run edit cannot reach a retry or a replay.
+  // An epic's children are runs of their own and pin at their own start, so an
+  // edit between the epic's start and a child's reaches that child.
+  const skillRevisions = await snapshotSkillRevisions(settingsCtx);
 
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
   // same workflowId should not create duplicate rows. `update: {}` preserves the
@@ -299,40 +300,33 @@ export async function createWorkflowRun(
   };
 }
 
-/// `{ skillId: currentRevision }` for every skill an agent this run can resolve
-/// references: the GLOBAL agents at the versions just pinned (a canary's
-/// candidate included), plus the active agents the cascade can reach at the
-/// run's own template, team and organization. A CHANNEL-scope agent is not
-/// known at run start; its skills (and any skill attached to an agent after the
-/// run began) have no pin and resolve their current revision.
-async function snapshotSkillRevisions(
-  agentVersions: Record<string, number>,
-  scope: SettingResolveCtx
-): Promise<Prisma.InputJsonObject> {
-  const reachable: Prisma.AgentWhereInput[] = [{ scope: 'GLOBAL' }];
-  if (scope.workflowTemplateId) {
-    reachable.push({ scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: scope.workflowTemplateId });
-  }
+/// `{ skillId: currentRevision }` for every active-or-not skill visible to the run's
+/// tenant: GLOBAL, plus the run's team's and organization's own. Keyed by skill
+/// id, so it does not matter which agent later references a skill — an explicit
+/// `key@version` ref, a CHANNEL-scope agent, or a skill attached to an agent
+/// after the run began all find their pin. One query, however many agent
+/// versions have accumulated. A skill created after this point has no entry
+/// and resolves its current revision, which is also its only one.
+async function snapshotSkillRevisions(scope: SettingResolveCtx): Promise<Prisma.InputJsonObject> {
+  const visible: Prisma.SkillWhereInput[] = [{ scope: 'GLOBAL' }];
   if (scope.teamId) {
-    reachable.push({ scope: 'TEAM', teamId: scope.teamId });
+    visible.push({ scope: 'TEAM', teamId: scope.teamId });
   }
   if (scope.orgId) {
-    reachable.push({ orgId: scope.orgId, scope: 'ORGANIZATION' });
+    visible.push({ orgId: scope.orgId, scope: 'ORGANIZATION' });
   }
-  const refs = await prisma.agentSkillRef.findMany({
-    select: {
-      agent: { select: { key: true, scope: true, version: true } },
-      skill: { select: { currentRevision: true, id: true } },
-    },
-    where: { agent: { isActive: true, OR: reachable } },
-  });
+  const skills = await runUnscoped(
+    'GLOBAL skills have no tenant by definition; the team and org rows are the run’s own',
+    ['Skill'],
+    () =>
+      prisma.skill.findMany({
+        select: { currentRevision: true, id: true },
+        where: { OR: visible },
+      })
+  );
   const pins: Record<string, number> = {};
-  for (const ref of refs) {
-    // A GLOBAL agent contributes only the version this run pinned.
-    if (ref.agent.scope === 'GLOBAL' && agentVersions[ref.agent.key] !== ref.agent.version) {
-      continue;
-    }
-    pins[ref.skill.id] = ref.skill.currentRevision;
+  for (const skill of skills) {
+    pins[skill.id] = skill.currentRevision;
   }
   return pins;
 }

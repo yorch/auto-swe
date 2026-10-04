@@ -79,10 +79,6 @@ vi.mock('@auto-swe/shared/db', () => {
     agent: {
       findMany: vi.fn(),
     },
-    // Run-start skill-revision snapshot: no references means an empty pin map.
-    agentSkillRef: {
-      findMany: vi.fn(async () => []),
-    },
     agentTrace: {
       aggregate: vi.fn(),
     },
@@ -107,6 +103,10 @@ vi.mock('@auto-swe/shared/db', () => {
     },
     runInput: {
       findUnique: vi.fn(async () => null),
+    },
+    // Run-start skill-revision snapshot: no skills means an empty pin map.
+    skill: {
+      findMany: vi.fn(async () => []),
     },
     team: { findUnique: vi.fn() },
     workflowHumanStep: {
@@ -157,7 +157,7 @@ const orgMonthlyUsageUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
 const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
 const findTemplate = vi.mocked(prisma.workflowTemplate.findFirst);
 const findAgents = vi.mocked(prisma.agent.findMany);
-const findSkillRefs = vi.mocked(prisma.agentSkillRef.findMany);
+const findSkills = vi.mocked(prisma.skill.findMany);
 const aggregateTraces = vi.mocked(prisma.agentTrace.aggregate);
 
 // Default: repo-less finalize paths (no activeWorkflows) fall back to summing the
@@ -188,7 +188,7 @@ afterEach(() => {
   findRepo.mockReset();
   findTemplate.mockReset();
   findAgents.mockReset();
-  findSkillRefs.mockClear();
+  findSkills.mockClear();
   aggregateTraces.mockReset();
 });
 
@@ -353,24 +353,41 @@ describe('createWorkflowRun', () => {
     });
   });
 
-  it('snapshots the current skill revision of every skill the run can reach', async () => {
+  it('snapshots the current revision of every skill visible to the run, keyed by skill id', async () => {
     findVersion.mockResolvedValue({ spec: validSpec } as never);
-    const ref = (key: string, version: number, scope: string, skillId: string, rev: number) => ({
-      agent: { key, scope, version },
-      skill: { currentRevision: rev, id: skillId },
-    });
-    findSkillRefs.mockResolvedValueOnce([
-      ref('implementer', 1, 'GLOBAL', 'skill-a', 3),
-      // reviewer is pinned at v2, so its v1 row's skill must not be pinned...
-      ref('reviewer', 1, 'GLOBAL', 'skill-old', 9),
-      ref('reviewer', 2, 'GLOBAL', 'skill-b', 1),
-      // ...while a scoped agent contributes whatever version it has.
-      ref('implementer', 4, 'TEAM', 'skill-team', 2),
+    findSkills.mockResolvedValueOnce([
+      { currentRevision: 3, id: 'skill-a' },
+      { currentRevision: 1, id: 'skill-b' },
     ] as never);
     await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
     const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
-    expect(args.create.skillRevisions).toEqual({ 'skill-a': 3, 'skill-b': 1, 'skill-team': 2 });
+    expect(args.create.skillRevisions).toEqual({ 'skill-a': 3, 'skill-b': 1 });
     expect(args.update).toEqual({});
+  });
+
+  it('scopes the skill snapshot to GLOBAL plus the run’s own team and organization', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    const findRunInput = vi.mocked(prisma.runInput.findUnique);
+    findRunInput.mockResolvedValue({
+      connection: { team: { orgId: 'org-9' }, teamId: 'team-9' },
+    } as never);
+    try {
+      await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+        workRequestId: 'wr-1',
+      });
+    } finally {
+      findRunInput.mockResolvedValue(null as never);
+    }
+    expect(findSkills.mock.calls[0]?.[0]?.where).toEqual({
+      OR: [
+        { scope: 'GLOBAL' },
+        { scope: 'TEAM', teamId: 'team-9' },
+        { orgId: 'org-9', scope: 'ORGANIZATION' },
+      ],
+    });
   });
 
   it('records who launched this execution, and which execution, on create only', async () => {
