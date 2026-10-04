@@ -150,7 +150,10 @@ describe('warnIfReposOnUnusableHosts', () => {
       (
         await run([
           repo('a', null),
-          repo('b', 'https://github.com', 'https://api.github.com', { host: '', installationId: '7' }),
+          repo('b', 'https://github.com', 'https://api.github.com', {
+            host: '',
+            installationId: '7',
+          }),
         ])
       ).warned
     ).toBe(false);

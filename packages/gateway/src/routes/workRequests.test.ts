@@ -3,6 +3,11 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 // Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+// The identity lookup needs a connection table these route mocks do not model.
+vi.mock('@auto-swe/shared/lib/sameRepositoryIds', () => ({
+  sameRepositoryIds: async (_prisma: unknown, id: string) => [id],
+}));
+
 vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   ...(await import('../test/billingMock.js')),

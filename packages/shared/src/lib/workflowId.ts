@@ -7,8 +7,8 @@ import { isTerminalActiveWorkflowStatus } from '../types/api.js';
  * Owner and repository name are lowercased: they are case-insensitive
  * identities, so a repository's id does not depend on the casing it was stored
  * with. Two legacy rows for one repository under different casings produce the
- * same string, but the allocator still sees two repositories, so the second one
- * gets a disambiguated id ({@link chooseWorkflowId}). The ticket id keeps its
+ * same string, which is why the allocator treats rows of one repository as one
+ * ({@link chooseWorkflowId}'s `owner.sameRepoIds`). The ticket id keeps its
  * casing: it is an external key the tracker owns (and the branch name is built
  * from it), and lowercasing it would rename the id of every run already in
  * flight. {@link legacyWorkflowIdBases} lists the cased ids earlier runs may hold.
@@ -135,16 +135,32 @@ function familyRe(base: string): RegExp {
  */
 export function workflowIdFamilyBases(
   baseId: string,
-  repoId?: string | null,
+  repoId?: string | readonly string[] | null,
   legacyBaseIds: readonly string[] = []
 ): string[] {
-  const bases = repoId ? [baseId, disambiguatedWorkflowIdBase(baseId, repoId)] : [baseId];
+  // Every repository id that is the same repository gets its disambiguated
+  // family read too: a run started under one of them still blocks the others.
+  const repoIds = repoId ? [repoId].flat() : [];
+  const bases = [baseId, ...repoIds.map((r) => disambiguatedWorkflowIdBase(baseId, r))];
   const legacy = legacyBaseIds.filter((l) => l !== baseId);
   return [
     ...bases,
     ...legacy,
-    ...(repoId ? legacy.map((l) => disambiguatedWorkflowIdBase(l, repoId)) : []),
+    ...repoIds.flatMap((r) => legacy.map((l) => disambiguatedWorkflowIdBase(l, r))),
   ];
+}
+
+/** Who is starting the ticket: the repository, and which other rows are the same repository. */
+export interface WorkflowIdOwner {
+  repoId: string;
+  externalTicketId?: string;
+  /**
+   * Every repository id with the same identity as `repoId` (same host, owner and
+   * name compared case-insensitively), `repoId` included or not. A row of any of
+   * them is ours: it blocks a duplicate start and counts as a previous run of
+   * this ticket. Omitted, only `repoId` itself is.
+   */
+  sameRepoIds?: readonly string[];
 }
 
 /**
@@ -153,7 +169,8 @@ export function workflowIdFamilyBases(
  *
  * - A non-terminal row that is ours → conflict (the ticket is still running).
  * - Rows owned by a different repository or ticket are never a conflict: they
- *   only share our ID *string*. If one sits in the base family we move to the
+ *   only share our ID *string*. Rows of another repository id with the same
+ *   identity (`owner.sameRepoIds`) are the same repository, not a different one. If one sits in the base family we move to the
  *   {@link disambiguatedWorkflowIdBase} family.
  * - Otherwise the first unused ID in the chosen family: the base, then `-r1`,
  *   `-r2`, … — `isRerun` when we have run this ticket before.
@@ -171,18 +188,20 @@ export function workflowIdFamilyBases(
 export function chooseWorkflowId(
   baseId: string,
   rows: readonly WorkflowIdCandidate[],
-  owner?: { repoId: string; externalTicketId?: string },
+  owner?: WorkflowIdOwner,
   legacyBaseIds: readonly string[] = []
 ): WorkflowIdAllocation {
-  const bases = workflowIdFamilyBases(baseId, owner?.repoId);
+  const sameRepoIds = new Set(owner ? [owner.repoId, ...(owner.sameRepoIds ?? [])] : []);
+  const familyRepoIds = owner ? [...sameRepoIds] : undefined;
+  const bases = workflowIdFamilyBases(baseId, familyRepoIds);
   const inFamily = rows.filter((r) => bases.some((b) => familyRe(b).test(r.temporalWorkflowId)));
   const isOurs = (r: WorkflowIdCandidate) =>
     !owner ||
-    ((r.repoId == null || r.repoId === owner.repoId) &&
+    ((r.repoId == null || sameRepoIds.has(r.repoId)) &&
       (owner.externalTicketId == null ||
         r.externalTicketId == null ||
         r.externalTicketId === owner.externalTicketId));
-  const legacyFamilies = workflowIdFamilyBases(baseId, owner?.repoId, legacyBaseIds)
+  const legacyFamilies = workflowIdFamilyBases(baseId, familyRepoIds, legacyBaseIds)
     .slice(bases.length)
     .map(familyRe);
   const legacyActive = rows.find(

@@ -2034,7 +2034,11 @@ describe('webhook routes', () => {
     });
 
     it('signals per run when no credential can be resolved for the installation', async () => {
-      trackRepo({ githubApiUrl: null, githubUrl: null, installation: { host: '', installationId: '777' } });
+      trackRepo({
+        githubApiUrl: null,
+        githubUrl: null,
+        installation: { host: '', installationId: '777' },
+      });
       vi.mocked(resolveGitHubToken).mockRejectedValueOnce(new Error('no key'));
 
       const res = await inject('/api/v1/webhooks/ci', body, sign(body));

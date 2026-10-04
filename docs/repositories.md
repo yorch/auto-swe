@@ -25,7 +25,7 @@ Everything that names a repository by owner and name takes the host into account
 | Onboarding (`POST /repositories`) | the duplicate check and the unique index include the host and compare owner and name case-insensitively |
 | Import from GitHub | the list comes from the instance host, so only repositories with no override count as already imported |
 | PR and CI webhooks, the access webhook | the delivery is first bound to the host its secret proved (see [Webhook secrets per host](#webhook-secrets-per-host)). Within that, when the owner/name is onboarded on more than one distinct host, the payload's `repository.html_url` picks which; otherwise the match is by name, as before. Owner and name match case-insensitively and literally (`_` and `%` in a name are not wildcards), whatever casing the payload uses |
-| Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. Owner and name are lowercased in the id; the ticket id keeps its casing. A run still in flight under an earlier form of the id (stored casing, or without the host) blocks a new one, as one under the current id does |
+| Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. Owner and name are lowercased in the id; the ticket id keeps its casing. A run still in flight under an earlier form of the id (stored casing, or without the host) blocks a new one, as one under the current id does. So does a run of another row for the same repository — the same host (no override is the instance's host) and the same owner and name compared case-insensitively; a repository on another host with the same owner and name is a different repository and never blocks |
 | Dependency detection | a dependency URL that names a host matches only a repository on that host |
 | Dependency checkouts | two neighbours with the same owner/name get distinct directories |
 
@@ -285,9 +285,6 @@ longer fit.
   duplicate are rebuilt from the repository's current owner and name, which no API route edits, so
   they match the id a run was started under; a database edit that changes only the casing while a
   run is in flight would leave that run's id unmatched.
-- **Case-only duplicate rows do not block each other's runs.** Legacy rows for the same repository
-  under two casings now share one workflow id, but they are still two repositories to the allocator,
-  so the second ticket start gets a disambiguated id instead of a conflict.
 - **An override spelling out the instance host is only cleared when the GitHub integration stores
   that host.** On a deployment configuring its host through the environment such an override is
   kept; it works, and onboarding treats it as the same repository as one with no override, but the

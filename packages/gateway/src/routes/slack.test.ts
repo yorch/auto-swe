@@ -7,6 +7,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 // lib/hitlResolve.ts (imported by the route for the hitl_resolve button) only
 // uses `Prisma.DbNull` at runtime — mocking the barrel avoids instantiating
 // the real PrismaClient singleton (which requires DATABASE_URL at import).
+// The identity lookup needs a connection table these route mocks do not model.
+vi.mock('@auto-swe/shared/lib/sameRepositoryIds', () => ({
+  sameRepositoryIds: async (_prisma: unknown, id: string) => [id],
+}));
+
 vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: { __sentinel: 'Prisma.DbNull' } } }));
 
 /**

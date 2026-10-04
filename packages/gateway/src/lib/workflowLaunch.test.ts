@@ -1,6 +1,15 @@
-import { generateWorkflowId, legacyWorkflowIdBases } from '@auto-swe/shared/lib/workflowId';
+import {
+  disambiguatedWorkflowIdBase,
+  generateWorkflowId,
+  legacyWorkflowIdBases,
+} from '@auto-swe/shared/lib/workflowId';
 import { describe, expect, it, vi } from 'vitest';
 import { allocateWorkflowId, launchTrackedWorkflow } from './workflowLaunch.js';
+
+// The identity lookup compares hosts against the instance's own.
+vi.mock('../../../shared/src/lib/systemConfig.js', () => ({
+  resolveGitHubConfig: async () => ({ baseUrl: 'https://github.com' }),
+}));
 
 function uniqueViolation() {
   return Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
@@ -230,6 +239,7 @@ describe('allocateWorkflowId — the id from before repository ids carried a hos
   ) =>
     ({
       activeWorkflow: { findMany: async () => rows },
+      connection: { findUnique: async () => null },
     }) as never;
   const row = (temporalWorkflowId: string, currentStatus: string, repoId: string | null) => ({
     currentStatus,
@@ -281,7 +291,10 @@ describe('allocateWorkflowId — the id from before repository ids carried a hos
 
   it('queries the cased legacy id, and is blocked by a run in flight under it', async () => {
     const findMany = vi.fn(async () => [row('eng-Acme-Api-T-1', 'IMPLEMENTING', 'repo-mine')]);
-    const prisma = { activeWorkflow: { findMany } } as never;
+    const prisma = {
+      activeWorkflow: { findMany },
+      connection: { findUnique: async () => null },
+    } as never;
     const result = await allocateWorkflowId(
       prisma,
       generateWorkflowId('T-1', 'Acme', 'Api'),
@@ -296,5 +309,56 @@ describe('allocateWorkflowId — the id from before repository ids carried a hos
   it('ignores a legacy id equal to the base id (no host override)', async () => {
     const result = await allocateWorkflowId(prismaWith([]), LEGACY, MINE, [LEGACY]);
     expect(result).toEqual({ isRerun: false, workflowId: LEGACY });
+  });
+
+  describe('repositories with the same identity', () => {
+    const BASE = 'eng-acme-api-T-1';
+    const ME = { externalTicketId: 'T-1', repoId: 'repo-upper' };
+    const conn = (id: string, githubUrl: string | null, org: string, name: string) => ({
+      githubUrl,
+      id,
+      organizationName: org,
+      repoName: name,
+    });
+    const prismaFor = (rows: ReturnType<typeof row>[], connections: ReturnType<typeof conn>[]) =>
+      ({
+        activeWorkflow: { findMany: async () => rows },
+        connection: {
+          findMany: async () => connections,
+          findUnique: async () => connections[0],
+        },
+      }) as never;
+
+    it('conflicts with a run of the case-variant row, as with a run of the same row', async () => {
+      const result = await allocateWorkflowId(
+        prismaFor(
+          [row(BASE, 'IMPLEMENTING', 'repo-lower')],
+          [conn('repo-upper', null, 'Acme', 'Api'), conn('repo-lower', null, 'acme', 'api')]
+        ),
+        BASE,
+        ME,
+        []
+      );
+      expect(result).toEqual({ conflictWorkflowId: BASE });
+    });
+
+    it('does not conflict with a run of the same owner and name on another host', async () => {
+      const result = await allocateWorkflowId(
+        prismaFor(
+          [row(BASE, 'IMPLEMENTING', 'repo-ghe')],
+          [
+            conn('repo-upper', null, 'Acme', 'Api'),
+            conn('repo-ghe', 'https://ghe.corp', 'acme', 'api'),
+          ]
+        ),
+        BASE,
+        ME,
+        []
+      );
+      expect(result).toEqual({
+        isRerun: false,
+        workflowId: disambiguatedWorkflowIdBase(BASE, 'repo-upper'),
+      });
+    });
   });
 });

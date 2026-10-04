@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
+const { findMany, sameRepositoryIds } = vi.hoisted(() => ({
+  findMany: vi.fn(),
+  sameRepositoryIds: vi.fn(),
+}));
 vi.mock('@auto-swe/shared/db', () => ({ prisma: { activeWorkflow: { findMany } } }));
+vi.mock('@auto-swe/shared/lib/sameRepositoryIds', () => ({ sameRepositoryIds }));
 
 import { allocateTicketWorkflowId } from './workflowIdAllocation.js';
 
@@ -15,6 +19,8 @@ const BASE = 'eng-acme-payments-api-X-1';
 
 beforeEach(() => {
   findMany.mockReset();
+  sameRepositoryIds.mockReset();
+  sameRepositoryIds.mockImplementation(async (_p: unknown, id: string) => [id]);
 });
 
 describe('allocateTicketWorkflowId', () => {
@@ -70,6 +76,35 @@ describe('allocateTicketWorkflowId', () => {
     await expect(allocateTicketWorkflowId(REPO)).resolves.toEqual({
       isRerun: true,
       workflowId: `${BASE}-r1`,
+    });
+  });
+
+  it('conflicts with a run of a same-identity row, as with a run of this row', async () => {
+    // The case-variant row's start already holds the shared (lowercased) id.
+    sameRepositoryIds.mockResolvedValue([REPO.id, 'case-variant-row']);
+    findMany.mockResolvedValue([
+      {
+        currentStatus: 'RUNNING',
+        repoId: 'case-variant-row',
+        temporalWorkflowId: BASE,
+        workRequest: { externalTicketId: 'X-1' },
+      },
+    ]);
+    await expect(allocateTicketWorkflowId(REPO)).resolves.toEqual({ conflictWorkflowId: BASE });
+  });
+
+  it('still treats a row that is not the same repository as foreign', async () => {
+    findMany.mockResolvedValue([
+      {
+        currentStatus: 'RUNNING',
+        repoId: 'case-variant-row',
+        temporalWorkflowId: BASE,
+        workRequest: { externalTicketId: 'X-1' },
+      },
+    ]);
+    await expect(allocateTicketWorkflowId(REPO)).resolves.toEqual({
+      isRerun: false,
+      workflowId: `${BASE}-xabcdef12`,
     });
   });
 });
