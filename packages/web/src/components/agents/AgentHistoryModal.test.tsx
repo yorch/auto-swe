@@ -8,7 +8,7 @@ import { AgentHistoryModal } from './AgentHistoryModal';
 function version(n: number, over: Record<string, unknown> = {}) {
   return {
     channelId: null,
-    createdAt: '2026-01-0' + n + 'T00:00:00Z',
+    createdAt: `2026-01-0${n}T00:00:00Z`,
     createdByEmail: 'ada@example.com',
     credentialId: null,
     description: null,

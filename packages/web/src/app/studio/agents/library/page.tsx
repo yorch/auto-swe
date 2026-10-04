@@ -20,7 +20,7 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useUserOrgs } from '@/hooks/useAdmin';
 import {
   type AgentRow,

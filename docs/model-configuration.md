@@ -327,6 +327,16 @@ or launch it once from the dashboard with the same repository. A schedule acts a
 that user needs write access to the fork. Set the fork's test command on its connection to something
 quick: the implementer runs it after each turn.
 
+### Setup readiness
+
+`GET /api/v1/platform/readiness` (ADMIN) reports whether a first run has what it needs: every provider
+used by an active GLOBAL agent's own model, and by the embedding model, has a GLOBAL credential (an
+agent pinned to its own credential does not need one); GitHub has a token or an App, from the database
+or the environment; and at least one repository connection exists. Home shows the missing items to
+admins with a link to each fix, the Credentials tab marks each needed provider present or missing, and
+the Models, Integrations and Connections pages show a banner for the items they can fix. A sub-role
+that inherits its model is covered by the agent it inherits from.
+
 ### Bootstrap (fresh deployment)
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.

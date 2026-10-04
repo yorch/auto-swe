@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { Suspense } from 'react';
-import { AuditLogTab } from '@/components/modelConfig/AuditLogTab';
+import { ConfigAuditLogTab } from '@/components/audit/ConfigAuditLogTab';
 import { CatalogTab } from '@/components/modelConfig/CatalogTab';
 import { CredentialsTab } from '@/components/modelConfig/CredentialsTab';
 import { EmbeddingsTab } from '@/components/modelConfig/EmbeddingsTab';
@@ -67,7 +67,7 @@ function StudioModelConfigPageInner() {
       {active === 'credentials' && <CredentialsTab />}
       {active === 'catalog' && <CatalogTab />}
       {active === 'embeddings' && <EmbeddingsTab />}
-      {active === 'audit' && <AuditLogTab />}
+      {active === 'audit' && <ConfigAuditLogTab initialGroup="models" />}
     </div>
   );
 }

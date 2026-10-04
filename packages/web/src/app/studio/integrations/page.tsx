@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
-import { AuditLogTab } from '@/components/integrations/AuditLogTab';
+import { ConfigAuditLogTab } from '@/components/audit/ConfigAuditLogTab';
 import { FigmaTab } from '@/components/integrations/FigmaTab';
 import { GitHubTab } from '@/components/integrations/GitHubTab';
 import { IssueTrackerTab } from '@/components/integrations/IssueTrackerTab';
@@ -72,7 +72,7 @@ function StudioIntegrationsPageInner() {
       {active === 'tracker' && <IssueTrackerTab />}
       {active === 'knowledge-base' && <KnowledgeBaseTab />}
       {active === 'figma' && <FigmaTab />}
-      {active === 'audit-log' && <AuditLogTab />}
+      {active === 'audit-log' && <ConfigAuditLogTab initialGroup="integrations" />}
     </div>
   );
 }

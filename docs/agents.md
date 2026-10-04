@@ -117,7 +117,11 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
   `isVerified`. Versions are immutable — editing a base cuts a new version. RBAC is ADMIN for
   GLOBAL, team OWNER for TEAM.
 - **API + UI:** `/api/v1/platform/agent-library` (plus `/api/v1/teams/:id/agent-library`) and
-  `/studio/agents/library`.
+  `/studio/agents/library`. Each agent's History view lists its versions, shows what changed
+  between a version and the one before it (prompt as a line diff; model, skills, tools,
+  credential and MCP connection as field changes), and restores an older version as a new one. A
+  restore leaves the prompt out of the new version when it equals the current prompt, so it keeps
+  the current verification.
 - **The `agent` node** carries an `agentRef` (`<key>` or `<key>@<version>`) plus optional
   `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
   and calls `runAgent`.
@@ -257,6 +261,13 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
   override) and attach one to an Agent via the `mcpConnectionId` field on the
   agent-library form. `validateMcpConnectionRef` enforces that the reference is an active `mcp`
   Connection, and TEAM-scoped agents may only reference their own team's connection (tenancy).
+- **Test and usage:** `POST /api/v1/platform/mcp-connections/:id/test` connects to the saved URL
+  over streamable HTTP, initializes, and lists the tools within the connection's list timeout,
+  answering `{ ok, toolCount, toolNames, durationMs }` or a fixed reason. The SSRF guard runs first,
+  redirects are not followed, and the server's own error text is never returned.
+  `GET /api/v1/platform/mcp-connections` adds `usedBy`: the agents whose current version binds each
+  connection. A connection is owned by a team, but a platform-wide agent may bind any connection; a
+  team's own agents only their team's.
 - **Guarding:** non-git connections are filtered out of the repo read/submit paths (GET
   `/repositories`, Slack picker, epics, scheduled requests) and rejected by the shared
   `isGitRepoConnection` guard (`@auto-swe/shared/lib/connectionGuards`) on the submit paths.
@@ -509,6 +520,8 @@ The warnings of the save-time and install-time scans are stored on the `SkillRev
 ### 6.5 Skill revisions and run pinning
 
 `Skill.promptText` and `description` are the live copy. Every change to either also writes an immutable `SkillRevision` (`skill_revisions`, unique on `(skillId, revision)`) and sets `Skill.currentRevision` to its number, in one statement. The paths that do so are: skill create (revision 1), skill edit (when the text or the description changes — a rename or an `isActive` toggle does not), the built-in sync when shipped text changes, and bundle install when a skill's text or description changes. A revision stores the text, the description, a content hash, the scan warnings, the author, and — for content imported from a source — provenance (`sourceSha`, `sourcePath`, `referenceFiles`). Revisions are never updated.
+
+The skill detail's History view lists the revisions (`GET /api/v1/platform/skills/:id/revisions`), compares each with the one before it, and restores an older one with `POST /api/v1/platform/skills/:id/revisions/:revision/restore`. A restore appends a revision carrying the old text, clears verification like any edit, and is refused for built-in skills, whose text comes from the platform.
 
 An edit is guarded on the revision number it read, so two concurrent edits cannot both produce revision N+1: the second gets `409 SKILL_CHANGED`. `PUT /api/v1/platform/skills/:id` also accepts `expectedRevision`, the revision the editor had on screen; when it is present and the skill has moved on, the edit is refused with the same 409 before anything is written. A guarded write that finds the skill deleted answers 404. A built-in sync that loses the race to another replica booting alongside it skips the skill, since that replica wrote the same shipped text. Startup sync gives any skill that has no revision row the row for the revision it already names.
 
@@ -803,6 +816,8 @@ Writes cut a new immutable `version`.
 | `GET` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Agent detail + version history |
 | `POST` | `/api/v1/platform/agent-library` | `ADMIN` | Create an Agent (or cut a new version) |
 | `PUT` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Update an Agent → bumps `version` |
+| `GET` | `/api/v1/platform/agent-library/:id/versions` | `ADMIN` | Every version of the lineage `:id` belongs to, newest first, with skills and author |
+| `POST` | `/api/v1/platform/agent-library/:id/restore` | `ADMIN` | Cut a new version from an older one (`{ versionId }`); never rewrites history |
 | `DELETE` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Delete / deactivate an Agent override |
 | `GET` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | List TEAM-scope Agent overrides |
 | `POST` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | Create a TEAM-scope Agent override |
@@ -830,6 +845,10 @@ Writes cut a new immutable `version`.
 ---
 
 ## 11. Limitations
+
+- **The MCP connection test does not authenticate and speaks streamable HTTP only.** A server that
+  needs a bearer token or only offers the legacy event-stream transport reports as not reachable even
+  though the worker, which uses `@mastra/mcp`, may connect to it.
 
 - **A skill created after a run starts is not in its pin.** It resolves its current revision, which is
   also its only one. An epic's children are runs of their own and pin at their own start, so an edit
