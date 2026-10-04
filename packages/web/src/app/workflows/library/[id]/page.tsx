@@ -7,7 +7,7 @@ import { estimateSpecCost, parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import { use, useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
@@ -26,7 +26,6 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { InputSchemaBuilder } from '@/components/workflow/InputSchemaBuilder';
 import { KeyValueRow } from '@/components/workflow/KeyValueRow';
 import { RefineChatPanel } from '@/components/workflow/RefineChatPanel';
-import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { SchemaFormPreview } from '@/components/workflow/SchemaFormPreview';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import {
@@ -569,7 +568,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [pendingShellSpec, setPendingShellSpec] = useState<WorkflowSpec | null>(null);
   const [editMetaOpen, setEditMetaOpen] = useState(false);
   const [editSchemaOpen, setEditSchemaOpen] = useState(false);
-  const [runOpen, setRunOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
   const [refineOpen, setRefineOpen] = useState(false);
 
@@ -789,8 +787,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
   return (
     <div className="space-y-8">
-      <RunTemplateModal onClose={() => setRunOpen(false)} open={runOpen} template={template} />
-
       <ExplainModal onClose={() => setExplainOpen(false)} open={explainOpen} templateId={id} />
 
       <RefineChatPanel onClose={() => setRefineOpen(false)} open={refineOpen} templateId={id} />
@@ -801,9 +797,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
           actions={
             <>
               {template.status === 'ACTIVE' && template.activeVersion !== null && (
-                <Button onClick={() => setRunOpen(true)} size="sm" variant="primary">
+                <ButtonLink
+                  href={`/start?template=${encodeURIComponent(template.id)}`}
+                  size="sm"
+                  variant="primary"
+                >
                   Run →
-                </Button>
+                </ButtonLink>
               )}
               {template.activeVersion !== null && (
                 <Button onClick={() => setExplainOpen(true)} size="sm" variant="secondary">

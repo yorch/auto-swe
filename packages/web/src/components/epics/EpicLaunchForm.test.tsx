@@ -3,13 +3,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
-import EpicsPage from './page';
+import { EpicLaunchForm } from './EpicLaunchForm';
 
-// next/navigation router is replaced for the redirect assertion
 const pushSpy = vi.fn();
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: pushSpy }),
-}));
 
 // authStore drives the role gate on the "+ New epic" button — admin/lead only.
 vi.mock('@/stores/authStore', () => ({
@@ -50,8 +46,8 @@ const REPOS = [
   },
 ];
 
-describe('EpicsPage — new epic', () => {
-  it('rejects single-repo selection (use Work Requests instead)', async () => {
+describe('EpicLaunchForm', () => {
+  it('rejects single-repo selection ', async () => {
     setupFetchMock({
       'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
       'GET /api/v1/repositories': () => ({ data: REPOS }),
@@ -65,16 +61,8 @@ describe('EpicsPage — new epic', () => {
       }),
     });
 
-    render(withQuery(<EpicsPage />));
-    // Button is disabled={repos.length < 2}; wait for the repos fetch to
-    // resolve (button becomes enabled) before clicking, otherwise the click
-    // hits a disabled button and the modal never opens.
-    const newEpic = await waitFor(() => {
-      const btn = screen.getByRole('button', { name: /new epic/i }) as HTMLButtonElement;
-      expect(btn.disabled).toBe(false);
-      return btn;
-    });
-    fireEvent.click(newEpic);
+    render(withQuery(<EpicLaunchForm onLaunched={pushSpy} />));
+    await screen.findAllByRole('checkbox');
 
     fireEvent.change(screen.getByLabelText(/external ticket id/i), {
       target: { value: 'EPIC-100' },
@@ -111,16 +99,8 @@ describe('EpicsPage — new epic', () => {
       }),
     });
 
-    render(withQuery(<EpicsPage />));
-    // Button is disabled={repos.length < 2}; wait for the repos fetch to
-    // resolve (button becomes enabled) before clicking, otherwise the click
-    // hits a disabled button and the modal never opens.
-    const newEpic = await waitFor(() => {
-      const btn = screen.getByRole('button', { name: /new epic/i }) as HTMLButtonElement;
-      expect(btn.disabled).toBe(false);
-      return btn;
-    });
-    fireEvent.click(newEpic);
+    render(withQuery(<EpicLaunchForm onLaunched={pushSpy} />));
+    await screen.findAllByRole('checkbox');
 
     fireEvent.change(screen.getByLabelText(/external ticket id/i), {
       target: { value: 'EPIC-100' },

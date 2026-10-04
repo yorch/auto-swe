@@ -1,6 +1,5 @@
 'use client';
 
-import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -20,7 +19,6 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
-import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { useHasRole } from '@/hooks/useHasRole';
@@ -405,7 +403,6 @@ export default function TemplatesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
-  const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
 
   const handleFork = async (starter: StarterTemplate) => {
     setForkingId(starter.id);
@@ -443,10 +440,6 @@ export default function TemplatesPage() {
       />
 
       <ArchiveConfirmModal onClose={() => setArchiveTarget(null)} target={archiveTarget} />
-
-      {runTarget && (
-        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
-      )}
 
       <PageHeader
         actions={
@@ -584,14 +577,14 @@ export default function TemplatesPage() {
                         <div className="flex items-center justify-end gap-2">
                           {t.status === 'ARCHIVED' ? null : t.status === 'ACTIVE' &&
                             t.activeVersion !== null ? (
-                            <Button
+                            <ButtonLink
                               className="whitespace-nowrap"
-                              onClick={() => setRunTarget(t)}
+                              href={`/start?template=${encodeURIComponent(t.id)}`}
                               size="sm"
                               variant="primary"
                             >
                               Run →
-                            </Button>
+                            </ButtonLink>
                           ) : (
                             <span
                               className="cursor-not-allowed"

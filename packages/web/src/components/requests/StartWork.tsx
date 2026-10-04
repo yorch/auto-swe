@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
+import { EpicLaunchForm } from '@/components/epics/EpicLaunchForm';
 import { WorkflowLaunchForm } from '@/components/requests/WorkflowLaunchForm';
 import { ButtonLink } from '@/components/ui/Button';
 import { Combobox } from '@/components/ui/Combobox';
@@ -14,11 +15,20 @@ import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { requestHref } from '@/lib/requestDisplay';
 import { useTeamStore } from '@/stores/teamStore';
 
-export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflow' | 'agent' }) {
+type Mode = 'workflow' | 'agent' | 'epic';
+
+export function StartWork({
+  initialMode = 'workflow',
+  initialTemplateId = '',
+}: {
+  initialMode?: Mode;
+  /** A workflow to preselect, from the library's Run button. */
+  initialTemplateId?: string;
+}) {
   const router = useRouter();
-  const [mode, setMode] = useState<'workflow' | 'agent'>(initialMode);
-  const [visited, setVisited] = useState<string[]>([]);
-  const [templateId, setTemplateId] = useState('');
+  const [mode, setMode] = useState<Mode>(initialMode);
+  const [visited, setVisited] = useState<string[]>(initialTemplateId ? [initialTemplateId] : []);
+  const [templateId, setTemplateId] = useState(initialTemplateId);
   const teamId = useTeamStore((state) => state.selectedTeamId);
   const templates = useWorkflowTemplates(teamId);
   const runnable = (templates.data ?? []).filter(
@@ -40,7 +50,7 @@ export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflo
       <RadioGroup
         legend="How do you want to work?"
         name="work-mode"
-        onChange={(value) => setMode(value as 'workflow' | 'agent')}
+        onChange={(value) => setMode(value as Mode)}
         options={[
           {
             description: 'Follow a reusable process with defined steps, checks, and approvals.',
@@ -52,6 +62,12 @@ export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflo
               'Give one agent a task on a repository, with explicit execution and delivery limits.',
             label: 'Run an agent',
             value: 'agent',
+          },
+          {
+            description:
+              'Change several repositories at once. A planner splits the brief into ordered per-repository work.',
+            label: 'Run a multi-repo epic',
+            value: 'epic',
           },
         ]}
         value={mode}
@@ -102,6 +118,9 @@ export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflo
       </div>
       <div hidden={mode !== 'agent'}>
         <AgentRunForm onLaunched={onLaunched} reviewBeforeLaunch />
+      </div>
+      <div hidden={mode !== 'epic'}>
+        <EpicLaunchForm onLaunched={(path) => router.push(path)} />
       </div>
     </div>
   );

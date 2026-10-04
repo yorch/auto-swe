@@ -1,5 +1,6 @@
-import { StartWork } from '@/components/requests/StartWork';
+import { redirect } from 'next/navigation';
 
+// Agent runs are started from Start work; this address is kept for old links.
 export default function AgentRunsPage() {
-  return <StartWork initialMode="agent" />;
+  redirect('/start?mode=agent');
 }
