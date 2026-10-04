@@ -1,11 +1,11 @@
 'use client';
 
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { SaveBar } from '@/components/ui/SaveBar';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   type CanaryConfig,
@@ -55,7 +55,7 @@ function toBody(form: CanaryFormState): CanaryConfigInput {
 export function CanaryForm() {
   const { data: canary, error: loadError, isError, isLoading } = useCanaryConfig();
   const update = useUpdateCanaryConfig();
-  const { form, setField, submit, saved, error } = useConfigForm({
+  const { form, setField, submit, saved, error, dirtyCount, discard } = useConfigForm({
     data: canary,
     initial: INITIAL,
     mutateAsync: update.mutateAsync,
@@ -140,14 +140,14 @@ export function CanaryForm() {
             </div>
           </Card>
 
-          {saved && <Alert variant="success">Canary configuration saved.</Alert>}
-          {error && <Alert variant="error">{error}</Alert>}
-
-          <div className="flex justify-end">
-            <Button disabled={update.isPending} type="submit" variant="primary">
-              {update.isPending ? 'Saving…' : 'Save changes'}
-            </Button>
-          </div>
+          <SaveBar
+            dirtyCount={dirtyCount}
+            error={error}
+            onDiscard={discard}
+            pending={update.isPending}
+            saved={saved}
+            savedMessage="Canary configuration saved."
+          />
         </form>
       </QueryBoundary>
     </>

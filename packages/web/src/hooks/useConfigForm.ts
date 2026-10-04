@@ -1,8 +1,10 @@
 'use client';
 
-import type { Dispatch, FormEvent, SetStateAction } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import type { FormEvent } from 'react';
+import { useEffect, useRef } from 'react';
 import { errMsg } from '@/lib/errors';
+import { type UseFormStateResult, useFormState } from './useFormState';
+import { useUnsavedChangesGuard } from './useUnsavedChangesGuard';
 
 // Factors out the repeated "load query -> seed local form state -> submit ->
 // saved/error" cycle shared by the workflow config forms (consolidation,
@@ -23,23 +25,19 @@ export interface UseConfigFormOptions<TData, TForm, TBody> {
   mutateAsync: (body: TBody) => Promise<unknown>;
 }
 
-export interface UseConfigFormResult<TForm> {
-  form: TForm;
-  setForm: Dispatch<SetStateAction<TForm>>;
-  setField: <K extends keyof TForm>(key: K, value: TForm[K]) => void;
+export interface UseConfigFormResult<TForm extends object> extends UseFormStateResult<TForm> {
   submit: (e?: FormEvent) => Promise<void>;
-  saved: boolean;
-  error: string | null;
 }
 
-export function useConfigForm<TData, TForm, TBody>(
+export function useConfigForm<TData, TForm extends object, TBody>(
   opts: UseConfigFormOptions<TData, TForm, TBody>
 ): UseConfigFormResult<TForm> {
   const { data, initial, toForm, toBody, mutateAsync } = opts;
 
-  const [form, setForm] = useState<TForm>(initial);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const state = useFormState<TForm>(initial);
+  const { form, seed, markSaved, markFailed, clearStatus } = state;
+  // A form with unsaved edits warns before the page is left.
+  useUnsavedChangesGuard(state.isDirty);
 
   // Seed the form from the query data exactly ONCE, on its first arrival. A
   // later background refetch (staleTime + refetchOnWindowFocus) hands back a new
@@ -50,25 +48,21 @@ export function useConfigForm<TData, TForm, TBody>(
   useEffect(() => {
     if (data && !seededRef.current) {
       seededRef.current = true;
-      setForm(toForm(data));
+      seed(toForm(data));
     }
   }, [data]);
 
-  const setField = <K extends keyof TForm>(key: K, value: TForm[K]) => {
-    setForm((f) => ({ ...f, [key]: value }));
-  };
-
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
-    setError(null);
-    setSaved(false);
+    clearStatus();
+    const submitted = form;
     try {
-      await mutateAsync(toBody(form));
-      setSaved(true);
+      await mutateAsync(toBody(submitted));
+      markSaved(submitted);
     } catch (err) {
-      setError(errMsg(err, 'Failed to save'));
+      markFailed(errMsg(err, 'Failed to save'));
     }
   };
 
-  return { error, form, saved, setField, setForm, submit };
+  return { ...state, submit };
 }
