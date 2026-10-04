@@ -259,4 +259,4 @@ jobs:
       - name: Skill sources (database-backed tests)
         env:
           SKILL_SOURCE_PG_TEST: '1'
-        run: yarn test packages/gateway/src/lib/skillSource.pg.test.ts
+        run: yarn test packages/gateway/src/lib/skillSource.pg.test.ts packages/gateway/src/lib/skillSourceBudget.pg.test.ts
