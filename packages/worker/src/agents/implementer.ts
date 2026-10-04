@@ -66,6 +66,17 @@ export interface ImplementerAgentOptions {
   resolveCtx?: ResolveCtx;
 }
 
+/**
+ * One entry of the skill menu. An imported skill is prefixed with where its text
+ * came from (`[external: owner/repo@sha7]`) so the agent weighs it as third-party.
+ */
+export function skillMenuLine(
+  s: Pick<ResolvedSkill, 'name' | 'description' | 'provenance'>
+): string {
+  const tag = s.provenance ? `[${s.provenance}] ` : '';
+  return `- **${s.name}**: ${tag}${s.description || s.name}`;
+}
+
 export async function createImplementerAgent(
   workspace: Workspace,
   tracer?: AgentTracer,
@@ -188,7 +199,7 @@ export async function createImplementerAgent(
         '## Available Skills',
         'Use the `loadSkill` tool to load the full guidance for any skill before applying it.',
         '',
-        ...resolvedSkills.map((s) => `- **${s.name}**: ${s.description || s.name}`),
+        ...resolvedSkills.map((s) => skillMenuLine(s)),
       ].join('\n')
     : '';
 
