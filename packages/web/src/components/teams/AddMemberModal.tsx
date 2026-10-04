@@ -29,6 +29,7 @@ export function AddMemberModal({
   const [userId, setUserId] = useState('');
   const [role, setRole] = useState<Role>('ENGINEER');
   const [error, setError] = useState<string | null>(null);
+  const [pickerKey, setPickerKey] = useState(0);
 
   useEffect(() => {
     if (!open) {
@@ -36,6 +37,9 @@ export function AddMemberModal({
     }
     setRole('ENGINEER');
     setError(null);
+    setUserId('');
+    // Remount the picker so its own lookup field starts empty too.
+    setPickerKey((k) => k + 1);
   }, [open]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -61,7 +65,12 @@ export function AddMemberModal({
       title="Add a member"
     >
       <form className="space-y-5" onSubmit={handleSubmit}>
-        <MemberUserPicker existingUserIds={existingUserIds} onChange={setUserId} value={userId} />
+        <MemberUserPicker
+          existingUserIds={existingUserIds}
+          key={pickerKey}
+          onChange={setUserId}
+          value={userId}
+        />
         <Select
           id="role"
           label="Team role"

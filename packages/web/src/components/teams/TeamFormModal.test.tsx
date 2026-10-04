@@ -47,3 +47,31 @@ describe('TeamFormModal — create', () => {
     expect(bodyOf(spy, '/api/v1/teams', 'POST')).toMatchObject({ slug: 'custom-slug' });
   });
 });
+
+describe('TeamFormModal — edit', () => {
+  it('keeps what the user typed when the parent re-renders with an equal but new mode object', () => {
+    const initial = { description: 'Owns payments', name: 'Payments' };
+    const view = (
+      <TeamFormModal
+        mode={{ initial: { ...initial }, kind: 'edit', teamId: 't1' }}
+        onClose={() => {}}
+        open={true}
+      />
+    );
+    const { rerender } = render(withQuery(view));
+    const name = screen.getByLabelText(/^name/i) as HTMLInputElement;
+    expect(name.value).toBe('Payments');
+    fireEvent.change(name, { target: { value: 'Payments Platform' } });
+    // A refetch-on-focus re-renders the parent, which builds a new `mode`.
+    rerender(
+      withQuery(
+        <TeamFormModal
+          mode={{ initial: { ...initial }, kind: 'edit', teamId: 't1' }}
+          onClose={() => {}}
+          open={true}
+        />
+      )
+    );
+    expect((screen.getByLabelText(/^name/i) as HTMLInputElement).value).toBe('Payments Platform');
+  });
+});

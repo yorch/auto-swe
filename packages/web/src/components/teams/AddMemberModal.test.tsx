@@ -41,8 +41,11 @@ describe('AddMemberModal', () => {
     );
 
     const userInput = (await screen.findByRole('combobox', { name: /user/i })) as HTMLInputElement;
-    // Pre-select runs against `eligible`, not the raw user list
-    await waitFor(() => expect(userInput.value).toContain('eligible@example.com'));
+    // Nothing is preselected: submit stays disabled until an explicit pick.
+    expect(userInput.value).toBe('');
+    expect(
+      (screen.getByRole('button', { name: /add member/i }) as HTMLButtonElement).disabled
+    ).toBe(true);
     // Filter excludes the existing member u2 AND the inactive u3
     act(() => userInput.focus());
     fireEvent.change(userInput, { target: { value: '@example.com' } });
