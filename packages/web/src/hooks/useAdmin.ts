@@ -295,6 +295,8 @@ export interface PlatformUsage {
     inputTokens: number;
     outputTokens: number;
   }[];
+  /** The window of the same length just before this one. */
+  previous: { calls: number; costUsd: number };
   scope: UsageScope;
   since: string;
   /** Exclusive end of the window: the end of the current UTC day. */

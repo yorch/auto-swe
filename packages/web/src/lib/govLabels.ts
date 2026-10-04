@@ -51,3 +51,17 @@ const PLATFORM_ROLE_RANK: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD
 export function roleChangeNeedsConfirm(from: string, to: string): boolean {
   return to === 'ADMIN' || (PLATFORM_ROLE_RANK[to] ?? 0) < (PLATFORM_ROLE_RANK[from] ?? 0);
 }
+
+/**
+ * A readable name for a machine key (`executeImplementation`, `code_security.scan`,
+ * `PR_OPENED`): split on case changes and separators, sentence-cased. For keys
+ * the API does not resolve to a title.
+ */
+export function humanizeKey(key: string): string {
+  const words = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_.\-/]+/g, ' ')
+    .trim()
+    .toLowerCase();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : key;
+}

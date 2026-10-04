@@ -241,7 +241,13 @@ describe('usageRoutes GET /usage', () => {
       .map(([args]) => args.where)
       .filter((w) => w.runId === undefined)
       .map((w) => [w.createdAt.gte.getTime(), w.createdAt.lt.getTime()]);
-    expect(dayBounds).toEqual(
+    // The first aggregate is the previous period: the same length, ending where this one starts.
+    expect(dayBounds[0]).toEqual([sinceMs - 7 * DAY_MS, sinceMs]);
+    expect(res.json().data.previous).toEqual({
+      calls: expect.any(Number),
+      costUsd: expect.any(Number),
+    });
+    expect(dayBounds.slice(1)).toEqual(
       Array.from({ length: 7 }, (_, i) => [sinceMs + i * DAY_MS, sinceMs + (i + 1) * DAY_MS])
     );
   });
