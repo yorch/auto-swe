@@ -139,6 +139,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                     width="100%"
                   >
                     <BarChart
+                      accessibilityLayer={false}
                       data={[...stats.perStepFailureRates]
                         .sort((a, b) => b.failureRate - a.failureRate)
                         .map((r) => ({

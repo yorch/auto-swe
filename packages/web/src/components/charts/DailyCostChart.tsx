@@ -54,7 +54,7 @@ export function DailyCostChart({ data, title }: Props) {
       }}
     >
       <ResponsiveContainer height={CHART_HEIGHT} width="100%">
-        <BarChart data={data}>
+        <BarChart accessibilityLayer={false} data={data}>
           <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
           <XAxis
             dataKey="date"

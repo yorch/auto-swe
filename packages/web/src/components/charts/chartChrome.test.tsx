@@ -27,3 +27,26 @@ describe('EmptyChart', () => {
     expect((container.firstChild as HTMLElement).style.height).toBe('280px');
   });
 });
+
+describe('chart accessibility layer', () => {
+  it('turns off Recharts focusable svg on every chart (ChartFrame supplies the label and table)', async () => {
+    const { globSync, readFileSync } = await import('node:fs');
+    const path = await import('node:path');
+    const root = path.resolve(__dirname, '../..');
+    const files = globSync('{components,app}/**/*.tsx', { cwd: root }).filter(
+      (file) => !file.endsWith('.test.tsx')
+    );
+    const offenders: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(path.join(root, file), 'utf8');
+      for (const match of source.matchAll(
+        /<(Bar|Line|Area|Pie|Composed|Radar|Scatter)Chart\b[^>]*>/g
+      )) {
+        if (!match[0].includes('accessibilityLayer={false}')) {
+          offenders.push(`${file}: ${match[0].slice(0, 40)}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});

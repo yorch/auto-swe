@@ -48,7 +48,7 @@ export function WorkflowsOverTimeChart({ data, title }: Props) {
       }}
     >
       <ResponsiveContainer height={CHART_HEIGHT} width="100%">
-        <AreaChart data={data}>
+        <AreaChart accessibilityLayer={false} data={data}>
           <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
           <XAxis
             dataKey="date"

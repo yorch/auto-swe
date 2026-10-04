@@ -49,7 +49,7 @@ export function ScorerTrendChart({ data, title }: Props) {
       }}
     >
       <ResponsiveContainer height={CHART_HEIGHT} width="100%">
-        <LineChart data={data}>
+        <LineChart accessibilityLayer={false} data={data}>
           <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
           <XAxis
             dataKey="date"

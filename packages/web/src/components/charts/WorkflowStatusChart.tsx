@@ -36,7 +36,7 @@ export function WorkflowStatusChart({ data, title }: Props) {
       }}
     >
       <ResponsiveContainer height={CHART_HEIGHT} width="100%">
-        <PieChart>
+        <PieChart accessibilityLayer={false}>
           <Pie
             cx="50%"
             cy="50%"

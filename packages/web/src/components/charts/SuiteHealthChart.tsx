@@ -74,7 +74,12 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
       }}
     >
       <ResponsiveContainer height={datasets.length * ROW_HEIGHT + 56} width="100%">
-        <BarChart data={datasets} layout="vertical" margin={{ bottom: 16, left: 8, right: 24 }}>
+        <BarChart
+          accessibilityLayer={false}
+          data={datasets}
+          layout="vertical"
+          margin={{ bottom: 16, left: 8, right: 24 }}
+        >
           <CartesianGrid horizontal={false} stroke={GRID_STROKE} strokeDasharray="2 4" />
           <XAxis
             domain={[0, Math.min(1, max * 1.2)]}
