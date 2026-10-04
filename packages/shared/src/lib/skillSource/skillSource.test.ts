@@ -565,6 +565,27 @@ describe('listing', () => {
     expect(hub.calls).toHaveLength(1);
   });
 
+  it('atSha reads exactly that commit and never asks where the ref points', async () => {
+    const hub = fakeHub({ files: [{ content: skillMd('a'), path: 'a/SKILL.md' }], sha: OTHER });
+    const result = await fetchSkillSource(
+      loc(),
+      { atSha: SHA, scriptMode: 'TEXT_ONLY' },
+      deps(hub)
+    );
+    expect(result.sha).toBe(SHA);
+    expect(result.skills[0]?.name).toBe('a');
+    expect(hub.calls.some((c) => c.url.includes('/commits/'))).toBe(false);
+    expect(hub.calls.some((c) => c.url.includes(`/git/trees/${SHA}`))).toBe(true);
+  });
+
+  it('atSha refuses anything that is not a commit sha, before any request', async () => {
+    const hub = fakeHub({ files: [] });
+    await expect(
+      fetchSkillSource(loc(), { atSha: '../x', scriptMode: 'TEXT_ONLY' }, deps(hub))
+    ).rejects.toMatchObject({ code: 'INVALID_SOURCE' });
+    expect(hub.calls).toHaveLength(0);
+  });
+
   it('resolveSourceSha returns just the commit', async () => {
     const hub = fakeHub({ files: [] });
     expect(await resolveSourceSha(loc(), deps(hub))).toBe(SHA);

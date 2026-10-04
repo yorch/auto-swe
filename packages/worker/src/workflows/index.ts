@@ -17,6 +17,7 @@ export { ScheduledRepoAccessSyncWorkflow } from './scheduledRepoAccessSync.js';
 export { ScheduledRepoDependencyScanWorkflow } from './scheduledRepoDependencyScan.js';
 export { ScheduledRevalidationWorkflow } from './scheduledRevalidation.js';
 export { ScheduledRunReaperWorkflow } from './scheduledRunReaper.js';
+export { ScheduledSkillSourceSyncWorkflow } from './scheduledSkillSourceSync.js';
 export { WorkflowAuthorWorkflow } from './workflowAuthor.js';
 export { authorJobProgressQuery, WorkflowAuthorJobWorkflow } from './workflowAuthorJob.js';
 export { WorkflowExplainWorkflow } from './workflowExplain.js';

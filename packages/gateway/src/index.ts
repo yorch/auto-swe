@@ -181,6 +181,11 @@ async function start() {
   app.temporal
     .syncRunReaperSchedule(sweeps.runReaper)
     .catch((err) => app.log.warn({ err }, 'run reaper schedule sync failed at startup'));
+  // Same for the skill-source update check: one cheap request per tracked source,
+  // and it only flags — an admin reviews and accepts. On by default.
+  app.temporal
+    .syncSkillSourceSyncSchedule(sweeps.skillSourceSync)
+    .catch((err) => app.log.warn({ err }, 'skill source sync schedule sync failed at startup'));
 
   // Same for the eval-regression Temporal Schedule (the nightly benchmark).
   // Off by default — needs a seeded dataset + a worker that can reach Docker.

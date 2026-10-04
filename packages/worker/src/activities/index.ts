@@ -210,6 +210,8 @@ export {
 } from './state.js';
 export type { SyncRepoAccessInput, SyncRepoAccessResult } from './syncRepoAccess.js';
 export { syncRepoAccess } from './syncRepoAccess.js';
+export type { SyncSkillSourcesResult } from './syncSkillSources.js';
+export { syncSkillSources } from './syncSkillSources.js';
 export {
   createWorkflowRun,
   finalizeWorkflowRun,
