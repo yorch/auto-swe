@@ -4,12 +4,17 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
-import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
+import {
+  buildWorkflowHumanStepControlFilter,
+  buildWorkflowHumanStepVisibilityFilter,
+} from '../lib/runVisibility.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const StepIdParam = z.object({ id: z.string().uuid() });
 
 const ListQuery = z.object({
+  /** Only pending steps the caller may answer and has not already answered. */
+  actionable: booleanQueryParam(false),
   overdue: booleanQueryParam(false),
   runId: z.string().uuid().optional(),
   sort: z
@@ -20,6 +25,8 @@ const ListQuery = z.object({
 
 const RespondBody = z.object({
   action: z.string().min(1).max(50),
+  /** An approver's note on an approval step; recorded and shown to the requester. */
+  comment: z.string().max(2000).optional(),
   value: z.unknown().optional(),
 });
 
@@ -37,6 +44,14 @@ const HumanStepRunSchema = z.object({
       externalTicketId: z.string().nullable(),
     })
     .nullable(),
+  workRequestId: z.string().uuid().nullable(),
+});
+
+const HumanStepResponseSchema = z.object({
+  action: z.string(),
+  byName: z.string().nullable(),
+  comment: z.string().nullable(),
+  resolvedAt: z.string().nullable(),
 });
 
 const HumanStepListItemSchema = z.object({
@@ -47,11 +62,15 @@ const HumanStepListItemSchema = z.object({
   fields: z.unknown().nullable(),
   id: z.string().uuid(),
   kind: z.string(),
+  /** What the caller already answered on this step, or null. */
+  myResponse: z.string().nullable(),
   nodeId: z.string(),
   options: z.unknown().nullable(),
   requestedAt: z.string(),
   requiredApprovers: z.number().int().min(1),
   resolvedAt: z.string().nullable(),
+  /** Each recorded answer with its optional comment, oldest first. */
+  responses: z.array(HumanStepResponseSchema),
   run: HumanStepRunSchema.nullable(),
   runId: z.string().uuid(),
   status: z.string(),
@@ -102,6 +121,14 @@ const RespondResponseSchema = z.object({
   }),
 });
 
+function commentOf(value: unknown): string | null {
+  if (value && typeof value === 'object' && 'comment' in value) {
+    const comment = (value as { comment: unknown }).comment;
+    return typeof comment === 'string' && comment ? comment : null;
+  }
+  return null;
+}
+
 function formatDate(value: Date): string;
 function formatDate(value: unknown): string | null;
 function formatDate(value: unknown): string | null {
@@ -146,7 +173,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { overdue, sort, status, runId } = request.query;
+      const { actionable, overdue, sort, status, runId } = request.query;
       const orderBy =
         sort === 'requestedAt:asc'
           ? { requestedAt: 'asc' as const }
@@ -158,12 +185,24 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       const steps = await fastify.prisma.workflowHumanStep.findMany({
         include: {
           _count: { select: { humanApprovals: true } },
+          humanApprovals: {
+            orderBy: { resolvedAt: 'asc' },
+            select: {
+              action: true,
+              resolvedAt: true,
+              resolvedBy: true,
+              resolvedByUser: { select: { name: true } },
+              value: true,
+            },
+          },
+          resolvedByUser: { select: { name: true } },
           run: {
             select: {
               id: true,
               status: true,
               workflowId: true,
               workRequest: { select: { description: true, externalTicketId: true } },
+              workRequestId: true,
             },
           },
         },
@@ -173,7 +212,17 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           ...(status === 'ALL' ? {} : { status: 'PENDING' }),
           ...(runId ? { runId } : {}),
           ...(overdue ? { timeoutAt: { lt: new Date() } } : {}),
-          ...buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate),
+          // "Actionable" is control, not visibility: a step on a run the caller can
+          // see but not answer is not waiting on them. A step they already approved
+          // is waiting on someone else, and an expired one cannot be answered.
+          ...(actionable
+            ? {
+                humanApprovals: { none: { resolvedBy: user.sub } },
+                OR: [{ timeoutAt: null }, { timeoutAt: { gt: new Date() } }],
+                status: 'PENDING',
+                ...buildWorkflowHumanStepControlFilter(user, request.repoAccessGate),
+              }
+            : buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate)),
         },
       });
       return {
@@ -185,11 +234,30 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           fields: s.fields,
           id: s.id,
           kind: s.kind,
+          myResponse: s.humanApprovals.find((a) => a.resolvedBy === user.sub)?.action ?? null,
           nodeId: s.nodeId,
           options: s.options,
           requestedAt: formatDate(s.requestedAt),
           requiredApprovers: s.requiredApprovers,
           resolvedAt: formatDate(s.resolvedAt),
+          responses:
+            s.humanApprovals.length > 0
+              ? s.humanApprovals.map((a) => ({
+                  action: a.action,
+                  byName: a.resolvedByUser?.name ?? null,
+                  comment: commentOf(a.value),
+                  resolvedAt: formatDate(a.resolvedAt),
+                }))
+              : s.status === 'RESOLVED' && s.payload && typeof s.payload === 'object'
+                ? [
+                    {
+                      action: String((s.payload as { action?: unknown }).action ?? 'respond'),
+                      byName: s.resolvedByUser?.name ?? null,
+                      comment: commentOf(s.payload),
+                      resolvedAt: formatDate(s.resolvedAt),
+                    },
+                  ]
+                : [],
           run: s.run,
           runId: s.runId,
           status: s.status,
@@ -349,6 +417,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
               status: true,
               workflowId: true,
               workRequest: { select: { description: true, externalTicketId: true } },
+              workRequestId: true,
             },
           },
         },
@@ -398,7 +467,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { action, value } = request.body;
+      const { action, comment, value } = request.body;
 
       const result = await resolveHitlStep(
         {
@@ -410,7 +479,8 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         request.params.id,
         action,
         value,
-        user
+        user,
+        comment
       );
 
       if (!result.ok) {
@@ -422,7 +492,13 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
-        after: { action, resolvedBy: user.sub, status: result.status, value },
+        after: {
+          action,
+          ...(comment?.trim() ? { comment: comment.trim() } : {}),
+          resolvedBy: user.sub,
+          status: result.status,
+          value,
+        },
         before: { status: 'PENDING' },
         entityId: result.runId,
         entityType: 'WorkflowRun',

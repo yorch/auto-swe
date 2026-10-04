@@ -519,6 +519,10 @@ export interface WorkspaceRequestSummary extends WorkflowRunSummary {
   isCrossRepo: boolean;
   visibleExecutionCount: number;
   pendingStepCount: number;
+  /** Soonest deadline among steps waiting on a person; null when none has one. */
+  pendingStepDeadline?: string | null;
+  /** The pull request is open and waiting for a human to review and merge it. */
+  needsMerge?: boolean;
   stage: string | null;
   reviewUrl: string | null;
   target: string | null;
@@ -598,6 +602,14 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   humanSteps?: HumanStepSummary[];
 }
 
+/** One recorded answer on a human step, with the answerer's optional note. */
+export interface HumanStepResponse {
+  action: string;
+  byName: string | null;
+  comment: string | null;
+  resolvedAt: string | null;
+}
+
 /** Shape of a pending human action (humanApproval/Decision/Input/Review node). */
 export interface HumanStepSummary {
   id: string;
@@ -619,10 +631,16 @@ export interface HumanStepSummary {
   requiredApprovers?: number;
   /** How many more distinct approvals are still needed. */
   approvalsRemaining?: number;
+  /** What the current user already answered on this step, or null. */
+  myResponse?: string | null;
+  /** Every recorded answer with its optional comment, oldest first. */
+  responses?: HumanStepResponse[];
   run: {
     id: string;
     status: string;
     workflowId: string;
+    /** The request this run belongs to; the request panel is the first place a run opens. */
+    workRequestId?: string | null;
     workRequest?: { externalTicketId: string; description: string } | null;
   };
 }

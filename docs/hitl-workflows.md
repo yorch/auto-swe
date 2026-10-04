@@ -250,6 +250,12 @@ All endpoints require at least the `ENGINEER` role. Visibility follows the same 
 ### `GET /api/v1/human-steps`
 
 Returns up to 100 `PENDING` steps visible to the authenticated user, ordered by `requestedAt` descending.
+`status=ALL` also returns answered steps (up to 200). `actionable=true` narrows the list to pending,
+unexpired steps the caller may answer and has not already answered; it is what the sidebar count and
+the Home "Waiting on you" section read.
+
+Each step also carries `myResponse` (the caller's own answer, or `null`), `responses` (every recorded
+answer as `{ action, byName, comment, resolvedAt }`, oldest first), and `run.workRequestId`.
 
 Response:
 ```json
@@ -304,6 +310,15 @@ Request body:
 ```json
 { "action": "submit", "value": "The diff looks good but please add input validation on line 42." }
 ```
+
+An `APPROVAL` response may carry an optional `comment` (up to 2000 characters):
+```json
+{ "action": "reject", "comment": "The migration drops a column the billing job still reads." }
+```
+The comment is stored with the response, written to the audit log, and shown to the requester on the
+request panel. It is not part of the signal the workflow receives. A comment on any other kind
+returns `400` with `INVALID_VALUE`. The web dialog requires a reason on reject and leaves a comment
+on approve optional; the API itself accepts a reject without one.
 
 Valid actions per kind:
 

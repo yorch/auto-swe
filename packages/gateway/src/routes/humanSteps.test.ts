@@ -40,6 +40,7 @@ function pendingStep(overrides: Record<string, unknown> = {}): Record<string, un
       status: 'RUNNING',
       workflowId: 'eng-acme-repo-JIRA-1',
       workRequest: { description: 'Add endpoint', externalTicketId: 'JIRA-1' },
+      workRequestId: '00000000-0000-4000-8000-000000000003',
     },
     runId: RUN_ID,
     signalName: 'hitl_approveGate',
@@ -140,6 +141,58 @@ describe('human step routes', () => {
     });
   });
 
+  describe('GET / responses', () => {
+    it('projects recorded comments and what the caller already answered', async () => {
+      listRows = [
+        pendingStep({
+          humanApprovals: [
+            {
+              action: 'approve',
+              resolvedAt: new Date('2026-06-01T01:00:00Z'),
+              resolvedBy: USER_ID,
+              resolvedByUser: { name: 'Ada' },
+              value: { comment: 'Looks right' },
+            },
+          ],
+          requiredApprovers: 2,
+        }),
+      ];
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/human-steps?actionable=true',
+      });
+      expect(res.statusCode).toBe(200);
+      const [row] = JSON.parse(res.payload).data;
+      expect(row.myResponse).toBe('approve');
+      expect(row.responses).toEqual([
+        {
+          action: 'approve',
+          byName: 'Ada',
+          comment: 'Looks right',
+          resolvedAt: '2026-06-01T01:00:00.000Z',
+        },
+      ]);
+    });
+
+    it('reads a single resolver comment from the stored payload', async () => {
+      listRows = [
+        pendingStep({
+          payload: { action: 'reject', comment: 'Wrong table', resolvedBy: USER_ID },
+          resolvedAt: new Date('2026-06-01T02:00:00Z'),
+          resolvedByUser: { name: 'Grace' },
+          status: 'RESOLVED',
+        }),
+      ];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      const [row] = JSON.parse(res.payload).data;
+      expect(row.responses).toMatchObject([
+        { action: 'reject', byName: 'Grace', comment: 'Wrong table' },
+      ]);
+      expect(row.myResponse).toBeNull();
+    });
+  });
+
   describe('POST /:id/respond', () => {
     function respond(payload: Record<string, unknown>) {
       return app.inject({
@@ -149,6 +202,25 @@ describe('human step routes', () => {
         url: `/api/v1/human-steps/${STEP_ID}/respond`,
       });
     }
+
+    it('stores an approver comment with the step but keeps it out of the signal', async () => {
+      stepRow = pendingStep();
+      const res = await respond({ action: 'reject', comment: '  Needs a test  ' });
+      expect(res.statusCode).toBe(200);
+      expect(updateManyCalls[0]?.data.payload).toMatchObject({
+        action: 'reject',
+        comment: 'Needs a test',
+      });
+      expect(signalCalls[0]?.args[0]).toEqual({ action: 'reject', resolvedBy: USER_ID });
+    });
+
+    it('refuses a comment on a step that is not an approval', async () => {
+      stepRow = pendingStep({ kind: 'REVIEW' });
+      const res = await respond({ action: 'submit', comment: 'hi' });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('INVALID_VALUE');
+      expect(signalCalls).toHaveLength(0);
+    });
 
     it('returns 404 when the step does not exist', async () => {
       stepRow = null;

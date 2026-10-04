@@ -252,7 +252,8 @@ export async function resolveHitlStep(
   stepId: string,
   action: string,
   value: unknown,
-  user: HitlActor
+  user: HitlActor,
+  rawComment?: string
 ): Promise<HitlResolveResult> {
   const { prisma, temporal, log } = deps;
 
@@ -298,7 +299,20 @@ export async function resolveHitlStep(
   }
   value = validation.value;
 
+  // An approver's note on an APPROVAL step. It is recorded with the response and
+  // shown to the requester, but never sent to the workflow: the signal payload
+  // keeps the shape every recorded history was written with.
+  const comment = rawComment?.trim() ? rawComment.trim() : undefined;
+  if (comment !== undefined && resolvedStep.kind !== 'APPROVAL') {
+    return {
+      code: 'INVALID_VALUE',
+      message: 'Comments are only supported on approval steps.',
+      ok: false,
+    };
+  }
+
   const signalPayload = { action, resolvedBy: user.sub, value };
+  const storedPayload = comment === undefined ? signalPayload : { ...signalPayload, comment };
   const requiredApprovers = resolvedStep.requiredApprovers;
   const isMultiApprover =
     resolvedStep.kind === 'APPROVAL' && requiredApprovers > 1 && action === 'approve';
@@ -309,6 +323,7 @@ export async function resolveHitlStep(
   ): Prisma.InputJsonValue =>
     ({
       action,
+      ...(comment === undefined ? {} : { comment }),
       signalSent,
       status,
       value: value !== undefined ? (value as Prisma.InputJsonValue) : null,
@@ -368,7 +383,12 @@ export async function resolveHitlStep(
             action,
             resolvedBy: user.sub,
             stepId,
-            value: value !== undefined ? (value as Prisma.InputJsonValue) : undefined,
+            value:
+              comment !== undefined
+                ? ({ comment } as Prisma.InputJsonValue)
+                : value !== undefined
+                  ? (value as Prisma.InputJsonValue)
+                  : undefined,
           },
         });
       } catch (err: unknown) {
@@ -405,7 +425,7 @@ export async function resolveHitlStep(
 
       const update = await tx.workflowHumanStep.updateMany({
         data: {
-          payload: signalPayload as Prisma.InputJsonValue,
+          payload: storedPayload as Prisma.InputJsonValue,
           resolvedAt: new Date(),
           resolvedBy: user.sub,
           status: 'RESOLVED',
@@ -436,7 +456,7 @@ export async function resolveHitlStep(
     const result = await prisma.$transaction(async (tx) => {
       const update = await tx.workflowHumanStep.updateMany({
         data: {
-          payload: signalPayload as Prisma.InputJsonValue,
+          payload: storedPayload as Prisma.InputJsonValue,
           resolvedAt: new Date(),
           resolvedBy: user.sub,
           status: 'RESOLVED',

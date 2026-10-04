@@ -134,6 +134,7 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
         include: {
           _count: { select: { humanSteps: { where: { status: 'PENDING' } } } },
           connection: { select: connectionSelect },
+          humanSteps: { select: { timeoutAt: true }, where: { status: 'PENDING' } },
           template: { select: { name: true, workspaceProvider: true } },
           workRequest: {
             select: {
@@ -205,7 +206,16 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
             attemptCount: wr?._count.workflowRuns ?? 1,
             failedExecutionCount: group.failedExecutionCount,
             isCrossRepo: group.isCrossRepo,
+            needsMerge: group.needsMerge,
             pendingStepCount: group.pendingStepCount,
+            // The soonest deadline among the steps waiting on a person, so a list can say how
+            // long is left without opening each request.
+            pendingStepDeadline:
+              run.humanSteps
+                .map((step) => step.timeoutAt)
+                .filter((at): at is Date => at != null)
+                .sort((a, b) => a.getTime() - b.getTime())[0]
+                ?.toISOString() ?? null,
             reviewUrl,
             stage: run.status === 'RUNNING' ? (ledger?.currentStatus ?? null) : null,
             status: group.status,
