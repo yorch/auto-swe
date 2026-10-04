@@ -1726,7 +1726,7 @@
     {
       "body": "The dashboard lists work by request, with the latest visible attempt standing for each, and retries a request without losing its identity.",
       "category": "Operations",
-      "detail": "Run visibility is applied first, then executions are grouped by request. A single-repository request is represented by its newest visible execution; a cross-repository request summarizes every visible child and keeps failed children visible while others run. Filtering and paging happen after grouping, so an old failure cannot resurface behind a successful retry. A retry of a git request starts a new execution of the same request; a connection-free or non-git request starts again from its recorded template version, re-checking only that an earlier run is still visible, the connection and the organization budget (not the template’s status, the caller’s team membership or the input schema), and an agent re-run reuses the request id with a fresh delivery branch. Optional instructions are appended to the new attempt’s description only. A cross-repository request is not retried as a whole.",
+      "detail": "Run visibility is applied first, then executions are grouped by request. A single-repository request is represented by its newest visible execution; a cross-repository request summarizes every visible child and keeps failed children visible while others run. Filtering and paging happen after grouping, so an old failure cannot resurface behind a successful retry. A retry of a git request starts a new execution of the same request; a connection-free or non-git request starts again from its recorded template version, applying the checks a fresh launch applies (the template must be ACTIVE and visible through the caller’s team membership, the input is validated against its input schema) together with run visibility, the connection and the organization budget, and an agent re-run reuses the request id with a fresh delivery branch. Optional instructions are appended to the new attempt’s description only. A cross-repository request is not retried as a whole.",
       "id": "requestWorkspace",
       "refs": [
         "requestGroup",
@@ -1751,9 +1751,9 @@
       "title": "Non-engineering API handlers"
     },
     {
-      "body": "Connector requests to tracker and knowledge-base base URLs pass an SSRF guard whose private-network opt-in is narrow (Jira field detection is the exception), and connector requests refuse or re-check every redirect.",
+      "body": "Connector requests to tracker and knowledge-base base URLs pass an SSRF guard whose private-network opt-in is narrow, and connector requests refuse or re-check every redirect.",
       "category": "Integrations",
-      "detail": "Jira, GitHub Issues and Confluence base URLs are checked strictly first when those connectors run; Jira field detection, an ADMIN call, does not run the check (see the boundary below). Only when that check refuses a private address and the connector’s allowPrivateNetwork opt-in is on is the refusal waived, and the waiver is logged. The opt-in never reaches loopback, link-local (IPv4 and IPv6), cloud-metadata or unspecified addresses, nor a malformed URL or a scheme other than http(s). The worker’s Jira path honours the opt-in only for the exact origin an ADMIN configured. The tracker and knowledge-base save routes apply the same check and answer 400 BASE_URL_REFUSED for a stored target the connector would refuse, but only when the write touches the provider or URL or turns the opt-in on, so a save that only turns it off is never blocked. Redirects are never followed unchecked. Linear, Notion, Slack, Zendesk and Figma requests set redirect: error, and the Atlassian client treats any 3xx as a failure it does not retry. GitHub Issues and the CI-log download, which GitHub answers with redirects, go through a guarded fetch: redirects are followed by hand for at most three hops, the guard runs on every hop, the credential is sent only to the configured origin, only a short allowlist of benign headers crosses to another origin, a write cannot cross origins, and a 307 or 308 keeps the method and body. Figma has no opt-in: its host is a constant that is still run through the guard.",
+      "detail": "Jira, GitHub Issues and Confluence base URLs are checked strictly first when those connectors run, and Jira field detection, an ADMIN call, runs the same check before it builds its client and answers 400 BASE_URL_REFUSED for a refused URL, whether it came from the stored row or the environment fallback. Only when that check refuses a private address and the connector’s allowPrivateNetwork opt-in is on is the refusal waived, and the waiver is logged. The opt-in never reaches loopback, link-local (IPv4 and IPv6), cloud-metadata or unspecified addresses, nor a malformed URL or a scheme other than http(s). The worker’s Jira path honours the opt-in only for the exact origin an ADMIN configured. The tracker and knowledge-base save routes apply the same check and answer 400 BASE_URL_REFUSED for a stored target the connector would refuse, but only when the write touches the provider or URL or turns the opt-in on, so a save that only turns it off is never blocked. Redirects are never followed unchecked. Linear, Notion, Slack, Zendesk and Figma requests set redirect: error, and the Atlassian client treats any 3xx as a failure it does not retry. GitHub Issues and the CI-log download, which GitHub answers with redirects, go through a guarded fetch: redirects are followed by hand for at most three hops, the guard runs on every hop, the credential is sent only to the configured origin, only a short allowlist of benign headers crosses to another origin, a write cannot cross origins, and a 307 or 308 keeps the method and body. Figma has no opt-in: its host is a constant that is still run through the guard.",
       "id": "connectorGuard",
       "refs": [
         "connectorProbe",
@@ -2161,7 +2161,7 @@
     {
       "body": "The guard reads URL text, so it blocks the obvious private targets and not every route to one.",
       "category": "Integrations",
-      "detail": "The check never resolves a name: a public hostname that points at an internal address passes, which only network policy outside the platform can stop. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs, so a refused one surfaces at run time. Jira field detection builds its Atlassian client from the resolved tracker config without the guard, so a stored or environment base URL (including a row saved before the save check existed) is fetched there with the credential unchecked; only the client’s refusal of redirects still applies. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code.",
+      "detail": "The check never resolves a name: a public hostname that points at an internal address passes, which only network policy outside the platform can stop. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs or Jira field detection is called, so a refused one surfaces at that point. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code.",
       "id": "connectorGuardBounds",
       "refs": [
         "connectorGuardText",
@@ -2185,15 +2185,6 @@
       "refs": ["teamMembers", "tenant"],
       "status": "Confirmed boundary",
       "title": "Deactivating a team does not remove repository access"
-    },
-    {
-      "body": "Retrying a connection-free template request re-checks less than launching it fresh does.",
-      "category": "Access",
-      "detail": "The retry re-checks only that an earlier run of the request is still visible to the caller, the connection and the organization budget. The fresh launch also requires the template to be ACTIVE and visible through the caller’s team membership and validates the input against the template’s input schema; the retry skips all three. A user removed from the template’s team can therefore still retry their earlier request, including on an archived template, and the recorded input is not re-validated against the schema.",
-      "id": "templateRetryChecks",
-      "refs": ["retryTemplateChecks", "launchTemplateChecks", "retryTemplate"],
-      "status": "Confirmed boundary",
-      "title": "A template-request retry skips the fresh launch’s template checks"
     }
   ],
   "modelDescriptions": {
@@ -3864,20 +3855,20 @@
       "title": "The run page holds the spec snapshot instead of refetching it"
     },
     {
-      "anchor": "const template = await app.prisma.workflowTemplate.findFirst({",
-      "before": 0,
+      "anchor": "where: launchableTemplateWhere(user, input.templateId),",
+      "before": 12,
       "id": "retryTemplateChecks",
-      "lines": 52,
+      "lines": 40,
       "path": "packages/gateway/src/lib/retryTemplateRequest.ts",
-      "title": "Template-request retry re-checks only run visibility, connection and org budget"
+      "title": "Template-request retry looks the template up with the launch scope, then checks the inputs"
     },
     {
-      "anchor": "where: { id: request.params.id, status: 'ACTIVE', ...teamMembershipFilter(user) },",
-      "before": 18,
+      "anchor": "export function launchableTemplateWhere(",
+      "before": 5,
       "id": "launchTemplateChecks",
       "lines": 50,
-      "path": "packages/gateway/src/routes/workflowTemplates.ts",
-      "title": "A fresh template launch also requires an ACTIVE template, team membership and a valid input"
+      "path": "packages/gateway/src/lib/templateLaunch.ts",
+      "title": "One shared helper scopes a template launch and a retry to ACTIVE, team-visible templates and validates inputs"
     },
     {
       "anchor": "lastCheckedAt: new Date(),",
@@ -4080,11 +4071,11 @@
       "title": "Addresses no opt-in reaches"
     },
     {
-      "anchor": "const strict = checkProbeUrl(baseUrl);",
-      "before": 6,
+      "anchor": "export function checkConnectorBaseUrl(",
+      "before": 8,
       "id": "connectorBaseUrl",
-      "lines": 20,
-      "path": "packages/shared/src/lib/integrations/registry.ts",
+      "lines": 22,
+      "path": "packages/shared/src/lib/ssrfGuard.ts",
       "title": "A connector base URL is checked strictly, then with the connector opt-in, and the waiver is logged"
     },
     {
@@ -4171,9 +4162,9 @@
       "anchor": "export async function detectJiraFields(",
       "before": 3,
       "id": "connectorJiraDetect",
-      "lines": 20,
+      "lines": 26,
       "path": "packages/gateway/src/lib/systemConfigService.ts",
-      "title": "Jira field detection builds its client without the guard"
+      "title": "Jira field detection runs the connector guard before it builds its client"
     },
     {
       "anchor": "We resolve at hostname-text level only (no DNS lookup)",
