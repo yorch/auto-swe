@@ -422,7 +422,7 @@ Skills are an **ADMIN-curated library**: creation (`POST /api/v1/platform/skills
 | `description` | One-line summary shown in the L1 menu |
 | `promptText` | Full reasoning guidance (max 50 KB) |
 | `isBuiltIn` | `true` for seeds from `packages/shared/src/skills/` |
-| `isVerified` | `true` for built-ins; set on a custom skill only by an ADMIN through `POST /api/v1/platform/skills/:id/verify`; reset to `false` whenever `promptText` is updated |
+| `isVerified` | `true` for built-ins; set on a custom skill only by an ADMIN through `POST /api/v1/platform/skills/:id/verify`; reset to `false` by any edit that cuts a revision (a `promptText` or `description` change) — a rename or an `isActive` toggle does not reset it |
 | `currentRevision` | The `SkillRevision` number that `promptText` and `description` currently mirror (§6.5) |
 | `isActive` | Toggle to enable/disable without deleting |
 
@@ -711,7 +711,7 @@ on the `Agent` payload below.
 | `POST` | `/api/v1/platform/skills/:id/verify` | `ADMIN` | Mark the current revision human-verified (audited) |
 | `DELETE` | `/api/v1/platform/skills/:id` | `ADMIN` | Delete (built-in skills are rejected with 400) |
 
-Updating `promptText` automatically resets `isVerified` to `false` and triggers a security scan (the scan result is returned in the response but does not block the save). A change to `promptText` or `description` cuts a new revision (§6.5).
+Any edit that cuts a revision (a `promptText` or `description` change) automatically resets `isVerified` to `false`, whether or not the skill is flagged built-in (bundle-installed skills are); a rename or an `isActive` toggle leaves it. The edit triggers a security scan (the scan result is returned in the response but does not block the save). A change to `promptText` or `description` cuts a new revision (§6.5).
 
 ### 9.2 Agent library (model / prompt / skills / tools)
 
@@ -757,8 +757,10 @@ Writes cut a new immutable `version`.
 - **A skill created after a run starts is not in its pin.** It resolves its current revision, which is
   also its only one. An epic's children are runs of their own and pin at their own start, so an edit
   between the epic's start and a child's start reaches that child. A run created before the
-  `skillRevisions` column existed has no pin, and neither does a channel-resident run, which does not
-  go through `createWorkflowRun`. Eval-harness cases are not runs and always read current text.
+  `skillRevisions` column existed has no pin. A channel-resident run started by the channel assistant
+  (`startChannelRun`) writes its own `WorkflowRun` and has no pin; a channel task run through
+  `createWorkflowRun` with no repository pins GLOBAL skills plus those of the team and organization
+  of the Slack channel its request came from (matched on Slack's channel id). Eval-harness cases are not runs and always read current text.
 - **A skill's `isActive` flag is not pinned.** It is read live on purpose, so a pinned run cannot keep
   using a skill an admin has disabled; the cost is that disabling and re-enabling mid-run changes
   which skills a retry sees.

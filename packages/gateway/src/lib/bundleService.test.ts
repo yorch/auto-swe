@@ -23,6 +23,7 @@ import {
   BundleProtectedContentError,
   exportBundle,
   installBundle,
+  SkillChangedError,
 } from './bundleService.js';
 
 function manifestFor(
@@ -621,6 +622,25 @@ describe('installBundle', () => {
       expect(call.data.revisions).toEqual({
         create: expect.objectContaining({ promptText: 'replacement text', revision: 3 }),
       });
+    });
+
+    it('raises SkillChangedError only when the guarded revision update loses', async () => {
+      prisma.skill.findFirst.mockResolvedValue(liveSkill);
+      prisma.skill.update.mockRejectedValueOnce(Object.assign(new Error('x'), { code: 'P2025' }));
+      await expect(
+        installBundle(asArg(), skillManifest('replacement text'), { allowUnverified: true })
+      ).rejects.toBeInstanceOf(SkillChangedError);
+    });
+
+    it('lets a unique-constraint failure elsewhere in the install surface as itself', async () => {
+      prisma.agent.create.mockRejectedValueOnce(Object.assign(new Error('dup'), { code: 'P2002' }));
+      const m = manifestFor({
+        ...EMPTY,
+        agents: [{ key: 'a', name: 'A' }],
+      } as unknown as BundleEntities);
+      const err = await installBundle(asArg(), m, { allowUnverified: true }).catch((e) => e);
+      expect(err).not.toBeInstanceOf(SkillChangedError);
+      expect(err).toMatchObject({ code: 'P2002' });
     });
 
     it('cuts no revision when the re-installed text is identical', async () => {
