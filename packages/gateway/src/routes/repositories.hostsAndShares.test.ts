@@ -510,6 +510,50 @@ describe('repository sharing', () => {
       );
     });
 
+    it('audits each deactivated schedule against the schedule, with the person who unshared', async () => {
+      const second = { ...stranded, id: '77777777-7777-4777-8777-777777777777' };
+      ctx.prisma.scheduledWorkRequest.findMany.mockResolvedValue([stranded, second]);
+      ctx.prisma.runInput.findUnique.mockResolvedValue({ templateId: 'tpl-1', templateVersion: 3 });
+      ctx.prisma.team.findMany.mockResolvedValue([]);
+      expect((await share([])).statusCode).toBe(200);
+      const scheduleAudits = ctx.prisma.configAuditLog.create.mock.calls
+        .map(([arg]) => arg.data)
+        .filter((d: { entityType: string }) => d.entityType === 'ScheduledWorkRequest');
+      expect(scheduleAudits).toHaveLength(2);
+      expect(scheduleAudits.map((d: { entityId: string }) => d.entityId)).toEqual([
+        SCHEDULE,
+        second.id,
+      ]);
+      expect(scheduleAudits[0]).toMatchObject({
+        action: 'UPDATE',
+        actorId: 'user-1',
+        afterJson: { isActive: false, reason: 'team lost its claim on the repository' },
+        beforeJson: { isActive: true, repoId: REPO, teamId: OTHER_TEAM },
+      });
+    });
+
+    it('does not audit a schedule it did not deactivate, and still pauses past a failed audit', async () => {
+      ctx.prisma.scheduledWorkRequest.findMany.mockResolvedValue([stranded]);
+      ctx.prisma.runInput.findUnique.mockResolvedValue({ templateId: 'tpl-1', templateVersion: 3 });
+      ctx.prisma.team.findMany.mockResolvedValue([]);
+      ctx.prisma.scheduledWorkRequest.updateMany.mockResolvedValueOnce({ count: 0 });
+      expect((await share([])).statusCode).toBe(200);
+      const audits = (
+        ctx.prisma.configAuditLog.create.mock.calls as Array<[{ data: { entityType: string } }]>
+      )
+        .map(([arg]) => arg.data.entityType)
+        .filter((t) => t === 'ScheduledWorkRequest');
+      expect(audits).toEqual([]);
+
+      ctx.prisma.configAuditLog.create.mockClear();
+      ctx.prisma.configAuditLog.create.mockResolvedValueOnce({});
+      ctx.prisma.configAuditLog.create.mockRejectedValueOnce(new Error('schedule audit'));
+      ctx.prisma.scheduledWorkRequest.updateMany.mockResolvedValue({ count: 1 });
+      ctx.temporal.syncWorkRequestSchedule.mockClear();
+      expect((await share([])).statusCode).toBe(200);
+      expect(ctx.temporal.syncWorkRequestSchedule).toHaveBeenCalled();
+    });
+
     it('keeps the database pause when Temporal cannot be reached', async () => {
       ctx.prisma.scheduledWorkRequest.findMany.mockResolvedValue([stranded]);
       ctx.prisma.runInput.findUnique.mockResolvedValue({ templateId: 'tpl-1', templateVersion: 3 });

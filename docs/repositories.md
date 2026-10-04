@@ -220,7 +220,10 @@ team, and is deactivated like a schedule of a team that lost its claim.
 When a team stops having a claim on the repository (its share is removed, or the repository moves
 to another team), its schedules on it are deactivated after the change commits, and the change is
 audited first: the row is marked inactive and the Temporal schedule is paused. Each schedule is
-handled on its own, and a failure on one is logged and never fails the request. The worker also
+handled on its own, and a failure on one is logged and never fails the request. Every schedule the
+change deactivates gets its own audit entry (entity `ScheduledWorkRequest`, naming the team that lost
+its claim and the person who changed the share or moved the repository); a failed audit write is
+logged and does not skip the pause. The worker also
 refuses to fire a schedule whose row is inactive, so a pause that did not reach Temporal still
 stops it, and refuses one whose team is no longer the repository's owning team or a current
 sharer (`schedule-team-unclaimed`, non-retryable), which covers a create that raced an unshare. A
@@ -306,3 +309,8 @@ longer fit.
 - **Some runs can only be controlled by a platform admin.** A run on a global template, against no
   repository, that nobody launched (a webhook start, or one from before launchers were recorded) is
   visible to everyone but can be cancelled, or its human steps answered, only by an admin.
+- **A deactivated team keeps its members' access and its shares.** `Team.isActive` gates managing
+  (creating, editing and moving repositories, leading templates) and the team listing, not
+  membership: the members of an inactive owning team still reach its repositories, and the members
+  of an inactive team a repository was shared with still reach that one. Removing the share is what
+  ends a shared team's access, and only active teams of the organization can be chosen when sharing.

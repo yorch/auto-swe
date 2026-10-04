@@ -28,10 +28,11 @@ import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
 async function deactivateSchedulesOutsideTeamsQuietly(
   fastify: FastifyInstance,
   repoId: string,
-  log: FastifyRequest['log']
+  log: FastifyRequest['log'],
+  actorId: string
 ): Promise<void> {
   try {
-    await deactivateSchedulesOutsideTeams(fastify, repoId, log);
+    await deactivateSchedulesOutsideTeams(fastify, repoId, log, actorId);
   } catch (err) {
     log.error({ err, repoId }, 'could not deactivate the schedules that lost their claim');
   }
@@ -780,7 +781,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // A move drops the shares that no longer apply and changes who owns the
       // repository, so schedules owned by a team with no remaining claim stop.
       if (moving) {
-        await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log);
+        await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log, user.sub);
       }
 
       return { data: redactConnection(updated) };
@@ -908,7 +909,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // A team that lost its share keeps no schedule on the repository. After the
       // audit, because the change is committed: a failure here must not leave it
       // unrecorded, nor turn it into a 500.
-      await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log);
+      await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log, user.sub);
 
       const shares = await fastify.prisma.connection.findUnique({
         select: { shares: { select: { team: { select: { id: true, name: true, slug: true } } } } },
