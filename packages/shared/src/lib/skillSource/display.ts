@@ -6,8 +6,8 @@
  * escape, reorder what a reviewer reads or reshape a log or error line.
  */
 export function safeDisplayPath(p: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
   const clean = p.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
     /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g,
     '?'
   );

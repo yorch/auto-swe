@@ -131,8 +131,8 @@ export async function runSkillsCommand(
 
 // Everything below that came from the server describes a third-party repository: its
 // names can carry terminal escapes, so control characters never reach the terminal.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
 const CONTROL =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
   /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 const clean = (s: string) => s.replace(CONTROL, '?');
 

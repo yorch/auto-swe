@@ -447,7 +447,7 @@ describe('skills sources', () => {
     });
 
     it('names are cleaned of bidi controls, and a rename is shown and reported', async () => {
-      reply((url, method) =>
+      reply((_url, method) =>
         method === 'POST'
           ? { body: { data: { ...ACCEPTED, renamed: [{ name: 'alpha', renamedTo: 'beta' }] } } }
           : {
