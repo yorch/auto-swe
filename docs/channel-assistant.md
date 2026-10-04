@@ -66,7 +66,7 @@ An `@mention` starts a `ChannelAssistantWorkflow` that replies in-thread, with l
 **Persona.** `SlackChannel.personaPrompt` falls back to `Team.defaultPersonaPrompt` via
 `resolvePersonaPrompt` — a pure synchronous cascade in `lib/channelPersona.ts`. The result is
 injected at the top of the system prompt, before tool hints, across every channel LLM path.
-Editable per channel at `/govern/slack-channels` and team-wide at `/teams/[id]`.
+Editable per channel on the channel's Settings tab (`/govern/slack-channels/[id]`) and team-wide at `/teams/[id]`.
 
 **Follow-up sessions.** With `followupSessionEnabled`, a plain reply continues a thread without a
 re-`@mention` while `ChannelThreadSession.lastAssistantAt` is fresh (a 30-minute window). Follow-up
@@ -280,11 +280,12 @@ Code-route tasks use the team's SWE template and stay visible like any engineeri
 **Audit feed.** `startChannelRun` stamps the triggering `userSlackId` and a truncated message
 snapshot onto `specSnapshot.channel`. `GET /api/v1/platform/slack-channels/:id/audit` aggregates the
 channel's runs into a "who asked what, when, and what it touched" feed — kind, who, when, status,
-cost, tokens, run ID. The admin Audit modal renders it with a kind filter and a link through to the
-full tool-call sequence. Read access uses the same `assertChannelAccess` guard as memory and open
+cost, tokens, run ID. The channel page's Activity tab renders it with a kind filter and a link through
+to the full tool-call sequence; Slack user IDs show as the linked account's email where one exists. Read access uses the same `assertChannelAccess` guard as memory and open
 items.
 
-Channels are configured at `/govern/slack-channels` over
+Channels are listed at `/govern/slack-channels` and configured on each channel's page
+(`/govern/slack-channels/[id]`, tabs Settings, Memory, Open items, Activity) over
 `/api/v1/platform/slack-channels` (plus `/:id/budget`, `/:id/budget/reset`, `/:id/audit`, and the
 memory and open-item
 sub-resources); channel-scoped agents are created from the agent-library form with `CHANNEL` scope
