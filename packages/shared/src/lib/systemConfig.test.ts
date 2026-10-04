@@ -513,6 +513,8 @@ describe('systemConfig resolvers', () => {
       'REPO_DEPENDENCY_SCAN_CRON',
       'MODEL_DISCOVERY_ENABLED',
       'MODEL_DISCOVERY_CRON',
+      'RUN_REAPER_ENABLED',
+      'RUN_REAPER_CRON',
     ];
     beforeEach(() => {
       for (const key of KEYS) {
@@ -525,6 +527,7 @@ describe('systemConfig resolvers', () => {
         modelDiscovery: { cronExpression: '17 3 * * *', enabled: true },
         repoAccess: { cronExpression: '23 * * * *', enabled: false },
         repoDependency: { cronExpression: '0 4 * * *', enabled: true },
+        runReaper: { cronExpression: '*/15 * * * *', enabled: true },
       });
     });
 
@@ -535,10 +538,13 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', '30 2 * * 1');
       vi.stubEnv('MODEL_DISCOVERY_ENABLED', 'false');
       vi.stubEnv('MODEL_DISCOVERY_CRON', '0 5 * * 1');
+      vi.stubEnv('RUN_REAPER_ENABLED', 'false');
+      vi.stubEnv('RUN_REAPER_CRON', '*/5 * * * *');
       expect(resolveScheduledSweeps()).toEqual({
         modelDiscovery: { cronExpression: '0 5 * * 1', enabled: false },
         repoAccess: { cronExpression: '5 * * * *', enabled: true },
         repoDependency: { cronExpression: '30 2 * * 1', enabled: false },
+        runReaper: { cronExpression: '*/5 * * * *', enabled: false },
       });
     });
 
@@ -546,10 +552,12 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('REPO_ACCESS_SYNC_ENABLED', 'yes');
       vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', 'daily');
       vi.stubEnv('MODEL_DISCOVERY_ENABLED', 'off');
+      vi.stubEnv('RUN_REAPER_CRON', 'often');
       const sweeps = resolveScheduledSweeps();
       expect(sweeps.repoAccess.enabled).toBe(false);
       expect(sweeps.repoDependency.cronExpression).toBe('0 4 * * *');
       expect(sweeps.modelDiscovery.enabled).toBe(true);
+      expect(sweeps.runReaper.cronExpression).toBe('*/15 * * * *');
     });
 
     describe('validateScheduledSweepsEnv — the strict check the gateway runs at boot', () => {
@@ -561,6 +569,8 @@ describe('systemConfig resolvers', () => {
         vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', '0 4 * * *');
         vi.stubEnv('MODEL_DISCOVERY_ENABLED', 'true');
         vi.stubEnv('MODEL_DISCOVERY_CRON', '17 3 * * *');
+        vi.stubEnv('RUN_REAPER_ENABLED', 'true');
+        vi.stubEnv('RUN_REAPER_CRON', '*/15 * * * *');
         expect(validateScheduledSweepsEnv()).toEqual([]);
       });
 

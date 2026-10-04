@@ -2,7 +2,7 @@ import type { Prisma } from '@auto-swe/shared';
 import type { SettingResolveCtx } from '@auto-swe/shared/config';
 import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
@@ -20,7 +20,10 @@ import {
 } from '../lib/slackNotify.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
 import { accrueChannelUsage } from './channelAssistant.js';
-import { assertScheduledFireAuthorized } from './scheduledFireAuthorization.js';
+import {
+  assertScheduledFireAuthorized,
+  SCHEDULE_FIRE_ID_RE,
+} from './scheduledFireAuthorization.js';
 
 /**
  * Workflow run lifecycle activities. These live OUTSIDE the workflow file so
@@ -81,6 +84,70 @@ async function ensureEpicChildLedgerRow(input: CreateWorkflowRunInput): Promise<
     create: {
       ...links,
       budgetTier: parent?.budgetTier ?? 'STANDARD',
+      currentStatus: 'STARTING',
+      temporalWorkflowId: input.workflowId,
+    },
+    update: links,
+    where: { temporalWorkflowId: input.workflowId },
+  });
+}
+
+interface ScheduledFireAnchor {
+  assignedBranch: string | null;
+  budgetTier: string;
+  repoId: string;
+}
+
+/** The schedule's anchor row, when this run is a fire of the schedule whose work request it carries. */
+async function scheduledFireAnchor(
+  input: CreateWorkflowRunInput
+): Promise<ScheduledFireAnchor | null> {
+  const match = input.workRequestId ? SCHEDULE_FIRE_ID_RE.exec(input.workflowId) : null;
+  if (!match) {
+    return null;
+  }
+  const anchor = await prisma.activeWorkflow.findUnique({
+    select: { assignedBranch: true, budgetTier: true, repoId: true, workRequestId: true },
+    where: { temporalWorkflowId: `sched-${match[1]}` },
+  });
+  if (!anchor?.repoId || anchor.workRequestId !== input.workRequestId) {
+    return null;
+  }
+  return { ...anchor, repoId: anchor.repoId };
+}
+
+/**
+ * Give a scheduled fire its own `ActiveWorkflow` ledger row, carrying the
+ * schedule's repository, branch and budget tier.
+ *
+ * A fire is a run of the schedule's standing work request, which names no
+ * connection, and the only ledger row it has is the schedule's anchor
+ * (`sched-<id>`, never a real fire's id). The fire's spend accrues to a row
+ * keyed by its own workflow id, which nothing created until a template's first
+ * `updateDomainState` self-registered a bare one: no repository, so no
+ * organization for the cap or for billing, no link to the work request, so the
+ * finalizer billed the anchor's zero, and the default budget tier instead of
+ * the schedule's. The returned repository goes on the run row as its
+ * `connectionId`, so the cap guard, the in-flight count and `finalizeRun` all
+ * reach the org through the run, as for an epic child.
+ *
+ * Written by `createWorkflowRun` only after the run row exists: a row written
+ * ahead of it would sit in STARTING for ever if the run never came to be (the
+ * reaper closes rows through runs), counted against the schedule creator's
+ * concurrency cap. The repository is read earlier, by `scheduledFireAnchor`,
+ * because the run row and the pinned settings need it. Idempotent, and never
+ * touches `currentStatus` or the counters of an existing row.
+ */
+async function writeScheduledFireLedgerRow(
+  input: CreateWorkflowRunInput,
+  anchor: ScheduledFireAnchor
+): Promise<void> {
+  const links = { repoId: anchor.repoId, workRequestId: input.workRequestId ?? null };
+  await prisma.activeWorkflow.upsert({
+    create: {
+      ...links,
+      assignedBranch: anchor.assignedBranch,
+      budgetTier: anchor.budgetTier,
       currentStatus: 'STARTING',
       temporalWorkflowId: input.workflowId,
     },
@@ -194,6 +261,10 @@ export async function createWorkflowRun(
   // and a row written ahead of one would sit in STARTING forever, counted as
   // live work that nothing will ever finish.
   await ensureEpicChildLedgerRow(input);
+  // A fire's ledger row is written after its run row below, not here: see
+  // `writeScheduledFireLedgerRow`.
+  const scheduledAnchor = await scheduledFireAnchor(input);
+  const scheduledRepoId = scheduledAnchor?.repoId ?? null;
 
   // P1/WS3: snapshot the active GLOBAL Agent versions so this run resolves a
   // fixed Agent version regardless of later library edits. One row per key
@@ -225,7 +296,7 @@ export async function createWorkflowRun(
   // cannot read the database, and a run that started under one transition
   // ceiling must finish under the same one or its replay history stops matching
   // its code — so these are resolved once, here, and carried forward.
-  const settingsCtx = await runSettingsContext(input);
+  const settingsCtx = await runSettingsContext(input, scheduledRepoId);
   const pinnedSettings = await snapshotPinnedSettings(settingsCtx);
 
   // Skill text is a second input to every agent: freeze the revision of every
@@ -251,6 +322,8 @@ export async function createWorkflowRun(
       // spans every repository, so run visibility reads this instead — a member
       // of one of the epic's teams reaches that team's child, not all of them.
       ...(input.parentWorkflowId && input.repoId ? { connectionId: input.repoId } : {}),
+      // A scheduled fire's standing work request names no connection either.
+      ...(scheduledRepoId ? { connectionId: scheduledRepoId } : {}),
       estimatedHumanTimeSaved: version.template?.estimatedHumanTimeSavedMinutes ?? null,
       isCanary,
       launchedById: input.launchedById ?? null,
@@ -268,6 +341,12 @@ export async function createWorkflowRun(
     update: {},
     where: { workflowId: input.workflowId },
   });
+
+  // The ledger row only has to exist before the run's first LLM call, which is
+  // after this activity returns.
+  if (scheduledAnchor) {
+    await writeScheduledFireLedgerRow(input, scheduledAnchor);
+  }
 
   // Read the pin back off the row rather than trusting the value just computed:
   // on a Temporal retry `update: {}` keeps the *original* snapshot, and the run
@@ -369,10 +448,13 @@ async function skillTenantContext(
 /// `RunInput.connectionId`, while the Slack slash-command and scheduled-request
 /// paths leave it null and carry the repo on `ActiveWorkflow.repoId` instead.
 /// `currentRequestContext()` reads the latter, so this reads both.
-async function runSettingsContext(input: CreateWorkflowRunInput): Promise<SettingResolveCtx> {
+async function runSettingsContext(
+  input: CreateWorkflowRunInput,
+  scheduledRepoId: string | null = null
+): Promise<SettingResolveCtx> {
   const ctx: SettingResolveCtx = { workflowTemplateId: input.templateId };
 
-  const [request, active] = await Promise.all([
+  const [request, active, fireRepo] = await Promise.all([
     input.workRequestId
       ? prisma.runInput.findUnique({
           select: { connection: { select: { team: { select: { orgId: true } }, teamId: true } } },
@@ -383,9 +465,17 @@ async function runSettingsContext(input: CreateWorkflowRunInput): Promise<Settin
       select: { repository: { select: { team: { select: { orgId: true } }, teamId: true } } },
       where: { temporalWorkflowId: input.workflowId },
     }),
+    // A scheduled fire's own ledger row is written after the settings are
+    // pinned, so its repository comes from the schedule's anchor instead.
+    scheduledRepoId
+      ? prisma.connection.findUnique({
+          select: { team: { select: { orgId: true } }, teamId: true },
+          where: { id: scheduledRepoId },
+        })
+      : null,
   ]);
 
-  const team = request?.connection ?? active?.repository;
+  const team = request?.connection ?? active?.repository ?? fireRepo;
   ctx.teamId = team?.teamId ?? undefined;
   ctx.orgId = team?.team?.orgId ?? undefined;
   return ctx;
@@ -451,10 +541,37 @@ export async function finalizeWorkflowRun(
   status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
   contextSnapshot?: unknown
 ): Promise<void> {
+  await finalizeRun(runId, status, contextSnapshot, 'worker');
+}
+
+/**
+ * The finalization core: ends the run, bills its org, and fires the terminal
+ * side effects, exactly once however many callers race (`endWorkflowRun`
+ * guards the write). `source` labels `workflow_runs_finalized_total`; the run
+ * reaper reaches the same core as the workflow's own finalize step, so a run it
+ * ends is billed identically. `notify: false` suppresses the user-facing side
+ * effects (Slack run-complete notice, in-thread channel report, tracker sync):
+ * the reaper passes it for a run whose execution closed long ago or no longer
+ * exists, because a first sweep over history would otherwise post every orphan at
+ * once, possibly against tickets a later run already completed. A run that
+ * ended minutes ago still notifies. Resolves true when this call ended the run,
+ * false when another attempt already had.
+ */
+export async function finalizeRun(
+  runId: string,
+  status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED' | 'CANCELLED',
+  contextSnapshot: unknown,
+  source: 'worker' | 'reaper',
+  // User-facing notices (Slack, in-thread report, tracker sync). The reaper
+  // turns them off only for a run that ended long ago or whose execution is gone.
+  notify = true
+): Promise<boolean> {
   // Phase-8 denormalize the run's cost + token totals onto workflow_runs at finalize
   // time. Read the workRequest → activeWorkflows join once, sum, then write back.
   const run = await prisma.workflowRun.findUnique({
     select: {
+      connection: { select: { team: { select: { orgId: true } } } },
+      connectionId: true,
       endedAt: true,
       workflowId: true,
       workRequest: {
@@ -462,7 +579,6 @@ export async function finalizeWorkflowRun(
           activeWorkflows: {
             select: {
               costUsdAccrued: true,
-              repository: { select: { team: { select: { orgId: true } } } },
               temporalWorkflowId: true,
               tokensInputUsed: true,
               tokensOutputUsed: true,
@@ -471,6 +587,7 @@ export async function finalizeWorkflowRun(
           connection: {
             select: { team: { select: { orgId: true } } },
           },
+          connectionId: true,
           externalTicketId: true,
           // Channel assistant (Phase A): a channel-launched task run carries its
           // origin in `payload.channelId` + the Slack thread coordinates. Used
@@ -562,13 +679,32 @@ export async function finalizeWorkflowRun(
   // rollback re-reads endedAt null and re-does both. runsCompleted counts only
   // SUCCESS; cost/tokens accrue for every terminal status (real spend).
   if (run?.endedAt != null) {
-    return;
+    return false;
   }
 
   // An epic's work request targets no single connection, so an epic child
-  // reaches its org through its own ledger row's repository instead.
-  const orgId =
-    run?.workRequest?.connection?.team?.orgId ?? ownWorkflows[0]?.repository?.team?.orgId;
+  // reaches its org through its own run's connection; a run with no connection
+  // anywhere, through its own ledger row's repository. The order
+  // `readOrgMonthSpend` and `resolveBilledOrg` (the mid-run cap) also use, so a
+  // run is billed to the org the cap counted it under.
+  const placedByConnection = !!(run?.workRequest?.connectionId || run?.connectionId);
+  let ledgerOrgId: string | null = null;
+  if (!placedByConnection && run?.workflowId) {
+    // The ledger row is read by workflow id whether or not it is linked to the
+    // work request, as the cap guard reads it, so both find the same org.
+    const ledger = await prisma.activeWorkflow.findFirst({
+      select: { repository: { select: { team: { select: { orgId: true } } } } },
+      where: { temporalWorkflowId: run.workflowId },
+    });
+    ledgerOrgId = ledger?.repository?.team?.orgId ?? null;
+  }
+  const orgId = billedOrgId({
+    ledgerOrgId,
+    requestConnectionId: run?.workRequest?.connectionId,
+    requestOrgId: run?.workRequest?.connection?.team?.orgId,
+    runConnectionId: run?.connectionId,
+    runOrgId: run?.connection?.team?.orgId,
+  });
 
   // A run the dashboard cancelled ends CANCELLED whatever the workflow reports
   // (`endWorkflowRun`), and everything below follows the status it ended with.
@@ -596,6 +732,12 @@ export async function finalizeWorkflowRun(
 
   let outcome: EndRunOutcome;
   if (orgId) {
+    // Always the month of finalization, whoever finalizes: the cap counts an
+    // unfinalized run's spend in the current month whenever it started
+    // (`orgMonthSpend`), so billing it anywhere else would move spend out of the
+    // figure the cap reads. A run that crosses a month boundary, or is reaped
+    // late, lands wholly in the month it ends in; splitting it would need
+    // per-call timestamps on the ledger.
     const yearMonth = currentYearMonth();
     outcome = await prisma.$transaction(async (tx) => {
       // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises
@@ -655,13 +797,13 @@ export async function finalizeWorkflowRun(
   }
 
   if (outcome === 'alreadyEnded') {
-    return;
+    return false;
   }
   // Counted only by the attempt that finalized, so a retried activity cannot
   // double it — and not for a run the dashboard cancelled, which the cancel
   // route already counted.
   if (outcome === 'ended') {
-    recordRunFinalized(status, 'worker');
+    recordRunFinalized(status, source);
   }
   const finalStatus = endedStatus(outcome);
 
@@ -675,7 +817,7 @@ export async function finalizeWorkflowRun(
   // redundant completion message into the SAME thread (double-post). For ordinary
   // SWE runs this still fires (gated on the team's `slackNotifySuccess` opt-in).
   const channelTaskPayload = readChannelTaskPayload(run?.workRequest?.payload);
-  if (!channelTaskPayload) {
+  if (!channelTaskPayload && notify) {
     await notifySlackRunComplete({ runId, status: finalStatus });
   }
 
@@ -689,12 +831,14 @@ export async function finalizeWorkflowRun(
   // re-reads neither.
   await finalizeChannelTaskRun(runId, finalStatus, run?.workRequest, channelTaskPayload, {
     contextSnapshot,
+    report: notify,
     traceCostUsd: channelTraceCostUsd,
   });
 
   // Best-effort tracker sync on workflow terminal status.
   const externalTicketId = run?.workRequest?.externalTicketId;
   if (
+    notify &&
     externalTicketId &&
     (finalStatus === 'SUCCESS' || finalStatus === 'FAILED' || finalStatus === 'TIMED_OUT')
   ) {
@@ -710,6 +854,7 @@ export async function finalizeWorkflowRun(
       trackerConfig
     ).catch(() => null);
   }
+  return true;
 }
 
 /** Shape of the `payload` we stamp onto a channel-task RunInput. */
@@ -761,7 +906,7 @@ async function finalizeChannelTaskRun(
     | null
     | undefined,
   payload: ChannelTaskPayload | null,
-  ctx: { contextSnapshot: unknown; traceCostUsd: number | undefined }
+  ctx: { contextSnapshot: unknown; report: boolean; traceCostUsd: number | undefined }
 ): Promise<void> {
   // `payload` is the already-narrowed channel-task discriminant from
   // `finalizeWorkflowRun` (`readChannelTaskPayload`). Null → not a channel task.
@@ -793,6 +938,11 @@ async function finalizeChannelTaskRun(
   }
 
   // 2. Report the result back into the originating thread (opt-in-independent).
+  //    Not for a run the reaper ended: the accrual above is billing, this is a
+  //    notice the user would meet long after the fact.
+  if (!ctx.report) {
+    return;
+  }
   const slackChannelId = workRequest?.slackChannelId;
   const threadTs = workRequest?.slackMessageTs;
   if (!slackChannelId || !threadTs) {

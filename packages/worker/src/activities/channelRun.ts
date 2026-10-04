@@ -69,7 +69,9 @@ const MAX_AUDIT_TEXT_CHARS = 280;
 
 export interface FinalizeChannelRunInput {
   workflowId: string;
-  status: 'SUCCESS' | 'FAILED';
+  status: 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED';
+  /** Labels `workflow_runs_finalized_total`; the run reaper passes `reaper`. */
+  source?: 'channel' | 'reaper';
 }
 
 export interface TouchChannelThreadSessionInput {
@@ -273,7 +275,7 @@ export async function finalizeChannelRun(input: FinalizeChannelRunInput): Promis
     status: input.status,
   });
   if (outcome === 'ended') {
-    recordRunFinalized(input.status, 'channel');
+    recordRunFinalized(input.status, input.source ?? 'channel');
   }
   if (outcome !== 'alreadyEnded') {
     return;

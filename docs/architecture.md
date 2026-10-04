@@ -658,8 +658,9 @@ finalizes it in a non-cancellable scope, keeping `CANCELLED` whatever outcome it
 everything the run spent — what it spent while stopping included. A channel turn (the global
 Channel Assistant template) finalizes in a cancellable scope, so the cancel would reject its
 finalization; the cancel ends it directly, which costs the org cap nothing because channel turns
-bill their channel, not an org. A cancel that finds no execution left to stop (it never started,
-or closed without finalizing) sets `endedAt` itself, since nothing else will, and bills nothing. `Organization.monthlyBudgetUsdCents` caps monthly spend —
+bill their channel, not an org. A cancel that finds no execution left to stop leaves a non-channel
+run for the run reaper (§8), which finalizes and bills it; a channel turn is ended by the cancel
+itself. `Organization.monthlyBudgetUsdCents` caps monthly spend —
 every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap.
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
@@ -675,8 +676,12 @@ on exactly one side. When the connection pool cannot start that transaction in t
 during them then counts twice or not at all, which is off by one run rather than every in-flight
 run. The scheduled-fire check reads the same figure, and the org budget endpoint
 returns it as `currentMonthSpend` beside the finalized `currentMonthUsage`. The cap is still
-best-effort under concurrency: launches that arrive together see the same total, and a running
-run keeps spending after the cap is reached — it stops new work, not work already started.
+best-effort under concurrency: launches that arrive together see the same total.
+A run already going meets the cap too: `assertBudgetAvailable` also reads `orgMonthSpend` for the
+run's organization (found as billing finds it: the work request's connection, else the run's own
+connection, else — only when the run has no connection — the ledger row's repository, else — for a workflow with no run — its spend owner) and refuses the next model call with a non-retryable `BUDGET_EXCEEDED` once spend
+reaches the cap. That read goes through a per-org cache of one config-cache window (30 s), holding
+the cap and the spend together, so a refusal clears within a window of the cap being raised.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
 `/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
 so the worker writer and the gateway reader cannot disagree about which month a run lands in.
@@ -795,7 +800,7 @@ status, source, tier — never a run or ticket:
 | Metric (Prometheus name) | Labels | Recorded by |
 |---|---|---|
 | `llm_calls_total`, `llm_tokens_total`, `llm_cost_usd_total` | `model`, `agent` (+ `direction` on tokens) | `recordLlmUsage`, embedding usage |
-| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel). The worker, channel and eval-verdict writes are conditional on `endedAt` still being null and the dashboard cancel on `status` still being `RUNNING`, so a retried activity or a cancel racing the workflow's own finalisation counts once. A run the dashboard cancelled is counted by the cancel; the worker or channel write that later sets its `endedAt` keeps it `CANCELLED` and does not count it again. The gateway's eval start-failure write is unconditional: no workflow exists to finalise that row, so nothing else writes it |
+| `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel), `reaper` (the run reaper, below). The worker, channel and eval-verdict writes are conditional on `endedAt` still being null and the dashboard cancel on `status` still being `RUNNING`, so a retried activity or a cancel racing the workflow's own finalisation counts once. A run the dashboard cancelled is counted by the cancel; the worker or channel write that later sets its `endedAt` keeps it `CANCELLED` and does not count it again. The gateway's eval start-failure write is unconditional: no workflow exists to finalise that row, so nothing else writes it |
 | `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, on each call that ends over the tier |
 | `activity_duration_seconds` (histogram) | `activity`, `outcome` (`success` / `failure` / `cancelled`) | the activity interceptor |
 
@@ -826,7 +831,47 @@ has recorded that its activities have not yet persisted. `assertBudgetAvailable`
 once the cap is reached, and `recordLlmUsage` fails the call that passes it with a non-retryable
 `BUDGET_EXCEEDED`. An eval dataset run multiplies the cap by its case count, and finishes with a
 partial verdict rather than failing when the cap runs out after some cases completed (see
-[evals.md](./evals.md)). Epic planning is not runless: it is debited to the epic's own ledger row.
+[evals.md](./evals.md)). Epic planning is not runless: it is held to the tier of the epic's own
+ledger row. Its calls also count toward the org cap, as runless spend: the planning activity
+declares the first named repository's team as the owner of its trace rows (only that activity — a
+child run is counted through its own run and ledger row, and stamping it too would count its spend
+twice), and the epic's ledger row itself is never read by `orgMonthSpend`, so nothing is counted
+twice.
+
+**Run reaper.** A run is finalized — ended and billed to its org — by its own workflow's last step,
+so a workflow that never reaches it would otherwise stay "in flight" for the org cap for ever. The
+`auto-swe-run-reaper` Temporal Schedule (`RUN_REAPER_ENABLED`, default `true`; `RUN_REAPER_CRON`,
+default every 15 minutes) starts `ScheduledRunReaperWorkflow`, whose one activity (`reapStrandedRuns`)
+takes up to 200 unfinalized runs older than 10 minutes and asks Temporal about each. It picks them
+never-checked first, then least recently checked (`WorkflowRun.reapCheckedAt`, stamped on every run
+found still running), so a crowd of long-lived live runs rotates behind newer ones rather than
+holding the batch.
+A run whose execution is finished or no longer exists is ended through `finalizeRun`, the same core
+as the workflow's own finalize step, so billing and the `workflow_runs_finalized_total` count
+(`source=reaper`) happen exactly once however the two race. A run whose execution closed within the
+last hour, or closed after the last sweep that found it still running (up to a day back, because a
+run waits its turn in the rotation and its notice should not be lost to that wait), still gets the
+usual Slack run-complete notice, in-thread channel report and tracker sync. A finalize that fails
+is retried on the next sweep, not a rotation later, only while its execution closed within the last
+hour (the widened window above applies to a finalize that succeeds, not to this retry); past that
+hour the run is stamped like a live one, so a run that cannot be finalized holds the front of the
+queue for at most an hour after its execution closed. For an execution that closed before both, or that Temporal no
+longer has, the reaper finalizes billing and status only (a channel task's cost still accrues to
+its channel) and logs, once it has done so, that it did not notify, because a first sweep over
+history would otherwise post every orphan at once, even against tickets a later run completed.
+Billing goes to the month of finalization, like every other finalization: the cap
+counts an unfinalized run's spend in the current month whenever it started, so billing it
+elsewhere would move spend out of the figure the cap reads. A run that crosses a month boundary,
+or is reaped late, therefore lands wholly in the month it ends in; apportioning it would need
+per-call timestamps. A
+Temporal status maps to a run status as `COMPLETED` → `SUCCESS`, `TIMED_OUT` → `TIMED_OUT`,
+`CANCELLED` and `TERMINATED` → `CANCELLED` (stopped on purpose), `FAILED` and an execution Temporal
+has forgotten → `FAILED` (`COMPLETED` means the workflow returned; a channel turn whose own
+finalize failed is therefore recorded `SUCCESS` whatever its turn's outcome); a run the dashboard already cancelled stays `CANCELLED`. A lookup that
+fails or exceeds its 5 s deadline leaves the run alone, so a live run is never billed on a Temporal
+hiccup. Channel turns end through `finalizeChannelRun`, which bills their channel, not an org. A
+dashboard cancel that finds the execution gone leaves the run for the reaper rather than ending it
+unbilled; the one exception is a channel turn, which bills no org and ends in the cancel itself.
 
 **Agent traces.** Each LLM-calling activity records tool calls, LLM requests/responses, and named
 events as `AgentTrace` rows, which power the `/runs/[id]` viewer. The pattern — including the
@@ -1049,16 +1094,34 @@ Current constraints of the system as built. Deliberate product boundaries are in
   A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call
   succeeded with a degraded result can carry an `error` (the decomposer's singleton fallback does),
   so it counts as a failure.
-- **The org cap counts unfinalized runs until they finalize.** A run that never finalizes (a
-  workflow terminated outside the worker, or a cancelled one whose worker never runs its
-  cancellation path) keeps its accrued cost in every month's in-flight figure. That includes a run
-  cancelled in the moment between its first activity creating the row and Temporal recording that
-  activity's completion: the workflow exits before the step that finalizes on cancellation, so the
-  row stays `CANCELLED` with no `endedAt`. A dashboard cancel
-  that finds the run's execution already gone ends the run without billing it, so that run's spend
-  leaves the cap.
-  Spend with no org on it — a runless workflow with no derivable owner, an epic's own planning ledger
-  row, which no run finalizes — is outside the cap.
+- **The org cap counts unfinalized runs until they finalize.** A run whose workflow ended without
+  finalizing it — terminated outside the worker, or cancelled before its first activity was
+  recorded — keeps its accrued cost in the in-flight figure until the run reaper ends it, so it
+  counts for up to the 10-minute grace plus a sweep interval, and for as long as the reaper is
+  disabled (`RUN_REAPER_ENABLED=false`) or Temporal is unreachable. A sweep checks 200 runs, so with
+  more unfinalized runs than that a stranded one is reached after at most
+  `ceil(unfinalized / 200)` sweeps. The first sweep over a long history reaps 200 per interval,
+  billing each into the current month and notifying no one for runs that ended over an hour ago, so
+  that month's usage report carries the spend of every run reaped late.
+  A run is counted for, capped under and billed to one organization, found in this order: its work
+  request's connection, else — only when the request names none, as an epic child's and a scheduled
+  fire's do not — the run's own connection, else — only when the run has no connection — the
+  repository of the run's own ledger row. A connection that is found decides even when its team has
+  no organization: the run is then billed to no one, never to the next source. A
+  scheduled fire gets its connection and ledger row at its first activity, from the schedule's
+  repository (and its branch and budget tier), so it is capped, counted in flight and billed to that
+  repository's organization like any other run. For the same reason a running fire counts against
+  its creator's MCP concurrency cap and appears in team-scoped workflow lists, as any launched run
+  does.
+  Spend with no org on it — a runless workflow with no derivable owner — is outside the cap. An
+  epic's planning is attributed to one team, the first repository the epic names, even when the
+  epic spans organizations; each child run is billed to its own repository's organization.
+- **The org cap is a gate with a one-window lag.** A run's next call is refused only once the
+  cached org spend has reached the cap, so up to one cache window (30 s) of spend, from every run
+  of the org at once, can land after the cap is crossed, and the figure does not include a call
+  until its run's ledger row is written. A spend or cap read that fails lets the call through. A
+  repo-less channel task bills its channel, not an org, so the org cap never refuses it; a code-route
+  channel task and a PRD run bill their connection's org and are refused like any run.
 - **Budget enforcement is a gate, not a reservation.** `assertBudgetAvailable` refuses a call for a
   workflow whose tier is already spent, and `recordLlmUsage` accrues atomically and re-checks after.
   A workflow sitting just under its limit is still allowed one more call of unknown size, because a

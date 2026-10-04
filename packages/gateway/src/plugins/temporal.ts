@@ -31,6 +31,7 @@ export const REVALIDATION_SCHEDULE_ID = 'auto-swe-eval-revalidation';
 export const REPO_DEPENDENCY_SCAN_SCHEDULE_ID = 'auto-swe-repo-dependency-scan';
 export const REPO_ACCESS_SYNC_SCHEDULE_ID = 'auto-swe-repo-access-sync';
 export const MODEL_DISCOVERY_SCHEDULE_ID = 'auto-swe-model-discovery';
+export const RUN_REAPER_SCHEDULE_ID = 'auto-swe-run-reaper';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -180,6 +181,15 @@ export interface ModelDiscoveryScheduleConfig {
   cronExpression: string;
 }
 
+/**
+ * The run reaper. The workflow finalizes runs whose Temporal execution ended
+ * without finalizing them, so the schedule carries no arguments.
+ */
+export interface RunReaperScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     temporal: {
@@ -253,6 +263,7 @@ declare module 'fastify' {
       syncRepoDependencyScanSchedule: (config: RepoDependencyScanScheduleConfig) => Promise<void>;
       syncRepoAccessSyncSchedule: (config: RepoAccessSyncScheduleConfig) => Promise<void>;
       syncModelDiscoverySchedule: (config: ModelDiscoveryScheduleConfig) => Promise<void>;
+      syncRunReaperSchedule: (config: RunReaperScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
       triggerRepoDependencyScanNow: () => Promise<void>;
       syncWorkRequestSchedule: (input: WorkRequestScheduleInput) => Promise<void>;
@@ -330,6 +341,17 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledModelDiscoveryWorkflow',
+    };
+  }
+
+  // Run-reaper action. The workflow finds the stranded runs itself, so the
+  // schedule carries no arguments.
+  function makeRunReaperScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledRunReaperWorkflow',
     };
   }
 
@@ -926,6 +948,16 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       };
       await upsertSchedule(REVALIDATION_SCHEDULE_ID, {
         action: makeRevalidationScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Run reaper (one system-wide Temporal Schedule) ──
+
+    async syncRunReaperSchedule(config: RunReaperScheduleConfig): Promise<void> {
+      await upsertSchedule(RUN_REAPER_SCHEDULE_ID, {
+        action: makeRunReaperScheduleAction(),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

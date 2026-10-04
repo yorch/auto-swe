@@ -888,6 +888,8 @@ export interface ScheduledSweepsConfig {
   modelDiscovery: SweepSchedule;
   /// Refreshes the cached source-control permission answers.
   repoAccess: SweepSchedule;
+  /// Finalizes runs whose workflow ended in Temporal without finalizing them.
+  runReaper: SweepSchedule;
   /// Refreshes the repo dependency graph from manifests and git signals.
   repoDependency: SweepSchedule;
 }
@@ -916,6 +918,9 @@ function envCron(name: string, fallback: string): string {
 ///   REPO_DEPENDENCY_SCAN_CRON     default `0 4 * * *`
 ///   MODEL_DISCOVERY_ENABLED       default true — it only lists models
 ///   MODEL_DISCOVERY_CRON          default `17 3 * * *`
+///   RUN_REAPER_ENABLED            default true — it only reads Temporal and
+///                                 closes runs that are already over
+///   RUN_REAPER_CRON               default `*/15 * * * *`
 ///
 /// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
@@ -932,6 +937,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
     repoDependency: {
       cronExpression: envCron('REPO_DEPENDENCY_SCAN_CRON', '0 4 * * *'),
       enabled: envFlag('REPO_DEPENDENCY_SCAN_ENABLED', true),
+    },
+    runReaper: {
+      cronExpression: envCron('RUN_REAPER_CRON', '*/15 * * * *'),
+      enabled: envFlag('RUN_REAPER_ENABLED', true),
     },
   };
 }
@@ -956,6 +965,8 @@ export function validateScheduledSweepsEnv(): string[] {
   check('REPO_DEPENDENCY_SCAN_CRON', cron, 'a five-field cron expression such as "0 4 * * *"');
   check('MODEL_DISCOVERY_ENABLED', flag, "'true' or 'false'");
   check('MODEL_DISCOVERY_CRON', cron, 'a five-field cron expression such as "17 3 * * *"');
+  check('RUN_REAPER_ENABLED', flag, "'true' or 'false'");
+  check('RUN_REAPER_CRON', cron, 'a five-field cron expression such as "*/15 * * * *"');
   return problems;
 }
 

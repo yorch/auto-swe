@@ -10,6 +10,15 @@ const { decomposeMock, prismaMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: prismaMock }));
+// `currentSpendOwner` reads the real ALS `withSpendOwner` sets; only the DB
+// lookup of a repository's owner is stubbed.
+vi.mock('../lib/spendOwner.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/spendOwner.js')>()),
+  ownerOfConnection: vi.fn(async (id: string) => ({
+    orgId: `org-of-${id}`,
+    teamId: `team-of-${id}`,
+  })),
+}));
 vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
   runUnscoped: vi.fn(async (_why: string, _models: string[], fn: () => unknown) => fn()),
 }));
@@ -22,6 +31,7 @@ vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({ orgId: 'org-1', teamId: 'team-1' })),
 }));
 
+import { currentSpendOwner } from '../lib/spendOwner.js';
 import { mergeStoredDependencies, planEpic } from './planEpic.js';
 
 function entries(...pairs: [string, string[]][]): EpicRepoEntry[] {
@@ -174,6 +184,18 @@ describe('planEpic', () => {
       { dependsOn: [], repoId: 'r1' },
       { dependsOn: ['r1'], repoId: 'r2' },
     ]);
+  });
+
+  it("declares its planning spend as the first repository team's, so the org cap counts it", async () => {
+    let owner: unknown;
+    decomposeMock.mockImplementation(async () => {
+      owner = await currentSpendOwner();
+      return [{ dependsOn: [], repoId: 'r1' }];
+    });
+    await planEpic(REQUEST);
+    expect(owner).toEqual({ orgId: 'org-of-r1', teamId: 'team-of-r1' });
+    // Scoped to the activity: nothing leaks to what runs after it.
+    expect(await currentSpendOwner()).toEqual({});
   });
 
   it('reads each repo orgId off its own team row', async () => {

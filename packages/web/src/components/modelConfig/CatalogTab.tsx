@@ -433,6 +433,11 @@ function DiscoveryPanel({
   );
 }
 
+/** Multiples of the input price; blank uses the built-in rate, shown when the row has one. */
+function cacheHint(builtinRate: number | undefined): string {
+  return builtinRate === undefined ? 'Blank: built-in rate' : `Blank: ${builtinRate}×`;
+}
+
 function EntryModal({
   existing,
   initial,
@@ -452,13 +457,21 @@ function EntryModal({
     existing?.displayName ?? initial?.displayName ?? ''
   );
   const [notes, setNotes] = useState(existing?.notes ?? '');
+  const [cacheRead, setCacheRead] = useState(String(existing?.cacheReadMultiplier ?? ''));
+  const [cacheWrite5m, setCacheWrite5m] = useState(String(existing?.cacheWrite5mMultiplier ?? ''));
+  const [cacheWrite1h, setCacheWrite1h] = useState(String(existing?.cacheWrite1hMultiplier ?? ''));
   const { error, saving, submit } = useIntegrationConfigForm();
   const create = useCreateCatalogEntry();
   const update = useUpdateCatalogEntry();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // Blank clears the override, so the built-in rate for the provider applies.
+    const multiplier = (v: string) => (v.trim() === '' ? null : Number(v));
     const body: CatalogEntryInput = {
+      cacheReadMultiplier: multiplier(cacheRead),
+      cacheWrite1hMultiplier: multiplier(cacheWrite1h),
+      cacheWrite5mMultiplier: multiplier(cacheWrite5m),
       displayName: displayName.trim() || null,
       inputUsdPerMTok: Number(input),
       kind,
@@ -532,6 +545,38 @@ function EntryModal({
             step="any"
             type="number"
             value={output}
+          />
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          <Input
+            hint={cacheHint(existing?.cacheDefaults?.cacheReadMultiplier)}
+            id="catalogCacheRead"
+            label="Cache read ×"
+            min={0}
+            onChange={(e) => setCacheRead(e.target.value)}
+            step="any"
+            type="number"
+            value={cacheRead}
+          />
+          <Input
+            hint={cacheHint(existing?.cacheDefaults?.cacheWrite5mMultiplier)}
+            id="catalogCacheWrite5m"
+            label="Cache write (5 min) ×"
+            min={0}
+            onChange={(e) => setCacheWrite5m(e.target.value)}
+            step="any"
+            type="number"
+            value={cacheWrite5m}
+          />
+          <Input
+            hint={cacheHint(existing?.cacheDefaults?.cacheWrite1hMultiplier)}
+            id="catalogCacheWrite1h"
+            label="Cache write (1 h) ×"
+            min={0}
+            onChange={(e) => setCacheWrite1h(e.target.value)}
+            step="any"
+            type="number"
+            value={cacheWrite1h}
           />
         </div>
         <div className="grid grid-cols-2 gap-4">

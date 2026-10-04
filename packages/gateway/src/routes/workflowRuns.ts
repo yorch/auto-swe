@@ -308,20 +308,21 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // (never started, or already closed) has nothing left to cancel, so that
       // failure counts as success; any other failure leaves the row RUNNING
       // and reports 502 so the caller can retry.
-      // Whether the workflow will finalize the run: true once Temporal has
-      // accepted the cancel of a RunnableWorkflow run, whose cancellation path
-      // finalizes it as CANCELLED in a non-cancellable scope; false when no
-      // execution is left to do that. Channel turns (the global Channel
-      // Assistant template) finalize in a cancellable scope, so a cancel
-      // rejects their finalization outright — and they bill no org, so ending
-      // them here loses nothing from the cap.
+      // Who ends the run's row. A non-channel run is left in flight (`endedAt`
+      // null) for whoever finalizes it with billing: the workflow's own
+      // cancellation path once Temporal accepted the cancel, or — when no
+      // execution is left to do that — the run reaper, which finalizes through
+      // the same core and bills the run's spend to the org's month. Ending it
+      // here would drop that spend from both sides of the cap. Channel turns
+      // (the global Channel Assistant template) finalize in a cancellable
+      // scope, so a cancel rejects their finalization outright, and they bill
+      // no org, so ending them here loses nothing from the cap.
       const isChannelTurn =
         run.template?.teamId === null && run.template?.name === CHANNEL_ASSISTANT_TEMPLATE_NAME;
-      let workflowFinalizes = false;
+      const workflowFinalizes = !isChannelTurn;
       if (run.workflowId) {
         try {
           await fastify.temporal.cancelWorkflow(run.workflowId);
-          workflowFinalizes = !isChannelTurn;
         } catch (err) {
           if (!isTerminalSignalError(err)) {
             request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel failed');
@@ -338,12 +339,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // concurrent terminal-state write (e.g. the workflow finishing, or its
       // own cancellation finalisation landing first) can't clobber it.
       //
-      // When the workflow will finalize the run, leave `endedAt` to it: the
-      // run stays in flight for the org cap until `finalizeWorkflowRun` bills
-      // its spend — including what it spends while it stops — to the org's
-      // month, keeping this CANCELLED. Ending it here would drop that spend
-      // from both sides of the cap. With no execution left, nothing else will
-      // end the run, so this write does.
+      // Leave `endedAt` to whoever finalizes the run with billing (see above):
+      // the run stays in flight for the org cap until its spend — including
+      // what it spends while it stops — is billed to the org's month, keeping
+      // this CANCELLED.
       const { count } = await fastify.prisma.workflowRun.updateMany({
         data: workflowFinalizes
           ? { status: 'CANCELLED' }

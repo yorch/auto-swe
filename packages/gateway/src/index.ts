@@ -176,6 +176,12 @@ async function start() {
     .syncModelDiscoverySchedule(sweeps.modelDiscovery)
     .catch((err) => app.log.warn({ err }, 'model discovery schedule sync failed at startup'));
 
+  // Same for the run reaper, which finalizes (and bills) runs whose workflow
+  // ended without finalizing them. It only reads Temporal, so it is on by default.
+  app.temporal
+    .syncRunReaperSchedule(sweeps.runReaper)
+    .catch((err) => app.log.warn({ err }, 'run reaper schedule sync failed at startup'));
+
   // Same for the eval-regression Temporal Schedule (the nightly benchmark).
   // Off by default — needs a seeded dataset + a worker that can reach Docker.
   resolveEvalScheduleConfig()

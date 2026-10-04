@@ -42,6 +42,12 @@ const { DEFAULT_DATA, ENTRIES, discoverMutate, dismissMutate, mutation, suggesti
       }),
       entry({
         builtin: BUILTIN,
+        cacheDefaults: {
+          cacheReadMultiplier: 0.1,
+          cacheWrite1hMultiplier: 2,
+          cacheWrite5mMultiplier: 1.25,
+        },
+        cacheWrite1hMultiplier: 3,
         id: 'b',
         inputUsdPerMTok: 3.5,
         isBuiltIn: true,
@@ -231,6 +237,17 @@ describe('CatalogTab', () => {
     expect(within(flagged as HTMLElement).queryByRole('button', { name: /retire/i })).toBeNull();
     fireEvent.click(within(flagged as HTMLElement).getByRole('button', { name: 'Edit' }));
     expect(screen.getByText('Edit anthropic/claude-sonnet-5-5')).toBeTruthy();
+  });
+
+  it('edits cache multipliers, showing an override and the built-in rate a blank falls back to', () => {
+    render(<CatalogTab />);
+    fireEvent.click(
+      within(rowFor('anthropic/claude-sonnet-5-5')).getByRole('button', { name: 'Edit' })
+    );
+    expect(screen.getByLabelText(/^Cache write \(1 h\)/)).toHaveProperty('value', '3');
+    expect(screen.getByLabelText(/^Cache read/)).toHaveProperty('value', '');
+    expect(screen.getByText('Blank: 0.1×')).toBeTruthy();
+    expect(screen.getByText('Blank: 2×')).toBeTruthy();
   });
 
   it('prefills an add from a discovered model, keeping its kind and display name', () => {

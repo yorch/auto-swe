@@ -16,6 +16,7 @@ import { gatedStepNames } from './config/deploymentAgents.js';
 import { STEP_REQUIRED_AGENTS } from './config/stepRequiredAgents.js';
 import { recordBudgetExceeded, recordLlmCallMetrics } from './metrics.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
+import { assertOrgBudgetAvailable } from './orgBudgetGuard.js';
 import { assertRunlessBudgetAvailable, recordRunlessUsage } from './runlessBudget.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
@@ -47,10 +48,22 @@ export type PriceSource = 'catalog' | 'builtin' | 'unknown';
 
 const MODEL_CATALOG_CACHE_KEY = 'model-catalog:prices';
 
+/** What one catalog read yields: each model's prices and its cache-rate overrides. */
+interface CatalogSnapshot {
+  prices: ReadonlyMap<string, ModelPrice>;
+  /** Only the multipliers a row sets; a null column is absent and falls back to the code table. */
+  cacheRates: ReadonlyMap<string, Partial<CacheMultipliers>>;
+}
+
 /** The last catalog read that succeeded; prices calls while the catalog is unreadable. */
-let lastGoodCatalog: ReadonlyMap<string, ModelPrice> | null = null;
+let lastGoodCatalog: CatalogSnapshot | null = null;
 /** After a failed read, the catalog is not queried again before this time. */
 let catalogRetryAt = 0;
+
+/** A negative or non-finite multiplier is ignored, so the code table's rate applies. */
+function isValidMultiplier(n: number | null): n is number {
+  return n !== null && Number.isFinite(n) && n >= 0;
+}
 
 /** A negative or non-finite rate would invert cost accrual and slip past USD budgets. */
 function isValidPrice(input: number, output: number): boolean {
@@ -63,25 +76,45 @@ function isValidPrice(input: number, output: number): boolean {
  * and backs off for one window. `withCache` does not cache a rejection, so
  * without the backoff an unreachable database would cost a query per LLM call.
  */
-async function catalogPrices(): Promise<ReadonlyMap<string, ModelPrice> | null> {
+async function catalogPrices(): Promise<CatalogSnapshot | null> {
   if (Date.now() < catalogRetryAt) {
     return lastGoodCatalog;
   }
   try {
     lastGoodCatalog = await withCache(MODEL_CATALOG_CACHE_KEY, configCacheTtlMs(), async () => {
       const rows = await prisma.modelCatalogEntry.findMany({
-        select: { inputUsdPerMTok: true, modelId: true, outputUsdPerMTok: true, provider: true },
+        select: {
+          cacheReadMultiplier: true,
+          cacheWrite1hMultiplier: true,
+          cacheWrite5mMultiplier: true,
+          inputUsdPerMTok: true,
+          modelId: true,
+          outputUsdPerMTok: true,
+          provider: true,
+        },
       });
       const prices = new Map<string, ModelPrice>();
+      const cacheRates = new Map<string, Partial<CacheMultipliers>>();
       for (const r of rows) {
+        const spec = `${r.provider}/${r.modelId}`;
         if (isValidPrice(r.inputUsdPerMTok, r.outputUsdPerMTok)) {
-          prices.set(`${r.provider}/${r.modelId}`, {
-            input: r.inputUsdPerMTok,
-            output: r.outputUsdPerMTok,
-          });
+          prices.set(spec, { input: r.inputUsdPerMTok, output: r.outputUsdPerMTok });
+        }
+        const rates: Partial<CacheMultipliers> = {};
+        if (isValidMultiplier(r.cacheReadMultiplier)) {
+          rates.read = r.cacheReadMultiplier;
+        }
+        if (isValidMultiplier(r.cacheWrite5mMultiplier)) {
+          rates.write = r.cacheWrite5mMultiplier;
+        }
+        if (isValidMultiplier(r.cacheWrite1hMultiplier)) {
+          rates.write1h = r.cacheWrite1hMultiplier;
+        }
+        if (Object.keys(rates).length > 0) {
+          cacheRates.set(spec, rates);
         }
       }
-      return prices;
+      return { cacheRates, prices };
     });
   } catch (err) {
     catalogRetryAt = Date.now() + configCacheTtlMs();
@@ -120,7 +153,7 @@ export async function getModelPrice(spec: string): Promise<{
 }> {
   const catalog = await catalogPrices();
   const catalogAvailable = catalog !== null;
-  const fromCatalog = catalog?.get(spec);
+  const fromCatalog = catalog?.prices.get(spec);
   if (fromCatalog) {
     return { catalogAvailable, known: true, price: fromCatalog, source: 'catalog' };
   }
@@ -129,6 +162,16 @@ export async function getModelPrice(spec: string): Promise<{
     return { catalogAvailable, known: true, price: builtin, source: 'builtin' };
   }
   return { catalogAvailable, known: false, price: ZERO_PRICE, source: 'unknown' };
+}
+
+/**
+ * The cache rates a call to `spec` is costed at: the model's catalog row where
+ * it sets one, else the code table (`cacheMultipliers`), field by field — so a
+ * row that overrides only the 1-hour write rate keeps the table's read rate.
+ */
+export async function getCacheMultipliers(spec: string): Promise<CacheMultipliers> {
+  const overrides = (await catalogPrices())?.cacheRates.get(spec);
+  return { ...cacheMultipliers(spec), ...overrides };
 }
 
 /**
@@ -190,19 +233,27 @@ function costFromPrice(
   price: ModelPrice,
   inputTokens: number,
   outputTokens: number,
-  cache: { read: number; write: number; rates: CacheMultipliers } = {
-    rates: { read: 1, write: 1 },
+  cache: { read: number; write: number; write1h: number; rates: CacheMultipliers } = {
+    rates: { read: 1, write: 1, write1h: 1 },
     read: 0,
     write: 0,
+    write1h: 0,
   }
 ): number {
   // `inputTokens` is the provider's total, cached input included (the AI SDK's
   // v3 usage shape). Clamped so a provider that reports cache tokens outside
-  // that total is costed at no less than its plain input.
+  // that total is costed at no less than its plain input. `write` is every
+  // cache write; `write1h` is the part of it written with the 1-hour TTL.
   const read = Math.min(cache.read, inputTokens);
   const write = Math.min(cache.write, inputTokens - read);
+  const write1h = Math.min(cache.write1h, write);
   const uncached = inputTokens - read - write;
-  const inputCost = (uncached + read * cache.rates.read + write * cache.rates.write) * price.input;
+  const inputCost =
+    (uncached +
+      read * cache.rates.read +
+      (write - write1h) * cache.rates.write +
+      write1h * cache.rates.write1h) *
+    price.input;
   return (inputCost + outputTokens * price.output) / 1_000_000;
 }
 
@@ -214,17 +265,28 @@ export interface TokenUsage {
   cachedInputTokens?: number;
   /** Of `inputTokens`, how many were written to the prompt cache (Mastra's usage shape). */
   cacheCreationInputTokens?: number;
+  /**
+   * Of `cacheCreationInputTokens`, how many were written with Anthropic's 1-hour
+   * TTL. Mastra lifts it from the response's `cache_creation.ephemeral_1h_input_tokens`;
+   * absent when the provider reports no split, and the AI SDK's own shape has none.
+   */
+  cacheCreationInputTokens1h?: number;
   /** The AI SDK's own shape for the same two counts. */
   inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
 }
 
 /** Cache read/write counts from either usage shape; 0 when the provider reported none. */
-export function cacheTokens(usage: TokenUsage): { read: number; write: number } {
+export function cacheTokens(usage: TokenUsage): {
+  read: number;
+  write: number;
+  write1h: number;
+} {
   const count = (n: number | undefined) =>
     Number.isFinite(n) && (n as number) > 0 ? (n as number) : 0;
   return {
     read: count(usage.cachedInputTokens ?? usage.inputTokenDetails?.cacheReadTokens),
     write: count(usage.cacheCreationInputTokens ?? usage.inputTokenDetails?.cacheWriteTokens),
+    write1h: count(usage.cacheCreationInputTokens1h),
   };
 }
 
@@ -302,6 +364,9 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
   // string that matched no ledger row, so its gate was a permanent silent
   // no-op. `persistActivityTrace` resolves its run the same way.
   const temporalWorkflowId = currentWorkflowId();
+  // The organization's monthly USD cap binds the next call of a run already
+  // going, not only the launch of a new one.
+  await assertOrgBudgetAvailable(temporalWorkflowId, label);
   const workflow = await prisma.activeWorkflow.findFirst({
     select: {
       budgetTier: true,
@@ -442,7 +507,7 @@ export async function recordLlmUsage(
   const cache = cacheTokens(usage);
   const callCost = costFromPrice(price, inputTokens, outputTokens, {
     ...cache,
-    rates: cacheMultipliers(modelSpec),
+    rates: await getCacheMultipliers(modelSpec),
   });
   // Before the ledger: a call with no ledger row (channel, PRD, authoring) was
   // still made and paid for.
@@ -467,6 +532,7 @@ export async function recordLlmUsage(
         // spent tokens, and its span should say so.
         span.setAttributes({
           'llm.cache_read_tokens': cache.read,
+          'llm.cache_write_1h_tokens': cache.write1h,
           'llm.cache_write_tokens': cache.write,
           'llm.cost_price_source': source,
           'llm.cost_pricing_known': known,

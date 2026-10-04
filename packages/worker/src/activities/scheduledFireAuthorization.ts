@@ -39,7 +39,7 @@ export const SCHEDULED_FIRE_REFUSED = 'SCHEDULED_FIRE_REFUSED';
 const REFUSAL_AUDIT_DEDUP_MS = 60 * 60 * 1000;
 
 /** A schedule fire's workflow id: `sched-<row uuid>`, plus Temporal's per-fire suffix. */
-const SCHEDULE_FIRE_ID_RE =
+export const SCHEDULE_FIRE_ID_RE =
   /^sched-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:-|$)/i;
 
 export type ScheduledFireRefusalReason =

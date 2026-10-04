@@ -27,7 +27,10 @@ vi.mock('@temporalio/activity', async (orig) => ({
   ...(await orig<typeof import('@temporalio/activity')>()),
   activityInfo: () => ({ attempt: 1 }),
 }));
-vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: vi.fn() }));
+vi.mock('../lib/activityContext.js', () => ({
+  currentWorkflowId: () => 'wf-own',
+  persistActivityTrace: vi.fn(),
+}));
 vi.mock('../lib/scm/index.js', () => ({
   getScmProvider: () => ({
     createOrUpdatePullRequest: m.createPr,
@@ -95,6 +98,30 @@ describe('createOrUpdatePullRequest draft option', () => {
     await expect(createOrUpdatePullRequest(request, codeResult, { draft: true })).rejects.toBe(
       boom
     );
+  });
+});
+
+describe('which ledger row a new PR is linked to', () => {
+  it("links the row of the executing workflow, not another row of the same work request's", async () => {
+    m.prisma.activeWorkflow.findFirst.mockImplementation(
+      async (args: { where: { temporalWorkflowId?: string } }) =>
+        args.where.temporalWorkflowId === 'wf-own' ? { id: 'own-row' } : { id: 'anchor-row' }
+    );
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.pullRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ workflowId: 'own-row' }),
+    });
+  });
+
+  it('falls back to the work request lookup when the executing workflow has no row of its own', async () => {
+    m.prisma.activeWorkflow.findFirst.mockImplementation(
+      async (args: { where: { temporalWorkflowId?: string } }) =>
+        args.where.temporalWorkflowId ? null : { id: 'request-row' }
+    );
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.pullRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ workflowId: 'request-row' }),
+    });
   });
 });
 

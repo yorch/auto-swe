@@ -185,17 +185,25 @@ describe('BUILTIN_MODELS', () => {
 
 describe('cacheMultipliers', () => {
   it('applies the Anthropic rule to every Claude model, catalog-only ones included', () => {
-    expect(cacheMultipliers('anthropic/claude-opus-4-8')).toEqual({ read: 0.1, write: 1.25 });
-    expect(cacheMultipliers('anthropic/claude-not-in-code')).toEqual({ read: 0.1, write: 1.25 });
+    expect(cacheMultipliers('anthropic/claude-opus-4-8')).toEqual({
+      read: 0.1,
+      write: 1.25,
+      write1h: 2,
+    });
+    expect(cacheMultipliers('anthropic/claude-not-in-code')).toEqual({
+      read: 0.1,
+      write: 1.25,
+      write1h: 2,
+    });
   });
 
   it('uses a per-model rate where the vendor prices caching per model', () => {
-    expect(cacheMultipliers('openai/gpt-5')).toEqual({ read: 0.1, write: 1 });
+    expect(cacheMultipliers('openai/gpt-5')).toEqual({ read: 0.1, write: 1, write1h: 1 });
   });
 
   it('prices cached input as ordinary input when no discount is known', () => {
-    expect(cacheMultipliers('openai/gpt-5.5-pro')).toEqual({ read: 1, write: 1 });
-    expect(cacheMultipliers('google/gemini-2.5-pro')).toEqual({ read: 1, write: 1 });
-    expect(cacheMultipliers('nonsense')).toEqual({ read: 1, write: 1 });
+    expect(cacheMultipliers('openai/gpt-5.5-pro')).toEqual({ read: 1, write: 1, write1h: 1 });
+    expect(cacheMultipliers('google/gemini-2.5-pro')).toEqual({ read: 1, write: 1, write1h: 1 });
+    expect(cacheMultipliers('nonsense')).toEqual({ read: 1, write: 1, write1h: 1 });
   });
 });

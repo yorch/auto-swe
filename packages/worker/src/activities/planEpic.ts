@@ -9,6 +9,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
+import { ownerOfConnection, withSpendOwner } from '../lib/spendOwner.js';
 
 /**
  * Does `from` already depend on `to`, directly or transitively, under `graph`?
@@ -106,6 +107,20 @@ async function loadStoredUpstream(
  * Fetches repo metadata from Prisma, calls the LLM planner, and returns EpicRepoEntry[].
  */
 export async function planEpic(epicRequest: EpicPlanRequest): Promise<EpicRepoEntry[]> {
+  // The epic's own ledger row names no repository and no run keeps its spend,
+  // so without a declared owner its planning calls are stamped with nobody and
+  // sit outside the org cap. It is declared here, around this activity only:
+  // the child runs have their own run and ledger row and are counted through
+  // them, and stamping them too would count their spend twice. An epic can span
+  // teams, but a launch is authorized against every repository it names, so the
+  // first one is a team the requester is a member of.
+  const [firstRepoId] = epicRequest.repoIds;
+  return withSpendOwner(firstRepoId ? ownerOfConnection(firstRepoId) : Promise.resolve({}), () =>
+    planEpicImpl(epicRequest)
+  );
+}
+
+async function planEpicImpl(epicRequest: EpicPlanRequest): Promise<EpicRepoEntry[]> {
   heartbeat('fetching repo metadata');
 
   // Fetch repo metadata for the planner agent

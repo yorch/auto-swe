@@ -51,7 +51,8 @@ vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
 }));
 
 // Covered by its own suite; here only the wiring into createWorkflowRun.
-vi.mock('./scheduledFireAuthorization.js', () => ({
+vi.mock('./scheduledFireAuthorization.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./scheduledFireAuthorization.js')>()),
   assertScheduledFireAuthorized: vi.fn(async () => undefined),
 }));
 
@@ -139,11 +140,16 @@ vi.mock('@auto-swe/shared/db', () => {
 import { prisma } from '@auto-swe/shared/db';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { recordRunFinalized } from '../lib/metrics.js';
-import { notifySlackRunComplete, notifySlackStepFailure } from '../lib/slackNotify.js';
+import {
+  notifySlackRunComplete,
+  notifySlackStepFailure,
+  postSlackThreadMessage,
+} from '../lib/slackNotify.js';
 import { assertScheduledFireAuthorized } from './scheduledFireAuthorization.js';
 import {
   buildChannelTaskResultText,
   createWorkflowRun,
+  finalizeRun,
   finalizeWorkflowRun,
   recordWorkflowStep,
   resolveTemplateForRepo,
@@ -497,6 +503,103 @@ describe('createWorkflowRun', () => {
       );
     });
 
+    describe('scheduled fire ledger row', () => {
+      const fire = {
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'sched-3f2b8c1e-0a4d-4c55-9a77-1d2e3f4a5b6c-2026-10-04T12:00:00Z',
+        workRequestId: 'wr-standing',
+      };
+      const anchor = {
+        assignedBranch: 'auto/OPS-SCHED-3f2b8c1e',
+        budgetTier: 'LARGE',
+        repoId: 'repo-sched',
+        workRequestId: 'wr-standing',
+      };
+
+      it("carries the schedule's repository onto the run and onto the fire's own ledger row", async () => {
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+        upsertRun.mockClear();
+        await createWorkflowRun(fire);
+        expect(prisma.activeWorkflow.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { temporalWorkflowId: 'sched-3f2b8c1e-0a4d-4c55-9a77-1d2e3f4a5b6c' },
+          })
+        );
+        expect(prisma.activeWorkflow.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            create: expect.objectContaining({
+              assignedBranch: 'auto/OPS-SCHED-3f2b8c1e',
+              budgetTier: 'LARGE',
+              currentStatus: 'STARTING',
+              repoId: 'repo-sched',
+              temporalWorkflowId: fire.workflowId,
+              workRequestId: 'wr-standing',
+            }),
+            where: { temporalWorkflowId: fire.workflowId },
+          })
+        );
+        expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+          connectionId: 'repo-sched',
+        });
+      });
+
+      it('writes the fire’s ledger row only after the run row exists', async () => {
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+        upsertRun.mockClear();
+        await createWorkflowRun(fire);
+        const ledgerOrder = vi.mocked(prisma.activeWorkflow.upsert).mock.invocationCallOrder[0];
+        const runOrder = upsertRun.mock.invocationCallOrder[0];
+        expect(ledgerOrder).toBeGreaterThan(runOrder as number);
+      });
+
+      it('writes no ledger row when the run row cannot be created', async () => {
+        // A row written first would sit in STARTING for ever with no run for the
+        // reaper to close, counted against the schedule creator's concurrency cap.
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+        vi.mocked(prisma.skill.findMany).mockRejectedValueOnce(new Error('db down'));
+        await expect(createWorkflowRun(fire)).rejects.toThrow('db down');
+        expect(prisma.activeWorkflow.upsert).not.toHaveBeenCalled();
+
+        upsertRun.mockRejectedValueOnce(new Error('db down'));
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        await expect(createWorkflowRun(fire)).rejects.toThrow('db down');
+        expect(prisma.activeWorkflow.upsert).not.toHaveBeenCalled();
+      });
+
+      it("pins the run's settings at the schedule's team, though the fire's ledger row is not yet written", async () => {
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        vi.mocked(prisma.connection.findUnique).mockResolvedValueOnce({
+          team: { orgId: 'org-s' },
+          teamId: 'team-s',
+        } as never);
+        await createWorkflowRun(fire);
+        expect(prisma.connection.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 'repo-sched' } })
+        );
+      });
+
+      it('leaves a run that only looks like a fire alone: the anchor must carry the same work request', async () => {
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce({
+          ...anchor,
+          workRequestId: 'someone-else',
+        } as never);
+        vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+        upsertRun.mockClear();
+        await createWorkflowRun(fire);
+        expect(prisma.activeWorkflow.upsert).not.toHaveBeenCalled();
+        expect(upsertRun.mock.calls.at(-1)?.[0].create).not.toHaveProperty('connectionId');
+      });
+    });
+
     it('writes no ledger row when the template cannot be resolved', async () => {
       // A row written before this return would sit in STARTING forever.
       findVersion.mockResolvedValue(null as never);
@@ -679,6 +782,7 @@ describe('finalizeWorkflowRun', () => {
       workRequest: {
         activeWorkflows: [{ costUsdAccrued: 2, tokensInputUsed: 100n, tokensOutputUsed: 50n }],
         connection: { team: { orgId: 'org-1' } },
+        connectionId: 'c',
       },
     } as never);
     updateManyRuns.mockResolvedValue({ count: 1 } as never);
@@ -713,6 +817,7 @@ describe('finalizeWorkflowRun', () => {
       workRequest: {
         activeWorkflows: [{ costUsdAccrued: 3, tokensInputUsed: 10n, tokensOutputUsed: 5n }],
         connection: { team: { orgId: 'org-1' } },
+        connectionId: 'c',
       },
     } as never);
     updateManyRuns.mockResolvedValue({ count: 1 } as never);
@@ -756,6 +861,7 @@ describe('finalizeWorkflowRun', () => {
           },
         ],
         connection: { team: { orgId: 'org-1' } },
+        connectionId: 'c',
         payload: null,
       },
     } as never);
@@ -801,6 +907,213 @@ describe('finalizeWorkflowRun', () => {
 
     expect(updateManyRuns).toHaveBeenCalledTimes(1);
     expect(recorded).toHaveBeenCalledExactlyOnceWith('FAILED', 'worker');
+    findRun.mockReset();
+  });
+
+  it('labels a run the reaper ended with its own source, and counts a reaped cancel not at all', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const recorded = vi.mocked(recordRunFinalized);
+    recorded.mockClear();
+    findRun.mockResolvedValue({ endedAt: null, workRequest: null } as never);
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    await finalizeRun('run-r', 'TIMED_OUT', undefined, 'reaper');
+    expect(recorded).toHaveBeenCalledExactlyOnceWith('TIMED_OUT', 'reaper');
+
+    // A run the gateway already cancelled keeps CANCELLED and was counted by
+    // the cancel route: the reaper's write ends it without counting it again.
+    recorded.mockClear();
+    updateManyRuns.mockResolvedValueOnce({ count: 0 } as never);
+    updateManyRuns.mockResolvedValueOnce({ count: 1 } as never);
+    await finalizeRun('run-c', 'FAILED', undefined, 'reaper');
+    expect(recorded).not.toHaveBeenCalled();
+    findRun.mockReset();
+  });
+
+  it('bills a reaped run into the current month, however long ago it started', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+    orgUpsert.mockClear();
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue({
+      endedAt: null,
+      startedAt: new Date('2026-03-14T10:00:00Z'),
+      workflowId: 'eng-old',
+      workRequest: {
+        activeWorkflows: [
+          {
+            costUsdAccrued: 2,
+            temporalWorkflowId: 'eng-old',
+            tokensInputUsed: 1n,
+            tokensOutputUsed: 1n,
+          },
+        ],
+        connection: { team: { orgId: 'org-1' } },
+        connectionId: 'c',
+        payload: null,
+      },
+    } as never);
+    await finalizeRun('run-old', 'FAILED', undefined, 'reaper', false);
+    const usage = orgUpsert.mock.calls[0]?.[0] as { create: { yearMonth: string } };
+    expect(usage.create.yearMonth).toBe(new Date().toISOString().slice(0, 7));
+    findRun.mockReset();
+    orgUpsert.mockReset();
+  });
+
+  it('bills an epic child with no ledger row through its own run connection', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+    orgUpsert.mockClear();
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue({
+      connection: { team: { orgId: 'org-child' } },
+      connectionId: 'c-child',
+      endedAt: null,
+      workflowId: 'epic-child',
+      workRequest: { activeWorkflows: [], connection: null, connectionId: null, payload: null },
+    } as never);
+    await finalizeWorkflowRun('run-child', 'SUCCESS');
+    expect(orgUpsert).toHaveBeenCalledTimes(1);
+    const billed = orgUpsert.mock.calls[0]?.[0] as { create: { orgId: string } };
+    expect(billed.create.orgId).toBe('org-child');
+    findRun.mockReset();
+    orgUpsert.mockReset();
+  });
+
+  describe('which org a finalized run is billed to', () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const findLedger = vi.mocked(prisma.activeWorkflow.findFirst);
+    const runRow = (over: Record<string, unknown>) =>
+      ({
+        endedAt: null,
+        workflowId: 'wf-org',
+        workRequest: { activeWorkflows: [], connection: null, connectionId: null, payload: null },
+        ...over,
+      }) as never;
+    async function billedTo(row: never, ledgerOrg?: string): Promise<string | undefined> {
+      const orgUpsert = vi.mocked(prisma.orgMonthlyUsage.upsert);
+      orgUpsert.mockClear();
+      findLedger.mockResolvedValue(
+        ledgerOrg ? ({ repository: { team: { orgId: ledgerOrg } } } as never) : null
+      );
+      updateManyRuns.mockReset();
+      updateManyRuns.mockResolvedValue({ count: 1 } as never);
+      findRun.mockResolvedValue(row);
+      await finalizeWorkflowRun('run-org', 'SUCCESS');
+      return (orgUpsert.mock.calls[0]?.[0] as { create: { orgId: string } } | undefined)?.create
+        .orgId;
+    }
+
+    afterEach(() => {
+      findRun.mockReset();
+      findLedger.mockReset();
+      findLedger.mockResolvedValue(null);
+    });
+
+    it("bills the request's connection's org even when the run has a different connection", async () => {
+      const row = runRow({
+        connection: { team: { orgId: 'org-run' } },
+        connectionId: 'c-run',
+        workRequest: {
+          activeWorkflows: [],
+          connection: { team: { orgId: 'org-request' } },
+          connectionId: 'c',
+          payload: null,
+        },
+      });
+      expect(await billedTo(row, 'org-ledger')).toBe('org-request');
+    });
+
+    it("does not use the run's connection when the request named one whose team has no org", async () => {
+      const row = runRow({
+        connection: { team: { orgId: 'org-run' } },
+        connectionId: 'c-run',
+        workRequest: {
+          activeWorkflows: [],
+          connection: { team: { orgId: null } },
+          connectionId: 'c',
+          payload: null,
+        },
+      });
+      expect(await billedTo(row)).toBeUndefined();
+      // Nor the ledger: the connection the request named decides.
+      expect(await billedTo(row, 'org-ledger')).toBeUndefined();
+    });
+
+    it("bills no one, not the ledger's org, when the run's own connection has no org", async () => {
+      const row = runRow({ connection: { team: { orgId: null } }, connectionId: 'c-run' });
+      expect(await billedTo(row, 'org-ledger')).toBeUndefined();
+    });
+
+    it("uses the run's connection when the request names none", async () => {
+      const row = runRow({ connection: { team: { orgId: 'org-run' } }, connectionId: 'c-run' });
+      expect(await billedTo(row, 'org-ledger')).toBe('org-run');
+    });
+
+    it('falls back to the ledger repository for a run with no work request and no connection', async () => {
+      expect(await billedTo(runRow({ workRequest: null }), 'org-ledger')).toBe('org-ledger');
+    });
+  });
+
+  it('fires no user-facing side effect when notify is off, and all of them when it is on', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const notify = vi.mocked(notifySlackRunComplete);
+    const tracker = vi.mocked(syncTrackerOnEvent);
+    tracker.mockResolvedValue(undefined as never);
+    const row = {
+      endedAt: null,
+      workflowId: 'eng-x',
+      workRequest: {
+        activeWorkflows: [],
+        connection: { team: { orgId: 'org-1' } },
+        externalTicketId: 'T-1',
+        payload: null,
+      },
+    } as never;
+    for (const [on, expected] of [
+      [false, 0],
+      [true, 1],
+    ] as const) {
+      notify.mockClear();
+      tracker.mockClear();
+      updateManyRuns.mockReset();
+      updateManyRuns.mockResolvedValue({ count: 1 } as never);
+      findRun.mockResolvedValue(row);
+      await finalizeRun('run-n', 'FAILED', undefined, 'reaper', on);
+      expect(notify).toHaveBeenCalledTimes(expected);
+      expect(tracker).toHaveBeenCalledTimes(expected);
+    }
+    findRun.mockReset();
+  });
+
+  it('does not post a reaped channel task into its Slack thread, but the worker finalize does', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const post = vi.mocked(postSlackThreadMessage);
+    const channelRun = {
+      endedAt: null,
+      startedAt: new Date('2026-03-14T10:00:00Z'),
+      workflowId: 'ct-1',
+      workRequest: {
+        activeWorkflows: [],
+        connection: null,
+        externalTicketId: null,
+        payload: { channelId: 'chan-1', kind: 'channel-task' },
+        slackChannelId: 'C1',
+        slackMessageTs: '1.2',
+      },
+    };
+    post.mockClear();
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue(channelRun as never);
+    await finalizeRun('run-ct', 'FAILED', undefined, 'reaper', false);
+    expect(post).not.toHaveBeenCalled();
+
+    findRun.mockResolvedValue(channelRun as never);
+    await finalizeWorkflowRun('run-ct', 'FAILED');
+    expect(post).toHaveBeenCalledTimes(1);
     findRun.mockReset();
   });
 

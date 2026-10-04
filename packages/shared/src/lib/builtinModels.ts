@@ -57,22 +57,24 @@ export function builtinModelSpec(model: Pick<BuiltinModel, 'provider' | 'modelId
 
 /**
  * Prompt-cache rates as multiples of a model's input price: `read` for input
- * served from the provider's cache, `write` for input written into it. They
+ * served from the provider's cache, `write` for input written into it with the
+ * default 5-minute TTL, `write1h` for input written with the 1-hour TTL. They
  * apply to whatever input price the call is costed at — a customized catalog
  * price included — so a catalog edit never needs a second edit here.
  */
 export interface CacheMultipliers {
   read: number;
   write: number;
+  write1h: number;
 }
 
 /** Cached input priced as ordinary input: no published discount is known. */
-const NO_CACHE_DISCOUNT: CacheMultipliers = { read: 1, write: 1 };
+const NO_CACHE_DISCOUNT: CacheMultipliers = { read: 1, write: 1, write1h: 1 };
 
 /** Vendors that publish one caching rule for every model. */
 const PROVIDER_CACHE_MULTIPLIERS: Readonly<Record<string, CacheMultipliers>> = {
-  // Reads 0.1x input, 5-minute writes 1.25x input, on every Claude model.
-  anthropic: { read: 0.1, write: 1.25 },
+  // Reads 0.1x input, 5-minute writes 1.25x, 1-hour writes 2x, on every Claude model.
+  anthropic: { read: 0.1, write: 1.25, write1h: 2 },
 };
 
 /**
@@ -80,7 +82,7 @@ const PROVIDER_CACHE_MULTIPLIERS: Readonly<Record<string, CacheMultipliers>> = {
  * charges nothing to write, so only the read rate differs from 1.
  */
 const MODEL_CACHE_MULTIPLIERS: Readonly<Record<string, CacheMultipliers>> = {
-  'openai/gpt-5': { read: 0.1, write: 1 },
+  'openai/gpt-5': { read: 0.1, write: 1, write1h: 1 },
 };
 
 /**

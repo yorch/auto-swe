@@ -437,3 +437,10 @@ DO $$ BEGIN
   ALTER TABLE "human_error_baselines"
     ADD CONSTRAINT "human_error_baselines_error_rate_check" CHECK ("error_rate" >= 0 AND "error_rate" <= 1);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- The run reaper's candidate query and `orgMonthSpend` both read only the runs
+-- that never ended; this keeps that set cheap however many finished runs the
+-- table holds. Partial and NULLS FIRST, so Prisma's DSL cannot express it. The
+-- order matches the reaper's: never-checked first, then oldest.
+CREATE INDEX IF NOT EXISTS "idx_workflow_runs_unfinalized_reap"
+    ON "workflow_runs" ("reap_checked_at" NULLS FIRST, "started_at") WHERE "ended_at" IS NULL;

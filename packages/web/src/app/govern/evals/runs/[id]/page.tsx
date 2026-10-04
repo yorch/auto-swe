@@ -27,7 +27,12 @@ interface Verdict {
   byTag: Record<string, PairedDelta>;
   summary: string;
   /** Set when the runless budget stopped the run before every case ran. */
-  partial?: { completedCases: number; totalCases: number; error: string };
+  partial?: {
+    completedCases: number;
+    totalCases: number;
+    error: string;
+    reason?: 'budget' | 'org_budget';
+  };
 }
 
 function isVerdict(v: unknown): v is Verdict {
@@ -83,7 +88,7 @@ function VerdictView({ summary }: { summary: unknown }) {
     <div className="space-y-4">
       {summary.partial && (
         <p className="font-mono text-xs text-amber-400">
-          {`Partial: the budget stopped this run after ${summary.partial.completedCases} of ${summary.partial.totalCases} cases; the verdict covers only those. ${summary.partial.error}`}
+          {`Partial: ${summary.partial.reason === 'org_budget' ? "the organization's monthly budget" : 'the budget'} stopped this run after ${summary.partial.completedCases} of ${summary.partial.totalCases} cases; the verdict covers only those. ${summary.partial.error}`}
         </p>
       )}
       <p

@@ -596,11 +596,33 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
       url: `/api/v1/workflow-runs/${runId}/cancel`,
     });
     expect(res.statusCode).toBe(200);
-    // No execution is left to finalize the run, so this write ends it.
+    // No execution is left, but ending the row here would drop its spend from
+    // the org cap unbilled: the row stays in flight for the run reaper, which
+    // finalizes it through the billing core.
     const update = prisma.workflowRun.updateMany.mock.calls[0][0];
     expect(update.where).toEqual({ id: runId, status: 'RUNNING' });
-    expect(update.data.status).toBe('CANCELLED');
-    expect(update.data.endedAt).toBeInstanceOf(Date);
+    expect(update.data).toEqual({ status: 'CANCELLED' });
+  });
+
+  it('still ends a channel turn itself when its workflow is already gone', async () => {
+    const { app, prisma, temporal } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: runId,
+      status: 'RUNNING',
+      template: { name: 'Channel Assistant', teamId: null },
+      workflowId: 'channel-turn-2',
+    });
+    prisma.workflowRun.updateMany.mockResolvedValue({ count: 1 });
+    temporal.cancelWorkflow.mockRejectedValue(
+      Object.assign(new Error('workflow not found'), { name: 'WorkflowNotFoundError' })
+    );
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${runId}/cancel`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.workflowRun.updateMany.mock.calls[0][0].data.endedAt).toBeInstanceOf(Date);
   });
 
   it('cancels the Temporal workflow when the guarded update transitions exactly one row', async () => {

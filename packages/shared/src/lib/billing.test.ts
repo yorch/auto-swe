@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../index.js';
-import { orgMonthSpend, usdToCents } from './billing.js';
+import { billedOrgId, orgMonthSpend, usdToCents } from './billing.js';
 
 const ORG = 'org-1';
 
@@ -8,6 +8,10 @@ function fakeDb(opts: {
   finalized?: number | null;
   runs?: { id: string; workflowId: string }[];
   ledgers?: { temporalWorkflowId: string; costUsdAccrued: number }[];
+  /** Unfinalized runs no connection places in any org (only a ledger repository can). */
+  unplaced?: { workflowId: string }[];
+  /** Ledger rows whose repository belongs to the org, among the unplaced runs. */
+  repoLedgers?: { temporalWorkflowId: string; costUsdAccrued: number }[];
   runTraceCost?: number | null;
   runlessCost?: number | null;
 }) {
@@ -17,14 +21,22 @@ function fakeDb(opts: {
     },
   }));
   const tx = {
-    activeWorkflow: { findMany: vi.fn(async () => opts.ledgers ?? []) },
+    activeWorkflow: {
+      findMany: vi.fn(async (args: { where: { repository?: unknown } }) =>
+        args.where.repository ? (opts.repoLedgers ?? []) : (opts.ledgers ?? [])
+      ),
+    },
     agentTrace: { aggregate },
     orgMonthlyUsage: {
       findUnique: vi.fn(async () =>
         opts.finalized == null ? null : { costUsdAccrued: String(opts.finalized) }
       ),
     },
-    workflowRun: { findMany: vi.fn(async () => opts.runs ?? []) },
+    workflowRun: {
+      findMany: vi.fn(async (args: { select: { id?: boolean } }) =>
+        args.select.id ? (opts.runs ?? []) : (opts.unplaced ?? [])
+      ),
+    },
   };
   const $transaction = vi.fn(async (fn: (t: typeof tx) => unknown, _o: unknown) => fn(tx));
   // The same models off the client itself, for the reads outside a transaction.
@@ -77,7 +89,10 @@ describe('orgMonthSpend', () => {
           endedAt: null,
           OR: [
             { workRequest: { connection: { team: { orgId: ORG } } } },
-            { connection: { team: { orgId: ORG } }, workRequest: { connectionId: null } },
+            {
+              connection: { team: { orgId: ORG } },
+              OR: [{ workRequestId: null }, { workRequest: { connectionId: null } }],
+            },
           ],
         },
       })
@@ -104,7 +119,7 @@ describe('orgMonthSpend', () => {
       runlessUsd: 0.5,
       totalUsd: 10.5,
     });
-    expect(f.tx.workflowRun.findMany).toHaveBeenCalledOnce();
+    expect(f.tx.workflowRun.findMany).toHaveBeenCalledTimes(2);
   });
 
   it('rethrows any other failure', async () => {
@@ -121,6 +136,81 @@ describe('orgMonthSpend', () => {
       runlessUsd: 0,
       totalUsd: 0,
     });
+  });
+});
+
+describe('orgMonthSpend: runs placed by the run connection or the ledger', () => {
+  it("counts a run with a connection but no work request, via the run's own connection", async () => {
+    const f = fakeDb({
+      ledgers: [{ costUsdAccrued: 4, temporalWorkflowId: 'wf-sched' }],
+      runs: [{ id: 'run-s', workflowId: 'wf-sched' }],
+    });
+    await orgMonthSpend(f.db, ORG);
+    // `workRequest: { connectionId: null }` alone needs the request to exist;
+    // `workRequestId: null` is what lets a request-less run through.
+    const direct = f.tx.workflowRun.findMany.mock.calls[0]?.[0] as unknown as {
+      where: { OR: { OR?: unknown }[] };
+    };
+    expect(direct.where.OR[1]?.OR).toContainEqual({ workRequestId: null });
+    expect((await orgMonthSpend(f.db, ORG)).inFlightUsd).toBe(4);
+  });
+
+  it('counts a run only its ledger row places in the org, from that ledger row', async () => {
+    const f = fakeDb({
+      repoLedgers: [{ costUsdAccrued: 6, temporalWorkflowId: 'wf-bare' }],
+      unplaced: [{ workflowId: 'wf-bare' }, { workflowId: 'wf-elsewhere' }],
+    });
+    const spend = await orgMonthSpend(f.db, ORG);
+    expect(spend.inFlightUsd).toBe(6);
+    // Unplaced runs name no connection, on the request or on the run; the
+    // ledger repository's org decides them.
+    expect(f.tx.workflowRun.findMany).toHaveBeenCalledWith({
+      select: { workflowId: true },
+      where: {
+        connectionId: null,
+        endedAt: null,
+        OR: [{ workRequestId: null }, { workRequest: { connectionId: null } }],
+      },
+    });
+    expect(f.tx.activeWorkflow.findMany).toHaveBeenCalledWith({
+      select: { costUsdAccrued: true, temporalWorkflowId: true },
+      where: {
+        repository: { team: { orgId: ORG } },
+        temporalWorkflowId: { in: ['wf-bare', 'wf-elsewhere'] },
+      },
+    });
+  });
+
+  it('asks the ledger nothing when no run is left unplaced', async () => {
+    const f = fakeDb({});
+    await orgMonthSpend(f.db, ORG);
+    expect(f.tx.activeWorkflow.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('billedOrgId', () => {
+  it('prefers the request connection, then the run connection only when the request names none, then the ledger', () => {
+    const all = { ledgerOrgId: 'L', requestOrgId: 'Q', runOrgId: 'R' };
+    expect(billedOrgId({ ...all, requestConnectionId: 'c', runConnectionId: 'r' })).toBe('Q');
+    expect(billedOrgId({ ...all, requestOrgId: null, runConnectionId: 'r' })).toBe('R');
+    expect(billedOrgId({ ledgerOrgId: 'L' })).toBe('L');
+    expect(billedOrgId({})).toBeNull();
+  });
+
+  it('lets a connection decide even when its team has no org: no fall-through to the next source', () => {
+    // The request named a connection, so it decides; its team having no org
+    // bills no one, neither the run's connection nor the ledger.
+    expect(
+      billedOrgId({
+        ledgerOrgId: 'L',
+        requestConnectionId: 'c',
+        requestOrgId: null,
+        runConnectionId: 'r',
+        runOrgId: 'R',
+      })
+    ).toBeNull();
+    // Likewise a run's own connection with no org does not reach the ledger.
+    expect(billedOrgId({ ledgerOrgId: 'L', runConnectionId: 'r', runOrgId: null })).toBeNull();
   });
 });
 

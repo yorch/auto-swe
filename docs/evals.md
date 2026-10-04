@@ -100,7 +100,9 @@ the run with a verdict over the cases already paired; the summary carries a `par
 API carry `partial: true` for it, and the dataset page's run list and the run page's header badge
 read `SUCCESS (partial)` or `REGRESSION (partial)` in amber instead of a plain verdict. `auto-swe evals run` prints the partial line and exits 2 for a partial
 `SUCCESS`, so a nightly gate never passes on a prefix; a partial `REGRESSION` still exits 1. A cap
-reached before any case completed fails the run.
+reached before any case completed fails the run. The same early end applies when the organization's
+monthly USD cap refuses a call: the summary's `partial.reason` is then `org_budget` rather than
+`budget`, and the run page names the organization budget.
 
 Execution is durable: `EvalRunWorkflow` runs the dataset on Temporal, so a long benchmark survives
 restarts like any other run.
