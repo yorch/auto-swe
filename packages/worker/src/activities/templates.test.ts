@@ -546,6 +546,46 @@ describe('createWorkflowRun', () => {
         });
       });
 
+      it('writes the fire’s ledger row only after the run row exists', async () => {
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+        upsertRun.mockClear();
+        await createWorkflowRun(fire);
+        const ledgerOrder = vi.mocked(prisma.activeWorkflow.upsert).mock.invocationCallOrder[0];
+        const runOrder = upsertRun.mock.invocationCallOrder[0];
+        expect(ledgerOrder).toBeGreaterThan(runOrder as number);
+      });
+
+      it('writes no ledger row when the run row cannot be created', async () => {
+        // A row written first would sit in STARTING for ever with no run for the
+        // reaper to close, counted against the schedule creator's concurrency cap.
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+        vi.mocked(prisma.skill.findMany).mockRejectedValueOnce(new Error('db down'));
+        await expect(createWorkflowRun(fire)).rejects.toThrow('db down');
+        expect(prisma.activeWorkflow.upsert).not.toHaveBeenCalled();
+
+        upsertRun.mockRejectedValueOnce(new Error('db down'));
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        await expect(createWorkflowRun(fire)).rejects.toThrow('db down');
+        expect(prisma.activeWorkflow.upsert).not.toHaveBeenCalled();
+      });
+
+      it("pins the run's settings at the schedule's team, though the fire's ledger row is not yet written", async () => {
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        vi.mocked(prisma.connection.findUnique).mockResolvedValueOnce({
+          team: { orgId: 'org-s' },
+          teamId: 'team-s',
+        } as never);
+        await createWorkflowRun(fire);
+        expect(prisma.connection.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 'repo-sched' } })
+        );
+      });
+
       it('leaves a run that only looks like a fire alone: the anchor must carry the same work request', async () => {
         findVersion.mockResolvedValue({ spec: validSpec } as never);
         vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce({

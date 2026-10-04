@@ -92,9 +92,33 @@ async function ensureEpicChildLedgerRow(input: CreateWorkflowRunInput): Promise<
   });
 }
 
+interface ScheduledFireAnchor {
+  assignedBranch: string | null;
+  budgetTier: string;
+  repoId: string;
+}
+
+/** The schedule's anchor row, when this run is a fire of the schedule whose work request it carries. */
+async function scheduledFireAnchor(
+  input: CreateWorkflowRunInput
+): Promise<ScheduledFireAnchor | null> {
+  const match = input.workRequestId ? SCHEDULE_FIRE_ID_RE.exec(input.workflowId) : null;
+  if (!match) {
+    return null;
+  }
+  const anchor = await prisma.activeWorkflow.findUnique({
+    select: { assignedBranch: true, budgetTier: true, repoId: true, workRequestId: true },
+    where: { temporalWorkflowId: `sched-${match[1]}` },
+  });
+  if (!anchor?.repoId || anchor.workRequestId !== input.workRequestId) {
+    return null;
+  }
+  return { ...anchor, repoId: anchor.repoId };
+}
+
 /**
  * Give a scheduled fire its own `ActiveWorkflow` ledger row, carrying the
- * schedule's repository, branch and budget tier, and return that repository.
+ * schedule's repository, branch and budget tier.
  *
  * A fire is a run of the schedule's standing work request, which names no
  * connection, and the only ledger row it has is the schedule's anchor
@@ -107,21 +131,17 @@ async function ensureEpicChildLedgerRow(input: CreateWorkflowRunInput): Promise<
  * `connectionId`, so the cap guard, the in-flight count and `finalizeRun` all
  * reach the org through the run, as for an epic child.
  *
- * Returns null for a run that is not a fire. Idempotent, and never touches
- * `currentStatus` or the counters of an existing row.
+ * Written by `createWorkflowRun` only after the run row exists: a row written
+ * ahead of it would sit in STARTING for ever if the run never came to be (the
+ * reaper closes rows through runs), counted against the schedule creator's
+ * concurrency cap. The repository is read earlier, by `scheduledFireAnchor`,
+ * because the run row and the pinned settings need it. Idempotent, and never
+ * touches `currentStatus` or the counters of an existing row.
  */
-async function ensureScheduledFireLedgerRow(input: CreateWorkflowRunInput): Promise<string | null> {
-  const match = input.workRequestId ? SCHEDULE_FIRE_ID_RE.exec(input.workflowId) : null;
-  if (!match) {
-    return null;
-  }
-  const anchor = await prisma.activeWorkflow.findUnique({
-    select: { assignedBranch: true, budgetTier: true, repoId: true, workRequestId: true },
-    where: { temporalWorkflowId: `sched-${match[1]}` },
-  });
-  if (!anchor?.repoId || anchor.workRequestId !== input.workRequestId) {
-    return null;
-  }
+async function writeScheduledFireLedgerRow(
+  input: CreateWorkflowRunInput,
+  anchor: ScheduledFireAnchor
+): Promise<void> {
   const links = { repoId: anchor.repoId, workRequestId: input.workRequestId ?? null };
   await prisma.activeWorkflow.upsert({
     create: {
@@ -134,7 +154,6 @@ async function ensureScheduledFireLedgerRow(input: CreateWorkflowRunInput): Prom
     update: links,
     where: { temporalWorkflowId: input.workflowId },
   });
-  return anchor.repoId;
 }
 
 /**
@@ -242,7 +261,10 @@ export async function createWorkflowRun(
   // and a row written ahead of one would sit in STARTING forever, counted as
   // live work that nothing will ever finish.
   await ensureEpicChildLedgerRow(input);
-  const scheduledRepoId = await ensureScheduledFireLedgerRow(input);
+  // A fire's ledger row is written after its run row below, not here: see
+  // `writeScheduledFireLedgerRow`.
+  const scheduledAnchor = await scheduledFireAnchor(input);
+  const scheduledRepoId = scheduledAnchor?.repoId ?? null;
 
   // P1/WS3: snapshot the active GLOBAL Agent versions so this run resolves a
   // fixed Agent version regardless of later library edits. One row per key
@@ -274,7 +296,7 @@ export async function createWorkflowRun(
   // cannot read the database, and a run that started under one transition
   // ceiling must finish under the same one or its replay history stops matching
   // its code — so these are resolved once, here, and carried forward.
-  const settingsCtx = await runSettingsContext(input);
+  const settingsCtx = await runSettingsContext(input, scheduledRepoId);
   const pinnedSettings = await snapshotPinnedSettings(settingsCtx);
 
   // Skill text is a second input to every agent: freeze the revision of every
@@ -319,6 +341,12 @@ export async function createWorkflowRun(
     update: {},
     where: { workflowId: input.workflowId },
   });
+
+  // The ledger row only has to exist before the run's first LLM call, which is
+  // after this activity returns.
+  if (scheduledAnchor) {
+    await writeScheduledFireLedgerRow(input, scheduledAnchor);
+  }
 
   // Read the pin back off the row rather than trusting the value just computed:
   // on a Temporal retry `update: {}` keeps the *original* snapshot, and the run
@@ -420,10 +448,13 @@ async function skillTenantContext(
 /// `RunInput.connectionId`, while the Slack slash-command and scheduled-request
 /// paths leave it null and carry the repo on `ActiveWorkflow.repoId` instead.
 /// `currentRequestContext()` reads the latter, so this reads both.
-async function runSettingsContext(input: CreateWorkflowRunInput): Promise<SettingResolveCtx> {
+async function runSettingsContext(
+  input: CreateWorkflowRunInput,
+  scheduledRepoId: string | null = null
+): Promise<SettingResolveCtx> {
   const ctx: SettingResolveCtx = { workflowTemplateId: input.templateId };
 
-  const [request, active] = await Promise.all([
+  const [request, active, fireRepo] = await Promise.all([
     input.workRequestId
       ? prisma.runInput.findUnique({
           select: { connection: { select: { team: { select: { orgId: true } }, teamId: true } } },
@@ -434,9 +465,17 @@ async function runSettingsContext(input: CreateWorkflowRunInput): Promise<Settin
       select: { repository: { select: { team: { select: { orgId: true } }, teamId: true } } },
       where: { temporalWorkflowId: input.workflowId },
     }),
+    // A scheduled fire's own ledger row is written after the settings are
+    // pinned, so its repository comes from the schedule's anchor instead.
+    scheduledRepoId
+      ? prisma.connection.findUnique({
+          select: { team: { select: { orgId: true } }, teamId: true },
+          where: { id: scheduledRepoId },
+        })
+      : null,
   ]);
 
-  const team = request?.connection ?? active?.repository;
+  const team = request?.connection ?? active?.repository ?? fireRepo;
   ctx.teamId = team?.teamId ?? undefined;
   ctx.orgId = team?.team?.orgId ?? undefined;
   return ctx;
