@@ -28,7 +28,7 @@ import {
   useUpsertOrgMember,
 } from '@/hooks/useOrg';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
-import { buildBudgetPatch, removeCapPatch } from '@/lib/budgetPatch';
+import { buildBudgetPatch, centsToDollarsInput, removeCapPatch } from '@/lib/budgetPatch';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatCents, formatPercent, formatTokens } from '@/lib/utils';
@@ -81,7 +81,9 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const [inviteRole, setInviteRole] = useState<OrgRole>('ORG_MEMBER');
   const [inviteError, setInviteError] = useState<string | null>(null);
   // Prefilled with the stored values so an untouched field is sent back as-is.
-  const [budgetInput, setBudgetInput] = usePrefilledField(budget?.monthlyBudgetUsdCents);
+  const [budgetInput, setBudgetInput] = usePrefilledField(
+    centsToDollarsInput(budget?.monthlyBudgetUsdCents)
+  );
   const [thresholdInput, setThresholdInput] = usePrefilledField(
     budget?.budgetAlertThresholdPercent
   );
@@ -461,10 +463,13 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               <>
                 <div className="grid grid-cols-2 gap-3">
                   <Input
-                    hint="Monthly cap in USD cents (e.g. 10000 = $100)."
-                    label="Monthly cap (USD cents)"
+                    hint="Monthly spend cap in dollars (e.g. 100.00). Leave blank for no cap."
+                    label="Monthly cap ($)"
+                    min="0"
                     onChange={(e) => setBudgetInput(e.target.value)}
                     placeholder="No cap"
+                    prefix="$"
+                    step="0.01"
                     type="number"
                     value={budgetInput}
                   />
