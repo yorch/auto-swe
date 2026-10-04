@@ -487,6 +487,7 @@ CREATE TABLE "users" (
     "image" TEXT,
     "slack_id" TEXT,
     "github_login" TEXT,
+    "github_login_account_id" TEXT,
     "role" "Role" NOT NULL DEFAULT 'ENGINEER',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

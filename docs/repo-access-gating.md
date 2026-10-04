@@ -43,6 +43,12 @@ linking GitHub to an existing email or Google user is covered — that path crea
 `users.github_login` is unique. A login already held by another user is reported and left alone
 rather than moved; taking it would hand that user's repository access to whoever signed in last.
 
+`users.github_login_account_id` records the `accounts.account_id` the login was read from (`{host}:{id}`,
+or a bare github.com id), and is written and cleared together with the login. A user may link several
+GitHub accounts, and a login is only comparable with the id space of the host that issued it, so the
+ownership check verifies against that one account. A recorded account that is no longer linked leaves
+the login with nothing behind it, and it is cleared as an unlinked login.
+
 Accounts linked before the column existed are covered by
 `packages/gateway/src/scripts/backfillGithubLogins.ts`. Run it before enabling enforcement:
 
@@ -376,6 +382,10 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   takeover is recorded for it. A github.com account is still asked without a credential then, which
   rate-limits. The lookup uses a host's standard API base (`/api/v3` on a GitHub Enterprise Server),
   not a per-repository override.
+- **A login with no recorded source account is verified only when one account is linked.** A user
+  whose login was written before the source account was recorded, and who has linked several GitHub
+  accounts, is reported as unverifiable and kept; nothing is cleared. Signing in again, or the
+  account's next update, records the source.
 - **Revocation is not instant.** Webhooks make it seconds, but a missed or undelivered webhook
   leaves the previous answer in place until the next sweep, and a paused sweep extends that to
   `repoAccess.viewStaleAfterHours`. The launch path is unaffected, because it asks live.

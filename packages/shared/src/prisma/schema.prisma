@@ -1050,6 +1050,12 @@ model User {
   /// Unique because one GitHub identity must not map to two platform users —
   /// the projection would then grant one user's access to the other.
   githubLogin   String?  @unique @map("github_login")
+  /// The `Account.accountId` the login was read from (`{host}:{id}`, or a bare
+  /// github.com id). A user can link several GitHub accounts, and a login is
+  /// only comparable with the id space of the host that issued it, so ownership
+  /// verification needs to know which account to check. Null on a row written
+  /// before this was recorded; cleared together with `githubLogin`.
+  githubLoginAccountId String? @map("github_login_account_id")
   role          Role     @default(ENGINEER)
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz

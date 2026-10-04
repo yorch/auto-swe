@@ -227,7 +227,10 @@ export async function fetchGithubUserId(
  */
 export async function clearGithubLogin(prisma: PrismaClient, userId: string): Promise<void> {
   await prisma.$transaction([
-    prisma.user.update({ data: { githubLogin: null }, where: { id: userId } }),
+    prisma.user.update({
+      data: { githubLogin: null, githubLoginAccountId: null },
+      where: { id: userId },
+    }),
     prisma.repoAccess.deleteMany({ where: { userId } }),
   ]);
 }
@@ -244,11 +247,21 @@ export async function verifyGithubLoginOwnership(
   prisma: PrismaClient,
   args: { userId: string; login: string; targets: AccountTargets }
 ): Promise<LoginOwnershipResult> {
-  const accounts = await prisma.account.findMany({
-    select: { accountId: true },
-    where: { providerId: 'github', userId: args.userId },
-  });
-  const account = accounts[0];
+  const [accounts, owner] = await Promise.all([
+    prisma.account.findMany({
+      select: { accountId: true },
+      where: { providerId: 'github', userId: args.userId },
+    }),
+    prisma.user.findUnique({
+      select: { githubLoginAccountId: true },
+      where: { id: args.userId },
+    }),
+  ]);
+  // The account the login was read from, when that was recorded. A recorded
+  // account that is no longer linked leaves the login with nothing behind it,
+  // however many others are linked.
+  const sourceId = owner?.githubLoginAccountId ?? null;
+  const account = sourceId ? accounts.find((a) => a.accountId === sourceId) : accounts[0];
   if (!account?.accountId) {
     // No linked GitHub account, yet a login is recorded. The account-delete
     // hook handles the unlink and swallows its own failures, so this is the
@@ -258,13 +271,15 @@ export async function verifyGithubLoginOwnership(
     await clearGithubLogin(prisma, args.userId);
     return { clearedLogin: args.login, status: 'unlinked' };
   }
-  // `users.github_login` does not record which of several linked GitHub
-  // accounts it came from, and a login is only comparable with the id space of
-  // the host that issued it. Comparing against the wrong one would clear a
-  // valid login and write a false takeover, so it is left unverified.
-  if (accounts.length > 1) {
+  // A row written before the source account was recorded cannot say which of
+  // several linked accounts the login came from, and a login is only comparable
+  // with the id space of the host that issued it. Comparing against the wrong
+  // one would clear a valid login and write a false takeover, so it is left
+  // unverified.
+  if (!sourceId && accounts.length > 1) {
     return {
-      reason: 'several GitHub accounts are linked, so the login cannot be tied to one host',
+      reason:
+        'several GitHub accounts are linked and the login does not record which one it came from',
       status: 'unverifiable',
     };
   }

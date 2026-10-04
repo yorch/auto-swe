@@ -282,6 +282,7 @@ function buildAuth() {
   const refreshGithubLogin = async (account: {
     providerId: string;
     userId: string;
+    accountId?: string | null;
     accessToken?: string | null;
   }): Promise<void> => {
     if (account.providerId !== 'github') {
@@ -294,6 +295,7 @@ function buildAuth() {
         _githubSignIn.mode === 'ghe' ? _githubSignIn.apiUrl : (await resolveGitHubConfig()).apiUrl;
       const result = await syncGithubLoginForAccount(prisma, {
         accessToken: account.accessToken,
+        accountId: account.accountId ?? null,
         apiUrl,
         userId: account.userId,
       });

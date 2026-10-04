@@ -26,6 +26,7 @@ function json(body: unknown, status = 200): Response {
 
 const findFirst = vi.fn(); // account.findMany
 const update = vi.fn();
+const userFind = vi.fn(); // user.findUnique
 const deleteMany = vi.fn();
 const auditCreate = vi.fn();
 
@@ -35,7 +36,7 @@ function prisma(): PrismaClient {
     account: { findMany: findFirst },
     configAuditLog: { create: auditCreate },
     repoAccess: { deleteMany },
-    user: { update },
+    user: { findUnique: userFind, update },
   } as unknown as PrismaClient;
 }
 
@@ -45,6 +46,7 @@ beforeEach(() => {
   deleteMany.mockResolvedValue({ count: 0 });
   auditCreate.mockResolvedValue({});
   findFirst.mockResolvedValue([{ accountId: '4242' }]);
+  userFind.mockResolvedValue({ githubLoginAccountId: null });
 });
 
 afterEach(() => {
@@ -153,7 +155,7 @@ describe('verifyGithubLoginOwnership', () => {
       status: 'reassigned',
     });
     expect(update).toHaveBeenCalledWith({
-      data: { githubLogin: null },
+      data: { githubLogin: null, githubLoginAccountId: null },
       where: { id: USER_ID },
     });
   });
@@ -208,7 +210,7 @@ describe('verifyGithubLoginOwnership', () => {
       status: 'reassigned',
     });
     expect(update).toHaveBeenCalledWith({
-      data: { githubLogin: null },
+      data: { githubLogin: null, githubLoginAccountId: null },
       where: { id: USER_ID },
     });
   });
@@ -275,6 +277,60 @@ describe('verifyGithubLoginOwnership with several linked accounts', () => {
     expect(spy).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
     expect(auditCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('verifyGithubLoginOwnership with a recorded source account', () => {
+  const userId = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+  const both = [{ accountId: '4242' }, { accountId: 'ghe.corp:7' }];
+  const targets = (spy: (id: string) => void): AccountTargets => ({
+    forAccount: async (id) => {
+      spy(id);
+      return { apiUrl: API, token: 'tok' };
+    },
+    unauthenticatedHosts: () => [],
+  });
+
+  it('verifies against the recorded account, not the first one', async () => {
+    findFirst.mockResolvedValue(both);
+    userFind.mockResolvedValue({ githubLoginAccountId: 'ghe.corp:7' });
+    stub(() => json({ id: 7 }));
+    const asked = vi.fn();
+    await expect(
+      verifyGithubLoginOwnership(prisma(), { login: 'octocat', targets: targets(asked), userId })
+    ).resolves.toEqual({ status: 'ok' });
+    expect(asked).toHaveBeenCalledWith('ghe.corp:7');
+  });
+
+  it('detects a takeover against the recorded account', async () => {
+    findFirst.mockResolvedValue(both);
+    userFind.mockResolvedValue({ githubLoginAccountId: 'ghe.corp:7' });
+    stub(() => json({ id: 999 }));
+    await expect(
+      verifyGithubLoginOwnership(prisma(), {
+        login: 'octocat',
+        targets: targets(vi.fn()),
+        userId,
+      })
+    ).resolves.toEqual({ clearedLogin: 'octocat', status: 'reassigned' });
+    expect(update).toHaveBeenCalledWith({
+      data: { githubLogin: null, githubLoginAccountId: null },
+      where: { id: userId },
+    });
+  });
+
+  it('treats a recorded account that is no longer linked as unlinked', async () => {
+    findFirst.mockResolvedValue([{ accountId: '4242' }]);
+    userFind.mockResolvedValue({ githubLoginAccountId: 'ghe.corp:7' });
+    const spy = stub(() => json({ id: 7 }));
+    await expect(
+      verifyGithubLoginOwnership(prisma(), {
+        login: 'octocat',
+        targets: targets(vi.fn()),
+        userId,
+      })
+    ).resolves.toEqual({ clearedLogin: 'octocat', status: 'unlinked' });
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

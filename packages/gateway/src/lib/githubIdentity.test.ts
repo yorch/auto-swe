@@ -94,11 +94,13 @@ describe('fetchGithubLogin', () => {
 describe('storeGithubLogin', () => {
   it('writes the login to the named user', async () => {
     const update = vi.fn().mockResolvedValue({});
-    await expect(storeGithubLogin(prismaWith(update), 'user-1', 'octocat')).resolves.toEqual({
+    await expect(
+      storeGithubLogin(prismaWith(update), 'user-1', 'octocat', '4242')
+    ).resolves.toEqual({
       login: 'octocat',
     });
     expect(update).toHaveBeenCalledWith({
-      data: { githubLogin: 'octocat' },
+      data: { githubLogin: 'octocat', githubLoginAccountId: '4242' },
       where: { id: 'user-1' },
     });
   });
@@ -114,12 +116,14 @@ describe('storeGithubLogin', () => {
       .fn()
       .mockRejectedValueOnce(Object.assign(new Error('unique'), { code: 'P2002' }))
       .mockResolvedValueOnce({});
-    await expect(storeGithubLogin(prismaWith(update), 'user-2', 'octocat')).resolves.toEqual({
+    await expect(
+      storeGithubLogin(prismaWith(update), 'user-2', 'octocat', '4242')
+    ).resolves.toEqual({
       login: null,
       reason: 'claimed-by-another-user',
     });
     expect(update).toHaveBeenNthCalledWith(2, {
-      data: { githubLogin: null },
+      data: { githubLogin: null, githubLoginAccountId: null },
       where: { id: 'user-2' },
     });
   });
@@ -128,7 +132,7 @@ describe('storeGithubLogin', () => {
     const update = vi.fn().mockResolvedValue({});
     await clearGithubLogin(prismaWith(update), 'user-1');
     expect(update).toHaveBeenCalledWith({
-      data: { githubLogin: null },
+      data: { githubLogin: null, githubLoginAccountId: null },
       where: { id: 'user-1' },
     });
   });
@@ -136,7 +140,9 @@ describe('storeGithubLogin', () => {
   it('propagates errors that are not a uniqueness collision', async () => {
     // A dead connection must not read as "this login is taken".
     const update = vi.fn().mockRejectedValue(Object.assign(new Error('down'), { code: 'P1001' }));
-    await expect(storeGithubLogin(prismaWith(update), 'user-3', 'octocat')).rejects.toThrow('down');
+    await expect(storeGithubLogin(prismaWith(update), 'user-3', 'octocat', null)).rejects.toThrow(
+      'down'
+    );
   });
 });
 
@@ -147,6 +153,7 @@ describe('syncGithubLoginForAccount', () => {
     await expect(
       syncGithubLoginForAccount(prismaWith(update), {
         accessToken: 'tok',
+        accountId: 'ghe.corp:7',
         apiUrl: API,
         userId: 'user-1',
       })
@@ -159,6 +166,7 @@ describe('syncGithubLoginForAccount', () => {
     await expect(
       syncGithubLoginForAccount(prismaWith(update), {
         accessToken: null,
+        accountId: null,
         apiUrl: API,
         userId: 'user-1',
       })
@@ -173,6 +181,7 @@ describe('syncGithubLoginForAccount', () => {
     await expect(
       syncGithubLoginForAccount(prismaWith(update), {
         accessToken: 'tok',
+        accountId: 'ghe.corp:7',
         apiUrl: API,
         userId: 'user-1',
       })
