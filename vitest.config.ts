@@ -136,6 +136,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillScanner.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/skillRevision',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillRevision.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/regexSafety',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/regexSafety.ts'),
       },

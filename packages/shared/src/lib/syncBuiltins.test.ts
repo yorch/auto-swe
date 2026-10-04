@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
-import { seedSweStarter } from './syncBuiltins.js';
+import { seedCoreDefaults, seedSweStarter } from './syncBuiltins.js';
 
 /**
  * Admin-owned state must survive a gateway restart: `syncBuiltins` runs on
@@ -34,8 +34,10 @@ function makeFake() {
     agentSkillRef: [] as Row[],
     autonomyPolicy: [] as Row[],
     evalRubric: [] as Row[],
+    modelCatalogEntry: [] as Row[],
     scannerPattern: [] as Row[],
     skill: [] as Row[],
+    skillRevision: [] as Row[],
     workflowTemplate: [] as Row[],
     workflowTemplateVersion: [] as Row[],
   };
@@ -45,7 +47,8 @@ function makeFake() {
     const t = tables[name];
     return {
       create: async ({ data }: { data: Record<string, unknown> }) => {
-        const { versions, ...rest } = data as {
+        const { versions, revisions, ...rest } = data as {
+          revisions?: { create: Record<string, unknown> };
           versions?: { create: Record<string, unknown> };
         } & Record<string, unknown>;
         if (name === 'workflowTemplateVersion') {
@@ -55,6 +58,9 @@ function makeFake() {
         }
         const row: Row = { createdBy: null, generatedBy: null, id: id(name), ...rest };
         t.push(row);
+        if (revisions) {
+          tables.skillRevision.push({ id: id('rev'), skillId: row.id, ...revisions.create });
+        }
         if (versions) {
           tables.workflowTemplateVersion.push({
             createdBy: null,
@@ -65,6 +71,12 @@ function makeFake() {
           });
         }
         return row;
+      },
+      createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => {
+        for (const d of data) {
+          t.push({ id: id(name), ...d });
+        }
+        return { count: data.length };
       },
       findFirst: async (args: { where?: Record<string, unknown>; orderBy?: unknown } = {}) => {
         if (name === 'agent') {
@@ -79,10 +91,23 @@ function makeFake() {
       findMany: async (args: { where?: Record<string, unknown> } = {}) =>
         t
           .filter((r) => matches(r, args.where))
+          // `revisions: { none: {} }` — the backfill's "skill with no revision row".
+          .filter(
+            (r) =>
+              name !== 'skill' ||
+              !('revisions' in (args.where ?? {})) ||
+              !tables.skillRevision.some((rev) => rev.skillId === r.id)
+          )
           .sort((a, b) => Number(a.version ?? 0) - Number(b.version ?? 0)),
       update: async ({ data, where }: { data: Record<string, unknown>; where: { id: string } }) => {
         const row = t.find((r) => r.id === where.id) as Row;
-        Object.assign(row, data);
+        const { revisions, ...rest } = data as {
+          revisions?: { create: Record<string, unknown> };
+        } & Record<string, unknown>;
+        Object.assign(row, rest);
+        if (revisions) {
+          tables.skillRevision.push({ id: id('rev'), skillId: row.id, ...revisions.create });
+        }
         return row;
       },
       updateMany: async ({
@@ -442,5 +467,66 @@ describe('syncBuiltins — agents and skill refs', () => {
     const { orderBys, prisma } = makeFake();
     await seedSweStarter(prisma);
     expect(orderBys.every((o) => JSON.stringify(o).includes('"version":"desc"'))).toBe(true);
+  });
+});
+
+describe('syncBuiltins — skill revisions', () => {
+  const revisionsOf = (tables: ReturnType<typeof makeFake>['tables'], skillId: string) =>
+    tables.skillRevision.filter((r) => r.skillId === skillId);
+
+  it('seeds every built-in skill with revision 1 holding its text', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    expect(tables.skill).toHaveLength(BUILTIN_SKILLS.length);
+    for (const skill of tables.skill) {
+      expect(skill.currentRevision).toBe(1);
+      const revs = revisionsOf(tables, skill.id);
+      expect(revs).toHaveLength(1);
+      expect(revs[0]).toMatchObject({ promptText: skill.promptText, revision: 1 });
+    }
+  });
+
+  it('cuts no revision when a second boot finds the text unchanged', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    await seedSweStarter(prisma);
+    expect(tables.skillRevision).toHaveLength(BUILTIN_SKILLS.length);
+  });
+
+  it('cuts revision 2 when shipped text changes, keeping revision 1 verbatim', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const def = BUILTIN_SKILLS[0] as { name: string; promptText: string };
+    const original = def.promptText;
+    const skill = tables.skill.find((r) => r.name === def.name) as Row;
+    try {
+      def.promptText = `${original}\nA line this release adds.`;
+      await seedSweStarter(prisma);
+    } finally {
+      def.promptText = original;
+    }
+
+    expect(skill.currentRevision).toBe(2);
+    expect(skill.promptText).toBe(`${original}\nA line this release adds.`);
+    const revs = revisionsOf(tables, skill.id);
+    expect(revs.map((r) => r.revision)).toEqual([1, 2]);
+    expect(revs[0]?.promptText).toBe(original);
+    expect(revs[1]?.promptText).toBe(skill.promptText);
+  });
+
+  it('backfills revision 1 for a skill that has none, idempotently', async () => {
+    const { prisma, tables } = makeFake();
+    tables.skill.push({
+      currentRevision: 1,
+      description: 'd',
+      id: 'legacy',
+      name: 'legacy custom',
+      promptText: 'custom text',
+    });
+    await seedCoreDefaults(prisma);
+    await seedCoreDefaults(prisma);
+    expect(revisionsOf(tables, 'legacy')).toEqual([
+      expect.objectContaining({ promptText: 'custom text', revision: 1 }),
+    ]);
   });
 });

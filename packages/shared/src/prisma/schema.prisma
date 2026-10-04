@@ -1071,6 +1071,7 @@ model User {
   humanErrorBaselines   HumanErrorBaseline[]
   workRequests          RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleCreator")
+  skillRevisions        SkillRevision[]        @relation("SkillRevisionCreator")
   schedulesActingAs     ScheduledWorkRequest[] @relation("ScheduleActsAs")
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
@@ -1328,6 +1329,13 @@ model WorkflowRun {
   /// a model or credential edit land inside an in-flight workflow. Null for
   /// runs created before this column existed — they resolve live.
   pinnedSettings    Json?             @map("pinned_settings")
+  /// Snapshot of the skill revisions the run's agents reference, taken when the
+  /// run began: a `{ skillId: revision }` map. `resolveAgent` reads the pinned
+  /// `SkillRevision` text instead of the live `Skill` row, so editing a skill
+  /// mid-run cannot change the prompt a retry or replay sees. A skill with no
+  /// entry (added to an agent after the run began) resolves its current
+  /// revision. Null for runs created before this column existed.
+  skillRevisions    Json?             @map("skill_revisions")
   /// True when this run was routed to the canary arm (evals P2 canary).
   /// Used to split EvalResult rows for canary vs control comparison.
   isCanary          Boolean           @default(false) @map("is_canary")
@@ -2392,13 +2400,49 @@ model Skill {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
+  /// The revision number whose content `promptText`/`description` mirror. The
+  /// columns above stay the live copy (every reader that wants "now" keeps
+  /// working); `SkillRevision` is the immutable history a run pins against.
+  currentRevision Int @default(1) @map("current_revision")
+
   agentSkillRefs AgentSkillRef[]
+  revisions      SkillRevision[]
 
   @@index([scope, teamId])
   @@index([scope, orgId])
   @@index([teamId])
   @@index([orgId])
   @@map("skills")
+}
+
+/// One immutable version of a skill's content. Written by every path that
+/// changes `Skill.promptText` or `description` (create, edit, built-in sync,
+/// bundle install) and never updated afterwards: a run records
+/// `{ skillId: revision }` at start (`WorkflowRun.skillRevisions`) and reads the
+/// text from here, so a later edit cannot alter an in-flight run.
+model SkillRevision {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  skillId       String   @map("skill_id") @db.Uuid
+  skill         Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  revision      Int
+  promptText    String   @map("prompt_text")
+  description   String?
+  /// sha256 over promptText + description; equal hashes mean no new revision.
+  contentHash   String   @map("content_hash")
+  /// Provenance for content imported from a git source; null for authored text.
+  sourceSha     String?  @map("source_sha")
+  sourcePath    String?  @map("source_path")
+  /// Companion text files imported with the skill (`{ path, content }[]`).
+  referenceFiles Json?   @map("reference_files")
+  /// Advisory `scanSkillContent` warnings for this exact text.
+  scanWarnings  Json     @default("[]") @map("scan_warnings")
+  createdById   String?  @map("created_by_id") @db.Uuid
+  createdBy     User?    @relation("SkillRevisionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([skillId, revision])
+  @@index([createdById])
+  @@map("skill_revisions")
 }
 
 enum ScannerPatternType {
