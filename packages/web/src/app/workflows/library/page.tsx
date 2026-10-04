@@ -42,7 +42,7 @@ const SPEC_SCHEMA_VERSION = 1;
 const BLANK_SPEC: WorkflowSpec = {
   description: 'Replace this step with your first action.',
   entry: 'start',
-  name: 'new-template',
+  name: 'new-workflow',
   nodes: {
     done: { status: 'SUCCESS', type: 'terminate' },
     start: { next: 'done', step: 'noop', type: 'step' },
@@ -94,7 +94,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
 
   return (
     <Modal
-      eyebrow="§ Templates"
+      eyebrow="§ Workflows"
       onClose={() => {
         onClose();
         setName('');
@@ -102,7 +102,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
         setError(null);
       }}
       open={open}
-      title="New template"
+      title="New workflow"
     >
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
@@ -116,7 +116,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
           hint="Optional"
           label="Description"
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="What does this template do?"
+          placeholder="What does this workflow do?"
           rows={3}
           value={description}
         />
@@ -130,7 +130,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
           }}
           onSubmit={handleCreate}
           pendingLabel="Creating…"
-          submitLabel="Create blank template"
+          submitLabel="Create blank workflow"
         />
       </div>
     </Modal>
@@ -252,7 +252,7 @@ function NewTemplateModal({
 
   return (
     <Modal
-      eyebrow="§ Templates"
+      eyebrow="§ Workflows"
       onClose={() => {
         onClose();
         reset();
@@ -364,7 +364,7 @@ function NewTemplateModal({
             size="sm"
             variant="ghost"
           >
-            Or start from a blank template
+            Or start from a blank workflow
           </Button>
         </div>
       </div>
@@ -396,7 +396,7 @@ export default function TemplatesPage() {
   const manageTitle = canManage
     ? undefined
     : isLead
-      ? 'Select a team you lead to author templates for it'
+      ? 'Select a team you lead to author workflows for it'
       : requiresRoleTitle('LEAD');
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
@@ -456,55 +456,18 @@ export default function TemplatesPage() {
           </span>
         }
         chapter="§ Workflows"
-        subtitle="Agentic workflow library. Pick a template, run it with your inputs, watch it execute."
+        subtitle="Your reusable workflows. Pick one, run it with your inputs, and follow the request."
         title="Workflow library"
       />
 
-      {/* Starter gallery */}
-      <section>
-        <SectionHeader hint="fork to edit" number="01" title="Start from a template" />
-        {forkError && <Alert className="mb-4">{forkError}</Alert>}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {STARTER_TEMPLATES.map((s) => {
-            const isForking = forkingId === s.id;
-            return (
-              <Card
-                className={cn(
-                  'group flex flex-col p-5 hover:border-ember-400',
-                  'border-l-[3px]',
-                  TONE_CLASS[s.tone]
-                )}
-                key={s.id}
-              >
-                <div className="label-mono mb-2">{s.tagline}</div>
-                <h3 className="mb-2 font-display text-xl font-medium text-paper-100">{s.name}</h3>
-                <p className="mb-5 flex-1 text-sm leading-relaxed text-paper-400">
-                  {s.description}
-                </p>
-                <span className="self-start" title={manageTitle}>
-                  <Button
-                    disabled={!canManage || isForking || createTemplate.isPending}
-                    onClick={() => handleFork(s)}
-                    size="sm"
-                    variant="primary"
-                  >
-                    {isForking ? 'Forking…' : 'Fork starter'}
-                  </Button>
-                </span>
-              </Card>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Existing templates table */}
+      {/* Workflows table */}
       <section>
         <SectionHeader
           hint={`${(templates ?? []).length} total`}
-          number="02"
-          title="Existing templates"
+          number="01"
+          title="Your workflows"
         />
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="templates">
+        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="workflows">
           {
             <Card className="overflow-hidden p-0" variant="inset">
               <Table>
@@ -590,7 +553,7 @@ export default function TemplatesPage() {
                               className="cursor-not-allowed"
                               title={
                                 t.status === 'DRAFT'
-                                  ? 'Activate this template before running'
+                                  ? 'Activate this workflow before running'
                                   : 'No active version — promote a version first'
                               }
                             >
@@ -622,8 +585,8 @@ export default function TemplatesPage() {
                   {(templates ?? []).length === 0 && (
                     <TableStatusRow colSpan={7}>
                       <EmptyState
-                        hint="Fork a starter above or create a blank template."
-                        title="No templates yet."
+                        hint="Start from a starter below or create a blank workflow."
+                        title="No workflows yet"
                       />
                     </TableStatusRow>
                   )}
@@ -633,6 +596,47 @@ export default function TemplatesPage() {
           }
         </QueryBoundary>
       </section>
+      {/* Starter gallery */}
+      <details className="rounded-lg border border-ink-600 p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-paper-100">
+          New workflow from a starter
+          <span className="ml-2 text-xs font-normal text-paper-400">
+            Fork one to edit it as your own
+          </span>
+        </summary>
+        {forkError && <Alert className="mb-4 mt-4">{forkError}</Alert>}
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {STARTER_TEMPLATES.map((s) => {
+            const isForking = forkingId === s.id;
+            return (
+              <Card
+                className={cn(
+                  'group flex flex-col p-5 hover:border-ember-400',
+                  'border-l-[3px]',
+                  TONE_CLASS[s.tone]
+                )}
+                key={s.id}
+              >
+                <div className="label-mono mb-2">{s.tagline}</div>
+                <h3 className="mb-2 font-display text-xl font-medium text-paper-100">{s.name}</h3>
+                <p className="mb-5 flex-1 text-sm leading-relaxed text-paper-400">
+                  {s.description}
+                </p>
+                <span className="self-start" title={manageTitle}>
+                  <Button
+                    disabled={!canManage || isForking || createTemplate.isPending}
+                    onClick={() => handleFork(s)}
+                    size="sm"
+                    variant="primary"
+                  >
+                    {isForking ? 'Forking…' : 'Fork starter'}
+                  </Button>
+                </span>
+              </Card>
+            );
+          })}
+        </div>
+      </details>
     </div>
   );
 }
@@ -662,7 +666,7 @@ function ArchiveConfirmModal({
       onClose={onClose}
       onConfirm={handleArchive}
       open={target !== null}
-      title="Archive template?"
+      title="Archive workflow?"
     />
   );
 }

@@ -413,7 +413,7 @@ function EditorInner({
           <span>nodes</span>
           <span className="tabular text-paper-200">{Object.keys(spec.nodes).length}</span>
           <span className="text-ink-500">·</span>
-          <span>entry</span>
+          <span>first step</span>
           <span className="tabular text-ember-400">{spec.entry}</span>
           {costEstimateUsd != null && costEstimateUsd > 0 && (
             <>

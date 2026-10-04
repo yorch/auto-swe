@@ -150,7 +150,7 @@ function EditMetadataModal({
   };
 
   return (
-    <Modal eyebrow="§ Template" onClose={onClose} open={open} title="Edit metadata">
+    <Modal eyebrow="§ Workflow" onClose={onClose} open={open} title="Edit metadata">
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
         <Input label="Name" onChange={(e) => setName(e.target.value)} value={name} />
@@ -175,7 +175,7 @@ function EditMetadataModal({
         />
         <ToggleSwitch
           checked={defaultChecked}
-          label="Set as default template"
+          label="Set as default workflow"
           onChange={() => setDefaultChecked((v) => !v)}
         />
         <ModalFooter
@@ -228,12 +228,12 @@ function EditSchemaModal({
 
   return (
     <Modal
-      eyebrow="§ Template"
+      eyebrow="§ Workflow"
       onClose={onClose}
       open={open}
       size="lg"
-      subtitle="Define the fields users fill in when running this template. Leave empty for no required inputs."
-      title="Run schema"
+      subtitle="Define the fields people fill in when they run this workflow. Leave empty for no required inputs."
+      title="Launch inputs"
     >
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
@@ -618,8 +618,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
         error={error}
         isError={isError}
         isLoading={isLoading}
-        label="template"
-        loadingMessage="loading template…"
+        label="workflow"
+        loadingMessage="loading workflow…"
       />
     );
   }
@@ -828,7 +828,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
           className="mb-0 mt-4"
           subtitle={
             template.description ||
-            'A workflow template: its versions, run schema, experiment and triggers.'
+            'A workflow: its versions, launch inputs, experiment and triggers.'
           }
           title={template.name}
         />
@@ -879,7 +879,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
             {mode === 'view' && visualSpec && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="label-mono">Spec — read-only</div>
+                  <div className="label-mono">Definition (read only)</div>
                   <div className="flex items-center gap-2">{editorActions}</div>
                 </div>
                 <WorkflowDag
@@ -1035,7 +1035,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   ) : undefined
                 }
                 number={railNumber('schema')}
-                title="Run schema"
+                title="Launch inputs"
               />
               {(() => {
                 const inputSchema = template.inputSchema;
@@ -1043,7 +1043,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   return (
                     <EmptyState
                       className="py-0 text-left text-xs"
-                      title="No schema — runs accept any input"
+                      title="No launch inputs — runs accept any input"
                     />
                   );
                 }

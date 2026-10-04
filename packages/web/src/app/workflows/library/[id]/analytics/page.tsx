@@ -61,7 +61,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
   return (
     <div className="space-y-8">
       <div>
-        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Template'} />
+        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Workflow'} />
         <PageHeader
           actions={
             <Select
@@ -76,7 +76,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
           }
           chapter="§ Workflows"
           className="mb-0 mt-4"
-          subtitle={`Observed performance and cost metrics for this template over the last ${windowDays} days.`}
+          subtitle={`Observed performance and cost metrics for this workflow over the last ${windowDays} days.`}
           title="Observed performance"
         />
       </div>
