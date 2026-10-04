@@ -20,7 +20,10 @@ import {
 } from '../lib/slackNotify.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
 import { accrueChannelUsage } from './channelAssistant.js';
-import { assertScheduledFireAuthorized } from './scheduledFireAuthorization.js';
+import {
+  assertScheduledFireAuthorized,
+  SCHEDULE_FIRE_ID_RE,
+} from './scheduledFireAuthorization.js';
 
 /**
  * Workflow run lifecycle activities. These live OUTSIDE the workflow file so
@@ -87,6 +90,51 @@ async function ensureEpicChildLedgerRow(input: CreateWorkflowRunInput): Promise<
     update: links,
     where: { temporalWorkflowId: input.workflowId },
   });
+}
+
+/**
+ * Give a scheduled fire its own `ActiveWorkflow` ledger row, carrying the
+ * schedule's repository, branch and budget tier, and return that repository.
+ *
+ * A fire is a run of the schedule's standing work request, which names no
+ * connection, and the only ledger row it has is the schedule's anchor
+ * (`sched-<id>`, never a real fire's id). The fire's spend accrues to a row
+ * keyed by its own workflow id, which nothing created until a template's first
+ * `updateDomainState` self-registered a bare one: no repository, so no
+ * organization for the cap or for billing, no link to the work request, so the
+ * finalizer billed the anchor's zero, and the default budget tier instead of
+ * the schedule's. The returned repository goes on the run row as its
+ * `connectionId`, so the cap guard, the in-flight count and `finalizeRun` all
+ * reach the org through the run, as for an epic child.
+ *
+ * Returns null for a run that is not a fire. Idempotent, and never touches
+ * `currentStatus` or the counters of an existing row.
+ */
+async function ensureScheduledFireLedgerRow(input: CreateWorkflowRunInput): Promise<string | null> {
+  const match = input.workRequestId ? SCHEDULE_FIRE_ID_RE.exec(input.workflowId) : null;
+  if (!match) {
+    return null;
+  }
+  const anchor = await prisma.activeWorkflow.findUnique({
+    select: { assignedBranch: true, budgetTier: true, repoId: true, workRequestId: true },
+    where: { temporalWorkflowId: `sched-${match[1]}` },
+  });
+  if (!anchor?.repoId || anchor.workRequestId !== input.workRequestId) {
+    return null;
+  }
+  const links = { repoId: anchor.repoId, workRequestId: input.workRequestId ?? null };
+  await prisma.activeWorkflow.upsert({
+    create: {
+      ...links,
+      assignedBranch: anchor.assignedBranch,
+      budgetTier: anchor.budgetTier,
+      currentStatus: 'STARTING',
+      temporalWorkflowId: input.workflowId,
+    },
+    update: links,
+    where: { temporalWorkflowId: input.workflowId },
+  });
+  return anchor.repoId;
 }
 
 /**
@@ -194,6 +242,7 @@ export async function createWorkflowRun(
   // and a row written ahead of one would sit in STARTING forever, counted as
   // live work that nothing will ever finish.
   await ensureEpicChildLedgerRow(input);
+  const scheduledRepoId = await ensureScheduledFireLedgerRow(input);
 
   // P1/WS3: snapshot the active GLOBAL Agent versions so this run resolves a
   // fixed Agent version regardless of later library edits. One row per key
@@ -251,6 +300,8 @@ export async function createWorkflowRun(
       // spans every repository, so run visibility reads this instead — a member
       // of one of the epic's teams reaches that team's child, not all of them.
       ...(input.parentWorkflowId && input.repoId ? { connectionId: input.repoId } : {}),
+      // A scheduled fire's standing work request names no connection either.
+      ...(scheduledRepoId ? { connectionId: scheduledRepoId } : {}),
       estimatedHumanTimeSaved: version.template?.estimatedHumanTimeSavedMinutes ?? null,
       isCanary,
       launchedById: input.launchedById ?? null,

@@ -51,7 +51,8 @@ vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
 }));
 
 // Covered by its own suite; here only the wiring into createWorkflowRun.
-vi.mock('./scheduledFireAuthorization.js', () => ({
+vi.mock('./scheduledFireAuthorization.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./scheduledFireAuthorization.js')>()),
   assertScheduledFireAuthorized: vi.fn(async () => undefined),
 }));
 
@@ -500,6 +501,63 @@ describe('createWorkflowRun', () => {
           }),
         })
       );
+    });
+
+    describe('scheduled fire ledger row', () => {
+      const fire = {
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'sched-3f2b8c1e-0a4d-4c55-9a77-1d2e3f4a5b6c-2026-10-04T12:00:00Z',
+        workRequestId: 'wr-standing',
+      };
+      const anchor = {
+        assignedBranch: 'auto/OPS-SCHED-3f2b8c1e',
+        budgetTier: 'LARGE',
+        repoId: 'repo-sched',
+        workRequestId: 'wr-standing',
+      };
+
+      it("carries the schedule's repository onto the run and onto the fire's own ledger row", async () => {
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce(anchor as never);
+        vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+        upsertRun.mockClear();
+        await createWorkflowRun(fire);
+        expect(prisma.activeWorkflow.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { temporalWorkflowId: 'sched-3f2b8c1e-0a4d-4c55-9a77-1d2e3f4a5b6c' },
+          })
+        );
+        expect(prisma.activeWorkflow.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            create: expect.objectContaining({
+              assignedBranch: 'auto/OPS-SCHED-3f2b8c1e',
+              budgetTier: 'LARGE',
+              currentStatus: 'STARTING',
+              repoId: 'repo-sched',
+              temporalWorkflowId: fire.workflowId,
+              workRequestId: 'wr-standing',
+            }),
+            where: { temporalWorkflowId: fire.workflowId },
+          })
+        );
+        expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+          connectionId: 'repo-sched',
+        });
+      });
+
+      it('leaves a run that only looks like a fire alone: the anchor must carry the same work request', async () => {
+        findVersion.mockResolvedValue({ spec: validSpec } as never);
+        vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce({
+          ...anchor,
+          workRequestId: 'someone-else',
+        } as never);
+        vi.mocked(prisma.activeWorkflow.upsert).mockClear();
+        upsertRun.mockClear();
+        await createWorkflowRun(fire);
+        expect(prisma.activeWorkflow.upsert).not.toHaveBeenCalled();
+        expect(upsertRun.mock.calls.at(-1)?.[0].create).not.toHaveProperty('connectionId');
+      });
     });
 
     it('writes no ledger row when the template cannot be resolved', async () => {

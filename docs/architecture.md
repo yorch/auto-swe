@@ -1102,6 +1102,12 @@ Current constraints of the system as built. Deliberate product boundaries are in
   `ceil(unfinalized / 200)` sweeps. The first sweep over a long history reaps 200 per interval,
   billing each into the current month and notifying no one for runs that ended over an hour ago, so
   that month's usage report carries the spend of every run reaped late.
+  A run is counted for, capped under and billed to one organization, found in this order: its work
+  request's connection, else — only when the request names none, as an epic child's and a scheduled
+  fire's do not — the run's own connection, else the repository of the run's own ledger row. A
+  scheduled fire gets its connection and ledger row at its first activity, from the schedule's
+  repository (and its branch and budget tier), so it is capped, counted in flight and billed to that
+  repository's organization like any other run.
   Spend with no org on it — a runless workflow with no derivable owner — is outside the cap. An
   epic's planning is attributed to one team, the first repository the epic names, even when the
   epic spans organizations; each child run is billed to its own repository's organization.
