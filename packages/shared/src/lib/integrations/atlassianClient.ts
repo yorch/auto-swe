@@ -13,7 +13,7 @@ export interface AtlassianClientConfig {
 export class AtlassianError extends Error {
   constructor(
     public readonly status: number,
-    public readonly code: 'auth' | 'not_found' | 'rate_limited' | 'server' | 'network',
+    public readonly code: 'auth' | 'not_found' | 'rate_limited' | 'server' | 'network' | 'redirect',
     message: string
   ) {
     super(message);
@@ -142,6 +142,17 @@ export class AtlassianClient {
           } catch (err) {
             if (err instanceof AtlassianError) {
               throw err;
+            }
+            // `redirect: 'error'` surfaces as a TypeError whose cause names the
+            // redirect. Retrying cannot change the answer, so fail at once.
+            if (
+              /redirect/i.test(String((err as { cause?: { message?: unknown } })?.cause?.message))
+            ) {
+              throw new AtlassianError(
+                0,
+                'redirect',
+                'Atlassian request refused: the server answered with a redirect, which is not followed'
+              );
             }
             lastError = new AtlassianError(0, 'network', String(err));
           }

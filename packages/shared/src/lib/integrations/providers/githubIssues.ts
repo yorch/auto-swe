@@ -1,3 +1,5 @@
+import { fetchGuarded } from '../../guardedFetch.js';
+import { isSafeProbeUrl } from '../../ssrfGuard.js';
 import type { IssueTrackerProvider } from '../issueTracker.js';
 import type {
   CreatedIssue,
@@ -65,6 +67,21 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     return h;
   }
 
+  /**
+   * GitHub answers a renamed repository or a transferred issue with a
+   * same-origin redirect, so redirects are followed — by hand, with every hop
+   * checked. The configured base was vetted when the provider was built; any
+   * other origin must pass the strict guard, and the token goes only to the
+   * configured origin.
+   */
+  private request(url: string, init: RequestInit): Promise<Response> {
+    const origin = new URL(this.baseUrl).origin;
+    return fetchGuarded(url, init, {
+      check: (target) => target.origin === origin || isSafeProbeUrl(target.toString()).ok,
+      credentialOrigin: origin,
+    });
+  }
+
   async fetchIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue | null> {
     try {
       const parsed = parseGitHubTicketId(id, opts?.defaultRepo ?? this.defaultRepo);
@@ -76,9 +93,8 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         return null;
       }
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}`;
-      const res = await fetch(url, {
+      const res = await this.request(url, {
         headers: this.headers(),
-        redirect: 'error',
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -119,7 +135,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         return null;
       }
       const url = `${this.baseUrl}/repos/${owner}/${repo}/issues`;
-      const res = await fetch(url, {
+      const res = await this.request(url, {
         body: JSON.stringify({
           body: fields.description,
           labels: [fields.issueType.toLowerCase()],
@@ -127,7 +143,6 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         }),
         headers: { ...this.headers(), 'Content-Type': 'application/json' },
         method: 'POST',
-        redirect: 'error',
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -159,11 +174,10 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
       }
       const state = targetStatusName.toLowerCase() === 'done' ? 'closed' : 'open';
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}`;
-      await fetch(url, {
+      await this.request(url, {
         body: JSON.stringify({ state }),
         headers: { ...this.headers(), 'Content-Type': 'application/json' },
         method: 'PATCH',
-        redirect: 'error',
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
@@ -178,11 +192,10 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         return;
       }
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}/comments`;
-      await fetch(url, {
+      await this.request(url, {
         body: JSON.stringify({ body: bodyText }),
         headers: { ...this.headers(), 'Content-Type': 'application/json' },
         method: 'POST',
-        redirect: 'error',
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {

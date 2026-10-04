@@ -42,6 +42,7 @@
     "./lib/repoDependency": "./dist/lib/repoDependency.js",
     "./lib/repoDependencyMatch": "./dist/lib/repoDependencyMatch.js",
     "./lib/repoDependencyResolver": "./dist/lib/repoDependencyResolver.js",
+    "./lib/guardedFetch": "./dist/lib/guardedFetch.js",
     "./lib/ssrfGuard": "./dist/lib/ssrfGuard.js",
     "./lib/modelDiscovery": "./dist/lib/modelDiscovery.js",
     "./lib/modelSuggestions": "./dist/lib/modelSuggestions.js",
