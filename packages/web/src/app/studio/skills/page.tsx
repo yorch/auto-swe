@@ -362,7 +362,7 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
 // ── Effectiveness Card ────────────────────────────────────────────────────────
 
 function EffectivenessCard() {
-  const { data, isLoading, isError, error: loadError } = useSkillEffectiveness();
+  const { data, isLoading, isError, error: loadError, refetch } = useSkillEffectiveness();
   return (
     <Card>
       <CardHeader>
@@ -379,6 +379,7 @@ function EffectivenessCard() {
         isError={isError}
         isLoading={isLoading}
         label="skill effectiveness"
+        onRetry={() => void refetch()}
       >
         {!data?.perSkill.length ? (
           <EmptyState className="py-6" title="No runs with active skills in this window yet." />
@@ -428,7 +429,7 @@ export default function StudioSkillsPage() {
   const [viewTarget, setViewTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
   const deleteSkill = useDeleteSkill();
-  const { data: skills, isLoading, isError, error: loadError } = useSkills();
+  const { data: skills, isLoading, isError, error: loadError, refetch } = useSkills();
   const update = useUpdateSkill();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
@@ -477,7 +478,13 @@ export default function StudioSkillsPage() {
             <CardTitle>All skills</CardTitle>
           </CardHeader>
           {toggleError && <Alert variant="error">{toggleError}</Alert>}
-          <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="skills">
+          <QueryBoundary
+            error={loadError}
+            isError={isError}
+            isLoading={isLoading}
+            label="skills"
+            onRetry={() => void refetch()}
+          >
             {!skills?.length ? (
               <EmptyState title="No skills yet. Create one with the button above." />
             ) : (
