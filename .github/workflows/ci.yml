@@ -268,3 +268,11 @@ jobs:
         env:
           SKILL_SOURCE_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/skillSource.pg.test.ts packages/gateway/src/lib/skillSourceBudget.pg.test.ts
+
+      # Password sign-in for an admin-created user, through the real better-auth
+      # handler: it looks an account up by the lower-cased email, so a route that
+      # stores the address as typed makes an account nobody can sign in to.
+      - name: Admin-created user sign-in (database-backed tests)
+        env:
+          USER_SIGNIN_PG_TEST: '1'
+        run: yarn test packages/gateway/src/routes/users.signin.pg.test.ts
