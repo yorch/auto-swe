@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { SettingRow, type SettingRowStatus } from '@/components/settings/SettingRow';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -122,6 +122,12 @@ export default function GovernSettingsPage() {
   const viewKey = selection.scope === 'GLOBAL' ? 'GLOBAL' : `${selection.scope}:${scopeId}`;
   const viewKeyRef = useRef(viewKey);
   viewKeyRef.current = viewKey;
+  // Row status belongs to the view it was made in. Reset it whenever the view changes — through
+  // the picker or through back/forward navigation, which changes the URL without `showScope`.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the reset is keyed on the view itself
+  useEffect(() => {
+    setRowStatus({});
+  }, [viewKey]);
 
   const awaitingChoice = scope !== 'GLOBAL' && !scopeId;
 
