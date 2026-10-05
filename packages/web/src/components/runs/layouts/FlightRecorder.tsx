@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { TracesTab } from '@/components/runs/TracesTab';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { useIsNarrow } from '@/hooks/useMediaQuery';
 import { specNodeIdOfRecording } from '@/lib/traceLinkage';
 import { cn, formatClock, formatDuration } from '@/lib/utils';
 import type { RunLayoutProps } from './types';
@@ -49,7 +50,7 @@ function WaterfallBar({
 
   return (
     <div className="flex items-center gap-3 py-1.5">
-      <span className="w-[120px] shrink-0 truncate font-mono text-[10px] text-paper-500">
+      <span className="sticky left-0 z-[1] w-[120px] shrink-0 truncate bg-ink-800 font-mono text-[10px] text-paper-500">
         {step.nodeId}
       </span>
       <div className="relative h-4 flex-1 rounded bg-ink-600">
@@ -178,15 +179,75 @@ export function FlightRecorder({
     return traces.filter((t) => new Date(t.createdAt).getTime() <= cutoff);
   }, [traces, currentMs, run.startedAt, totalMs]);
 
+  // Below the breakpoint the page scrolls as one column: scrubber, step timing, the topology
+  // and then the event feed. At desktop width the timing and feed share the left column and
+  // the topology sits to their right.
+  const narrow = useIsNarrow();
+
+  const waterfall = totalMs > 0 && (
+    <div className="px-4 py-3 border-b border-ink-600/30 shrink-0 lg:px-5">
+      <div className="kicker mb-2">Step timing</div>
+      {/* Narrow: the bars keep a readable width and scroll sideways inside this box, the
+          step name staying pinned at the left edge. */}
+      <div className="overflow-x-auto lg:overflow-visible">
+        <div className="min-w-[520px] lg:min-w-0">
+          {run.steps.map((s: WorkflowStepRecord) => (
+            <WaterfallBar
+              currentMs={currentMs}
+              key={s.id}
+              runStartMs={runStartMs}
+              step={s}
+              totalMs={totalMs}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const eventFeed = (
+    <div className="flex flex-1 flex-col lg:overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-ink-600/30 shrink-0 lg:px-5">
+        <span className="kicker">Event feed</span>
+        {playing && (
+          <span className="recording-pulse inline-block w-1.5 h-1.5 rounded-full bg-moss-400" />
+        )}
+        <span className="ml-auto font-mono text-[10px] text-paper-600">
+          {visibleTraces.length} / {traces.length} events
+        </span>
+      </div>
+      <div className="min-w-0 flex-1 lg:overflow-y-auto" ref={feedRef}>
+        <TracesTab
+          filterNodeId={null}
+          linker={linker}
+          onClearFilter={() => {}}
+          traces={visibleTraces}
+        />
+      </div>
+    </div>
+  );
+
+  const topology = (
+    <div className="h-[240px] shrink-0 border-b border-ink-600/40 lg:border-b-0">
+      <WorkflowDag
+        height="100%"
+        onSelect={() => {}}
+        selectedNodeId={currentStepName ? specNodeIdOfRecording(currentStepName, linker) : null}
+        spec={spec}
+        statuses={dagOverlay}
+      />
+    </div>
+  );
+
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
+    <div className="flex min-w-0 flex-1 flex-col lg:overflow-hidden">
       {/* Scrubber panel */}
-      <div className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-6 py-4">
-        <div className="flex items-center gap-5 mb-3">
+      <div className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 py-4 lg:px-6">
+        <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-3">
           {/* Play/Pause */}
           <button
             aria-label={playing ? 'Pause replay' : 'Play replay'}
-            className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-ember-400 bg-ember-400 text-ink-950 transition-colors"
+            className="flex h-[44px] w-[44px] items-center justify-center rounded-full lg:h-9 lg:w-9 border-2 border-ember-400 bg-ember-400 text-ink-950 transition-colors"
             onClick={() => {
               if (playhead >= 1) {
                 setPlayhead(0);
@@ -214,6 +275,7 @@ export function FlightRecorder({
             ariaLabel="Replay speed"
             className="ml-auto"
             onChange={(v) => setSpeed(Number(v) as 1 | 4 | 16)}
+            optionClassName="min-h-[40px] lg:min-h-0"
             options={SPEED_OPTIONS}
             value={String(speed) as SpeedValue}
           />
@@ -223,7 +285,7 @@ export function FlightRecorder({
         <div className="relative">
           <input
             aria-label="Replay position"
-            className="h-1.5 w-full cursor-pointer appearance-none rounded-xs accent-ember-400 outline-none"
+            className="block h-[36px] w-full cursor-pointer appearance-none rounded-xs accent-ember-400 outline-none max-lg:bg-[length:100%_0.375rem] max-lg:bg-center max-lg:bg-no-repeat lg:inline-block lg:h-1.5"
             max={1000}
             min={0}
             onChange={(e) => {
@@ -231,14 +293,14 @@ export function FlightRecorder({
               setPlayhead(Number(e.target.value) / 1000);
             }}
             style={{
-              background: `linear-gradient(to right, var(--color-ember-400) ${playhead * 100}%, var(--color-ink-500) ${playhead * 100}%)`,
+              backgroundImage: `linear-gradient(to right, var(--color-ember-400) ${playhead * 100}%, var(--color-ink-500) ${playhead * 100}%)`,
             }}
             type="range"
             value={Math.round(playhead * 1000)}
           />
           {/* Step bands underneath */}
           {totalMs > 0 && run.startedAt && (
-            <div className="pointer-events-none absolute top-0 right-0 left-0 flex h-1.5">
+            <div className="pointer-events-none absolute top-1/2 right-0 left-0 flex h-1.5 -translate-y-1/2 lg:top-0 lg:translate-y-0">
               {run.steps.map((s: WorkflowStepRecord) => {
                 if (!s.startedAt) {
                   return null;
@@ -272,63 +334,26 @@ export function FlightRecorder({
         </div>
       </div>
 
-      {/* Body */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: Waterfall + Event feed */}
-        <div className="flex-1 flex flex-col overflow-hidden border-r border-ink-600/40">
-          {/* Waterfall */}
-          {totalMs > 0 && (
-            <div className="px-5 py-3 border-b border-ink-600/30 shrink-0">
-              <div className="kicker mb-2">Step timing</div>
-              {run.steps.map((s: WorkflowStepRecord) => (
-                <WaterfallBar
-                  currentMs={currentMs}
-                  key={s.id}
-                  runStartMs={runStartMs}
-                  step={s}
-                  totalMs={totalMs}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Live event feed */}
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <div className="flex items-center gap-2 px-5 py-2 border-b border-ink-600/30 shrink-0">
-              <span className="kicker">Event feed</span>
-              {playing && (
-                <span className="recording-pulse inline-block w-1.5 h-1.5 rounded-full bg-moss-400" />
-              )}
-              <span className="ml-auto font-mono text-[10px] text-paper-600">
-                {visibleTraces.length} / {traces.length} events
-              </span>
-            </div>
-            <div className="flex-1 overflow-y-auto" ref={feedRef}>
-              <TracesTab
-                filterNodeId={null}
-                linker={linker}
-                onClearFilter={() => {}}
-                traces={visibleTraces}
-              />
-            </div>
+      {narrow ? (
+        <>
+          {waterfall}
+          {topology}
+          {eventFeed}
+        </>
+      ) : (
+        /* Body */
+        <div className="flex-1 flex overflow-hidden">
+          {/* Left: Waterfall + Event feed */}
+          <div className="flex-1 flex flex-col overflow-hidden border-r border-ink-600/40">
+            {waterfall}
+            {/* Live event feed */}
+            {eventFeed}
           </div>
-        </div>
 
-        {/* Right: Mini topology + failure card */}
-        <div className="flex w-[280px] shrink-0 flex-col overflow-y-auto">
-          <div className="h-[240px] shrink-0">
-            <WorkflowDag
-              height="100%"
-              onSelect={() => {}}
-              selectedNodeId={
-                currentStepName ? specNodeIdOfRecording(currentStepName, linker) : null
-              }
-              spec={spec}
-              statuses={dagOverlay}
-            />
-          </div>
+          {/* Right: Mini topology */}
+          <div className="flex w-[280px] shrink-0 flex-col overflow-y-auto">{topology}</div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
