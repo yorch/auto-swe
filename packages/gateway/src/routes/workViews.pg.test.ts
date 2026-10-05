@@ -232,6 +232,19 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
     // Automated: an agent run, and a template launch filed under its own uuid.
     const agent = await request({ repo: 'repoa', ticket: `agent-${suffix}`, user: 'alice' });
     await run(agent.wr.id, 'SUCCESS', 'agentTpl');
+    // The draft PR an agent run opened, tracked on the run's own ledger row.
+    await prisma.pullRequest.create({
+      data: {
+        ciStatus: 'PENDING',
+        headSha: 'g',
+        isDraft: true,
+        prNumber: 31,
+        repoId: ids.repoa,
+        status: 'OPEN',
+        title: 'agent run PR',
+        workflowId: agent.ledger?.id,
+      },
+    });
     const fallbackId = crypto.randomUUID();
     ids.fallback = fallbackId;
     await request({
@@ -373,6 +386,25 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
         workRequestId: prd.wr.id,
       },
     });
+
+    // Platform-generated ids that no template origin or channel marks: a PRD run
+    // (`PRD-<id>`, no ledger row) and a scheduled fire (`<prefix>-SCHED-<id>`).
+    ids.prdSynthetic = `PRD-G${suffix.toUpperCase()}`;
+    ids.scheduled = `DEPS-SCHED-${suffix}`;
+    const prdGenerated = await request({
+      connection: 'repoa',
+      synthetic: true,
+      ticket: ids.prdSynthetic,
+      user: 'frank',
+    });
+    await run(prdGenerated.wr.id, 'RUNNING');
+    const scheduled = await request({
+      repo: 'repoa',
+      synthetic: true,
+      ticket: ids.scheduled,
+      user: 'frank',
+    });
+    await run(scheduled.wr.id, 'SUCCESS');
   });
 
   afterAll(async () => {
@@ -585,6 +617,15 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
       expect(hiddenById.data).toEqual([]);
     });
 
+    it('hides a PRD run’s and a scheduled fire’s generated ids unless asked', async () => {
+      for (const id of [ids.prdSynthetic, ids.scheduled]) {
+        const url = `/api/v1/tickets?scope=TEAM&search=${id}`;
+        expect((await get<TicketGroup>('alice', url)).data).toEqual([]);
+        const shown = await get<TicketGroup>('alice', `${url}&includeAutomated=true`);
+        expect(shown.data.map((g) => g.ticketId)).toEqual([id]);
+      }
+    });
+
     it('treats includeAutomated=false as false', async () => {
       const { data } = await tickets('alice', '&includeAutomated=false');
       expect(data.map((g) => g.ticketId)).not.toContain(`agent-${suffix}`);
@@ -635,8 +676,8 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
     it('lists only PRs on repositories the caller can reach', async () => {
       const alice = await prs('alice');
       // Her own, the epic's repo A child, and the single-repo request on repo A: never B's.
-      expect(alice.data.map((p) => p.prNumber).sort()).toEqual([1, 11, 21]);
-      expect(alice.meta.total).toBe(3);
+      expect(alice.data.map((p) => p.prNumber).sort()).toEqual([1, 11, 21, 31]);
+      expect(alice.meta.total).toBe(4);
       expect(alice.data.find((p) => p.prNumber === 1)).toMatchObject({
         costUsd: 1.5,
         isDraft: true,
@@ -647,19 +688,26 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
         url: `https://github.com/wv-${suffix}/repo-a/pull/1`,
         workRequestId: ids.wra,
       });
+      // An agent run's draft PR is listed like any other, and as automated work.
+      expect(alice.data.find((p) => p.prNumber === 31)).toMatchObject({
+        isDraft: true,
+        status: 'OPEN',
+        ticketId: `agent-${suffix}`,
+        title: 'agent run PR',
+      });
       expect((await prs('carol')).data).toEqual([]);
       expect((await prs('carol')).meta.total).toBe(0);
     });
 
     it('lets an ADMIN see every row and filter by state, draft, repository and ticket', async () => {
       const all = await prs('admin', `ticket=${suffix}`);
-      expect(all.data.map((p) => p.prNumber).sort()).toEqual([1, 11, 12, 2, 21]);
+      expect(all.data.map((p) => p.prNumber).sort()).toEqual([1, 11, 12, 2, 21, 31]);
       expect(
         (await prs('admin', `ticket=${suffix}&state=MERGED`)).data.map((p) => p.prNumber)
       ).toEqual([2]);
       expect(
-        (await prs('admin', `ticket=${suffix}&draft=draft`)).data.map((p) => p.prNumber)
-      ).toEqual([1]);
+        (await prs('admin', `ticket=${suffix}&draft=draft`)).data.map((p) => p.prNumber).sort()
+      ).toEqual([1, 31]);
       expect(
         (await prs('admin', `ticket=${suffix}&draft=ready`)).data.map((p) => p.prNumber).sort()
       ).toEqual([11, 12, 2, 21]);

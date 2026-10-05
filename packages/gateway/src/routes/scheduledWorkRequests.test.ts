@@ -398,6 +398,8 @@ describe('/api/v1/scheduled-work-requests', () => {
     // Standing WorkRequest + anchor ActiveWorkflow were written.
     expect(createdWorkRequests).toHaveLength(1);
     expect(createdWorkRequests[0].templateId).toBe('tpl-1'); // team default resolved at save
+    // The id is generated from the schedule, so the ticket view leaves it out.
+    expect(createdWorkRequests[0].ticketIsSynthetic).toBe(true);
     expect(createdWorkRequests[0].templateVersion).toBe(3);
     expect(createdActiveWorkflows).toHaveLength(1);
     expect(String(createdActiveWorkflows[0].temporalWorkflowId)).toMatch(/^sched-/);

@@ -776,6 +776,8 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           }),
           templateId: template.templateId,
           templateVersion: template.templateVersion,
+          // `<prefix>-SCHED-<id>` is generated from the schedule, not a tracker ticket.
+          ticketIsSynthetic: true,
         },
       });
 

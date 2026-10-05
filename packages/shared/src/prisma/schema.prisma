@@ -1179,8 +1179,9 @@ model Verification {
 model RunInput {
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   externalTicketId String      @map("external_ticket_id")
-  /// True when a launch named no ticket and filed the request's own id instead: a
-  /// correlation key, not a ticket. The ticket view leaves these out by default.
+  /// True when the platform generated `externalTicketId` (a launch that named no
+  /// ticket, a PRD run, a scheduled fire): a correlation key, not a ticket. The
+  /// ticket view leaves these out by default.
   ticketIsSynthetic Boolean    @default(false) @map("ticket_is_synthetic")
   description      String      @default("")
   requestPayload   String      @map("request_payload")
