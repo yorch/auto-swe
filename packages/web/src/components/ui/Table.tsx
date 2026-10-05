@@ -195,16 +195,23 @@ export function Td({
           cn(
             'max-sm:block max-sm:px-0! max-sm:py-1! max-sm:text-left',
             primary && 'max-sm:text-base max-sm:font-medium',
-            label &&
-              'max-sm:flex max-sm:items-baseline max-sm:justify-between max-sm:gap-3 max-sm:before:shrink-0 max-sm:before:text-xs max-sm:before:text-paper-500 max-sm:before:content-[attr(data-label)]'
+            label && 'max-sm:flex max-sm:items-baseline max-sm:justify-between max-sm:gap-3'
           ),
         className
       )}
       colSpan={colSpan}
-      data-label={stacked ? label : undefined}
       title={title}
     >
-      {children}
+      {stacked && label ? (
+        <>
+          {/* A real element, not CSS content: Safari drops table semantics on the
+              display:block cells, and generated content is not reliably announced. */}
+          <span className="hidden shrink-0 text-xs text-paper-500 max-sm:inline">{label}</span>
+          <span className="min-w-0">{children}</span>
+        </>
+      ) : (
+        children
+      )}
     </td>
   );
 }

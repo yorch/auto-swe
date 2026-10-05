@@ -48,7 +48,8 @@ describe('stacked Table', () => {
         </tbody>
       </Table>
     );
-    expect(screen.getByRole('cell').getAttribute('data-label')).toBe('Status');
+    // The caption is real text in the cell, so assistive tech reads it with the value.
+    expect(screen.getByRole('cell').textContent).toBe('StatusOpen');
     expect(screen.getByRole('table').className).toContain('max-sm:');
 
     rerender(
@@ -60,7 +61,7 @@ describe('stacked Table', () => {
         </tbody>
       </Table>
     );
-    expect(screen.getByRole('cell').getAttribute('data-label')).toBeNull();
+    expect(screen.getByRole('cell').textContent).toBe('Open');
     expect(screen.getByRole('table').className).not.toContain('max-sm:');
   });
 });
