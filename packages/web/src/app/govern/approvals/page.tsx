@@ -26,6 +26,8 @@ const SORT_OPTIONS: { label: string; value: ApprovalSort }[] = [
 ];
 
 const PAGE_SIZE = 20;
+/** The most steps the gateway returns in one list, by tab. */
+const SERVER_CAP: Record<ApprovalFilter, number> = { ALL: 200, PENDING: 100 };
 
 export default function GovernApprovalsPage() {
   const [filter, setFilter] = useState<ApprovalFilter>('PENDING');
@@ -43,6 +45,7 @@ export default function GovernApprovalsPage() {
   } = useApprovals(filter, sort, overdueOnly);
 
   const count = steps?.length ?? 0;
+  const atCap = count >= SERVER_CAP[filter];
   const pageCount = Math.max(1, Math.ceil(count / PAGE_SIZE));
   const current = Math.min(page, pageCount - 1);
   const visible = steps?.slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE) ?? [];
@@ -62,8 +65,10 @@ export default function GovernApprovalsPage() {
             : filter === 'PENDING'
               ? count === 0
                 ? 'No pending actions'
-                : `${count} pending action${count !== 1 ? 's' : ''}`
-              : `${count} step${count !== 1 ? 's' : ''} total`
+                : `${count}${atCap ? '+' : ''} pending action${count !== 1 ? 's' : ''}`
+              : atCap
+                ? `Showing ${count} steps, the most this list loads. Sort or filter to see others.`
+                : `${count} step${count !== 1 ? 's' : ''} total`
         }
         title={navLabel('/govern/approvals')}
       />
