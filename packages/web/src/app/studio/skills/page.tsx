@@ -601,7 +601,7 @@ export default function StudioSkillsPage() {
       <ConfirmModal
         confirmLabel="Deactivate"
         dangerous
-        message={`Agents stop receiving "${deactivateTarget?.name ?? ''}" while it is inactive. ${deactivateTarget ? (usageText(deactivateTarget) ?? '') : ''} This takes effect in runs already in progress too.`}
+        message={`Agents stop receiving "${visibleText(deactivateTarget?.name ?? '')}" while it is inactive. ${deactivateTarget ? (usageText(deactivateTarget) ?? '') : ''} This takes effect in runs already in progress too.`}
         onClose={() => setDeactivateTarget(null)}
         onConfirm={async () => {
           if (deactivateTarget) {
@@ -610,7 +610,7 @@ export default function StudioSkillsPage() {
         }}
         open={deactivateTarget !== null}
         pendingLabel="Deactivating…"
-        title={`Deactivate "${deactivateTarget?.name ?? ''}"?`}
+        title={`Deactivate "${visibleText(deactivateTarget?.name ?? '')}"?`}
       />
       <SkillDetailModal onClose={() => setViewTarget(null)} skill={viewTarget} />
       <ConfirmModal
@@ -618,7 +618,7 @@ export default function StudioSkillsPage() {
         dangerous
         message={
           deleteTarget
-            ? `Delete "${deleteTarget.name}" and remove it from every agent that uses it. ${usageText(deleteTarget) ?? 'No agent uses it.'} This cannot be undone.`
+            ? `Delete "${visibleText(deleteTarget.name)}" and remove it from every agent that uses it. ${usageText(deleteTarget) ?? 'No agent uses it.'} This cannot be undone.`
             : ''
         }
         onClose={() => setDeleteTarget(null)}
@@ -629,7 +629,7 @@ export default function StudioSkillsPage() {
         }}
         open={deleteTarget !== null}
         pendingLabel="Deleting…"
-        title={`Delete "${deleteTarget?.name ?? ''}"?`}
+        title={`Delete "${visibleText(deleteTarget?.name ?? '')}"?`}
       />
     </div>
   );

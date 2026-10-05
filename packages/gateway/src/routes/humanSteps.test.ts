@@ -8,6 +8,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
 vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: DB_NULL } }));
 
+import {
+  buildWorkflowRunControlFilter,
+  buildWorkflowRunVisibilityFilter,
+} from '../lib/runVisibility.js';
 import { humanStepRoutes } from './humanSteps.js';
 
 const STEP_ID = '00000000-0000-4000-8000-000000000001';
@@ -282,7 +286,10 @@ describe('human step routes', () => {
       expect(where.OR).toEqual([{ timeoutAt: null }, { timeoutAt: { gt: expect.any(Date) } }]);
       const plain = await listWhere('/api/v1/human-steps');
       // The control filter differs from the visibility filter a plain list uses.
-      expect(JSON.stringify(where)).not.toBe(JSON.stringify(plain));
+      const actor = { role: 'ENGINEER', sub: USER_ID } as never;
+      expect(where.run).toEqual(buildWorkflowRunControlFilter(actor, undefined));
+      expect(plain.run).toEqual(buildWorkflowRunVisibilityFilter(actor, undefined));
+      expect(JSON.stringify(where.run)).not.toBe(JSON.stringify(plain.run));
     });
 
     it('a plain list carries no actionable narrowing', async () => {
