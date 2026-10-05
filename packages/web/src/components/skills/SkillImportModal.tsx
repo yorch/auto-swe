@@ -17,14 +17,24 @@ import {
 } from '@/hooks/useSkillSources';
 import { errMsg } from '@/lib/errors';
 
-/** `owner/repo`, or a github.com style URL, to its parts; null when it is neither. */
+/**
+ * `owner/repo`, or a github.com style URL, to its parts; null when it is neither. A
+ * `/tree/<ref>/<folder>` URL also yields the ref and folder. The ref is the first segment, since
+ * a branch name with a slash cannot be told from a folder in the URL alone.
+ */
 export function parseRepository(
   input: string
-): { host?: string; owner: string; repo: string } | null {
+): { host?: string; owner: string; path?: string; ref?: string; repo: string } | null {
   const text = input.trim().replace(/\.git$/, '');
-  const url = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\/.*)?$/.exec(text);
+  const url = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\/(.*))?$/.exec(text);
   if (url) {
-    return { host: url[1], owner: url[2], repo: url[3] };
+    const base = { host: url[1], owner: url[2], repo: url[3] };
+    const tree = /^(?:tree|blob)\/([^/]+)(?:\/(.*))?$/.exec(url[4] ?? '');
+    if (!tree) {
+      return base;
+    }
+    const folder = (tree[2] ?? '').replace(/\/+$/, '');
+    return { ...base, ...(folder ? { path: folder } : {}), ref: tree[1] };
   }
   const short = /^([\w.-]+)\/([\w.-]+)$/.exec(text);
   return short ? { owner: short[1], repo: short[2] } : null;
@@ -220,7 +230,15 @@ export function SkillImportModal({
             hint="For example acme/agent-skills, or paste the repository's GitHub URL."
             id="skill-import-repo"
             label="Repository"
-            onChange={(e) => setRepository(e.target.value)}
+            onChange={(e) => {
+              setRepository(e.target.value);
+              // A pasted tree URL names the branch and folder; fill the fields it answers.
+              const pasted = parseRepository(e.target.value);
+              if (pasted?.ref) {
+                setRef(pasted.ref);
+                setPath(pasted.path ?? '');
+              }
+            }}
             placeholder="owner/name"
             required
             value={repository}

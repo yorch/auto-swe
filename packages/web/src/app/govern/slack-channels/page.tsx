@@ -54,9 +54,6 @@ function fmtBudget(
   return `${spent} / ${cap}`;
 }
 
-const dollarsToCents = dollarsInputToCents;
-const centsToDisplayDollars = centsToDollarsInput;
-
 // ── Create modal ─────────────────────────────────────────────────────────────
 
 interface CreateForm {
@@ -110,7 +107,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const budgetCents = dollarsToCents(form.budgetDollars);
+    const budgetCents = dollarsInputToCents(form.budgetDollars);
     if (form.budgetDollars.trim() !== '' && budgetCents === null) {
       setError('Budget must be a non-negative number (e.g. 10.00)');
       return;
@@ -304,7 +301,7 @@ function buildEditForm(ch: SlackChannel): EditForm {
     agentKey: ch.agentKey,
     ambientCron: ch.ambientCron ?? '',
     ambientEnabled: ch.ambientEnabled,
-    budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
+    budgetDollars: centsToDollarsInput(ch.monthlyBudgetUsdCents),
     consolidationEnabled: ch.consolidationEnabled,
     followupSessionEnabled: ch.followupSessionEnabled,
     isPrivate: ch.isPrivate,
@@ -337,7 +334,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const budgetCents = dollarsToCents(form.budgetDollars);
+    const budgetCents = dollarsInputToCents(form.budgetDollars);
     if (form.budgetDollars.trim() !== '' && budgetCents === null) {
       setError('Budget must be a non-negative number (e.g. 10.00)');
       return;

@@ -33,6 +33,22 @@ describe('parseRepository', () => {
     });
     expect(parseRepository('not a repo')).toBeNull();
   });
+
+  it('reads the ref and folder out of a tree URL', () => {
+    expect(parseRepository('https://github.com/acme/skills/tree/dev/skills/tdd')).toEqual({
+      host: 'github.com',
+      owner: 'acme',
+      path: 'skills/tdd',
+      ref: 'dev',
+      repo: 'skills',
+    });
+    expect(parseRepository('https://github.com/acme/skills/tree/v2/')).toEqual({
+      host: 'github.com',
+      owner: 'acme',
+      ref: 'v2',
+      repo: 'skills',
+    });
+  });
 });
 
 describe('SkillImportModal', () => {
