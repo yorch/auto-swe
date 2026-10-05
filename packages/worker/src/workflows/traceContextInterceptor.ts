@@ -1,7 +1,8 @@
 import {
-  CancelledFailure,
+  CancellationScope,
   ContinueAsNew,
   defaultPayloadConverter,
+  isCancellation,
   type Payload,
   proxySinks,
   TemporalFailure,
@@ -38,15 +39,23 @@ function decodeCarrier(payload: Payload | undefined): Record<string, string> | u
 }
 
 /**
- * How a run ended, as workflow code can see it. Only a `TemporalFailure` (or a
- * continue-as-new) ends the run: any other thrown error fails the workflow
- * *task*, which Temporal retries, so it is not an end and exports nothing.
+ * How a run ended, as workflow code can see it. Mirrors the SDK's own rule: a
+ * cancellation error after a cancel request is a cancelled run — including an
+ * `ActivityFailure` or `ChildWorkflowFailure` whose cause is the cancellation,
+ * which is what a run cancelled while awaiting an activity throws — and any
+ * other `TemporalFailure` is a failed one. Anything else (a plain `Error`)
+ * fails the workflow *task*, which Temporal retries, so it is not an end and
+ * exports nothing.
+ *
+ * That last case holds only while the worker leaves `failureExceptionTypes` /
+ * `workflowFailureErrorTypes` unset, as this repo does; setting them would turn
+ * plain errors into workflow failures, and those would export nothing here.
  */
 function classify(err: unknown): { outcome: WorkflowSpanOutcome; message?: string } | undefined {
   if (err instanceof ContinueAsNew) {
     return { outcome: 'continued-as-new' };
   }
-  if (err instanceof CancelledFailure) {
+  if (isCancellation(err) && CancellationScope.current().consideredCancelled) {
     return { outcome: 'cancelled' };
   }
   if (err instanceof TemporalFailure) {

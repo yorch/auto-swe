@@ -10,7 +10,7 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
-import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import type { WorkflowSpanTarget } from './workflowSpanSink.js';
 
 export function initTelemetry(serviceName: string): {
@@ -19,9 +19,11 @@ export function initTelemetry(serviceName: string): {
   workflowSpans?: WorkflowSpanTarget;
 } {
   const endpoint = resolveOtelExporterEndpoint();
-  // One exporter behind two processors: the SDK's batch processor for spans a
-  // tracer ends, and a simple one for workflow spans, which carry ids chosen
-  // inside the workflow isolate and so cannot come from a tracer.
+  // One exporter behind two batch processors: the SDK's for spans a tracer ends,
+  // and one for workflow spans, which carry ids chosen inside the workflow
+  // isolate and so cannot come from a tracer. Batching keeps a burst of run
+  // endings from exceeding the OTLP exporter's concurrent-export limit, which
+  // would drop the SDK processor's batches too.
   const traceExporter = endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined;
   const telemetry = initSharedTelemetry({
     esmModules: ['http', 'https'],
@@ -43,11 +45,16 @@ export function initTelemetry(serviceName: string): {
     serviceName,
     traceExporter,
   });
+  const processor =
+    traceExporter && telemetry.resource ? new BatchSpanProcessor(traceExporter) : undefined;
   return {
-    shutdown: telemetry.shutdown,
+    // The batch processor is shut down first, so its final batch reaches the
+    // exporter before the SDK shuts that exporter down.
+    shutdown: async () => {
+      await processor?.shutdown();
+      await telemetry.shutdown();
+    },
     workflowSpans:
-      traceExporter && telemetry.resource
-        ? { processor: new SimpleSpanProcessor(traceExporter), resource: telemetry.resource }
-        : undefined,
+      processor && telemetry.resource ? { processor, resource: telemetry.resource } : undefined,
   };
 }

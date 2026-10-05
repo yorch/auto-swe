@@ -122,6 +122,8 @@ async function run() {
 
   console.log('Worker started, polling task queue: engineering-workflow');
   await worker.run();
+  // A graceful stop flushes the batched spans, workflow spans included.
+  await otel.shutdown();
 }
 
 run().catch(async (err) => {

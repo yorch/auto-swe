@@ -37,12 +37,29 @@ describe('parseTraceparent', () => {
     });
   });
 
+  it('reads the first four fields of a higher version, and writes version 00', () => {
+    expect(parseTraceparent(`cc-${TRACE}-${PARENT}-01-extra`)).toEqual({
+      flags: '01',
+      spanId: PARENT,
+      traceId: TRACE,
+    });
+    const ctx = workflowSpanContext(
+      { traceparent: `cc-${TRACE}-${PARENT}-01-extra` },
+      'wf-1',
+      'run-1',
+      'run-0'
+    );
+    expect(ctx.parentSpanId).toBe(PARENT);
+    expect(ctx.carrier.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  });
+
   it.each([
+    `00-${TRACE}-${PARENT}-01-extra`,
+    `ff-${TRACE}-${PARENT}-01`,
     undefined,
     'garbage',
     `00-${'0'.repeat(32)}-${PARENT}-01`,
     `00-${TRACE}-${'0'.repeat(16)}-01`,
-    `01-${TRACE}-${PARENT}-01`,
   ])('rejects %s', (value) => {
     expect(parseTraceparent(value)).toBeUndefined();
   });
@@ -69,6 +86,17 @@ describe('workflowSpanContext', () => {
     expect(ctx.carrier).toEqual({
       traceparent: `00-${ctx.traceId}-${workflowSpanId('wf-1', 'run-2')}-01`,
     });
+  });
+
+  it('carries every other key of the starter carrier through unchanged', () => {
+    const ctx = workflowSpanContext(
+      { baggage: 'user=1', traceparent: `00-${TRACE}-${PARENT}-01` },
+      'wf-1',
+      'run-1',
+      'run-0'
+    );
+    expect(ctx.carrier.baggage).toBe('user=1');
+    expect(ctx.carrier.traceparent).toContain(workflowSpanId('wf-1', 'run-1'));
   });
 
   it('treats a malformed carrier as none', () => {

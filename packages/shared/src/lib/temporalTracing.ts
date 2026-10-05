@@ -20,9 +20,10 @@ import {
  * Three hops, none of which loads OpenTelemetry into the workflow isolate:
  * this client interceptor writes the header; the worker's workflow interceptor
  * (`workflows/traceContextInterceptor.ts`, which repeats this name because the
- * isolate cannot import this module) copies it, untouched, onto each scheduled
- * activity and child workflow; the worker's activity interceptor reads it back
- * with {@link traceContextFromHeaders} and parents the activity span on it.
+ * isolate cannot import this module) re-parents it on the run's workflow span
+ * and puts the result on each scheduled activity and child workflow; the
+ * worker's activity interceptor reads it back with {@link traceContextFromHeaders}
+ * and parents the activity span on it.
  */
 export const TRACE_CONTEXT_HEADER = 'x-auto-swe-trace';
 

@@ -1,6 +1,10 @@
 import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { resourceFromAttributes } from '@opentelemetry/resources';
-import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import {
+  BatchSpanProcessor,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
 import type { WorkflowInfo } from '@temporalio/workflow';
 import { describe, expect, it } from 'vitest';
 import type { WorkflowSpanRecord } from '../workflows/workflowSpan.js';
@@ -75,6 +79,19 @@ describe('workflow span sink', () => {
     const { exportSpan, exporter } = setup();
     await exportSpan.fn(info, { ...record, flags: '00' });
     expect(exporter.getFinishedSpans()).toHaveLength(0);
+  });
+
+  it('exports through a batch processor once it is flushed', async () => {
+    const exporter = new InMemorySpanExporter();
+    const processor = new BatchSpanProcessor(exporter);
+    const { exportSpan } = createWorkflowSpanSinks({
+      processor,
+      resource: resourceFromAttributes({}),
+    }).workflowSpans;
+    await exportSpan.fn(info, record);
+    await processor.forceFlush();
+    expect(exporter.getFinishedSpans()).toHaveLength(1);
+    await processor.shutdown();
   });
 
   it('is a no-op when telemetry is disabled', async () => {

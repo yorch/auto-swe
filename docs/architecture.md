@@ -747,7 +747,7 @@ loads OpenTelemetry into the workflow isolate:
 |---|---|---|
 | Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start and signal-with-start, and — on the gateway's client only — every signal and update |
 | Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Derives the run's workflow span id by arithmetic from its workflow id and run id (`workflows/workflowSpan.ts`, replay-stable), then rewrites that header so its parent span is the workflow span and puts it on every scheduled activity, local activity, child workflow and continue-as-new. A run that arrives without a usable header gets a derived trace id hashed from its workflow id and first run id, and its workflow span is the root of that trace. The newest signal's or update's header travels beside it as `x-auto-swe-trace-signal`. When the run's workflow code ends, the interceptor calls the `workflowSpans` sink |
-| Workflow span | `lib/workflowSpanSink.ts`, registered as a Temporal sink with `callDuringReplay: false` | Builds a finished `workflow.<type>` span with exactly the ids the interceptor derived — the tracer API cannot be told a span id, so it constructs the SDK's public `ReadableSpan` and hands it to a span processor in front of the OTLP exporter — with `temporal.workflow_id`, `temporal.run_id`, `temporal.workflow_type` and `temporal.outcome` attributes, an error status when the run failed, and the run's start and end times. With telemetry off the sink does nothing |
+| Workflow span | `lib/workflowSpanSink.ts`, registered as a Temporal sink with `callDuringReplay: false` | Builds a finished `workflow.<type>` span with exactly the ids the interceptor derived — the tracer API cannot be told a span id, so it constructs the SDK's public `ReadableSpan` and hands it to a batch span processor in front of the OTLP exporter, with the same resource as the SDK's own spans — with `temporal.workflow_id`, `temporal.run_id`, `temporal.workflow_type` and `temporal.outcome` attributes, an error status when the run failed (a run cancelled by the user, including while awaiting an activity, is recorded as `cancelled` and is not an error), and the run's start and end times. With telemetry off the sink does nothing |
 | Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the workflow span, with a span link to the signal's span when the signal header is present |
 
 So a gateway request — its Fastify and HTTP server spans — the run's workflow span, and every
@@ -1081,9 +1081,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   under a parent the backend does not yet have. A run terminated or timed out from outside never runs
   workflow code, so its span is never exported and its activities stay under a missing parent. A
   workflow error that is not a Temporal failure fails the workflow task, which Temporal retries, so
-  it exports nothing until the run actually ends. The span is exported once per run in normal
-  operation, but a worker that dies after exporting and before Temporal records the completion
-  re-runs that final activation on another worker and exports it a second time. The span covers the
+  it exports nothing until the run actually ends (that holds while the worker leaves
+  `failureExceptionTypes` unset, as it does). Sinks run before Temporal records the completion, so a
+  final workflow task that Temporal rejects or retries — a signal racing the end, a task timeout, a
+  worker that dies mid-task — exports the span again; the duplicate has the same span id. The span covers the
   run, not the idle time between activities. A signal's link reaches only activities scheduled after
   it, and only the newest signal's: work already running when it arrives, and earlier signals, are
   not linked.

@@ -1,5 +1,12 @@
 import { register } from 'node:module';
-import { type Resource, resourceFromAttributes } from '@opentelemetry/resources';
+import {
+  detectResources,
+  envDetector,
+  hostDetector,
+  processDetector,
+  type Resource,
+  resourceFromAttributes,
+} from '@opentelemetry/resources';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 
@@ -44,10 +51,14 @@ export function initTelemetry(opts: InitTelemetryOptions): {
     return { shutdown: async () => {} };
   }
 
+  // Built here, not left to NodeSDK, so spans that bypass a tracer (the worker's
+  // workflow span) carry the very resource the SDK's own spans do. The merge
+  // order is NodeSDK's: detected attributes (OTEL_SERVICE_NAME,
+  // OTEL_RESOURCE_ATTRIBUTES, process, host) win over the defaults below.
   const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: opts.serviceName,
     [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? '0.1.0',
-  });
+  }).merge(detectResources({ detectors: [envDetector, processDetector, hostDetector] }));
 
   if (opts.esmModules?.length) {
     // DEP0205: Node 26 deprecates `register()` for `registerHooks()`, which
@@ -64,6 +75,7 @@ export function initTelemetry(opts: InitTelemetryOptions): {
   }
 
   const sdk = new NodeSDK({
+    autoDetectResources: false,
     instrumentations: opts.instrumentations ?? [],
     logRecordProcessors: opts.logRecordProcessors,
     metricReader: opts.metricReader,

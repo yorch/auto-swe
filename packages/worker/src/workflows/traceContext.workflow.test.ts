@@ -57,7 +57,10 @@ beforeAll(async () => {
     interceptors: { workflow: [traceContextClientInterceptor()] },
   });
   worker = await Worker.create({
-    activities: { probe: async () => {} },
+    activities: {
+      hold: () => new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+      probe: async () => {},
+    },
     connection: env.nativeConnection,
     interceptors: { activity: [activitySpanInterceptor], workflowModules: [interceptorPath] },
     sinks: createWorkflowSpanSinks({
@@ -198,7 +201,11 @@ describe('trace context propagation through a workflow', () => {
     const history = await handle.fetchHistory();
     for (const workerOptions of [
       { workflowsPath },
-      { interceptors: { workflowModules: [interceptorPath] }, workflowsPath },
+      {
+        interceptors: { workflowModules: [interceptorPath] },
+        sinks: createWorkflowSpanSinks(undefined),
+        workflowsPath,
+      },
     ]) {
       await expect(
         Worker.runReplayHistory(workerOptions, history, 'trace-signal-1')
@@ -258,6 +265,37 @@ describe('trace context propagation through a workflow', () => {
     expect(second?.spanContext().spanId).not.toBe(first?.spanContext().spanId);
   }, 60_000);
 
+  it('exports a cancelled run, cancelled while awaiting an activity, as cancelled and not as an error', async () => {
+    const handle = await client.workflow.start('TraceCancelWorkflow', {
+      taskQueue: TASK_QUEUE,
+      workflowId: 'trace-cancel-1',
+    });
+    for (let i = 0; i < 50; i++) {
+      if ((await handle.describe()).raw.pendingActivities?.length) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    await handle.cancel();
+    await expect(handle.result()).rejects.toThrow();
+
+    const [span] = workflowSpans();
+    expect(workflowSpans()).toHaveLength(1);
+    expect(span?.name).toBe('workflow.TraceCancelWorkflow');
+    expect(span?.attributes['temporal.outcome']).toBe('cancelled');
+    expect(span?.status.code).not.toBe(SpanStatusCode.ERROR);
+  }, 60_000);
+
+  it('exports nothing for a plain error, which fails the workflow task and is retried', async () => {
+    const handle = await client.workflow.start('TracePlainErrorWorkflow', {
+      taskQueue: TASK_QUEUE,
+      workflowId: 'trace-plain-1',
+    });
+    await new Promise((r) => setTimeout(r, 2000));
+    await handle.terminate('test over');
+    expect(workflowSpans()).toHaveLength(0);
+  }, 60_000);
+
   it('stamps signals only when the client propagates them', () => {
     expect(traceContextClientInterceptor().signal).toBeTypeOf('function');
     expect(traceContextClientInterceptor().startUpdate).toBeTypeOf('function');
@@ -287,7 +325,11 @@ describe('trace context propagation through a workflow', () => {
     ).resolves.toBeUndefined();
     await expect(
       Worker.runReplayHistory(
-        { interceptors: { workflowModules: [interceptorPath] }, workflowsPath },
+        {
+          interceptors: { workflowModules: [interceptorPath] },
+          sinks: createWorkflowSpanSinks(undefined),
+          workflowsPath,
+        },
         history,
         'trace-parent-3'
       )

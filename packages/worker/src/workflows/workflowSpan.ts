@@ -48,7 +48,8 @@ export interface TraceParent {
   flags: string;
 }
 
-const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
+// W3C: a version above 00 may append fields, so only the first four are read; ff is invalid.
+const TRACEPARENT = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(-.*)?$/;
 
 /** A W3C `traceparent` split into its parts, or undefined when it is malformed or names an all-zero id. */
 export function parseTraceparent(value: unknown): TraceParent | undefined {
@@ -56,8 +57,18 @@ export function parseTraceparent(value: unknown): TraceParent | undefined {
   if (!m) {
     return undefined;
   }
-  const [, traceId, spanId, flags] = m as unknown as [string, string, string, string];
-  if (/^0+$/.test(traceId) || spanId === ZERO_SPAN_ID) {
+  const [, version, traceId, spanId, flags, extra] = m as unknown as [
+    string,
+    string,
+    string,
+    string,
+    string,
+    string | undefined,
+  ];
+  if (version === 'ff' || (version === '00' && extra) || /^0+$/.test(traceId)) {
+    return undefined;
+  }
+  if (spanId === ZERO_SPAN_ID) {
     return undefined;
   }
   return { flags, spanId, traceId };
@@ -93,7 +104,14 @@ export function workflowSpanContext(
   const traceId = parent?.traceId ?? derivedTraceId(workflowId, firstExecutionRunId);
   const flags = parent?.flags ?? '01';
   const traceState = parent ? incoming?.tracestate || undefined : undefined;
-  const carrier: Record<string, string> = { traceparent: `00-${traceId}-${spanId}-${flags}` };
+  // Everything else the starter sent (`baggage`, say) travels on unchanged.
+  const carrier: Record<string, string> = {};
+  for (const [key, value] of Object.entries(incoming ?? {})) {
+    if (key !== 'traceparent' && key !== 'tracestate' && typeof value === 'string') {
+      carrier[key] = value;
+    }
+  }
+  carrier.traceparent = `00-${traceId}-${spanId}-${flags}`;
   if (traceState) {
     carrier.tracestate = traceState;
   }
