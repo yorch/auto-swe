@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { SecretStatusRow } from '@/components/ui/SecretStatusRow';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type McpConnectionRow,
@@ -125,21 +126,18 @@ function McpBearerTokenField({
         value={value}
       />
       {hasToken && onClearChange && (
-        <div className="flex items-center gap-2 text-xs text-paper-400">
-          <span>{clear ? 'Will be cleared on save.' : 'Stored.'}</span>
-          <Button
-            aria-pressed={clear}
-            onClick={() => {
+        <SecretStatusRow
+          action={{
+            label: clear ? 'Keep stored token' : 'Clear stored token',
+            onClick: () => {
               onClearChange(!clear);
               onChange('');
-            }}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            {clear ? 'Keep stored token' : 'Clear stored token'}
-          </Button>
-        </div>
+            },
+            pressed: clear ?? false,
+          }}
+        >
+          {clear ? 'Will be cleared on save.' : 'Stored.'}
+        </SecretStatusRow>
       )}
     </div>
   );
