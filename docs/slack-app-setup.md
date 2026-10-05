@@ -25,7 +25,7 @@ All under the gateway's `/api/v1/auth/slack` prefix:
 | Endpoint | Used by |
 |---|---|
 | `POST /commands` | `/auto-swe` slash command (HMAC-verified via `SLACK_SIGNING_SECRET`) |
-| `POST /interactive` | Modal submissions (`/auto-swe run` picker), HITL buttons, and shortcuts (global "Run a workflow" + message "Ask auto-swe about this") |
+| `POST /interactive` | Modal submissions (`/auto-swe run` picker, HITL approve/reject comment form), HITL buttons, and shortcuts (global "Run a workflow" + message "Ask auto-swe about this") |
 | `POST /events` | Slack Events API — the @mention teammate + thread-reply task steering (HMAC-verified; acks within 3s, then starts the assistant workflow or signals an in-flight task run) |
 | `GET  /callback` | OAuth redirect target for the account-link flow (`/connect`) |
 | `GET  /connect` | Account-link flow surfaced in the unknown-Slack-user ephemeral hint (user scope `identity.basic`) |

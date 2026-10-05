@@ -23,7 +23,8 @@ const fetchSlackChannelIsPrivateMock = vi.fn<(...a: unknown[]) => Promise<boolea
   async () => null
 );
 const syncSlackHumanStepOutcomeMock = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('../lib/hitlSlackSync.js', () => ({
+vi.mock('../lib/hitlSlackSync.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/hitlSlackSync.js')>()),
   syncSlackHumanStepOutcome: syncSlackHumanStepOutcomeMock,
 }));
 vi.mock('../lib/slack.js', async (importOriginal) => ({
@@ -713,6 +714,7 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
       channel: { id: 'C-hitl' },
       message: { ts: '1111.2222' },
       response_url: RESPONSE_URL,
+      trigger_id: 'trig-default',
       type: 'block_actions',
       user: { id: 'U1' },
       ...overrides,
@@ -735,6 +737,69 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
       payload: body,
       url: '/api/v1/auth/slack/interactive',
     });
+  }
+
+  interface OpenedView {
+    callback_id: string;
+    private_metadata: string;
+    submit: { text: string };
+    title: { text: string };
+    blocks: Array<{ optional?: boolean; type: string; block_id?: string }>;
+  }
+
+  /** The `views.open` call the last button click made, if any. */
+  function openedView(): { trigger_id: string; view: OpenedView } | undefined {
+    return fetchCalls.find((c) => c.url.includes('views.open'))?.body as
+      | { trigger_id: string; view: OpenedView }
+      | undefined;
+  }
+
+  function submissionBody(
+    privateMetadata: string,
+    comment: string | undefined,
+    overrides: Record<string, unknown> = {}
+  ): string {
+    const payload = {
+      type: 'view_submission',
+      user: { id: 'U1' },
+      view: {
+        callback_id: 'hitl_resolve_modal',
+        private_metadata: privateMetadata,
+        state: {
+          values: {
+            hitl_comment_block: { hitl_comment_input: { value: comment ?? null } },
+          },
+        },
+      },
+      ...overrides,
+    };
+    return `payload=${encodeURIComponent(JSON.stringify(payload))}`;
+  }
+
+  /**
+   * Click Approve / Reject (which opens the modal), then submit it the way Slack would: with the
+   * `private_metadata` the gateway wrote, which is the only way to obtain a validly signed one.
+   */
+  async function submitHitlModal(
+    action: 'approve' | 'reject',
+    comment?: string,
+    overrides: Record<string, unknown> = {}
+  ) {
+    const click = await injectInteractive(
+      interactivePayload({
+        actions: [
+          {
+            action_id: `hitl_resolve:${action}`,
+            value: JSON.stringify({ action, stepId: STEP_ID }),
+          },
+        ],
+        trigger_id: 'trig-1',
+      })
+    );
+    expect(click.statusCode).toBe(200);
+    const view = openedView()?.view;
+    expect(view).toBeDefined();
+    return injectInteractive(submissionBody(view?.private_metadata ?? '', comment, overrides));
   }
 
   it('rejects unsigned requests with 401', async () => {
@@ -776,10 +841,11 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
   it('edits the announcement to show the decision once the step resolves', async () => {
     syncSlackHumanStepOutcomeMock.mockClear();
     state.humanStep = pendingHumanStep();
-    await injectInteractive(interactivePayload());
+    await submitHitlModal('approve');
     expect(syncSlackHumanStepOutcomeMock).toHaveBeenCalledTimes(1);
     expect(syncSlackHumanStepOutcomeMock).toHaveBeenCalledWith(expect.anything(), STEP_ID, {
       action: 'approve',
+      comment: undefined,
       userId: 'u1',
       value: undefined,
     });
@@ -789,7 +855,7 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     syncSlackHumanStepOutcomeMock.mockClear();
     syncSlackHumanStepOutcomeMock.mockImplementationOnce(() => new Promise<undefined>(() => {}));
     state.humanStep = pendingHumanStep();
-    const res = await injectInteractive(interactivePayload());
+    const res = await submitHitlModal('approve');
     expect(res.statusCode).toBe(200);
     expect(syncSlackHumanStepOutcomeMock).toHaveBeenCalledTimes(1);
   });
@@ -797,26 +863,16 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
   it('leaves the announcement alone while more approvals are still needed', async () => {
     syncSlackHumanStepOutcomeMock.mockClear();
     state.humanStep = pendingHumanStep({ requiredApprovers: 2 });
-    await injectInteractive(interactivePayload());
+    await submitHitlModal('approve');
     expect(syncSlackHumanStepOutcomeMock).not.toHaveBeenCalled();
   });
 
   it('happy path: resolves the step, signals the workflow, posts a thread confirmation', async () => {
     state.humanStep = pendingHumanStep();
-    const res = await injectInteractive(interactivePayload());
+    const res = await submitHitlModal('approve');
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      data: {
-        action: 'hitl_resolve',
-        approvalsRemaining: 0,
-        currentApprovers: 1,
-        ok: true,
-        requiredApprovers: 1,
-        signalSent: true,
-        status: 'RESOLVED',
-        stepId: STEP_ID,
-      },
-    });
+    // An empty 200 closes the modal.
+    expect(res.body).toBe('');
 
     // Atomic PENDING→RESOLVED guard preserved (same core as the inbox route).
     expect(state.humanStepUpdateCalls).toHaveLength(1);
@@ -874,9 +930,10 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     const res = await injectInteractive(interactivePayload());
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      data: { action: 'hitl_resolve', code: 'ALREADY_RESOLVED', ok: false },
+      data: { action: 'hitl_resolve', ignored: true, reason: 'already_resolved' },
     });
     expect(state.signalCalls).toHaveLength(0);
+    expect(openedView()).toBeUndefined();
     const msg = fetchCalls.find((c) => c.url === RESPONSE_URL);
     expect(msg).toBeDefined();
     const msgBody = msg?.body as { response_type: string; text: string };
@@ -889,8 +946,10 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     const res = await injectInteractive(interactivePayload());
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      data: { action: 'hitl_resolve', code: 'NOT_FOUND', ok: false },
+      data: { action: 'hitl_resolve', ignored: true, reason: 'not_found' },
     });
+    // Not authorized to act on it → no form is opened and nothing is signalled.
+    expect(openedView()).toBeUndefined();
     expect(state.signalCalls).toHaveLength(0);
   });
 
@@ -900,20 +959,9 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     gone.name = 'WorkflowNotFoundError';
     state.signalError = gone;
 
-    const res = await injectInteractive(interactivePayload());
+    const res = await submitHitlModal('approve');
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      data: {
-        action: 'hitl_resolve',
-        approvalsRemaining: 0,
-        currentApprovers: 1,
-        ok: true,
-        requiredApprovers: 1,
-        signalSent: false,
-        status: 'RESOLVED',
-        stepId: STEP_ID,
-      },
-    });
+    expect(res.body).toBe('');
     // Resolve only — no rollback write.
     expect(state.humanStepUpdateCalls).toHaveLength(1);
 
@@ -925,13 +973,211 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     state.humanStep = pendingHumanStep();
     state.signalError = new Error('Temporal unreachable');
 
-    const res = await injectInteractive(interactivePayload());
+    const res = await submitHitlModal('approve');
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      data: { action: 'hitl_resolve', code: 'SIGNAL_FAILED', ok: false },
+    // The failure shows in the form, which stays open so the person can submit again.
+    expect(res.json()).toMatchObject({
+      errors: { hitl_comment_block: expect.stringMatching(/try the button again/i) },
+      response_action: 'errors',
     });
     expect(state.humanStepUpdateCalls).toHaveLength(2);
     expect(state.humanStepUpdateCalls[1]?.data).toMatchObject({ status: 'PENDING' });
+  });
+
+  it('opens a reject modal with a required reason, using the interaction trigger_id', async () => {
+    state.humanStep = pendingHumanStep();
+    const res = await injectInteractive(
+      interactivePayload({
+        actions: [
+          {
+            action_id: 'hitl_resolve:reject',
+            value: JSON.stringify({ action: 'reject', stepId: STEP_ID }),
+          },
+        ],
+        trigger_id: 'trig-1',
+      })
+    );
+    expect(res.statusCode).toBe(200);
+    const opened = openedView();
+    expect(opened?.trigger_id).toBe('trig-1');
+    expect(opened?.view.callback_id).toBe('hitl_resolve_modal');
+    expect(opened?.view.title.text).toBe('Reject step');
+    expect(opened?.view.submit.text).toBe('Reject');
+    const input = opened?.view.blocks.find((b) => b.block_id === 'hitl_comment_block');
+    expect(input?.optional).toBe(false);
+    // Nothing resolves until the form is submitted.
+    expect(state.signalCalls).toHaveLength(0);
+    expect(state.humanStepUpdateCalls).toHaveLength(0);
+  });
+
+  it('opens an approve modal whose comment is optional', async () => {
+    state.humanStep = pendingHumanStep();
+    const r2 = await injectInteractive(interactivePayload({ trigger_id: 'trig-2' }));
+    expect(r2.statusCode).toBe(200);
+    const opened = openedView();
+    expect(opened?.view.title.text).toBe('Approve step');
+    const input = opened?.view.blocks.find((b) => b.block_id === 'hitl_comment_block');
+    expect(input?.optional).toBe(true);
+    expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('does not open a modal for a step the clicker cannot control', async () => {
+    state.humanStep = null;
+    await injectInteractive(interactivePayload({ trigger_id: 'trig-3' }));
+    expect(openedView()).toBeUndefined();
+    const hint = fetchCalls.find((c) => c.url === RESPONSE_URL);
+    expect((hint?.body as { text: string } | undefined)?.text).toMatch(
+      /no longer exists or is not visible/i
+    );
+  });
+
+  it('keeps one-click resolution for decision options', async () => {
+    state.humanStep = pendingHumanStep({
+      kind: 'DECISION',
+      options: [{ label: 'Ship', next: 'ship', value: 'ship-it' }],
+      signalName: 'hitl_pick',
+    });
+    await injectInteractive(
+      interactivePayload({
+        actions: [
+          {
+            action_id: 'hitl_resolve:select:0',
+            value: JSON.stringify({ action: 'select', stepId: STEP_ID, value: 'ship-it' }),
+          },
+        ],
+        trigger_id: 'trig-4',
+      })
+    );
+    expect(openedView()).toBeUndefined();
+    expect(state.signalCalls).toHaveLength(1);
+  });
+
+  it('reject submission: a short reason comes back as a field error and resolves nothing', async () => {
+    state.humanStep = pendingHumanStep();
+    const res = await submitHitlModal('reject', 'no');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      errors: { hitl_comment_block: expect.stringMatching(/at least 5 characters/i) },
+      response_action: 'errors',
+    });
+    expect(state.signalCalls).toHaveLength(0);
+    expect(state.humanStepUpdateCalls).toHaveLength(0);
+  });
+
+  it('reject submission: an empty reason is refused', async () => {
+    state.humanStep = pendingHumanStep();
+    const res = await submitHitlModal('reject');
+    expect(res.json()).toMatchObject({ response_action: 'errors' });
+    expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('reject submission with a reason resolves through the shared path and records the comment', async () => {
+    syncSlackHumanStepOutcomeMock.mockClear();
+    state.humanStep = pendingHumanStep();
+    const res = await submitHitlModal('reject', '  Wrong migration order, redo the plan  ');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('');
+    expect(state.signalCalls).toEqual([
+      {
+        args: [{ action: 'reject', resolvedBy: 'u1', value: undefined }],
+        signalName: 'hitl_approveGate',
+        workflowId: 'eng-acme-repo-JIRA-1',
+      },
+    ]);
+    // The comment is stored with the response but never sent to the workflow.
+    expect(state.humanStepUpdateCalls[0]?.data).toMatchObject({
+      payload: expect.objectContaining({ comment: 'Wrong migration order, redo the plan' }),
+    });
+    expect(syncSlackHumanStepOutcomeMock).toHaveBeenCalledWith(expect.anything(), STEP_ID, {
+      action: 'reject',
+      comment: 'Wrong migration order, redo the plan',
+      userId: 'u1',
+      value: undefined,
+    });
+    // The confirmation still lands in the original message's thread.
+    const confirm = fetchCalls.find((c) => c.url.includes('chat.postMessage'));
+    expect((confirm?.body as { thread_ts: string } | undefined)?.thread_ts).toBe('1111.2222');
+  });
+
+  it('approve submission with a comment records it', async () => {
+    state.humanStep = pendingHumanStep();
+    const res = await submitHitlModal('approve', 'Looks right');
+    expect(res.body).toBe('');
+    expect(state.humanStepUpdateCalls[0]?.data).toMatchObject({
+      payload: expect.objectContaining({ action: 'approve', comment: 'Looks right' }),
+    });
+  });
+
+  it('submission for a step that expired between open and submit → inline error, no crash', async () => {
+    state.humanStep = pendingHumanStep();
+    const click = await injectInteractive(interactivePayload({ trigger_id: 'trig-5' }));
+    expect(click.statusCode).toBe(200);
+    const metadata = openedView()?.view.private_metadata ?? '';
+    state.humanStep = pendingHumanStep({ status: 'RESOLVED' });
+    const res = await injectInteractive(submissionBody(metadata, 'late'));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      errors: { hitl_comment_block: expect.stringMatching(/already been resolved/i) },
+      response_action: 'errors',
+    });
+    expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('submission by someone who lost access since opening is re-authorized and refused', async () => {
+    state.humanStep = pendingHumanStep();
+    await injectInteractive(interactivePayload({ trigger_id: 'trig-6' }));
+    const metadata = openedView()?.view.private_metadata ?? '';
+    // Control filter now matches nothing for this user.
+    state.humanStep = null;
+    const res = await injectInteractive(submissionBody(metadata, 'ok'));
+    expect(res.json()).toMatchObject({
+      errors: { hitl_comment_block: expect.stringMatching(/not visible to you/i) },
+      response_action: 'errors',
+    });
+    expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('refuses a submission whose private_metadata is forged or unsigned', async () => {
+    state.humanStep = pendingHumanStep();
+    const forged = Buffer.from(
+      JSON.stringify({ action: 'approve', slackUserId: 'U1', stepId: STEP_ID })
+    ).toString('base64url');
+    for (const metadata of [`${forged}.${'0'.repeat(64)}`, forged, '', 'garbage.sig']) {
+      const res = await injectInteractive(submissionBody(metadata, 'x'));
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ response_action: 'errors' });
+    }
+    expect(state.signalCalls).toHaveLength(0);
+    expect(state.humanStepUpdateCalls).toHaveLength(0);
+  });
+
+  it('refuses a submission replayed by a different Slack user', async () => {
+    state.humanStep = pendingHumanStep();
+    await injectInteractive(interactivePayload({ trigger_id: 'trig-7' }));
+    const metadata = openedView()?.view.private_metadata ?? '';
+    const res = await injectInteractive(
+      submissionBody(metadata, 'ok', { user: { id: 'U-ENGINEER' } })
+    );
+    expect(res.json()).toMatchObject({ response_action: 'errors' });
+    expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('refuses an unsigned modal submission request with 401', async () => {
+    state.humanStep = pendingHumanStep();
+    const res = await injectInteractive(submissionBody('x.y', 'ok'), false);
+    expect(res.statusCode).toBe(401);
+    expect(state.signalCalls).toHaveLength(0);
+  });
+
+  it('modal submission from an unlinked Slack account → inline error', async () => {
+    state.humanStep = pendingHumanStep();
+    const res = await injectInteractive(
+      submissionBody('x.y', 'ok', { user: { id: 'U-UNLINKED' } })
+    );
+    expect(res.json()).toMatchObject({
+      errors: { hitl_comment_block: expect.stringMatching(/link your slack account/i) },
+      response_action: 'errors',
+    });
   });
 
   it('malformed button value → ignored ack with ephemeral warning', async () => {
