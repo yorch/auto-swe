@@ -112,7 +112,8 @@ export function TabBar<T extends string>({
             const selected = active === tab.id;
             return (
               <button
-                aria-controls={idPrefix ? `${idPrefix}-panel-${tab.id}` : undefined}
+                // Only the selected panel is rendered, so only it can be controlled.
+                aria-controls={idPrefix && selected ? `${idPrefix}-panel-${tab.id}` : undefined}
                 aria-selected={selected}
                 className={tabClass(selected)}
                 id={`${baseId}-tab-${tab.id}`}

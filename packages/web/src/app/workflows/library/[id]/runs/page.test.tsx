@@ -50,4 +50,27 @@ describe('template run history paging', () => {
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(spy.mock.calls.every(([u]) => !String(u).includes('offset=20'))).toBe(true);
   });
+
+  it('keeps the other filters when the failed-step chip is cleared', async () => {
+    resetNavigation('failedStep=build&status=failed&offset=20', `/workflows/library/${ID}/runs`);
+    setupFetchMock({
+      [`/api/v1/workflow-templates/${ID}`]: () => ({ data: { id: ID, name: 'T', versions: [] } }),
+      '/api/v1/workflow-runs': () => ({ data: [], meta: { limit: 20, offset: 0, total: 0 } }),
+    });
+    await act(async () => {
+      render(
+        withQuery(
+          <Suspense fallback={null}>
+            <TemplateRunsPage params={PARAMS} />
+          </Suspense>
+        )
+      );
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear' }));
+    const { nav } = await import('@/test/mockNavigation');
+    const last = new URLSearchParams(nav.search);
+    expect(last.get('status')).toBe('failed');
+    expect(last.has('failedStep')).toBe(false);
+    expect(last.has('offset')).toBe(false);
+  });
 });

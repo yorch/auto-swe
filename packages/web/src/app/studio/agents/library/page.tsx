@@ -288,13 +288,23 @@ export default function AgentLibraryPage() {
 
   const rowActions = (a: AgentRow) => (
     <div className="flex flex-wrap items-center justify-end gap-1">
-      <Button onClick={() => setHistory(a)} size="sm" variant="ghost">
+      <Button
+        aria-label={`History of ${a.key}`}
+        onClick={() => setHistory(a)}
+        size="sm"
+        variant="ghost"
+      >
         History
       </Button>
-      <Button onClick={() => openEdit(a)} size="sm" variant="ghost">
+      <Button aria-label={`Edit ${a.key}`} onClick={() => openEdit(a)} size="sm" variant="ghost">
         Edit
       </Button>
-      <Button onClick={() => setDeleting(a)} size="sm" variant="danger">
+      <Button
+        aria-label={`Deactivate ${a.key}`}
+        onClick={() => setDeleting(a)}
+        size="sm"
+        variant="danger"
+      >
         Deactivate
       </Button>
     </div>

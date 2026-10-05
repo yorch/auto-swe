@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { Suspense, use } from 'react';
 import { RunListItem } from '@/components/runs/RunListItem';
 import { Button } from '@/components/ui/Button';
@@ -21,6 +20,7 @@ import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { nodeTitlesOf } from '@/lib/nodeTitles';
 import { validateRouteParam } from '@/lib/routeParams';
 import { isRunStatus, runStatusOptions } from '@/lib/runStatusOptions';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -115,9 +115,13 @@ function TemplateRuns({ id: rawId }: { id: string }) {
         {failedNodeId && (
           <span className="flex items-center gap-2 rounded-md border border-ink-400 px-3 py-1.5 text-xs text-paper-300">
             Runs where “{nodeTitles.get(failedNodeId) ?? failedNodeId}” failed
-            <Link className="text-ember-400 hover:underline" href={`/workflows/library/${id}/runs`}>
+            <button
+              className={cn('text-ember-400 hover:underline', FOCUS_RING)}
+              onClick={() => update({ failedStep: null, offset: null })}
+              type="button"
+            >
               Clear
-            </Link>
+            </button>
           </span>
         )}
         {(statusFilter || versionFilter) && (
