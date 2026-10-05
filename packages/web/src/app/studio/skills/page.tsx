@@ -319,9 +319,12 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             </div>
           </div>
           {showHistory && (
-            <SkillHistory onRestored={(restored, warnings) =>
+            <SkillHistory
+              onRestored={(restored, warnings) =>
                 setViewed({ ...sk, ...restored, scanWarnings: warnings })
-              } skill={sk} />
+              }
+              skill={sk}
+            />
           )}
         </div>
       )}
