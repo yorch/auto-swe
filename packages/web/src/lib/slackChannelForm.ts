@@ -3,6 +3,7 @@ import type {
   SlackChannel,
   UpdateSlackChannelBody,
 } from '@/hooks/useSlackChannels';
+import { centsToDollarsInput, dollarsInputToCents } from '@/lib/budgetPatch';
 import { describeCron, normalizeCron } from '@/lib/cronPreview';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
@@ -71,8 +72,7 @@ export function channelToForm(ch: SlackChannel): ChannelFormState {
     agentKey: ch.agentKey,
     ambientCron: ch.ambientCron ?? '',
     ambientEnabled: ch.ambientEnabled,
-    budgetDollars:
-      ch.monthlyBudgetUsdCents == null ? '' : (ch.monthlyBudgetUsdCents / 100).toFixed(2),
+    budgetDollars: centsToDollarsInput(ch.monthlyBudgetUsdCents),
     consolidationEnabled: ch.consolidationEnabled,
     followupSessionEnabled: ch.followupSessionEnabled,
     isPrivate: ch.isPrivate,
@@ -95,15 +95,10 @@ export function channelToForm(ch: SlackChannel): ChannelFormState {
 
 /** Dollars typed by a person to the cents the API stores; `null` for blank, `undefined` for invalid. */
 export function dollarsToCents(value: string): number | null | undefined {
-  const trimmed = value.trim();
-  if (trimmed === '') {
+  if (value.trim() === '') {
     return null;
   }
-  const num = Number(trimmed);
-  if (!Number.isFinite(num) || num < 0) {
-    return undefined;
-  }
-  return Math.round(num * 100);
+  return dollarsInputToCents(value) ?? undefined;
 }
 
 const OVERRIDE_FIELDS = [

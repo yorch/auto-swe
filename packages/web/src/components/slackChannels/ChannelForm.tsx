@@ -248,6 +248,7 @@ export function ChannelForm({
         min="0"
         onChange={(e) => onChange('budgetDollars', e.target.value)}
         placeholder="50.00"
+        prefix="$"
         step="0.01"
         type="number"
         value={form.budgetDollars}

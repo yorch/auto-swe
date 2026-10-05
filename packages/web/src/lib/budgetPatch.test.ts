@@ -1,18 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { buildBudgetPatch, removeCapPatch } from './budgetPatch';
+import {
+  buildBudgetPatch,
+  centsToDollarsInput,
+  dollarsInputToCents,
+  removeCapPatch,
+} from './budgetPatch';
 
 const CURRENT = { budgetAlertThresholdPercent: 80, monthlyBudgetUsdCents: 10_000 };
 
 describe('buildBudgetPatch', () => {
   it('keeps the cap when only the threshold changes', () => {
-    expect(buildBudgetPatch('10000', '90', CURRENT)).toEqual({
+    expect(buildBudgetPatch('100.00', '90', CURRENT)).toEqual({
       body: { budgetAlertThresholdPercent: 90, monthlyBudgetUsdCents: 10_000 },
       kind: 'patch',
     });
   });
 
   it('keeps the threshold when only the cap changes', () => {
-    expect(buildBudgetPatch('20000', '80', CURRENT)).toEqual({
+    expect(buildBudgetPatch('200', '80', CURRENT)).toEqual({
       body: { budgetAlertThresholdPercent: 80, monthlyBudgetUsdCents: 20_000 },
       kind: 'patch',
     });
@@ -32,19 +37,19 @@ describe('buildBudgetPatch', () => {
   });
 
   it('disables the alert when the threshold is cleared', () => {
-    expect(buildBudgetPatch('10000', '', CURRENT)).toEqual({
+    expect(buildBudgetPatch('100', '', CURRENT)).toEqual({
       body: { budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 10_000 },
       kind: 'patch',
     });
   });
 
   it('reports no change', () => {
-    expect(buildBudgetPatch('10000', '80', CURRENT)).toEqual({ kind: 'unchanged' });
+    expect(buildBudgetPatch('100.00', '80', CURRENT)).toEqual({ kind: 'unchanged' });
   });
 
   it('validates ranges', () => {
     expect(buildBudgetPatch('-1', '80', CURRENT).kind).toBe('invalid');
-    expect(buildBudgetPatch('1.5', '80', CURRENT).kind).toBe('invalid');
+    expect(buildBudgetPatch('1.555', '80', CURRENT).kind).toBe('invalid');
     expect(buildBudgetPatch('100', '101', CURRENT).kind).toBe('invalid');
   });
 });
@@ -55,5 +60,15 @@ describe('removeCapPatch', () => {
       budgetAlertThresholdPercent: 80,
       monthlyBudgetUsdCents: null,
     });
+  });
+});
+
+describe('dollar conversion', () => {
+  it('round-trips cents through the dollar text', () => {
+    expect(centsToDollarsInput(10_050)).toBe('100.50');
+    expect(centsToDollarsInput(null)).toBe('');
+    expect(dollarsInputToCents('100.50')).toBe(10_050);
+    expect(dollarsInputToCents('0.1')).toBe(10);
+    expect(dollarsInputToCents('abc')).toBeNull();
   });
 });

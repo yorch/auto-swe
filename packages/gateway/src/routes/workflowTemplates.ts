@@ -26,7 +26,7 @@ import {
   validateSpec,
   type WorkflowSpec,
 } from '@auto-swe/shared/workflow';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { experimentBucket } from '../lib/experimentBucket.js';
@@ -632,6 +632,26 @@ function specValidationWarnings(spec: WorkflowSpec): string[] {
   return [...report.errors, ...report.warnings].map(formatValidationIssue);
 }
 
+/**
+ * Lint errors in a stored version's spec. A draft with errors may be saved, but a version that
+ * serves real runs (promoted, activated, or an experiment arm) must have none.
+ */
+function specErrorsOf(spec: unknown): string[] {
+  return validateSpec(spec as WorkflowSpec).errors.map(formatValidationIssue);
+}
+
+function sendSpecHasErrors(reply: FastifyReply, errors: string[], action: string) {
+  const shown = errors.slice(0, 5).join('; ');
+  const more = errors.length > 5 ? `; and ${errors.length - 5} more` : '';
+  return reply.status(409).send({
+    error: {
+      code: 'SPEC_HAS_ERRORS',
+      details: { errorCount: errors.length, errors },
+      message: `This version has ${errors.length} error${errors.length === 1 ? '' : 's'} and cannot ${action} until they are fixed: ${shown}${more}`,
+    },
+  });
+}
+
 export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -1212,6 +1232,37 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           );
         }
       }
+      // Setting a template ACTIVE (restoring an archived one, say) serves real runs from
+      // its active version, so it carries the same preconditions `/promote` enforces.
+      if (request.body.status === 'ACTIVE' && existing.status !== 'ACTIVE') {
+        if (existing.activeVersion === null) {
+          return sendError(
+            reply,
+            409,
+            'NO_ACTIVE_VERSION',
+            'This template has no active version — promote a version first'
+          );
+        }
+        const activeRow = await fastify.prisma.workflowTemplateVersion.findUnique({
+          where: {
+            templateId_version: { templateId: existing.id, version: existing.activeVersion },
+          },
+        });
+        if (activeRow?.generatedBy && !activeRow.reviewedAt) {
+          return sendError(
+            reply,
+            409,
+            'REVIEW_REQUIRED',
+            'This AI-generated version must be reviewed and approved before the template can be activated.'
+          );
+        }
+        if (activeRow) {
+          const errs = specErrorsOf(activeRow.spec);
+          if (errs.length > 0) {
+            return sendSpecHasErrors(reply, errs, 'be activated');
+          }
+        }
+      }
       // Enabling traffic split without a destination version is meaningless and
       // would silently no-op in the resolver — reject it up front.
       const nextExpVersion = expVersion !== undefined ? expVersion : existing.experimentVersion;
@@ -1223,6 +1274,20 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             message: 'experimentSplit > 0 requires experimentVersion to be set',
           },
         });
+      }
+      if (
+        nextExpSplit !== null &&
+        nextExpSplit > 0 &&
+        nextExpVersion !== null &&
+        (expVersion !== undefined || expSplit !== undefined)
+      ) {
+        const armRow = await fastify.prisma.workflowTemplateVersion.findUnique({
+          where: { templateId_version: { templateId: existing.id, version: nextExpVersion } },
+        });
+        const errs = armRow ? specErrorsOf(armRow.spec) : [];
+        if (errs.length > 0) {
+          return sendSpecHasErrors(reply, errs, 'be used in an experiment');
+        }
       }
 
       const { inputSchema: rawInputSchema, ...restBody } = request.body;
@@ -1694,6 +1759,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
               'This AI-generated version must be reviewed and approved before it can be promoted to active.',
           },
         });
+      }
+      const promoteErrors = specErrorsOf(version.spec);
+      if (promoteErrors.length > 0) {
+        return sendSpecHasErrors(reply, promoteErrors, 'be promoted');
       }
       const updated = await fastify.prisma.workflowTemplate.update({
         data: { activeVersion: request.body.version, status: 'ACTIVE' },

@@ -1,4 +1,5 @@
 import type { WorkspaceRequestSummary } from '@auto-swe/shared/types/api';
+import { formatDuration } from '@/lib/utils';
 
 export function requestProgress(
   request: Pick<WorkspaceRequestSummary, 'status' | 'pendingStepCount' | 'stage'> &
@@ -34,4 +35,33 @@ export function requestProgress(
 
 export function requestHref(requestId: string): string {
   return `/workflows?request=${encodeURIComponent(requestId)}`;
+}
+
+export interface AttentionReason {
+  label: string;
+  tone: 'amber' | 'brick' | 'violet';
+}
+
+/** Why a request is asking for attention, in the order a person would act on it. */
+export function attentionReasons(
+  request: Pick<WorkspaceRequestSummary, 'status' | 'pendingStepCount'> &
+    Partial<Pick<WorkspaceRequestSummary, 'needsMerge' | 'pendingStepDeadline'>>,
+  now = Date.now()
+): AttentionReason[] {
+  const reasons: AttentionReason[] = [];
+  if (request.pendingStepCount > 0) {
+    let label = 'Awaiting approval';
+    if (request.pendingStepDeadline) {
+      const msLeft = new Date(request.pendingStepDeadline).getTime() - now;
+      label += msLeft <= 0 ? ' · overdue' : ` · ${formatDuration(msLeft)} left`;
+    }
+    reasons.push({ label, tone: 'amber' });
+  }
+  if (request.status === 'FAILED' || request.status === 'TIMED_OUT') {
+    reasons.push({ label: request.status === 'FAILED' ? 'Failed' : 'Timed out', tone: 'brick' });
+  }
+  if (request.needsMerge) {
+    reasons.push({ label: 'Needs review', tone: 'violet' });
+  }
+  return reasons;
 }

@@ -17,7 +17,9 @@ const skill = (over: Partial<Skill>): Skill => ({
   name: 'custom',
   origin: null,
   promptText: 'text',
+  scanWarnings: [],
   updatedAt: '2026-10-01T00:00:00Z',
+  usedBy: [],
   usedByCount: 0,
   ...over,
 });

@@ -7,6 +7,7 @@ import {
   AgentFormFields,
   type AgentFormValue,
 } from '@/components/agents/AgentFormFields';
+import { broaderFallbacks } from '@/components/agents/agentFallback';
 import { AgentHistoryModal } from '@/components/agents/AgentHistoryModal';
 import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
 import { Alert } from '@/components/ui/Alert';
@@ -92,6 +93,15 @@ const EDIT_COPY: AgentFormCopy = {
 };
 
 // ── Page ──────────────────────────────────────────────────────────────────────
+
+const SCOPE_NOUN: Record<AgentScope, string> = {
+  CHANNEL: 'Slack channel',
+  GLOBAL: 'deployment',
+  ORGANIZATION: 'organization',
+  TEAM: 'team',
+  WORKFLOW_TEMPLATE: 'workflow template',
+};
+const scopeNoun = (scope: AgentScope) => SCOPE_NOUN[scope];
 
 /** The target a scoped row is pinned to, named where the page can resolve it. */
 function scopeTarget(
@@ -564,16 +574,40 @@ export default function AgentLibraryPage() {
 
       <ConfirmModal
         confirmLabel="Deactivate"
+        confirmText={deleting?.scope === 'GLOBAL' ? deleting.key : undefined}
         dangerous
         message={
-          deleting
-            ? `Deactivate all versions of '${deleting.key}'? Resolution falls back to the role defaults.`
-            : ''
+          deleting ? (
+            deleting.scope === 'GLOBAL' ? (
+              <div className="space-y-2">
+                <p>
+                  Deactivate all versions of <strong>{deleting.key}</strong>? Nothing sits behind
+                  the global version, so runs that need <code>{deleting.key}</code> will fail.
+                </p>
+                <p>
+                  If this agent is required, the worker will also refuse to start until it is active
+                  again.
+                </p>
+              </div>
+            ) : (
+              (() => {
+                const fallbacks = broaderFallbacks(deleting, agents ?? []);
+                return fallbacks.length > 0
+                  ? `Deactivate all versions of '${deleting.key}' for this ${scopeNoun(deleting.scope)}? Runs there fall back to the ${scopeNoun(fallbacks[0] as AgentScope)} version of this agent.`
+                  : `Deactivate all versions of '${deleting.key}' for this ${scopeNoun(deleting.scope)}? No broader version exists, so runs there that need this agent will fail.`;
+              })()
+            )
+          ) : (
+            ''
+          )
         }
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
           if (deleting) {
-            await deleteAgent.mutateAsync(deleting.id);
+            await deleteAgent.mutateAsync({
+              force: deleting.scope === 'GLOBAL',
+              id: deleting.id,
+            });
             setDeleting(null);
           }
         }}

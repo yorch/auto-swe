@@ -60,6 +60,8 @@ interface Props {
   costEstimateUsd?: number | null;
   observedCostUsd?: number | null;
   parseError?: string | null;
+  /** A save the server rejected; listed beside the live lint results rather than in a separate banner. */
+  serverError?: string | null;
   /** Action bar shown above the canvas — parent supplies Save/Cancel CTAs. */
   actions?: React.ReactNode;
 }
@@ -81,6 +83,7 @@ function EditorInner({
   costEstimateUsd,
   observedCostUsd,
   parseError,
+  serverError,
   actions,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -147,6 +150,14 @@ function EditorInner({
   // an author only found out a spec was broken after saving it. Pure and cheap.
   const lint = useMemo(() => validateSpec(spec), [spec]);
   const issues = useMemo(() => [...lint.errors, ...lint.warnings], [lint]);
+  const serverIssues = useMemo(
+    () =>
+      (serverError ?? '')
+        .split(/\n|; /)
+        .map((m) => m.trim())
+        .filter(Boolean),
+    [serverError]
+  );
 
   const nodesWithSelection = useMemo(
     () => nodes.map((n) => ({ ...n, selected: n.id === selectedNodeId })),
@@ -516,9 +527,18 @@ function EditorInner({
         </Alert>
       )}
 
-      {issues.length > 0 && (
-        <details className="border-b border-ink-600/40 bg-ink-800/60 px-4 py-1.5 font-mono text-[11px]">
+      {(issues.length > 0 || serverIssues.length > 0) && (
+        <details
+          className="border-b border-ink-600/40 bg-ink-800/60 px-4 py-1.5 font-mono text-[11px]"
+          open={lint.errors.length > 0 || serverIssues.length > 0}
+        >
           <summary className="cursor-pointer select-none text-paper-400">
+            {serverIssues.length > 0 && (
+              <span className="text-brick-400">
+                Save rejected: {serverIssues.length} problem{serverIssues.length === 1 ? '' : 's'}
+              </span>
+            )}
+            {serverIssues.length > 0 && issues.length > 0 && ' · '}
             {lint.errors.length > 0 && (
               <span className="text-brick-400">
                 {lint.errors.length} error{lint.errors.length === 1 ? '' : 's'}
@@ -532,6 +552,11 @@ function EditorInner({
             )}
           </summary>
           <ul className="mt-1.5 max-h-32 space-y-0.5 overflow-y-auto">
+            {serverIssues.map((message) => (
+              <li className="text-paper-300" key={`server:${message}`}>
+                <span className="text-brick-400">server</span> {message}
+              </li>
+            ))}
             {issues.map((issue) => (
               <li key={`${issue.code}:${issue.nodeId ?? ''}:${issue.field ?? ''}:${issue.message}`}>
                 <button

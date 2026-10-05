@@ -329,8 +329,57 @@ export async function updateGitHubConfig(
   };
 }
 
-export async function testGitHubConnection(): Promise<{ detail: string; ok: boolean }> {
-  const config = await resolveGitHubConfig();
+/**
+ * Values typed into the form but not saved. A field left out (or a secret left
+ * blank) means "use the stored value"; `null` on a non-secret clears it.
+ */
+export type GitHubTestDraft = {
+  apiUrl?: string | null;
+  appId?: string | null;
+  appInstallationId?: string | null;
+  appPrivateKey?: string;
+  authMode?: 'auto' | 'pat' | 'app' | null;
+  token?: string;
+};
+
+const GITHUB_DEFAULT_API_URL = 'https://api.github.com';
+
+export async function testGitHubConnection(
+  draft: GitHubTestDraft = {}
+): Promise<{ detail: string; ok: boolean }> {
+  const stored = await resolveGitHubConfig();
+  const config = {
+    ...stored,
+    apiUrl: draft.apiUrl === undefined ? stored.apiUrl : (draft.apiUrl ?? GITHUB_DEFAULT_API_URL),
+    appId: draft.appId === undefined ? stored.appId : draft.appId,
+    appInstallationId:
+      draft.appInstallationId === undefined ? stored.appInstallationId : draft.appInstallationId,
+    appPrivateKey: draft.appPrivateKey ?? stored.appPrivateKey,
+    authMode: draft.authMode === undefined ? stored.authMode : draft.authMode,
+    token: draft.token ?? stored.token,
+  };
+
+  // The stored token is valid on the stored API host only. Pointing it at a
+  // different typed host would send the saved credential somewhere it was
+  // never saved for, so a changed URL needs the token typed alongside it.
+  if (!draft.token && config.apiUrl !== stored.apiUrl) {
+    return {
+      detail: 'Enter the token again to test against a different API URL.',
+      ok: false,
+    };
+  }
+
+  // A typed URL is operator input that was never saved, so it gets the SSRF guard the other
+  // connectors run on a base URL: no loopback, link-local or private address.
+  if (config.apiUrl !== stored.apiUrl) {
+    const safety = checkProbeUrl(config.apiUrl);
+    if (!safety.ok) {
+      return {
+        detail: 'That API URL is not allowed: it must be a public https address.',
+        ok: false,
+      };
+    }
+  }
 
   const appConfigured = config.appId && config.appPrivateKey && config.appInstallationId;
   const mode = config.authMode ?? 'auto';
@@ -357,11 +406,18 @@ export async function testGitHubConnection(): Promise<{ detail: string; ok: bool
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { message?: string };
-      return {
-        detail: `GitHub API returned ${res.status}: ${body.message ?? res.statusText}`,
-        ok: false,
-      };
+      // Fixed wording per status class: the remote body is never echoed back.
+      const reason =
+        res.status === 401
+          ? 'the token was rejected'
+          : res.status === 403
+            ? 'the token is not permitted or is rate limited'
+            : res.status === 404
+              ? 'the endpoint was not found, so check the API URL'
+              : res.status >= 500
+                ? 'GitHub reported a server error'
+                : 'the request was refused';
+      return { detail: `GitHub API returned ${res.status}: ${reason}.`, ok: false };
     }
     const user = (await res.json()) as { login: string };
     return { detail: `Authenticated as ${user.login}`, ok: true };
@@ -453,8 +509,10 @@ export async function updateSlackConfig(
   };
 }
 
-export async function testSlackConnection(): Promise<{ detail: string; ok: boolean }> {
-  const { botToken } = await resolveSlackConfig();
+export async function testSlackConnection(
+  draft: { botToken?: string } = {}
+): Promise<{ detail: string; ok: boolean }> {
+  const botToken = draft.botToken ?? (await resolveSlackConfig()).botToken;
   if (!botToken) {
     return { detail: 'No Slack bot token configured.', ok: false };
   }
@@ -1325,4 +1383,112 @@ export async function testDecryptSecrets(prisma: PrismaClient): Promise<Record<s
     results.githubToken = `error: ${e instanceof Error ? e.message : e}`;
   }
   return results;
+}
+
+// ─── Clearing a stored secret ─────────────────────────────────────────────────
+
+/// Which secret fields each singleton integration holds. A field absent here is not
+/// clearable, so the route's allowlist and the columns it nulls cannot drift apart.
+export const CLEARABLE_SECRETS = {
+  figma: ['apiToken'],
+  github: ['token', 'webhookSecret', 'appClientSecret', 'appPrivateKey'],
+  'issue-tracker': ['apiToken', 'webhookSecret'],
+  'knowledge-base': ['apiToken'],
+  slack: ['botToken', 'clientSecret', 'signingSecret'],
+} as const satisfies Record<string, readonly string[]>;
+
+export type ClearableIntegration = keyof typeof CLEARABLE_SECRETS;
+
+interface SingletonDelegate {
+  findUnique(args: { where: { id: string } }): Promise<Record<string, unknown> | null>;
+  update(args: { data: Record<string, unknown>; where: { id: string } }): Promise<unknown>;
+}
+
+function singletonFor(
+  prisma: PrismaClient,
+  integration: ClearableIntegration
+): { delegate: SingletonDelegate; entityId: string; entityType: string } {
+  switch (integration) {
+    case 'figma':
+      return {
+        delegate: prisma.figmaConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.figma,
+        entityType: 'FigmaConfig',
+      };
+    case 'github':
+      return {
+        delegate: prisma.gitHubConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.github,
+        entityType: 'GitHubConfig',
+      };
+    case 'issue-tracker':
+      return {
+        delegate: prisma.issueTrackerConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.tracker,
+        entityType: 'IssueTrackerConfig',
+      };
+    case 'knowledge-base':
+      return {
+        delegate: prisma.knowledgeBaseConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.knowledgeBase,
+        entityType: 'KnowledgeBaseConfig',
+      };
+    case 'slack':
+      return {
+        delegate: prisma.slackConfig as unknown as SingletonDelegate,
+        entityId: SYSTEM_CONFIG_IDS.slack,
+        entityType: 'SlackConfig',
+      };
+  }
+}
+
+/// Removes one stored secret from an integration's singleton row, so the resolver falls
+/// back to the environment variable when one is set. Returns false when nothing was stored.
+export async function clearStoredSecret(
+  prisma: PrismaClient,
+  log: FastifyBaseLogger,
+  actorId: string,
+  integration: ClearableIntegration,
+  field: string
+): Promise<boolean> {
+  const { delegate, entityId, entityType } = singletonFor(prisma, integration);
+  const existing = await delegate.findUnique({ where: { id: 'default' } });
+  if (!existing?.[`${field}Ciphertext`]) {
+    return false;
+  }
+  await delegate.update({
+    data: {
+      [`${field}AuthTag`]: null,
+      [`${field}Ciphertext`]: null,
+      [`${field}KeyVersion`]: null,
+      [`${field}LastFour`]: null,
+      [`${field}Nonce`]: null,
+    },
+    where: { id: 'default' },
+  });
+  await writeSystemConfigAudit(prisma, log, {
+    action: 'UPDATE',
+    actorId,
+    afterJson: { [`${field}LastFour`]: null, changedFields: [field], cleared: true },
+    beforeJson: { [`${field}LastFour`]: existing[`${field}LastFour`] ?? null },
+    entityId,
+    entityType,
+  });
+  return true;
+}
+
+/// The masked view of an integration, as its GET route returns it.
+export function getIntegrationConfig(prisma: PrismaClient, integration: ClearableIntegration) {
+  switch (integration) {
+    case 'figma':
+      return getFigmaConfig(prisma);
+    case 'github':
+      return getGitHubConfig(prisma);
+    case 'issue-tracker':
+      return getIssueTrackerConfig(prisma);
+    case 'knowledge-base':
+      return getKnowledgeBaseConfig(prisma);
+    case 'slack':
+      return getSlackConfig(prisma);
+  }
 }

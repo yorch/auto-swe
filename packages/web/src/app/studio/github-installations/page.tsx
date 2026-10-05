@@ -237,9 +237,25 @@ export default function StudioGithubInstallationsPage() {
                         <Button onClick={() => setEditTarget(i)} size="sm" variant="secondary">
                           Edit
                         </Button>
-                        <Button onClick={() => setDeleteTarget(i)} size="sm" variant="danger">
+                        <Button
+                          disabled={(i._count?.connections ?? 0) > 0}
+                          onClick={() => setDeleteTarget(i)}
+                          size="sm"
+                          title={
+                            (i._count?.connections ?? 0) > 0
+                              ? `${i._count?.connections} ${i._count?.connections === 1 ? 'repository still uses' : 'repositories still use'} this installation. Repoint ${i._count?.connections === 1 ? 'it' : 'them'} first.`
+                              : undefined
+                          }
+                          variant="danger"
+                        >
                           Delete
                         </Button>
+                        {(i._count?.connections ?? 0) > 0 && (
+                          <span className="self-center text-[11px] text-paper-400">
+                            In use by {i._count?.connections}{' '}
+                            {i._count?.connections === 1 ? 'repository' : 'repositories'}
+                          </span>
+                        )}
                       </div>
                     </Td>
                   </TRow>

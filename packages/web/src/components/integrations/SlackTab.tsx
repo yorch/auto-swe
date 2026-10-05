@@ -81,7 +81,12 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
   };
 
   const handleTest = () => {
-    runTest(() => testSlackConnection());
+    // Only the bot token matters to the probe; a blank field tests the stored one.
+    const unsaved = botToken !== '';
+    runTest(async () => ({
+      ...(await testSlackConnection(unsaved ? { botToken } : {})),
+      unsaved,
+    }));
   };
 
   if (isLoading || isError) {
@@ -122,6 +127,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
             />
           </ConfigField>
           <SecretInput
+            clear={{ field: 'clientSecret', integration: 'slack' }}
             current={data?.clientSecret ?? null}
             id="slack-client-secret"
             label="Client secret"
@@ -130,6 +136,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
             value={clientSecret}
           />
           <SecretInput
+            clear={{ field: 'signingSecret', integration: 'slack' }}
             current={data?.signingSecret ?? null}
             id="slack-signing-secret"
             label="Signing secret"
@@ -138,6 +145,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
             value={signingSecret}
           />
           <SecretInput
+            clear={{ field: 'botToken', integration: 'slack' }}
             current={data?.botToken ?? null}
             id="slack-bot-token"
             label="Bot token"

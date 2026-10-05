@@ -26,14 +26,18 @@ interface MockPrisma {
     create: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
   };
+  agent: { findMany: ReturnType<typeof vi.fn> };
+  embeddingConfig: { findFirst: ReturnType<typeof vi.fn> };
 }
 
 function newMockPrisma(): MockPrisma {
   return {
+    agent: { findMany: vi.fn().mockResolvedValue([]) },
     configAuditLog: {
       create: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    embeddingConfig: { findFirst: vi.fn().mockResolvedValue(null) },
     providerCredential: {
       create: vi.fn(),
       delete: vi.fn().mockResolvedValue({}),
@@ -232,6 +236,82 @@ describe('modelConfigRoutes — admin', () => {
       expect(body.data[0]).not.toHaveProperty('apiKeyNonce');
       expect(body.data[0]).not.toHaveProperty('apiKeyAuthTag');
       expect(body.data[0].maskedKey).toBe('****1234');
+    });
+  });
+
+  describe('GET /credentials usage', () => {
+    it('lists the agents and embedding config a credential backs', async () => {
+      const ctx = await buildAdminApp('ADMIN');
+      const base = {
+        apiBase: null,
+        createdAt: new Date(),
+        createdById: null,
+        keyVersion: 1,
+        lastFour: '1234',
+        provider: 'openai',
+        scope: 'GLOBAL',
+        teamId: null,
+        updatedAt: new Date(),
+      };
+      ctx.mockPrisma.providerCredential.findMany.mockResolvedValueOnce([
+        { ...base, id: 'cred-1' },
+        { ...base, id: 'cred-2' },
+      ]);
+      ctx.mockPrisma.agent.findMany.mockResolvedValueOnce([
+        { credentialId: 'cred-1', key: 'reviewer' },
+        { credentialId: 'cred-1', key: 'reviewer' },
+        { credentialId: 'cred-1', key: 'implementer' },
+      ]);
+      ctx.mockPrisma.embeddingConfig.findFirst.mockResolvedValueOnce({ credentialId: 'cred-2' });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/credentials',
+      });
+      const [one, two] = JSON.parse(res.payload).data;
+      expect(one.usage).toEqual({ agents: ['implementer', 'reviewer'], embedding: false });
+      expect(two.usage).toEqual({ agents: [], embedding: true });
+      await ctx.app.close();
+    });
+  });
+
+  describe('custom provider API base', () => {
+    it('rejects a non-built-in provider created without an API base', async () => {
+      const ctx = await buildAdminApp('ADMIN');
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { apiKey: 'sk-abc-1234', provider: 'openrouter', scope: 'GLOBAL' },
+        url: '/api/v1/platform/credentials',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('API_BASE_REQUIRED');
+      expect(ctx.mockPrisma.providerCredential.create).not.toHaveBeenCalled();
+      await ctx.app.close();
+    });
+
+    it('rejects clearing the API base of a custom provider', async () => {
+      const ctx = await buildAdminApp('ADMIN');
+      ctx.mockPrisma.providerCredential.findUnique.mockResolvedValueOnce({
+        apiBase: 'https://example.com/v1',
+        createdAt: new Date(),
+        createdById: null,
+        id: '11111111-1111-4111-8111-111111111111',
+        keyVersion: 1,
+        lastFour: '1234',
+        provider: 'openrouter',
+        scope: 'GLOBAL',
+        teamId: null,
+        updatedAt: new Date(),
+      });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { apiBase: null },
+        url: '/api/v1/platform/credentials/11111111-1111-4111-8111-111111111111',
+      });
+      expect(res.statusCode).toBe(400);
+      await ctx.app.close();
     });
   });
 

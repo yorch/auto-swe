@@ -140,6 +140,19 @@ On install the gateway:
    deployment.
 7. Records the result as an `InstalledBundle` row, marking it `VERIFIED` or `UNVERIFIED`.
 
+### Previewing before install
+
+`POST /api/v1/platform/bundles/preview` (a `bundle` inline, or a `url` to fetch) runs the same
+checks as an install through one shared validation, and returns the bundle's trust state and
+signer, the version already installed under its name, each entry it would create or replace (with a
+flag on every entry that replaces protected content), the advisory scan findings in its skills, and
+a `blockedReason` when this deployment would refuse it (an unverified bundle while unverified
+installs are off). It writes nothing. The Studio bundles page always previews first; the install
+dialog needs a ticked box to replace protected content, and an unverified bundle needs a second
+"Install unverified bundle" confirmation. `install-from-url` takes the previewed `expectedContentHash`
+and answers `409 BUNDLE_CHANGED` when the URL now serves different content, so what is installed is
+what was reviewed. Skills from a bundle always install unverified, whatever the bundle's trust state.
+
 Exported templates may embed local connection references (e.g. an `mcp` node's `connectionRef`); the
 installer preserves the spec but those references only resolve if a matching `Connection` is created
 separately.

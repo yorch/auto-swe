@@ -75,6 +75,15 @@ function ScanWarnings({ warnings }: { warnings: string[] }) {
   );
 }
 
+/** Names the agents that reference a skill, for the confirmations that affect them. */
+function usageText(skill: Skill): string | null {
+  if (skill.usedByCount === 0) {
+    return null;
+  }
+  const names = skill.usedBy.length > 0 ? ` (${skill.usedBy.join(', ')})` : '';
+  return `It is used by ${skill.usedByCount} agent ${skill.usedByCount === 1 ? 'version' : 'versions'}${names}.`;
+}
+
 // ── Skill Detail / Edit Modal ────────────────────────────────────────────────
 
 function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: () => void }) {
@@ -264,6 +273,15 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           </EntityMetaBadges>
           {sk.description && (
             <p className="text-sm text-paper-300">{visibleOrNull(sk.description)}</p>
+          )}
+          {skill.scanWarnings.length > 0 && (
+            <Alert title="Scanner findings on this text" variant="warning">
+              <ul className="list-disc space-y-0.5 pl-4 text-xs">
+                {skill.scanWarnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </Alert>
           )}
           <div>
             <div className="label-mono mb-1.5">Prompt text</div>
@@ -484,6 +502,17 @@ export default function StudioSkillsPage() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
 
+  // A skill that agents use is not switched off without a confirmation.
+  const [deactivateTarget, setDeactivateTarget] = useState<Skill | null>(null);
+
+  function requestToggle(skill: Skill) {
+    if (skill.isActive && skill.usedByCount > 0) {
+      setDeactivateTarget(skill);
+      return;
+    }
+    void handleToggleActive(skill);
+  }
+
   async function handleToggleActive(skill: Skill) {
     setToggleError(null);
     setTogglingId(skill.id);
@@ -605,7 +634,7 @@ export default function StudioSkillsPage() {
                             ariaLabel={`Active: ${visibleText(skill.name)}`}
                             checked={skill.isActive}
                             disabled={togglingId === skill.id}
-                            onChange={() => handleToggleActive(skill)}
+                            onChange={() => requestToggle(skill)}
                           />
                         </Td>
                         <Td className="py-2 text-right">
@@ -637,11 +666,29 @@ export default function StudioSkillsPage() {
       {tab === 'skills' && <EffectivenessCard />}
 
       <SkillFormModal onClose={() => setNewOpen(false)} open={newOpen} />
+      <ConfirmModal
+        confirmLabel="Deactivate"
+        dangerous
+        message={`Agents stop receiving "${visibleText(deactivateTarget?.name ?? '')}" while it is inactive. ${deactivateTarget ? (usageText(deactivateTarget) ?? '') : ''} This takes effect in runs already in progress too.`}
+        onClose={() => setDeactivateTarget(null)}
+        onConfirm={async () => {
+          if (deactivateTarget) {
+            await handleToggleActive(deactivateTarget);
+          }
+        }}
+        open={deactivateTarget !== null}
+        pendingLabel="Deactivating…"
+        title={`Deactivate "${visibleText(deactivateTarget?.name ?? '')}"?`}
+      />
       <SkillDetailModal onClose={() => setViewTarget(null)} skill={viewTarget} />
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message="This will remove the skill and all its assignments. This cannot be undone."
+        message={
+          deleteTarget
+            ? `Delete "${visibleText(deleteTarget.name)}" and remove it from every agent that uses it. ${usageText(deleteTarget) ?? 'No agent uses it.'} This cannot be undone.`
+            : ''
+        }
         onClose={() => setDeleteTarget(null)}
         onConfirm={async () => {
           if (deleteTarget) {
@@ -650,7 +697,7 @@ export default function StudioSkillsPage() {
         }}
         open={deleteTarget !== null}
         pendingLabel="Deleting…"
-        title={`Delete "${deleteTarget?.name ?? ''}"?`}
+        title={`Delete "${visibleText(deleteTarget?.name ?? '')}"?`}
       />
     </div>
   );

@@ -995,6 +995,194 @@ describe('workflow-templates routes', () => {
     }
   });
 
+  describe('versions with lint errors', () => {
+    // A spec the schema accepts (so it can be saved) whose entry node does not exist.
+    const BROKEN_SPEC = { ...(VALID_SPEC as object), entry: 'no-such-node' };
+
+    async function withBrokenVersion(
+      version: number,
+      run: (tplId: string) => Promise<void>
+    ): Promise<void> {
+      const tpl = state.templates[0];
+      if (!tpl) {
+        throw new Error('expected template');
+      }
+      const key = `${tpl.id}:${version}`;
+      const stored = state.versions.get(key);
+      if (!stored) {
+        throw new Error('expected version');
+      }
+      const saved = { ...tpl };
+      state.versions.set(key, { ...stored, spec: BROKEN_SPEC });
+      try {
+        await run(tpl.id);
+      } finally {
+        state.versions.set(key, stored);
+        Object.assign(tpl, saved);
+      }
+    }
+
+    it('refuses to promote a version with errors', async () => {
+      await withBrokenVersion(2, async (id) => {
+        const res = await app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'POST',
+          payload: { version: 2 },
+          url: `/api/v1/workflow-templates/${id}/promote`,
+        });
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error?.code).toBe('SPEC_HAS_ERRORS');
+        expect(res.json().error?.details.errorCount).toBeGreaterThan(0);
+      });
+    });
+
+    it('refuses an experiment arm with errors but allows a zero split', async () => {
+      await withBrokenVersion(2, async (id) => {
+        const res = await app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'PATCH',
+          payload: { experimentSplit: 25, experimentVersion: 2 },
+          url: `/api/v1/workflow-templates/${id}`,
+        });
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error?.code).toBe('SPEC_HAS_ERRORS');
+        const off = await app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'PATCH',
+          payload: { experimentSplit: 0, experimentVersion: 2 },
+          url: `/api/v1/workflow-templates/${id}`,
+        });
+        expect(off.statusCode).toBe(200);
+      });
+    });
+
+    it('refuses to activate a template whose active version has errors', async () => {
+      const tpl = state.templates[0];
+      if (!tpl || tpl.activeVersion == null) {
+        throw new Error('expected template with an active version');
+      }
+      const active = tpl.activeVersion;
+      await withBrokenVersion(active, async (id) => {
+        const t = state.templates[0];
+        if (t) {
+          t.status = 'ARCHIVED';
+        }
+        const res = await app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'PATCH',
+          payload: { status: 'ACTIVE' },
+          url: `/api/v1/workflow-templates/${id}`,
+        });
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error?.code).toBe('SPEC_HAS_ERRORS');
+      });
+    });
+  });
+
+  it('activates a draft by promoting the version that is already active', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const saved = { ...tpl };
+    tpl.status = 'DRAFT';
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'POST',
+        payload: { version: tpl.activeVersion },
+        url: `/api/v1/workflow-templates/${tpl.id}/promote`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.status).toBe('ACTIVE');
+    } finally {
+      Object.assign(tpl, saved);
+    }
+  });
+
+  it('restores an archived template to active', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const saved = { ...tpl };
+    tpl.status = 'ARCHIVED';
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { status: 'ACTIVE' },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.status).toBe('ACTIVE');
+    } finally {
+      Object.assign(tpl, saved);
+    }
+  });
+
+  it('refuses to restore an archived template whose active version is an unreviewed AI draft', async () => {
+    const tpl = state.templates[0];
+    if (!tpl || tpl.activeVersion == null) {
+      throw new Error('expected template with an active version');
+    }
+    const key = `${tpl.id}:${tpl.activeVersion}`;
+    const stored = state.versions.get(key);
+    if (!stored) {
+      throw new Error('expected active version');
+    }
+    const saved = { ...tpl };
+    tpl.status = 'ARCHIVED';
+    state.versions.set(key, {
+      ...stored,
+      generatedBy: 'workflow_author',
+      reviewedAt: null,
+    } as never);
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { status: 'ACTIVE' },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error?.code).toBe('REVIEW_REQUIRED');
+      // Restoring to draft is not refused: it serves no runs.
+      const draft = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { status: 'DRAFT' },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+      expect(draft.statusCode).toBe(200);
+    } finally {
+      state.versions.set(key, stored);
+      Object.assign(tpl, saved);
+    }
+  });
+
+  it('refuses to activate a template that has no active version', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const saved = { ...tpl };
+    tpl.status = 'ARCHIVED';
+    tpl.activeVersion = null;
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { status: 'ACTIVE' },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error?.code).toBe('NO_ACTIVE_VERSION');
+    } finally {
+      Object.assign(tpl, saved);
+    }
+  });
+
   it('forbids reviewing a generated version you generated yourself', async () => {
     const tpl = state.templates[0];
     if (!tpl) {

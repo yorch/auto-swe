@@ -30,15 +30,15 @@ export function MemberUserPicker({
   const isAdmin = useHasRole('ADMIN');
   const eligible = useEligibleUsers(existingUserIds, isAdmin);
 
-  // Admin mode: default to the first eligible user, and drop a selection a
-  // refetch removed from the list.
-  const firstEligible = eligible[0]?.id ?? '';
+  // Admin mode starts empty: the caller must make an explicit choice, so Add
+  // can never act on a user nobody picked. A selection a refetch removed from
+  // the list is dropped.
   const selectionValid = eligible.some((u) => u.id === value);
   useEffect(() => {
-    if (isAdmin && !selectionValid) {
-      onChange(firstEligible);
+    if (isAdmin && value !== '' && !selectionValid && eligible.length > 0) {
+      onChange('');
     }
-  }, [isAdmin, selectionValid, firstEligible, onChange]);
+  }, [isAdmin, value, selectionValid, eligible.length, onChange]);
 
   const [email, setEmail] = useState('');
   const [found, setFound] = useState<string | null>(null);

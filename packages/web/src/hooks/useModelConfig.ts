@@ -23,6 +23,8 @@ export interface ProviderCredentialRow {
   createdById: string | null;
   createdAt: string;
   updatedAt: string;
+  /** What this credential backs: agent keys pinned to it and whether embeddings use it. */
+  usage?: { agents: string[]; embedding: boolean };
 }
 
 export interface ConfigAuditRow {

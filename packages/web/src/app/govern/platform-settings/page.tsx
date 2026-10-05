@@ -244,6 +244,7 @@ export default function GovernSettingsPage() {
                 track(setting.key, () => setSetting.mutateAsync({ key: setting.key, value }))
               }
               scope={selection.scope}
+              scopeKey={selection.scope === 'GLOBAL' ? 'GLOBAL' : `${selection.scope}:${scopeId}`}
               setting={setting}
               sourceHref={sourceHrefFor(setting.source)}
               status={rowStatus[setting.key]}

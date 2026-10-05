@@ -108,8 +108,10 @@ export function useUpdateAgent() {
 export function useDeleteAgent() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      api.delete<{ data: { deactivated: number } }>(`/api/v1/platform/agent-library/${id}`),
+    mutationFn: ({ force = false, id }: { force?: boolean; id: string }) =>
+      api.delete<{ data: { deactivated: number } }>(
+        `/api/v1/platform/agent-library/${id}${force ? '?force=true' : ''}`
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

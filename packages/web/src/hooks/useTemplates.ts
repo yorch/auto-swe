@@ -123,14 +123,28 @@ export function useWorkflowGenerationJob(jobId: string | null) {
   });
 }
 
-export function useExplainWorkflowTemplate(templateId: string) {
-  return useMutation({
-    mutationFn: () =>
+/**
+ * The plain-language explanation of a template's active version. Each call is a
+ * billed LLM run, so it is fetched once per template + active version and kept
+ * for the session; reopening the dialog shows the cached text.
+ */
+export function useExplainWorkflowTemplate(
+  templateId: string,
+  activeVersion: number | null,
+  enabled: boolean
+) {
+  return useQuery({
+    enabled: enabled && !!templateId,
+    gcTime: 60 * 60_000,
+    queryFn: () =>
       api
         .post<{
           data: { explanation: string };
         }>(`/api/v1/workflow-templates/${templateId}/explain`, {})
         .then((r) => r.data),
+    queryKey: ['workflow-template-explain', templateId, activeVersion],
+    retry: false,
+    staleTime: Number.POSITIVE_INFINITY,
   });
 }
 

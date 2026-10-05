@@ -7,6 +7,8 @@ import { errMsg } from '@/lib/errors';
 export interface TestResult {
   ok: boolean;
   detail: string;
+  /** The test ran against values typed into the form but not yet saved. */
+  unsaved?: boolean;
 }
 
 export interface UseIntegrationConfigFormResult {

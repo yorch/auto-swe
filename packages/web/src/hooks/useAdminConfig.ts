@@ -74,6 +74,26 @@ function configMutation<TConfig, TInput>(slug: string, opts: { affectsReadiness?
   };
 }
 
+/**
+ * DELETE one stored secret of an integration (`github`, `slack`, `issue-tracker`,
+ * `knowledge-base`, `figma`). The value falls back to its environment variable when
+ * one is set. Refetches that integration's config so the field's status updates.
+ */
+export function useClearConfigSecret(integration: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (field: string) =>
+      api.delete<unknown>(`${configPath(integration)}/secrets/${field}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: configKey(integration) });
+      // Clearing a GitHub secret can drop the last credential, which setup readiness reports.
+      if (integration === 'github') {
+        qc.invalidateQueries({ queryKey: READINESS_KEY });
+      }
+    },
+  });
+}
+
 /** POST `…/test`. The body is empty for connectors that need no probe input. */
 function postConfigTest(slug: string, body: Record<string, string> = {}) {
   return api.post<{ ok: boolean; detail: string }>(`${configPath(slug)}/test`, body);
@@ -118,7 +138,21 @@ export const useUpdateGitHubConfig = configMutation<GitHubConfig, GitHubConfigIn
   affectsReadiness: true,
 });
 
-export const testGitHubConnection = () => postConfigTest('github');
+/**
+ * The unsaved GitHub form values a connection test may use. Anything left out
+ * (and any secret left blank) is tested as stored.
+ */
+export interface GitHubTestDraft {
+  token?: string;
+  apiUrl?: string | null;
+  appId?: string | null;
+  appInstallationId?: string | null;
+  appPrivateKey?: string;
+  authMode?: string | null;
+}
+
+export const testGitHubConnection = (draft: GitHubTestDraft = {}) =>
+  api.post<{ ok: boolean; detail: string }>(`${configPath('github')}/test`, draft);
 
 // ── Slack config ──
 
@@ -140,7 +174,8 @@ export const useSlackConfig = sourcedConfigQuery<SlackConfig>('slack');
 
 export const useUpdateSlackConfig = configMutation<SlackConfig, SlackConfigInput>('slack');
 
-export const testSlackConnection = () => postConfigTest('slack');
+export const testSlackConnection = (draft: { botToken?: string } = {}) =>
+  api.post<{ ok: boolean; detail: string }>(`${configPath('slack')}/test`, draft);
 
 // ── Workflow defaults ──
 

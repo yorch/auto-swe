@@ -109,6 +109,15 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.skill.findMany({
           include: {
             _count: { select: { agentSkillRefs: true } },
+            // Which agents reference it, so a delete or deactivate can name what it affects.
+            agentSkillRefs: { select: { agent: { select: { isActive: true, key: true } } } },
+            // The newest revision is the current one; its scan findings are what a reviewer
+            // reads before verifying.
+            revisions: {
+              orderBy: { revision: 'desc' },
+              select: { scanWarnings: true },
+              take: 1,
+            },
             source: { select: { host: true, owner: true, repo: true } },
           },
           orderBy: [{ isBuiltIn: 'desc' }, { name: 'asc' }],
@@ -125,9 +134,13 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         : [];
       const shaOf = new Map(shas.map((r) => [r.skillId, r.sourceSha]));
       return {
-        data: skills.map(({ _count, source, ...s }) => ({
+        data: skills.map(({ _count, agentSkillRefs, revisions, source, ...s }) => ({
           ...s,
           externalSource: source ? { ...source, sha: shaOf.get(s.id) ?? null } : null,
+          scanWarnings: Array.isArray(revisions[0]?.scanWarnings) ? revisions[0].scanWarnings : [],
+          usedBy: [
+            ...new Set(agentSkillRefs.filter((r) => r.agent.isActive).map((r) => r.agent.key)),
+          ].sort(),
           usedByCount: _count.agentSkillRefs,
         })),
       };
