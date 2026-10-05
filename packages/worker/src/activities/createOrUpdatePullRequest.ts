@@ -56,14 +56,22 @@ async function doCreateOrUpdatePullRequest(
   const repoRef = toRepoRef(repo);
   const scm = getScmProvider(repoRef);
 
-  // Check if PR already exists
-  const existingPR = await prisma.pullRequest.findFirst({
-    where: {
-      repoId: repo.id,
-      status: 'OPEN',
-      workflow: { workRequestId: request.workRequestId },
-    },
-  });
+  // Check if PR already exists. A request can have several ledger rows (re-runs,
+  // scheduled fires that share a standing request and branch), so the pick is
+  // explicit: an open PR on this execution's own row wins, else the newest.
+  const openPrWhere = { repoId: repo.id, status: 'OPEN' as const };
+  const existingPR =
+    (await prisma.pullRequest.findFirst({
+      orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+      where: {
+        ...openPrWhere,
+        workflow: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },
+      },
+    })) ??
+    (await prisma.pullRequest.findFirst({
+      orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+      where: { ...openPrWhere, workflow: { workRequestId: request.workRequestId } },
+    }));
 
   if (existingPR) {
     if (existingPR.prNumber == null) {

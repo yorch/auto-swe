@@ -24,7 +24,10 @@ row (it refuses to run without one) and links that. The row records:
 | `openedAt` / `mergedAt` / `closedAt` | when the PR was opened, merged, and closed (a merge sets both of the last two) |
 | `ciStatus`, `headSha` | the CI verdict for the current head, unchanged by this lifecycle |
 
-Only an `OPEN` row for the same request and repository is updated on a re-push. A close is a
+Only an `OPEN` row for the same request and repository is updated on a re-push. A request can have
+several ledger rows (re-runs, and scheduled fires, which share one standing request and one branch),
+so the choice is explicit: the open PR on the executing workflow's own ledger row, else the newest
+open one of the request (`openedAt`, then `id`, descending). A close is a
 decision, so it is respected within the workflow that opened the PR: when `createOrUpdatePullRequest`
 runs again in a workflow whose latest PR for the repository was closed without merging, it fails
 non-retryably with `PR_CLOSED_BY_REVIEWER` instead of opening a replacement. A new run of the same

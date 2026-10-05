@@ -227,6 +227,42 @@ describe('createOrUpdatePullRequest with a PR already recorded for the work requ
   });
 });
 
+describe('which open PR is reused', () => {
+  type Where = { status?: string; workflow: { temporalWorkflowId?: string } };
+  type Row = { id: string; prNumber: number; openedAt: Date; ledger: string };
+  // Fakes the table: filters by the query's ledger scope and honours its orderBy.
+  const table = (rows: Row[]) =>
+    m.prisma.pullRequest.findFirst.mockImplementation(
+      async (args: { where: Where; orderBy?: Array<Record<string, 'asc' | 'desc'>> }) => {
+        if (args.where.status !== 'OPEN') {
+          return null;
+        }
+        const own = args.where.workflow.temporalWorkflowId;
+        const hits = rows.filter((r) => !own || r.ledger === own);
+        if (args.orderBy?.[0]?.openedAt === 'desc') {
+          hits.sort((a, b) => b.openedAt.getTime() - a.openedAt.getTime());
+        }
+        return hits[0] ?? null;
+      }
+    );
+  const older = { id: 'a', ledger: 'wf-own', openedAt: new Date('2026-01-01'), prNumber: 1 };
+  const newer = { id: 'b', ledger: 'wf-other', openedAt: new Date('2026-02-01'), prNumber: 2 };
+
+  it("prefers the open PR on this execution's own ledger row over a newer one elsewhere", async () => {
+    table([newer, older]);
+    await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toMatchObject({
+      prNumber: 1,
+    });
+  });
+
+  it('takes the newest open PR of the request when none is on its own row', async () => {
+    table([{ ...older, ledger: 'wf-x' }, newer]);
+    await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toMatchObject({
+      prNumber: 2,
+    });
+  });
+});
+
 describe('createOrUpdatePullRequest when the host would reuse a ready PR', () => {
   it('fails non-retryably instead of pushing onto it', async () => {
     m.createPr.mockRejectedValue(new ExistingPullRequestNotDraftError('acme/api#9 is open'));
