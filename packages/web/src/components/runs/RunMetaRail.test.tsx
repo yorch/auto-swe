@@ -61,9 +61,14 @@ describe('RunMetaRail collapsed under the graph (phone)', () => {
     expect(panel?.hidden).toBe(true);
   });
 
-  it('is a labelled landmark and a touch-sized control', () => {
+  it('names the section once: the toggle says it, the panel does not repeat it', () => {
     render(<RunMetaRail collapsible run={run} />);
-    expect(screen.getByRole('complementary', { name: 'Run details' })).toBeTruthy();
+    expect(screen.getAllByText('Run details')).toHaveLength(1);
+  });
+
+  it('is a landmark with a touch-sized control', () => {
+    render(<RunMetaRail collapsible run={run} />);
+    expect(screen.getByRole('complementary')).toBeTruthy();
     expect(screen.getByRole('button', { name: /run details/i }).className).toContain(
       'min-h-[44px]'
     );

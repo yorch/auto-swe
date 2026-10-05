@@ -195,7 +195,7 @@ export default function RunDetailPage({ params }: PageProps) {
   const failureCardReRun = reRunLocked ? undefined : handleReRun;
 
   return (
-    <div className="flex h-full min-w-0 flex-col bg-ink-800 max-lg:overflow-y-auto">
+    <div className="flex h-full flex-col bg-ink-800 max-lg:min-w-0 max-lg:overflow-y-auto max-lg:overflow-x-hidden">
       {/* ── Page header band ──────────────────────────────────────────────── */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-ink-600/40 bg-ink-900 px-4 py-4 md:px-6">
         {/* Breadcrumb */}
@@ -203,7 +203,7 @@ export default function RunDetailPage({ params }: PageProps) {
           {run.workRequest && (
             <>
               <Link
-                className="inline-flex min-h-[40px] items-center transition-colors hover:text-paper-200 lg:min-h-0"
+                className="transition-colors hover:text-paper-200 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center"
                 href={requestHref(run.workRequest.id)}
               >
                 ← Request
@@ -212,7 +212,7 @@ export default function RunDetailPage({ params }: PageProps) {
             </>
           )}
           <Link
-            className="inline-flex min-h-[40px] items-center transition-colors hover:text-paper-200 lg:min-h-0"
+            className="transition-colors hover:text-paper-200 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center"
             href="/runs"
           >
             All runs
@@ -234,7 +234,7 @@ export default function RunDetailPage({ params }: PageProps) {
         </span>
 
         {/* Right side: actions + layout switcher */}
-        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3 md:ml-auto">
+        <div className="flex flex-wrap items-center gap-3 max-lg:min-w-0 max-lg:max-w-full md:ml-auto">
           {securityEvents.length > 0 && (
             <Badge tone="amber" uppercase>
               {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
@@ -310,7 +310,7 @@ export default function RunDetailPage({ params }: PageProps) {
           {/* The Agent Run template is hidden: its detail route answers 404 for everyone. */}
           {!isAgentRun && (
             <Link
-              className="inline-flex min-h-[40px] items-center font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400 lg:min-h-0"
+              className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center"
               href={`/workflows/library/${run.templateId}`}
             >
               View template →
@@ -331,7 +331,7 @@ export default function RunDetailPage({ params }: PageProps) {
       />
 
       {/* ── Layout body ───────────────────────────────────────────────────── */}
-      <div className="flex min-w-0 flex-1 lg:overflow-hidden" ref={traceAnchorRef}>
+      <div className="flex flex-1 max-lg:min-w-0 lg:overflow-hidden" ref={traceAnchorRef}>
         <Layout
           dagOverlay={dagOverlay}
           jumpNonce={jumpNonce}

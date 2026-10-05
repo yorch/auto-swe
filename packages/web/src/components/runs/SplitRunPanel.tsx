@@ -96,7 +96,7 @@ export function SplitRunPanel({
       </div>
 
       {/* Trace stream column */}
-      <div className="min-w-0 lg:flex-1 lg:overflow-y-auto">
+      <div className="max-lg:min-w-0 lg:flex-1 lg:overflow-y-auto">
         <TracesTab
           filterNodeId={selectedNodeId}
           linker={linker}

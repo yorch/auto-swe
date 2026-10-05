@@ -98,9 +98,9 @@ describe('RunSummary', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Hide details' }));
     expect(screen.getByRole('button', { name: 'Show failure details' })).toBeTruthy();
-    expect(screen.getByText('outcome card').parentElement?.className).toContain('max-md:hidden');
+    expect(screen.getByText('outcome card').parentElement?.className).toContain('max-lg:hidden');
     expect(screen.getByText('Pending one').closest('section')?.className).not.toContain(
-      'max-md:hidden'
+      'max-lg:hidden'
     );
   });
 

@@ -57,7 +57,9 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
   const body = (
     <>
       {/* Run details */}
-      <RailSection className="pt-5" divider={false} title="Run details">
+      {/* Collapsed, the toggle above already says "Run details"; repeating it inside would be
+          announced twice. */}
+      <RailSection className="pt-5" divider={false} title={collapsible ? undefined : 'Run details'}>
         <dl>
           <MetaRow label="Started">
             <MonoValue>{formatDate(run.startedAt)}</MonoValue>
@@ -151,11 +153,7 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
 
   if (collapsible) {
     return (
-      <aside
-        aria-label="Run details"
-        className="shrink-0 border-b border-ink-600/40 bg-ink-900"
-        data-testid="run-meta-rail"
-      >
+      <aside className="shrink-0 border-b border-ink-600/40 bg-ink-900" data-testid="run-meta-rail">
         <button
           aria-controls={panelId}
           aria-expanded={open}
