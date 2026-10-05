@@ -66,4 +66,20 @@ describe('SkillHistory', () => {
     await screen.findByText('What changed from #1 to #2');
     expect(screen.queryByRole('button', { name: /Restore revision/ })).toBeNull();
   });
+
+  it('shows hidden characters in the diff as markers', async () => {
+    setupFetchMock({
+      'GET /api/v1/platform/skills/s1/revisions': () => {
+        const r = revisions();
+        r.data[0].promptText = 'Be brief.\u202eevil\u200b';
+        r.data[0].description = 'a\u202eb';
+        return r;
+      },
+    });
+    render(withQuery(<SkillHistory skill={SKILL} />));
+    await screen.findByText('What changed from #1 to #2');
+    expect(screen.getByText(/evil⟨U\+200B⟩/)).toBeTruthy();
+    expect(screen.getByText(/a⟨U\+202E⟩b/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain('\u202e');
+  });
 });

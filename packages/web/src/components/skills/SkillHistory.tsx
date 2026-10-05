@@ -11,12 +11,20 @@ import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { type Skill, useRestoreSkillRevision, useSkillRevisions } from '@/hooks/useSkills';
 import { type FieldChange, lineDiff } from '@/lib/agentDiff';
 import { formatDate } from '@/lib/utils';
+import { visibleText } from '@/lib/visibleText';
 
 /**
  * The saved revisions of one skill with what changed in each, and a way back. A restore saves the
  * old text as a new revision, so runs pinned to any revision keep reading it.
  */
-export function SkillHistory({ skill }: { skill: Skill }) {
+export function SkillHistory({
+  onRestored,
+  skill,
+}: {
+  /** Called with the saved skill after a restore, so the caller shows the revision it just made. */
+  onRestored?: (skill: Skill) => void;
+  skill: Skill;
+}) {
   const { data: revisions, error, isError, isLoading } = useSkillRevisions(skill.id);
   const restore = useRestoreSkillRevision();
   const [selected, setSelected] = useState<number | null>(null);
@@ -32,19 +40,24 @@ export function SkillHistory({ skill }: { skill: Skill }) {
       return [];
     }
     const out: FieldChange[] = [];
-    if ((previous.description ?? '') !== (current.description ?? '')) {
+    // Stored text keeps bidi and zero-width characters; show them as markers before diffing.
+    const prevDescription = visibleText(previous.description ?? '');
+    const currDescription = visibleText(current.description ?? '');
+    if (prevDescription !== currDescription) {
       out.push({
-        after: current.description ?? '',
-        before: previous.description ?? '',
+        after: currDescription,
+        before: prevDescription,
         kind: 'text',
         label: 'Description',
       });
     }
-    if (previous.promptText !== current.promptText) {
+    const prevText = visibleText(previous.promptText, { multiline: true });
+    const currText = visibleText(current.promptText, { multiline: true });
+    if (prevText !== currText) {
       out.push({
         kind: 'prompt',
         label: 'Prompt text',
-        lines: lineDiff(previous.promptText, current.promptText),
+        lines: lineDiff(prevText, currText),
       });
     }
     return out;
@@ -130,6 +143,7 @@ export function SkillHistory({ skill }: { skill: Skill }) {
           if (restoring !== null) {
             const res = await restore.mutateAsync({ id: skill.id, revision: restoring });
             setNotice({ revision: res.skill.currentRevision, warnings: res.scanWarnings });
+            onRestored?.(res.skill);
             setSelected(null);
             setRestoring(null);
           }

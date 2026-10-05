@@ -112,6 +112,23 @@ describe('Skills studio page', () => {
     expect(await screen.findByText(/changed since you opened it/)).toBeTruthy();
   });
 
+  it('never swaps the open text for a newer revision: shows a notice, and Reload reads it', async () => {
+    const { rerender } = render(<StudioSkillsPage />);
+    open('imported');
+    state.skills = [
+      skill({ currentRevision: 5, id: 'imported', name: 'imported', promptText: 'newer text' }),
+    ];
+    rerender(<StudioSkillsPage />);
+    expect(screen.getByText('text')).toBeTruthy();
+    expect(screen.queryByText('newer text')).toBeNull();
+    expect(screen.getByText(/changed since you opened it — reload/)).toBeTruthy();
+    expect(screen.queryByText('Verify revision 4')).toBeNull();
+    fireEvent.click(screen.getByText('Reload'));
+    expect(screen.getByText('newer text')).toBeTruthy();
+    fireEvent.click(screen.getByText('Verify revision 5'));
+    await waitFor(() => expect(verify).toHaveBeenCalledWith({ id: 'imported', revision: 5 }));
+  });
+
   it('shows hidden characters in skill names and descriptions', () => {
     state.skills = [skill({ description: 'a‮b', name: 'na​me' })];
     render(<StudioSkillsPage />);

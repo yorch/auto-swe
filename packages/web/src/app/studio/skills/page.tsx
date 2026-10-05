@@ -89,12 +89,23 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
   const [form, setForm] = useState({ description: '', isActive: true, name: '', promptText: '' });
   const [error, setError] = useState<string | null>(null);
   const [scanWarnings, setScanWarnings] = useState<string[]>([]);
+  // The revision on screen. Fixed when the modal opens and after an in-modal restore, so the text
+  // a reviewer reads and the revision Verify attests never drift apart while the list refetches.
+  const [viewed, setViewed] = useState<Skill | null>(skill);
 
   if (!skill) {
+    if (viewed) {
+      setViewed(null);
+    }
     return null;
   }
+  if (viewed?.id !== skill.id) {
+    setViewed(skill);
+  }
 
-  const sk = allSkills?.find((s) => s.id === skill.id) ?? skill;
+  const sk = viewed?.id === skill.id ? viewed : skill;
+  const live = allSkills?.find((s) => s.id === skill.id);
+  const movedOn = !!live && live.currentRevision !== sk.currentRevision;
 
   function startEdit() {
     setForm({
@@ -132,7 +143,8 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
       if (!sk.isBuiltIn && form.promptText !== sk.promptText) {
         patch.promptText = form.promptText;
       }
-      const { scanWarnings: warnings } = await update.mutateAsync(patch);
+      const { scanWarnings: warnings, skill: saved } = await update.mutateAsync(patch);
+      setViewed({ ...sk, ...saved });
       setEditing(false);
       if (warnings.length > 0) {
         // Saved, but the scanner flagged the text — keep the modal open to say so.
@@ -154,7 +166,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     } catch (err) {
       setVerifyError(
         err instanceof ApiError && err.code === 'SKILL_CHANGED'
-          ? 'This skill changed since you opened it. Close it, open it again and read its current text before verifying.'
+          ? 'This skill changed since you opened it. Reload it and read its current text before verifying.'
           : errMsg(err, 'Failed to verify the skill')
       );
     }
@@ -222,6 +234,23 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
       ) : (
         <div className="space-y-5">
           <ScanWarnings warnings={scanWarnings} />
+          {movedOn && (
+            <Alert variant="warning">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>This skill changed since you opened it — reload to read the new text.</span>
+                <Button
+                  onClick={() => {
+                    setViewed(live);
+                    setVerifyError(null);
+                  }}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Reload
+                </Button>
+              </div>
+            </Alert>
+          )}
           <EntityMetaBadges
             isActive={sk.isActive}
             isBuiltIn={sk.isBuiltIn}
@@ -241,7 +270,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
               {visibleText(sk.promptText, { multiline: true })}
             </pre>
-            {isAdmin && !sk.isVerified && !sk.isBuiltIn && (
+            {isAdmin && !sk.isVerified && !sk.isBuiltIn && !movedOn && (
               <div className="mt-3 flex items-center gap-3">
                 <Button disabled={verify.isPending} onClick={handleVerify} variant="secondary">
                   Verify revision {sk.currentRevision}
@@ -271,7 +300,9 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
               </Button>
             </div>
           </div>
-          {showHistory && <SkillHistory skill={sk} />}
+          {showHistory && (
+            <SkillHistory onRestored={(restored) => setViewed({ ...sk, ...restored })} skill={sk} />
+          )}
         </div>
       )}
     </Modal>
