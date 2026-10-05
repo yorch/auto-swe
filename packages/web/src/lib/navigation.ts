@@ -357,7 +357,6 @@ export function navLabel(href: string): string {
 const EXTRA_PAGE_SECTIONS: [string, string][] = [
   ['/start', 'Work'],
   ['/epics', 'Work'],
-  ['/docs', 'Help'],
   ['/lessons', 'Govern'],
 ];
 
@@ -367,6 +366,10 @@ const EXTRA_PAGE_SECTIONS: [string, string][] = [
  */
 export function pageSection(pathname: string): string | null {
   const href = activeNavHref(pathname, NAV_ITEMS);
+  // Docs sits in the Account sidebar group but is help, not account management.
+  if (href === '/docs') {
+    return 'Help';
+  }
   const group = NAV_GROUPS.find((g) => g.items.some((i) => i.href === href));
   if (group && pageTitle(pathname) !== 'Home') {
     // A sub-page with its own title (autonomy decisions) still sits in its parent's group.
