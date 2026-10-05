@@ -1,6 +1,6 @@
 'use client';
 
-import { CHANNEL_ASSISTANT_TEMPLATE_NAME } from '@auto-swe/shared/lib/channelTask';
+import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
@@ -457,8 +457,7 @@ export default function TemplatesPage() {
   const [restoreError, setRestoreError] = useState<string | null>(null);
   // The built-in Channel Assistant template only records channel conversations: the platform
   // starts it, so it is shown but cannot be run or archived by hand.
-  const isSystemManaged = (t: WorkflowTemplateSummary) =>
-    t.team === null && t.name === CHANNEL_ASSISTANT_TEMPLATE_NAME;
+  const isSystemManaged = (t: WorkflowTemplateSummary) => isSystemManagedTemplate(t);
   const visibleTemplates = (templates ?? []).filter((t) => matchesStatusFilter(t, statusFilter));
 
   const handleFork = async (starter: StarterTemplate) => {
@@ -675,7 +674,7 @@ export default function TemplatesPage() {
                             size="sm"
                             variant="secondary"
                           >
-                            {canWrite(t.team?.id) ? 'Edit' : 'View'}
+                            {canWrite(t.team?.id) && !isSystemManaged(t) ? 'Edit' : 'View'}
                           </ButtonLink>
                           {canWrite(t.team?.id) && t.status === 'ARCHIVED' && (
                             <RestoreButton onError={setRestoreError} template={t} />

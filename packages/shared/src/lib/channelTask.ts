@@ -39,3 +39,12 @@ export const CHANNEL_TASK_STEER_SIGNAL = 'steer';
  */
 export const CHANNEL_ASSISTANT_TEMPLATE_NAME = 'Channel Assistant';
 export const CHANNEL_TASK_TEMPLATE_NAME = 'Channel Task';
+
+/**
+ * True for the platform-started Channel Assistant: a GLOBAL template (no team) of that
+ * name. It is listed but never launched or edited by hand — the UI hides Run/Edit and
+ * the run route refuses it.
+ */
+export function isSystemManagedTemplate(t: { name: string; team: unknown | null }): boolean {
+  return t.team === null && t.name === CHANNEL_ASSISTANT_TEMPLATE_NAME;
+}

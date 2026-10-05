@@ -1,5 +1,6 @@
 'use client';
 
+import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
@@ -37,7 +38,10 @@ export function StartWork({
   const teamId = useTeamStore((state) => state.selectedTeamId);
   const templates = useWorkflowTemplates(teamId);
   const runnable = (templates.data ?? []).filter(
-    (template) => template.status === 'ACTIVE' && template.activeVersion !== null
+    (template) =>
+      template.status === 'ACTIVE' &&
+      template.activeVersion !== null &&
+      !isSystemManagedTemplate(template)
   );
   const template = runnable.find((item) => item.id === templateId);
   const unrunnableTemplate =
