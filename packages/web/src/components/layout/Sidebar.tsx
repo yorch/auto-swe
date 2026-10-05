@@ -75,7 +75,7 @@ function NavIcon({ name }: { name: string }) {
 
 const SECTIONS_KEY = 'auto-swe.nav.sections';
 
-/** Which collapsible nav sections the user has opened, remembered per user in this browser. */
+/** Which collapsible nav sections the user has closed or reopened (all start open), remembered per user in this browser. */
 function useOpenSections(userKey: string) {
   const key = `${SECTIONS_KEY}.${userKey}`;
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -281,14 +281,25 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
               }
               const label = section.label;
               const holdsActive = section.items.some((i) => i.href === activeHref);
-              const isOpen = holdsActive || (sections.open[label] ?? false);
+              const panelId = `nav-section-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+              const isOpen = holdsActive || (sections.open[label] ?? true);
               return (
                 <div key={label}>
                   <button
+                    aria-controls={panelId}
+                    // Not `disabled`: the section holding the current page cannot collapse, but
+                    // it stays focusable so a screen reader still finds and announces it.
+                    aria-disabled={holdsActive}
                     aria-expanded={isOpen}
-                    className="flex w-full items-center gap-2 px-[18px] py-[7px] text-left text-[12px] font-semibold text-paper-400 hover:text-paper-200 disabled:cursor-default"
-                    disabled={holdsActive}
-                    onClick={() => sections.toggle(label, isOpen)}
+                    className={cn(
+                      'flex w-full items-center gap-2 px-[18px] py-[7px] text-left text-[12px] font-semibold text-paper-400 hover:text-paper-200',
+                      holdsActive && 'cursor-default'
+                    )}
+                    onClick={() => {
+                      if (!holdsActive) {
+                        sections.toggle(label, isOpen);
+                      }
+                    }}
                     type="button"
                   >
                     <svg
@@ -307,7 +318,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
                     </svg>
                     {label}
                   </button>
-                  {isOpen && links(true)}
+                  <div id={panelId}>{isOpen && links(true)}</div>
                 </div>
               );
             })}
