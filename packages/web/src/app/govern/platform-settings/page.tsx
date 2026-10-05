@@ -126,16 +126,18 @@ export default function GovernSettingsPage() {
 
   // Each row tracks its own save, so one slow or failing write neither freezes
   // the page nor reports against the wrong setting.
-  const track = (key: string, run: (callbacks: MutationCallbacks) => void) => {
+  // `mutateAsync` per call: per-call `mutate` callbacks live on one observer and TanStack
+  // drops those of any earlier call when a later one starts, leaving that row "Saving…".
+  const track = (key: string, run: () => Promise<unknown>) => {
     setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saving' } }));
-    run({
-      onError: (err) =>
+    run().then(
+      () => setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saved' } })),
+      (err: unknown) =>
         setRowStatus((prev) => ({
           ...prev,
           [key]: { message: errMsg(err, 'The change could not be saved.'), phase: 'error' },
-        })),
-      onSuccess: () => setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saved' } })),
-    });
+        }))
+    );
   };
 
   // Where a value came from, when this page can show that scope: the platform-wide view
@@ -231,7 +233,7 @@ export default function GovernSettingsPage() {
               canWriteHere={setting.canWrite}
               grantsHref={isAdmin ? '/govern/config-grants' : undefined}
               key={setting.key}
-              onClear={() => track(setting.key, (cb) => clearSetting.mutate(setting.key, cb))}
+              onClear={() => track(setting.key, () => clearSetting.mutateAsync(setting.key))}
               onEdit={() =>
                 setRowStatus((prev) => {
                   if (!prev[setting.key] || prev[setting.key].phase === 'saving') {
@@ -242,7 +244,7 @@ export default function GovernSettingsPage() {
                 })
               }
               onSave={(value) =>
-                track(setting.key, (cb) => setSetting.mutate({ key: setting.key, value }, cb))
+                track(setting.key, () => setSetting.mutateAsync({ key: setting.key, value }))
               }
               scope={selection.scope}
               setting={setting}
@@ -254,9 +256,4 @@ export default function GovernSettingsPage() {
       ))}
     </div>
   );
-}
-
-interface MutationCallbacks {
-  onError: (err: unknown) => void;
-  onSuccess: () => void;
 }
