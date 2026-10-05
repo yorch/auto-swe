@@ -18,8 +18,11 @@ const m = vi.hoisted(() => ({
   createPr: vi.fn(),
   gate: vi.fn(),
   importTree: vi.fn(async () => 10),
-  ledger: { repoId: 'repo-1' } as unknown,
+  ledger: { id: 'ledger-1', repoId: 'repo-1' } as unknown,
   persist: vi.fn(async () => {}),
+  prCreate: vi.fn(async (_args: unknown) => ({})),
+  prFind: vi.fn(async (_args: unknown) => null as { id: string } | null),
+  prUpdate: vi.fn(async (_args: unknown) => ({})),
   push: vi.fn(),
   resolveAgentSpec: vi.fn(),
   run: {
@@ -57,6 +60,7 @@ vi.mock('@auto-swe/shared/db', () => ({
         installation: null,
       })),
     },
+    pullRequest: { create: m.prCreate, findFirst: m.prFind, update: m.prUpdate },
     workflowRun: { findUnique: vi.fn(async () => m.run) },
   },
 }));
@@ -190,7 +194,8 @@ beforeEach(() => {
     template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
     templateId: 'tpl-1',
   };
-  m.ledger = { repoId: 'repo-1' };
+  m.ledger = { id: 'ledger-1', repoId: 'repo-1' };
+  m.prFind.mockResolvedValue(null);
   m.slots = [{ launchedAt: new Date(1), teamId: 'team-1', workflowId: 'wf-1' }];
   m.temporal = {};
   m.toolKeys = null;
@@ -539,6 +544,46 @@ describe('delivery: trust boundary and gate-before-push', () => {
     });
     expect(arg.body).not.toMatch(/@octocat/);
     expect(r).toMatchObject({ prNumber: 7, prUrl: 'https://x/pull/7' });
+  });
+
+  it("tracks the draft PR on the run's own ledger row", async () => {
+    await runAgentTask({ request: deliver('draft_pr') });
+    expect(m.prFind).toHaveBeenCalledWith({
+      select: { id: true },
+      where: { prNumber: 7, repoId: 'repo-1' },
+    });
+    expect(m.prCreate).toHaveBeenCalledTimes(1);
+    expect(m.prCreate.mock.calls[0]?.[0]).toEqual({
+      data: {
+        ciStatus: 'PENDING',
+        headSha: GATED.sha,
+        isDraft: true,
+        prNumber: 7,
+        repoId: 'repo-1',
+        status: 'OPEN',
+        title: '[auto-swe] agent run: fix the typo',
+        workflowId: 'ledger-1',
+      },
+    });
+  });
+
+  it('refreshes the row instead of duplicating it when the PR number is already tracked', async () => {
+    m.prFind.mockResolvedValue({ id: 'pr-row' });
+    await runAgentTask({ request: deliver('draft_pr') });
+    expect(m.prCreate).not.toHaveBeenCalled();
+    expect(m.prUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'pr-row' } }));
+  });
+
+  it('does not track a PR for deliver=branch', async () => {
+    await runAgentTask({ request: deliver('branch') });
+    expect(m.prFind).not.toHaveBeenCalled();
+    expect(m.prCreate).not.toHaveBeenCalled();
+  });
+
+  it('still returns the opened PR when the tracking row cannot be written', async () => {
+    m.prCreate.mockRejectedValue(new Error('db down'));
+    const r = await runAgentTask({ request: deliver('draft_pr') });
+    expect(r).toMatchObject({ gate: 'passed', prNumber: 7 });
   });
 
   it('puts agent-controlled file paths in a fence they cannot close, with mentions defused', async () => {

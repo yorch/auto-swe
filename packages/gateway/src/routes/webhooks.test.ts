@@ -802,6 +802,31 @@ describe('webhook routes', () => {
       expect(evalCreateCalls).toHaveLength(1);
     });
 
+    it('finds a PR an agent run opened and records its merge against the finished run', async () => {
+      // An Agent Run's draft PR is tracked on the run's own ledger row. The run
+      // ends when it opens the PR, so the merge signal finds no execution: the
+      // merge is recorded and the delivery accepted.
+      const agentWorkflowId = 'agent-0a1b2c3d111122223333444455556666';
+      trackedPr = {
+        ...trackedRow(),
+        workflow: {
+          repository: { team: null },
+          temporalWorkflowId: agentWorkflowId,
+          workRequest: { externalTicketId: agentWorkflowId },
+        },
+      };
+      signalGoneWorkflowIds.add(agentWorkflowId);
+
+      const res = await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data).toMatchObject({
+        signalSent: false,
+        workflowId: agentWorkflowId,
+      });
+      expect(prRowStatus).toBe('MERGED');
+    });
+
     it('re-signals on a manual redelivery after a failed merge signal', async () => {
       trackedPr = trackedRow();
       signalFailWorkflowIds.add('eng-acme-payments-api-JIRA-1');
