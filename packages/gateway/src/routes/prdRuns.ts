@@ -195,6 +195,8 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
             requestPayload,
             templateId: template.id,
             templateVersion: template.activeVersion,
+            // `PRD-<id>` is generated here, not a tracker ticket.
+            ticketIsSynthetic: true,
           },
           temporalWorkflowId: prdWorkflowId,
         },

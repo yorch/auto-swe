@@ -242,7 +242,11 @@ describe('POST /api/v1/agent-runs', () => {
     expect(req.externalTicketId).toMatch(/^agent-[0-9a-f]{32}$/);
     // The ledger row carries the repo: the worker derives team and org from it.
     expect(ledgers[0]).toMatchObject({ currentStatus: 'IMPLEMENTING', repoId: REPO });
-    expect(runInputs[0]).toMatchObject({ requestedById: USER, templateId: TEMPLATE });
+    expect(runInputs[0]).toMatchObject({
+      requestedById: USER,
+      templateId: TEMPLATE,
+      ticketIsSynthetic: true,
+    });
   });
 
   it('assigns a branch only when the run delivers', async () => {

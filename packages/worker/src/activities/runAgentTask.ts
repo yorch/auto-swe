@@ -10,6 +10,7 @@ import {
   isLaunchableAgentKey,
 } from '@auto-swe/shared/lib/agentRun';
 import { decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
+import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { FileChange, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -17,6 +18,7 @@ import { selectAgentRunTools } from '../agents/agentRunTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { loadLiveAgentRunSlots } from '../lib/agentRunSlots.js';
 import { AgentTracer, redactString } from '../lib/agentTracer.js';
 import { boundToolKeys } from '../lib/boundToolKeys.js';
@@ -112,7 +114,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     );
   }
   const ledger = await prisma.activeWorkflow.findFirst({
-    select: { repoId: true },
+    select: { id: true, repoId: true },
     where: { temporalWorkflowId: workflowId },
   });
   if (!ledger?.repoId || ledger.repoId !== repoId) {
@@ -336,6 +338,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
 
     let pr: { prNumber: number; prUrl: string } | undefined;
     if (payload.deliver === 'draft_pr') {
+      const title = prTitle(request.description);
       try {
         pr = await scm.createOrUpdatePullRequest({
           baseBranch: repo.defaultBranch,
@@ -350,7 +353,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
           draft: true,
           headBranch: branch,
           repo: repoRef,
-          title: prTitle(request.description),
+          title,
         });
       } catch (err) {
         // The branch is already published, and stays so. A repository that cannot
@@ -364,6 +367,17 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
           { branch, headSha: gated.sha }
         );
       }
+      await recordAgentRunPullRequest(
+        {
+          headSha: gated.sha,
+          isDraft: true,
+          ledgerId: ledger.id,
+          prNumber: pr.prNumber,
+          repoId,
+          title,
+        },
+        tracer
+      );
     }
 
     return {
@@ -383,6 +397,56 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     // The agent workspace never holds the push credential, but both are removed.
     await agentWs?.destroy();
     await trusted?.destroy();
+  }
+}
+
+/**
+ * Track the PR on the run's own ledger row, as the workflow's PR step does, so it
+ * shows on /pull-requests and the webhook lifecycle finds it. Never fails the run:
+ * the PR is already open and the branch pushed, and a retry of this activity would
+ * not reuse the open PR (it would be refused as a duplicate). The failure is
+ * logged and traced instead, so the run viewer shows it.
+ *
+ * Always a `create`: the host just opened a new PR, so a row already holding this
+ * (repository, number) belongs to a different PR (the repository was repointed or
+ * recreated and numbering restarted). The partial unique index refuses the insert,
+ * and that other row, with its workflow link and MERGED state, stays untouched.
+ */
+async function recordAgentRunPullRequest(
+  args: {
+    headSha: string;
+    isDraft: boolean;
+    ledgerId: string;
+    prNumber: number;
+    repoId: string;
+    title: string;
+  },
+  tracer: AgentTracer
+): Promise<void> {
+  try {
+    await prisma.pullRequest.create({
+      data: {
+        ciStatus: 'PENDING',
+        headSha: args.headSha,
+        isDraft: args.isDraft,
+        prNumber: args.prNumber,
+        repoId: args.repoId,
+        status: 'OPEN',
+        title: clampPullRequestTitle(args.title),
+        workflowId: args.ledgerId,
+      },
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logWarn('agent run pull request was opened but could not be tracked', {
+      error,
+      prNumber: args.prNumber,
+    });
+    tracer.addActivityEvent({
+      error,
+      name: 'pr.record_failed',
+      outputJson: { prNumber: args.prNumber },
+    });
   }
 }
 

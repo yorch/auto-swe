@@ -18,6 +18,7 @@ import {
   ExistingPullRequestNotDraftError,
 } from '../lib/scm/types.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
+import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
 
 export interface CreatePullRequestOptions {
   /** Open the PR as a draft; a host that cannot fails the step, never falls back. */
@@ -189,7 +190,10 @@ async function doCreateOrUpdatePullRequest(
   });
 
   // Best-effort tracker sync on PR opened.
-  if (request.externalTicketId) {
+  if (
+    request.externalTicketId &&
+    (await requestHasTrackerTicket(request.workRequestId, request.externalTicketId))
+  ) {
     const trackerConfig = await resolveIssueTrackerConfig();
     await syncTrackerOnEvent(
       {

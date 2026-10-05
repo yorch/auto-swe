@@ -5,7 +5,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import { isTrackerTicket, syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { Context } from '@temporalio/activity';
@@ -595,6 +595,7 @@ export async function finalizeRun(
           payload: true,
           slackChannelId: true,
           slackMessageTs: true,
+          ticketIsSynthetic: true,
         },
       },
     },
@@ -840,6 +841,7 @@ export async function finalizeRun(
   if (
     notify &&
     externalTicketId &&
+    isTrackerTicket(run?.workRequest) &&
     (finalStatus === 'SUCCESS' || finalStatus === 'FAILED' || finalStatus === 'TIMED_OUT')
   ) {
     const trackerConfig = await resolveIssueTrackerConfig();

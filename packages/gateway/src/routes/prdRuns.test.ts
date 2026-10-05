@@ -161,6 +161,16 @@ describe('POST /prd-runs', () => {
     expect(h.runInputs[0]).toMatchObject({ connectionId: REPO_ID, isCrossRepo: true });
   });
 
+  it('flags the generated PRD-<id> ticket as synthetic', async () => {
+    const res = await submit(h);
+
+    expect(res.statusCode).toBe(201);
+    expect(h.runInputs[0]).toMatchObject({
+      externalTicketId: expect.stringMatching(/^PRD-[0-9A-F]{8}$/),
+      ticketIsSynthetic: true,
+    });
+  });
+
   it('writes no ActiveWorkflow row', async () => {
     const res = await submit(h);
 

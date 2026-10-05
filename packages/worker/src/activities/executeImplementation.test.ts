@@ -48,7 +48,10 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
-vi.mock('@auto-swe/shared/lib/trackerSync', () => ({ syncTrackerOnEvent: vi.fn(async () => {}) }));
+vi.mock('@auto-swe/shared/lib/trackerSync', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/trackerSync')>()),
+  syncTrackerOnEvent: vi.fn(async () => {}),
+}));
 
 vi.mock('@temporalio/activity', () => ({
   ApplicationFailure: { nonRetryable: (msg: string) => new Error(msg) },

@@ -384,8 +384,8 @@ export async function submitPrdWorkRequests(
       const repoInfo = repoById.get(repo.id) ?? repo;
 
       // Prefer tracker-assigned ID; fall back to a generated one.
-      const externalTicketId =
-        storyTicketMap.get(story.title.toLowerCase()) ?? `${prdPrefix}-${storyIndex}`;
+      const trackerTicketId = storyTicketMap.get(story.title.toLowerCase());
+      const externalTicketId = trackerTicketId ?? `${prdPrefix}-${storyIndex}`;
 
       const workRequestId = crypto.randomUUID();
       if (!repoInfo.organizationName || !repoInfo.repoName) {
@@ -454,6 +454,7 @@ export async function submitPrdWorkRequests(
             requestPayload,
             templateId,
             templateVersion,
+            ticketIsSynthetic: trackerTicketId === undefined,
           },
         });
       } catch {

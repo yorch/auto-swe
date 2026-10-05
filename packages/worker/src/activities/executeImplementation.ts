@@ -36,6 +36,7 @@ import {
 } from '../lib/repoDependencyContext.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
 import {
@@ -274,12 +275,14 @@ export async function executeImplementation(
     }
 
     // Fire-and-forget tracker sync — never blocks implementation
-    resolveIssueTrackerConfig()
-      .then((trackerConfig) =>
-        syncTrackerOnEvent(
-          { issueId: request.externalTicketId, type: 'workflow_started' },
-          trackerConfig
-        )
+    requestHasTrackerTicket(request.workRequestId, request.externalTicketId)
+      .then(async (isTicket) =>
+        isTicket
+          ? syncTrackerOnEvent(
+              { issueId: request.externalTicketId, type: 'workflow_started' },
+              await resolveIssueTrackerConfig()
+            )
+          : undefined
       )
       .catch(() => null);
 
