@@ -7,9 +7,9 @@ import {
   AgentFormFields,
   type AgentFormValue,
 } from '@/components/agents/AgentFormFields';
-import { broaderFallbacks } from '@/components/agents/agentFallback';
 import { AgentHistoryModal } from '@/components/agents/AgentHistoryModal';
 import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
+import { broaderFallbacks } from '@/components/agents/agentFallback';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
