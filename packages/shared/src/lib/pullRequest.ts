@@ -13,7 +13,10 @@ export const PULL_REQUEST_TITLE_MAX_LENGTH = 300;
 
 /** A host-supplied title as stored: trimmed and capped, null when nothing is left. */
 export function clampPullRequestTitle(title: string | null | undefined): string | null {
-  const trimmed = title?.trim().slice(0, PULL_REQUEST_TITLE_MAX_LENGTH);
+  // By code point, so a surrogate pair is never cut in half.
+  const trimmed = Array.from(title?.trim() ?? '')
+    .slice(0, PULL_REQUEST_TITLE_MAX_LENGTH)
+    .join('');
   return trimmed ? trimmed : null;
 }
 

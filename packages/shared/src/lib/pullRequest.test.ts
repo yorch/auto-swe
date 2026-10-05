@@ -31,6 +31,14 @@ describe('clampPullRequestTitle', () => {
     expect(clampPullRequestTitle('  fix it  ')).toBe('fix it');
     expect(clampPullRequestTitle('x'.repeat(1000))).toHaveLength(PULL_REQUEST_TITLE_MAX_LENGTH);
     expect(clampPullRequestTitle('   ')).toBeNull();
+  });
+
+  it('never splits a surrogate pair at the cap', () => {
+    const clamped = clampPullRequestTitle(`${'x'.repeat(PULL_REQUEST_TITLE_MAX_LENGTH - 1)}😀😀`);
+    expect(clamped).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    );
+    expect(Array.from(clamped ?? '')).toHaveLength(PULL_REQUEST_TITLE_MAX_LENGTH);
     expect(clampPullRequestTitle(undefined)).toBeNull();
   });
 });

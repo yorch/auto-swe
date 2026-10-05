@@ -135,6 +135,43 @@ describe('which ledger row a new PR is linked to', () => {
   });
 });
 
+describe('a PR a reviewer closed', () => {
+  const closedInLineage = (lineage: boolean) =>
+    m.prisma.pullRequest.findFirst.mockImplementation(
+      async (args: { where: { status?: string } }) =>
+        args.where.status === 'OPEN' || !lineage ? null : { prNumber: 5, status: 'CLOSED' }
+    );
+
+  it('is not replaced when the same workflow pushes again', async () => {
+    closedInLineage(true);
+    await expect(createOrUpdatePullRequest(request, codeResult)).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'PR_CLOSED_BY_REVIEWER',
+    });
+    expect(m.createPr).not.toHaveBeenCalled();
+    expect(m.prisma.pullRequest.create).not.toHaveBeenCalled();
+    // The lookup is scoped to this execution's own ledger lineage.
+    expect(m.prisma.pullRequest.findFirst.mock.calls.at(-1)?.[0].where).toMatchObject({
+      workflow: { temporalWorkflowId: 'wf-own', workRequestId: 'wr-1' },
+    });
+  });
+
+  it('does not stop a fresh run of the request, which opens its own PR', async () => {
+    closedInLineage(false);
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.pullRequest.create).toHaveBeenCalled();
+  });
+
+  it('does not stop a workflow whose latest PR is merged or open elsewhere', async () => {
+    m.prisma.pullRequest.findFirst.mockImplementation(
+      async (args: { where: { status?: string } }) =>
+        args.where.status === 'OPEN' ? null : { prNumber: 5, status: 'MERGED' }
+    );
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.pullRequest.create).toHaveBeenCalled();
+  });
+});
+
 describe('createOrUpdatePullRequest with a PR already recorded for the work request', () => {
   beforeEach(() => {
     m.prisma.pullRequest.findFirst.mockResolvedValue({ id: 'pr-row', prNumber: 5 });

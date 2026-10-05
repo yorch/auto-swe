@@ -104,6 +104,25 @@ async function doCreateOrUpdatePullRequest(
 
   const title = formatPRTitle(request, workflowDefaults.prTitleTemplate);
 
+  // A reviewer closed this workflow's PR without merging it. Repushing must not
+  // quietly open a replacement: the close is a decision. A new run of the same
+  // request has its own ledger row, so it is not stopped by this one.
+  const latest = await prisma.pullRequest.findFirst({
+    orderBy: { openedAt: 'desc' },
+    select: { prNumber: true, status: true },
+    where: {
+      repoId: repo.id,
+      workflow: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },
+    },
+  });
+  if (latest?.status === 'CLOSED') {
+    throw ApplicationFailure.nonRetryable(
+      `PR #${latest.prNumber} for ${codeResult.branch} was closed without merging, so no new pull ` +
+        'request is opened for this run. Reopen it, or start a new run of the request.',
+      'PR_CLOSED_BY_REVIEWER'
+    );
+  }
+
   // Create the PR (or, on Temporal retries, reuse one a prior attempt created
   // on the host but crashed before persisting the DB row — the tracking row is
   // still written below). Only a prior attempt could have orphaned a PR, so

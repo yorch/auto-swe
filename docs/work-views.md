@@ -20,9 +20,12 @@ Every pull request the platform opens has one `PullRequest` row, created by the
 | `openedAt` / `mergedAt` / `closedAt` | when the PR was opened, merged, and closed (a merge sets both of the last two) |
 | `ciStatus`, `headSha` | the CI verdict for the current head, unchanged by this lifecycle |
 
-A closed PR is never reused: when a request runs again after its PR was closed, the worker opens a
-new one, and the old row stays as history. Only an `OPEN` row for the same request and repository is
-updated on a re-push.
+Only an `OPEN` row for the same request and repository is updated on a re-push. A close is a
+decision, so it is respected within the workflow that opened the PR: when `createOrUpdatePullRequest`
+runs again in a workflow whose latest PR for the repository was closed without merging, it fails
+non-retryably with `PR_CLOSED_BY_REVIEWER` instead of opening a replacement. A new run of the same
+request has its own ledger row, is not stopped by that close, and opens a new PR; the old row stays as
+history.
 
 ### 1.1 Webhook events
 
@@ -30,7 +33,7 @@ updated on a re-push.
 
 | Event | Effect |
 |---|---|
-| `closed`, merged | `OPEN` → `MERGED`, `mergedAt` and `closedAt` set, the workflow signalled and the merge side effects run (evals label, Slack, tracker) |
+| `closed`, merged | `OPEN` or `CLOSED` → `MERGED`, `mergedAt` and `closedAt` set, the workflow signalled and the merge side effects run (evals label, Slack, tracker) |
 | `closed`, not merged | `OPEN` → `CLOSED`, `closedAt` set. The workflow is not signalled |
 | `reopened` | `CLOSED` → `OPEN`, `closedAt` cleared. A merged PR is never reopened |
 | `ready_for_review` / `converted_to_draft` | `isDraft` set to false / true |
@@ -43,9 +46,12 @@ The rest of the contract is the same as for every webhook delivery:
 
 - The delivery is bound to the host its secret proved, exactly as for a merge, so a payload naming a
   repository on another host changes nothing (see [repositories.md](./repositories.md)).
-- Each write is guarded on the row's current status, so a redelivered event finds the row already
-  changed and does nothing. A redelivered merge cannot run the merge side effects twice: the
-  `OPEN` → `MERGED` update is the claim, and only the delivery that wins it signals the workflow.
+- Every status transition is guarded on the row's current status (merge from `OPEN` or `CLOSED`,
+  close from `OPEN`, reopen from `CLOSED`), so a redelivered event finds the row already changed and
+  does nothing. `MERGED` is terminal: the transition into it is the claim, and only the delivery that
+  wins it signals the workflow, so a redelivered merge cannot run the merge side effects twice. A
+  failed signal restores the row's previous status. Draft and title updates are plain idempotent
+  sets, not status-guarded.
 - The title is host text, untrusted: it is trimmed and capped on write, and every surface renders it
   as plain text.
 
@@ -140,14 +146,17 @@ http(s) address.
 
 ## Limitations
 
+- A PR closed by a reviewer is not replaced by a re-push in the same workflow; the run fails until
+  the PR is reopened or the request is run again.
 - Pull requests opened outside the platform are not listed: a webhook only updates a row the
   platform created.
 - Review decisions (approvals, requested changes) are not tracked; the state is open, merged or
   closed, plus draft.
 - A close without a merge is recorded but does not signal the workflow, so a run waiting on a human
   merge keeps waiting until it times out or is cancelled.
-- A merge is matched only to an `OPEN` row. If a close was recorded and the reopen was never
-  delivered, a later merge is ignored.
+- Close and reopen events are applied in arrival order. If a `reopened` is lost, or arrives before
+  the `closed` it follows, the row reads `CLOSED` for a PR that is open until the next merge or close
+  event corrects it. A merge is still recorded from either state.
 - A ticket's title, status and link are a snapshot from submit time, and exist only when a tracker
   is configured; they do not follow later edits in the tracker.
 - Tickets are grouped over every visible request matching the filters before they are paged, so a

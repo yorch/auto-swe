@@ -534,7 +534,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           prNumber,
           repository: repositoryWhere,
-          status: 'OPEN',
+          // CLOSED too: a reopen that was lost or arrived late must not strand a merge.
+          status: { in: ['OPEN', 'CLOSED'] },
         },
       });
 
@@ -542,14 +543,14 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: { ignored: true, reason: 'No tracked workflow for this PR' } };
       }
 
-      // Atomic OPEN→MERGED guard, then signal, rolling back on failure — the
+      // Atomic OPEN|CLOSED→MERGED guard, then signal, rolling back on failure — the
       // same shape as `resolveHitlStep` in `lib/hitlResolve.ts`, for the same
-      // reason. The `status: 'OPEN'` predicate is the real concurrency guard
+      // reason. The status predicate is the real concurrency guard
       // (the lookup above is an optimistic fast-path): two concurrent
       // deliveries of the same merge race here and only one updates a row.
       const merged = await fastify.prisma.pullRequest.updateMany({
         data: { closedAt: event.mergedAt, mergedAt: event.mergedAt, status: 'MERGED' },
-        where: { id: pullRequest.id, status: 'OPEN' },
+        where: { id: pullRequest.id, status: { in: ['OPEN', 'CLOSED'] } },
       });
       if (merged.count === 0) {
         // Someone else won the race and is delivering the signal; a genuine
@@ -587,7 +588,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           );
           await fastify.prisma.pullRequest
             .updateMany({
-              data: { closedAt: null, mergedAt: null, status: 'OPEN' },
+              data: {
+                closedAt: pullRequest.closedAt,
+                mergedAt: null,
+                status: pullRequest.status,
+              },
               where: { id: pullRequest.id, status: 'MERGED' },
             })
             .catch((rollbackErr: unknown) => {

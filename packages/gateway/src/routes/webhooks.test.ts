@@ -347,8 +347,9 @@ describe('webhook routes', () => {
           // /git writes `status`; model the OPEN→MERGED guard for real so the
           // duplicate and rollback paths are genuinely exercised.
           if (typeof args.data.status === 'string') {
-            const guard = args.where.status as string | undefined;
-            if (guard !== undefined && guard !== prRowStatus) {
+            const guard = args.where.status as string | { in: string[] } | undefined;
+            const allowed = typeof guard === 'object' ? guard.in : guard ? [guard] : undefined;
+            if (allowed !== undefined && !allowed.includes(prRowStatus)) {
               return { count: 0 };
             }
             prRowStatus = args.data.status;
@@ -497,7 +498,9 @@ describe('webhook routes', () => {
 
     function trackedRow(): Record<string, unknown> {
       return {
+        closedAt: null,
         id: 'pr-row-1',
+        status: 'OPEN',
         workflow: {
           repository: { team: null },
           temporalWorkflowId: 'eng-acme-payments-api-JIRA-1',
@@ -545,7 +548,7 @@ describe('webhook routes', () => {
       expect(updateManyCalls).toEqual([
         {
           data: { closedAt: expect.any(Date), mergedAt: expect.any(Date), status: 'MERGED' },
-          where: { id: 'pr-row-1', status: 'OPEN' },
+          where: { id: 'pr-row-1', status: { in: ['OPEN', 'CLOSED'] } },
         },
       ]);
       expect(prRowStatus).toBe('MERGED');
@@ -669,6 +672,38 @@ describe('webhook routes', () => {
         expect(updateManyCalls).toHaveLength(0);
       });
 
+      const closedRow = () => ({
+        closedAt: new Date('2026-10-01T00:00:00Z'),
+        id: 'pr-row-1',
+        status: 'CLOSED',
+        workflow: { repository: { team: null }, temporalWorkflowId: 'wf-1', workRequest: null },
+      });
+
+      it('merges a PR recorded as CLOSED (a reopen that was lost), signalling once', async () => {
+        trackedPr = closedRow();
+        prRowStatus = 'CLOSED';
+        const res = await pr('closed', {}, true);
+        expect(res.statusCode).toBe(200);
+        expect(prRowStatus).toBe('MERGED');
+        expect(signalCalls).toHaveLength(1);
+        // MERGED is terminal: a redelivery claims nothing and signals nothing.
+        await pr('closed', {}, true);
+        expect(signalCalls).toHaveLength(1);
+      });
+
+      it('restores CLOSED, not OPEN, when the merge signal fails', async () => {
+        trackedPr = closedRow();
+        prRowStatus = 'CLOSED';
+        signalFailWorkflowIds.add('wf-1');
+        const res = await pr('closed', {}, true);
+        expect(res.statusCode).toBe(503);
+        expect(updateManyCalls.at(-1)).toEqual({
+          data: { closedAt: new Date('2026-10-01T00:00:00Z'), mergedAt: null, status: 'CLOSED' },
+          where: { id: 'pr-row-1', status: 'MERGED' },
+        });
+        expect(prRowStatus).toBe('CLOSED');
+      });
+
       it('uses the time the host reports for a merge', async () => {
         trackedPr = {
           id: 'pr-row-1',
@@ -725,7 +760,7 @@ describe('webhook routes', () => {
       expect(updateManyCalls).toEqual([
         {
           data: { closedAt: expect.any(Date), mergedAt: expect.any(Date), status: 'MERGED' },
-          where: { id: 'pr-row-1', status: 'OPEN' },
+          where: { id: 'pr-row-1', status: { in: ['OPEN', 'CLOSED'] } },
         },
         {
           data: { closedAt: null, mergedAt: null, status: 'OPEN' },
@@ -759,7 +794,7 @@ describe('webhook routes', () => {
       expect(updateManyCalls).toEqual([
         {
           data: { closedAt: expect.any(Date), mergedAt: expect.any(Date), status: 'MERGED' },
-          where: { id: 'pr-row-1', status: 'OPEN' },
+          where: { id: 'pr-row-1', status: { in: ['OPEN', 'CLOSED'] } },
         },
       ]);
       expect(prRowStatus).toBe('MERGED');
