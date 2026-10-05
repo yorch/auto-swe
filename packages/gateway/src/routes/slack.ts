@@ -30,11 +30,14 @@ import {
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
-import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
+import { escapeSlackMrkdwn, syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { authorizeLaunch, launchRefusalMessage } from '../lib/launchAuthorization.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import { buildWorkflowRunControlFilter } from '../lib/runVisibility.js';
+import {
+  buildWorkflowHumanStepControlFilter,
+  buildWorkflowRunControlFilter,
+} from '../lib/runVisibility.js';
 import {
   fetchSlackChannelIsPrivate,
   openSlackView,
@@ -468,6 +471,8 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
 
       const actionId = payload.actions?.[0]?.action_id ?? '';
       const isHitlResolve = actionId === 'hitl_resolve' || actionId.startsWith('hitl_resolve:');
+      const isHitlModalSubmission =
+        payload.type === 'view_submission' && payload.view?.callback_id === HITL_MODAL_CALLBACK_ID;
       const isRunShortcut =
         payload.type === 'shortcut' && payload.callback_id === 'auto_swe_run_shortcut';
 
@@ -493,6 +498,17 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       if (!user) {
+        if (isHitlModalSubmission) {
+          // A modal has no response_url to carry a hint; an inline error is the one
+          // surface that reaches the submitter.
+          return {
+            errors: {
+              [HITL_COMMENT_BLOCK]:
+                'Link your Slack account in Settings first — then you can resolve steps from Slack.',
+            },
+            response_action: 'errors',
+          };
+        }
         if (isHitlResolve) {
           // Button clicks come from arbitrary channel members — answer the
           // clicker with an ephemeral hint instead of a bare 403 (Slack shows
@@ -551,6 +567,11 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         return handleRunModalSubmission(fastify, user, payload);
       }
 
+      // View-submission: the approve / reject comment modal opened from a HITL button.
+      if (isHitlModalSubmission) {
+        return handleHitlModalSubmission(fastify, request, user, payload, signingSecret);
+      }
+
       if (!actionId) {
         return { data: { ignored: true } };
       }
@@ -559,7 +580,7 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       // Shares the inbox route's resolve core (lib/hitlResolve.ts): same team
       // visibility, action validation, atomic guard, and signal rollback.
       if (isHitlResolve) {
-        return handleHitlResolveAction(fastify, request, user, payload);
+        return handleHitlResolveAction(fastify, request, user, payload, signingSecret);
       }
 
       // Handle known actions
@@ -1490,7 +1511,8 @@ async function handleHitlResolveAction(
   fastify: FastifyInstance,
   request: FastifyRequest,
   user: { id: string; role: Role },
-  payload: SlackInteractivePayload
+  payload: SlackInteractivePayload,
+  signingSecret: string
 ): Promise<unknown> {
   let parsed: HitlButtonValue = {};
   try {
@@ -1507,6 +1529,66 @@ async function handleHitlResolveAction(
     return { data: { action: 'hitl_resolve', ignored: true, reason: 'malformed_value' } };
   }
 
+  // Approve and reject collect a note first, as the dashboard does: a reject needs a reason and
+  // an approve may carry a comment. Every other action (a decision option) resolves in one click.
+  if (parsed.action === 'approve' || parsed.action === 'reject') {
+    return openHitlCommentModal(fastify, user, payload, signingSecret, {
+      action: parsed.action,
+      stepId: parsed.stepId,
+    });
+  }
+
+  const outcome = await resolveHitlStepFromSlack(
+    fastify,
+    request,
+    user,
+    {
+      channelId: payload.channel?.id,
+      messageTs: payload.message?.ts,
+      slackUserId: payload.user?.id,
+    },
+    payload,
+    { action: parsed.action, stepId: parsed.stepId, value: parsed.value }
+  );
+  if (outcome.ok) {
+    return { data: outcome.data };
+  }
+  await respondToInteraction(payload, hitlErrorText(outcome.code, outcome.message), {
+    ephemeral: true,
+  });
+  return { data: { action: 'hitl_resolve', code: outcome.code, ok: false } };
+}
+
+interface HitlResolveTarget {
+  stepId: string;
+  action: string;
+  value?: unknown;
+  comment?: string | undefined;
+}
+
+type HitlSlackOutcome =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; code: HitlResolveErrorCode; message: string };
+
+/**
+ * The resolve core shared by the one-click buttons and the comment modal: authorization and
+ * validation live in `resolveHitlStep`, and on success the thread confirmation and the
+ * announcement edit follow. Nothing here trusts the caller's description of the step — the clicker
+ * is the platform user the Slack id maps to, and the step is looked up under that user's control
+ * filter every time.
+ */
+async function resolveHitlStepFromSlack(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  user: { id: string; role: Role },
+  where: {
+    channelId: string | undefined;
+    messageTs: string | undefined;
+    slackUserId: string | undefined;
+  },
+  interaction: SlackInteractivePayload,
+  target: HitlResolveTarget
+): Promise<HitlSlackOutcome> {
   const result = await resolveHitlStep(
     {
       // Slack authenticates by request signature, not `requireAuth`, so there
@@ -1517,50 +1599,297 @@ async function handleHitlResolveAction(
       prisma: fastify.prisma,
       temporal: fastify.temporal,
     },
-    parsed.stepId,
-    parsed.action,
-    parsed.value,
-    { role: user.role, sub: user.id }
+    target.stepId,
+    target.action,
+    target.value,
+    { role: user.role, sub: user.id },
+    target.comment
   );
-
-  if (result.ok) {
-    const who = payload.user?.id ? `<@${payload.user.id}>` : 'someone';
-    let text: string;
-    if (result.status === 'PENDING') {
-      text = `:hourglass: *${result.title}* — ${who} recorded \`${parsed.action}\` (${result.currentApprovers}/${result.requiredApprovers}). ${result.approvalsRemaining} more approval${result.approvalsRemaining === 1 ? '' : 's'} needed.`;
-    } else if (result.signalSent) {
-      text = `:white_check_mark: *${result.title}* — resolved with \`${parsed.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}).`;
-    } else {
-      text = `:white_check_mark: *${result.title}* — recorded as \`${parsed.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}), but the workflow run had already finished, so nothing was signalled.`;
-    }
-    if (result.status === 'RESOLVED') {
-      // Replaces the buttons with the decision, so a decided step reads as decided in place.
-      // Not awaited: Slack wants the interaction acknowledged within seconds, and this never throws.
-      void syncSlackHumanStepOutcome({ log: request.log, prisma: fastify.prisma }, result.stepId, {
-        action: parsed.action,
-        userId: user.id,
-        value: parsed.value,
-      });
-    }
-    await respondToInteraction(payload, text, { ephemeral: result.status === 'PENDING' });
-    return {
-      data: {
-        action: 'hitl_resolve',
-        approvalsRemaining: result.approvalsRemaining,
-        currentApprovers: result.currentApprovers,
-        ok: true,
-        requiredApprovers: result.requiredApprovers,
-        signalSent: result.signalSent,
-        status: result.status,
-        stepId: result.stepId,
-      },
-    };
+  if (!result.ok) {
+    return { code: result.code, message: result.message, ok: false };
   }
 
-  await respondToInteraction(payload, hitlErrorText(result.code, result.message), {
-    ephemeral: true,
+  const who = where.slackUserId ? `<@${where.slackUserId}>` : 'someone';
+  let text: string;
+  if (result.status === 'PENDING') {
+    text = `:hourglass: *${result.title}* — ${who} recorded \`${target.action}\` (${result.currentApprovers}/${result.requiredApprovers}). ${result.approvalsRemaining} more approval${result.approvalsRemaining === 1 ? '' : 's'} needed.`;
+  } else if (result.signalSent) {
+    text = `:white_check_mark: *${result.title}* — resolved with \`${target.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}).`;
+  } else {
+    text = `:white_check_mark: *${result.title}* — recorded as \`${target.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}), but the workflow run had already finished, so nothing was signalled.`;
+  }
+  if (result.status === 'RESOLVED') {
+    // Replaces the buttons with the decision, so a decided step reads as decided in place.
+    // Not awaited: Slack wants the interaction acknowledged within seconds, and this never throws.
+    void syncSlackHumanStepOutcome({ log: request.log, prisma: fastify.prisma }, result.stepId, {
+      action: target.action,
+      comment: target.comment,
+      userId: user.id,
+      value: target.value,
+    });
+  }
+  // A modal submission carries no response_url, so a pending-approval note goes to the thread too.
+  await respondToInteraction(
+    {
+      ...interaction,
+      ...(where.channelId ? { channel: { id: where.channelId } } : {}),
+      ...(where.messageTs ? { message: { ts: where.messageTs } } : {}),
+    },
+    text,
+    { ephemeral: result.status === 'PENDING' && Boolean(interaction.response_url) }
+  );
+  return {
+    data: {
+      action: 'hitl_resolve',
+      approvalsRemaining: result.approvalsRemaining,
+      currentApprovers: result.currentApprovers,
+      ok: true,
+      requiredApprovers: result.requiredApprovers,
+      signalSent: result.signalSent,
+      status: result.status,
+      stepId: result.stepId,
+    },
+    ok: true,
+  };
+}
+
+// ── HITL approve / reject comment modal ─────────────────────────────────────
+
+const HITL_MODAL_CALLBACK_ID = 'hitl_resolve_modal';
+const HITL_COMMENT_BLOCK = 'hitl_comment_block';
+const HITL_COMMENT_INPUT = 'hitl_comment_input';
+/** Same bounds as the dashboard's reject reason. */
+const HITL_REJECT_REASON_MIN = 5;
+const HITL_COMMENT_MAX = 2000;
+/** Slack caps `private_metadata` at 3000 characters. */
+const HITL_MODAL_PRIVATE_METADATA_MAX = 3000;
+
+interface HitlModalMetadata {
+  stepId: string;
+  action: 'approve' | 'reject';
+  /** The Slack user the modal was opened for; a submission must come from the same one. */
+  slackUserId: string;
+  /** Where the confirmation goes — presentation only, never consulted for authorization. */
+  channelId?: string;
+  messageTs?: string;
+}
+
+function hmacHex(secret: string, data: string): string {
+  return crypto.createHmac('sha256', secret).update(`hitl-modal:${data}`).digest('hex');
+}
+
+/**
+ * `private_metadata` round-trips through the client, so it is signed with the Slack signing secret
+ * and verified on submission. The signature is defence in depth: the step id it names is still
+ * re-authorized against the submitter on every submission.
+ */
+function signHitlModalMetadata(metadata: HitlModalMetadata, secret: string): string {
+  const body = Buffer.from(JSON.stringify(metadata)).toString('base64url');
+  return `${body}.${hmacHex(secret, body)}`;
+}
+
+function verifyHitlModalMetadata(
+  raw: string | undefined,
+  secret: string
+): HitlModalMetadata | null {
+  const [body, sig, ...rest] = (raw ?? '').split('.');
+  if (!body || !sig || rest.length > 0) {
+    return null;
+  }
+  const expected = Buffer.from(hmacHex(secret, body));
+  const given = Buffer.from(sig);
+  if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(body, 'base64url').toString()
+    ) as Partial<HitlModalMetadata>;
+    if (
+      typeof parsed.stepId !== 'string' ||
+      !parsed.stepId ||
+      (parsed.action !== 'approve' && parsed.action !== 'reject') ||
+      typeof parsed.slackUserId !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      action: parsed.action,
+      slackUserId: parsed.slackUserId,
+      stepId: parsed.stepId,
+      ...(typeof parsed.channelId === 'string' ? { channelId: parsed.channelId } : {}),
+      ...(typeof parsed.messageTs === 'string' ? { messageTs: parsed.messageTs } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildHitlCommentModalView(input: {
+  action: 'approve' | 'reject';
+  stepTitle: string;
+  privateMetadata: string;
+}): unknown {
+  const reject = input.action === 'reject';
+  return {
+    blocks: [
+      {
+        text: {
+          text: `*${escapeSlackMrkdwn(input.stepTitle).slice(0, 300)}*\n${
+            reject
+              ? 'Rejecting sends the run down its rejection path.'
+              : 'Approving lets the run continue to its next step.'
+          }`,
+          type: 'mrkdwn',
+        },
+        type: 'section',
+      },
+      {
+        block_id: HITL_COMMENT_BLOCK,
+        element: {
+          action_id: HITL_COMMENT_INPUT,
+          max_length: HITL_COMMENT_MAX,
+          multiline: true,
+          type: 'plain_text_input',
+        },
+        label: { text: reject ? 'Reason' : 'Comment (optional)', type: 'plain_text' },
+        optional: !reject,
+        type: 'input',
+      },
+    ],
+    callback_id: HITL_MODAL_CALLBACK_ID,
+    close: { text: 'Cancel', type: 'plain_text' },
+    private_metadata: input.privateMetadata,
+    submit: { text: reject ? 'Reject' : 'Approve', type: 'plain_text' },
+    title: { text: reject ? 'Reject step' : 'Approve step', type: 'plain_text' },
+    type: 'modal',
+  };
+}
+
+/**
+ * Open the approve / reject modal for a button click. `views.open` needs the interaction's
+ * `trigger_id` within three seconds, so the only work before it is one indexed lookup: the step
+ * under the clicker's control filter. Opening is not the authorization — the submission resolves
+ * through `resolveHitlStep`, which checks again — but refusing here spares the clicker a form
+ * that cannot succeed and keeps the step title out of a modal for someone who cannot act on it.
+ */
+async function openHitlCommentModal(
+  fastify: FastifyInstance,
+  user: { id: string; role: Role },
+  payload: SlackInteractivePayload,
+  signingSecret: string,
+  target: { stepId: string; action: 'approve' | 'reject' }
+): Promise<unknown> {
+  const ignored = (reason: string) => ({ data: { action: 'hitl_resolve', ignored: true, reason } });
+  if (!payload.trigger_id) {
+    await respondToInteraction(
+      payload,
+      ':warning: Slack did not provide what is needed to open the form — please try again.',
+      {
+        ephemeral: true,
+      }
+    );
+    return ignored('missing_trigger_id');
+  }
+  const gate = (await resolveRepoAccessGateOrLastKnown()) ?? undefined;
+  const step = await fastify.prisma.workflowHumanStep.findFirst({
+    select: { id: true, status: true, title: true },
+    where: {
+      id: target.stepId,
+      ...buildWorkflowHumanStepControlFilter({ role: user.role, sub: user.id }, gate),
+    },
   });
-  return { data: { action: 'hitl_resolve', code: result.code, ok: false } };
+  if (!step) {
+    await respondToInteraction(payload, hitlErrorText('NOT_FOUND', ''), { ephemeral: true });
+    return ignored('not_found');
+  }
+  if (step.status !== 'PENDING') {
+    await respondToInteraction(payload, hitlErrorText('ALREADY_RESOLVED', ''), { ephemeral: true });
+    return ignored('already_resolved');
+  }
+  const metadata: HitlModalMetadata = {
+    action: target.action,
+    slackUserId: payload.user?.id ?? '',
+    stepId: step.id,
+    ...(payload.channel?.id ? { channelId: payload.channel.id } : {}),
+    ...(payload.message?.ts ? { messageTs: payload.message.ts } : {}),
+  };
+  const privateMetadata = signHitlModalMetadata(metadata, signingSecret);
+  if (privateMetadata.length > HITL_MODAL_PRIVATE_METADATA_MAX) {
+    return ignored('metadata_too_large');
+  }
+  const botToken = await resolveSlackBotTokenForWorkspace(payload.team?.id ?? '');
+  const opened = await openSlackView(
+    {
+      triggerId: payload.trigger_id,
+      view: buildHitlCommentModalView({
+        action: target.action,
+        privateMetadata,
+        stepTitle: step.title,
+      }),
+    },
+    botToken ?? undefined
+  );
+  if (!opened.ok) {
+    await respondToInteraction(
+      payload,
+      ':warning: Could not open the form — please resolve the step from the inbox instead.',
+      { ephemeral: true }
+    );
+    return ignored(opened.error ?? 'views_open_failed');
+  }
+  return { data: { action: 'hitl_resolve', modalOpened: true, stepId: step.id } };
+}
+
+/**
+ * The approve / reject modal closing with a submit. Slack's request signature has already been
+ * verified by the route; `private_metadata` additionally must carry our signature and name the
+ * submitting Slack user. Failures come back as `response_action: errors` so the person sees them
+ * in the form instead of a silent dismissal.
+ */
+async function handleHitlModalSubmission(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  user: { id: string; role: Role },
+  payload: SlackInteractivePayload,
+  signingSecret: string
+): Promise<unknown> {
+  const fail = (message: string) => ({
+    errors: { [HITL_COMMENT_BLOCK]: message },
+    response_action: 'errors',
+  });
+  const metadata = verifyHitlModalMetadata(payload.view?.private_metadata, signingSecret);
+  if (!metadata || metadata.slackUserId !== payload.user?.id) {
+    return fail('This form is no longer valid — close it and use the buttons in Slack again.');
+  }
+
+  const typed = (
+    payload.view?.state?.values?.[HITL_COMMENT_BLOCK]?.[HITL_COMMENT_INPUT]?.value ?? ''
+  ).trim();
+  if (metadata.action === 'reject' && typed.length < HITL_REJECT_REASON_MIN) {
+    return fail(`Give a reason of at least ${HITL_REJECT_REASON_MIN} characters.`);
+  }
+  if (typed.length > HITL_COMMENT_MAX) {
+    return fail(`Keep this under ${HITL_COMMENT_MAX} characters.`);
+  }
+
+  const outcome = await resolveHitlStepFromSlack(
+    fastify,
+    request,
+    user,
+    { channelId: metadata.channelId, messageTs: metadata.messageTs, slackUserId: payload.user?.id },
+    payload,
+    {
+      action: metadata.action,
+      ...(typed ? { comment: typed } : {}),
+      stepId: metadata.stepId,
+    }
+  );
+  if (!outcome.ok) {
+    return fail(hitlErrorText(outcome.code, outcome.message).replace(/^:\w+:\s*/, ''));
+  }
+  // An empty 200 closes the modal.
+  return '';
 }
 
 function hitlErrorText(code: HitlResolveErrorCode, message: string): string {

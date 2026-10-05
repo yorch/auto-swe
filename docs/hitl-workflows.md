@@ -320,6 +320,17 @@ request panel and on the full run page, beside who decided. It is not part of th
 returns `400` with `INVALID_VALUE`. The web dialog requires a reason on reject and leaves a comment
 on approve optional; the API itself accepts a reject without one.
 
+**Slack buttons.** An approval announcement carries Approve and Reject buttons. Clicking either
+opens a Slack modal, the same shape as the web dialog: Reject asks for a required reason (5 to 2000
+characters), Approve an optional comment. Submitting resolves the step through the same path as the
+inbox route, with the text as the comment, so multi-approver counting, audit and the signal are
+identical. A failure (a too-short reason, a step already resolved, a run that has finished, access
+lost since the modal opened) shows inline in the modal rather than closing it. The modal opens only
+for a step the clicker may control, and the submission is authorized again from the Slack user's
+linked account; the modal's `private_metadata` is signed with the Slack signing secret and must name
+the submitting user, and is never itself a grant. Decision options stay one-click, since they carry
+no free text.
+
 **Slack message.** The worker records where it posted a step's announcement
 (`WorkflowHumanStep.slackMessage`). When the step resolves, from the web or from a Slack button, the
 gateway edits that message to show the decision, who made it, and the approver's comment, and drops
@@ -349,10 +360,10 @@ lifecycle changes and delegated configuration grants are managed under `/govern/
 
 ## Limitations
 
-- **Slack buttons carry no comment.** A response given from a Slack button records the decision
-  only; a note needs the web dialog. Only the message the worker posted is edited, so a step whose
-  announcement failed to post, or that was announced before the message was recorded, shows nothing
-  in Slack.
+- **Only the message the worker posted is edited.** A step whose announcement failed to post, or
+  that was announced before the message was recorded, shows nothing in Slack. A pending
+  multi-approver response confirms in the message's thread, not privately to the approver, because a
+  modal submission has no private reply channel.
 - **`humanInput` supports four field types** — `text`, `number`, `boolean`, `select`. There is no
   file upload, no multi-select, and no cross-field validation beyond what the spec declares.
 - **`humanDecision` takes 2–10 options.** Wider branching needs a `cond` chain downstream.
