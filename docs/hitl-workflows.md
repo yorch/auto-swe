@@ -255,7 +255,7 @@ unexpired steps the caller may answer and has not already answered; it is what t
 the Home "Waiting on you" section read.
 
 Each step also carries `myResponse` (the caller's own answer, or `null`), `responses` (every recorded
-answer as `{ action, byName, comment, resolvedAt }`, oldest first), and `run.workRequestId`.
+answer as `{ action, byName, comment, resolvedAt, value }`, oldest first), and `run.workRequestId`.
 
 Response:
 ```json
