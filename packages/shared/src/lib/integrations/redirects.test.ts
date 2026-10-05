@@ -32,6 +32,7 @@ describe('connector requests do not follow redirects', () => {
   it('Atlassian client does not follow redirects', async () => {
     const fetchMock = stubFetch();
     const client = new AtlassianClient({
+      allowPrivateNetwork: false,
       apiToken: 't',
       baseUrl: 'https://x.atlassian.net',
       email: 'a@b.com',
@@ -116,6 +117,7 @@ describe('redirect behaviour against local servers', () => {
       res.writeHead(302, { location: `${target.url}/x` }).end();
     });
     const client = new AtlassianClient({
+      allowPrivateNetwork: false,
       apiToken: 't',
       baseUrl: origin.url,
       email: 'a@b.com',

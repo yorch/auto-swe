@@ -9,8 +9,11 @@ export interface AtlassianClientConfig {
   apiToken: string;
   timeoutMs?: number;
   maxRetries?: number;
-  /** The connector's `allowPrivateNetwork` opt-in: waives private addresses only, at resolution too. */
-  allowPrivateNetwork?: boolean;
+  /**
+   * The connector's `allowPrivateNetwork` opt-in: waives private addresses only, at resolution too.
+   * Required, with no default, so a construction site must decide rather than inherit strictness.
+   */
+  allowPrivateNetwork: boolean;
   /** Replaces the guarded fetch. Tests only: the connector registry never sets it. */
   fetchImpl?: typeof fetch;
 }
@@ -43,7 +46,7 @@ export class AtlassianClient {
     this.timeoutMs = config.timeoutMs ?? 5000;
     this.maxRetries = config.maxRetries ?? 3;
     this.guardedFetch =
-      config.fetchImpl ?? createGuardedFetch({ allowPrivate: config.allowPrivateNetwork === true });
+      config.fetchImpl ?? createGuardedFetch({ allowPrivate: config.allowPrivateNetwork });
     this.authHeader = `Basic ${Buffer.from(`${config.email}:${config.apiToken}`).toString('base64')}`;
   }
 

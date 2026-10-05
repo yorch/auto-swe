@@ -899,7 +899,11 @@ describe('systemConfigService', () => {
         provider: 'jira',
       } as never);
       mockAtlassianGet.mockResolvedValueOnce([{ id: 'summary', name: 'Summary' }]);
+      vi.mocked(AtlassianClient).mockClear();
       await expect(detectJiraFields()).resolves.toMatchObject({ storyPointsFieldId: null });
+      expect(AtlassianClient).toHaveBeenCalledWith(
+        expect.objectContaining({ allowPrivateNetwork })
+      );
     });
 
     it('returns all fields plus a best-guess storyPointsFieldId match', async () => {

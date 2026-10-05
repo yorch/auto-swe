@@ -1453,6 +1453,7 @@ export async function detectJiraFields(): Promise<{
     throw new BaseUrlRefusedError(safety.reason);
   }
   const client = new AtlassianClient({
+    allowPrivateNetwork: config.allowPrivateNetwork === true,
     apiToken: config.apiToken,
     baseUrl: config.baseUrl,
     email: config.email ?? '',
