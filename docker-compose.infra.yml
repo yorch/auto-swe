@@ -15,7 +15,7 @@
 # an OOM kill brings the stack back without an operator; the one-shot setup
 # containers keep their bounded `on-failure` retries and exit on success.
 #
-# Ports for Postgres (5432), Temporal (7233/8233), and the object store (9000)
+# Ports for Postgres (5432), Temporal (7233/8233, UI only with the `temporal-ui` profile), and the object store (9000)
 # are published to the host for local development and so the documented runbook
 # can run `psql` / `prisma migrate deploy` from the host. None of these services
 # authenticates its callers, so each binds to loopback (127.0.0.1) by default.
@@ -131,8 +131,16 @@ services:
   # Web UI (was bundled inside auto-setup on 8233; now its own container).
   # Container listens on 8080; mapped to host 8233 to keep our existing
   # TEMPORAL_UI_PORT default and avoid colliding with gateway:8080.
+  #
+  # Behind the `temporal-ui` profile: it is a workflow admin surface (it can
+  # signal and terminate workflows) and this file is layered under
+  # docker-compose.prod.yml, so an unprofiled UI would run in production. The
+  # local entry points (yarn docker:*, just infra-*/dev-*) opt in; production
+  # recipes must not, and COMPOSE_PROFILES in a deploy host's `.env` must not
+  # include `temporal-ui`.
   temporal-ui:
     image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.53.3}
+    profiles: ["temporal-ui"]
     restart: unless-stopped
     depends_on:
       temporal:
