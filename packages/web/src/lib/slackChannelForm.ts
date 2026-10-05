@@ -138,13 +138,17 @@ export function validateChannelForm(
     [form.reactiveEnabled, 'reactiveCron', 'Reactive schedule'],
   ] as const) {
     const value = form[field].trim();
-    // A stored schedule is kept while its feature is off, so it must be valid either way.
+    // The field is hidden while its feature is off, so an error there would be invisible:
+    // validate only a schedule that is switched on (an invalid one is not sent, see cronFor).
+    if (!enabled) {
+      continue;
+    }
     if (value) {
       const preview = describeCron(value);
       if (!preview.ok) {
         errors[field] = preview.error;
       }
-    } else if (enabled && !value) {
+    } else {
       errors[field] = `${label} needs a cron expression while it is switched on.`;
     }
   }
@@ -161,10 +165,12 @@ export function validateChannelForm(
 
 /**
  * The schedule is sent whatever the toggle says, so switching a feature off and on again
- * never loses it; only a blank field clears it. The server runs it only while enabled.
+ * never loses it; only a blank (or invalid, and switched off) field clears it. The server runs it only while enabled.
  */
 function cronFor(value: string): string | null {
-  return normalizeCron(value) || null;
+  const cron = normalizeCron(value);
+  // A schedule left invalid under a switched-off feature is dropped rather than refused by the server.
+  return cron && describeCron(cron).ok ? cron : null;
 }
 
 /** Call only after `validateChannelForm` returned no errors. */

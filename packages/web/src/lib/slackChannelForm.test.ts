@@ -28,10 +28,17 @@ describe('validateChannelForm', () => {
     expect(validateChannelForm(form, 'edit')).toEqual({});
   });
 
-  it('checks a stored schedule whether or not its feature is on, and explains a bad one', () => {
+  it('checks a schedule only while its feature is on, and explains a bad one', () => {
+    // Off: the field is hidden, so an error there would be invisible.
+    expect(validateChannelForm({ ...valid(), ambientCron: 'nonsense' }, 'edit')).toEqual({});
     expect(
-      validateChannelForm({ ...valid(), ambientCron: 'nonsense' }, 'edit').ambientCron
+      validateChannelForm({ ...valid(), ambientCron: 'nonsense', ambientEnabled: true }, 'edit')
+        .ambientCron
     ).toBeTruthy();
+    // The gateway accepts 7 for Sunday, so the form does too.
+    expect(
+      validateChannelForm({ ...valid(), reactiveCron: '0 9 * * 7', reactiveEnabled: true }, 'edit')
+    ).toEqual({});
     expect(validateChannelForm({ ...valid(), ambientCron: '' }, 'edit')).toEqual({});
     const bad = validateChannelForm(
       { ...valid(), ambientCron: '0 25 * * *', ambientEnabled: true },
@@ -53,6 +60,11 @@ describe('validateChannelForm', () => {
 });
 
 describe('form to body', () => {
+  it('drops an invalid schedule left under a switched-off feature instead of sending it', () => {
+    const body = formToUpdateBody({ ...valid(), ambientCron: 'nonsense', ambientEnabled: false });
+    expect(body.ambientCron).toBeNull();
+  });
+
   it('keeps a schedule whose feature is off and converts dollars to cents', () => {
     const body = formToUpdateBody({
       ...valid(),
