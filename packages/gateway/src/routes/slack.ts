@@ -30,6 +30,7 @@ import {
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { authorizeLaunch, launchRefusalMessage } from '../lib/launchAuthorization.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
@@ -1531,6 +1532,14 @@ async function handleHitlResolveAction(
       text = `:white_check_mark: *${result.title}* — resolved with \`${parsed.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}).`;
     } else {
       text = `:white_check_mark: *${result.title}* — recorded as \`${parsed.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}), but the workflow run had already finished, so nothing was signalled.`;
+    }
+    if (result.status === 'RESOLVED') {
+      // Replaces the buttons with the decision, so a decided step reads as decided in place.
+      await syncSlackHumanStepOutcome({ log: request.log, prisma: fastify.prisma }, result.stepId, {
+        action: parsed.action,
+        userId: user.id,
+        value: parsed.value,
+      });
     }
     await respondToInteraction(payload, text, { ephemeral: result.status === 'PENDING' });
     return {

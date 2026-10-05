@@ -87,7 +87,7 @@ export default function RunDetailPage({ params }: PageProps) {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   // Both open and answered steps for this run: the open ones need a person, the answered ones
   // show who decided and what they said.
-  const { data: approvalSteps } = useApprovals('ALL', 'requestedAt:desc', false, id);
+  const { data: approvalSteps } = useApprovals('ALL', 'requestedAt:desc', false, id ?? undefined);
 
   const pendingSteps = useMemo(
     () => (approvalSteps ?? []).filter((s) => s.status === 'PENDING'),

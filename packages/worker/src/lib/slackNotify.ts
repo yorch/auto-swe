@@ -45,6 +45,8 @@ interface SlackChatPostMessageResponse {
   error?: string;
   /** Timestamp of the posted/updated message — used by the live-edit (chat.update) flow. */
   ts?: string;
+  /** The channel id the message landed in (chat.update needs the id, not a name). */
+  channel?: string;
 }
 
 interface ResolvedChannel {
@@ -132,7 +134,7 @@ async function postToSlack(
   text: string,
   logLabel: string,
   blocks?: unknown[]
-): Promise<void> {
+): Promise<{ channel: string; ts: string } | null> {
   const body: Record<string, unknown> = { channel, text };
   if (threadTs) {
     body.thread_ts = threadTs;
@@ -161,6 +163,7 @@ async function postToSlack(
       // eslint-disable-next-line no-console
       console.warn(`${logLabel}: chat.postMessage failed: ${data.error ?? 'unknown'}`);
     }
+    return data.ok && data.ts ? { channel: data.channel ?? channel, ts: data.ts } : null;
   } finally {
     clearTimeout(timer);
   }
@@ -709,7 +712,8 @@ export async function notifySlackHumanStep(input: {
     };
     const descriptionLine = input.description ? `\n${truncate(input.description, 400)}` : '';
     const inboxUrl = `${resolveWebUrl()}/inbox`;
-    const text = `:hourglass_flowing_sand: *[${resolved.ticket}]* *${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}\n<${inboxUrl}|Open inbox →>`;
+    const header = `*[${resolved.ticket}]* *${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}`;
+    const text = `:hourglass_flowing_sand: ${header}\n<${inboxUrl}|Open inbox →>`;
     const blocks = buildHumanStepBlocks({
       inboxUrl,
       kind: input.kind,
@@ -717,7 +721,7 @@ export async function notifySlackHumanStep(input: {
       stepId: input.stepId,
       text,
     });
-    await postToSlack(
+    const posted = await postToSlack(
       token,
       resolved.channel,
       resolved.threadTs,
@@ -725,6 +729,13 @@ export async function notifySlackHumanStep(input: {
       'slackNotify (human-step)',
       blocks
     );
+    // Remember the message so resolving the step can edit it to show the decision.
+    if (posted && input.stepId) {
+      await prisma.workflowHumanStep.update({
+        data: { slackMessage: { channel: posted.channel, text: header, ts: posted.ts } },
+        where: { id: input.stepId },
+      });
+    }
   } catch {
     /* best-effort */
   }

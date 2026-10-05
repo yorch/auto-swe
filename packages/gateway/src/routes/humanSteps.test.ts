@@ -8,6 +8,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
 vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: DB_NULL } }));
 
+const syncSlack = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('../lib/hitlSlackSync.js', () => ({ syncSlackHumanStepOutcome: syncSlack }));
+
 import {
   buildWorkflowRunControlFilter,
   buildWorkflowRunVisibilityFilter,
@@ -318,6 +321,26 @@ describe('human step routes', () => {
         comment: 'Needs a test',
       });
       expect(signalCalls[0]?.args[0]).toEqual({ action: 'reject', resolvedBy: USER_ID });
+    });
+
+    it("shows the decision and the note on the step's Slack message", async () => {
+      syncSlack.mockClear();
+      stepRow = pendingStep();
+      const res = await respond({ action: 'reject', comment: 'Needs a test' });
+      expect(res.statusCode).toBe(200);
+      expect(syncSlack).toHaveBeenCalledWith(expect.anything(), STEP_ID, {
+        action: 'reject',
+        comment: 'Needs a test',
+        userId: USER_ID,
+        value: undefined,
+      });
+    });
+
+    it('does not touch Slack when the response is refused', async () => {
+      syncSlack.mockClear();
+      stepRow = null;
+      await respond({ action: 'approve' });
+      expect(syncSlack).not.toHaveBeenCalled();
     });
 
     it('refuses a comment on a step that is not an approval', async () => {
