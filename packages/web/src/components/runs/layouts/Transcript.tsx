@@ -81,6 +81,7 @@ export function Transcript({
   // Selection is the page's, so "Jump to failure" can select a step from outside
   // the layout; scrolling follows the selection rather than the click. The nonce
   // re-fires it when the same failed step is jumped to again after scrolling away.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: jumpNonce is a re-fire trigger, not a value the effect reads
   useEffect(() => {
     if (selectedId) {
       stepRefs.current[selectedId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });

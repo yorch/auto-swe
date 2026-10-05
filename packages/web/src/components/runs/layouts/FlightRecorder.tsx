@@ -111,6 +111,7 @@ export function FlightRecorder({
   // refreshing `run` does not snap the playhead back.
   const runRef = useRef({ run, totalMs });
   runRef.current = { run, totalMs };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: jumpNonce is a re-fire trigger, not a value the effect reads
   useEffect(() => {
     const { run: current, totalMs: total } = runRef.current;
     if (!selectedNodeId || !current.startedAt || total === 0) {
