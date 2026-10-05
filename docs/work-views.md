@@ -150,7 +150,7 @@ reload.
   address says otherwise), draft, repository, ticket. The PR links to the host in a new tab.
 - **Tickets** — a table with the tracker status, request and run counts, the latest run, PR count,
   cost and last activity. A "Hide automated runs" checkbox is on by default. A row expands to the
-  latest request, the ticket's requests, and its pull requests with their states.
+  latest request and its pull requests with their states.
 
 Titles, ticket ids and tracker text render as plain text; a ticket link is followed only for an
 http(s) address.

@@ -35,14 +35,15 @@ describe('Pull requests page', () => {
   });
 
   it('reads its filters from the address and ignores values it does not know', () => {
-    nav.search = 'state=MERGED&draft=ready&scope=TEAM&ticket=JIRA-1&offset=30&repo=r1';
+    nav.search =
+      'state=MERGED&draft=ready&scope=TEAM&ticket=JIRA-1&offset=30&repo=3f2b8c1e-7a4d-4e5b-9c10-1a2b3c4d5e6f';
     usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
     render(<PullRequestsPage />);
     expect(usePullRequests).toHaveBeenCalledWith(
       expect.objectContaining({
         draft: 'ready',
         offset: 30,
-        repoId: 'r1',
+        repoId: '3f2b8c1e-7a4d-4e5b-9c10-1a2b3c4d5e6f',
         scope: 'TEAM',
         state: 'MERGED',
         ticket: 'JIRA-1',
@@ -55,6 +56,13 @@ describe('Pull requests page', () => {
     expect(usePullRequests).toHaveBeenLastCalledWith(
       expect.objectContaining({ draft: 'any', state: 'OPEN' })
     );
+  });
+
+  it('does not send a repository that is not a uuid', () => {
+    nav.search = 'repo=not-a-uuid';
+    usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
+    render(<PullRequestsPage />);
+    expect(usePullRequests).toHaveBeenCalledWith(expect.objectContaining({ repoId: undefined }));
   });
 
   it('keeps "all states" distinct from the open default', () => {

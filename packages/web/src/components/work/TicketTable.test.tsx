@@ -59,21 +59,24 @@ describe('TicketTable', () => {
     expect(container.querySelector('b')).toBeNull();
   });
 
-  it('expands to the latest request, the ticket’s requests and its pull requests', () => {
+  it('expands to the latest request and its pull requests', () => {
     render(<TicketTable groups={[group()]} />);
     const toggle = screen.getByRole('button', { name: /Show details/ });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // Nothing is controlled until the details row exists.
+    expect(toggle.getAttribute('aria-controls')).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open latest request' })).toBeNull();
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(toggle.getAttribute('aria-controls')).toBeTruthy();
+    const controlled = toggle.getAttribute('aria-controls');
+    expect(controlled).toBeTruthy();
+    expect(document.getElementById(controlled as string)).not.toBeNull();
     expect(screen.getByRole('link', { name: 'Open latest request' }).getAttribute('href')).toBe(
       '/workflows?request=wr-1'
     );
-    expect(
-      screen.getByRole('link', { name: 'All requests for this ticket' }).getAttribute('href')
-    ).toBe('/workflows?scope=TEAM&search=JIRA-1');
+    // The requests list can only substring-match a ticket, so it is not linked.
+    expect(screen.queryByRole('link', { name: /All requests/ })).toBeNull();
     expect(screen.getByRole('link', { name: /acme\/api #3/ }).getAttribute('href')).toBe(
       'https://github.com/acme/api/pull/3'
     );

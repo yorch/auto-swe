@@ -73,7 +73,7 @@ function TicketRow({ group }: { group: TicketGroup }) {
         </Td>
         <Td align="right" className="px-4 py-3">
           <button
-            aria-controls={detailsId}
+            aria-controls={open ? detailsId : undefined}
             aria-expanded={open}
             className={cn('rounded px-2 py-1 text-xs text-ember-400 hover:underline', FOCUS_RING)}
             onClick={() => setOpen((value) => !value)}
@@ -90,12 +90,6 @@ function TicketRow({ group }: { group: TicketGroup }) {
             <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
               <Link className={LINK} href={requestHref(group.latestWorkRequestId)}>
                 Open latest request
-              </Link>
-              <Link
-                className={LINK}
-                href={`/workflows?scope=TEAM&search=${encodeURIComponent(group.ticketId)}`}
-              >
-                All requests for this ticket
               </Link>
             </div>
             {group.pullRequests.length > 0 && (

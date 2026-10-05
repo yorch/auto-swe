@@ -17,6 +17,7 @@ import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { usePullRequests } from '@/hooks/useWorkViews';
 
 const PAGE_SIZE = 30;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type StateFilter = PullRequestState | 'all';
 const STATES: { label: string; value: StateFilter }[] = [
   { label: 'Open', value: 'OPEN' },
@@ -38,7 +39,9 @@ function PullRequests() {
   const state: StateFilter =
     rawState === 'all' ? 'all' : (PULL_REQUEST_STATES.find((s) => s === rawState) ?? 'OPEN');
   const draft = DRAFTS.find((option) => option.value === params.get('draft'))?.value ?? 'any';
-  const repoId = (params.get('repo') ?? '').slice(0, 64);
+  // Only a uuid is sent: anything else in the address would just be a 400.
+  const rawRepo = params.get('repo') ?? '';
+  const repoId = UUID.test(rawRepo) ? rawRepo : '';
   const ticket = (params.get('ticket') ?? '').slice(0, 200);
   const offset = parseOffset(params.get('offset'));
   const [ticketDraft, setTicketDraft] = useState(ticket);
