@@ -34,6 +34,42 @@ const TITLE_OVERRIDES: Record<string, { title: string; description: string }> = 
   },
 };
 
+/**
+ * The first prose paragraph, flattened to one line and cut at a word boundary.
+ * Front matter, headings, horizontal rules and fences are skipped; a blockquote
+ * counts as prose with its marker removed.
+ */
+export function deriveDescription(raw: string): string {
+  let body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+  body = body.replace(/```[\s\S]*?```/g, '');
+  const lines: string[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const t = line.trim();
+    const isRule = /^([-*_])(\s*\1){2,}$/.test(t);
+    if (t === '' || /^#/.test(t) || isRule) {
+      if (lines.length > 0) {
+        break;
+      }
+      continue;
+    }
+    lines.push(t.replace(/^>\s?/, ''));
+  }
+  const text = lines
+    .join(' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/[*_`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length <= MAX_DESCRIPTION) {
+    return text;
+  }
+  const cut = text.slice(0, MAX_DESCRIPTION);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > 60 ? cut.slice(0, space) : cut).replace(/[\s,;:.-]+$/, '')}…`;
+}
+
+const MAX_DESCRIPTION = 140;
+
 function deriveMeta(slug: string, raw: string): DocMeta {
   const override = TITLE_OVERRIDES[slug];
   if (override) {
@@ -41,8 +77,7 @@ function deriveMeta(slug: string, raw: string): DocMeta {
   }
 
   const title = raw.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? slug;
-  const firstPara = raw.match(/^(?!#|>|\s*$).+$/m)?.[0]?.trim() ?? '';
-  const description = firstPara.replace(/[*_`]/g, '').slice(0, 140);
+  const description = deriveDescription(raw);
 
   return { description, slug, title };
 }
