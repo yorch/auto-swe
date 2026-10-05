@@ -82,6 +82,17 @@ function deriveMeta(slug: string, raw: string): DocMeta {
   return { description, slug, title };
 }
 
+/** Slugs shown first on the docs index, in this order; everything else follows by title. */
+const PINNED_SLUGS = ['README', 'quickstart', 'product-overview'];
+
+export function orderDocs(docs: DocMeta[]): DocMeta[] {
+  const rank = (slug: string) => {
+    const i = PINNED_SLUGS.indexOf(slug);
+    return i === -1 ? PINNED_SLUGS.length : i;
+  };
+  return [...docs].sort((a, b) => rank(a.slug) - rank(b.slug) || a.title.localeCompare(b.title));
+}
+
 export const listDocs = cache(async (): Promise<DocMeta[]> => {
   const entries = await readdir(DOCS_DIR);
   const docs = await Promise.all(
@@ -98,7 +109,7 @@ export const listDocs = cache(async (): Promise<DocMeta[]> => {
         return deriveMeta(slug, raw);
       })
   );
-  return docs.sort((a, b) => a.title.localeCompare(b.title));
+  return orderDocs(docs);
 });
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveDescription } from './docs';
+import { deriveDescription, orderDocs } from './docs';
 
 describe('deriveDescription', () => {
   it('skips front matter, headings and horizontal rules', () => {
@@ -30,5 +30,25 @@ describe('deriveDescription', () => {
 
   it('returns an empty string when there is no prose', () => {
     expect(deriveDescription('# Only a heading')).toBe('');
+  });
+});
+
+describe('orderDocs', () => {
+  it('pins Overview, Quickstart and Product overview first, then sorts by title', () => {
+    const doc = (slug: string, title: string) => ({ description: '', slug, title });
+    const out = orderDocs([
+      doc('agents', 'Agents'),
+      doc('product-overview', 'Product overview'),
+      doc('architecture', 'Architecture'),
+      doc('quickstart', 'Quickstart'),
+      doc('README', 'Overview'),
+    ]);
+    expect(out.map((d) => d.slug)).toEqual([
+      'README',
+      'quickstart',
+      'product-overview',
+      'agents',
+      'architecture',
+    ]);
   });
 });
