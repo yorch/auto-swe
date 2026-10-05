@@ -114,7 +114,7 @@ describe('isSafeProbeUrl', () => {
 
     it('does not over-block neighbouring IPv6 prefixes', () => {
       expectAllowed('http://[fb00::1]/'); // just below fc00::/7
-      expectAllowed('http://[2001:db8::1]/'); // documentation/global unicast
+      expectAllowed('http://[2606:4700::1111]/'); // global unicast
     });
   });
 
@@ -237,6 +237,13 @@ describe('checkProbeUrl (per-host private-network opt-in)', () => {
     'https://[::ffff:169.254.169.254]/',
     'https://[::ffff:a9fe:a9fe]/',
     'https://[fd00:ec2::254]/',
+    'https://[fd20:ce::254]/',
+    'https://192.0.0.192/',
+    'https://198.18.0.1/',
+    'https://203.0.113.5/',
+    'https://[2001:db8::1]/',
+    'https://[2001::1]/',
+    'https://[100::1]/',
     'https://100.100.100.200/',
     'https://metadata.google.internal/',
     'https://127.0.0.1/',
@@ -250,6 +257,10 @@ describe('checkProbeUrl (per-host private-network opt-in)', () => {
     'https://metadata./',
   ])('never waives %s', (u) => {
     expect(checkProbeUrl(u, { allowPrivate: true }).ok).toBe(false);
+  });
+
+  it('does not mistake a hostname that begins with a reserved prefix for an address', () => {
+    expect(isSafeProbeUrl('https://203.0.113.example.com/').ok).toBe(true);
   });
 
   it('never waives a non-private refusal', () => {

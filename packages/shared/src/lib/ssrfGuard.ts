@@ -1,18 +1,21 @@
+import { isIP } from 'node:net';
+
 /**
  * Shared SSRF guard for any gateway/worker code path that fetches an
  * operator-supplied URL (provider-credential `apiBase` probes, `mcp`
  * Connection URLs, bundle install-from-URL, issue-tracker / knowledge-base /
  * Figma connector base URLs, worker-side MCP server refs). Consolidates what
- * used to be several independently-maintained host blocklists
- * (`credentialService.ts`'s `isSafeProbeUrl` and `bundleFetch.ts`'s
- * `isBlockedHost`) into one definition so a fix here fixes every call site.
+ * used to be several independently-maintained host blocklists into one
+ * definition so a fix here fixes every call site.
  *
- * We resolve at hostname-text level only (no DNS lookup) — the goal is
- * blocking the obvious accidents (loopback, RFC1918, link-local, cloud
- * metadata, IPv6-mapped IPv4), not stopping a determined attacker who can
- * register a public hostname pointing at internal IPs (DNS rebinding). For
- * that we'd need per-environment outbound-network policy at the OS/container
- * level.
+ * This module reads the URL's host TEXT: it is the early, cheap refusal for
+ * save-time validation and fast errors, and it is the single source of the
+ * address classification (loopback, link-local, metadata, private, reserved).
+ * It cannot see what a NAME resolves to — a public hostname pointing at
+ * `10.x` (`10.1.1.17.nip.io`, a DNS-rebinding name) passes it. That half lives
+ * in `guardedDispatcher.ts`, which resolves the name at connection time,
+ * classifies every resolved address with `checkProbeUrl` below, and pins the
+ * connection to the checked set. A call site that sends a request needs both.
  */
 
 export type SafeProbeUrlResult =
@@ -62,6 +65,40 @@ function extractEmbeddedIpv4(host: string): string | null {
     return hexPairToIpv4(sixToFour[1], sixToFour[2]);
   }
   return null;
+}
+
+/**
+ * Addresses no connector may reach and no opt-in waives: multicast and
+ * reserved IPv4 (224.0.0.0/3), the IETF protocol block (192.0.0.0/24, which
+ * holds OCI's legacy metadata address 192.0.0.192), benchmarking
+ * (198.18.0.0/15), the documentation ranges (192.0.2.0/24, 198.51.100.0/24,
+ * 203.0.113.0/24), the retired 6to4 relay anycast (192.88.99.0/24), and for
+ * IPv6 the discard prefix (100::/64), documentation (2001:db8::/32) and Teredo
+ * (2001::/32, which embeds an IPv4 address, so the whole block is refused).
+ * `effective` is a bare host with any embedded IPv4 already unwrapped; a
+ * hostname that merely begins with digits is not an address and is not matched.
+ */
+export function isReservedAddress(effective: string): boolean {
+  const family = isIP(effective);
+  if (family === 4) {
+    const [a, b, c] = effective.split('.').map(Number);
+    return (
+      a >= 224 ||
+      (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      (a === 198 && b === 51 && c === 100) ||
+      (a === 203 && b === 0 && c === 113) ||
+      (a === 192 && b === 88 && c === 99)
+    );
+  }
+  if (family === 6) {
+    return (
+      /^ff[0-9a-f]{2}:/.test(effective) ||
+      /^100:(:|0:0:0:)/.test(effective) ||
+      /^2001:(db8:|:|0:)/.test(effective)
+    );
+  }
+  return false;
 }
 
 /// Rejects URLs that would let the gateway (or worker) be used as an SSRF
@@ -162,6 +199,10 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
   ) {
     return { ok: false, private: true, reason: `host '${host}' is on a private network` };
   }
+  if (isReservedAddress(effective)) {
+    // No `private` flag: an opt-in never waives a reserved range.
+    return { ok: false, reason: `host '${host}' is a reserved address` };
+  }
   return { ok: true, url };
 }
 
@@ -170,7 +211,7 @@ type NeverAllowedKind = 'link-local' | 'loopback' | 'unspecified';
 /**
  * Addresses no opt-in may reach: cloud metadata endpoints (link-local
  * 169.254.0.0/16 — AWS/Azure/GCP/Oracle — and IPv6 link-local fe80::/10, plus AWS's IPv6 `fd00:ec2::254`,
- * Alibaba's 100.100.100.200 and the GCP metadata names) and loopback /
+ * GCP's IPv6 `fd20:ce::254`, OCI's legacy 192.0.0.192, Alibaba's 100.100.100.200 and the GCP metadata names) and loopback /
  * unspecified addresses, which are the platform's own services. A private
  * network opt-in is for a self-hosted server on an internal address, never for
  * these.
@@ -187,6 +228,8 @@ function neverAllowedKind(url: URL): { effective: string; kind: NeverAllowedKind
     effective === 'metadata.google.internal' ||
     effective === '100.100.100.200' ||
     effective.startsWith('fd00:ec2:') ||
+    effective.startsWith('fd20:ce:') ||
+    effective === '192.0.0.192' ||
     /^169\.254\./.test(effective) ||
     /^fe[89ab][0-9a-f]:/.test(effective)
   ) {

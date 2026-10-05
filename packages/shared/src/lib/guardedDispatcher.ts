@@ -77,12 +77,6 @@ function bareHost(hostname: string): string {
   );
 }
 
-/** IPv4 ranges the text check does not name but no connector may reach: multicast and reserved. */
-function isReservedIpv4(addr: string): boolean {
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(addr);
-  return m !== null && Number(m[1]) >= 224;
-}
-
 export type AddressVerdict = 'ok' | 'private' | 'never';
 
 /**
@@ -95,12 +89,6 @@ export function classifyAddress(address: string, allowPrivate = false): AddressV
   const bare = address.replace(/%.*$/, '').toLowerCase();
   const family = isIP(bare);
   if (family === 0) {
-    return 'never';
-  }
-  if (family === 4 && isReservedIpv4(bare)) {
-    return 'never';
-  }
-  if (family === 6 && /^ff[0-9a-f]{2}:/.test(bare)) {
     return 'never';
   }
   let url: string;
