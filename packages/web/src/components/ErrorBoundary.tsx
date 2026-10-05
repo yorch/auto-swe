@@ -1,10 +1,16 @@
 'use client';
 
 import React from 'react';
-import { Button } from '@/components/ui/Button';
+import { ErrorPanel } from '@/components/ErrorPanel';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
+  /**
+   * When this changes the boundary clears a caught error. The shell passes the
+   * pathname, so navigating away from a crashed page renders the next page
+   * instead of re-rendering the crash.
+   */
+  resetKey?: string;
 }
 
 interface ErrorBoundaryState {
@@ -22,6 +28,12 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     return { error, hasError: true };
   }
 
+  componentDidUpdate(prev: ErrorBoundaryProps) {
+    if (this.state.hasError && prev.resetKey !== this.props.resetKey) {
+      this.setState({ error: null, hasError: false });
+    }
+  }
+
   /**
    * Without this, a crash is shown to the user and recorded nowhere — the one
    * failure mode nobody finds out about. There is no client-side error sink in
@@ -35,20 +47,10 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex items-center justify-center min-h-[400px] p-8">
-          <div className="text-center max-w-md">
-            <h2 className="text-xl font-semibold mb-2 text-paper-100">Something went wrong</h2>
-            <p className="text-sm text-paper-500 mb-4">
-              {this.state.error?.message ?? 'An unexpected error occurred.'}
-            </p>
-            <Button
-              onClick={() => this.setState({ error: null, hasError: false })}
-              variant="primary"
-            >
-              Try again
-            </Button>
-          </div>
-        </div>
+        <ErrorPanel
+          error={this.state.error}
+          onRetry={() => this.setState({ error: null, hasError: false })}
+        />
       );
     }
 

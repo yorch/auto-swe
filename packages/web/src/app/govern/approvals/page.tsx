@@ -9,7 +9,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { TabBar } from '@/components/ui/TabBar';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { type ApprovalFilter, type ApprovalSort, useApprovals } from '@/hooks/useApprovals';
 import { navLabel } from '@/lib/navigation';
 
@@ -75,6 +75,7 @@ export default function GovernApprovalsPage() {
 
       <TabBar
         active={filter}
+        idPrefix="approvals"
         onChange={(next) => {
           setFilter(next);
           setPage(0);
@@ -82,52 +83,61 @@ export default function GovernApprovalsPage() {
         tabs={TABS}
       />
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Select
-          aria-label="Sort"
-          className="w-40"
-          onChange={(v) => {
-            setSort(v as ApprovalSort);
-            setPage(0);
-          }}
-          options={SORT_OPTIONS}
-          value={sort}
-        />
+      <div {...tabPanelProps('approvals', filter)} className="space-y-8">
+        <div className="flex flex-wrap items-center gap-3">
+          <Select
+            aria-label="Sort"
+            className="w-40"
+            onChange={(v) => {
+              setSort(v as ApprovalSort);
+              setPage(0);
+            }}
+            options={SORT_OPTIONS}
+            value={sort}
+          />
 
-        <Checkbox
-          checked={overdueOnly}
-          label="Overdue only"
-          onChange={(e) => {
-            setOverdueOnly(e.target.checked);
-            setPage(0);
-          }}
-        />
+          <Checkbox
+            checked={overdueOnly}
+            label="Overdue only"
+            onChange={(e) => {
+              setOverdueOnly(e.target.checked);
+              setPage(0);
+            }}
+          />
+        </div>
+
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="inbox"
+          onRetry={() => void refetch()}
+        >
+          {count > 0 && (
+            <div className="space-y-3">
+              {visible.map((step) => (
+                <HumanStepCard key={step.id} step={step} />
+              ))}
+              {count > PAGE_SIZE && (
+                <Pagination
+                  hasNext={current < pageCount - 1}
+                  hasPrev={current > 0}
+                  onNext={() => setPage(current + 1)}
+                  onPrev={() => setPage(current - 1)}
+                  rangeEnd={Math.min(count, (current + 1) * PAGE_SIZE)}
+                  rangeStart={current * PAGE_SIZE + 1}
+                  total={count}
+                />
+              )}
+            </div>
+          )}
+
+          {count === 0 && (
+            <EmptyState title={filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'} />
+          )}
+        </QueryBoundary>
       </div>
-
-      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="inbox">
-        {count > 0 && (
-          <div className="space-y-3">
-            {visible.map((step) => (
-              <HumanStepCard key={step.id} step={step} />
-            ))}
-            {count > PAGE_SIZE && (
-              <Pagination
-                hasNext={current < pageCount - 1}
-                hasPrev={current > 0}
-                onNext={() => setPage(current + 1)}
-                onPrev={() => setPage(current - 1)}
-                rangeEnd={Math.min(count, (current + 1) * PAGE_SIZE)}
-                rangeStart={current * PAGE_SIZE + 1}
-                total={count}
-              />
-            )}
-          </div>
-        )}
-
-        {count === 0 && (
-          <EmptyState title={filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'} />
-        )}
-      </QueryBoundary>
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import type { CreateEpicResponse, EpicDetail, EpicSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useTeamStore } from '@/stores/teamStore';
 
 export function useCreateEpic() {
   const qc = useQueryClient();
@@ -16,18 +17,30 @@ export function useCreateEpic() {
   });
 }
 
-export function useEpics(filters: { limit?: number; offset?: number } = {}) {
+export function useEpics(
+  filters: { limit?: number; offset?: number; scope?: 'MINE' | 'TEAM' } = {},
+  options: { enabled?: boolean } = {}
+) {
+  // The shell's selected team narrows the list, as it does for requests.
+  const teamId = useTeamStore((state) => state.selectedTeamId);
   const params = new URLSearchParams();
   params.set('limit', String(filters.limit ?? 50));
   params.set('offset', String(filters.offset ?? 0));
+  if (filters.scope) {
+    params.set('scope', filters.scope);
+  }
+  if (teamId) {
+    params.set('teamId', teamId);
+  }
   return useQuery({
+    enabled: options.enabled ?? true,
     queryFn: () =>
       api
         .get<{ data: EpicSummary[]; meta: { limit: number; offset: number; total: number } }>(
           `/api/v1/epics?${params.toString()}`
         )
         .then((r) => ({ data: r.data, meta: r.meta })),
-    queryKey: ['epics', filters],
+    queryKey: ['epics', filters, teamId],
     refetchInterval: 10_000,
   });
 }

@@ -39,7 +39,7 @@ export function optionText(option: DropdownOption): string {
 /** The control's box: matches `Input` (h-10, or h-8 mono when compact). */
 export function fieldBoxClass(compact: boolean, invalid: boolean) {
   return cn(
-    'w-full rounded-[9px] border border-ink-400 bg-ink-900/60 text-paper-100 outline-none transition-colors',
+    'w-full rounded-md border border-ink-400 bg-ink-900/60 text-paper-100 outline-none transition-colors',
     compact ? 'h-8 px-2 font-mono text-xs' : 'h-10 px-3 text-sm',
     // data-focused: a Select's trigger button; data-focus-within: a Combobox's
     // Group around its input. Each primitive gets the attribute that applies.
@@ -63,7 +63,7 @@ export function FieldLabel({ label, required }: { label?: string; required?: boo
   );
 }
 
-const HELP_LINE = 'mt-1.5 block font-mono text-[10px] uppercase tracking-wider';
+const HELP_LINE = 'mt-1.5 block text-xs';
 
 /**
  * How a dropdown validates. Without a caller `error` it validates natively, so a
@@ -118,7 +118,7 @@ export function Chevron() {
 export function DropdownPopover({ children }: { children: ReactNode }) {
   return (
     <Popover
-      className="max-h-72 w-[var(--trigger-width)] overflow-auto rounded-[9px] border border-ink-400 bg-ink-900 p-1 shadow-xl outline-none data-[entering]:animate-none"
+      className="max-h-72 w-[var(--trigger-width)] overflow-auto rounded-md border border-ink-400 bg-ink-900 p-1 shadow-xl outline-none data-[entering]:animate-none"
       offset={4}
     >
       {children}
@@ -130,7 +130,7 @@ export function DropdownItem({ option, compact }: { option: DropdownOption; comp
   return (
     <ListBoxItem
       className={cn(
-        'flex cursor-pointer items-start gap-2 rounded-[7px] px-2.5 py-1.5 text-paper-200 outline-none',
+        'flex cursor-pointer items-start gap-2 rounded-sm px-2.5 py-1.5 text-paper-200 outline-none',
         compact ? 'font-mono text-xs' : 'text-sm',
         'data-[focused]:bg-ink-600 data-[selected]:text-ember-400',
         'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40'

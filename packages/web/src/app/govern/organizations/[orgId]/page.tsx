@@ -220,8 +220,10 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         <QueryBoundary
           error={membersQuery.error}
           isError={membersQuery.isError}
+          isFetching={membersQuery.isFetching}
           isLoading={membersQuery.isLoading}
           label="members"
+          onRetry={() => void membersQuery.refetch()}
         >
           <Table>
             <THead>
@@ -361,8 +363,10 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         <QueryBoundary
           error={orgQuery.error}
           isError={orgQuery.isError}
+          isFetching={orgQuery.isFetching}
           isLoading={orgQuery.isLoading}
           label="organization"
+          onRetry={() => void orgQuery.refetch()}
         >
           <div className="space-y-4">
             {orgError ? <Alert variant="error">{orgError}</Alert> : null}
@@ -400,8 +404,10 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         <QueryBoundary
           error={budgetQuery.error}
           isError={budgetQuery.isError}
+          isFetching={budgetQuery.isFetching}
           isLoading={budgetQuery.isLoading}
           label="budget"
+          onRetry={() => void budgetQuery.refetch()}
         >
           <div className="space-y-4">
             {budgetError ? <Alert variant="error">{budgetError}</Alert> : null}

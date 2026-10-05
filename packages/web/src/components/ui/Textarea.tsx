@@ -27,7 +27,7 @@ export function Textarea({
         aria-describedby={fieldDescribedBy(inputId, hint, error)}
         aria-invalid={error ? true : undefined}
         className={cn(
-          'w-full rounded-[9px] border border-ink-400 bg-ink-900/60 font-mono text-xs text-paper-100 outline-none transition-colors',
+          'w-full rounded-md border border-ink-400 bg-ink-900/60 font-mono text-xs text-paper-100 outline-none transition-colors',
           compact ? 'px-2 py-1.5' : 'min-h-[9rem] px-3 py-2',
           'focus:border-ember-400 focus:bg-ink-900/80',
           'placeholder:text-paper-600',

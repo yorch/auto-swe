@@ -40,7 +40,7 @@ export const UnifiedDiff = memo(function UnifiedDiff({ text }: { text: string })
   return (
     <section
       aria-label="Text diff"
-      className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 py-2 font-mono text-xs"
+      className="max-h-96 overflow-auto rounded-md border border-ink-600 bg-ink-900 py-2 font-mono text-xs"
     >
       {lines.map(({ id, kind, line }) => (
         <div

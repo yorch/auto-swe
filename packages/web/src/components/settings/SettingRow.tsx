@@ -139,8 +139,8 @@ export function SettingRow({
             <ToggleSwitch
               checked={boolDraft}
               disabled={!canWriteHere || busy || setting.redacted}
-              // ToggleSwitch takes no aria-label; the visually hidden prefix gives
-              // the switch the setting's name instead of just its state.
+              // The visually hidden prefix gives the switch the setting's name
+              // instead of just its state.
               label={
                 <>
                   <span className="sr-only">{setting.label}: </span>

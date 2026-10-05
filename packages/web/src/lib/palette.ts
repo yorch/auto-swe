@@ -26,9 +26,9 @@ export const TOKEN = {
   ink950: '#0a0c12',
   moss400: '#46d28a',
   paper200: '#eef1f7',
-  paper300: '#aeb6c9',
+  paper300: '#c4cad9',
   paper400: '#aeb6c9',
-  paper500: '#6f7990',
+  paper500: '#9aa3b8',
   violet400: '#34d8c0',
 } as const;
 

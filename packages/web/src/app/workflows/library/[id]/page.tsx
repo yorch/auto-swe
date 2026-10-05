@@ -12,7 +12,7 @@ import {
 import { use, useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
@@ -32,7 +32,6 @@ import { InputSchemaBuilder } from '@/components/workflow/InputSchemaBuilder';
 import { KeyValueRow } from '@/components/workflow/KeyValueRow';
 import { PromoteVersionModal } from '@/components/workflow/PromoteVersionModal';
 import { RefineChatPanel } from '@/components/workflow/RefineChatPanel';
-import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { SchemaFormPreview } from '@/components/workflow/SchemaFormPreview';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import {
@@ -156,7 +155,7 @@ function EditMetadataModal({
   };
 
   return (
-    <Modal eyebrow="§ Template" onClose={onClose} open={open} title="Edit metadata">
+    <Modal eyebrow="§ Workflow" onClose={onClose} open={open} title="Edit metadata">
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
         <Input label="Name" onChange={(e) => setName(e.target.value)} value={name} />
@@ -181,7 +180,7 @@ function EditMetadataModal({
         />
         <ToggleSwitch
           checked={defaultChecked}
-          label="Set as default template"
+          label="Set as default workflow"
           onChange={() => setDefaultChecked((v) => !v)}
         />
         <ModalFooter
@@ -234,12 +233,12 @@ function EditSchemaModal({
 
   return (
     <Modal
-      eyebrow="§ Template"
+      eyebrow="§ Workflow"
       onClose={onClose}
       open={open}
       size="lg"
-      subtitle="Define the fields users fill in when running this template. Leave empty for no required inputs."
-      title="Run schema"
+      subtitle="Define the fields people fill in when they run this workflow. Leave empty for no required inputs."
+      title="Launch inputs"
     >
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
@@ -560,7 +559,14 @@ function WebhookCard({
 export default function TemplateDetailPage({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: template, isLoading, isError, error } = useWorkflowTemplate(id ?? '');
+  const {
+    data: template,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error,
+  } = useWorkflowTemplate(id ?? '');
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
   const { data: versionDetail } = useWorkflowTemplateVersion(id ?? '', effectiveVersion);
@@ -585,7 +591,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [pendingErrorSpec, setPendingErrorSpec] = useState<WorkflowSpec | null>(null);
   const [editMetaOpen, setEditMetaOpen] = useState(false);
   const [editSchemaOpen, setEditSchemaOpen] = useState(false);
-  const [runOpen, setRunOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
   const [refineOpen, setRefineOpen] = useState(false);
   const [promoteOpen, setPromoteOpen] = useState(false);
@@ -664,9 +669,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
-        label="template"
-        loadingMessage="loading template…"
+        label="workflow"
+        loadingMessage="loading workflow…"
+        onRetry={() => void refetch()}
       />
     );
   }
@@ -861,8 +868,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
   return (
     <div className="space-y-8">
-      <RunTemplateModal onClose={() => setRunOpen(false)} open={runOpen} template={template} />
-
       <ExplainModal
         activeVersion={template.activeVersion}
         onClose={() => setExplainOpen(false)}
@@ -878,9 +883,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
           actions={
             <>
               {template.status === 'ACTIVE' && template.activeVersion !== null && (
-                <Button onClick={() => setRunOpen(true)} size="sm" variant="primary">
+                <ButtonLink
+                  href={`/start?template=${encodeURIComponent(template.id)}`}
+                  size="sm"
+                  variant="primary"
+                >
                   Run →
-                </Button>
+                </ButtonLink>
               )}
               {template.activeVersion !== null && (
                 <Button onClick={() => setExplainOpen(true)} size="sm" variant="secondary">
@@ -905,7 +914,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
           className="mb-0 mt-4"
           subtitle={
             template.description ||
-            'A workflow template: its versions, run schema, experiment and triggers.'
+            'A workflow: its versions, launch inputs, experiment and triggers.'
           }
           title={template.name}
         />
@@ -950,7 +959,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       {/* Edit mode: full-bleed canvas */}
       {mode === 'edit' && editorSpec && stepRegistry && (
-        <div className="-mx-10">
+        <div className="-mx-4 md:-mx-10">
           <TemplateEditor
             actions={editorActions}
             costEstimateUsd={costEstimate?.totalUsd}
@@ -973,7 +982,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
             {mode === 'view' && visualSpec && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="label-mono">Spec — read-only</div>
+                  <div className="label-mono">Definition (read only)</div>
                   <div className="flex items-center gap-2">{editorActions}</div>
                 </div>
                 <WorkflowDag
@@ -1135,7 +1144,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   ) : undefined
                 }
                 number={railNumber('schema')}
-                title="Run schema"
+                title="Launch inputs"
               />
               {(() => {
                 const inputSchema = template.inputSchema;
@@ -1143,7 +1152,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   return (
                     <EmptyState
                       className="py-0 text-left text-xs"
-                      title="No schema — runs accept any input"
+                      title="No launch inputs — runs accept any input"
                     />
                   );
                 }

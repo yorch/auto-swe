@@ -297,8 +297,8 @@ gateway, so the entry point would be too.
 
 ## 9. The dashboard
 
-**Start work** (`/start`, ENGINEER and above) offers workflow and agent launch paths. The
-`/agent-runs` URL opens the same flow with **Run an agent** selected. The agent path is a form over
+**Start work** (`/start`, ENGINEER and above) offers workflow, agent and multi-repo epic
+launch paths. The `/agent-runs` URL redirects to `/start?mode=agent`. The agent path is a form over
 the same `POST /api/v1/agent-runs`. A review screen shows the repository, agent, task, delivery, and
 limits before launch. Returning to the inputs preserves the draft. Launching opens the request
 side panel in **Requests** (`/workflows`), which groups its execution attempts.

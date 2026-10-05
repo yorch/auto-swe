@@ -10,7 +10,7 @@ import { KnowledgeBaseTab } from '@/components/integrations/KnowledgeBaseTab';
 import { SlackTab } from '@/components/integrations/SlackTab';
 import { SourceBadge } from '@/components/integrations/SourceBadge';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { TabBar } from '@/components/ui/TabBar';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 
 type Tab = 'github' | 'slack' | 'tracker' | 'knowledge-base' | 'figma' | 'audit-log';
 
@@ -60,13 +60,15 @@ function StudioIntegrationsPageInner() {
         }
         title="Integrations"
       />
-      <TabBar active={active} onChange={setActive} tabs={TABS} />
-      {active === 'github' && <GitHubTab />}
-      {active === 'slack' && <SlackTab installedTeamId={installedSlackTeamId} />}
-      {active === 'tracker' && <IssueTrackerTab />}
-      {active === 'knowledge-base' && <KnowledgeBaseTab />}
-      {active === 'figma' && <FigmaTab />}
-      {active === 'audit-log' && <AuditLogTab />}
+      <TabBar active={active} idPrefix="integrations" onChange={setActive} tabs={TABS} />
+      <div {...tabPanelProps('integrations', active)}>
+        {active === 'github' && <GitHubTab />}
+        {active === 'slack' && <SlackTab installedTeamId={installedSlackTeamId} />}
+        {active === 'tracker' && <IssueTrackerTab />}
+        {active === 'knowledge-base' && <KnowledgeBaseTab />}
+        {active === 'figma' && <FigmaTab />}
+        {active === 'audit-log' && <AuditLogTab />}
+      </div>
     </div>
   );
 }

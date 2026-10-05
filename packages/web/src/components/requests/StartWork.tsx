@@ -3,28 +3,44 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
+import { EpicLaunchForm } from '@/components/epics/EpicLaunchForm';
 import { WorkflowLaunchForm } from '@/components/requests/WorkflowLaunchForm';
+import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RadioGroup } from '@/components/ui/RadioGroup';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { requestHref } from '@/lib/requestDisplay';
 import { useTeamStore } from '@/stores/teamStore';
 
-export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflow' | 'agent' }) {
+type Mode = 'workflow' | 'agent' | 'epic';
+
+export function StartWork({
+  initialMode = 'workflow',
+  initialTemplateId = '',
+}: {
+  initialMode?: Mode;
+  /** A workflow to preselect, from the library's Run button. */
+  initialTemplateId?: string;
+}) {
   const router = useRouter();
-  const [mode, setMode] = useState<'workflow' | 'agent'>(initialMode);
-  const [visited, setVisited] = useState<string[]>([]);
-  const [templateId, setTemplateId] = useState('');
+  // POST /epics requires LEAD, so the option is shown but disabled below that.
+  const canStartEpic = useHasRole('LEAD');
+  const [mode, setMode] = useState<Mode>(initialMode);
+  const [visited, setVisited] = useState<string[]>(initialTemplateId ? [initialTemplateId] : []);
+  const [templateId, setTemplateId] = useState(initialTemplateId);
   const teamId = useTeamStore((state) => state.selectedTeamId);
   const templates = useWorkflowTemplates(teamId);
   const runnable = (templates.data ?? []).filter(
     (template) => template.status === 'ACTIVE' && template.activeVersion !== null
   );
   const template = runnable.find((item) => item.id === templateId);
+  const unrunnableTemplate =
+    !!initialTemplateId && !templates.isLoading && !templates.isError && !template;
   const onLaunched = (requestId: string) => router.push(requestHref(requestId));
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -37,10 +53,16 @@ export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflo
         subtitle="Choose how to work, enter the details, then review before launching."
         title="Start work"
       />
+      {unrunnableTemplate && (
+        <Alert variant="warning">
+          The workflow you picked is not available to run. It may be inactive, archived or not
+          visible to your team. Choose another workflow below.
+        </Alert>
+      )}
       <RadioGroup
         legend="How do you want to work?"
         name="work-mode"
-        onChange={(value) => setMode(value as 'workflow' | 'agent')}
+        onChange={(value) => setMode(value as Mode)}
         options={[
           {
             description: 'Follow a reusable process with defined steps, checks, and approvals.',
@@ -53,6 +75,14 @@ export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflo
             label: 'Run an agent',
             value: 'agent',
           },
+          {
+            description: canStartEpic
+              ? 'Change several repositories at once. A planner splits the brief into ordered per-repository work.'
+              : 'Needs a team lead or administrator.',
+            disabled: !canStartEpic,
+            label: 'Run a multi-repo epic',
+            value: 'epic',
+          },
         ]}
         value={mode}
       />
@@ -60,8 +90,10 @@ export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflo
         <QueryBoundary
           error={templates.error}
           isError={templates.isError}
+          isFetching={templates.isFetching}
           isLoading={templates.isLoading}
           label="workflows"
+          onRetry={() => void templates.refetch()}
         >
           {!runnable.length ? (
             <EmptyState
@@ -101,6 +133,9 @@ export function StartWork({ initialMode = 'workflow' }: { initialMode?: 'workflo
       </div>
       <div hidden={mode !== 'agent'}>
         <AgentRunForm onLaunched={onLaunched} reviewBeforeLaunch />
+      </div>
+      <div hidden={mode !== 'epic'}>
+        <EpicLaunchForm onLaunched={(path) => router.push(path)} reviewBeforeLaunch />
       </div>
     </div>
   );

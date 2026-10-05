@@ -54,7 +54,7 @@ function AddedSkill({
   const label = visibleText(a.name ?? a.folder);
   const reason = notInstallableReason(a);
   return (
-    <li className="space-y-1 rounded-[9px] border border-ink-600 p-3">
+    <li className="space-y-1 rounded-md border border-ink-600 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-paper-100">{label}</span>
         <span className="font-mono text-[11px] text-paper-500">{visibleText(a.folder)}</span>

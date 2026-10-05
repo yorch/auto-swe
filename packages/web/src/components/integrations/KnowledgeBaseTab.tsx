@@ -38,7 +38,14 @@ const PROVIDER_HINTS: Record<
 };
 
 export function KnowledgeBaseTab() {
-  const { data: resp, error: loadError, isError, isLoading } = useKnowledgeBaseConfig();
+  const {
+    data: resp,
+    error: loadError,
+    isError,
+    isFetching,
+    refetch,
+    isLoading,
+  } = useKnowledgeBaseConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateKnowledgeBaseConfig();
@@ -107,8 +114,10 @@ export function KnowledgeBaseTab() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="knowledge base config"
+        onRetry={() => void refetch()}
       />
     );
   }

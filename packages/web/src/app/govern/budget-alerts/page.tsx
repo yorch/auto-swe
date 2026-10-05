@@ -9,7 +9,14 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useBudgetAlerts } from '@/hooks/useOrg';
 
 export default function BudgetAlertsPage() {
-  const { data: orgs, isLoading, isError, error: loadError } = useBudgetAlerts();
+  const {
+    data: orgs,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useBudgetAlerts();
   const alerting = (orgs ?? []).filter((o) => o.alert.triggered);
 
   return (
@@ -29,8 +36,10 @@ export default function BudgetAlertsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="budget alerts"
+        onRetry={() => void refetch()}
       >
         {
           <Card>

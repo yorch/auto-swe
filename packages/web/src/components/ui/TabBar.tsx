@@ -1,5 +1,8 @@
+'use client';
+
 import Link from 'next/link';
-import { cn } from '@/lib/utils';
+import { useId, useRef } from 'react';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 interface TabItem<T extends string> {
   id: T;
@@ -8,53 +11,127 @@ interface TabItem<T extends string> {
   href?: string;
 }
 
+/** Props for the panel a tab controls; pair with `<TabBar idPrefix>`. */
+export function tabPanelProps(idPrefix: string, id: string) {
+  return {
+    'aria-labelledby': `${idPrefix}-tab-${id}`,
+    id: `${idPrefix}-panel-${id}`,
+    role: 'tabpanel' as const,
+  };
+}
+
 /**
- * Underlined section tabs. Tabs with an `href` are `next/link`s marked
- * `aria-current="page"` when active — sub-pages stay linkable, middle-clickable
- * and prefetched. Tabs without one call `onChange`, for in-page sections.
+ * Underlined section tabs. Tabs with an `href` are `next/link`s in a labelled
+ * `<nav>`, marked `aria-current="page"` when active — sub-pages stay linkable,
+ * middle-clickable and prefetched. Tabs without one are in-page sections and
+ * follow the ARIA tabs pattern: a `tablist` of `role="tab"` buttons with
+ * `aria-selected`, a roving tabindex and Left/Right/Home/End navigation.
+ * `ariaLabel` names the group.
  */
 export function TabBar<T extends string>({
   tabs,
   active,
   onChange,
   className,
+  ariaLabel = 'Sections',
+  idPrefix,
 }: {
   tabs: TabItem<T>[];
   active: T;
   onChange?: (id: T) => void;
   className?: string;
+  ariaLabel?: string;
+  /**
+   * Links each in-page tab to its panel: tabs get `aria-controls`, and the page
+   * spreads {@link tabPanelProps} with the same prefix onto the panel.
+   */
+  idPrefix?: string;
 }) {
+  const generated = useId();
+  const baseId = idPrefix ?? generated;
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const isLinkBar = tabs.some((t) => t.href);
+
+  const tabClass = (selected: boolean) =>
+    cn(
+      'shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm transition-colors',
+      FOCUS_RING,
+      selected
+        ? 'border-ember-400 text-ember-400'
+        : 'border-transparent text-paper-400 hover:text-paper-100'
+    );
+
+  const onKeyDown = (e: React.KeyboardEvent, index: number) => {
+    let next = index;
+    if (e.key === 'ArrowRight') {
+      next = (index + 1) % tabs.length;
+    } else if (e.key === 'ArrowLeft') {
+      next = (index - 1 + tabs.length) % tabs.length;
+    } else if (e.key === 'Home') {
+      next = 0;
+    } else if (e.key === 'End') {
+      next = tabs.length - 1;
+    } else {
+      return;
+    }
+    e.preventDefault();
+    refs.current[next]?.focus();
+    onChange?.(tabs[next].id);
+  };
+
   return (
     <div className={cn('border-b border-ink-600', className)}>
-      <nav className="flex gap-1 overflow-x-auto">
-        {tabs.map((tab) => {
-          const tabClassName = cn(
-            'shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm transition-colors',
-            active === tab.id
-              ? 'border-ember-400 text-ember-400'
-              : 'border-transparent text-paper-400 hover:text-paper-100'
-          );
-          return tab.href ? (
-            <Link
-              aria-current={active === tab.id ? 'page' : undefined}
-              className={tabClassName}
-              href={tab.href}
-              key={tab.id}
-            >
-              {tab.label}
-            </Link>
-          ) : (
-            <button
-              className={tabClassName}
-              key={tab.id}
-              onClick={() => onChange?.(tab.id)}
-              type="button"
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </nav>
+      {isLinkBar ? (
+        <nav aria-label={ariaLabel} className="flex gap-1 overflow-x-auto">
+          {tabs.map((tab) =>
+            tab.href ? (
+              <Link
+                aria-current={active === tab.id ? 'page' : undefined}
+                className={tabClass(active === tab.id)}
+                href={tab.href}
+                key={tab.id}
+              >
+                {tab.label}
+              </Link>
+            ) : (
+              <button
+                aria-pressed={active === tab.id}
+                className={tabClass(active === tab.id)}
+                key={tab.id}
+                onClick={() => onChange?.(tab.id)}
+                type="button"
+              >
+                {tab.label}
+              </button>
+            )
+          )}
+        </nav>
+      ) : (
+        <div aria-label={ariaLabel} className="flex gap-1 overflow-x-auto" role="tablist">
+          {tabs.map((tab, i) => {
+            const selected = active === tab.id;
+            return (
+              <button
+                aria-controls={idPrefix ? `${idPrefix}-panel-${tab.id}` : undefined}
+                aria-selected={selected}
+                className={tabClass(selected)}
+                id={`${baseId}-tab-${tab.id}`}
+                key={tab.id}
+                onClick={() => onChange?.(tab.id)}
+                onKeyDown={(e) => onKeyDown(e, i)}
+                ref={(el) => {
+                  refs.current[i] = el;
+                }}
+                role="tab"
+                tabIndex={selected ? 0 : -1}
+                type="button"
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

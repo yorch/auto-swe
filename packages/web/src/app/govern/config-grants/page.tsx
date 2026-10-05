@@ -26,7 +26,14 @@ type GrantScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
 type GrantRole = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
 export default function GovernConfigGrantsPage() {
-  const { data: grants, isLoading, isError, error: loadError } = useConfigGrants();
+  const {
+    data: grants,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useConfigGrants();
   const createGrant = useCreateConfigGrant();
   const revokeGrant = useRevokeConfigGrant();
   const [revokeTarget, setRevokeTarget] = useState<ConfigGrant | null>(null);
@@ -233,9 +240,11 @@ export default function GovernConfigGrantsPage() {
           <QueryBoundary
             error={loadError}
             isError={isError}
+            isFetching={isFetching}
             isLoading={isLoading}
             label="grants"
             loadingMessage="loading grants…"
+            onRetry={() => void refetch()}
           >
             {(grants ?? []).length === 0 ? (
               <EmptyState title="No grants configured." />

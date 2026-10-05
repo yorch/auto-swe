@@ -3,7 +3,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Role } from '@auto-swe/shared';
 import { describe, expect, it } from 'vitest';
-import { activeNavHref, NAV_ITEMS, navLabel, pageTitle, visibleNavGroups } from './navigation';
+import {
+  activeNavHref,
+  isStartWorkPath,
+  NAV_ITEMS,
+  navLabel,
+  pageTitle,
+  visibleNavGroups,
+} from './navigation';
 
 const APP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
 const RANK: Record<Role, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
@@ -104,6 +111,17 @@ describe('activeNavHref', () => {
     expect(activeNavHref('/', NAV_ITEMS)).toBe('/');
     expect(activeNavHref('/nowhere', NAV_ITEMS)).toBe('');
   });
+
+  it('highlights All runs on a run page and Requests on an epic', () => {
+    expect(activeNavHref('/runs', NAV_ITEMS)).toBe('/runs');
+    expect(activeNavHref('/runs/abc', NAV_ITEMS)).toBe('/runs');
+    expect(activeNavHref('/epics/wf-1', NAV_ITEMS)).toBe('/workflows');
+  });
+
+  it('knows the Start work path', () => {
+    expect(isStartWorkPath('/start')).toBe(true);
+    expect(isStartWorkPath('/startling')).toBe(false);
+  });
 });
 
 describe('pageTitle', () => {
@@ -116,7 +134,7 @@ describe('pageTitle', () => {
 
   it('titles detail and extra pages', () => {
     expect(pageTitle('/runs/abc')).toBe('Run');
-    expect(pageTitle('/runs')).toBe('Runs');
+    expect(pageTitle('/runs')).toBe('All runs');
     expect(pageTitle('/govern/teams/abc')).toBe('Teams');
     expect(pageTitle('/govern/policies/decisions')).toBe('Autonomy decisions');
     expect(pageTitle('/epics/wf-1')).toBe('Epics');

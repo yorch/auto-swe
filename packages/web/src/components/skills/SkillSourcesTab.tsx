@@ -40,7 +40,7 @@ const SCRIPT_MODE_LABEL = { REJECT: 'reject scripts', TEXT_ONLY: 'text only' } a
  * accepts it. ADMIN-only (the server enforces it too).
  */
 export function SkillSourcesTab() {
-  const { data: sources, isLoading, isError, error } = useSkillSources();
+  const { data: sources, isLoading, isError, isFetching, error, refetch } = useSkillSources();
   const check = useCheckSource();
   const patch = usePatchSource();
   const remove = useDeleteSource();
@@ -96,7 +96,14 @@ export function SkillSourcesTab() {
         {notice && (
           <Alert variant={notice.tone === 'error' ? 'error' : 'info'}>{notice.text}</Alert>
         )}
-        <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="skill sources">
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="skill sources"
+          onRetry={() => void refetch()}
+        >
           {!sources?.length ? (
             <EmptyState title="No external sources yet. Add one with the button above." />
           ) : (

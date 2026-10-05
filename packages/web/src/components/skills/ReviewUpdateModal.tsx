@@ -87,7 +87,7 @@ function ChangedSkill({
   return (
     <section
       aria-label={`Changed skill ${name}`}
-      className="space-y-2 rounded-[9px] border border-ink-600 p-3"
+      className="space-y-2 rounded-md border border-ink-600 p-3"
     >
       <div className="flex flex-wrap items-center gap-2">
         <Checkbox

@@ -5,6 +5,13 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Keyboard-focus ring shared by every interactive primitive (buttons, nav links,
+ * tabs, switches). `focus-visible` only, so a mouse click leaves no ring.
+ */
+export const FOCUS_RING =
+  'outline-none focus-visible:ring-2 focus-visible:ring-ember-400 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900';
+
 /** A plain JSON-style object — not null, not an array. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

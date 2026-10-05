@@ -6,6 +6,8 @@ export interface RadioOption<T extends string> {
   label: ReactNode;
   /** A quiet line under the label, for card-style options. */
   description?: ReactNode;
+  /** Shown but not selectable; say why in the description. */
+  disabled?: boolean;
 }
 
 /**
@@ -35,10 +37,17 @@ export function RadioGroup<T extends string>({
     <fieldset className={cn('space-y-3', className)}>
       <legend className={hideLegend ? 'sr-only' : 'label-mono mb-2 block'}>{legend}</legend>
       {options.map((o) => (
-        <label className="flex cursor-pointer items-start gap-3" key={o.value}>
+        <label
+          className={cn(
+            'flex items-start gap-3',
+            o.disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+          )}
+          key={o.value}
+        >
           <input
             checked={value === o.value}
             className="mt-0.5 h-4 w-4 shrink-0 accent-ember-400"
+            disabled={o.disabled}
             name={name}
             onChange={() => onChange(o.value)}
             type="radio"

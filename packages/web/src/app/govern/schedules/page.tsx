@@ -425,7 +425,14 @@ export default function GovernSchedulesPage() {
   const canCreate = isAdmin || (ledTeamIds?.size ?? 0) > 0;
   const [deleteTarget, setDeleteTarget] = useState<ScheduledWorkRequestSummary | null>(null);
   const deleteSchedule = useDeleteSchedule();
-  const { data: schedules, isLoading, isError, error: loadError } = useSchedules();
+  const {
+    data: schedules,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useSchedules();
 
   return (
     <div className="space-y-8">
@@ -451,7 +458,14 @@ export default function GovernSchedulesPage() {
         <CardHeader>
           <CardTitle>All schedules</CardTitle>
         </CardHeader>
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="schedules">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="schedules"
+          onRetry={() => void refetch()}
+        >
           {!schedules?.length ? (
             <EmptyState title="No schedules yet. Create one with the button above." />
           ) : (

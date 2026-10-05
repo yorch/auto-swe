@@ -22,7 +22,14 @@ import { navLabel } from '@/lib/navigation';
 import { BundlePreviewModal } from './BundlePreviewModal';
 
 export default function StudioBundlesPage() {
-  const { data: bundles, isLoading, isError, error: loadError } = useInstalledBundles();
+  const {
+    data: bundles,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useInstalledBundles();
   const installFromUrl = useInstallBundleFromUrl();
   const previewBundle = usePreviewBundle();
   const exportBundle = useExportBundle();
@@ -162,7 +169,14 @@ export default function StudioBundlesPage() {
         <CardHeader>
           <CardTitle>Installed bundles</CardTitle>
         </CardHeader>
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="bundles">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="bundles"
+          onRetry={() => void refetch()}
+        >
           {!bundles || bundles.length === 0 ? (
             <EmptyState className="py-4" title="No bundles installed yet." />
           ) : (

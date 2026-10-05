@@ -137,6 +137,8 @@ function TemplateDiffContent({ params }: PageProps) {
     data: template,
     isLoading: templateLoading,
     isError: templateError,
+    isFetching: templateFetching,
+    refetch: refetchTemplate,
     error: templateErr,
   } = useWorkflowTemplate(id ?? '');
   const platformRole = useAuthStore((s) => s.user?.role);
@@ -172,6 +174,8 @@ function TemplateDiffContent({ params }: PageProps) {
     data: diffPayload,
     isLoading,
     isError: isDiffError,
+    isFetching: diffFetching,
+    refetch: refetchDiff,
     error: diffError,
   } = useWorkflowSpecDiff(id ?? '', before, after);
 
@@ -219,7 +223,7 @@ function TemplateDiffContent({ params }: PageProps) {
   return (
     <div className="space-y-8">
       <div>
-        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Template'} />
+        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Workflow'} />
         <PageHeader
           actions={
             <div className="flex flex-wrap items-end gap-4">
@@ -258,7 +262,7 @@ function TemplateDiffContent({ params }: PageProps) {
           subtitle={
             before !== null && after !== null && before !== after
               ? `Before (v${before}) → After (v${after}). Changed nodes are highlighted on both diagrams and expanded below.`
-              : 'Side-by-side diff of two versions of this template.'
+              : 'Side-by-side diff of two versions of this workflow.'
           }
           title="Version diff"
         />
@@ -289,21 +293,25 @@ function TemplateDiffContent({ params }: PageProps) {
       <QueryBoundary
         error={templateErr}
         isError={templateError}
+        isFetching={templateFetching}
         isLoading={templateLoading}
-        label="template"
+        label="workflow"
+        onRetry={() => void refetchTemplate()}
       >
         {singleVersion || (before !== null && before === after) ? (
           <EmptyState
-            hint="Compare needs two versions of this template."
+            hint="Compare needs two versions of this workflow."
             title="Only one version — save a change to compare"
           />
         ) : (
           <QueryBoundary
             error={diffError}
             isError={isDiffError}
+            isFetching={diffFetching}
             isLoading={isLoading}
             label="the diff"
             loadingMessage="computing diff…"
+            onRetry={() => void refetchDiff()}
           >
             {parseError && <Alert>{parseError}</Alert>}
             {diffPayload && !parseError && specPair && (

@@ -664,6 +664,8 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
     data: items,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     error: loadError,
   } = useChannelMemory(channel?.id ?? null, showConsolidated);
   const deleteMemory = useDeleteChannelMemory();
@@ -702,8 +704,10 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
         <QueryBoundary
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="channel memory"
+          onRetry={() => void refetch()}
         >
           {!items || items.length === 0 ? (
             <EmptyState className="py-6" title="No memory yet for this channel." />
@@ -812,6 +816,8 @@ function OpenItemsModal({
     data: items,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     error: loadError,
   } = useChannelOpenItems(channel?.id ?? null, statusFilter);
   const updateItem = useUpdateChannelOpenItem();
@@ -848,7 +854,14 @@ function OpenItemsModal({
 
         {actionError && <Alert>{actionError}</Alert>}
 
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="open items">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="open items"
+          onRetry={() => void refetch()}
+        >
           {!items || items.length === 0 ? (
             <EmptyState
               className="py-4"
@@ -926,6 +939,8 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
     data: entries,
     error: loadError,
     isError,
+    isFetching,
+    refetch,
     isLoading,
   } = useChannelAudit(channel?.id ?? null, kindFilter);
 
@@ -954,8 +969,10 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
           <QueryBoundary
             error={loadError}
             isError={isError}
+            isFetching={isFetching}
             isLoading={isLoading}
             label="audit entries"
+            onRetry={() => void refetch()}
           />
         ) : !entries || entries.length === 0 ? (
           <EmptyState
@@ -1106,6 +1123,7 @@ function ChannelRow({
       <Td align="center" className="px-4 py-3">
         <div className="flex justify-center">
           <ToggleSwitch
+            ariaLabel={`Active: ${channel.name ?? channel.slackChannelId}`}
             checked={channel.isActive}
             disabled={update.isPending}
             onChange={handleToggleActive}
@@ -1153,7 +1171,14 @@ function ChannelRow({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function GovernSlackChannelsPage() {
-  const { data: channels, error: loadError, isError, isLoading } = useSlackChannels();
+  const {
+    data: channels,
+    error: loadError,
+    isError,
+    isFetching,
+    isLoading,
+    refetch,
+  } = useSlackChannels();
   const { data: teams } = useTeams();
   const deleteChannel = useDeleteSlackChannel();
 
@@ -1190,8 +1215,10 @@ export default function GovernSlackChannelsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="Slack channels"
+        onRetry={() => void refetch()}
       >
         <Card>
           <CardHeader>

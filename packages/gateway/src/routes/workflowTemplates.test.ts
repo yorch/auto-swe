@@ -46,6 +46,7 @@ function buildApp(state: {
     status: string;
     startedAt: Date;
     endedAt: Date | null;
+    workRequestId?: string | null;
     /** Non-admin viewers who pass run visibility; unset = everyone. */
     visibleTo?: string[];
   }>;
@@ -753,6 +754,7 @@ describe('workflow-templates routes', () => {
         startedAt: new Date(),
         status: 'RUNNING',
         templateId: tpl.id,
+        workRequestId: 'wr-1',
       });
     }
     const res = await app.inject({
@@ -765,6 +767,7 @@ describe('workflow-templates routes', () => {
     expect(body.data).toHaveLength(state.templates.length);
     const first = body.data[0];
     expect(first.lastRun?.status).toBe('RUNNING');
+    expect(first.lastRun?.workRequestId).toBe('wr-1');
   });
 
   it('reports the newest run the caller may see as lastRun, not another team’s', async () => {

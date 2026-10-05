@@ -75,6 +75,7 @@ export default function GovernLessonsPage() {
     data: stats,
     isLoading: statsLoading,
     isError: statsIsError,
+    isFetching: statsIsFetching,
     error: statsError,
     refetch: refetchStats,
   } = useAdminLessonStats();
@@ -82,7 +83,9 @@ export default function GovernLessonsPage() {
     data: lessons,
     isLoading: lessonsLoading,
     isError: lessonsIsError,
+    isFetching: lessonsIsFetching,
     error: lessonsError,
+    refetch: refetchLessons,
   } = useLessons(false, { limit: 20 });
   const { data: consolidation } = useConsolidationConfig();
   const deleteLesson = useDeleteLesson();
@@ -167,8 +170,10 @@ export default function GovernLessonsPage() {
         <QueryBoundary
           error={statsError}
           isError={statsIsError}
+          isFetching={statsIsFetching}
           isLoading={statsLoading}
           label="lesson stats"
+          onRetry={() => void refetchStats()}
         >
           {!stats || stats.length === 0 ? (
             <EmptyState title="No repositories found." />
@@ -204,8 +209,10 @@ export default function GovernLessonsPage() {
         <QueryBoundary
           error={lessonsError}
           isError={lessonsIsError}
+          isFetching={lessonsIsFetching}
           isLoading={lessonsLoading}
           label="lessons"
+          onRetry={() => void refetchLessons()}
         >
           {!lessons || lessons.length === 0 ? (
             <EmptyState title="No active lessons." />
@@ -219,7 +226,7 @@ export default function GovernLessonsPage() {
                         {lesson.repository.organizationName}/{lesson.repository.repoName}
                       </span>
                       {lesson.failureType && (
-                        <Badge className="text-[9px]" tone="muted" uppercase>
+                        <Badge className="text-[10px]" tone="muted" uppercase>
                           {lesson.failureType}
                         </Badge>
                       )}

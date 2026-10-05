@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { RequestList } from '@/components/requests/RequestList';
+import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -11,6 +13,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { useApprovals } from '@/hooks/useApprovals';
 import { type RequestScope, type RequestState, useRequests } from '@/hooks/useRequests';
+import { deniedMessage } from '@/lib/accessDenied';
 
 function WorkSection({
   title,
@@ -41,8 +44,10 @@ function WorkSection({
       <QueryBoundary
         error={query.error}
         isError={query.isError}
+        isFetching={query.isFetching}
         isLoading={query.isLoading}
         label={title.toLowerCase()}
+        onRetry={() => void query.refetch()}
       >
         {requests.length ? (
           <RequestList
@@ -83,10 +88,44 @@ function WaitingOnYou() {
   );
 }
 
+/** Why the user landed here, when a role-gated page sent them Home. */
+function AccessDeniedNotice() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const fresh = deniedMessage(params.get('denied'), params.get('need'), params.get('reason'));
+  // Keep the notice, then drop the parameters so a reload or a shared link does not repeat it.
+  const [message, setMessage] = useState<string | null>(fresh);
+  useEffect(() => {
+    if (fresh) {
+      setMessage(fresh);
+    }
+    if (params.has('denied')) {
+      router.replace('/', { scroll: false });
+    }
+  }, [fresh, params, router]);
+  return message ? (
+    <Alert variant="warning">
+      <span className="flex flex-wrap items-start justify-between gap-3">
+        <span>{message}</span>
+        <button
+          className="underline hover:no-underline"
+          onClick={() => setMessage(null)}
+          type="button"
+        >
+          Dismiss
+        </button>
+      </span>
+    </Alert>
+  ) : null;
+}
+
 export default function HomePage() {
   const [scope, setScope] = useState<RequestScope>('MINE');
   return (
     <div className="space-y-8">
+      <Suspense fallback={null}>
+        <AccessDeniedNotice />
+      </Suspense>
       <PageHeader
         actions={
           <ButtonLink href="/start" variant="primary">

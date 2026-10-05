@@ -12,14 +12,17 @@ interface Page<T> {
   meta: { total: number; limit: number; offset: number };
 }
 
-export function useRequests(filters: {
-  scope: RequestScope;
-  requestId?: string;
-  state?: RequestState;
-  search?: string;
-  offset?: number;
-  limit?: number;
-}) {
+export function useRequests(
+  filters: {
+    scope: RequestScope;
+    requestId?: string;
+    state?: RequestState;
+    search?: string;
+    offset?: number;
+    limit?: number;
+  },
+  options: { enabled?: boolean } = {}
+) {
   const teamId = useTeamStore((state) => state.selectedTeamId);
   const scoped = { ...filters, ...(teamId ? { teamId } : {}) };
   const params = new URLSearchParams();
@@ -29,6 +32,7 @@ export function useRequests(filters: {
     }
   }
   return useQuery({
+    enabled: options.enabled ?? true,
     queryFn: () =>
       api.get<Page<WorkspaceRequestSummary>>(`/api/v1/workflow-runs/requests?${params}`),
     queryKey: ['workflow-runs', 'requests', scoped],
