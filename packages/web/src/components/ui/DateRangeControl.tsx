@@ -41,6 +41,7 @@ export function DateRangeControl({
     : value.kind === 'custom'
       ? `custom:${value.from}:${value.to}`
       : `preset:${value.days}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `valueKey` stands for `value`
   useEffect(() => {
     if (value?.kind === 'custom') {
       setCustomOpen(true);
@@ -50,7 +51,6 @@ export function DateRangeControl({
       // A preset (or all time) became the value: the custom editor has done its job.
       setCustomOpen(false);
     }
-    // biome-ignore lint/correctness/useExhaustiveDependencies: `valueKey` stands for `value`
   }, [valueKey]);
 
   const today = utcDay(new Date());
