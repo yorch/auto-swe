@@ -40,6 +40,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/pullRequest.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/guardedDispatcher',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedDispatcher.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/crypto',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/crypto.ts'),
       },

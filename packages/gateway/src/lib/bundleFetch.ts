@@ -1,3 +1,4 @@
+import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 
 /**
@@ -44,6 +45,9 @@ export function assertPublicBundleUrl(rawUrl: string): void {
  */
 const FETCH_TIMEOUT_MS = 15_000;
 
+// Resolves the host and refuses any private/loopback/metadata answer; each hop comes back here.
+const guardedFetch = createGuardedFetch();
+
 async function readBodyCapped(res: Response, maxBytes: number): Promise<string> {
   if (!res.body) {
     return '';
@@ -77,7 +81,7 @@ export async function fetchBundleJson(
   let current = url;
   for (let hop = 0; ; hop++) {
     assertPublicBundleUrl(current);
-    const res = await fetch(current, {
+    const res = await guardedFetch(current, {
       redirect: 'manual',
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });

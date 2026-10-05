@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import {
   modelListRequest,
   safeFetchError,
@@ -61,6 +62,9 @@ export function redactCredential(row: {
 
 const PROBE_TIMEOUT_MS = 5_000;
 
+// A credential's apiBase is checked at save time as text; the probe also checks what it resolves to.
+const guardedFetch = createGuardedFetch();
+
 /// Issues a minimal HTTP probe against the configured provider to verify the
 /// credential works. Returns `{ ok, status, error? }`. Best-effort — not all
 /// providers expose a cheap "list models" endpoint, so failures here are not
@@ -75,7 +79,7 @@ export async function probeCredential(args: {
     return { error: safeRequestError(request.error), ok: false };
   }
   try {
-    const res = await fetch(request.url, {
+    const res = await guardedFetch(request.url, {
       ...request.init,
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
