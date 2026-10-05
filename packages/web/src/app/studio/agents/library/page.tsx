@@ -7,6 +7,7 @@ import {
   AgentFormFields,
   type AgentFormValue,
 } from '@/components/agents/AgentFormFields';
+import { broaderFallbacks } from '@/components/agents/agentFallback';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -114,15 +115,7 @@ const SCOPE_NOUN: Record<AgentScope, string> = {
   TEAM: 'team',
   WORKFLOW_TEMPLATE: 'workflow template',
 };
-const FALLBACK_CHAIN: Record<AgentScope, string> = {
-  CHANNEL: 'team, organization, then global',
-  GLOBAL: '',
-  ORGANIZATION: 'global',
-  TEAM: 'organization, then global',
-  WORKFLOW_TEMPLATE: 'channel, team, organization, then global',
-};
 const scopeNoun = (scope: AgentScope) => SCOPE_NOUN[scope];
-const fallbackChain = (scope: AgentScope) => FALLBACK_CHAIN[scope];
 
 /** The target a scoped row is pinned to, named where the page can resolve it. */
 function scopeTarget(
@@ -567,7 +560,12 @@ export default function AgentLibraryPage() {
                 </p>
               </div>
             ) : (
-              `Deactivate all versions of '${deleting.key}' for this ${scopeNoun(deleting.scope)}? Runs there fall back to the next broader version of this agent (${fallbackChain(deleting.scope)}).`
+              (() => {
+                const fallbacks = broaderFallbacks(deleting, agents ?? []);
+                return fallbacks.length > 0
+                  ? `Deactivate all versions of '${deleting.key}' for this ${scopeNoun(deleting.scope)}? Runs there fall back to the ${scopeNoun(fallbacks[0] as AgentScope)} version of this agent.`
+                  : `Deactivate all versions of '${deleting.key}' for this ${scopeNoun(deleting.scope)}? No broader version exists, so runs there that need this agent will fail.`;
+              })()
             )
           ) : (
             ''
