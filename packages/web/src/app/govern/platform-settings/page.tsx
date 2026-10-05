@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { SettingRow, type SettingRowStatus } from '@/components/settings/SettingRow';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -119,6 +119,10 @@ export default function GovernSettingsPage() {
     return [...byGroup.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [settings.data]);
 
+  const viewKey = selection.scope === 'GLOBAL' ? 'GLOBAL' : `${selection.scope}:${scopeId}`;
+  const viewKeyRef = useRef(viewKey);
+  viewKeyRef.current = viewKey;
+
   const awaitingChoice = scope !== 'GLOBAL' && !scopeId;
 
   // Each row tracks its own save, so one slow or failing write neither freezes
@@ -126,10 +130,14 @@ export default function GovernSettingsPage() {
   // `mutateAsync` per call: per-call `mutate` callbacks live on one observer and TanStack
   // drops those of any earlier call when a later one starts, leaving that row "Saving…".
   const track = (key: string, run: () => Promise<unknown>) => {
+    const startedAt = viewKey;
+    // A save that settles after the view changed belongs to the old scope: drop it.
+    const stillHere = () => viewKeyRef.current === startedAt;
     setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saving' } }));
     run().then(
-      () => setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saved' } })),
+      () => stillHere() && setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saved' } })),
       (err: unknown) =>
+        stillHere() &&
         setRowStatus((prev) => ({
           ...prev,
           [key]: { message: errMsg(err, 'The change could not be saved.'), phase: 'error' },
@@ -244,7 +252,7 @@ export default function GovernSettingsPage() {
                 track(setting.key, () => setSetting.mutateAsync({ key: setting.key, value }))
               }
               scope={selection.scope}
-              scopeKey={selection.scope === 'GLOBAL' ? 'GLOBAL' : `${selection.scope}:${scopeId}`}
+              scopeKey={viewKey}
               setting={setting}
               sourceHref={sourceHrefFor(setting.source)}
               status={rowStatus[setting.key]}
