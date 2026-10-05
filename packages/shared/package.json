@@ -46,6 +46,7 @@
     "./lib/repoDependencyResolver": "./dist/lib/repoDependencyResolver.js",
     "./lib/guardedFetch": "./dist/lib/guardedFetch.js",
     "./lib/ssrfGuard": "./dist/lib/ssrfGuard.js",
+    "./lib/guardedDispatcher": "./dist/lib/guardedDispatcher.js",
     "./lib/mcpHeaders": "./dist/lib/mcpHeaders.js",
     "./lib/modelDiscovery": "./dist/lib/modelDiscovery.js",
     "./lib/modelSuggestions": "./dist/lib/modelSuggestions.js",
@@ -127,6 +128,7 @@
     "bcrypt": "6.0.0",
     "dotenv-expand": "13.0.0",
     "pg": "8.23.1",
+    "undici": "8.11.2",
     "yaml": "2.9.0",
     "zod": "4.6.5"
   },
