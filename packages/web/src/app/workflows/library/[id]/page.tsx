@@ -293,6 +293,20 @@ function ExperimentCard({
 
   const nonActive = versions.filter((v) => v.version !== activeVersion);
 
+  // A version with lint errors can be saved as a draft but cannot serve traffic, so it cannot be
+  // an experiment arm. Only the chosen version's spec is loaded, so the check runs on selection.
+  const { data: armDetail } = useWorkflowTemplateVersion(templateId, expVer);
+  const armErrorCount = useMemo(() => {
+    if (!armDetail || expVer == null) {
+      return 0;
+    }
+    try {
+      return validateSpec(parseWorkflowSpec(armDetail.spec)).errors.length;
+    } catch {
+      return 1;
+    }
+  }, [armDetail, expVer]);
+
   const handleSave = async () => {
     setError(null);
     try {
@@ -336,6 +350,12 @@ function ExperimentCard({
           ]}
           value={expVer == null ? '' : String(expVer)}
         />
+        {expVer && armErrorCount > 0 && (
+          <Alert className="text-xs">
+            v{expVer} has {armErrorCount} error{armErrorCount === 1 ? '' : 's'}, so it cannot be
+            used in an experiment until they are fixed.
+          </Alert>
+        )}
         {expVer && (
           <div className="space-y-1">
             <Slider
@@ -354,7 +374,7 @@ function ExperimentCard({
         )}
         <div className="flex gap-2">
           <Button
-            disabled={updateTemplate.isPending}
+            disabled={updateTemplate.isPending || armErrorCount > 0}
             onClick={handleSave}
             size="sm"
             variant="primary"
@@ -1207,7 +1227,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       <ConfirmModal
         confirmLabel="Save draft"
-        message={`This workflow has ${lintErrorCount} error${lintErrorCount === 1 ? '' : 's'}. It is saved as an inactive draft: nothing runs it, and it cannot be promoted or activated until the errors are fixed.`}
+        message={`This workflow has ${lintErrorCount} error${lintErrorCount === 1 ? '' : 's'}. It is saved as an inactive draft: nothing runs it, and it cannot be promoted, activated or used in an experiment until the errors are fixed.`}
         onClose={() => setPendingErrorSpec(null)}
         onConfirm={() => {
           if (pendingErrorSpec) {
