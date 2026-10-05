@@ -68,6 +68,12 @@ describe('form to body', () => {
     expect(body.orgFlagCooldownHours).toBeNull();
   });
 
+  it('sends a schedule with single spaces between its fields', () => {
+    expect(formToUpdateBody({ ...valid(), ambientCron: '0   9 * *\t1' }).ambientCron).toBe(
+      '0 9 * * 1'
+    );
+  });
+
   it('builds a create body with the Slack ids and trims text', () => {
     const body = formToCreateBody({
       ...valid(),

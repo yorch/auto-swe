@@ -100,24 +100,36 @@ const pad = (n: number) => String(n).padStart(2, '0');
 function dayPhrase(dow: ParsedField, dom: ParsedField, month: ParsedField): string {
   const parts: string[] = [];
   const dows = dow.values;
+  let weekdayPhrase = '';
   if (!dow.any) {
     if (dows.join() === '1,2,3,4,5') {
-      parts.push('weekdays');
+      weekdayPhrase = 'weekdays';
     } else if (dows.join() === '0,6') {
-      parts.push('weekends');
+      weekdayPhrase = 'weekends';
     } else if (dows.length === 1) {
-      parts.push(DAY_PLURALS[dows[0]].toLowerCase());
+      weekdayPhrase = DAY_PLURALS[dows[0]].toLowerCase();
     } else {
-      parts.push(dows.map((d) => DAY_NAMES[d]).join(', '));
+      weekdayPhrase = dows.map((d) => DAY_NAMES[d]).join(', ');
     }
   }
-  if (!dom.any) {
-    parts.push(`on day${dom.values.length === 1 ? '' : 's'} ${dom.values.join(', ')} of the month`);
+  const domPhrase = dom.any
+    ? ''
+    : `on day${dom.values.length === 1 ? '' : 's'} ${dom.values.join(', ')} of the month`;
+  if (weekdayPhrase && domPhrase) {
+    // Standard cron fires when EITHER day field matches once both are restricted.
+    parts.push(`${domPhrase} or on ${weekdayPhrase}`);
+  } else {
+    parts.push(weekdayPhrase || domPhrase);
   }
   if (!month.any) {
     parts.push(`in ${month.values.map((m) => MONTH_NAMES[m - 1]).join(', ')}`);
   }
-  return parts.join(' ');
+  return parts.filter(Boolean).join(' ');
+}
+
+/** The expression as the server expects it: trimmed, fields separated by single spaces. */
+export function normalizeCron(expression: string): string {
+  return expression.trim().split(/\s+/).join(' ');
 }
 
 export function describeCron(expression: string): CronPreview {

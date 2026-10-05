@@ -3,7 +3,7 @@ import type {
   SlackChannel,
   UpdateSlackChannelBody,
 } from '@/hooks/useSlackChannels';
-import { describeCron } from '@/lib/cronPreview';
+import { describeCron, normalizeCron } from '@/lib/cronPreview';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
 /**
@@ -164,7 +164,7 @@ export function validateChannelForm(
  * never loses it; only a blank field clears it. The server runs it only while enabled.
  */
 function cronFor(value: string): string | null {
-  return value.trim() || null;
+  return normalizeCron(value) || null;
 }
 
 /** Call only after `validateChannelForm` returned no errors. */

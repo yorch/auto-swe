@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeCron } from './cronPreview';
+import { describeCron, normalizeCron } from './cronPreview';
 
 const text = (expr: string) => {
   const result = describeCron(expr);
@@ -14,6 +14,15 @@ describe('describeCron', () => {
     expect(text('0 9 * * 1,3')).toBe('Mon, Wed at 09:00 UTC');
     expect(text('0 9 * * 0,6')).toBe('Weekends at 09:00 UTC');
     expect(text('0 9 * * 7')).toBe('Sundays at 09:00 UTC');
+  });
+
+  it('reads both day fields as either-or, the way cron runs them', () => {
+    expect(text('0 9 1 * 1')).toBe('On day 1 of the month or on mondays at 09:00 UTC');
+  });
+
+  it('normalises whitespace the way the server pattern expects', () => {
+    expect(normalizeCron('  0   9\t* * 1 ')).toBe('0 9 * * 1');
+    expect(normalizeCron('   ')).toBe('');
   });
 
   it('reads day-of-month and month restrictions', () => {
