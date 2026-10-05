@@ -231,11 +231,7 @@ function UsageWorkspace() {
       : (scopeOptions?.[0]?.value ?? null);
   const scopes = useUsageScopes();
   const { data, error, isError, isFetching, refetch, isLoading, isPlaceholderData } =
-    usePlatformUsage(
-    windowDays,
-    scopeOf(scopeValue ?? ''),
-    scopeValue !== null
-  );
+    usePlatformUsage(windowDays, scopeOf(scopeValue ?? ''), scopeValue !== null);
   const scopeLabel = String(scopeOptions?.find((o) => o.value === scopeValue)?.label ?? '');
   const delta = data
     ? formatDelta(data.totals.costUsd, data.previous.costUsd, {

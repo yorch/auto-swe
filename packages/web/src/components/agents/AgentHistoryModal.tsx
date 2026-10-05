@@ -30,7 +30,14 @@ export function AgentHistoryModal({
   credentialNames?: ReadonlyMap<string, string>;
   onClose: () => void;
 }) {
-  const { data: versions, error, isError, isLoading } = useAgentVersions(agent.id);
+  const {
+    data: versions,
+    error,
+    isError,
+    isFetching,
+    isLoading,
+    refetch,
+  } = useAgentVersions(agent.id);
   const restore = useRestoreAgentVersion();
   const [selected, setSelected] = useState<string | null>(null);
   const [restoring, setRestoring] = useState<string | null>(null);
@@ -70,7 +77,14 @@ export function AgentHistoryModal({
           {warnings.length > 0 && (
             <Alert variant="warning">Content scan warnings: {warnings.join('; ')}</Alert>
           )}
-          <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="versions">
+          <QueryBoundary
+            error={error}
+            isError={isError}
+            isFetching={isFetching}
+            isLoading={isLoading}
+            label="versions"
+            onRetry={() => void refetch()}
+          >
             <Table>
               <THead>
                 <Th variant="compact">Version</Th>

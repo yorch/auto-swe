@@ -50,9 +50,11 @@ export default function GovernSessionsPage() {
         <QueryBoundary
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="sessions"
           loadingMessage="loading sessions…"
+          onRetry={() => void refetch()}
         />
       </div>
     );

@@ -39,6 +39,8 @@ export function ChannelOpenItemsTab({ channel }: { channel: SlackChannel }) {
     data: items,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     error: loadError,
   } = useChannelOpenItems(channel.id, statusFilter);
   const updateItem = useUpdateChannelOpenItem();
@@ -69,7 +71,14 @@ export function ChannelOpenItemsTab({ channel }: { channel: SlackChannel }) {
 
       {actionError && <Alert>{actionError}</Alert>}
 
-      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="open items">
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="open items"
+        onRetry={() => void refetch()}
+      >
         {!items || items.length === 0 ? (
           <EmptyState
             className="py-4"

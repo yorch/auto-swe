@@ -86,9 +86,11 @@ export default function UsersPage() {
         <QueryBoundary
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="users"
           loadingMessage="loading users…"
+          onRetry={() => void refetch()}
         />
       </div>
     );

@@ -25,7 +25,14 @@ export function SkillHistory({
   onRestored?: (skill: Skill) => void;
   skill: Skill;
 }) {
-  const { data: revisions, error, isError, isLoading } = useSkillRevisions(skill.id);
+  const {
+    data: revisions,
+    error,
+    isError,
+    isFetching,
+    isLoading,
+    refetch,
+  } = useSkillRevisions(skill.id);
   const restore = useRestoreSkillRevision();
   const [selected, setSelected] = useState<number | null>(null);
   const [restoring, setRestoring] = useState<number | null>(null);
@@ -73,7 +80,14 @@ export function SkillHistory({
             ` The content scanner flagged the text: ${notice.warnings.join('; ')}`}
         </Alert>
       )}
-      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="revisions">
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="revisions"
+        onRetry={() => void refetch()}
+      >
         <Table>
           <THead>
             <Th variant="compact">Revision</Th>

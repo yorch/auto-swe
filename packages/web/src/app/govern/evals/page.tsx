@@ -142,8 +142,10 @@ function EvalsWorkspace() {
         <QueryBoundary
           error={latestRuns.error}
           isError={latestRuns.isError}
+          isFetching={latestRuns.isFetching}
           isLoading={latestRuns.isLoading}
           label="eval runs"
+          onRetry={() => void latestRuns.refetch()}
         >
           {latestRuns.data && latestRuns.data.length > 0 ? (
             <div className="space-y-1">

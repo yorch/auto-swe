@@ -26,7 +26,14 @@ function spendLabel(channel: SlackChannel): string {
 
 export default function GovernSlackChannelsPage() {
   const router = useRouter();
-  const { data: channels, error: loadError, isError, isLoading } = useSlackChannels();
+  const {
+    data: channels,
+    error: loadError,
+    isError,
+    isFetching,
+    isLoading,
+    refetch,
+  } = useSlackChannels();
   const { data: teams } = useTeams();
   const [registerOpen, setRegisterOpen] = useState(false);
   const teamNames = new Map(teams?.map((t) => [t.id, t.name]));
@@ -47,8 +54,10 @@ export default function GovernSlackChannelsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="Slack channels"
+        onRetry={() => void refetch()}
       >
         <Card className="overflow-x-auto">
           <CardHeader>

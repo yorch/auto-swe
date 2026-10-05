@@ -345,7 +345,14 @@ export default function AgentLibraryPage() {
             />
           </div>
         </CardHeader>
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="agents">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="agents"
+          onRetry={() => void refetch()}
+        >
           {visibleAgents.length === 0 ? (
             <EmptyState
               hint={

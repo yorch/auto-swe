@@ -97,6 +97,8 @@ export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
     data: items,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     error: loadError,
   } = useChannelMemory(channel.id, showConsolidated);
   const deleteMemory = useDeleteChannelMemory();
@@ -113,8 +115,10 @@ export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="channel memory"
+        onRetry={() => void refetch()}
       >
         {!items || items.length === 0 ? (
           <EmptyState className="py-6" title="No memory yet for this channel." />

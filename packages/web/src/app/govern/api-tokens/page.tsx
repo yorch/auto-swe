@@ -95,9 +95,11 @@ export default function GovernAccessTokensPage() {
         <QueryBoundary
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="tokens"
           loadingMessage="loading tokens…"
+          onRetry={() => void refetch()}
         />
       </div>
     );

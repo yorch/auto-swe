@@ -75,8 +75,10 @@ export function GitHubCredentialsSection({ number }: { number?: string }) {
           compact
           error={mine.error}
           isError={mine.isError}
+          isFetching={mine.isFetching}
           isLoading={mine.isLoading}
           label="your GitHub credentials"
+          onRetry={() => void mine.refetch()}
         >
           {credentials.length === 0 ? (
             <EmptyState

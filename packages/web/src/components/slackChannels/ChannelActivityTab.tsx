@@ -36,6 +36,8 @@ export function ChannelActivityTab({ channel }: { channel: SlackChannel }) {
     data: entries,
     error: loadError,
     isError,
+    isFetching,
+    refetch,
     isLoading,
   } = useChannelAudit(channel.id, kindFilter);
   const { data: users } = useUsers();
@@ -58,7 +60,14 @@ export function ChannelActivityTab({ channel }: { channel: SlackChannel }) {
       />
 
       {isLoading || isError ? (
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="activity" />
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="activity"
+          onRetry={() => void refetch()}
+        />
       ) : !entries || entries.length === 0 ? (
         <EmptyState
           className="py-4"

@@ -160,7 +160,14 @@ export default function ConnectionsPage() {
         type="search"
         value={search}
       />
-      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="connections">
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="connections"
+        onRetry={() => void refetch()}
+      >
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {(repos ?? []).map((r) => {
             const isGitRepo = !r.type || r.type === 'git_repo';

@@ -187,8 +187,13 @@ export default function SettingsPage() {
             compact
             error={providersQuery.error ?? linkedQuery.error}
             isError={providersQuery.isError || linkedQuery.isError}
+            isFetching={providersQuery.isFetching || linkedQuery.isFetching}
             isLoading={providersQuery.isLoading || linkedQuery.isLoading}
             label="your sign-in methods"
+            onRetry={() => {
+              void providersQuery.refetch();
+              void linkedQuery.refetch();
+            }}
           >
             <ul className="divide-y divide-ink-600">
               {SOCIAL_PROVIDERS.map((p) => {

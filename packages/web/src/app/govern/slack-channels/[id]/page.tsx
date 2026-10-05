@@ -30,7 +30,7 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
   const id = validateRouteParam(rawId);
   // The single-channel read, not the list: it carries the memory count the delete confirm
   // quotes and a stale list entry cannot hide a channel that exists.
-  const { data: channel, error, isError, isLoading } = useSlackChannel(id);
+  const { data: channel, error, isError, isFetching, isLoading, refetch } = useSlackChannel(id);
   // The tab lives in the URL so a view can be linked to and survives a reload.
   const { params: query, update } = useUrlFilters();
   const rawTab = query.get('tab');
@@ -42,7 +42,14 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
       <Link className="label-mono hover:text-paper-200" href="/govern/slack-channels">
         ← Slack channels
       </Link>
-      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="Slack channel">
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="Slack channel"
+        onRetry={() => void refetch()}
+      >
         {!channel ? (
           <EmptyState
             action={<ButtonLink href="/govern/slack-channels">Back to Slack channels</ButtonLink>}
