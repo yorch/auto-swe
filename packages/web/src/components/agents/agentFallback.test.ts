@@ -3,7 +3,7 @@ import type { AgentRow } from '@/hooks/useAgentLibrary';
 import { broaderFallbacks } from './agentFallback';
 
 const row = (over: Partial<AgentRow>): AgentRow =>
-  ({ isActive: true, key: 'implementer', orgId: null, scope: 'GLOBAL', ...over }) as AgentRow;
+  ({ isActive: true, key: 'implementer', orgId: null, scope: 'GLOBAL', teamId: null, ...over }) as AgentRow;
 
 describe('broaderFallbacks', () => {
   it('is empty when no broader row exists, so deactivating would fail runs', () => {
@@ -29,7 +29,29 @@ describe('broaderFallbacks', () => {
   });
 
   it("does not count another organization's row", () => {
-    const team = row({ orgId: 'o1', scope: 'TEAM' });
+    const team = row({ orgId: 'o1', scope: 'TEAM', teamId: 't1' });
     expect(broaderFallbacks(team, [team, row({ orgId: 'o2', scope: 'ORGANIZATION' })])).toEqual([]);
+    expect(broaderFallbacks(team, [team, row({ orgId: 'o1', scope: 'ORGANIZATION' })])).toEqual([
+      'ORGANIZATION',
+    ]);
+  });
+
+  it('does not claim an organization fallback when the row\'s organization is unknown', () => {
+    const team = row({ scope: 'TEAM', teamId: 't1' });
+    expect(broaderFallbacks(team, [team, row({ orgId: 'o1', scope: 'ORGANIZATION' })])).toEqual([]);
+  });
+
+  it("derives a team row's organization from another loaded row of the same team", () => {
+    const a = row({ scope: 'TEAM', teamId: 't1' });
+    const b = row({ key: 'reviewer', orgId: 'o1', scope: 'TEAM', teamId: 't1' });
+    expect(broaderFallbacks(a, [a, b, row({ orgId: 'o1', scope: 'ORGANIZATION' })])).toEqual([
+      'ORGANIZATION',
+    ]);
+  });
+
+  it("counts a team fallback only for the row's own team", () => {
+    const tpl = row({ scope: 'WORKFLOW_TEMPLATE', teamId: 't1' });
+    expect(broaderFallbacks(tpl, [tpl, row({ scope: 'TEAM', teamId: 't2' })])).toEqual([]);
+    expect(broaderFallbacks(tpl, [tpl, row({ scope: 'TEAM', teamId: 't1' })])).toEqual(['TEAM']);
   });
 });
