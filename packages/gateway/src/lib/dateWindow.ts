@@ -79,3 +79,31 @@ export function resolveCustomRange(q: { since?: string; until?: string }): Resol
   const days = Math.round((end.getTime() - start.getTime()) / DAY_MS);
   return { days, end, previousStart: new Date(start.getTime() - days * DAY_MS), start };
 }
+
+/** Above this many days a chart series is bucketed by week, so a long range stays a bounded query count. */
+export const WEEKLY_BUCKET_ABOVE_DAYS = 90;
+
+export interface SeriesBucket {
+  /** Inclusive start, epoch ms. */
+  start: number;
+  /** Exclusive end, epoch ms, clipped to the end of the window. */
+  end: number;
+}
+
+/**
+ * Splits `[since, since + windowDays)` into the buckets a time series reports: a day each up to
+ * {@link WEEKLY_BUCKET_ABOVE_DAYS}, otherwise seven days each (the last may be shorter). A 366-day
+ * range is at most 53 buckets, so it costs at most 53 aggregate queries.
+ */
+export function seriesBuckets(
+  since: number,
+  windowDays: number
+): { bucketDays: 1 | 7; buckets: SeriesBucket[] } {
+  const bucketDays = windowDays > WEEKLY_BUCKET_ABOVE_DAYS ? 7 : 1;
+  const buckets: SeriesBucket[] = [];
+  const end = since + windowDays * DAY_MS;
+  for (let start = since; start < end; start += bucketDays * DAY_MS) {
+    buckets.push({ end: Math.min(start + bucketDays * DAY_MS, end), start });
+  }
+  return { bucketDays, buckets };
+}

@@ -414,6 +414,20 @@ describe('evalRoutes', () => {
       expect(prisma.evalResult.groupBy).toHaveBeenCalledTimes(3);
     });
 
+    it('buckets a range over 90 days by week (at most 53 queries)', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalResult.groupBy.mockResolvedValue([]);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/trends?since=2025-10-01&until=2026-06-30',
+      });
+      expect(res.statusCode).toBe(200);
+      const { data } = JSON.parse(res.payload);
+      expect(data.bucketDays).toBe(7);
+      expect(prisma.evalResult.groupBy).toHaveBeenCalledTimes(39);
+    });
+
     it('rejects a half-given or backwards custom range', async () => {
       const { app } = await buildApp();
       for (const qs of ['since=2026-01-10', 'since=2026-01-10&until=2026-01-01']) {

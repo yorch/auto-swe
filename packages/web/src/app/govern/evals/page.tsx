@@ -82,6 +82,7 @@ function EvalsWorkspace() {
   const datasetsQuery = useEvalDatasets();
   const latestRuns = useLatestEvalRuns(5);
   const trends = trendsQuery.data?.scorers ?? [];
+  const weekly = trendsQuery.data?.bucketDays === 7;
   const scorerNames = [...new Set(trends.map((t) => t.scorer))];
   const datasets = datasetsQuery.data;
   // Until one is picked (or when the pick has no signal in this window), the scorer
@@ -176,7 +177,9 @@ function EvalsWorkspace() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow={`Daily mean · ${describeRange(range).toLowerCase()}`}>
+          <CardTitle
+            eyebrow={`${weekly ? 'Weekly' : 'Daily'} mean · ${describeRange(range).toLowerCase()}`}
+          >
             {scorer || 'Scorer trends'}
           </CardTitle>
         </CardHeader>
@@ -198,12 +201,12 @@ function EvalsWorkspace() {
                     daily: t.daily,
                     label: t.breakdown ?? '(none)',
                   }))}
-                  title={`${scorer || 'Scorer'} by ${by === 'judgeModel' ? 'judge model' : 'agent'}, daily mean`}
+                  title={`${scorer || 'Scorer'} by ${by === 'judgeModel' ? 'judge model' : 'agent'}, ${weekly ? 'weekly' : 'daily'} mean`}
                 />
               ) : charted.length === 1 && charted[0] ? (
                 <ScorerTrendChart
                   data={charted[0].daily}
-                  title={`${scorer || 'Scorer'} daily mean`}
+                  title={`${scorer || 'Scorer'} ${weekly ? 'weekly' : 'daily'} mean`}
                 />
               ) : (
                 <EmptyState title={`No ${scorer} signals in this window.`} />

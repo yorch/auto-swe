@@ -234,6 +234,28 @@ describe('usageRoutes GET /usage', () => {
     expect(previous.gte.toISOString()).toBe('2026-01-03T00:00:00.000Z');
   });
 
+  it('buckets a custom range over 90 days by week, keeping the query count bounded', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/usage?since=2025-10-01&until=2026-06-30',
+    });
+    expect(res.statusCode).toBe(200);
+    const { bucketDays, daily, windowDays } = res.json().data;
+    expect(windowDays).toBe(273);
+    expect(bucketDays).toBe(7);
+    expect(daily).toHaveLength(39);
+    expect(daily[0].date).toBe('2025-10-01');
+    expect(daily[1].date).toBe('2025-10-08');
+    const bucketCalls = prisma.agentTrace.aggregate.mock.calls.filter(
+      ([a]) =>
+        a.where.createdAt?.lt &&
+        a.where.createdAt.lt.getTime() - a.where.createdAt.gte.getTime() <= 7 * DAY_MS
+    );
+    expect(bucketCalls.length).toBeLessThanOrEqual(53);
+  });
+
   it.each([
     ['only since', 'since=2026-01-10'],
     ['until before since', 'since=2026-01-10&until=2026-01-09'],

@@ -329,9 +329,14 @@ function UsageWorkspace() {
                 <>
                   <Card>
                     <CardHeader>
-                      <CardTitle>Spend per day</CardTitle>
+                      <CardTitle>
+                        {data.bucketDays === 7 ? 'Spend per week' : 'Spend per day'}
+                      </CardTitle>
                     </CardHeader>
-                    <DailyCostChart data={data.daily} title="LLM spend per day" />
+                    <DailyCostChart
+                      data={data.daily}
+                      title={data.bucketDays === 7 ? 'LLM spend per week' : 'LLM spend per day'}
+                    />
                   </Card>
 
                   <Card className="p-0 overflow-hidden">

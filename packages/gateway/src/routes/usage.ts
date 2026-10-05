@@ -2,7 +2,12 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { customRangeFields, refineCustomRange, resolveCustomRange } from '../lib/dateWindow.js';
+import {
+  customRangeFields,
+  refineCustomRange,
+  resolveCustomRange,
+  seriesBuckets,
+} from '../lib/dateWindow.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -369,15 +374,15 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
       const teamName = new Map(teams.map((t) => [t.id, t.name]));
       const orgName = new Map(orgs.map((o) => [o.id, o.name]));
 
-      const days = Array.from({ length: windowDays }, (_, i) => since.getTime() + i * DAY_MS);
-      const daily = await mapLimited(days, DAILY_CONCURRENCY, async (start) => {
+      const { bucketDays, buckets } = seriesBuckets(since.getTime(), windowDays);
+      const daily = await mapLimited(buckets, DAILY_CONCURRENCY, async ({ end, start }) => {
         const row = await asPlatformAdmin(user, PLATFORM_WIDE, ['AgentTrace'], () =>
           prisma.agentTrace.aggregate({
             _count: { _all: true },
             _sum: { costUsd: true, inputTokens: true, outputTokens: true },
             where: {
               ...scope,
-              createdAt: { gte: new Date(start), lt: new Date(start + DAY_MS) },
+              createdAt: { gte: new Date(start), lt: new Date(end) },
               type: 'llm_response',
             },
           })
@@ -413,6 +418,7 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
 
       return {
         data: {
+          bucketDays,
           byActivity: ranked(byActivity, (nodeId) => ({ nodeId })),
           byAgent: ranked(byAgent, (agentKey) => ({ agentKey })),
           // A null model is an LLM call whose spec could not be resolved.

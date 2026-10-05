@@ -338,6 +338,8 @@ export interface PlatformUsage {
     teamId: string | null;
     teamName: string | null;
   })[];
+  /** Days each `daily` entry covers: 1, or 7 for a range over 90 days. */
+  bucketDays?: 1 | 7;
   daily: {
     calls: number;
     costUsd: number;
