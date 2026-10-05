@@ -45,8 +45,9 @@ export function useApprovals(
         .get<{ data: HumanStepSummary[] }>(`/api/v1/human-steps${qs ? `?${qs}` : ''}`)
         .then((r) => r.data),
     queryKey: ['approvals', filter, sort, overdueOnly, runId, actionable],
-    // Keep a fallback poll (30 s for pending, disabled for history).
-    refetchInterval: filter === 'PENDING' ? 30_000 : false,
+    // Keep a fallback poll (30 s for pending, and for one run's steps, which show
+    // live status; the unscoped history view does not poll).
+    refetchInterval: filter === 'PENDING' || runId ? 30_000 : false,
   });
 }
 
