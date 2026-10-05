@@ -21,6 +21,7 @@ function row(version: number, over: Record<string, unknown> = {}) {
     description: null,
     id: version === 1 ? V1 : V2,
     inheritsModelFrom: null,
+    isActive: true,
     isBuiltIn: false,
     isVerified: true,
     key: 'reviewer',
@@ -51,10 +52,12 @@ function newMockPrisma() {
     },
     agentSkillRef: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
+    connection: { findUnique: vi.fn() },
     modelCatalogEntry: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
     },
+    skill: { findMany: vi.fn().mockResolvedValue([]) },
     user: { findMany: vi.fn().mockResolvedValue([{ email: 'a@x.dev', id: 'u1' }]) },
   };
   return Object.assign(prisma, {
@@ -158,6 +161,55 @@ describe('POST /agent-library/:id/restore', () => {
     });
     expect(res.statusCode).toBe(201);
     expect(prisma.agent.create.mock.calls[0][0].data.isVerified).toBe(true);
+  });
+
+  it('refuses a version whose MCP connection is no longer usable', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { mcpConnectionId: 'conn-1' }))
+      .mockResolvedValueOnce(row(2));
+    prisma.connection.findUnique.mockResolvedValue({ isActive: false, type: 'mcp' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVALID_MCP_CONNECTION');
+    expect(prisma.agent.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to restore into a deactivated lineage', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1))
+      .mockResolvedValueOnce(row(2, { isActive: false }));
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(prisma.agent.create).not.toHaveBeenCalled();
+  });
+
+  it('warns, without failing, about a skill that has been deactivated', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { skillRefs: [{ skillId: SKILL, sortOrder: 0 }] }))
+      .mockResolvedValueOnce(row(2))
+      .mockResolvedValueOnce({ version: 2 });
+    prisma.skill.findMany.mockResolvedValue([{ name: 'Careful reviewer' }]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().skillWarnings[0]).toMatch(/Careful reviewer/);
   });
 
   it('refuses a version from another lineage', async () => {

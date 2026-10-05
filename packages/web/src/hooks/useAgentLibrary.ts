@@ -198,10 +198,12 @@ export function useRestoreAgentVersion() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, versionId }: { id: string; versionId: string }) =>
-      api.post<{ data: AgentRow; scanWarnings?: string[]; catalogWarnings?: string[] }>(
-        `/api/v1/platform/agent-library/${id}/restore`,
-        { versionId }
-      ),
+      api.post<{
+        data: AgentRow;
+        scanWarnings?: string[];
+        catalogWarnings?: string[];
+        skillWarnings?: string[];
+      }>(`/api/v1/platform/agent-library/${id}/restore`, { versionId }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

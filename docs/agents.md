@@ -121,7 +121,9 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
   between a version and the one before it (prompt as a line diff; model, skills, tools,
   credential and MCP connection as field changes), and restores an older version as a new one. A
   restore leaves the prompt out of the new version when it equals the current prompt, so it keeps
-  the current verification.
+  the current verification. A restore runs the same MCP connection check as an edit (400 when the
+  connection is inactive or another team's), warns about skills deactivated since, and is refused
+  with a 409 while the agent is deactivated, so it never switches an agent back on by itself.
 - **The `agent` node** carries an `agentRef` (`<key>` or `<key>@<version>`) plus optional
   `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
   and calls `runAgent`.

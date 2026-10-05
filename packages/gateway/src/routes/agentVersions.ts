@@ -2,7 +2,11 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { type AgentScope, updateAgent } from '../lib/agentLibraryService.js';
+import {
+  type AgentScope,
+  updateAgent,
+  validateMcpConnectionRef,
+} from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -111,6 +115,35 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
       if (!latest) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
       }
+      // Restoring into a deactivated lineage would silently switch the agent back on, which is
+      // a decision of its own; reactivate it deliberately first.
+      if (!latest.isActive) {
+        return reply.status(409).send({
+          error: {
+            code: 'AGENT_INACTIVE',
+            message: 'This agent is deactivated. Reactivate it before restoring a version.',
+          },
+        });
+      }
+      // The same reference check an edit gets: the connection may have been deactivated or
+      // belong to another team since that version was current.
+      const mcpError = await validateMcpConnectionRef(fastify.prisma, source.mcpConnectionId, {
+        scope: anchor.scope as AgentScope,
+        teamId: anchor.teamId,
+      });
+      if (mcpError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
+      }
+      // A skill deactivated since then is not injected into the agent; say so rather than refuse.
+      const inactiveSkills =
+        source.skillRefs.length > 0
+          ? await fastify.prisma.skill.findMany({
+              select: { name: true },
+              where: { id: { in: source.skillRefs.map((r) => r.skillId) }, isActive: false },
+            })
+          : [];
       const { agent, catalogWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
         latest,
@@ -142,6 +175,13 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
         ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        ...(inactiveSkills.length > 0
+          ? {
+              skillWarnings: inactiveSkills.map(
+                (sk) => `The skill "${sk.name}" is deactivated and will not apply to this agent.`
+              ),
+            }
+          : {}),
       });
     }
   );

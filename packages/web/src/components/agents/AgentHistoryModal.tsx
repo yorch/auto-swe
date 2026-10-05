@@ -151,7 +151,7 @@ export function AgentHistoryModal({
         onConfirm={async () => {
           if (restoreTarget) {
             const res = await restore.mutateAsync({ id: agent.id, versionId: restoreTarget.id });
-            setWarnings(res.scanWarnings ?? []);
+            setWarnings([...(res.scanWarnings ?? []), ...(res.skillWarnings ?? [])]);
             setRestored(res.data.version);
             setSelected(null);
             setRestoring(null);
