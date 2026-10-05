@@ -6,6 +6,7 @@ import { TracesTab } from '@/components/runs/TracesTab';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
+import { stepBand } from '@/lib/runTimeline';
 import { specNodeIdOfRecording } from '@/lib/traceLinkage';
 import { cn, formatClock, formatDuration } from '@/lib/utils';
 import type { RunLayoutProps } from './types';
@@ -19,6 +20,13 @@ const SPEED_OPTIONS: SegmentedOption<SpeedValue>[] = [
   { label: '4×', value: '4' },
   { label: '16×', value: '16' },
 ];
+
+/** A box that scrolls sideways has to be reachable by keyboard, and named, to be usable without a pointer. */
+const SCROLL_REGION = {
+  'aria-label': 'Step timing, scrolls sideways',
+  role: 'region',
+  tabIndex: 0,
+} as const;
 
 // ── Direction C — Flight Recorder ──────────────────────────────────────────────
 
@@ -50,7 +58,7 @@ function WaterfallBar({
 
   return (
     <div className="flex items-center gap-3 py-1.5">
-      <span className="sticky left-0 z-[1] w-[120px] shrink-0 truncate bg-ink-800 font-mono text-[10px] text-paper-500">
+      <span className="w-[120px] shrink-0 truncate font-mono text-[10px] text-paper-500 max-lg:sticky max-lg:left-0 max-lg:z-[1] max-lg:bg-ink-800 max-lg:shadow-[0.75rem_0_0_0_var(--color-ink-800)]">
         {step.nodeId}
       </span>
       <div className="relative h-4 flex-1 rounded bg-ink-600">
@@ -185,11 +193,11 @@ export function FlightRecorder({
   const narrow = useIsNarrow();
 
   const waterfall = totalMs > 0 && (
-    <div className="px-4 py-3 border-b border-ink-600/30 shrink-0 lg:px-5">
+    <div className="px-4 py-3 border-b border-ink-600/30 shrink-0 max-lg:order-1 lg:px-5">
       <div className="kicker mb-2">Step timing</div>
       {/* Narrow: the bars keep a readable width and scroll sideways inside this box, the
           step name staying pinned at the left edge. */}
-      <div className="overflow-x-auto lg:overflow-visible">
+      <div className="overflow-x-auto lg:overflow-visible" {...(narrow ? SCROLL_REGION : {})}>
         <div className="min-w-[520px] lg:min-w-0">
           {run.steps.map((s: WorkflowStepRecord) => (
             <WaterfallBar
@@ -206,7 +214,7 @@ export function FlightRecorder({
   );
 
   const eventFeed = (
-    <div className="flex flex-1 flex-col lg:overflow-hidden">
+    <div className="flex flex-1 flex-col max-lg:order-3 lg:overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-2 border-b border-ink-600/30 shrink-0 lg:px-5">
         <span className="kicker">Event feed</span>
         {playing && (
@@ -216,7 +224,7 @@ export function FlightRecorder({
           {visibleTraces.length} / {traces.length} events
         </span>
       </div>
-      <div className="min-w-0 flex-1 lg:overflow-y-auto" ref={feedRef}>
+      <div className="flex-1 max-lg:min-w-0 lg:overflow-y-auto" ref={feedRef}>
         <TracesTab
           filterNodeId={null}
           linker={linker}
@@ -228,9 +236,10 @@ export function FlightRecorder({
   );
 
   const topology = (
-    <div className="h-[240px] shrink-0 border-b border-ink-600/40 lg:border-b-0">
+    <div className="h-[min(240px,50dvh)] shrink-0 border-b border-ink-600/40 max-lg:order-2 lg:h-[240px] lg:border-b-0">
       <WorkflowDag
         height="100%"
+        narrowScrollSafe
         onSelect={() => {}}
         selectedNodeId={currentStepName ? specNodeIdOfRecording(currentStepName, linker) : null}
         spec={spec}
@@ -240,7 +249,7 @@ export function FlightRecorder({
   );
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col lg:overflow-hidden">
+    <div className="flex flex-1 flex-col max-lg:min-w-0 lg:overflow-hidden">
       {/* Scrubber panel */}
       <div className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 py-4 lg:px-6">
         <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-3">
@@ -285,7 +294,7 @@ export function FlightRecorder({
         <div className="relative">
           <input
             aria-label="Replay position"
-            className="block h-[36px] w-full cursor-pointer appearance-none rounded-xs accent-ember-400 outline-none max-lg:bg-[length:100%_0.375rem] max-lg:bg-center max-lg:bg-no-repeat lg:inline-block lg:h-1.5"
+            className="block h-[40px] w-full cursor-pointer appearance-none rounded-xs accent-ember-400 outline-none max-lg:bg-[length:100%_0.375rem] max-lg:bg-center max-lg:bg-no-repeat lg:inline-block lg:h-1.5"
             max={1000}
             min={0}
             onChange={(e) => {
@@ -300,18 +309,16 @@ export function FlightRecorder({
           />
           {/* Step bands underneath */}
           {totalMs > 0 && run.startedAt && (
-            <div className="pointer-events-none absolute top-1/2 right-0 left-0 flex h-1.5 -translate-y-1/2 lg:top-0 lg:translate-y-0">
+            <div className="pointer-events-none absolute top-0 right-0 left-0 flex h-1.5 max-lg:top-1/2 max-lg:-translate-y-1/2">
               {run.steps.map((s: WorkflowStepRecord) => {
                 if (!s.startedAt) {
                   return null;
                 }
-                const runStart = new Date(run.startedAt ?? '').getTime();
-                const stepStart = new Date(s.startedAt).getTime() - runStart;
-                const stepEnd = s.endedAt
-                  ? new Date(s.endedAt).getTime() - runStart
-                  : stepStart + totalMs * 0.05;
-                const leftPct = (stepStart / totalMs) * 100;
-                const widthPct = Math.max(1, ((stepEnd - stepStart) / totalMs) * 100);
+                const { leftPct, widthPct } = stepBand(
+                  { endedAt: s.endedAt, startedAt: s.startedAt },
+                  runStartMs,
+                  totalMs
+                );
                 const isFailed = s.status === 'FAILED';
 
                 return (
@@ -334,26 +341,22 @@ export function FlightRecorder({
         </div>
       </div>
 
-      {narrow ? (
-        <>
+      {/* Body. The wrappers are the same elements at every width (below lg the two columns are
+          `display: contents` and the children are ordered with CSS), so crossing the breakpoint
+          keeps the graph's pan and zoom, the expanded traces and the feed's scroll. */}
+      <div className="flex flex-1 flex-col lg:flex-row lg:overflow-hidden">
+        {/* Left: Waterfall + Event feed */}
+        <div className="contents lg:flex lg:flex-1 lg:flex-col lg:overflow-hidden lg:border-r lg:border-ink-600/40">
           {waterfall}
-          {topology}
+          {/* Live event feed */}
           {eventFeed}
-        </>
-      ) : (
-        /* Body */
-        <div className="flex-1 flex overflow-hidden">
-          {/* Left: Waterfall + Event feed */}
-          <div className="flex-1 flex flex-col overflow-hidden border-r border-ink-600/40">
-            {waterfall}
-            {/* Live event feed */}
-            {eventFeed}
-          </div>
-
-          {/* Right: Mini topology */}
-          <div className="flex w-[280px] shrink-0 flex-col overflow-y-auto">{topology}</div>
         </div>
-      )}
+
+        {/* Right: Mini topology */}
+        <div className="contents lg:flex lg:w-[280px] lg:shrink-0 lg:flex-col lg:overflow-y-auto">
+          {topology}
+        </div>
+      </div>
     </div>
   );
 }

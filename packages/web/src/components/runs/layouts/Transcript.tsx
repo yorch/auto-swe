@@ -98,7 +98,7 @@ export function Transcript({
   const handleSpineSelect = (id: string) => setSelectedId(id);
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col lg:flex-row lg:overflow-hidden">
+    <div className="flex flex-1 flex-col max-lg:min-w-0 lg:flex-row lg:overflow-hidden">
       {/* Step spine: 212px */}
       <aside className="w-full shrink-0 border-b border-ink-600/40 bg-ink-900 lg:w-[212px] lg:overflow-y-auto lg:border-b-0 lg:border-r">
         <div className="px-4 py-3 kicker border-b border-ink-600/30">Steps</div>
@@ -108,7 +108,7 @@ export function Transcript({
       {narrow && rail}
 
       {/* Reading column: 1fr */}
-      <div className="min-w-0 flex-1 px-4 py-5 lg:overflow-y-auto lg:px-8 lg:py-7">
+      <div className="flex-1 px-4 py-5 max-lg:min-w-0 lg:overflow-y-auto lg:px-8 lg:py-7">
         {/* Editorial intro */}
         <div className="mb-10 max-w-2xl">
           <div className="kicker mb-2">Run narrative</div>
@@ -136,11 +136,11 @@ export function Transcript({
               }}
             >
               {/* Sticky step header */}
-              <div className="sticky top-0 z-10 mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink-600/30 bg-ink-800 py-3 lg:flex-nowrap">
+              <div className="sticky top-0 z-10 mb-3 flex flex-wrap items-center gap-3 border-b border-ink-600/30 bg-ink-800 py-3 max-lg:gap-y-1 lg:flex-nowrap">
                 <span className="tabular font-mono text-xs text-paper-600">
                   {String(i + 1).padStart(2, '0')}
                 </span>
-                <h3 className="font-display max-lg:min-w-0 max-lg:break-all text-lg font-medium tracking-[-0.01em] text-paper-100">
+                <h3 className="font-display text-lg max-lg:min-w-0 max-lg:break-all font-medium tracking-[-0.01em] text-paper-100">
                   {step.nodeId}
                 </h3>
                 <StatusBadge status={step.status} />

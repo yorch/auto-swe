@@ -146,11 +146,15 @@ describe('Transcript layout', () => {
 });
 
 describe('Timeline layout', () => {
-  it('stacks timing, topology, then the feed on a phone', () => {
+  it('orders timing, topology, feed below lg with CSS order, leaving the DOM as at desktop', () => {
     mockViewport(500);
     render(<FlightRecorder {...props} />);
-    expect(before(screen.getByText('Step timing'), screen.getByTestId('dag'))).toBe(true);
-    expect(before(screen.getByTestId('dag'), screen.getByText('Event feed'))).toBe(true);
+    const timing = screen.getByText('Step timing').parentElement as HTMLElement;
+    const topology = screen.getByTestId('dag').parentElement as HTMLElement;
+    const feed = screen.getByText('Event feed').parentElement?.parentElement as HTMLElement;
+    expect(timing.className).toContain('max-lg:order-1');
+    expect(topology.className).toContain('max-lg:order-2');
+    expect(feed.className).toContain('max-lg:order-3');
   });
 
   it('keeps the topology to the right of the feed at desktop width', () => {
@@ -169,10 +173,59 @@ describe('Timeline layout', () => {
     expect(screen.getByText('impl').className).toContain('sticky');
   });
 
+  it('makes the sideways scroller a keyboard-reachable region below lg, and a plain box above', () => {
+    mockViewport(500);
+    const { unmount } = render(<FlightRecorder {...props} />);
+    const narrowBox = screen.getByText('impl').closest('.overflow-x-auto') as HTMLElement;
+    expect(narrowBox.getAttribute('role')).toBe('region');
+    expect(narrowBox.getAttribute('aria-label')).toBeTruthy();
+    expect(narrowBox.tabIndex).toBe(0);
+    unmount();
+    mockViewport(1440);
+    render(<FlightRecorder {...props} />);
+    const wideBox = screen.getByText('impl').closest('.overflow-x-auto') as HTMLElement;
+    expect(wideBox.getAttribute('role')).toBeNull();
+    expect(wideBox.hasAttribute('tabindex')).toBe(false);
+  });
+
   it('gives the play control and the position slider a touch-sized target', () => {
     mockViewport(500);
     render(<FlightRecorder {...props} />);
     expect(screen.getByRole('button', { name: /play replay/i }).className).toContain('h-[44px]');
-    expect(screen.getByLabelText('Replay position').className).toContain('h-[36px]');
+    expect(screen.getByLabelText('Replay position').className).toContain('h-[40px]');
+  });
+});
+
+describe('crossing the breakpoint keeps the tree', () => {
+  it('keeps the graph and console of the Split layout mounted', () => {
+    const viewport = mockViewport(1440);
+    render(<SplitConsole {...props} />);
+    const dag = screen.getByTestId('dag');
+    const panel = screen.getByTestId('split-panel');
+    act(() => viewport.setViewportWidth(500));
+    expect(screen.getByTestId('dag')).toBe(dag);
+    expect(screen.getByTestId('split-panel')).toBe(panel);
+    act(() => viewport.setViewportWidth(1440));
+    expect(screen.getByTestId('dag')).toBe(dag);
+  });
+
+  it('keeps the narrative of the Transcript layout mounted', () => {
+    const viewport = mockViewport(1440);
+    render(<Transcript {...props} />);
+    const narrative = screen.getByText('Run narrative');
+    act(() => viewport.setViewportWidth(500));
+    expect(screen.getByText('Run narrative')).toBe(narrative);
+  });
+
+  it('keeps the topology graph and the feed of the Timeline layout mounted', () => {
+    const viewport = mockViewport(1440);
+    render(<FlightRecorder {...props} />);
+    const dag = screen.getByTestId('dag');
+    const feed = screen.getByText('Event feed');
+    act(() => viewport.setViewportWidth(500));
+    expect(screen.getByTestId('dag')).toBe(dag);
+    expect(screen.getByText('Event feed')).toBe(feed);
+    act(() => viewport.setViewportWidth(1440));
+    expect(screen.getByTestId('dag')).toBe(dag);
   });
 });
