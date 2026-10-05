@@ -37,6 +37,10 @@ export function ChannelSettingsTab({ channel }: { channel: SlackChannel }) {
   const [statusError, setStatusError] = useState<string | null>(null);
 
   const name = channel.name ?? 'this channel';
+  const memoryPhrase =
+    channel.memoryItemCount == null
+      ? 'all of its memory'
+      : `${channel.memoryItemCount} memory item${channel.memoryItemCount === 1 ? '' : 's'}`;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -119,7 +123,7 @@ export function ChannelSettingsTab({ channel }: { channel: SlackChannel }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="max-w-prose text-sm text-paper-400">
             Removes the channel's registration together with everything the assistant remembers
-            about it and every open item it is tracking. This cannot be undone.
+            about it ({memoryPhrase}) and every open item it is tracking. This cannot be undone.
           </p>
           <Button onClick={() => setConfirmDelete(true)} variant="danger">
             Delete channel
@@ -142,7 +146,7 @@ export function ChannelSettingsTab({ channel }: { channel: SlackChannel }) {
         closeOnConfirm={false}
         confirmLabel="Delete channel"
         dangerous
-        message={`Delete ${name}? Its memory and open items are deleted with it, and the assistant stops responding there. This cannot be undone.`}
+        message={`Delete ${name}? ${memoryPhrase.charAt(0).toUpperCase()}${memoryPhrase.slice(1)} and its open items are deleted with it, and the assistant stops responding there. This cannot be undone.`}
         onClose={() => setConfirmDelete(false)}
         onConfirm={async () => {
           await remove.mutateAsync(channel.id);

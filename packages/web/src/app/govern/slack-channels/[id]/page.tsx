@@ -12,7 +12,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
-import { useSlackChannels } from '@/hooks/useSlackChannels';
+import { useSlackChannel } from '@/hooks/useSlackChannels';
 import { validateRouteParam } from '@/lib/routeParams';
 
 type Tab = 'settings' | 'memory' | 'open-items' | 'activity';
@@ -27,9 +27,10 @@ const TABS: { id: Tab; label: string }[] = [
 export default function SlackChannelDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: channels, error, isError, isLoading } = useSlackChannels();
+  // The single-channel read, not the list: it carries the memory count the delete confirm
+  // quotes and a stale list entry cannot hide a channel that exists.
+  const { data: channel, error, isError, isLoading } = useSlackChannel(id);
   const [tab, setTab] = useState<Tab>('settings');
-  const channel = channels?.find((c) => c.id === id);
 
   return (
     <div className="space-y-6">

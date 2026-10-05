@@ -23,7 +23,9 @@ function newMockPrisma() {
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     memoryItem: {
+      count: vi.fn().mockResolvedValue(0),
       delete: vi.fn().mockResolvedValue({}),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
       update: vi.fn(),
@@ -126,6 +128,7 @@ describe('slackChannelRoutes', () => {
 
   it('gets one channel with usage', async () => {
     const { app, mockPrisma } = await buildApp();
+    mockPrisma.memoryItem.count.mockResolvedValue(3);
     mockPrisma.slackChannel.findUnique.mockResolvedValue({
       id: CHANNEL,
       name: 'general',
@@ -139,6 +142,7 @@ describe('slackChannelRoutes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.id).toBe(CHANNEL);
+    expect(JSON.parse(res.payload).data.memoryItemCount).toBe(3);
     await app.close();
   });
 
@@ -383,6 +387,48 @@ describe('slackChannelRoutes', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.deleted).toBe(true);
     expect(mockPrisma.slackChannel.delete).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('deletes the channel memory in the same transaction and audits the count', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      slackChannelId: 'C123',
+      teamId: TEAM,
+    });
+    mockPrisma.memoryItem.deleteMany.mockResolvedValue({ count: 7 });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).data.memoryItemsDeleted).toBe(7);
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.memoryItem.deleteMany).toHaveBeenCalledWith({
+      where: { channelId: CHANNEL },
+    });
+    expect(mockPrisma.configAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          beforeJson: expect.objectContaining({ memoryItemsDeleted: 7 }),
+        }),
+      })
+    );
+    await app.close();
+  });
+
+  it('does not delete memory when the channel does not exist', async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.slackChannel.findUnique.mockResolvedValue(null);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(mockPrisma.memoryItem.deleteMany).not.toHaveBeenCalled();
     await app.close();
   });
 

@@ -47,6 +47,8 @@ export interface SlackChannel {
   updatedAt: string;
   workspace: SlackChannelWorkspace;
   currentMonthUsage: SlackChannelUsage | null;
+  /** Only on the single-channel read: how many memory items a delete would remove. */
+  memoryItemCount?: number;
 }
 
 export interface CreateSlackChannelBody {
@@ -102,6 +104,14 @@ export function useSlackChannels() {
   return useQuery({
     queryFn: () => api.get<{ data: SlackChannel[] }>(BASE).then((r) => r.data),
     queryKey: KEY,
+  });
+}
+
+export function useSlackChannel(id: string | null) {
+  return useQuery({
+    enabled: !!id,
+    queryFn: () => api.get<{ data: SlackChannel }>(`${BASE}/${id}`).then((r) => r.data),
+    queryKey: [...KEY, id],
   });
 }
 

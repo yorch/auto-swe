@@ -344,7 +344,13 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
       return reply;
     }
-    return { data: await withCurrentUsage(fastify, row) };
+    // The delete confirmation states how much memory goes with the channel.
+    const memoryItemCount = await runUnscoped(
+      'bounded to one pre-authorised channelId',
+      ['MemoryItem'],
+      () => fastify.prisma.memoryItem.count({ where: { channelId: row.id } })
+    );
+    return { data: { ...(await withCurrentUsage(fastify, row)), memoryItemCount } };
   });
 
   // GET /:id/budget — current-month usage + the cap.
@@ -949,7 +955,30 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
       }
-      await fastify.prisma.slackChannel.delete({ where: { id: current.id } });
+      // The memory relation is SetNull, which would leave the channel's lessons behind as
+      // orphans no screen reaches; delete them in the same transaction as the channel so
+      // the count in the audit entry is exactly what went.
+      const memoryItemsDeleted = await fastify.prisma.$transaction(async (tx) => {
+        const removed = await runUnscoped(
+          'bounded to the one channel being deleted',
+          ['MemoryItem'],
+          () => tx.memoryItem.deleteMany({ where: { channelId: current.id } })
+        );
+        await tx.slackChannel.delete({ where: { id: current.id } });
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor,
+          before: {
+            memoryItemsDeleted: removed.count,
+            slackChannelId: current.slackChannelId,
+            teamId: current.teamId,
+          },
+          client: tx,
+          entityId: current.id,
+          entityType: 'SlackChannel',
+        });
+        return removed.count;
+      });
       // Best-effort schedule teardown — never block the delete on a Temporal
       // hiccup; an orphaned schedule fires a workflow that no-ops on a missing
       // channel and can be reaped out of band.
@@ -964,14 +993,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
           'failed to delete channel ambient/reactive schedule'
         );
       }
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor,
-        before: { slackChannelId: current.slackChannelId, teamId: current.teamId },
-        entityId: current.id,
-        entityType: 'SlackChannel',
-      });
-      return reply.send({ data: { deleted: true } });
+      return reply.send({ data: { deleted: true, memoryItemsDeleted } });
     }
   );
 };
