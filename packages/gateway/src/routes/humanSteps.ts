@@ -189,13 +189,17 @@ function stepResponses(s: {
     resolvedAt: formatDate(a.resolvedAt),
     value: null,
   }));
-  if (s.status !== 'RESOLVED' || !s.payload || typeof s.payload !== 'object') return rows;
+  if (s.status !== 'RESOLVED' || !s.payload || typeof s.payload !== 'object') {
+    return rows;
+  }
   const action = String((s.payload as { action?: unknown }).action ?? 'respond');
   const resolver = (s.payload as { resolvedBy?: unknown }).resolvedBy ?? s.resolvedBy;
   const accounted = s.humanApprovals.some(
     (a) => a.action === action && (resolver == null || a.resolvedBy === resolver)
   );
-  if (accounted) return rows;
+  if (accounted) {
+    return rows;
+  }
   return [
     ...rows,
     {
@@ -203,14 +207,16 @@ function stepResponses(s: {
       byName: s.resolvedByUser?.name ?? null,
       comment: commentOf(s.payload),
       resolvedAt: formatDate(s.resolvedAt),
-      value: valueOf(s.kind, s.payload),
+      value: answerValue(s.kind, s.payload),
     },
   ];
 }
 
 /** The answer text a requester can read: a review's notes or the option a decision picked. */
-function valueOf(kind: string, payload: unknown): string | null {
-  if (kind !== 'REVIEW' && kind !== 'DECISION') return null;
+function answerValue(kind: string, payload: unknown): string | null {
+  if (kind !== 'REVIEW' && kind !== 'DECISION') {
+    return null;
+  }
   const value = (payload as { value?: unknown }).value;
   return typeof value === 'string' && value ? value : null;
 }

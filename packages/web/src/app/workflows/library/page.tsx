@@ -101,7 +101,9 @@ function RestoreButton({
             } catch (err) {
               // An unreviewed AI-generated active version cannot serve runs, so activating is
               // refused. Restore to draft rather than dead-ending: it can be reviewed there.
-              if (!(err instanceof ApiError && err.code === 'REVIEW_REQUIRED')) throw err;
+              if (!(err instanceof ApiError && err.code === 'REVIEW_REQUIRED')) {
+                throw err;
+              }
               await update.mutateAsync({ status: 'DRAFT' });
             }
           }
