@@ -27,6 +27,7 @@ import {
   useEdgesState,
   useNodesInitialized,
   useNodesState,
+  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -40,12 +41,12 @@ import {
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
-import { useFitFlow } from './fitFlow';
+import { shouldFit, useFitFlow } from './fitFlow';
 import { FlowChrome } from './flowChrome';
 import { focusWhenReady } from './focusWhenReady';
 import { foldBookkeeping } from './foldBookkeeping';
 import { foldGroups } from './foldGroups';
-import { FIT_VIEW_OPTIONS, specToFlow } from './specToFlow';
+import { specToFlow } from './specToFlow';
 import { WorkflowOutline } from './WorkflowOutline';
 
 export type { DiffKind } from '@/lib/workflowLayout';
@@ -167,22 +168,69 @@ function InnerDag({
     setEdges(initial.edges);
   }, [initial.nodes, initial.edges, setNodes, setEdges]);
 
-  // The `fitView` prop fits once, on the first render — before the nodes are
-  // measured when they arrive with the spec. Fit again once they are measured
-  // and whenever a different spec (another version) is shown, so the whole
-  // graph is on screen on load instead of clipped at the canvas edge.
-  const fit = useFitFlow();
+  // Frame the graph once the nodes are measured, and again only when what is being looked
+  // at changes: another spec, the other view, or a fold the viewer toggled. A refresh that
+  // recolours a node rebuilds its node object, so React Flow re-measures it and
+  // `nodesInitialized` flips false -> true; that must not pull the viewer back from where
+  // they have panned to, and neither must a step starting to run unfold bookkeeping or a
+  // group (those follow `keep`, not a choice of the viewer), so they are not in the key.
+  const flow = useReactFlow();
+  const fit = useFitFlow(spec.entry);
   const nodesInitialized = useNodesInitialized();
-  // Folding bookkeeping or a group changes which nodes are drawn without changing the
-  // spec, so the set of drawn ids is a trigger too. Statuses do not change it, so a
-  // live run's colours never pull the viewer back from where they have panned to.
-  const drawnKey = initial.nodes.map((n) => n.id).join('\u0000');
-  // biome-ignore lint/correctness/useExhaustiveDependencies: specKey and drawnKey are the triggers — a different spec, or a different set of drawn nodes, must be refitted.
+  const fittedKey = useRef<string | null>(null);
+  const cancelFocus = useRef<(() => void) | null>(null);
+  // Hidden until the first fit so a centred, unfitted view is never painted.
+  const [framed, setFramed] = useState(false);
+  const fitKey = JSON.stringify([view, specContentKey, folded, collapsedKey]);
+  const drawnIds = initial.nodes.map((n) => n.id).join('\u0000');
+  // Where keyboard focus goes once an expanded group's members are on the canvas: the
+  // card that had it is unmounted, which would otherwise drop focus to <body>.
+  const pendingFocus = useRef<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const nodeEl = useCallback(
+    (id: string) =>
+      containerRef.current?.querySelector<HTMLElement>(
+        `.react-flow__node[data-id="${CSS.escape(id)}"]`
+      ) ?? null,
+    []
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `nodes` re-runs this once the store holds the nodes drawn for the current view
   useEffect(() => {
-    if (nodesInitialized && view === 'graph') {
-      fit();
+    if (view !== 'graph') {
+      return;
     }
-  }, [nodesInitialized, specKey, drawnKey, fit, view]);
+    if (initial.nodes.length === 0) {
+      setFramed(true);
+      return;
+    }
+    const drawnMatches =
+      flow
+        .getNodes()
+        .map((n) => n.id)
+        .join('\u0000') === drawnIds;
+    if (
+      !shouldFit({
+        drawnMatches,
+        fittedKey: fittedKey.current,
+        initialized: nodesInitialized,
+        key: fitKey,
+      })
+    ) {
+      return;
+    }
+    fittedKey.current = fitKey;
+    fit();
+    setFramed(true);
+    // Focus after the fit, not before: the fit moves the viewport, and focusing first can
+    // leave the member just focused (and auto-panned to) off screen.
+    const id = pendingFocus.current;
+    if (id) {
+      pendingFocus.current = null;
+      cancelFocus.current?.();
+      cancelFocus.current = focusWhenReady(() => nodeEl(id));
+    }
+  }, [nodesInitialized, nodes, fitKey, drawnIds, fit, flow, view]);
+  useEffect(() => () => cancelFocus.current?.(), []);
 
   // Reflect external selection by setting React Flow's `selected` flag.
   const nodesWithSelection = useMemo(
@@ -193,11 +241,6 @@ function InnerDag({
       })),
     [nodes, selectedNodeId]
   );
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  // Where keyboard focus goes once an expanded group's members are on the canvas: the
-  // card that had it is unmounted, which would otherwise drop focus to <body>.
-  const pendingFocus = useRef<string | null>(null);
 
   /** Open one collapsed group. A card is not a node, so it is never "selected". */
   const expandGroup = useCallback(
@@ -230,23 +273,7 @@ function InnerDag({
 
   // Move DOM focus onto a node's React Flow wrapper so focus follows keyboard
   // selection (React Flow tags each wrapper with `data-id`).
-  const nodeEl = useCallback(
-    (id: string) =>
-      containerRef.current?.querySelector<HTMLElement>(
-        `.react-flow__node[data-id="${CSS.escape(id)}"]`
-      ) ?? null,
-    []
-  );
   const focusNodeEl = useCallback((id: string) => nodeEl(id)?.focus(), [nodeEl]);
-
-  useEffect(() => {
-    const id = pendingFocus.current;
-    if (id && nodes.some((n) => n.id === id)) {
-      pendingFocus.current = null;
-      // Not a single focus(): the nodes just put on the canvas are hidden until measured.
-      focusWhenReady(() => nodeEl(id));
-    }
-  }, [nodes, nodeEl]);
 
   // Keyboard graph traversal: arrows walk the edges, Home jumps to the entry
   // node, Enter/Space opens the anchored node in the inspector (or expands a
@@ -372,15 +399,13 @@ function InnerDag({
           // behavior a `role="group"`/list would impose. Individual nodes carry
           // their own descriptive `aria-label` (see specToFlow's `ariaLabel`).
           aria-roledescription="workflow graph"
-          className="relative min-h-0 flex-1"
+          className={`relative min-h-0 flex-1 ${framed ? '' : 'opacity-0'}`}
           onKeyDown={onKeyDown}
           ref={containerRef}
           role="application"
         >
           <ReactFlow
             edges={edges}
-            fitView
-            fitViewOptions={FIT_VIEW_OPTIONS}
             maxZoom={2.5}
             minZoom={0.15}
             nodes={nodesWithSelection}

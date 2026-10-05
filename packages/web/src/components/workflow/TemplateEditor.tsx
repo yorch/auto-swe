@@ -48,7 +48,7 @@ import { makeDefaultNodeFor } from './makeDefaultNode';
 import { NodeInspector } from './NodeInspector';
 import { NodePalette, PALETTE_MIME, type PaletteDragKind, PaletteDragSchema } from './NodePalette';
 import { deleteNodeFromSpec, renameNodeInSpec, setSpecEdge } from './specEdits';
-import { FIT_VIEW_OPTIONS, specToFlow } from './specToFlow';
+import { specToFlow } from './specToFlow';
 import { WorkflowOutline } from './WorkflowOutline';
 
 const NODE_TYPES = { dag: DagNode };
@@ -99,22 +99,28 @@ function EditorInner({
   const inspectorRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const { screenToFlowPosition } = useReactFlow();
-  const fit = useFitFlow();
-  const nodesInitialized = useNodesInitialized();
-  // Once, when the first nodes are measured: React Flow's own fit centres a graph too
-  // large for the readable floor, cutting off its start. Later edits are the author's to frame.
-  const fitted = useRef(false);
-  useEffect(() => {
-    if (nodesInitialized && !fitted.current) {
-      fitted.current = true;
-      fit();
-    }
-  }, [nodesInitialized, fit]);
 
   const stepRegistryByName = useMemo(
     () => new Map(stepRegistry.map((s) => [s.name, s])),
     [stepRegistry]
   );
+
+  const fit = useFitFlow(spec.entry);
+  const nodesInitialized = useNodesInitialized();
+  // Once, when the nodes the editor opened with are measured: React Flow's own fit centres a
+  // graph too large for the readable floor, cutting off its start. Later edits are the
+  // author's to frame, and an empty template has nothing to frame (the first node dropped on
+  // it must not zoom the canvas in mid-gesture). Hidden until then so no unframed view paints.
+  const openedWithNodes = useRef(Object.keys(spec.nodes).length > 0);
+  const fitted = useRef(false);
+  const [framed, setFramed] = useState(!openedWithNodes.current);
+  useEffect(() => {
+    if (openedWithNodes.current && nodesInitialized && !fitted.current) {
+      fitted.current = true;
+      fit();
+      setFramed(true);
+    }
+  }, [nodesInitialized, fit]);
 
   const initial = useMemo(() => specToFlow(spec, { editable: true }), [spec]);
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode<DagNodeData>>(initial.nodes);
@@ -634,7 +640,7 @@ function EditorInner({
             canvas inside it is the interactive surface. */}
         <div
           aria-label="Workflow editor canvas. Left and right arrows follow the flow, up and down arrows switch between branches, Enter opens a node, Home jumps to the start, Delete removes the selected node."
-          className="relative min-w-0 flex-1 bg-ink-900"
+          className={`relative min-w-0 flex-1 bg-ink-900 ${framed ? '' : 'opacity-0'}`}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           ref={canvasRef}
@@ -644,8 +650,6 @@ function EditorInner({
             connectionLineStyle={{ stroke: TOKEN.ember400, strokeWidth: 2 }}
             deleteKeyCode="Delete"
             edges={edges}
-            fitView
-            fitViewOptions={FIT_VIEW_OPTIONS}
             maxZoom={2.5}
             minZoom={0.15}
             nodes={nodesWithSelection}
