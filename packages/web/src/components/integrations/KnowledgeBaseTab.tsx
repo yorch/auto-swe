@@ -66,11 +66,15 @@ export function KnowledgeBaseTab() {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  // Notion's API address is fixed, so it has no base URL and no private-network switch.
+  const isNotion = (provider === '' ? data?.provider : provider) === 'notion';
   const body: KnowledgeBaseConfigInput = {
     allowPrivateNetwork:
-      allowPrivateNetwork === data?.allowPrivateNetwork ? undefined : allowPrivateNetwork,
+      isNotion || allowPrivateNetwork === data?.allowPrivateNetwork
+        ? undefined
+        : allowPrivateNetwork,
     apiToken: apiToken || undefined,
-    baseUrl: clearableField(baseUrl, data?.baseUrl),
+    baseUrl: isNotion ? undefined : clearableField(baseUrl, data?.baseUrl),
     email: clearableField(email, data?.email),
     enabled: enabled === data?.enabled ? undefined : enabled,
     maxPages: clearableIntField(maxPages, data?.maxPages),
@@ -119,7 +123,7 @@ export function KnowledgeBaseTab() {
     if (enabled !== undefined) {
       draft.enabled = enabled;
     }
-    const baseUrlDraft = clearableField(baseUrl, data?.baseUrl);
+    const baseUrlDraft = isNotion ? undefined : clearableField(baseUrl, data?.baseUrl);
     if (baseUrlDraft !== undefined) {
       draft.baseUrl = baseUrlDraft;
     }
@@ -213,34 +217,38 @@ export function KnowledgeBaseTab() {
               value={enabled === undefined ? '' : String(enabled)}
             />
           </ConfigField>
-          <ConfigField
-            current={data?.baseUrl || undefined}
-            id="kb-base-url"
-            label="Base URL"
-            source={sources.baseUrl}
-          >
-            <Input
-              compact
-              id="kb-base-url"
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
-              value={baseUrl}
-            />
-          </ConfigField>
-          <Checkbox
-            checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
-            hint={
-              <>
-                Allows a base URL on a private-network address (internal, <code>.local</code>,
-                private IP). Loopback, link-local and cloud-metadata addresses are always refused;
-                use the host's LAN address or <code>host.docker.internal</code> instead. Only enable
-                this for a trusted self-hosted instance you control.
-              </>
-            }
-            id="kb-allow-private-network"
-            label="Allow private/internal network base URL"
-            onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
-          />
+          {!isNotion && (
+            <>
+              <ConfigField
+                current={data?.baseUrl || undefined}
+                id="kb-base-url"
+                label="Base URL"
+                source={sources.baseUrl}
+              >
+                <Input
+                  compact
+                  id="kb-base-url"
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
+                  value={baseUrl}
+                />
+              </ConfigField>
+              <Checkbox
+                checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
+                hint={
+                  <>
+                    Allows a base URL on a private-network address (internal, <code>.local</code>,
+                    private IP). Loopback, link-local and cloud-metadata addresses are always
+                    refused; use the host's LAN address or <code>host.docker.internal</code>{' '}
+                    instead. Only enable this for a trusted self-hosted instance you control.
+                  </>
+                }
+                id="kb-allow-private-network"
+                label="Allow private/internal network base URL"
+                onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
+              />
+            </>
+          )}
           {effectiveProvider === 'confluence' && (
             <ConfigField
               current={data?.email || undefined}

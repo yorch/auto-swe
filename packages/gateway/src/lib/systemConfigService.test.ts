@@ -1212,6 +1212,30 @@ describe('systemConfigService', () => {
       expect(result.detail).toContain('missing baseUrl or apiToken');
     });
 
+    it('tests Notion with only a token, never asking for a base URL', async () => {
+      resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
+        apiToken: null,
+        baseUrl: null,
+        enabled: true,
+        provider: 'notion',
+      } as never);
+      const missing = await testKnowledgeBaseConnection();
+      expect(missing.detail).toBe('Knowledge base (notion) missing apiToken.');
+
+      resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
+        apiToken: 'tok',
+        baseUrl: null,
+        enabled: true,
+        provider: 'notion',
+        spaces: [],
+      } as never);
+      mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
+        testConnection: vi.fn().mockResolvedValueOnce(undefined),
+      } as never);
+      const ok = await testKnowledgeBaseConnection();
+      expect(ok).toEqual({ detail: 'notion connection successful.', ok: true });
+    });
+
     it('reports unsupported provider when the registry returns null', async () => {
       resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
         apiToken: 'tok',
