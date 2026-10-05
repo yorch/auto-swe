@@ -229,3 +229,39 @@ describe('crossing the breakpoint keeps the tree', () => {
     expect(screen.getByTestId('dag')).toBe(dag);
   });
 });
+
+describe('scrubber step bands', () => {
+  const late = {
+    ...step,
+    endedAt: null,
+    id: 's-late',
+    nodeId: 'late',
+    startedAt: '2026-10-01T12:05:20Z',
+    status: 'RUNNING' as const,
+  };
+  const lateRun = { ...run, steps: [step, late] } as unknown as WorkflowRunDetail;
+  const bandLefts = () => {
+    const track = screen.getByLabelText('Replay position');
+    return Array.from(track.nextElementSibling?.children ?? []).map((band) =>
+      Number.parseFloat((band as HTMLElement).style.left)
+    );
+  };
+
+  it('stay inside the track below lg, so the scrolling page cannot overflow sideways', () => {
+    mockViewport(500);
+    render(<FlightRecorder {...props} run={lateRun} />);
+    const widths = Array.from(
+      screen.getByLabelText('Replay position').nextElementSibling?.children ?? []
+    ).map((band) => Number.parseFloat((band as HTMLElement).style.width));
+    const lefts = bandLefts();
+    lefts.forEach((left, i) => {
+      expect(left + widths[i]).toBeLessThanOrEqual(100);
+    });
+  });
+
+  it('keep their original, overhanging geometry at desktop width', () => {
+    mockViewport(1440);
+    render(<FlightRecorder {...props} run={lateRun} />);
+    expect(Math.max(...bandLefts())).toBeGreaterThan(100);
+  });
+});

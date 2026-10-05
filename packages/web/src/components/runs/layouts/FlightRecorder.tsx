@@ -317,7 +317,10 @@ export function FlightRecorder({
                 const { leftPct, widthPct } = stepBand(
                   { endedAt: s.endedAt, startedAt: s.startedAt },
                   runStartMs,
-                  totalMs
+                  totalMs,
+                  // Desktop keeps the geometry it always had (a late band overhangs the track
+                  // and is clipped by the viewport); only a page that scrolls needs the clamp.
+                  narrow
                 );
                 const isFailed = s.status === 'FAILED';
 

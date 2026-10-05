@@ -37,4 +37,15 @@ describe('stepBand', () => {
       expect(leftPct + widthPct).toBeLessThanOrEqual(100);
     }
   });
+
+  it('keeps the legacy, unclamped geometry when asked (desktop draws it, clipped by the viewport)', () => {
+    expect(stepBand({ endedAt: null, startedAt: at(10.625) }, RUN_START, TOTAL, false)).toEqual({
+      leftPct: 106.25,
+      widthPct: 5,
+    });
+    const inside = { endedAt: at(4), startedAt: at(2) };
+    expect(stepBand(inside, RUN_START, TOTAL, false)).toEqual(
+      stepBand(inside, RUN_START, TOTAL, true)
+    );
+  });
 });
