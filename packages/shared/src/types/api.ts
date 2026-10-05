@@ -1,4 +1,5 @@
 import type { InputSchema } from '../lib/inputSchema.js';
+import type { PullRequestState } from '../lib/pullRequest.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
 
@@ -974,4 +975,66 @@ export interface EvalRubricDto {
   scale: string;
   isBuiltIn: boolean;
   createdAt: string;
+}
+
+// ── Pull requests and tickets ──
+
+/** A run as the pull-request and ticket views name it. */
+export interface WorkItemRunRef {
+  id: string;
+  status: WorkflowRunStatus;
+}
+
+/** One row of GET /api/v1/pull-requests. `title` is host text: render it as plain text. */
+export interface PullRequestListItem {
+  id: string;
+  /** Null for a row whose repository was removed; only an ADMIN can see one. */
+  repository: { id: string; org: string; name: string } | null;
+  prNumber: number | null;
+  /** The PR on its host; null when it cannot be derived. */
+  url: string | null;
+  title: string | null;
+  status: PullRequestState;
+  isDraft: boolean;
+  ciStatus: string;
+  openedAt: string;
+  mergedAt: string | null;
+  closedAt: string | null;
+  ticketId: string | null;
+  workRequestId: string | null;
+  /** Null when the caller may not see the run. */
+  latestRun: WorkItemRunRef | null;
+  costUsd: number | null;
+}
+
+/** A PR as a ticket group lists it. */
+export interface TicketPullRequest {
+  id: string;
+  repository: { id: string; org: string; name: string } | null;
+  prNumber: number | null;
+  url: string | null;
+  status: PullRequestState;
+  isDraft: boolean;
+}
+
+/**
+ * One row of GET /api/v1/tickets: everything filed under one external ticket id
+ * that the caller may see. `title`, `status` and `url` are the tracker's answer
+ * when the newest visible request was submitted (untrusted: render as plain
+ * text); `url` is set only for an http(s) address.
+ */
+export interface TicketGroup {
+  ticketId: string;
+  title: string | null;
+  status: string | null;
+  url: string | null;
+  requestCount: number;
+  /** Visible runs by status. */
+  runCounts: Partial<Record<WorkflowRunStatus, number>>;
+  latestRun: WorkItemRunRef | null;
+  /** The newest visible request, where the group's requests and runs are reached. */
+  latestWorkRequestId: string;
+  pullRequests: TicketPullRequest[];
+  costUsd: number;
+  lastActivityAt: string;
 }

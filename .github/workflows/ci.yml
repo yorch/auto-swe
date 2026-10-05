@@ -221,6 +221,14 @@ jobs:
           WORK_REQUEST_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/workRequests.idempotency.pg.test.ts
 
+      # The pull-request and ticket views: what a list leaves out is decided by
+      # relational visibility filters over a group that spans two teams, which a
+      # mocked Prisma would not evaluate.
+      - name: Pull-request and ticket views (database-backed tests)
+        env:
+          WORK_VIEWS_PG_TEST: '1'
+        run: yarn test packages/gateway/src/routes/workViews.pg.test.ts
+
       # The read tools against the real route plugins and the same tables: what a
       # tool returns for a team member, an outsider, an ADMIN and a deactivated
       # user is what REST returns for them. Its own step, for the same reason: it
