@@ -917,7 +917,9 @@ export async function updateKnowledgeBaseConfig(
   sealInto(data, 'apiToken', apiToken);
 
   const row = await prisma.knowledgeBaseConfig.upsert({
-    create: { id: 'default', ...data },
+    // `spaces` is NOT NULL with no database default, so a first save that omits it must create an
+    // empty list rather than fail with P2011.
+    create: { id: 'default', spaces: spaces ?? [], ...data },
     update: data,
     where: { id: 'default' },
   });

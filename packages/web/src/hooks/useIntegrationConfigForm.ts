@@ -4,6 +4,35 @@ import { useState } from 'react';
 import { errMsg } from '@/lib/errors';
 import { useUnsavedChangesGuard } from './useUnsavedChangesGuard';
 
+const FIELD_LABELS: Record<string, string> = {
+  apiBase: 'API base URL',
+  apiToken: 'API token',
+  appId: 'App ID',
+  baseUrl: 'Base URL',
+  email: 'Email',
+  maxNodes: 'Max nodes',
+  maxPages: 'Max pages',
+  spaces: 'Spaces',
+};
+
+/**
+ * The gateway reports a rejected body as `body/baseUrl Invalid URL`. Turn that into a sentence
+ * about the field the person sees; any other message passes through unchanged.
+ */
+export function friendlyValidationMessage(message: string): string {
+  const match = /^(?:body)?\/([A-Za-z0-9_]+) (.+)$/.exec(message);
+  if (!match) {
+    return message;
+  }
+  const [, field = '', problem = ''] = match;
+  const label = FIELD_LABELS[field] ?? field.replace(/([A-Z])/g, ' $1').toLowerCase();
+  const name = label.charAt(0).toUpperCase() + label.slice(1);
+  if (/invalid url/i.test(problem)) {
+    return `${name} must be a full URL, for example https://example.com.`;
+  }
+  return `${name}: ${problem.charAt(0).toLowerCase()}${problem.slice(1)}`;
+}
+
 /** The `{ ok, detail }` shape every `test<X>Connection()` helper resolves to. */
 export interface TestResult {
   ok: boolean;
@@ -66,7 +95,7 @@ export function useIntegrationConfigForm(dirtyCount = 0): UseIntegrationConfigFo
       setSaved(true);
       onSuccess?.(result);
     } catch (err) {
-      setError(errMsg(err, 'Failed to save'));
+      setError(friendlyValidationMessage(errMsg(err, 'Failed to save')));
     } finally {
       setSaving(false);
     }
