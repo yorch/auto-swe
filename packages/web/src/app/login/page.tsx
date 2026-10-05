@@ -219,7 +219,7 @@ function LoginPageInner() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await probeGateway('/api/v1/auth/providers', isOkResponse);
+        const res = await probeGateway('/api/v1/auth/providers', isOkResponse, 5000);
         if (!res) {
           // Non-2xx — could be the real gateway throwing, or a wrong server
           // on the port. Either way the page can't continue, so surface it.
