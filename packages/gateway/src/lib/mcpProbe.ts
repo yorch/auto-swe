@@ -28,36 +28,74 @@ class ProbeError extends Error {}
 
 type Fetch = typeof fetch;
 
+const timeoutError = (timeoutMs: number) =>
+  new ProbeError(`The server did not answer within ${Math.round(timeoutMs / 1000)} seconds.`);
+
 /**
  * Reads a body up to a size cap. For an event stream the answer to `id` may arrive while the
- * server holds the stream open, so reading stops as soon as that message is complete.
+ * server holds the stream open, so each completed event is checked as it arrives (never the whole
+ * buffer again) and reading stops once that message is complete. An abort mid-read is the same
+ * timeout the request itself reports.
  */
-async function readCapped(res: Response, id: number, eventStream: boolean): Promise<string> {
+async function readCapped(
+  res: Response,
+  id: number,
+  eventStream: boolean,
+  signal: AbortSignal,
+  timeoutMs: number
+): Promise<string> {
   const reader = res.body?.getReader();
   if (!reader) {
     return '';
   }
+  const aborted = new Promise<never>((_, reject) => {
+    const fail = () => reject(new Error('aborted'));
+    if (signal.aborted) {
+      fail();
+    } else {
+      signal.addEventListener('abort', fail, { once: true });
+    }
+  });
+  aborted.catch(() => undefined);
+  const decoder = new TextDecoder();
   const chunks: Uint8Array[] = [];
+  let pending = '';
   let size = 0;
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
+    let step: ReadableStreamReadResult<Uint8Array>;
+    try {
+      // fetch aborts its own body, but racing the signal makes the deadline hold for any body.
+      step = await Promise.race([reader.read(), aborted]);
+    } catch (err) {
+      if (signal.aborted) {
+        await reader.cancel().catch(() => undefined);
+        throw timeoutError(timeoutMs);
+      }
+      void err;
+      throw new ProbeError('The connection to the server broke while reading its answer.');
+    }
+    if (step.done) {
       break;
     }
-    size += value.byteLength;
+    size += step.value.byteLength;
     if (size > MAX_BODY_BYTES) {
       await reader.cancel();
       throw new ProbeError('The server sent a response that was too large to read.');
     }
-    chunks.push(value);
+    chunks.push(step.value);
     if (eventStream) {
-      const text = Buffer.concat(chunks).toString('utf8');
-      try {
-        rpcMessage(text, 'text/event-stream', id);
+      // Only complete events (ended by a blank line) are parsed; the tail waits for more bytes.
+      pending += decoder.decode(step.value, { stream: true });
+      const events = pending.split(/\r?\n\r?\n/);
+      pending = events.pop() ?? '';
+      for (const event of events) {
+        try {
+          rpcMessage(event, 'text/event-stream', id);
+        } catch {
+          continue; // Some other event; keep reading.
+        }
         await reader.cancel();
-        return text;
-      } catch {
-        // The answer is not complete yet; keep reading.
+        return `${event}\n\n`;
       }
     }
   }
@@ -126,9 +164,7 @@ export async function probeMcpServer(
       });
     } catch (err) {
       if (signal.aborted) {
-        throw new ProbeError(
-          `The server did not answer within ${Math.round(timeoutMs / 1000)} seconds.`
-        );
+        throw timeoutError(timeoutMs);
       }
       void err;
       throw new ProbeError('Could not connect to the server.');
@@ -155,7 +191,7 @@ export async function probeMcpServer(
     }
     const contentType = res.headers.get('content-type') ?? '';
     const message = rpcMessage(
-      await readCapped(res, id, contentType.includes('text/event-stream')),
+      await readCapped(res, id, contentType.includes('text/event-stream'), signal, timeoutMs),
       contentType,
       id
     );

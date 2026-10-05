@@ -47,6 +47,35 @@ describe('probeMcpServer', () => {
     expect(cancelled).toBe(true);
   });
 
+  it('reports the timeout, not a connection error, when the abort lands mid-read', async () => {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode('event: ping\ndata: {}\n\n'));
+        // never closed and never answers: the read hangs until the probe's deadline
+      },
+    });
+    const sse = new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+    const res = await probeMcpServer('https://mcp.test/mcp', 50, server(sse) as never);
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/did not answer within/);
+  });
+
+  it('finds the answer when an event is split across chunks, without rescanning the buffer', async () => {
+    const enc = new TextEncoder();
+    const msg = `data: ${JSON.stringify({ id: 2, jsonrpc: '2.0', result: { tools: [{ name: 'a' }, { name: 'b' }] } })}\r\n\r\n`;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode('data: {"id":9}\n\n'));
+        controller.enqueue(enc.encode(msg.slice(0, 20)));
+        controller.enqueue(enc.encode(msg.slice(20)));
+      },
+    });
+    const sse = new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+    const res = await probeMcpServer('https://mcp.test/mcp', 5000, server(sse) as never);
+    expect(res).toMatchObject({ ok: true, toolCount: 2 });
+  });
+
   it('closes the session with a DELETE carrying its id', async () => {
     const f = server(json({ id: 2, jsonrpc: '2.0', result: { tools: [] } }));
     await probeMcpServer('https://mcp.test/mcp', 5000, f as never);

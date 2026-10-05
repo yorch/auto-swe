@@ -80,6 +80,17 @@ describe('GET /readiness', () => {
     expect(data.providers.map((p: { provider: string }) => p.provider)).not.toContain('mistral');
   });
 
+  it('skips an agent whose latest version inherits its model, even if an older one had a spec', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findMany.mockResolvedValue([
+      { credentialId: null, key: 'implementer', modelSpec: 'mistral/old', version: 1 },
+      { credentialId: null, key: 'implementer', modelSpec: null, version: 2 },
+    ]);
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: URL });
+    const { data } = res.json();
+    expect(data.providers.map((p: { provider: string }) => p.provider)).not.toContain('mistral');
+  });
+
   it('reports ready when everything is configured', async () => {
     const { app } = await buildApp();
     const res = await app.inject({ headers: AUTH, method: 'GET', url: URL });
