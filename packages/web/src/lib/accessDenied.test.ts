@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deniedHref, deniedMessage } from './accessDenied';
+import { deniedHref, deniedMessage, deniedReasonHref } from './accessDenied';
 
 describe('access denied notice', () => {
   it('names the lowest role the page admits', () => {
@@ -17,5 +17,19 @@ describe('access denied notice', () => {
     expect(deniedMessage(null, 'ADMIN')).toBeNull();
     expect(deniedMessage('//evil.example', 'ADMIN')).toBeNull();
     expect(deniedMessage('https://evil.example', null)).toBeNull();
+  });
+
+  it('words the usage and inactive reasons without naming a role', () => {
+    expect(deniedMessage('/govern/usage', null, 'usage')).toBe(
+      'You need access to usage data to open LLM usage. Ask an administrator if you think you should have access.'
+    );
+    expect(deniedMessage('/govern/usage', null, 'inactive')).toMatch(/waiting for approval/);
+    expect(deniedReasonHref('/govern/usage', 'inactive')).toBe(
+      '/?denied=%2Fgovern%2Fusage&reason=inactive'
+    );
+  });
+
+  it('says nothing when the denied page is Home', () => {
+    expect(deniedMessage('/', 'ADMIN')).toBeNull();
   });
 });

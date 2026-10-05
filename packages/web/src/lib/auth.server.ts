@@ -2,7 +2,7 @@ import type { Role } from '@auto-swe/shared';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { deniedHref } from '@/lib/accessDenied';
+import { deniedHref, deniedReasonHref } from '@/lib/accessDenied';
 import {
   COOKIE_ACCESS_TOKEN,
   COOKIE_SESSION_MARKER,
@@ -132,7 +132,9 @@ async function requireActiveSession(): Promise<RoleCheck> {
     return result;
   }
   if (!result.user.isActive) {
-    redirect('/');
+    // Home explains it, as it does for a missing role.
+    const headerStore = await headers();
+    redirect(deniedReasonHref(headerStore.get(PATHNAME_HEADER) ?? '/', 'inactive'));
   }
   return result;
 }
@@ -171,7 +173,7 @@ export async function requireUsageScope(): Promise<RoleCheck> {
   }
   if (!(scopes.platform || scopes.teams?.length || scopes.orgs?.length)) {
     const headerStore = await headers();
-    redirect(deniedHref(headerStore.get(PATHNAME_HEADER) ?? '/', ['LEAD']));
+    redirect(deniedReasonHref(headerStore.get(PATHNAME_HEADER) ?? '/', 'usage'));
   }
   return result;
 }

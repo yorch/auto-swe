@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
 import { RequestList } from '@/components/requests/RequestList';
 import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
@@ -63,8 +63,32 @@ function WorkSection({
 /** Why the user landed here, when a role-gated page sent them Home. */
 function AccessDeniedNotice() {
   const params = useSearchParams();
-  const message = deniedMessage(params.get('denied'), params.get('need'));
-  return message ? <Alert variant="warning">{message}</Alert> : null;
+  const router = useRouter();
+  const fresh = deniedMessage(params.get('denied'), params.get('need'), params.get('reason'));
+  // Keep the notice, then drop the parameters so a reload or a shared link does not repeat it.
+  const [message, setMessage] = useState<string | null>(fresh);
+  useEffect(() => {
+    if (fresh) {
+      setMessage(fresh);
+    }
+    if (params.has('denied')) {
+      router.replace('/', { scroll: false });
+    }
+  }, [fresh, params, router]);
+  return message ? (
+    <Alert variant="warning">
+      <span className="flex flex-wrap items-start justify-between gap-3">
+        <span>{message}</span>
+        <button
+          className="underline hover:no-underline"
+          onClick={() => setMessage(null)}
+          type="button"
+        >
+          Dismiss
+        </button>
+      </span>
+    </Alert>
+  ) : null;
 }
 
 export default function HomePage() {
