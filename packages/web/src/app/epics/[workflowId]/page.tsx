@@ -75,7 +75,16 @@ export default function EpicDetailPage({ params }: PageProps) {
     <div className="space-y-8">
       <BackToEpics />
       <PageHeader
-        actions={<StatusBadge status={epic.status} />}
+        actions={
+          <div className="flex items-center gap-3">
+            {epic.workRequestId && (
+              <ButtonLink href={requestHref(epic.workRequestId)} size="sm" variant="secondary">
+                View request
+              </ButtonLink>
+            )}
+            <StatusBadge status={epic.status} />
+          </div>
+        }
         chapter="§ Requests"
         subtitle="A multi-repository change and the child workflows it fans out to."
         title={epic.externalTicketId}
@@ -130,24 +139,12 @@ export default function EpicDetailPage({ params }: PageProps) {
                     const cell = epicChildRunCell(child, runIdByTemporalId, childRunsSettled);
                     if (cell.kind === 'run') {
                       return (
-                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs">
-                          <Link
-                            className="text-ember-400 hover:underline"
-                            href={
-                              epic.workRequestId
-                                ? requestHref(epic.workRequestId)
-                                : `/runs/${cell.runId}`
-                            }
-                          >
-                            view request →
-                          </Link>
-                          <Link
-                            className="text-paper-400 hover:underline"
-                            href={`/runs/${cell.runId}`}
-                          >
-                            diagnostics
-                          </Link>
-                        </span>
+                        <Link
+                          className="font-mono text-xs text-ember-400 hover:underline"
+                          href={`/runs/${cell.runId}`}
+                        >
+                          Diagnostics →
+                        </Link>
                       );
                     }
                     if (cell.kind === 'no-access') {
