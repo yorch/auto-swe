@@ -172,6 +172,10 @@ export function useRestoreSkillRevision() {
           scanWarnings?: string[];
         }>(`/api/v1/platform/skills/${id}/revisions/${revision}/restore`, {})
         .then(toSaveResult),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['skills'] });
+      // A restored skill changes what agents bound to it inject, and the library lists those.
+      qc.invalidateQueries({ queryKey: ['admin-agent-library'] });
+    },
   });
 }

@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
+import { READINESS_KEY } from '@/hooks/useReadiness';
 import { api } from '@/lib/api';
 
 // ── Masked field shape ──
@@ -57,12 +58,18 @@ function unwrappedConfigQuery<TConfig>(slug: string) {
 }
 
 /** PUT that invalidates the matching query on success. */
-function configMutation<TConfig, TInput>(slug: string) {
+function configMutation<TConfig, TInput>(slug: string, opts: { affectsReadiness?: boolean } = {}) {
   return () => {
     const qc = useQueryClient();
     return useMutation({
       mutationFn: (body: TInput) => api.put<{ data: TConfig }>(configPath(slug), body),
-      onSuccess: () => qc.invalidateQueries({ queryKey: configKey(slug) }),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: configKey(slug) });
+        // Setup readiness reads this config (GitHub credentials), so refresh it too.
+        if (opts.affectsReadiness) {
+          qc.invalidateQueries({ queryKey: READINESS_KEY });
+        }
+      },
     });
   };
 }
@@ -107,7 +114,9 @@ export interface GitHubConfigInput {
 
 export const useGitHubConfig = sourcedConfigQuery<GitHubConfig>('github');
 
-export const useUpdateGitHubConfig = configMutation<GitHubConfig, GitHubConfigInput>('github');
+export const useUpdateGitHubConfig = configMutation<GitHubConfig, GitHubConfigInput>('github', {
+  affectsReadiness: true,
+});
 
 export const testGitHubConnection = () => postConfigTest('github');
 

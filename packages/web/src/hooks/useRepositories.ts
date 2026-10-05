@@ -3,6 +3,7 @@
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
+import { READINESS_KEY } from '@/hooks/useReadiness';
 import { api } from '@/lib/api';
 
 export interface GitHubRepoInfo {
@@ -79,7 +80,11 @@ export function useCreateRepository() {
   return useMutation({
     mutationFn: (body: CreateRepoBody | CreateConnectionBody) =>
       api.post<{ data: RepositorySummary }>('/api/v1/repositories', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repositories'] });
+      // Setup readiness counts active repository connections.
+      qc.invalidateQueries({ queryKey: READINESS_KEY });
+    },
   });
 }
 
@@ -88,7 +93,11 @@ export function useUpdateRepository(id: string) {
   return useMutation({
     mutationFn: (body: UpdateRepoBody) =>
       api.patch<{ data: RepositorySummary }>(`/api/v1/repositories/${id}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repositories'] });
+      // Setup readiness counts active repository connections.
+      qc.invalidateQueries({ queryKey: READINESS_KEY });
+    },
   });
 }
 
