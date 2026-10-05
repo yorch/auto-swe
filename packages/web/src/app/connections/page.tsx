@@ -142,7 +142,15 @@ export default function ConnectionsPage() {
         subtitle="External systems — git repos, REST APIs, and other integrations — available to your workflows."
         title="Connections"
       />
-      <SetupBanner items={['connections']} />
+      <SetupBanner
+        here="/connections"
+        inPage={
+          canManage
+            ? { label: 'Add connection', onClick: () => setMode({ kind: 'create' }) }
+            : undefined
+        }
+        items={['connections']}
+      />
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <Input
           aria-label="Search connections"

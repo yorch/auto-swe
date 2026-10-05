@@ -84,7 +84,7 @@ export default function StudioBundlesPage() {
             Distribute library content (Agents, Skills, scanner patterns, Templates) across
             deployments. Install seeds a <strong>managed base layer</strong>; your team/template
             overrides sit on top. A bundle whose detached signature matches a deployment-trusted key
-            installs as <strong>verified</strong>, otherwise as <strong>unverified</strong>{' '}
+            installs as <strong>Verified</strong>, otherwise as <strong>Unverified</strong>{' '}
             (community).
           </>
         }

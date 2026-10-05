@@ -600,7 +600,7 @@ export default function TemplatesPage() {
                           </div>
                         )}
                       </Td>
-                      <Td className="px-4 py-3 text-paper-400" label="Team">
+                      <Td className="px-4 py-3 whitespace-nowrap text-paper-400" label="Team">
                         {t.team?.name ?? <span className="text-paper-500">Platform-wide</span>}
                       </Td>
                       <Td className="px-4 py-3" label="Status">

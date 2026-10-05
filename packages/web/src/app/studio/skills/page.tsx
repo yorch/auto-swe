@@ -626,8 +626,8 @@ export default function StudioSkillsPage() {
                             )}
                           </div>
                         </Td>
-                        <Td className="max-w-xs py-2 pr-4" label="Description">
-                          <span className="line-clamp-1 text-paper-400">
+                        <Td className="py-2 pr-4 sm:max-w-xs" label="Description">
+                          <span className="line-clamp-2 text-paper-400 sm:line-clamp-1">
                             {visibleOrNull(skill.description) ?? '—'}
                           </span>
                         </Td>

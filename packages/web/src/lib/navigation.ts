@@ -72,7 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/studio/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
       {
         href: '/studio/integrations',
-        icon: 'layers',
+        icon: 'puzzle',
         label: 'Integrations',
         minRole: 'ADMIN',
       },

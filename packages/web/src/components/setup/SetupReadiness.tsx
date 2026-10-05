@@ -21,7 +21,7 @@ export function SetupReadiness() {
     return (
       <div
         aria-hidden="true"
-        className="h-40 animate-pulse rounded-xl border border-ink-400/40 bg-ink-800/50"
+        className="h-64 animate-pulse rounded-xl border border-ink-400/40 bg-ink-800/50"
         data-testid="setup-readiness-loading"
       />
     );
