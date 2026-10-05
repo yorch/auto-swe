@@ -4484,7 +4484,7 @@
       "title": "A connector base URL is checked strictly, then with the connector opt-in that waives only private addresses"
     },
     {
-      "anchor": "async function assertSafeJiraBaseUrl(baseUrl: string): Promise<void> {",
+      "anchor": "async function assertSafeJiraBaseUrl(baseUrl: string): Promise<{ allowPrivate: boolean }> {",
       "before": 0,
       "id": "connectorJiraOrigin",
       "lines": 22,
