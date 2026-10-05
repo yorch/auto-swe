@@ -89,6 +89,9 @@ function EditorInner({
   const [showOutline, setShowOutline] = useState(false);
   // Below lg the palette is a drawer over the canvas rather than a fixed column.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteRef = useRef<HTMLDivElement>(null);
+  const outlineRef = useRef<HTMLElement>(null);
+  const inspectorRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const { screenToFlowPosition } = useReactFlow();
 
@@ -325,6 +328,39 @@ function EditorInner({
     el?.focus();
   }, []);
 
+  // Below lg the palette, outline and inspector are overlays on the canvas, so
+  // opening one moves focus into it, and Escape closes it again.
+  useEffect(() => {
+    if (paletteOpen) {
+      focusFirst(paletteRef.current);
+    }
+  }, [paletteOpen]);
+  useEffect(() => {
+    if (showOutline) {
+      focusFirst(outlineRef.current);
+    }
+  }, [showOutline]);
+  useEffect(() => {
+    if (selectedNodeId && overlayMode()) {
+      focusFirst(inspectorRef.current);
+    }
+  }, [selectedNodeId]);
+  const handleOverlayKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key !== 'Escape' || !overlayMode()) {
+      return;
+    }
+    if (paletteOpen) {
+      setPaletteOpen(false);
+    } else if (showOutline) {
+      setShowOutline(false);
+    } else if (selectedNodeId) {
+      onSelect(null);
+    } else {
+      return;
+    }
+    event.stopPropagation();
+  };
+
   // Keyboard graph traversal for the editor — parity with the read-only viewer.
   // Arrows walk the edges, Home jumps to the entry node, Enter opens the focused
   // node in the inspector. Attached in the CAPTURE phase so it preempts React
@@ -436,7 +472,11 @@ function EditorInner({
           <Button
             aria-expanded={paletteOpen}
             className="lg:hidden"
-            onClick={() => setPaletteOpen((v) => !v)}
+            onClick={() => {
+              setPaletteOpen((v) => !v);
+              // One overlay at a time below lg.
+              setShowOutline(false);
+            }}
             size="sm"
             variant={paletteOpen ? 'primary' : 'ghost'}
           >
@@ -444,7 +484,10 @@ function EditorInner({
           </Button>
           <Button
             aria-pressed={showOutline}
-            onClick={() => setShowOutline((v) => !v)}
+            onClick={() => {
+              setShowOutline((v) => !v);
+              setPaletteOpen(false);
+            }}
             size="sm"
             variant={showOutline ? 'primary' : 'ghost'}
           >
@@ -497,12 +540,18 @@ function EditorInner({
         </details>
       )}
 
-      <div className="relative flex min-h-0 flex-1 overflow-hidden" ref={wrapperRef}>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: Escape only closes the overlays inside */}
+      <div
+        className="relative flex min-h-0 flex-1 overflow-hidden"
+        onKeyDown={handleOverlayKeyDown}
+        ref={wrapperRef}
+      >
         <div
           className={cn(
             'z-20 h-full shadow-xl lg:static lg:block lg:shadow-none',
             paletteOpen ? 'absolute inset-y-0 left-0 block' : 'hidden'
           )}
+          ref={paletteRef}
         >
           <NodePalette
             onAdd={(...args) => {
@@ -517,6 +566,8 @@ function EditorInner({
           <aside
             aria-label="Outline"
             className="absolute inset-y-0 left-0 z-10 flex w-72 max-w-full shrink-0 flex-col border-r border-ink-600 bg-ink-900 shadow-xl lg:static lg:shadow-none"
+            ref={outlineRef}
+            tabIndex={-1}
           >
             <WorkflowOutline
               className="flex-1"
@@ -568,6 +619,7 @@ function EditorInner({
             'z-20 h-full max-w-full flex-col shadow-xl lg:static lg:flex lg:shadow-none [&>aside]:min-h-0 [&>aside]:max-w-full [&>aside]:flex-1',
             selectedNode ? 'absolute inset-y-0 right-0 flex' : 'hidden'
           )}
+          ref={inspectorRef}
         >
           {selectedNode && (
             <div className="flex justify-end border-b border-ink-600 bg-ink-950 px-3 py-1.5 lg:hidden">
@@ -600,4 +652,17 @@ function EditorInner({
       </div>
     </div>
   );
+}
+
+/** Moves focus to the first control inside an overlay, or the overlay itself. */
+function focusFirst(container: HTMLElement | null) {
+  const target = container?.querySelector<HTMLElement>(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  );
+  (target ?? container)?.focus();
+}
+
+/** Below lg the side panels are overlays on the canvas. */
+function overlayMode() {
+  return !window.matchMedia('(min-width: 1024px)').matches;
 }
