@@ -29,7 +29,11 @@ import {
 } from '@auto-swe/shared/lib/workflowId';
 import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
-import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import {
+  HITL_REJECT_REASON_MIN,
+  type HitlResolveErrorCode,
+  resolveHitlStep,
+} from '../lib/hitlResolve.js';
 import { escapeSlackMrkdwn, syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { authorizeLaunch, launchRefusalMessage } from '../lib/launchAuthorization.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -1659,7 +1663,6 @@ const HITL_MODAL_CALLBACK_ID = 'hitl_resolve_modal';
 const HITL_COMMENT_BLOCK = 'hitl_comment_block';
 const HITL_COMMENT_INPUT = 'hitl_comment_input';
 /** Same bounds as the dashboard's reject reason. */
-const HITL_REJECT_REASON_MIN = 5;
 const HITL_COMMENT_MAX = 2000;
 /** Slack caps `private_metadata` at 3000 characters. */
 const HITL_MODAL_PRIVATE_METADATA_MAX = 3000;

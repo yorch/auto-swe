@@ -317,8 +317,11 @@ An `APPROVAL` response may carry an optional `comment` (up to 2000 characters):
 ```
 The comment is stored with the response, written to the audit log, and shown to the requester on the
 request panel and on the full run page, beside who decided. It is not part of the signal the workflow receives. A comment on any other kind
-returns `400` with `INVALID_VALUE`. The web dialog requires a reason on reject and leaves a comment
-on approve optional; the API itself accepts a reject without one.
+returns `400` with `INVALID_VALUE`. A reject on an `APPROVAL` step requires a reason: the `comment`,
+trimmed, must be at least 5 characters, or the response is `400` with `REASON_REQUIRED`. The rule lives
+in the shared resolution path, so the web dialog, the Slack modal and direct API calls all meet it; an
+approve's comment stays optional. Timeouts and other automatic resolutions do not go through this path
+and need no reason.
 
 **Slack buttons.** An approval announcement carries Approve and Reject buttons. Clicking either
 opens a Slack modal, the same shape as the web dialog: Reject asks for a required reason (5 to 2000

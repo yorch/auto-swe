@@ -52,6 +52,9 @@ export interface HitlResolveDeps {
   gate?: ConnectionScopeGate;
 }
 
+/** A rejection of an approval step must say why, in at least this many characters. */
+export const HITL_REJECT_REASON_MIN = 5;
+
 export type HitlResolveErrorCode =
   | 'NOT_FOUND'
   | 'ALREADY_RESOLVED'
@@ -59,6 +62,7 @@ export type HitlResolveErrorCode =
   | 'UNKNOWN_KIND'
   | 'INVALID_ACTION'
   | 'INVALID_VALUE'
+  | 'REASON_REQUIRED'
   | 'SIGNAL_FAILED';
 
 export type HitlResolveResult =
@@ -307,6 +311,18 @@ export async function resolveHitlStep(
     return {
       code: 'INVALID_VALUE',
       message: 'Comments are only supported on approval steps.',
+      ok: false,
+    };
+  }
+
+  if (
+    resolvedStep.kind === 'APPROVAL' &&
+    action === 'reject' &&
+    (comment?.length ?? 0) < HITL_REJECT_REASON_MIN
+  ) {
+    return {
+      code: 'REASON_REQUIRED',
+      message: `Give a reason of at least ${HITL_REJECT_REASON_MIN} characters when rejecting.`,
       ok: false,
     };
   }

@@ -154,6 +154,7 @@ const STATUS_BY_CODE: Record<HitlResolveErrorCode, 200 | 400 | 404 | 409 | 502> 
   INVALID_ACTION: 400,
   INVALID_VALUE: 400,
   NOT_FOUND: 404,
+  REASON_REQUIRED: 400,
   RUN_NOT_RUNNING: 409,
   SIGNAL_FAILED: 502,
   UNKNOWN_KIND: 400,
@@ -174,18 +175,18 @@ function stepResponses(s: {
     action: string;
     resolvedAt: Date | null;
     resolvedBy: string | null;
-    resolvedByUser: { name: string | null } | null;
+    resolvedByUser: { email?: string | null; name: string | null } | null;
     value: unknown;
   }[];
   payload: unknown;
   resolvedAt: Date | null;
   resolvedBy: string | null;
-  resolvedByUser: { name: string | null } | null;
+  resolvedByUser: { email?: string | null; name: string | null } | null;
   status: string;
 }) {
   const rows = s.humanApprovals.map((a) => ({
     action: a.action,
-    byName: a.resolvedByUser?.name ?? null,
+    byName: a.resolvedByUser?.name ?? a.resolvedByUser?.email ?? null,
     comment: commentOf(a.value),
     resolvedAt: formatDate(a.resolvedAt),
     value: null,
@@ -205,7 +206,7 @@ function stepResponses(s: {
     ...rows,
     {
       action,
-      byName: s.resolvedByUser?.name ?? null,
+      byName: s.resolvedByUser?.name ?? s.resolvedByUser?.email ?? null,
       comment: commentOf(s.payload),
       resolvedAt: formatDate(s.resolvedAt),
       value: answerValue(s.kind, s.payload),
@@ -253,11 +254,11 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
               action: true,
               resolvedAt: true,
               resolvedBy: true,
-              resolvedByUser: { select: { name: true } },
+              resolvedByUser: { select: { email: true, name: true } },
               value: true,
             },
           },
-          resolvedByUser: { select: { name: true } },
+          resolvedByUser: { select: { email: true, name: true } },
           run: {
             select: {
               id: true,
