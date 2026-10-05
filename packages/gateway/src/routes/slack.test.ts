@@ -785,6 +785,15 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     });
   });
 
+  it('acknowledges the button without waiting for the Slack edit', async () => {
+    syncSlackHumanStepOutcomeMock.mockClear();
+    syncSlackHumanStepOutcomeMock.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+    state.humanStep = pendingHumanStep();
+    const res = await injectInteractive(interactivePayload());
+    expect(res.statusCode).toBe(200);
+    expect(syncSlackHumanStepOutcomeMock).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves the announcement alone while more approvals are still needed', async () => {
     syncSlackHumanStepOutcomeMock.mockClear();
     state.humanStep = pendingHumanStep({ requiredApprovers: 2 });

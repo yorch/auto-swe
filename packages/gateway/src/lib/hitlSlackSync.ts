@@ -45,8 +45,37 @@ function parseSlackMessage(json: unknown): StoredSlackMessage | null {
     : null;
 }
 
-/** The decision line shown on the message, e.g. `:white_check_mark: *Approved* by Dana`. */
-export function buildOutcomeText(header: string, outcome: HitlSlackOutcome, who: string): string {
+/** One approver of a multi-approver step, with the note they left, if any. */
+export interface HitlSlackApprover {
+  comment?: string | undefined;
+  name: string;
+}
+
+function quote(text: string): string {
+  const note = text.trim();
+  const clipped =
+    note.length > COMMENT_MAX_CHARS ? `${note.slice(0, COMMENT_MAX_CHARS - 1)}…` : note;
+  return escapeSlackMrkdwn(clipped).replaceAll(/\r?\n/g, '\n> ');
+}
+
+/**
+ * The decision line shown on the message, e.g. `:white_check_mark: *Approved* by Dana`. A step that
+ * needed several approvals passes `approvers`, so the line names all of them and each note is
+ * attributed rather than showing only the last approver's.
+ */
+export function buildOutcomeText(
+  header: string,
+  outcome: HitlSlackOutcome,
+  who: string,
+  approvers: readonly HitlSlackApprover[] = []
+): string {
+  if (outcome.action === 'approve' && approvers.length > 1) {
+    const names = approvers.map((a) => escapeSlackMrkdwn(a.name)).join(', ');
+    const notes = approvers
+      .filter((a) => a.comment?.trim())
+      .map((a) => `> *${escapeSlackMrkdwn(a.name)}:* ${quote(a.comment as string)}`);
+    return [header, `:white_check_mark: *Approved* by ${names}`, ...notes].join('\n');
+  }
   const person = escapeSlackMrkdwn(who);
   let line: string;
   if (outcome.action === 'approve') {
@@ -62,10 +91,30 @@ export function buildOutcomeText(header: string, outcome: HitlSlackOutcome, who:
   if (!note) {
     return `${header}\n${line}`;
   }
-  const clipped =
-    note.length > COMMENT_MAX_CHARS ? `${note.slice(0, COMMENT_MAX_CHARS - 1)}…` : note;
-  const quoted = escapeSlackMrkdwn(clipped).replaceAll(/\r?\n/g, '\n> ');
-  return `${header}\n${line}\n> ${quoted}`;
+  return `${header}\n${line}\n> ${quote(note)}`;
+}
+
+/** Everyone who approved the step, oldest first, with the note stored on their approval. */
+async function loadApprovers(
+  prisma: PrismaClient,
+  stepId: string,
+  action: string
+): Promise<HitlSlackApprover[]> {
+  if (action !== 'approve') {
+    return [];
+  }
+  const rows = await prisma.humanApproval.findMany({
+    orderBy: { resolvedAt: 'asc' },
+    select: { resolvedByUser: { select: { email: true, name: true } }, value: true },
+    where: { action: 'approve', stepId },
+  });
+  return rows.map((row) => {
+    const comment = (row.value as { comment?: unknown } | null)?.comment;
+    return {
+      comment: typeof comment === 'string' ? comment : undefined,
+      name: row.resolvedByUser?.name ?? row.resolvedByUser?.email ?? 'Someone',
+    };
+  });
 }
 
 export async function syncSlackHumanStepOutcome(
@@ -93,7 +142,13 @@ export async function syncSlackHumanStepOutcome(
       select: { email: true, name: true },
       where: { id: outcome.userId },
     });
-    const text = buildOutcomeText(message.text, outcome, user?.name ?? user?.email ?? 'Someone');
+    const approvers = await loadApprovers(deps.prisma, stepId, outcome.action);
+    const text = buildOutcomeText(
+      message.text,
+      outcome,
+      user?.name ?? user?.email ?? 'Someone',
+      approvers
+    );
     const res = await fetch(SLACK_UPDATE_URL, {
       body: JSON.stringify({
         // Replacing the blocks drops the buttons, so a decided step cannot be answered twice.

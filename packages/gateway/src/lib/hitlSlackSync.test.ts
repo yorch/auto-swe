@@ -45,6 +45,22 @@ describe('buildOutcomeText', () => {
     ).toBe(`${HEADER}\n:white_check_mark: *Decided* by Dana: ship`);
   });
 
+  it('names every approver of a multi-approver step, attributing each note', () => {
+    const text = buildOutcomeText(
+      HEADER,
+      { action: 'approve', comment: 'Ship it', userId: 'u2' },
+      'Eli',
+      [
+        { comment: 'Looks right', name: 'Dana' },
+        { name: 'Eli' },
+        { comment: 'Fine <by me>', name: 'Fay' },
+      ]
+    );
+    expect(text).toBe(
+      `${HEADER}\n:white_check_mark: *Approved* by Dana, Eli, Fay\n> *Dana:* Looks right\n> *Fay:* Fine &lt;by me&gt;`
+    );
+  });
+
   it('clips a very long comment', () => {
     const text = buildOutcomeText(
       HEADER,
@@ -61,6 +77,7 @@ describe('syncSlackHumanStepOutcome', () => {
   const fetchMock = vi.fn();
   const log = { warn: vi.fn() };
   const prisma = {
+    humanApproval: { findMany: vi.fn() },
     user: { findUnique: vi.fn() },
     workflowHumanStep: { findUnique: vi.fn() },
   };
@@ -76,6 +93,7 @@ describe('syncSlackHumanStepOutcome', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     fetchMock.mockResolvedValue({ json: async () => ({ ok: true }) });
     resolveToken.mockResolvedValue('xoxb-test');
+    prisma.humanApproval.findMany.mockResolvedValue([]);
     prisma.user.findUnique.mockResolvedValue({ email: 'd@x.test', name: 'Dana' });
     prisma.workflowHumanStep.findUnique.mockResolvedValue({
       slackMessage: { channel: 'C1', text: HEADER, ts: '5.5' },
@@ -96,6 +114,17 @@ describe('syncSlackHumanStepOutcome', () => {
     expect(body.text).toContain('> Ship it');
     expect(body.blocks).toHaveLength(1);
     expect(body.blocks[0].type).toBe('section');
+  });
+
+  it('reads the approvals so a multi-approver step shows all of them', async () => {
+    prisma.humanApproval.findMany.mockResolvedValue([
+      { resolvedByUser: { email: 'a@x.test', name: 'Ann' }, value: { comment: 'ok' } },
+      { resolvedByUser: { email: 'd@x.test', name: 'Dana' }, value: null },
+    ]);
+    await run();
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, { body: string }])[1].body);
+    expect(body.text).toContain('*Approved* by Ann, Dana');
+    expect(body.text).toContain('> *Ann:* ok');
   });
 
   it('does nothing for a step that never posted to Slack', async () => {

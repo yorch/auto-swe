@@ -336,6 +336,15 @@ describe('human step routes', () => {
       });
     });
 
+    it('responds without waiting for the Slack edit', async () => {
+      syncSlack.mockClear();
+      syncSlack.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+      stepRow = pendingStep();
+      const res = await respond({ action: 'approve' });
+      expect(res.statusCode).toBe(200);
+      expect(syncSlack).toHaveBeenCalledTimes(1);
+    });
+
     it('does not touch Slack when the response is refused', async () => {
       syncSlack.mockClear();
       stepRow = null;

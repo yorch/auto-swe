@@ -551,7 +551,8 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Show the decision (and the approver's note) on the Slack message that announced the step.
       if (result.status === 'RESOLVED') {
-        await syncSlackHumanStepOutcome(
+        // Not awaited: the answer is already recorded and this never throws.
+        void syncSlackHumanStepOutcome(
           { log: request.log, prisma: fastify.prisma },
           result.stepId,
           { action, comment, userId: user.sub, value }

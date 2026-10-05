@@ -1535,7 +1535,8 @@ async function handleHitlResolveAction(
     }
     if (result.status === 'RESOLVED') {
       // Replaces the buttons with the decision, so a decided step reads as decided in place.
-      await syncSlackHumanStepOutcome({ log: request.log, prisma: fastify.prisma }, result.stepId, {
+      // Not awaited: Slack wants the interaction acknowledged within seconds, and this never throws.
+      void syncSlackHumanStepOutcome({ log: request.log, prisma: fastify.prisma }, result.stepId, {
         action: parsed.action,
         userId: user.id,
         value: parsed.value,
