@@ -25,13 +25,56 @@ function server(listBody: Response) {
 }
 
 describe('probeMcpServer', () => {
+  it('stops reading an event stream the server holds open once the answer has arrived', async () => {
+    const enc = new TextEncoder();
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+      start(controller) {
+        controller.enqueue(
+          enc.encode(
+            `event: message\ndata: ${JSON.stringify({ id: 2, jsonrpc: '2.0', result: { tools: [{ name: 'a' }] } })}\n\n`
+          )
+        );
+        // never closed: the server keeps the stream open for notifications
+      },
+    });
+    const sse = new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+    const res = await probeMcpServer('https://mcp.test/mcp', 5000, server(sse) as never);
+    expect(res).toMatchObject({ ok: true, toolCount: 1 });
+    expect(cancelled).toBe(true);
+  });
+
+  it('closes the session with a DELETE carrying its id', async () => {
+    const f = server(json({ id: 2, jsonrpc: '2.0', result: { tools: [] } }));
+    await probeMcpServer('https://mcp.test/mcp', 5000, f as never);
+    const last = f.mock.calls.at(-1)?.[1] as RequestInit;
+    expect(last.method).toBe('DELETE');
+    expect((last.headers as Record<string, string>)['mcp-session-id']).toBe('s1');
+  });
+
+  it('never waits longer than a minute whatever timeout is stored', async () => {
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+    await probeMcpServer(
+      'https://mcp.test/mcp',
+      600_000,
+      server(json({ id: 2, jsonrpc: '2.0', result: { tools: [] } })) as never
+    );
+    expect(spy).toHaveBeenCalledWith(60_000);
+    spy.mockRestore();
+  });
+
   it('reports the tool count and names, carrying the session through', async () => {
     const f = server(
       json({ id: 2, jsonrpc: '2.0', result: { tools: [{ name: 'search' }, { name: 'fetch' }] } })
     );
     const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never);
     expect(res).toMatchObject({ ok: true, toolCount: 2, toolNames: ['search', 'fetch'] });
-    const listCall = f.mock.calls.at(-1)?.[1] as RequestInit;
+    const listCall = f.mock.calls.find(([, init]) =>
+      String((init as RequestInit).body).includes('tools/list')
+    )?.[1] as RequestInit;
     expect((listCall.headers as Record<string, string>)['mcp-session-id']).toBe('s1');
     expect(listCall.redirect).toBe('manual');
   });

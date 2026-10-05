@@ -20,13 +20,19 @@ export interface McpProbeResult {
 
 const MAX_BODY_BYTES = 1_000_000;
 const MAX_TOOL_NAMES = 12;
+/** A stored per-connection timeout is admin-chosen; a probe never waits longer than this. */
+const MAX_TIMEOUT_MS = 60_000;
 const PROTOCOL_VERSION = '2025-03-26';
 
 class ProbeError extends Error {}
 
 type Fetch = typeof fetch;
 
-async function readCapped(res: Response): Promise<string> {
+/**
+ * Reads a body up to a size cap. For an event stream the answer to `id` may arrive while the
+ * server holds the stream open, so reading stops as soon as that message is complete.
+ */
+async function readCapped(res: Response, id: number, eventStream: boolean): Promise<string> {
   const reader = res.body?.getReader();
   if (!reader) {
     return '';
@@ -44,6 +50,16 @@ async function readCapped(res: Response): Promise<string> {
       throw new ProbeError('The server sent a response that was too large to read.');
     }
     chunks.push(value);
+    if (eventStream) {
+      const text = Buffer.concat(chunks).toString('utf8');
+      try {
+        rpcMessage(text, 'text/event-stream', id);
+        await reader.cancel();
+        return text;
+      } catch {
+        // The answer is not complete yet; keep reading.
+      }
+    }
   }
   return Buffer.concat(chunks).toString('utf8');
 }
@@ -89,6 +105,7 @@ export async function probeMcpServer(
   fetchImpl: Fetch = fetch
 ): Promise<McpProbeResult> {
   const started = Date.now();
+  timeoutMs = Math.min(timeoutMs, MAX_TIMEOUT_MS);
   const signal = AbortSignal.timeout(timeoutMs);
   let sessionId: string | null = null;
 
@@ -136,7 +153,12 @@ export async function probeMcpServer(
     if (header) {
       sessionId = header;
     }
-    const message = rpcMessage(await readCapped(res), res.headers.get('content-type') ?? '', id);
+    const contentType = res.headers.get('content-type') ?? '';
+    const message = rpcMessage(
+      await readCapped(res, id, contentType.includes('text/event-stream')),
+      contentType,
+      id
+    );
     if (message.error) {
       throw new ProbeError('The server refused the request.');
     }
@@ -168,5 +190,19 @@ export async function probeMcpServer(
       error: err instanceof ProbeError ? err.message : 'The check failed unexpectedly.',
       ok: false,
     };
+  } finally {
+    // Best effort: tell a stateful server the session is over so it does not hold it open.
+    if (sessionId) {
+      try {
+        await fetchImpl(url, {
+          headers: { 'mcp-protocol-version': PROTOCOL_VERSION, 'mcp-session-id': sessionId },
+          method: 'DELETE',
+          redirect: 'manual',
+          signal: AbortSignal.timeout(2000),
+        });
+      } catch {
+        // The probe's verdict stands whether or not the server accepted the close.
+      }
+    }
   }
 }
