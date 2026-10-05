@@ -188,6 +188,17 @@ describe('probeMcpServer', () => {
       expect(f).toHaveBeenCalledTimes(2);
     });
 
+    it('names custom headers too when any are configured', async () => {
+      const f = vi.fn(async () => new Response('no', { status: 403 }));
+      const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never, {
+        bearerToken: TOKEN,
+        headers: [{ name: 'x-api-key', value: 'k' }],
+      });
+      expect(res.error).toBe(
+        "The server rejected the request's credentials (bearer token or custom headers)."
+      );
+    });
+
     /** A legacy SSE server: POST to the base URL is 404, GET opens the stream. */
     function legacyServer(opts: { endpoint?: string } = {}) {
       const enc = new TextEncoder();

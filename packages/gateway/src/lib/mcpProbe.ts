@@ -314,9 +314,11 @@ export async function probeMcpServer(
     }
     if (res.status === 401 || res.status === 403) {
       throw new ProbeError(
-        opts.bearerToken
-          ? 'The server rejected the stored bearer token.'
-          : 'The server requires authentication. Add a bearer token to this connection.',
+        Object.keys(customHeaders).length > 0
+          ? "The server rejected the request's credentials (bearer token or custom headers)."
+          : opts.bearerToken
+            ? 'The server rejected the stored bearer token.'
+            : 'The server requires authentication. Add a bearer token to this connection.',
         true
       );
     }
