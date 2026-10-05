@@ -52,6 +52,12 @@ export interface LoadMcpToolsOptions {
   listTimeoutMs?: number;
   /** Timeout for each individual MCP tool call (default 60 s). */
   callTimeoutMs?: number;
+  /**
+   * Plaintext bearer token for the server, already decrypted by the resolver. Sent as
+   * `Authorization: Bearer …` to the server's own origin only (see `bearerFetch`); never logged,
+   * traced, or included in an error message.
+   */
+  bearerToken?: string;
 }
 
 const DEFAULT_LIST_TIMEOUT_MS = 15_000;
@@ -84,6 +90,49 @@ export function parseMcpServerRef(mcpServerRef: string): URL | null {
   // target reaching an MCP server connection. Reuse its parsed URL — no re-parse.
   const safety = isSafeProbeUrl(mcpServerRef);
   return safety.ok ? safety.url : null;
+}
+
+/** A `fetch` shaped like the MCP client's, which also receives a request-context third argument. */
+type McpFetch = (
+  input: string | URL,
+  init?: RequestInit,
+  requestContext?: unknown
+) => Promise<Response>;
+
+/**
+ * The fetch the MCP client uses for EVERY request on both transports (streamable HTTP's POST/GET/
+ * DELETE, and the legacy SSE stream plus its POSTs) when the connection carries a token.
+ *
+ * The token is attached only when the request targets the server's own origin, so a transport that
+ * is ever pointed elsewhere (an SSE `endpoint` event naming another host) carries no credential.
+ * Redirects are never followed: a redirect would re-send the request, and the SDK's own redirect
+ * handling is not the place to decide where a credential may go, so a 3xx is refused outright.
+ */
+export function bearerFetch(
+  serverUrl: URL,
+  token: string,
+  baseFetch: typeof fetch = fetch
+): McpFetch {
+  return async (input, init) => {
+    const target = new URL(typeof input === 'string' ? input : input.toString());
+    const headers = new Headers(init?.headers);
+    if (target.origin === serverUrl.origin) {
+      headers.set('authorization', `Bearer ${token}`);
+    } else {
+      headers.delete('authorization');
+    }
+    const res = await baseFetch(target, { ...init, headers, redirect: 'manual' });
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error('MCP server answered with a redirect, which is not followed');
+    }
+    return res;
+  };
+}
+
+/** Removes a secret from text that may have been built from a failing request. */
+function scrubToken(text: string, token: string | undefined): string {
+  return token ? text.split(token).join('[redacted]') : text;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -197,7 +246,9 @@ export async function loadMcpTools(
     try {
       await client?.disconnect();
     } catch (err: unknown) {
-      console.warn(`[mcp] disconnect failed for ${url}: ${getErrorMessage(err)}`);
+      console.warn(
+        `[mcp] disconnect failed for ${url}: ${scrubToken(getErrorMessage(err), options?.bearerToken)}`
+      );
     }
   };
 
@@ -206,7 +257,21 @@ export async function loadMcpTools(
     // each implementer activity needs its own connection lifecycle.
     client = new MCPClient({
       id: `implementer-mcp-${randomUUID()}`,
-      servers: { [SERVER_NAME]: { timeout: callTimeoutMs, url } },
+      servers: {
+        [SERVER_NAME]: {
+          timeout: callTimeoutMs,
+          url,
+          // A token-less connection keeps the client's stock transport behaviour. With a token,
+          // one fetch carries it on both transports and `allowedHosts` pins the client to the
+          // connection's host as a second line behind the origin check in `bearerFetch`.
+          ...(options?.bearerToken
+            ? {
+                allowedHosts: [url.host],
+                fetch: bearerFetch(url, options.bearerToken),
+              }
+            : {}),
+        },
+      },
       timeout: callTimeoutMs,
     });
 
@@ -241,7 +306,7 @@ export async function loadMcpTools(
   } catch (err: unknown) {
     // Connection / listing failure must NOT fail the implementation —
     // record the event and continue with built-in workspace tools only.
-    const error = getErrorMessage(err);
+    const error = scrubToken(getErrorMessage(err), options?.bearerToken);
     console.error(`[mcp] connect failed for ${url}: ${error}`);
     tracer?.addActivityEvent({
       durationMs: Date.now() - start,

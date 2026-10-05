@@ -6,6 +6,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 vi.mock('./agentResolver.js', () => ({ fetchActiveAgent: vi.fn() }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { _resetKeyCacheForTests, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { fetchActiveAgent } from './agentResolver.js';
 import { mcpUrlForConnection, resolveAgentMcpUrl } from './mcpConnection.js';
 
@@ -136,5 +137,52 @@ describe('resolveAgentMcpUrl', () => {
   it('never throws — a resolution error yields null', async () => {
     mockedFetchActiveAgent.mockRejectedValueOnce(new Error('config missing'));
     expect(await resolveAgentMcpUrl('implementer')).toBeNull();
+  });
+});
+
+describe('mcpUrlForConnection bearer token', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONFIG_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+    _resetKeyCacheForTests();
+  });
+
+  const withToken = (token: string) => {
+    const enc = encryptSecret(token);
+    return mcpConn({
+      apiKeyAuthTag: enc.authTag,
+      apiKeyCiphertext: enc.ciphertext,
+      apiKeyNonce: enc.nonce,
+      apiKeyVersion: enc.keyVersion,
+    });
+  };
+
+  it('has no token when the connection stores none', async () => {
+    findUnique.mockResolvedValue(mcpConn() as never);
+    expect((await mcpUrlForConnection('c1'))?.bearerToken).toBeUndefined();
+  });
+
+  it('decrypts the stored token for the caller', async () => {
+    findUnique.mockResolvedValue(withToken('sk-secret-123') as never);
+    expect((await mcpUrlForConnection('c1'))?.bearerToken).toBe('sk-secret-123');
+  });
+
+  it('keeps the token out of anything that serializes, spreads or logs the target', async () => {
+    findUnique.mockResolvedValue(withToken('sk-secret-123') as never);
+    const target = await mcpUrlForConnection('c1');
+    expect(JSON.stringify(target)).not.toContain('sk-secret-123');
+    expect(JSON.stringify({ ...target })).not.toContain('sk-secret-123');
+    expect(Object.keys(target ?? {})).not.toContain('bearerToken');
+    expect(JSON.stringify(Object.entries(target ?? {}))).not.toContain('sk-secret-123');
+  });
+
+  it('yields no connection, and logs no secret, when the stored token cannot be decrypted', async () => {
+    const row = withToken('sk-secret-123') as unknown as { apiKeyCiphertext: Uint8Array };
+    row.apiKeyCiphertext = new Uint8Array(row.apiKeyCiphertext.length);
+    findUnique.mockResolvedValue(row as never);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await mcpUrlForConnection('c1')).toBeNull();
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('sk-secret-123');
+    warn.mockRestore();
   });
 });

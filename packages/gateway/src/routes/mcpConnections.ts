@@ -1,3 +1,4 @@
+import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
@@ -13,8 +14,21 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  * bind tools from via `Agent.mcpConnectionId`. An `mcp` Connection is a normal
  * `Connection` row with `type='mcp'` and the server URL in `config.url`; the git
  * identity columns stay null. http(s) only — stdio is intentionally unsupported.
+ *
+ * An optional bearer token is stored in the Connection's existing AES-256-GCM `apiKey*` envelope
+ * columns (unused by `mcp` rows), never in `config`. It is write-only: no response carries it, the
+ * audit trail records only whether one is set, and it is sent only to the connection's own origin.
  */
+const BearerToken = z
+  .string()
+  .min(1)
+  .max(4096)
+  // A header value: visible ASCII only, so a pasted newline cannot smuggle in another header.
+  .regex(/^[\x21-\x7e]+$/, 'The token must be visible characters with no spaces or line breaks');
+
 const CreateSchema = z.object({
+  /** Optional bearer token the server requires; sent as `Authorization: Bearer …`. */
+  bearerToken: BearerToken.optional(),
   /** Optional per-connection override of `loadMcpTools`'s per-call timeout (default 60 s). */
   callTimeoutMs: z.number().int().positive().optional(),
   /** Optional per-connection override of `loadMcpTools`'s list-timeout (default 15 s). */
@@ -33,17 +47,59 @@ const CreateSchema = z.object({
  * `config` from scratch, so a blank timeout in the form clears the override back
  * to `loadMcpTools`'s default rather than leaving a stale value behind.
  */
-const UpdateSchema = z.object({
-  callTimeoutMs: z.number().int().positive().optional(),
-  listTimeoutMs: z.number().int().positive().optional(),
-  name: z.string().min(1).max(200),
-  url: z
-    .string()
-    .url()
-    .refine((u) => /^https?:\/\//i.test(u), 'url must be an http(s) URL'),
-});
+const UpdateSchema = z
+  .object({
+    /** Replaces the stored token. Omit to keep it. */
+    bearerToken: BearerToken.optional(),
+    callTimeoutMs: z.number().int().positive().optional(),
+    /** Removes the stored token. Cannot be combined with `bearerToken`. */
+    clearBearerToken: z.boolean().optional(),
+    listTimeoutMs: z.number().int().positive().optional(),
+    name: z.string().min(1).max(200),
+    url: z
+      .string()
+      .url()
+      .refine((u) => /^https?:\/\//i.test(u), 'url must be an http(s) URL'),
+  })
+  .refine((b) => !(b.bearerToken !== undefined && b.clearBearerToken), {
+    message: 'Send either a new token or clearBearerToken, not both',
+  });
 
 const IdParams = z.object({ id: z.string().uuid() });
+
+/** The envelope columns a stored token occupies (`apiKey*` on Connection). */
+function tokenColumns(token: string) {
+  const enc = encryptSecret(token);
+  return {
+    apiKeyAuthTag: enc.authTag,
+    apiKeyCiphertext: enc.ciphertext,
+    apiKeyNonce: enc.nonce,
+    apiKeyVersion: enc.keyVersion,
+  };
+}
+
+const NO_TOKEN_COLUMNS = {
+  apiKeyAuthTag: null,
+  apiKeyCiphertext: null,
+  apiKeyNonce: null,
+};
+
+/**
+ * Wire shape of an `mcp` connection: the shared redaction (envelope columns removed) with the
+ * boolean renamed for this surface. The token itself, and even its last characters, never leave.
+ */
+function mcpView<T extends Parameters<typeof redactConnection>[0]>(row: T) {
+  const { hasApiToken, ...rest } = redactConnection(row);
+  return { ...rest, hasToken: hasApiToken };
+}
+
+function safeOrigin(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).origin;
+  } catch {
+    return null;
+  }
+}
 
 function sanitizeAuditUrl(rawUrl: string): string {
   const url = new URL(rawUrl);
@@ -67,7 +123,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       })
     );
     const usedBy = await agentsUsing(rows.map((r) => r.id));
-    return { data: rows.map((r) => ({ ...redactConnection(r), usedBy: usedBy.get(r.id) ?? [] })) };
+    return { data: rows.map((r) => ({ ...mcpView(r), usedBy: usedBy.get(r.id) ?? [] })) };
   });
 
   /**
@@ -156,7 +212,28 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         typeof config.listTimeoutMs === 'number' && config.listTimeoutMs > 0
           ? config.listTimeoutMs
           : 15_000;
-      return { data: await probeMcpServer(config.url, timeoutMs) };
+      // Decrypted only here, handed to the probe, and never logged or returned. A row whose
+      // envelope no longer decrypts is reported rather than probed unauthenticated.
+      let bearerToken: string | undefined;
+      if (conn.apiKeyCiphertext && conn.apiKeyNonce && conn.apiKeyAuthTag) {
+        try {
+          bearerToken = decryptSecret({
+            authTag: conn.apiKeyAuthTag,
+            ciphertext: conn.apiKeyCiphertext,
+            keyVersion: conn.apiKeyVersion,
+            nonce: conn.apiKeyNonce,
+          });
+        } catch {
+          return {
+            data: {
+              durationMs: 0,
+              error: 'The stored token could not be read. Clear it and enter it again.',
+              ok: false,
+            },
+          };
+        }
+      }
+      return { data: await probeMcpServer(config.url, timeoutMs, undefined, { bearerToken }) };
     }
   );
 
@@ -165,7 +242,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: CreateSchema } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const { name, teamId, url, listTimeoutMs, callTimeoutMs } = request.body;
+      const { name, teamId, url, listTimeoutMs, callTimeoutMs, bearerToken } = request.body;
       const safety = isSafeProbeUrl(url);
       if (!safety.ok) {
         return reply
@@ -184,17 +261,29 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
       };
       const conn = await fastify.prisma.connection.create({
-        data: { config, name, teamId, type: 'mcp' },
+        data: {
+          config,
+          name,
+          teamId,
+          type: 'mcp',
+          ...(bearerToken ? tokenColumns(bearerToken) : {}),
+        },
         include: { team: { select: { id: true, name: true, slug: true } } },
       });
       await writeAuditLog(fastify, {
         action: 'CREATE',
         actor,
-        after: { ...config, name, type: 'mcp', url: sanitizeAuditUrl(url) },
+        after: {
+          ...config,
+          hasToken: !!bearerToken,
+          name,
+          type: 'mcp',
+          url: sanitizeAuditUrl(url),
+        },
         entityId: conn.id,
         entityType: 'Connection',
       });
-      return reply.status(201).send({ data: redactConnection(conn) });
+      return reply.status(201).send({ data: mcpView(conn) });
     }
   );
 
@@ -203,7 +292,8 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: UpdateSchema, params: IdParams } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const { name, url, listTimeoutMs, callTimeoutMs } = request.body;
+      const { name, url, listTimeoutMs, callTimeoutMs, bearerToken, clearBearerToken } =
+        request.body;
       // Scope to type='mcp' so this route can never mutate a git_repo connection.
       const conn = await fastify.prisma.connection.findFirst({
         where: { id: request.params.id, type: 'mcp' },
@@ -220,8 +310,24 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'UNSAFE_URL', message: `url rejected: ${safety.reason}` } });
       }
       const before = conn.config as Record<string, unknown> | null;
+      const hadToken = conn.apiKeyCiphertext != null;
+      // A stored token belongs to the origin it was saved for. Pointing the connection at another
+      // origin while keeping it would send the token somewhere its owner never approved.
+      if (hadToken && bearerToken === undefined && !clearBearerToken) {
+        const previous = typeof before?.url === 'string' ? safeOrigin(before.url) : null;
+        if (previous !== safeOrigin(url)) {
+          return reply.status(409).send({
+            error: {
+              code: 'TOKEN_ORIGIN_CHANGE',
+              message:
+                'This connection has a stored bearer token. Changing the server address would send it to a different host. Enter a new token or clear the stored one first.',
+            },
+          });
+        }
+      }
       const beforeAudit = {
         ...(before ?? {}),
+        hasToken: hadToken,
         name: conn.name,
         type: 'mcp',
         ...(typeof before?.url === 'string' ? { url: sanitizeAuditUrl(before.url) } : {}),
@@ -232,19 +338,30 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
       };
       const updated = await fastify.prisma.connection.update({
-        data: { config, name },
+        data: {
+          config,
+          name,
+          ...(bearerToken !== undefined ? tokenColumns(bearerToken) : {}),
+          ...(clearBearerToken ? NO_TOKEN_COLUMNS : {}),
+        },
         include: { team: { select: { id: true, name: true, slug: true } } },
         where: { id: conn.id },
       });
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: { ...config, name, type: 'mcp', url: sanitizeAuditUrl(url) },
+        after: {
+          ...config,
+          hasToken: bearerToken !== undefined ? true : clearBearerToken ? false : hadToken,
+          name,
+          type: 'mcp',
+          url: sanitizeAuditUrl(url),
+        },
         before: beforeAudit,
         entityId: conn.id,
         entityType: 'Connection',
       });
-      return reply.send({ data: redactConnection(updated) });
+      return reply.send({ data: mcpView(updated) });
     }
   );
 

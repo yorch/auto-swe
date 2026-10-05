@@ -188,6 +188,7 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
       resolved.skills,
       {
         maxToolOutputChars: agentSettings['workspace.maxToolOutputChars'],
+        mcpBearerToken: mcpTarget?.bearerToken,
         mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
         mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
         mcpServerRef: mcpTarget?.url,
