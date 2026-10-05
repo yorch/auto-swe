@@ -176,3 +176,45 @@ describe('authStore.login hand-off to an MCP authorization', () => {
     expect(await useAuthStore.getState().login('a@b.c', 'pw', 'client_id=c1&sig=abc')).toBeNull();
   });
 });
+
+describe('authStore.signInWithProvider', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Captures the body the sign-in request sends, and answers with a provider URL. */
+  function captureSocialSignIn() {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith('/api/auth/sign-in/social')) {
+          bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return jsonResponse(200, { redirect: true, url: 'https://ghe.example.com/authorize' });
+        }
+        throw new Error(`unexpected fetch ${String(input)}`);
+      })
+    );
+    vi.stubGlobal('location', { href: '', origin: 'https://app.example.com' });
+    return bodies;
+  }
+
+  it('sends failures back to the login page instead of the gateway root', async () => {
+    const bodies = captureSocialSignIn();
+
+    await useAuthStore.getState().signInWithProvider('github');
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]?.callbackURL).toBe('https://app.example.com/login?bridge=1');
+    expect(bodies[0]?.errorCallbackURL).toBe('https://app.example.com/login');
+  });
+
+  it('keeps the provider and still navigates to the provider URL', async () => {
+    const bodies = captureSocialSignIn();
+
+    await useAuthStore.getState().signInWithProvider('github');
+
+    expect(bodies[0]?.provider).toBe('github');
+    expect(window.location.href).toBe('https://ghe.example.com/authorize');
+  });
+});

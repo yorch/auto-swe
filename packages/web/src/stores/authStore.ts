@@ -164,6 +164,9 @@ async function betterAuthRedirect(
   }
   const body = {
     callbackURL: `${window.location.origin}${callbackPath}`,
+    // Without this a failed callback ends on the gateway's own root, a 404. better-auth appends
+    // `?error=<code>`; the page that started the flow shows it.
+    errorCallbackURL: `${window.location.origin}${callbackPath.split('?')[0]}`,
     ...(oauthQuery ? { oauth_query: oauthQuery } : {}),
     provider,
   };
