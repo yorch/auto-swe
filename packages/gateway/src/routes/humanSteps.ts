@@ -160,6 +160,49 @@ const MAX_INBOX_STREAMS_PER_USER = 5;
 /** user id → number of currently open `/inbox/stream` connections. */
 const openInboxStreams = new Map<string, number>();
 
+/**
+ * Every response recorded on a step. Approval rows carry the approvers; a reject (or any
+ * single-shot answer) on a multi-approver step resolves through the step's own payload and
+ * writes no row, so that response is appended when no row already accounts for it.
+ */
+function stepResponses(s: {
+  humanApprovals: {
+    action: string;
+    resolvedAt: Date | null;
+    resolvedBy: string | null;
+    resolvedByUser: { name: string | null } | null;
+    value: unknown;
+  }[];
+  payload: unknown;
+  resolvedAt: Date | null;
+  resolvedBy: string | null;
+  resolvedByUser: { name: string | null } | null;
+  status: string;
+}) {
+  const rows = s.humanApprovals.map((a) => ({
+    action: a.action,
+    byName: a.resolvedByUser?.name ?? null,
+    comment: commentOf(a.value),
+    resolvedAt: formatDate(a.resolvedAt),
+  }));
+  if (s.status !== 'RESOLVED' || !s.payload || typeof s.payload !== 'object') return rows;
+  const action = String((s.payload as { action?: unknown }).action ?? 'respond');
+  const resolver = (s.payload as { resolvedBy?: unknown }).resolvedBy ?? s.resolvedBy;
+  const accounted = s.humanApprovals.some(
+    (a) => a.action === action && (resolver == null || a.resolvedBy === resolver)
+  );
+  if (accounted) return rows;
+  return [
+    ...rows,
+    {
+      action,
+      byName: s.resolvedByUser?.name ?? null,
+      comment: commentOf(s.payload),
+      resolvedAt: formatDate(s.resolvedAt),
+    },
+  ];
+}
+
 export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -240,24 +283,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           requestedAt: formatDate(s.requestedAt),
           requiredApprovers: s.requiredApprovers,
           resolvedAt: formatDate(s.resolvedAt),
-          responses:
-            s.humanApprovals.length > 0
-              ? s.humanApprovals.map((a) => ({
-                  action: a.action,
-                  byName: a.resolvedByUser?.name ?? null,
-                  comment: commentOf(a.value),
-                  resolvedAt: formatDate(a.resolvedAt),
-                }))
-              : s.status === 'RESOLVED' && s.payload && typeof s.payload === 'object'
-                ? [
-                    {
-                      action: String((s.payload as { action?: unknown }).action ?? 'respond'),
-                      byName: s.resolvedByUser?.name ?? null,
-                      comment: commentOf(s.payload),
-                      resolvedAt: formatDate(s.resolvedAt),
-                    },
-                  ]
-                : [],
+          responses: stepResponses(s),
           run: s.run,
           runId: s.runId,
           status: s.status,

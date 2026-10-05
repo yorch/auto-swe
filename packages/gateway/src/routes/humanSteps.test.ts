@@ -58,6 +58,7 @@ describe('human step routes', () => {
   let stepRow: Record<string, unknown> | null = null;
   let updateManyCount = 1;
   const updateManyCalls: UpdateManyCall[] = [];
+  const findManyCalls: Array<Record<string, unknown>> = [];
   let signalError: Error | null = null;
   const signalCalls: Array<{ workflowId: string; signalName: string; args: unknown[] }> = [];
 
@@ -86,7 +87,10 @@ describe('human step routes', () => {
       },
       workflowHumanStep: {
         findFirst: async () => stepRow,
-        findMany: async () => listRows,
+        findMany: async (args: Record<string, unknown>) => {
+          findManyCalls.push(args);
+          return listRows;
+        },
         updateMany: async (args: UpdateManyCall) => {
           updateManyCalls.push(args);
           return { count: updateManyCount };
@@ -116,6 +120,7 @@ describe('human step routes', () => {
     stepRow = null;
     updateManyCount = 1;
     updateManyCalls.length = 0;
+    findManyCalls.length = 0;
     signalError = null;
     signalCalls.length = 0;
   });
@@ -190,6 +195,80 @@ describe('human step routes', () => {
         { action: 'reject', byName: 'Grace', comment: 'Wrong table' },
       ]);
       expect(row.myResponse).toBeNull();
+    });
+
+    it('keeps a reject that resolved a multi-approver step after an approval', async () => {
+      const OTHER = 'user-2';
+      listRows = [
+        pendingStep({
+          humanApprovals: [
+            {
+              action: 'approve',
+              resolvedAt: new Date('2026-06-01T01:00:00Z'),
+              resolvedBy: USER_ID,
+              resolvedByUser: { name: 'Ada' },
+              value: { comment: 'Fine by me' },
+            },
+          ],
+          payload: { action: 'reject', comment: 'Wrong table', resolvedBy: OTHER },
+          requiredApprovers: 2,
+          resolvedAt: new Date('2026-06-01T02:00:00Z'),
+          resolvedBy: OTHER,
+          resolvedByUser: { name: 'Grace' },
+          status: 'RESOLVED',
+        }),
+      ];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      const [row] = JSON.parse(res.payload).data;
+      expect(row.responses).toMatchObject([
+        { action: 'approve', byName: 'Ada', comment: 'Fine by me' },
+        { action: 'reject', byName: 'Grace', comment: 'Wrong table' },
+      ]);
+    });
+
+    it('does not duplicate an approval already recorded as a row', async () => {
+      listRows = [
+        pendingStep({
+          humanApprovals: [
+            {
+              action: 'approve',
+              resolvedAt: new Date('2026-06-01T01:00:00Z'),
+              resolvedBy: USER_ID,
+              resolvedByUser: { name: 'Ada' },
+              value: { comment: 'ok' },
+            },
+          ],
+          payload: { action: 'approve', comment: 'ok', resolvedBy: USER_ID },
+          resolvedBy: USER_ID,
+          resolvedByUser: { name: 'Ada' },
+          status: 'RESOLVED',
+        }),
+      ];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      expect(JSON.parse(res.payload).data[0].responses).toHaveLength(1);
+    });
+  });
+
+  describe('GET / actionable filter', () => {
+    const listWhere = async (url: string) => {
+      await app.inject({ headers: AUTH, method: 'GET', url });
+      return findManyCalls.at(-1)?.where as Record<string, unknown>;
+    };
+
+    it('narrows to steps the caller can answer and has not answered', async () => {
+      const where = await listWhere('/api/v1/human-steps?actionable=true');
+      expect(where.status).toBe('PENDING');
+      expect(where.humanApprovals).toEqual({ none: { resolvedBy: USER_ID } });
+      expect(where.OR).toEqual([{ timeoutAt: null }, { timeoutAt: { gt: expect.any(Date) } }]);
+      const plain = await listWhere('/api/v1/human-steps');
+      // The control filter differs from the visibility filter a plain list uses.
+      expect(JSON.stringify(where)).not.toBe(JSON.stringify(plain));
+    });
+
+    it('a plain list carries no actionable narrowing', async () => {
+      const where = await listWhere('/api/v1/human-steps');
+      expect(where.humanApprovals).toBeUndefined();
+      expect(where.status).toBe('PENDING');
     });
   });
 
