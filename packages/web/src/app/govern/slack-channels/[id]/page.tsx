@@ -11,7 +11,7 @@ import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { TabBar } from '@/components/ui/TabBar';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useSlackChannel } from '@/hooks/useSlackChannels';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -68,16 +68,26 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
               subtitle={`${channel.workspace.name ? `${channel.workspace.name} · ` : ''}Each channel belongs to a team and can set its own agent, schedules and monthly spend cap.`}
               title={channel.name ?? 'Unnamed channel'}
             />
-            <TabBar active={tab} onChange={setTab} tabs={TABS} />
+            <TabBar
+              active={tab}
+              ariaLabel="Channel sections"
+              idPrefix="slack-channel"
+              onChange={setTab}
+              tabs={TABS}
+            />
             <div className="pt-2">
               {/* Stays mounted while another tab is open, so switching tabs never discards
                   edits that have not been saved yet. */}
-              <div hidden={tab !== 'settings'}>
+              <div hidden={tab !== 'settings'} {...tabPanelProps('slack-channel', 'settings')}>
                 <ChannelSettingsTab channel={channel} key={channel.id} />
               </div>
-              {tab === 'memory' && <ChannelMemoryTab channel={channel} />}
-              {tab === 'open-items' && <ChannelOpenItemsTab channel={channel} />}
-              {tab === 'activity' && <ChannelActivityTab channel={channel} />}
+              {tab !== 'settings' && (
+                <div {...tabPanelProps('slack-channel', tab)}>
+                  {tab === 'memory' && <ChannelMemoryTab channel={channel} />}
+                  {tab === 'open-items' && <ChannelOpenItemsTab channel={channel} />}
+                  {tab === 'activity' && <ChannelActivityTab channel={channel} />}
+                </div>
+              )}
             </div>
           </>
         )}

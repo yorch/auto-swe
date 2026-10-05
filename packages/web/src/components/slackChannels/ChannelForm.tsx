@@ -261,7 +261,7 @@ export function ChannelForm({
         value={form.personaPrompt}
       />
 
-      <details className="rounded-[10px] border border-ink-500 p-4">
+      <details className="rounded-lg border border-ink-500 p-4">
         <summary className="cursor-pointer text-sm font-semibold text-paper-200">
           Timing overrides
         </summary>

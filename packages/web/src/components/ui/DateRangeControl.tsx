@@ -58,7 +58,7 @@ export function DateRangeControl({
   const selected =
     customOpen || value?.kind === 'custom' ? 'custom' : value ? String(value.days) : 'all';
   const inputClass =
-    'h-8 rounded-[9px] border border-ink-400 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400';
+    'h-8 rounded-md border border-ink-400 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400';
 
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>
@@ -95,7 +95,7 @@ export function DateRangeControl({
             value={to}
           />
           <button
-            className="h-8 rounded-[9px] border border-ink-400 px-3 font-mono text-[11px] uppercase tracking-[0.14em] text-paper-200 hover:bg-ink-600/50 disabled:opacity-40"
+            className="h-8 rounded-md border border-ink-400 px-3 font-mono text-[11px] uppercase tracking-[0.14em] text-paper-200 hover:bg-ink-600/50 disabled:opacity-40"
             disabled={invalid}
             onClick={() => onChange({ from, kind: 'custom', to })}
             type="button"

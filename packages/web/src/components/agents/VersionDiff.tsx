@@ -14,11 +14,11 @@ export function VersionDiff({ changes }: { changes: FieldChange[] }) {
           <h4 className="label-mono mb-1.5">{change.label}</h4>
           {change.kind === 'text' && (
             <div className="space-y-1 text-sm">
-              <div className="rounded-[7px] bg-brick-400/10 px-2 py-1 text-paper-300">
+              <div className="rounded-sm bg-brick-400/10 px-2 py-1 text-paper-300">
                 <span className="mr-2 text-brick-400">−</span>
                 {change.before || <span className="text-paper-500">empty</span>}
               </div>
-              <div className="rounded-[7px] bg-moss-400/10 px-2 py-1 text-paper-200">
+              <div className="rounded-sm bg-moss-400/10 px-2 py-1 text-paper-200">
                 <span className="mr-2 text-moss-400">+</span>
                 {change.after || <span className="text-paper-500">empty</span>}
               </div>
@@ -40,7 +40,7 @@ export function VersionDiff({ changes }: { changes: FieldChange[] }) {
             </div>
           )}
           {change.kind === 'prompt' && (
-            <pre className="max-h-80 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 p-2 text-xs">
+            <pre className="max-h-80 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-2 text-xs">
               {change.lines.map((line, i) => (
                 <div
                   className={cn(

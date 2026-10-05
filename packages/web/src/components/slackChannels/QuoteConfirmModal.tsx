@@ -50,7 +50,7 @@ export function QuoteConfirmModal({
   return (
     <Modal onClose={close} open={open} title={title}>
       <p className="text-sm text-paper-400">{intro}</p>
-      <blockquote className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-[9px] border-l-2 border-ember-400 bg-ink-900/60 px-3 py-2 text-sm text-paper-200">
+      <blockquote className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border-l-2 border-ember-400 bg-ink-900/60 px-3 py-2 text-sm text-paper-200">
         {quote}
       </blockquote>
       {error && <Alert>{error}</Alert>}
