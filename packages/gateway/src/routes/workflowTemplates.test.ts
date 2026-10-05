@@ -1034,6 +1034,46 @@ describe('workflow-templates routes', () => {
     }
   });
 
+  it('refuses to restore an archived template whose active version is an unreviewed AI draft', async () => {
+    const tpl = state.templates[0];
+    if (!tpl || tpl.activeVersion == null) {
+      throw new Error('expected template with an active version');
+    }
+    const key = `${tpl.id}:${tpl.activeVersion}`;
+    const stored = state.versions.get(key);
+    if (!stored) {
+      throw new Error('expected active version');
+    }
+    const saved = { ...tpl };
+    tpl.status = 'ARCHIVED';
+    state.versions.set(key, {
+      ...stored,
+      generatedBy: 'workflow_author',
+      reviewedAt: null,
+    } as never);
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { status: 'ACTIVE' },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error?.code).toBe('REVIEW_REQUIRED');
+      // Restoring to draft is not refused: it serves no runs.
+      const draft = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'PATCH',
+        payload: { status: 'DRAFT' },
+        url: `/api/v1/workflow-templates/${tpl.id}`,
+      });
+      expect(draft.statusCode).toBe(200);
+    } finally {
+      state.versions.set(key, stored);
+      Object.assign(tpl, saved);
+    }
+  });
+
   it('refuses to activate a template that has no active version', async () => {
     const tpl = state.templates[0];
     if (!tpl) {
