@@ -236,8 +236,17 @@ site's opt-in (`allowPrivateNetwork`, or an opted-in skill-source host) allows i
 link-local, unspecified, multicast, reserved and cloud-metadata addresses are refused regardless.
 A DNS failure or timeout (5 s) refuses with a fixed message and never echoes resolver detail.
 Redirects are followed by hand or refused, so each hop passes through the same guard.
-`yarn invariants:check` fails a bare `fetch(…)` in the modules whose requests are all
-operator-supplied.
+Where one call talks to a single trusted host and may be redirected elsewhere (the CI log download,
+an MCP server), the private-network allowance is scoped to that host's origin and every other
+origin is checked strictly. The check classifies one source of truth for addresses: besides
+loopback, link-local and cloud metadata (including GCP's `fd20:ce::254` and OCI's legacy
+`192.0.0.192`), the IETF protocol, benchmarking, documentation, 6to4 relay, Teredo and discard
+ranges are refused. Connections use HTTP/1.1 and try the checked addresses IPv4 first. Production
+always drives the dispatcher with undici's own `fetch`; only tests substitute one.
+`yarn invariants:check` fails a bare `fetch` (a call, a `= fetch` default or `fetch` passed as a
+value) in the modules whose requests are all operator-supplied: the bundle, credential-probe, MCP
+probe, model-discovery, Atlassian, GitHub Issues, skill-source, MCP tool and GitHub SCM modules.
+Octokit and GitHub Enterprise API calls, an aliased `fetch`, and another HTTP client are not seen.
 
 ---
 
@@ -257,16 +266,19 @@ from the definition.
 
 ## Limitations
 
-- **Pinning needs a direct connection.** With a process-wide proxy (`NODE_USE_ENV_PROXY`) the proxy
-  resolves the target, so the host is resolved and checked beforehand but the connection cannot be
-  pinned to that answer. A literal IP address is classified as written. The guard does not cover the
+- **Pinning needs a direct connection.** With a process-wide proxy (`NODE_USE_ENV_PROXY`,
+  `--use-env-proxy` on the command line or in `NODE_OPTIONS`) the proxy resolves the target, so the
+  host is resolved and checked beforehand but the connection cannot be pinned to that answer. The
+  check still needs local DNS: a network that only resolves through its proxy fails closed, with the
+  fixed "could not be resolved" refusal. A literal IP address is classified as written. The guard does not cover the
   Okta issuer's discovery fetch (made by the sign-in library at start-up), the model providers'
   own SDK calls from the worker, the GitHub Enterprise and Octokit calls (those hosts are governed
   by `github.repositoryHosts`, and a private host is legitimate there), or fixed public hosts such
   as Slack, Linear, Notion and Figma.
-- **The draft GitHub test cannot reach a private address.** A GitHub Enterprise host on a private
-  network is refused when its URL is typed but unsaved; the stored configuration is not re-checked
-  by that guard, so save it and test the saved values.
+- **The draft GitHub test cannot reach a private address.** A GitHub Enterprise host that is written
+  as a private address, or whose name resolves to one, is refused when its URL is typed but
+  unsaved; the stored configuration is not re-checked by that guard, so save it and test the
+  saved values.
 - **The registry does not yet cover every compiled-in constant.** Temporal retry and timeout
   profiles (`packages/worker/src/workflows/proxyOptions.ts`), the context-spill budgets in
   `runnable.ts`, the model price table in `costTracking.ts`, and several agent loop caps are still

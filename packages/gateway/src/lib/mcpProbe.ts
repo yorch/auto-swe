@@ -269,7 +269,9 @@ class SseStream {
 export async function probeMcpServer(
   url: string,
   timeoutMs: number,
-  fetchImpl: Fetch = fetch,
+  // Required, with no default: the caller supplies the guarded fetch, so a bare `fetch` can never
+  // stand in for it.
+  fetchImpl: Fetch,
   opts: McpProbeOptions = {}
 ): Promise<McpProbeResult> {
   const started = Date.now();

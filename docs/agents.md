@@ -904,7 +904,7 @@ template override is never badged, because it may use a different model or crede
   and per-user tokens are not supported. The SSRF guard checks the URL's host text and then resolves the name at connection time and
   connects only to a checked address (see `docs/configuration.md` §5, outbound URL guard), so a
   public hostname that resolves to a private address is refused unless the connection opts in to a
-  private network, and one that resolves to loopback, link-local or metadata never connects. A server that redirects (for example `/mcp` to `/mcp/`) is
+  private network (the opt-in covers the connection's own origin only; any other origin a request or redirect names is checked strictly), and one that resolves to loopback, link-local or metadata never connects. A server that redirects (for example `/mcp` to `/mcp/`) is
   refused by the token-carrying client and by the Test probe, so the connection URL must be the final
   one. Rotating the token is an edit of the connection; runs already connected keep the token they
   started with.

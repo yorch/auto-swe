@@ -124,7 +124,7 @@ type McpFetch = (
 export function bearerFetch(
   serverUrl: URL,
   token: string | undefined,
-  baseFetch: typeof fetch = fetch,
+  baseFetch: typeof fetch,
   customHeaders: readonly McpHeader[] = []
 ): McpFetch {
   return async (input, init) => {

@@ -423,28 +423,47 @@ function checkConnectorFetchesSetRedirect() {
 //
 // Tripwire over text, scoped to files whose every request is operator-supplied (a module that also
 // calls a fixed public host, such as the issue-tracker connector's Linear call, is not listed and
-// is reviewed by hand). It sees `fetch(` and `globalThis.fetch(`; an aliased or injected fetch is
-// not seen.
+// is reviewed by hand). It sees `fetch(…)`, `globalThis.fetch(…)`, and `fetch` used as a VALUE — a
+// `= fetch` default parameter, `fetch` passed as an argument — because an injectable fetch that
+// defaults to the bare one is the same bypass. `typeof fetch` (a type) and a `fetch:` property key
+// are not flagged.
+//
+// Covered: the modules listed below, plus `scm/github.ts` for the whole file — its Octokit and
+// GitHub Enterprise calls do not go through `fetch` and are documented exclusions, and the one
+// request that does (the CI log download) goes through `fetchGuarded`. Not covered: an aliased
+// fetch (`const f = globalThis['fetch']`), another HTTP client, and the modules that mix fixed and
+// operator-supplied hosts (reviewed by hand).
 // ---------------------------------------------------------------------------
 
 const GUARDED_FETCH_MODULES = [
   'packages/gateway/src/lib/bundleFetch.ts',
   'packages/gateway/src/lib/credentialService.ts',
+  'packages/gateway/src/lib/mcpProbe.ts',
   'packages/shared/src/lib/modelDiscovery.ts',
   'packages/shared/src/lib/integrations/atlassianClient.ts',
   'packages/shared/src/lib/integrations/providers/githubIssues.ts',
+  'packages/shared/src/lib/skillSource/github.ts',
   'packages/worker/src/agents/mcpTools.ts',
+  'packages/worker/src/lib/scm/github.ts',
 ];
 
 function checkOperatorUrlFetchesAreGuarded() {
   for (const file of GUARDED_FETCH_MODULES) {
-    const src = stripComments(read(file));
-    for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\s*\(/g)) {
+    // Strings are blanked too, so prose such as 'Cannot fetch CI logs' is not read as code. Line
+    // numbers survive: only the characters between the quotes are removed.
+    const src = stripComments(read(file)).replace(
+      /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
+      (str) => str[0] + str.slice(1, -1).replace(/[^\n]/g, ' ') + str[str.length - 1]
+    );
+    for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\b(?!\??\s*:)/g)) {
+      if (/\btypeof\s+$/.test(src.slice(0, m.index))) {
+        continue;
+      }
       fail(
         file,
         src.slice(0, m.index).split('\n').length,
         'operator-url-fetch-is-guarded',
-        'a bare fetch(…) in a module whose requests go to operator-supplied URLs',
+        'a bare fetch (call, default parameter or passed value) in a module whose requests go to operator-supplied URLs',
         'The text guard does not resolve DNS, so a public name that resolves to an internal address ' +
           'reaches it. Use createGuardedFetch() from shared/lib/guardedDispatcher.'
       );
