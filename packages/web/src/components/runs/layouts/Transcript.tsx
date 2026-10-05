@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
 import { TracesTab } from '@/components/runs/TracesTab';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { useIsNarrow } from '@/hooks/useMediaQuery';
 import { specNodeIdOfRecording, traceBelongsToStep } from '@/lib/traceLinkage';
 import { cn, formatDuration } from '@/lib/utils';
 import type { RunLayoutProps } from './types';
@@ -21,7 +22,7 @@ function StepSpine({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-0">
+    <div className="flex flex-row overflow-x-auto lg:flex-col lg:overflow-visible">
       {steps.map((s, i) => {
         const isSelected = selectedId === s.nodeId;
         const statusDot =
@@ -38,7 +39,7 @@ function StepSpine({
         return (
           <button
             className={cn(
-              'relative flex w-full items-start gap-3 border-l-2 px-4 py-3 text-left transition-colors hover:bg-ink-600/20',
+              'relative flex min-h-[44px] shrink-0 items-start gap-3 whitespace-nowrap border-b-2 px-4 py-3 text-left transition-colors hover:bg-ink-600/20 lg:w-full lg:whitespace-normal lg:border-b-0 lg:border-l-2',
               isSelected ? 'border-ember-400 bg-ink-600' : 'border-transparent'
             )}
             key={s.id}
@@ -48,7 +49,9 @@ function StepSpine({
             {/* Connected dot */}
             <div className="flex flex-col items-center shrink-0 mt-0.5">
               <span className={cn('h-2 w-2 shrink-0 rounded-full', statusDot)} />
-              {i < steps.length - 1 && <span className="mt-1 min-h-5 w-px flex-1 bg-ink-500" />}
+              {i < steps.length - 1 && (
+                <span className="mt-1 hidden min-h-5 w-px flex-1 bg-ink-500 lg:block" />
+              )}
             </div>
             <div className="min-w-0">
               <div
@@ -77,6 +80,10 @@ export function Transcript({
   traces,
 }: RunLayoutProps) {
   const stepRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // Stacked below the breakpoint: the step spine becomes a strip across the top and the
+  // details rail a collapsible section between it and the narrative.
+  const narrow = useIsNarrow();
+  const rail = <RunMetaRail collapsible={narrow} run={run} />;
 
   // Selection is the page's, so "Jump to failure" can select a step from outside
   // the layout; scrolling follows the selection rather than the click. The nonce
@@ -91,15 +98,17 @@ export function Transcript({
   const handleSpineSelect = (id: string) => setSelectedId(id);
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex flex-1 flex-col max-lg:min-w-0 lg:flex-row lg:overflow-hidden">
       {/* Step spine: 212px */}
-      <aside className="w-[212px] shrink-0 overflow-y-auto border-r border-ink-600/40 bg-ink-900">
+      <aside className="w-full shrink-0 border-b border-ink-600/40 bg-ink-900 lg:w-[212px] lg:overflow-y-auto lg:border-b-0 lg:border-r">
         <div className="px-4 py-3 kicker border-b border-ink-600/30">Steps</div>
         <StepSpine onSelect={handleSpineSelect} selectedId={selectedId} steps={run.steps} />
       </aside>
 
+      {narrow && rail}
+
       {/* Reading column: 1fr */}
-      <div className="flex-1 overflow-y-auto px-8 py-7">
+      <div className="flex-1 px-4 py-5 max-lg:min-w-0 lg:overflow-y-auto lg:px-8 lg:py-7">
         {/* Editorial intro */}
         <div className="mb-10 max-w-2xl">
           <div className="kicker mb-2">Run narrative</div>
@@ -127,11 +136,11 @@ export function Transcript({
               }}
             >
               {/* Sticky step header */}
-              <div className="sticky top-0 z-10 mb-3 flex items-center gap-3 border-b border-ink-600/30 bg-ink-800 py-3">
+              <div className="sticky top-0 z-10 mb-3 flex flex-wrap items-center gap-3 border-b border-ink-600/30 bg-ink-800 py-3 max-lg:gap-y-1 lg:flex-nowrap">
                 <span className="tabular font-mono text-xs text-paper-600">
                   {String(i + 1).padStart(2, '0')}
                 </span>
-                <h3 className="font-display text-lg font-medium tracking-[-0.01em] text-paper-100">
+                <h3 className="font-display text-lg max-lg:min-w-0 max-lg:break-all font-medium tracking-[-0.01em] text-paper-100">
                   {step.nodeId}
                 </h3>
                 <StatusBadge status={step.status} />
@@ -148,7 +157,7 @@ export function Transcript({
               </div>
 
               {/* Step summary */}
-              <p className="italic text-paper-500 text-sm mb-4">
+              <p className="mb-4 break-words text-sm italic text-paper-500">
                 {isFailedStep
                   ? step.error
                     ? `Failed: ${step.error.slice(0, 120)}`
@@ -179,7 +188,7 @@ export function Transcript({
       </div>
 
       {/* Right meta rail */}
-      <RunMetaRail run={run} />
+      {!narrow && rail}
     </div>
   );
 }

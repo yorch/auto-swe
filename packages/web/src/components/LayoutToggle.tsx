@@ -16,6 +16,14 @@ interface LayoutToggleProps {
 
 export function LayoutToggle({ value, onChange }: LayoutToggleProps) {
   return (
-    <SegmentedControl ariaLabel="Run layout" onChange={onChange} options={OPTIONS} value={value} />
+    // On a phone the three options share the row and are 40px tall.
+    <SegmentedControl
+      ariaLabel="Run layout"
+      className="max-w-full max-lg:flex max-lg:w-full"
+      onChange={onChange}
+      optionClassName="min-h-[40px] max-lg:flex-1 max-lg:px-1.5 lg:min-h-0"
+      options={OPTIONS}
+      value={value}
+    />
   );
 }

@@ -22,7 +22,7 @@ export interface RunSummaryProps {
   /**
    * `compact` is the request panel: it also states how an attempt ended and keeps the recorded
    * output one click away. `full` is the strip above a run's layout: the result and failure fold
-   * away on a phone, and the failure note names an agent run's cause.
+   * away below the desktop breakpoint, where the page scrolls and the summary has no height cap, and the failure note names an agent run's cause.
    */
   variant: 'compact' | 'full';
   onJumpToFailure?: () => void;
@@ -66,7 +66,7 @@ export function RunSummary({
     return null;
   }
 
-  const foldClass = full && folded ? 'max-md:hidden' : undefined;
+  const foldClass = full && folded ? 'max-lg:hidden' : undefined;
   return (
     <div className="space-y-5">
       {pendingSteps.length > 0 && (
@@ -88,7 +88,7 @@ export function RunSummary({
       {full && (hasResult || failedStep) && (
         <Button
           aria-expanded={!folded}
-          className="md:hidden"
+          className="h-[40px] lg:hidden"
           onClick={() => setFolded((value) => !value)}
           size="sm"
           variant="ghost"

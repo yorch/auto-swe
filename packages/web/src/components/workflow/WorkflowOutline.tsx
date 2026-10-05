@@ -174,7 +174,7 @@ export function WorkflowOutline({
                   <h4 className="m-0 border-y border-ink-600/40 bg-ink-800/60">
                     <button
                       aria-expanded={open}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.16em] text-paper-400 hover:text-paper-100"
+                      className="flex min-h-[40px] w-full items-center gap-2 px-3 py-1.5 text-left font-mono lg:min-h-0 text-[10px] uppercase tracking-[0.16em] text-paper-400 hover:text-paper-100"
                       onClick={() => toggle(section.group as string)}
                       title={
                         mustStayOpen(section.nodeIds)
@@ -208,7 +208,7 @@ export function WorkflowOutline({
                           <button
                             aria-current={selected ? 'true' : undefined}
                             className={cn(
-                              'flex w-full items-center gap-2 border-l-[3px] px-3 py-1.5 text-left transition-colors',
+                              'flex min-h-[44px] w-full items-center gap-2 border-l-[3px] px-3 py-1.5 text-left transition-colors lg:min-h-0',
                               NODE_TYPE_TONE[node.type].border,
                               selected
                                 ? 'bg-ember-400/10 text-paper-50'

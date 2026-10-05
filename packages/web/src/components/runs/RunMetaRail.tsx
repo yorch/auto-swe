@@ -2,7 +2,9 @@
 
 import type { WorkflowRunDetail } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { useId, useState } from 'react';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
+import { runMetaSummary } from '@/lib/runMeta';
 import { cn, formatCost, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
 import { AutonomyDecisionsPanel } from './AutonomyDecisionsPanel';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
@@ -10,6 +12,11 @@ import { RailRow, RailSection } from './Rail';
 
 interface RunMetaRailProps {
   run: WorkflowRunDetail;
+  /**
+   * Below the desktop breakpoint the rail is a full-width section between the graph and the
+   * console that starts closed behind a toggle, instead of a 270px column beside them.
+   */
+  collapsible?: boolean;
 }
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -29,7 +36,9 @@ function MonoValue({ children, accent }: { children: React.ReactNode; accent?: b
   );
 }
 
-export function RunMetaRail({ run }: RunMetaRailProps) {
+export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
+  const panelId = useId();
+  const [open, setOpen] = useState(false);
   const temporalUrl = useTemporalWorkflowUrl(run.workflowId);
   const shortWorkflowId =
     run.workflowId.length > 22 ? `${run.workflowId.slice(0, 22)}…` : run.workflowId;
@@ -43,10 +52,14 @@ export function RunMetaRail({ run }: RunMetaRailProps) {
   const cost = run.costUsdAccrued;
   const totalTokens = run.tokensInputTotal + run.tokensOutputTotal;
 
-  return (
-    <aside className="flex w-[270px] shrink-0 flex-col overflow-y-auto border-l border-ink-600/60 bg-ink-900">
+  const summary = runMetaSummary(run);
+
+  const body = (
+    <>
       {/* Run details */}
-      <RailSection className="pt-5" divider={false} title="Run details">
+      {/* Collapsed, the toggle above already says "Run details"; repeating it inside would be
+          announced twice. */}
+      <RailSection className="pt-5" divider={false} title={collapsible ? undefined : 'Run details'}>
         <dl>
           <MetaRow label="Started">
             <MonoValue>{formatDate(run.startedAt)}</MonoValue>
@@ -135,6 +148,39 @@ export function RunMetaRail({ run }: RunMetaRailProps) {
 
       {/* Autonomy decisions (P3) */}
       <AutonomyDecisionsPanel runId={run.id} />
+    </>
+  );
+
+  if (collapsible) {
+    return (
+      <aside className="shrink-0 border-b border-ink-600/40 bg-ink-900" data-testid="run-meta-rail">
+        <button
+          aria-controls={panelId}
+          aria-expanded={open}
+          className="flex min-h-[44px] w-full items-center gap-3 px-4 py-2 text-left"
+          onClick={() => setOpen((v) => !v)}
+          type="button"
+        >
+          <span aria-hidden="true" className="w-3 font-mono text-[10px] text-paper-500">
+            {open ? '▼' : '▶'}
+          </span>
+          <span className="kicker">Run details</span>
+          {summary.length > 0 && (
+            <span className="min-w-0 truncate font-mono text-[11px] text-paper-500">
+              {summary.join(' · ')}
+            </span>
+          )}
+        </button>
+        <div hidden={!open} id={panelId}>
+          {body}
+        </div>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="flex w-[270px] shrink-0 flex-col overflow-y-auto border-l border-ink-600/60 bg-ink-900">
+      {body}
     </aside>
   );
 }

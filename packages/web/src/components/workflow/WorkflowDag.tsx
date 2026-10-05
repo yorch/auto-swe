@@ -39,10 +39,13 @@ import {
   useState,
 } from 'react';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { useIsNarrow } from '@/hooks/useMediaQuery';
+import { cn } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
 import { shouldFit, useFitFlow } from './fitFlow';
 import { FlowChrome } from './flowChrome';
+import { flowGestureProps, gesturesLocked } from './flowGestures';
 import { focusWhenReady } from './focusWhenReady';
 import { foldBookkeeping } from './foldBookkeeping';
 import { foldGroups } from './foldGroups';
@@ -73,6 +76,13 @@ interface Props {
   foldBookkeeping?: boolean;
   /** Offer a Graph / Outline switch. The outline lists the same spec as rows. */
   outline?: boolean;
+  /**
+   * The graph sits in a page that scrolls (the run viewer below lg). There its gestures start
+   * off so a swipe or the wheel over the graph scrolls the page, a "Pan and zoom" switch turns
+   * them on, and the toolbar is one row that scrolls sideways so the canvas keeps its height.
+   * Off (the default) leaves React Flow and the wrapping toolbar exactly as they were.
+   */
+  narrowScrollSafe?: boolean;
 }
 
 /** Graphs larger than this open folded unless the caller says otherwise. */
@@ -89,7 +99,7 @@ const VIEW_OPTIONS = [
 ] as const;
 
 const TOOLBAR_BUTTON =
-  'rounded-sm border border-ink-600 bg-ink-800/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-400 hover:text-paper-100';
+  'min-h-[40px] rounded-sm border border-ink-600 bg-ink-800/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-400 hover:text-paper-100 lg:min-h-0';
 
 function InnerDag({
   spec: fullSpec,
@@ -100,7 +110,11 @@ function InnerDag({
   height,
   foldBookkeeping: foldDefault,
   outline,
+  narrowScrollSafe = false,
 }: Props) {
+  const narrow = useIsNarrow();
+  const [interactive, setInteractive] = useState(false);
+  const locked = gesturesLocked(narrowScrollSafe, narrow, interactive);
   const [view, setView] = useState<'graph' | 'outline'>('graph');
   const [folded, setFolded] = useState(
     () => foldDefault ?? Object.keys(fullSpec.nodes).length > AUTO_FOLD_NODE_COUNT
@@ -232,6 +246,17 @@ function InnerDag({
   }, [nodesInitialized, nodes, fitKey, drawnIds, fit, flow, view]);
   useEffect(() => () => cancelFocus.current?.(), []);
 
+  // React Flow's stylesheet marks the pane touch-action: none, which keeps the browser from
+  // scrolling the page on a swipe even with panning off. While the gestures are locked, hand
+  // the pane back to the browser.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `view` and `framed` re-run this once the pane is in the DOM
+  useEffect(() => {
+    for (const el of containerRef.current?.querySelectorAll<HTMLElement>('.react-flow__pane') ??
+      []) {
+      el.style.touchAction = locked ? 'auto' : '';
+    }
+  }, [locked, view, framed]);
+
   // Reflect external selection by setting React Flow's `selected` flag.
   const nodesWithSelection = useMemo(
     () =>
@@ -335,8 +360,15 @@ function InnerDag({
   // How many cards are actually on the canvas: a collapsed group holding something the
   // viewer is looking for stays open, so this can be fewer than `collapsed.size`.
   const foldedCount = Object.keys(groupFold.folded).length;
+  const showPanZoomSwitch = narrowScrollSafe && narrow && view === 'graph';
   const showToolbar =
-    outline || fold.hidden.length > 0 || collapsibleCount > 0 || collapsed.size > 0;
+    outline ||
+    showPanZoomSwitch ||
+    fold.hidden.length > 0 ||
+    collapsibleCount > 0 ||
+    collapsed.size > 0;
+  // Scroll-safe: one row that scrolls sideways, so the canvas keeps its height.
+  const toolbarButton = cn(TOOLBAR_BUTTON, narrowScrollSafe && 'shrink-0 whitespace-nowrap');
 
   return (
     <div
@@ -344,19 +376,39 @@ function InnerDag({
       style={{ height: height ?? 480 }}
     >
       {showToolbar && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-600/60 bg-ink-900 px-2 py-1.5">
+        <div
+          className={cn(
+            'flex items-center gap-2 border-b border-ink-600/60 bg-ink-900 px-2 py-1.5',
+            narrowScrollSafe
+              ? 'flex-nowrap overflow-x-auto lg:flex-wrap lg:overflow-visible'
+              : 'flex-wrap'
+          )}
+        >
           {outline && (
             <SegmentedControl
               ariaLabel="Workflow view"
+              className={narrowScrollSafe ? 'shrink-0' : undefined}
               onChange={setView}
+              optionClassName="min-h-[40px] lg:min-h-0"
               options={[...VIEW_OPTIONS]}
               value={view}
             />
           )}
+          {showPanZoomSwitch && (
+            <button
+              aria-pressed={interactive}
+              className={toolbarButton}
+              onClick={() => setInteractive((v) => !v)}
+              title="Off, swipes and the mouse wheel over the graph scroll the page. On, they pan and zoom the graph."
+              type="button"
+            >
+              {interactive ? 'Pan and zoom: on' : 'Pan and zoom: off'}
+            </button>
+          )}
           {view === 'graph' && fold.hidden.length > 0 && (
             <button
               aria-pressed={folded}
-              className={TOOLBAR_BUTTON}
+              className={toolbarButton}
               onClick={() => setFolded((v) => !v)}
               title="Status stamps and counters (set / updateDomainState nodes) change run state but do no work. Folding them out shortens the graph; nothing is edited."
               type="button"
@@ -367,7 +419,7 @@ function InnerDag({
           {view === 'graph' && (collapsibleCount > 0 || collapsed.size > 0) && (
             <button
               aria-pressed={collapsed.size > 0}
-              className={TOOLBAR_BUTTON}
+              className={toolbarButton}
               onClick={() => (collapsed.size > 0 ? setCollapsed(new Set()) : collapseAll())}
               title="Fold each group of steps into one card. A group holding a failed, running or pending step, a diff mark, or the selected step stays open. Nothing is edited."
               type="button"
@@ -421,6 +473,7 @@ function InnerDag({
             onNodesChange={onNodesChange}
             onPaneClick={() => onSelect?.(null)}
             proOptions={{ hideAttribution: true }}
+            {...flowGestureProps(locked)}
             zoomOnDoubleClick={false}
           >
             <FlowChrome onFit={fit} />

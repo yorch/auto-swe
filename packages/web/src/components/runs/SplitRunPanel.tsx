@@ -31,9 +31,9 @@ export function SplitRunPanel({
   };
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col lg:flex-row">
       {/* Step list column */}
-      <div className="w-[38%] shrink-0 overflow-y-auto border-r border-ink-600/40">
+      <div className="max-h-60 w-full shrink-0 overflow-y-auto border-b border-ink-600/40 lg:max-h-none lg:w-[38%] lg:border-b-0 lg:border-r">
         <div className="kicker sticky top-0 z-10 border-b border-ink-600/40 bg-ink-900 px-4 py-2">
           Steps · {steps.length}
         </div>
@@ -96,7 +96,7 @@ export function SplitRunPanel({
       </div>
 
       {/* Trace stream column */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="max-lg:min-w-0 lg:flex-1 lg:overflow-y-auto">
         <TracesTab
           filterNodeId={selectedNodeId}
           linker={linker}

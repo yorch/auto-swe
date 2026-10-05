@@ -47,6 +47,9 @@ const LAYOUTS: Record<RunDetailLayout, (props: RunLayoutProps) => React.ReactNod
   C: FlightRecorder,
 };
 
+/** `sm` buttons are 28px tall: on a phone the header actions get a 40px target instead. */
+const TOUCH_SM = 'h-[40px] lg:h-7';
+
 interface PageProps {
   params: Promise<{ id: string }>;
 }
@@ -192,7 +195,7 @@ export default function RunDetailPage({ params }: PageProps) {
   const failureCardReRun = reRunLocked ? undefined : handleReRun;
 
   return (
-    <div className="flex h-full flex-col bg-ink-800">
+    <div className="flex h-full flex-col bg-ink-800 max-lg:min-w-0 max-lg:overflow-y-auto max-lg:overflow-x-hidden">
       {/* ── Page header band ──────────────────────────────────────────────── */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-ink-600/40 bg-ink-900 px-4 py-4 md:px-6">
         {/* Breadcrumb */}
@@ -200,7 +203,7 @@ export default function RunDetailPage({ params }: PageProps) {
           {run.workRequest && (
             <>
               <Link
-                className="transition-colors hover:text-paper-200"
+                className="transition-colors hover:text-paper-200 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center"
                 href={requestHref(run.workRequest.id)}
               >
                 ← Request
@@ -208,7 +211,10 @@ export default function RunDetailPage({ params }: PageProps) {
               <span>/</span>
             </>
           )}
-          <Link className="transition-colors hover:text-paper-200" href="/runs">
+          <Link
+            className="transition-colors hover:text-paper-200 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center"
+            href="/runs"
+          >
             All runs
           </Link>
         </div>
@@ -228,7 +234,7 @@ export default function RunDetailPage({ params }: PageProps) {
         </span>
 
         {/* Right side: actions + layout switcher */}
-        <div className="flex flex-wrap items-center gap-3 md:ml-auto">
+        <div className="flex flex-wrap items-center gap-3 max-lg:min-w-0 max-lg:max-w-full md:ml-auto">
           {securityEvents.length > 0 && (
             <Badge tone="amber" uppercase>
               {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
@@ -236,6 +242,7 @@ export default function RunDetailPage({ params }: PageProps) {
           )}
           {(tracesTrimmed || fullTraces) && (
             <Button
+              className={TOUCH_SM}
               disabled={isPlaceholderData}
               onClick={toggleFullTraces}
               size="sm"
@@ -256,6 +263,7 @@ export default function RunDetailPage({ params }: PageProps) {
           )}
           {!isTerminalWorkflowRunStatus(run.status) && (
             <Button
+              className={TOUCH_SM}
               disabled={cancelRun.isPending}
               onClick={() => setShowCancelConfirm(true)}
               size="sm"
@@ -267,7 +275,13 @@ export default function RunDetailPage({ params }: PageProps) {
           {(WORKFLOW_RUN_FAILURE_STATUSES.has(run.status as WorkflowRunStatus) ||
             (isAgentRun && isTerminalWorkflowRunStatus(run.status))) &&
             run.workRequest && (
-              <Button disabled={reRunLocked} onClick={handleReRun} size="sm" variant="secondary">
+              <Button
+                className={TOUCH_SM}
+                disabled={reRunLocked}
+                onClick={handleReRun}
+                size="sm"
+                variant="secondary"
+              >
                 {retryRun.isPending ? 'Re-running…' : 'Re-run'}
               </Button>
             )}
@@ -296,7 +310,7 @@ export default function RunDetailPage({ params }: PageProps) {
           {/* The Agent Run template is hidden: its detail route answers 404 for everyone. */}
           {!isAgentRun && (
             <Link
-              className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400"
+              className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center"
               href={`/workflows/library/${run.templateId}`}
             >
               View template →
@@ -317,7 +331,7 @@ export default function RunDetailPage({ params }: PageProps) {
       />
 
       {/* ── Layout body ───────────────────────────────────────────────────── */}
-      <div className="flex-1 flex overflow-hidden" ref={traceAnchorRef}>
+      <div className="flex flex-1 max-lg:min-w-0 lg:overflow-hidden" ref={traceAnchorRef}>
         <Layout
           dagOverlay={dagOverlay}
           jumpNonce={jumpNonce}

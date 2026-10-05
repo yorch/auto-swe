@@ -249,9 +249,9 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           {KIND_LABEL[step.kind] ?? step.kind}
         </Badge>
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm">{step.title}</div>
+          <div className="break-words font-medium text-sm">{step.title}</div>
           {step.description && (
-            <div className="text-xs text-paper-400 mt-0.5">{step.description}</div>
+            <div className="mt-0.5 break-words text-xs text-paper-400">{step.description}</div>
           )}
           <div className="flex flex-wrap items-center gap-x-2 mt-1 text-xs text-paper-500">
             <span className={getTimestampColor(step.requestedAt)}>
@@ -313,7 +313,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           </div>
         </div>
         {canRespond && (
-          <Button onClick={toggleExpanded} size="sm" variant="ghost">
+          <Button className="h-[40px] lg:h-7" onClick={toggleExpanded} size="sm" variant="ghost">
             {expanded ? 'Collapse' : 'Respond'}
           </Button>
         )}
@@ -348,7 +348,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 {r.byName ?? 'Someone'} · {ACTION_LABEL[r.action] ?? r.action}
               </span>
               {r.comment && (
-                <p className="mt-0.5 whitespace-pre-wrap text-paper-400">{r.comment}</p>
+                <p className="mt-0.5 whitespace-pre-wrap break-words text-paper-400">{r.comment}</p>
               )}
               {r.value && <p className="mt-0.5 whitespace-pre-wrap text-paper-400">{r.value}</p>}
             </li>
@@ -376,6 +376,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           {step.kind === 'APPROVAL' && (
             <div className="flex gap-2">
               <Button
+                className="h-[40px] lg:h-7"
                 disabled={respond.isPending}
                 onClick={() => openDialog('approve')}
                 size="sm"
@@ -384,6 +385,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 Approve
               </Button>
               <Button
+                className="h-[40px] lg:h-7"
                 disabled={respond.isPending}
                 onClick={() => openDialog('reject')}
                 size="sm"
