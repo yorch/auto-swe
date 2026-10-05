@@ -77,6 +77,47 @@ const STATUS_TONE: Record<string, BadgeTone> = {
   TIMED_OUT: 'muted',
 };
 
+/**
+ * What a settled step shows in place of the bare status. A reject also resolves the step, so
+ * "resolved" in green would read as success; the decision itself is the useful word.
+ */
+function settledBadge(step: HumanStepSummary): { label: string; tone: BadgeTone } {
+  if (step.status !== 'RESOLVED') {
+    return {
+      label: step.status.replace(/_/g, ' ').toLowerCase(),
+      tone: STATUS_TONE[step.status] ?? 'brick',
+    };
+  }
+  const decision = step.responses?.at(-1)?.action;
+  if (step.kind === 'APPROVAL' && decision === 'reject') {
+    return { label: 'rejected', tone: 'brick' };
+  }
+  if (step.kind === 'APPROVAL' && decision === 'approve') {
+    return { label: 'approved', tone: 'moss' };
+  }
+  return { label: 'resolved', tone: 'moss' };
+}
+
+/** Auto-generated ticket ids (a UUID or an agent-run id) say nothing to a person. */
+function isOpaqueTicketId(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(id) || /^agent-[0-9a-f]/i.test(id);
+}
+
+/** The name of the request a step belongs to: its ticket id, or its description when the id is opaque. */
+function requestLabel(
+  request: { description?: string | null; externalTicketId?: string | null } | null | undefined
+): string | null {
+  const ticket = request?.externalTicketId?.trim();
+  if (ticket && !isOpaqueTicketId(ticket)) {
+    return ticket;
+  }
+  const description = request?.description?.trim().split('\n')[0];
+  if (description) {
+    return description.length > 80 ? `${description.slice(0, 79)}…` : description;
+  }
+  return ticket ?? null;
+}
+
 function contextToString(context: unknown): string {
   if (context == null) {
     return '';
@@ -276,17 +317,17 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             {showRunLink && (
               <>
                 <span>·</span>
-                {step.run.workRequest?.externalTicketId && (
+                {requestLabel(step.run.workRequest) && (
                   <>
                     {requestId ? (
                       <Link
-                        className="font-mono underline text-paper-400 hover:text-paper-200"
+                        className="underline text-paper-400 hover:text-paper-200"
                         href={requestHref(requestId)}
                       >
-                        {step.run.workRequest.externalTicketId}
+                        {requestLabel(step.run.workRequest)}
                       </Link>
                     ) : (
-                      <span className="font-mono">{step.run.workRequest.externalTicketId}</span>
+                      <span>{requestLabel(step.run.workRequest)}</span>
                     )}
                     <span>·</span>
                   </>
@@ -328,13 +369,8 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           </Badge>
         )}
         {step.status !== 'PENDING' && (
-          <Badge
-            className="shrink-0"
-            tone={STATUS_TONE[step.status] ?? 'brick'}
-            uppercase
-            variant="text"
-          >
-            {step.status.replace(/_/g, ' ').toLowerCase()}
+          <Badge className="shrink-0" tone={settledBadge(step).tone} uppercase variant="text">
+            {settledBadge(step).label}
           </Badge>
         )}
       </div>
@@ -545,7 +581,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         dismissible={pendingAction === null}
         onClose={() => setDialog(null)}
         open={dialog !== null}
-        title={dialog === 'reject' ? `Reject ${step.title}?` : `Approve ${step.title}?`}
+        title={dialog === 'reject' ? 'Reject this step?' : 'Approve this step?'}
       >
         <p className="text-sm text-paper-400">
           {dialog === 'reject'

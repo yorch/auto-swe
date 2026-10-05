@@ -147,6 +147,31 @@ describe('HumanStepCard approvals', () => {
       />
     );
     expect(screen.getByText('Wrong table')).toBeTruthy();
+    // A reject settles the step too; it must not read as a green "resolved".
+    expect(screen.getByText('rejected')).toBeTruthy();
+    expect(screen.queryByText('resolved')).toBeNull();
+  });
+
+  it('names the request by its description when the ticket id is a UUID', () => {
+    render(
+      <HumanStepCard
+        showRunLink
+        step={approvalStep({
+          run: {
+            id: 'r1',
+            status: 'RUNNING',
+            workflowId: 'w1',
+            workRequest: {
+              description: 'Add a health endpoint\nwith details',
+              externalTicketId: '3f2b8c1a-1111-4222-8333-444455556666',
+            },
+            workRequestId: 'req-1',
+          },
+        })}
+      />
+    );
+    expect(screen.getByText('Add a health endpoint')).toBeTruthy();
+    expect(screen.queryByText(/3f2b8c1a/)).toBeNull();
   });
 });
 
@@ -159,7 +184,7 @@ describe('HumanStepCard dialog and responses', () => {
     const closeButton = () =>
       screen
         .getAllByLabelText('Close')
-        .find((b) => b.closest('dialog')?.textContent?.includes('Approve Approve plan?')) as
+        .find((b) => b.closest('dialog')?.textContent?.includes('Approve this step?')) as
         | HTMLButtonElement
         | undefined;
     expect(closeButton()?.disabled).toBe(false);

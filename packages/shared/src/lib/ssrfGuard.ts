@@ -206,11 +206,19 @@ function isNeverAllowedHost(url: URL): boolean {
  */
 export function checkProbeUrl(apiBase: string, opts: { allowPrivate?: boolean } = {}) {
   const safety = isSafeProbeUrl(apiBase);
-  if (safety.ok || !opts.allowPrivate || !safety.private) {
+  if (safety.ok || !safety.private) {
     return safety;
   }
   const url = new URL(apiBase);
-  return isNeverAllowedHost(url) ? safety : ({ ok: true, url } as const);
+  if (isNeverAllowedHost(url)) {
+    // Say so rather than "on a private network", which invites the opt-in that cannot help.
+    const host = url.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+    const kind = /^(169\.254\.|fe[89ab][0-9a-f]:|fd00:ec2:|100\.100\.100\.200)/i.test(host)
+      ? 'a link-local or cloud metadata address'
+      : 'a loopback address';
+    return { ...safety, reason: `host '${host}' is ${kind} and is never allowed` };
+  }
+  return opts.allowPrivate ? ({ ok: true, url } as const) : safety;
 }
 
 /**

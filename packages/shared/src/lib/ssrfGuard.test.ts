@@ -257,3 +257,21 @@ describe('checkProbeUrl (per-host private-network opt-in)', () => {
     expect(checkProbeUrl('not a url', { allowPrivate: true }).ok).toBe(false);
   });
 });
+
+describe('checkProbeUrl wording for never-allowed hosts', () => {
+  it('calls loopback a loopback address, with or without the opt-in', () => {
+    for (const allowPrivate of [false, true]) {
+      const res = checkProbeUrl('http://127.0.0.1:3000/mcp', { allowPrivate });
+      expect(res.ok).toBe(false);
+      expect(!res.ok && res.reason).toBe(
+        "host '127.0.0.1' is a loopback address and is never allowed"
+      );
+    }
+  });
+
+  it('still waives a private range with the opt-in', () => {
+    expect(checkProbeUrl('http://10.0.0.5/mcp', { allowPrivate: true }).ok).toBe(true);
+    const strict = checkProbeUrl('http://10.0.0.5/mcp');
+    expect(!strict.ok && strict.reason).toMatch(/private network/);
+  });
+});
