@@ -142,9 +142,11 @@ export default function RunDetailPage({ params }: PageProps) {
   // Selecting the failed step is what the layouts react to (filter, scroll, playhead);
   // scrolling the anchor alone did nothing inside the overflow-hidden main.
   const failedNodeId = run ? findFailedStep(run.status, run.steps)?.nodeId : undefined;
+  const [jumpNonce, setJumpNonce] = useState(0);
   const handleJumpToFailure = useCallback(() => {
     if (failedNodeId) {
       setSelectedNodeId(failedNodeId);
+      setJumpNonce((n) => n + 1);
     }
     traceAnchorRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [failedNodeId]);
@@ -310,6 +312,7 @@ export default function RunDetailPage({ params }: PageProps) {
       <div className="flex-1 flex overflow-hidden" ref={traceAnchorRef}>
         <Layout
           dagOverlay={dagOverlay}
+          jumpNonce={jumpNonce}
           linker={linker}
           run={run}
           selectedNodeId={selectedNodeId}

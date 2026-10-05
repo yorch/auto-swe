@@ -11,4 +11,6 @@ export interface RunLayoutProps {
   dagOverlay: { byNodeId: Record<string, { status: string; attempt: number }> } | undefined;
   selectedNodeId: string | null;
   setSelectedNodeId: (id: string | null) => void;
+  /** Bumped on every "Jump to failure", so a repeat jump to the same step still re-seeks. */
+  jumpNonce?: number;
 }

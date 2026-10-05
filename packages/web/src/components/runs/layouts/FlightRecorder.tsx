@@ -76,6 +76,7 @@ function WaterfallBar({
 }
 
 export function FlightRecorder({
+  jumpNonce,
   linker,
   dagOverlay,
   run,
@@ -106,7 +107,7 @@ export function FlightRecorder({
 
   // A step selected from outside (the failure card's "Jump to failure") moves the
   // playhead to the end of that step, so the feed shows what the step produced.
-  // Only the selection triggers it: the run is read through a ref so a poll
+  // Only the selection (or a repeat jump) triggers it: the run is read through a ref so a poll
   // refreshing `run` does not snap the playhead back.
   const runRef = useRef({ run, totalMs });
   runRef.current = { run, totalMs };
@@ -123,7 +124,7 @@ export function FlightRecorder({
     const fraction = (new Date(at).getTime() - new Date(current.startedAt).getTime()) / total;
     setPlaying(false);
     setPlayhead(Math.min(Math.max(fraction, 0), 1));
-  }, [selectedNodeId]);
+  }, [selectedNodeId, jumpNonce]);
 
   useEffect(() => {
     if (playing) {

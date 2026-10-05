@@ -69,6 +69,7 @@ function StepSpine({
 }
 
 export function Transcript({
+  jumpNonce,
   linker,
   run,
   selectedNodeId: selectedId,
@@ -78,12 +79,13 @@ export function Transcript({
   const stepRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Selection is the page's, so "Jump to failure" can select a step from outside
-  // the layout; scrolling follows the selection rather than the click.
+  // the layout; scrolling follows the selection rather than the click. The nonce
+  // re-fires it when the same failed step is jumped to again after scrolling away.
   useEffect(() => {
     if (selectedId) {
       stepRefs.current[selectedId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [selectedId]);
+  }, [selectedId, jumpNonce]);
 
   const handleSpineSelect = (id: string) => setSelectedId(id);
 
