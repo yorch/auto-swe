@@ -1001,7 +1001,8 @@ describe('systemConfigService', () => {
       );
       const result = await testGitHubConnection();
       expect(result.ok).toBe(false);
-      expect(result.detail).toBe('GitHub API returned 401: Bad credentials');
+      expect(result.detail).toBe('GitHub API returned 401: the token was rejected.');
+      expect(result.detail).not.toContain('Bad credentials');
     });
 
     it('tests the unsaved token typed into the form instead of the stored one', async () => {
@@ -1050,6 +1051,26 @@ describe('systemConfigService', () => {
       const result = await testGitHubConnection({ apiUrl: 'https://evil.example.com' });
       expect(result.ok).toBe(false);
       expect(result.detail).toContain('Enter the token again');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses a typed API URL on a private address even with a typed token', async () => {
+      resolveGitHubConfigMock.mockResolvedValueOnce({
+        apiUrl: 'https://api.github.com',
+        appId: null,
+        appInstallationId: null,
+        appPrivateKey: null,
+        authMode: null,
+        token: null,
+      } as never);
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await testGitHubConnection({
+        apiUrl: 'http://169.254.169.254/latest',
+        token: 'ghp_typed',
+      });
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('not allowed');
       expect(fetchMock).not.toHaveBeenCalled();
     });
 

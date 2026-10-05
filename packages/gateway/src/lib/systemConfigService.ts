@@ -369,6 +369,18 @@ export async function testGitHubConnection(
     };
   }
 
+  // A typed URL is operator input that was never saved, so it gets the SSRF guard the other
+  // connectors run on a base URL: no loopback, link-local or private address.
+  if (config.apiUrl !== stored.apiUrl) {
+    const safety = checkProbeUrl(config.apiUrl);
+    if (!safety.ok) {
+      return {
+        detail: 'That API URL is not allowed: it must be a public https address.',
+        ok: false,
+      };
+    }
+  }
+
   const appConfigured = config.appId && config.appPrivateKey && config.appInstallationId;
   const mode = config.authMode ?? 'auto';
   const useApp = mode === 'app' || (mode === 'auto' && appConfigured);
@@ -394,11 +406,18 @@ export async function testGitHubConnection(
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { message?: string };
-      return {
-        detail: `GitHub API returned ${res.status}: ${body.message ?? res.statusText}`,
-        ok: false,
-      };
+      // Fixed wording per status class: the remote body is never echoed back.
+      const reason =
+        res.status === 401
+          ? 'the token was rejected'
+          : res.status === 403
+            ? 'the token is not permitted or is rate limited'
+            : res.status === 404
+              ? 'the endpoint was not found, so check the API URL'
+              : res.status >= 500
+                ? 'GitHub reported a server error'
+                : 'the request was refused';
+      return { detail: `GitHub API returned ${res.status}: ${reason}.`, ok: false };
     }
     const user = (await res.json()) as { login: string };
     return { detail: `Authenticated as ${user.login}`, ok: true };
