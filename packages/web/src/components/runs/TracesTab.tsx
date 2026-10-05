@@ -1,11 +1,12 @@
 'use client';
 
 import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
-import { type ReactNode, useCallback, useId, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { attributeTrace, type TraceLinker, traceMatchesSelection } from '@/lib/traceLinkage';
+import { FILTER_BAR_HEIGHT_VAR, groupHeaderTop } from '@/lib/traceSticky';
 import { cn, formatCount, formatDuration, formatTokens } from '@/lib/utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -408,7 +409,7 @@ function EventRow({
           <button
             aria-controls={`trace-output-${trace.id}`}
             aria-expanded={isExpanded}
-            className="flex min-h-[40px] min-w-0 flex-1 basis-[12rem] cursor-pointer items-center gap-2 text-left lg:min-h-0 lg:basis-auto"
+            className="flex min-h-[40px] min-w-0 flex-1 basis-[12rem] cursor-pointer items-center gap-2 text-left lg:min-h-0 lg:basis-[0%]"
             onClick={onToggle}
             type="button"
           >
@@ -429,7 +430,7 @@ function EventRow({
             {/* Event name */}
             <span
               className={cn(
-                'shrink-0 font-mono text-[11px] font-medium',
+                'font-mono text-[11px] font-medium max-lg:shrink-0',
                 hasError ? 'text-brick-400' : 'text-paper-200'
               )}
             >
@@ -443,7 +444,7 @@ function EventRow({
           </button>
 
           {/* Right: token/cost chip + otel link + duration + error chip */}
-          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2 lg:flex-nowrap">
+          <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2 max-lg:justify-end lg:flex-nowrap">
             <TokenCostChip trace={trace} />
             <OtelLink trace={trace} />
             {durationLabel && (
@@ -579,6 +580,26 @@ export function TracesTab({
     return [...bySection.values()];
   }, [filtered, linker, selectionNamesBranch, untaggedAmbiguous]);
 
+  // The filter bar's real height, so sticky group headers clear it (it is taller below lg).
+  const filterBarShowing = !compact && Boolean(filterNodeId);
+  const filterBarRef = useRef<HTMLDivElement>(null);
+  const [filterBarHeight, setFilterBarHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const el = filterBarRef.current;
+    if (!filterBarShowing || !el) {
+      setFilterBarHeight(null);
+      return;
+    }
+    const measure = () => setFilterBarHeight(el.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [filterBarShowing]);
+
   const showBranchHeaders = sections.some((s) => s.branch !== null);
   const anyAmbiguous = sections.some((sec) => sec.groups.some((g) => g.ambiguous));
 
@@ -587,9 +608,18 @@ export function TracesTab({
   }
 
   return (
-    <div>
+    <div
+      style={
+        filterBarHeight === null
+          ? undefined
+          : ({ [FILTER_BAR_HEIGHT_VAR]: `${filterBarHeight}px` } as React.CSSProperties)
+      }
+    >
       {!compact && filterNodeId && (
-        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-600/50 bg-ink-900 px-4 py-2 lg:flex-nowrap">
+        <div
+          className="sticky top-0 z-10 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-600/50 bg-ink-900 px-4 py-2 lg:flex-nowrap"
+          ref={filterBarRef}
+        >
           <span className="text-paper-500 text-[11px]">
             Filtered to{' '}
             <span className="rounded-sm bg-ink-600 max-lg:break-all px-1.5 py-0.5 font-mono text-[10px] text-paper-300">
@@ -650,7 +680,7 @@ export function TracesTab({
                     <div
                       className={cn(
                         'sticky z-[5] flex flex-wrap items-center gap-x-2 gap-y-0.5 bg-ink-800 px-4 py-2 lg:flex-nowrap',
-                        !compact && filterNodeId ? 'top-[33px]' : 'top-0'
+                        groupHeaderTop(filterBarShowing)
                       )}
                     >
                       <span className="font-mono text-[11px] font-medium text-paper-200 max-lg:min-w-0 max-lg:break-all">
