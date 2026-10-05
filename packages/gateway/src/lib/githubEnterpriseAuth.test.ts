@@ -174,6 +174,91 @@ describe('fetchGhesUserInfo', () => {
     expect(line).not.toContain('tok-secret-123');
   });
 
+  describe('the refusal log for a failed GHE request', () => {
+    const EMAILS_OK = [{ email: 'o@example.com', primary: true, verified: true }];
+
+    function respond(emailsResponse: Response) {
+      mockFetch((url) => (url.endsWith('/user/emails') ? emailsResponse : json(profile)));
+    }
+
+    function loggedLine(warn: ReturnType<typeof vi.spyOn>): string {
+      expect(warn).toHaveBeenCalledTimes(1);
+      return String(warn.mock.calls[0]?.[0]);
+    }
+
+    it("includes GitHub's own message and the permission it says the token needed", async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      respond(
+        new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), {
+          headers: {
+            'x-accepted-github-permissions': 'emails=read',
+            'x-oauth-scopes': 'read:user',
+          },
+          status: 403,
+        })
+      );
+
+      await fetchGhesUserInfo('tok', API, HOST);
+
+      const line = loggedLine(warn);
+      expect(line).toContain('GET /user/emails answered 403');
+      expect(line).toContain('Resource not accessible by integration');
+      expect(line).toContain('emails=read');
+      expect(line).toContain('read:user');
+    });
+
+    it.each([403, 404])('explains what to grant when /user/emails answers %i', async (status) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      respond(json({ message: 'nope' }, status));
+
+      await fetchGhesUserInfo('tok', API, HOST);
+
+      const line = loggedLine(warn);
+      expect(line).toContain('Email addresses');
+      expect(line).toContain('user:email');
+    });
+
+    it('gives no email hint for a failure that is not about email', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      mockFetch((url) =>
+        url.endsWith('/user/emails') ? json(EMAILS_OK) : json({ message: 'Server Error' }, 500)
+      );
+
+      await fetchGhesUserInfo('tok', API, HOST);
+
+      const line = loggedLine(warn);
+      expect(line).toContain('GET /user answered 500');
+      expect(line).not.toContain('Email addresses');
+    });
+
+    it('never puts the access token in the log', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      respond(json({ message: 'denied' }, 403));
+
+      await fetchGhesUserInfo('tok-secret-123', API, HOST);
+
+      expect(loggedLine(warn)).not.toContain('tok-secret-123');
+    });
+
+    it('still reports the status when the body is not JSON', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      respond(new Response('<html>Bad Gateway</html>', { status: 502 }));
+
+      await expect(fetchGhesUserInfo('tok', API, HOST)).resolves.toBeNull();
+
+      expect(loggedLine(warn)).toContain('GET /user/emails answered 502');
+    });
+
+    it('cuts an oversized message so one response cannot flood the log', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      respond(json({ message: 'x'.repeat(5000) }, 403));
+
+      await fetchGhesUserInfo('tok', API, HOST);
+
+      expect(loggedLine(warn).length).toBeLessThan(900);
+    });
+  });
+
   it('refuses the sign-in instead of throwing when the network fails', async () => {
     mockFetch(() => Promise.reject(new TypeError('fetch failed')));
 
