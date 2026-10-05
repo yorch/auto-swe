@@ -68,6 +68,8 @@ vi.mock('@auto-swe/shared/config', () => ({
 }));
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { createImplementerAgent } from '../agents/implementer.js';
+import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import {
   _defaults,
   type EvalCaseRow,
@@ -314,6 +316,28 @@ describe('runCaseDefault iteration cap', () => {
     await runCaseDefault(cases[0], 'implementer');
 
     expect((generate.mock.calls[0] as unknown[])[1]).toMatchObject({ maxSteps: 64 });
+  });
+
+  it('hands the connection headers and private-network opt-in to the implementer', async () => {
+    generate.mockResolvedValue({ text: 'done', usage: { inputTokens: 10, outputTokens: 5 } });
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 1 } as never);
+    const headers = [{ name: 'x-tenant', value: 'acme' }];
+    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce({
+      allowPrivateNetwork: true,
+      bearerToken: 'tok',
+      headers,
+      url: 'http://10.0.0.5/mcp',
+    } as never);
+
+    await runCaseDefault(cases[0], 'implementer');
+
+    const options = vi.mocked(createImplementerAgent).mock.calls.at(-1)?.[4];
+    expect(options).toMatchObject({
+      mcpAllowPrivateNetwork: true,
+      mcpBearerToken: 'tok',
+      mcpHeaders: headers,
+      mcpServerRef: 'http://10.0.0.5/mcp',
+    });
   });
 
   it('persists the trace even when the agent throws', async () => {
