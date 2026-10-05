@@ -14,7 +14,13 @@ vi.mock('@/hooks/useAdmin', () => ({
 import { Sidebar } from './Sidebar';
 
 beforeEach(() => {
-  window.localStorage.clear();
+  // Some runtimes leave jsdom without Storage (Node's own localStorage global can shadow it); the
+  // sidebar treats storage as optional, so the tests must not assume it either.
+  try {
+    window.localStorage?.clear();
+  } catch {
+    // No storage: nothing remembered to reset.
+  }
   useAuthStore.setState({ user: { email: 'a@x.dev', role: 'ADMIN', sub: 'u1' } } as never);
 });
 afterEach(cleanup);
