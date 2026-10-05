@@ -2389,7 +2389,7 @@
       "WorkflowShellAudit"
     ]
   },
-  "reviewedCommit": "c751fd76677fd79fc571283e4633210b8e706d8d",
+  "reviewedCommit": "1d39b2642131c9737e07ef6527e4443d2c6977bb",
   "sourceHashes": {
     "docker-compose.app.yml": "96d57e466289e17048648c7e852e21c0ac24085526fae63c21e8c0ffe8b22cf6",
     "packages/cli/src/commands/skills.ts": "bdfa28470df98565ec676d471ffc23a7e7719aea79b6be638d0e2aedee7acbda",
@@ -2449,6 +2449,7 @@
     "packages/shared/src/lib/sameRepositoryIds.ts": "04e497efc3212236c858121dc70ecc14a2020c2aa275aeda1067cd677604b0e4",
     "packages/shared/src/lib/skillRevision.ts": "cb5db8cba069a6dedbaa0d4dc91460078ddad4f4fa208be87953305806326551",
     "packages/shared/src/lib/skillScanner.ts": "81af9ab62a509b08c24d2f0e716eb71d44cc48848913f5dbd7c54253c8859551",
+    "packages/shared/src/lib/skillSource/display.ts": "e2cf4d5f77a638318fa3f8d2294ef6e4b8c341c9dbd5e575b2619e657f2f1861",
     "packages/shared/src/lib/skillSource/github.ts": "842969887bdcf06b28cbfd36fde16abc58510d88cd08104b0e9552208c5b9b62",
     "packages/shared/src/lib/skillSource/index.ts": "a472ed956c22b6536f2bdc639194a2ff2e7dc9e353d72a9ffe61ef78c41339db",
     "packages/shared/src/lib/skillSourceSync.ts": "afb11de0efe1385d57d0495be0570e61fbeedd3474d2a30f3e0b272864902f32",
@@ -2473,6 +2474,7 @@
     "packages/web/src/app/govern/usage/layout.tsx": "58f25d8d5a001d1fc86548a59939084a61a467783593b43d32232872f045822c",
     "packages/web/src/app/workflows/library/page.tsx": "c69a4f3e666d30da1a4ae8f42ed4ef60f0e5e29a14e40639eeb0087113bedf7f",
     "packages/web/src/components/modelConfig/CatalogTab.tsx": "53c8a7f98eb4a5ae90bee1ccb49db4e471ac552e99ae1236b125912e819c67f7",
+    "packages/web/src/components/skills/AddSourceModal.tsx": "d9f047c03120425378c9bbbac1b357ff80902837a1332b35e367b473a8d7d995",
     "packages/web/src/components/skills/InstallSkillsModal.tsx": "f21dd5810907318eac0fd4a385cb4d0d3cdb3a8a3405273dfe609e3121363c66",
     "packages/web/src/components/skills/ReviewUpdateModal.tsx": "d9342ca3480edd702df44577dcac72708b449b9306c2043712b7abf0e06ff8c8",
     "packages/web/src/hooks/useRuns.ts": "95a74bae446073977fb4093783d40d0a1b11ae684c2a9bf08174a99c7ec50526",
