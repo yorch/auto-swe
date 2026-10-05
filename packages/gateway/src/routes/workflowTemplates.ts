@@ -30,6 +30,7 @@ import {
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -332,6 +333,33 @@ type TemplateWithIncludes = Prisma.WorkflowTemplateGetPayload<{ include: typeof 
  * with persisted state). Shared by `POST /` (status ACTIVE) and `POST /generate`
  * (status DRAFT) so the persist/audit shape lives in one place.
  */
+/// Auditable subset of a template row: what it is and what it serves, never its spec text.
+function templateAuditFields(row: {
+  activeVersion: number | null;
+  description: string;
+  experimentSplit: number | null;
+  experimentVersion: number | null;
+  id: string;
+  isDefault: boolean;
+  name: string;
+  status: string;
+  teamId: string | null;
+  workspaceProvider: string | null;
+}) {
+  return {
+    activeVersion: row.activeVersion,
+    description: row.description,
+    experimentSplit: row.experimentSplit,
+    experimentVersion: row.experimentVersion,
+    id: row.id,
+    isDefault: row.isDefault,
+    name: row.name,
+    status: row.status,
+    teamId: row.teamId,
+    workspaceProvider: row.workspaceProvider,
+  };
+}
+
 async function createTemplateWithInitialVersion(
   prisma: FastifyInstance['prisma'],
   args: {
@@ -922,6 +950,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           teamId: teamId ?? null,
           workspaceProvider: request.body.workspaceProvider ?? null,
         });
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: user,
+          after: { ...templateAuditFields(tpl), generatedBy: 'workflow_author' },
+          entityId: tpl.id,
+          entityType: 'WorkflowTemplate',
+        });
         const warnings = [
           ...(await validateSpecRefs(fastify.prisma, parsedSpec)),
           ...specValidationWarnings(parsedSpec),
@@ -1100,6 +1135,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           status: 'ACTIVE',
           teamId: teamId ?? null,
           workspaceProvider: workspaceProvider ?? 'git_repo',
+        });
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: user,
+          after: templateAuditFields(tpl),
+          entityId: tpl.id,
+          entityType: 'WorkflowTemplate',
         });
         // Non-fatal: surface unresolved agent/mcp refs as warnings (never blocks save).
         const warnings = [
@@ -1323,6 +1365,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           include: TEMPLATE_INCLUDE,
           where: { id: existing.id },
         });
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: templateAuditFields(updated),
+        before: templateAuditFields(existing),
+        entityId: existing.id,
+        entityType: 'WorkflowTemplate',
       });
       const lastRuns = await loadLastRuns(
         fastify,
@@ -1709,6 +1759,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'VERSION_CONFLICT', message: 'Concurrent version writes — please retry' },
         });
       }
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { newVersion: created.version },
+        before: { newVersion: null },
+        entityId: tpl.id,
+        entityType: 'WorkflowTemplate',
+      });
       const warnings = [
         ...(await validateSpecRefs(fastify.prisma, parsed as WorkflowSpec)),
         ...specValidationWarnings(parsed as WorkflowSpec),
@@ -1773,6 +1831,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: { activeVersion: request.body.version, status: 'ACTIVE' },
         include: TEMPLATE_INCLUDE,
         where: { id: tpl.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: templateAuditFields(updated),
+        before: templateAuditFields(tpl),
+        entityId: tpl.id,
+        entityType: 'WorkflowTemplate',
       });
       const lastRuns = await loadLastRuns(
         fastify,

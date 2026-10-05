@@ -45,6 +45,8 @@ interface State {
   /** Rows `connectionTeamShare.findMany` returns, and the queries it was asked. */
   shares?: Array<{ connection: Record<string, unknown> }>;
   shareQueries?: Array<{ where: Record<string, unknown> }>;
+  /** Rows written to the configuration audit log. */
+  audits?: Array<{ action: string; entityType: string; [key: string]: unknown }>;
 }
 
 const TEAM_ID = '00000000-0000-4000-8000-000000000001';
@@ -104,6 +106,12 @@ function buildApp(state: State): FastifyInstance {
       return 1;
     },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+    configAuditLog: {
+      create: async ({ data }: { data: { action: string; entityType: string } }) => {
+        state.audits = [...(state.audits ?? []), data];
+        return data;
+      },
+    },
     connectionTeamShare: {
       findMany: async (args: { where: Record<string, unknown> }) => {
         state.shareQueries = [...(state.shareQueries ?? []), args];
@@ -243,6 +251,7 @@ describe('POST /api/v1/teams', () => {
 
     expect(res.statusCode).toBe(201);
     expect(res.json().data.orgId).toBe('org-default');
+    expect(state.audits).toMatchObject([{ action: 'CREATE', entityType: 'Team' }]);
   });
 
   it('400s when the requested org does not exist (P5)', async () => {

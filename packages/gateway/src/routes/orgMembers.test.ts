@@ -16,9 +16,12 @@ const MEMBER_ROW = {
   userId: TARGET_USER,
 };
 
+const auditCreate = vi.fn().mockResolvedValue({});
+
 function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
   const app = makeAuthedApp({
     prisma: {
+      configAuditLog: { create: auditCreate },
       organizationMembership: {
         count: vi.fn().mockResolvedValue(2),
         create: vi.fn().mockResolvedValue(MEMBER_ROW),
@@ -79,6 +82,13 @@ describe('POST /:orgId/members', () => {
     expect(res.statusCode).toBeOneOf([200, 201]);
     // The standard `{ data }` envelope, not a bare row.
     expect(JSON.parse(res.body).data.id).toBe('row-1');
+    expect(auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'UPDATE',
+        entityId: 'row-1',
+        entityType: 'OrganizationMembership',
+      }),
+    });
   });
 
   it('allows an ORG_ADMIN who is only a platform ENGINEER to manage members', async () => {

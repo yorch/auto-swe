@@ -10,8 +10,13 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+
+function memberAuditFields(row: { orgId: string; role: string; userId: string }) {
+  return { orgId: row.orgId, role: row.role, userId: row.userId };
+}
 
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
 const MemberParamsSchema = z.object({ orgId: z.string().uuid(), userId: z.string().uuid() });
@@ -123,10 +128,25 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           data: { role },
           where: { id: existing.id },
         });
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: requireUser(request),
+          after: memberAuditFields(updated),
+          before: memberAuditFields(existing),
+          entityId: existing.id,
+          entityType: 'OrganizationMembership',
+        });
         return reply.status(200).send({ data: updated });
       }
       const created = await fastify.prisma.organizationMembership.create({
         data: { orgId, role, userId },
+      });
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor: requireUser(request),
+        after: memberAuditFields(created),
+        entityId: created.id,
+        entityType: 'OrganizationMembership',
       });
       return reply.status(201).send({ data: created });
     }
@@ -165,8 +185,15 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         },
         select: { email: true, id: true, isActive: true, role: true },
       });
-      await fastify.prisma.organizationMembership.create({
+      const membership = await fastify.prisma.organizationMembership.create({
         data: { orgId, role: orgRole, userId: user.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor: requireUser(request),
+        after: memberAuditFields(membership),
+        entityId: membership.id,
+        entityType: 'OrganizationMembership',
       });
 
       try {
@@ -221,6 +248,14 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         data: { role },
         where: { id: row.id },
       });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: requireUser(request),
+        after: memberAuditFields(updated),
+        before: memberAuditFields(row),
+        entityId: row.id,
+        entityType: 'OrganizationMembership',
+      });
       return { data: updated };
     }
   );
@@ -255,6 +290,13 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
       }
       await fastify.prisma.organizationMembership.delete({ where: { id: row.id } });
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor: requireUser(request),
+        before: memberAuditFields(row),
+        entityId: row.id,
+        entityType: 'OrganizationMembership',
+      });
       return reply.status(204).send();
     }
   );

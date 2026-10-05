@@ -3,6 +3,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { currentYearMonth } from '../lib/orgAccess.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -145,7 +146,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const existing = await fastify.prisma.organization.findUnique({
-        select: { id: true },
+        select: { id: true, name: true, slug: true },
         where: { id: orgId },
       });
       if (!existing) {
@@ -159,6 +160,14 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
           data: body,
           select: { id: true, name: true, slug: true },
           where: { id: orgId },
+        });
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: requireUser(request),
+          after: { name: updated.name, slug: updated.slug },
+          before: { name: existing.name, slug: existing.slug },
+          entityId: orgId,
+          entityType: 'Organization',
         });
         return { data: updated };
       } catch (e) {

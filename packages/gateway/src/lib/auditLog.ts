@@ -22,6 +22,8 @@ export type AuditEntityType =
   | 'ModelCatalogEntry'
   | 'ModelSuggestion'
   | 'OktaOAuthConfig'
+  | 'Organization'
+  | 'OrganizationMembership'
   | 'PersonalAccessToken'
   | 'ProviderCredential'
   | 'ScannerPattern'
@@ -32,7 +34,10 @@ export type AuditEntityType =
   | 'SlackChannel'
   | 'SlackConfig'
   | 'StorageConfig'
+  | 'Team'
+  | 'TeamMembership'
   | 'User'
+  | 'WorkflowTemplate'
   | 'WorkflowRun';
 
 export async function writeAuditLog(

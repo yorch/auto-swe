@@ -4,6 +4,7 @@ import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { sendConflict } from '../lib/conflict.js';
 import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -11,6 +12,29 @@ import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { memberTeams, permissionRequirement } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { teamScopedConfigRoutes } from './modelConfig.js';
+
+/// Auditable subset of a team row.
+function teamAuditFields(team: {
+  description: string;
+  id: string;
+  isActive: boolean;
+  name: string;
+  orgId: string | null;
+  slug: string;
+}) {
+  return {
+    description: team.description,
+    id: team.id,
+    isActive: team.isActive,
+    name: team.name,
+    orgId: team.orgId,
+    slug: team.slug,
+  };
+}
+
+function membershipAuditFields(row: { role: string; teamId: string; userId: string }) {
+  return { role: row.role, teamId: row.teamId, userId: row.userId };
+}
 
 const CreateTeamSchema = z.object({
   description: z.string().max(500).default(''),
@@ -170,6 +194,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         throw err;
       }
 
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor: requireUser(request),
+        after: teamAuditFields(team),
+        entityId: team.id,
+        entityType: 'Team',
+      });
+
       return reply.status(201).send({ data: team });
     }
   );
@@ -297,6 +329,15 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       const updated = await fastify.prisma.team.update({
         data: request.body,
         where: { id: request.params.id },
+      });
+
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: requireUser(request),
+        after: teamAuditFields(updated),
+        before: teamAuditFields(team),
+        entityId: team.id,
+        entityType: 'Team',
       });
 
       return { data: updated };
@@ -467,6 +508,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         data: { isActive: false },
         where: { id: request.params.id },
       });
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor: requireUser(request),
+        after: { isActive: false },
+        before: teamAuditFields(team),
+        entityId: team.id,
+        entityType: 'Team',
+      });
 
       return { data: { deleted: true } };
     }
@@ -532,6 +581,13 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
           },
           include: { user: { select: { email: true, id: true, role: true } } },
         });
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: requireUser(request),
+          after: membershipAuditFields(membership),
+          entityId: membership.id,
+          entityType: 'TeamMembership',
+        });
         return reply.status(201).send({ data: membership });
       } catch (err) {
         if (isUniqueConstraintError(err)) {
@@ -586,6 +642,15 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 409, result.guard.code, result.guard.message);
       }
 
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: requireUser(request),
+        after: membershipAuditFields(result.value),
+        before: membershipAuditFields(membership),
+        entityId: membership.id,
+        entityType: 'TeamMembership',
+      });
+
       return { data: result.value };
     }
   );
@@ -628,6 +693,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       if (!result.ok) {
         return sendError(reply, 409, result.guard.code, result.guard.message);
       }
+
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor: requireUser(request),
+        before: membershipAuditFields(membership),
+        entityId: membership.id,
+        entityType: 'TeamMembership',
+      });
 
       return { data: { removed: true } };
     }

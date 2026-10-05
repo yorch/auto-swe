@@ -107,6 +107,8 @@ function buildApp(state: {
   }> = [];
   // exposed via state for assertions
   (state as unknown as { shellAudits: typeof shellAudits }).shellAudits = shellAudits;
+  const configAudits: Array<{ action: string; entityType: string; [key: string]: unknown }> = [];
+  (state as unknown as { configAudits: typeof configAudits }).configAudits = configAudits;
 
   type PrismaMock = Record<string, unknown> & {
     $transaction?: (fn: (tx: PrismaMock) => Promise<unknown>) => Promise<unknown>;
@@ -118,6 +120,12 @@ function buildApp(state: {
   app.decorate(
     'prisma',
     Object.assign(prismaMock, {
+      configAuditLog: {
+        create: async ({ data }: { data: { action: string; entityType: string } }) => {
+          configAudits.push(data);
+          return data;
+        },
+      },
       humanErrorBaseline: {
         findMany: async () =>
           (
@@ -448,6 +456,10 @@ describe('workflow-templates routes', () => {
     expect(body.data.activeVersion).toBe(1);
     expect(body.data.status).toBe('ACTIVE');
     expect(body.data.versionCount).toBe(1);
+    const audits = (state as unknown as { configAudits: Array<{ entityType: string }> })
+      .configAudits;
+    expect(audits.map((a) => a.entityType)).toContain('WorkflowTemplate');
+    expect(audits[0]).toMatchObject({ action: 'CREATE', entityType: 'WorkflowTemplate' });
   });
 
   it('saves an unparseable cond expression but surfaces it as a warning (non-blocking)', async () => {
