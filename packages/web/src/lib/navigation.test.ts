@@ -136,6 +136,8 @@ describe('pageTitle', () => {
 
   it('titles detail and extra pages', () => {
     expect(pageTitle('/runs/abc')).toBe('Run');
+    expect(pageTitle('/no/such/page')).toBe('Not found');
+    expect(pageSection('/docs')).toBe('Help');
     expect(pageTitle('/runs')).toBe('All runs');
     expect(pageTitle('/govern/teams/abc')).toBe('Teams');
     expect(pageTitle('/govern/policies/decisions')).toBe('Autonomy decisions');

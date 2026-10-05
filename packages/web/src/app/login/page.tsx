@@ -208,6 +208,28 @@ function LoginPageInner() {
     };
   }, [searchParams, hydrate, router, destination, bridgeAttempt]);
 
+  // Someone who is already signed in has no use for the form: send them on. Requires the bearer
+  // cookie so a guard that bounced them here for lacking it cannot loop.
+  useEffect(() => {
+    if (searchParams.get('bridge') === '1') {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const status = await hydrate();
+      if (cancelled || status !== 'authenticated') {
+        return;
+      }
+      const u = useAuthStore.getState().user;
+      if (u?.isActive !== false && api.getToken()) {
+        router.replace(destination);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, hydrate, router, destination]);
+
   // Which social providers are configured in the backend? Also doubles as
   // the gateway-reachability check (see gatewayDown above). "Gateway is up"
   // means three things in this context: (1) the request didn't fail at the

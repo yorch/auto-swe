@@ -215,9 +215,11 @@ function UserMenu() {
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[12.5px] font-semibold text-paper-200">{name}</span>
-          <span className="block text-[11px] text-paper-400">
-            {user?.role?.toLowerCase() ?? 'member'}
-          </span>
+          {(user?.role?.toLowerCase() ?? 'member') !== name.toLowerCase() && (
+            <span className="block text-[11px] text-paper-400">
+              {user?.role?.toLowerCase() ?? 'member'}
+            </span>
+          )}
         </span>
         <span aria-hidden="true" className="text-[10px] text-paper-500">
           ▾

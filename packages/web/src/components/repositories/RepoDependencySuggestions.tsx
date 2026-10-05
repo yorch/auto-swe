@@ -93,7 +93,7 @@ export function RepoDependencySuggestions({
   isLoading = false,
   isError = false,
   error,
-  emptyText = 'No onboarding suggestions — every detected dependency resolves to an onboarded repository.',
+  emptyText = 'No suggestions yet — run Re-scan dependencies to look for repositories to onboard.',
 }: {
   suggestions: UnresolvedDependencySuggestion[] | undefined;
   isLoading?: boolean;

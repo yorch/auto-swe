@@ -341,7 +341,7 @@ export function pageTitle(pathname: string): string {
   if (pathname.startsWith('/studio')) {
     return 'Studio';
   }
-  return 'auto·swe';
+  return 'Not found';
 }
 
 /** The label a page must use as its H1. Throws on an href with no nav entry. */
@@ -357,7 +357,7 @@ export function navLabel(href: string): string {
 const EXTRA_PAGE_SECTIONS: [string, string][] = [
   ['/start', 'Work'],
   ['/epics', 'Work'],
-  ['/docs', 'Account'],
+  ['/docs', 'Help'],
   ['/lessons', 'Govern'],
 ];
 

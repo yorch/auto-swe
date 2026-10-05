@@ -50,7 +50,7 @@ describe('RepoDependencySuggestions', () => {
 
   it('shows the empty state when there are no suggestions', () => {
     render(<RepoDependencySuggestions suggestions={[]} />);
-    expect(screen.getByText(/no onboarding suggestions/i)).toBeTruthy();
+    expect(screen.getByText(/no suggestions yet/i)).toBeTruthy();
   });
 
   it('groups suggestions by toRef and counts distinct referencing repos', () => {

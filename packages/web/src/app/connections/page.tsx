@@ -130,14 +130,6 @@ export default function ConnectionsPage() {
         actions={
           canManage ? (
             <>
-              <Checkbox
-                checked={showInactive}
-                label="Show inactive"
-                onChange={(e) => {
-                  setShowInactive(e.target.checked);
-                  setOffset(0);
-                }}
-              />
               <Button onClick={() => setMode({ kind: 'import' })} size="sm" variant="secondary">
                 Import from GitHub
               </Button>
@@ -151,14 +143,26 @@ export default function ConnectionsPage() {
         title="Connections"
       />
       <SetupBanner items={['connections']} />
-      <Input
-        aria-label="Search connections"
-        className="max-w-sm"
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search connections…"
-        type="search"
-        value={search}
-      />
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <Input
+          aria-label="Search connections"
+          className="max-w-sm"
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search connections…"
+          type="search"
+          value={search}
+        />
+        {canManage && (
+          <Checkbox
+            checked={showInactive}
+            label="Show inactive"
+            onChange={(e) => {
+              setShowInactive(e.target.checked);
+              setOffset(0);
+            }}
+          />
+        )}
+      </div>
       <QueryBoundary
         error={loadError}
         isError={isError}
