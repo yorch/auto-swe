@@ -1,4 +1,5 @@
 import { humanizeKey } from '@/lib/govLabels';
+import { requestHref } from '@/lib/requestDisplay';
 
 /** Where an audited entity can be opened: its own page when it has one, else its list. */
 interface EntityTarget {
@@ -31,8 +32,18 @@ export function entityTypeLabel(entityType: string): string {
   return humanizeKey(entityType);
 }
 
-/** The best page to open for an audited entity, or null when none exists. */
-export function entityHref(entityType: string, entityId: string): string | null {
+/**
+ * The best page to open for an audited entity, or null when none exists. A run opens its
+ * request panel when the log could resolve the request, else the run's diagnostics page.
+ */
+export function entityHref(
+  entityType: string,
+  entityId: string,
+  workRequestId?: string | null
+): string | null {
+  if (entityType === 'WorkflowRun' && workRequestId) {
+    return requestHref(workRequestId);
+  }
   const target = TARGETS[entityType];
   if (!target) {
     return null;

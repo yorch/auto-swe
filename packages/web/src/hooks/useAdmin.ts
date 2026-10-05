@@ -165,6 +165,8 @@ export interface AuditLogRow {
   beforeJson: unknown;
   afterJson: unknown;
   createdAt: string;
+  /** Only on a `WorkflowRun` row: the request that run belongs to, when it has one. */
+  workRequestId?: string | null;
 }
 
 export type AuditAction = 'CREATE' | 'DELETE' | 'UPDATE';

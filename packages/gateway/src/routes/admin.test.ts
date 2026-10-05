@@ -28,6 +28,9 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     user: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    workflowRun: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     workflowShellAudit: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
@@ -421,6 +424,65 @@ describe('adminRoutes', () => {
           where: { id: { in: ['11111111-1111-4111-8111-111111111111'] } },
         })
       );
+    });
+
+    it('resolves the request of each audited run in one batched lookup', async () => {
+      const run1 = '22222222-2222-4222-8222-222222222222';
+      const run2 = '33333333-3333-4333-8333-333333333333';
+      const row = (id: string, entityId: string, entityType: string) => ({
+        action: 'UPDATE',
+        actorId: null,
+        createdAt: new Date(),
+        entityId,
+        entityType,
+        id,
+      });
+      ctx.mockPrisma.configAuditLog.findMany.mockResolvedValueOnce([
+        row('a1', run1, 'WorkflowRun'),
+        row('a2', run2, 'WorkflowRun'),
+        row('a3', run1, 'WorkflowRun'),
+        row('a4', 'not-a-uuid', 'WorkflowRun'),
+        row('a5', 'e5', 'Team'),
+      ]);
+      ctx.mockPrisma.workflowRun.findMany.mockReset().mockResolvedValueOnce([
+        { id: run1, workRequestId: 'req-1' },
+        { id: run2, workRequestId: null },
+      ]);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log',
+      });
+      expect(res.statusCode).toBe(200);
+      const { data } = JSON.parse(res.payload);
+      expect(data.map((r: { workRequestId?: string | null }) => r.workRequestId)).toEqual([
+        'req-1',
+        null,
+        'req-1',
+        null,
+        undefined,
+      ]);
+      expect(ctx.mockPrisma.workflowRun.findMany).toHaveBeenCalledTimes(1);
+      expect(ctx.mockPrisma.workflowRun.findMany).toHaveBeenCalledWith({
+        select: { id: true, workRequestId: true },
+        where: { id: { in: [run1, run2] } },
+      });
+    });
+
+    it('skips the run lookup when the page holds no run rows', async () => {
+      ctx.mockPrisma.workflowRun.findMany.mockClear();
+      ctx.mockPrisma.configAuditLog.findMany.mockResolvedValueOnce([
+        {
+          action: 'UPDATE',
+          actorId: null,
+          createdAt: new Date(),
+          entityId: 'e',
+          entityType: 'Team',
+          id: 'a1',
+        },
+      ]);
+      await ctx.app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/audit-log' });
+      expect(ctx.mockPrisma.workflowRun.findMany).not.toHaveBeenCalled();
     });
 
     it('pushes every filter and the page window into the query', async () => {

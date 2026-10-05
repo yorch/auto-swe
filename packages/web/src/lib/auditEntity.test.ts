@@ -8,4 +8,10 @@ describe('audit entities', () => {
     expect(entityHref('Session', 's1')).toBe('/govern/sessions');
     expect(entityHref('McpToolCall', 'x')).toBeNull();
   });
+
+  it('opens the request panel for a run whose request is known, else the run page', () => {
+    expect(entityHref('WorkflowRun', 'r1', 'req 1')).toBe('/workflows?request=req%201');
+    expect(entityHref('WorkflowRun', 'r1', null)).toBe('/runs/r1');
+    expect(entityHref('WorkflowRun', 'r1')).toBe('/runs/r1');
+  });
 });

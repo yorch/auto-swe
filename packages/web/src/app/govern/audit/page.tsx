@@ -460,7 +460,7 @@ function AuditRow({
   onFilterActor: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const href = entityHref(row.entityType, row.entityId);
+  const href = entityHref(row.entityType, row.entityId, row.workRequestId);
   return (
     <>
       <TRow>
