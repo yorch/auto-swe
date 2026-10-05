@@ -4625,7 +4625,7 @@
       "title": "Ticket title and status read from the submit-time snapshot"
     },
     {
-      "anchor": "async function recordAgentRunPullRequest(args: {",
+      "anchor": "async function recordAgentRunPullRequest(",
       "before": 7,
       "id": "agentRunPr",
       "lines": 40,

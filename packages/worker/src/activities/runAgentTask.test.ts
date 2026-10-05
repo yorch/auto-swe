@@ -19,9 +19,8 @@ const m = vi.hoisted(() => ({
   gate: vi.fn(),
   importTree: vi.fn(async () => 10),
   ledger: { id: 'ledger-1', repoId: 'repo-1' } as unknown,
-  persist: vi.fn(async () => {}),
+  persist: vi.fn(async (_tracer: unknown, _key: string) => {}),
   prCreate: vi.fn(async (_args: unknown) => ({})),
-  prFind: vi.fn(async (_args: unknown) => null as { id: string } | null),
   prUpdate: vi.fn(async (_args: unknown) => ({})),
   push: vi.fn(),
   resolveAgentSpec: vi.fn(),
@@ -60,7 +59,7 @@ vi.mock('@auto-swe/shared/db', () => ({
         installation: null,
       })),
     },
-    pullRequest: { create: m.prCreate, findFirst: m.prFind, update: m.prUpdate },
+    pullRequest: { create: m.prCreate, update: m.prUpdate },
     workflowRun: { findUnique: vi.fn(async () => m.run) },
   },
 }));
@@ -178,6 +177,14 @@ const GATED = {
   workspaceId: 'trusted-ws',
 };
 
+/** The activity events the run's tracer held when it was persisted. */
+function traceEvents(): Array<{ error?: string; toolName: string }> {
+  const tracer = m.persist.mock.calls[0]?.[0] as
+    | { records: Array<{ error?: string; toolName: string }> }
+    | undefined;
+  return tracer ? tracer.records : [];
+}
+
 async function failureOf(p: Promise<unknown>): Promise<ApplicationFailure> {
   try {
     await p;
@@ -195,7 +202,7 @@ beforeEach(() => {
     templateId: 'tpl-1',
   };
   m.ledger = { id: 'ledger-1', repoId: 'repo-1' };
-  m.prFind.mockResolvedValue(null);
+  m.prCreate.mockResolvedValue({});
   m.slots = [{ launchedAt: new Date(1), teamId: 'team-1', workflowId: 'wf-1' }];
   m.temporal = {};
   m.toolKeys = null;
@@ -548,10 +555,6 @@ describe('delivery: trust boundary and gate-before-push', () => {
 
   it("tracks the draft PR on the run's own ledger row", async () => {
     await runAgentTask({ request: deliver('draft_pr') });
-    expect(m.prFind).toHaveBeenCalledWith({
-      select: { id: true },
-      where: { prNumber: 7, repoId: 'repo-1' },
-    });
     expect(m.prCreate).toHaveBeenCalledTimes(1);
     expect(m.prCreate.mock.calls[0]?.[0]).toEqual({
       data: {
@@ -567,16 +570,25 @@ describe('delivery: trust boundary and gate-before-push', () => {
     });
   });
 
-  it('refreshes the row instead of duplicating it when the PR number is already tracked', async () => {
-    m.prFind.mockResolvedValue({ id: 'pr-row' });
-    await runAgentTask({ request: deliver('draft_pr') });
-    expect(m.prCreate).not.toHaveBeenCalled();
-    expect(m.prUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'pr-row' } }));
+  it('never updates a row that already holds the same repository and number', async () => {
+    // The host just opened a new PR, so a row with this number is a different one.
+    // The unique index refuses the insert; the other row is left as it is.
+    m.prCreate.mockRejectedValue(
+      new Error('Unique constraint failed on pull_requests_repo_id_pr_number_uidx')
+    );
+    const r = await runAgentTask({ request: deliver('draft_pr') });
+    expect(m.prUpdate).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ gate: 'passed', prNumber: 7 });
+    expect(traceEvents()).toContainEqual(
+      expect.objectContaining({
+        error: expect.stringContaining('Unique constraint'),
+        toolName: 'pr.record_failed',
+      })
+    );
   });
 
   it('does not track a PR for deliver=branch', async () => {
     await runAgentTask({ request: deliver('branch') });
-    expect(m.prFind).not.toHaveBeenCalled();
     expect(m.prCreate).not.toHaveBeenCalled();
   });
 
@@ -584,6 +596,12 @@ describe('delivery: trust boundary and gate-before-push', () => {
     m.prCreate.mockRejectedValue(new Error('db down'));
     const r = await runAgentTask({ request: deliver('draft_pr') });
     expect(r).toMatchObject({ gate: 'passed', prNumber: 7 });
+    expect(traceEvents().map((e) => e.toolName)).toContain('pr.record_failed');
+  });
+
+  it('records no failure event when the row is written', async () => {
+    await runAgentTask({ request: deliver('draft_pr') });
+    expect(traceEvents().map((e) => e.toolName)).not.toContain('pr.record_failed');
   });
 
   it('puts agent-controlled file paths in a fence they cannot close, with mentions defused', async () => {

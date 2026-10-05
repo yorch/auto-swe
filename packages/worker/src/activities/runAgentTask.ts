@@ -367,14 +367,17 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
           { branch, headSha: gated.sha }
         );
       }
-      await recordAgentRunPullRequest({
-        headSha: gated.sha,
-        isDraft: true,
-        ledgerId: ledger.id,
-        prNumber: pr.prNumber,
-        repoId,
-        title,
-      });
+      await recordAgentRunPullRequest(
+        {
+          headSha: gated.sha,
+          isDraft: true,
+          ledgerId: ledger.id,
+          prNumber: pr.prNumber,
+          repoId,
+          title,
+        },
+        tracer
+      );
     }
 
     return {
@@ -401,41 +404,48 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
  * Track the PR on the run's own ledger row, as the workflow's PR step does, so it
  * shows on /pull-requests and the webhook lifecycle finds it. Never fails the run:
  * the PR is already open and the branch pushed, and a retry of this activity would
- * not reuse the open PR (it would be refused as a duplicate). An existing row for
- * the same (repo, number) is refreshed rather than duplicated.
+ * not reuse the open PR (it would be refused as a duplicate). The failure is
+ * logged and traced instead, so the run viewer shows it.
+ *
+ * Always a `create`: the host just opened a new PR, so a row already holding this
+ * (repository, number) belongs to a different PR (the repository was repointed or
+ * recreated and numbering restarted). The partial unique index refuses the insert,
+ * and that other row, with its workflow link and MERGED state, stays untouched.
  */
-async function recordAgentRunPullRequest(args: {
-  headSha: string;
-  isDraft: boolean;
-  ledgerId: string;
-  prNumber: number;
-  repoId: string;
-  title: string;
-}): Promise<void> {
-  const data = {
-    ciStatus: 'PENDING',
-    headSha: args.headSha,
-    isDraft: args.isDraft,
-    status: 'OPEN',
-    title: clampPullRequestTitle(args.title),
-    workflowId: args.ledgerId,
-  };
+async function recordAgentRunPullRequest(
+  args: {
+    headSha: string;
+    isDraft: boolean;
+    ledgerId: string;
+    prNumber: number;
+    repoId: string;
+    title: string;
+  },
+  tracer: AgentTracer
+): Promise<void> {
   try {
-    const existing = await prisma.pullRequest.findFirst({
-      select: { id: true },
-      where: { prNumber: args.prNumber, repoId: args.repoId },
+    await prisma.pullRequest.create({
+      data: {
+        ciStatus: 'PENDING',
+        headSha: args.headSha,
+        isDraft: args.isDraft,
+        prNumber: args.prNumber,
+        repoId: args.repoId,
+        status: 'OPEN',
+        title: clampPullRequestTitle(args.title),
+        workflowId: args.ledgerId,
+      },
     });
-    if (existing) {
-      await prisma.pullRequest.update({ data, where: { id: existing.id } });
-    } else {
-      await prisma.pullRequest.create({
-        data: { ...data, prNumber: args.prNumber, repoId: args.repoId },
-      });
-    }
   } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
     logWarn('agent run pull request was opened but could not be tracked', {
-      error: err instanceof Error ? err.message : String(err),
+      error,
       prNumber: args.prNumber,
+    });
+    tracer.addActivityEvent({
+      error,
+      name: 'pr.record_failed',
+      outputJson: { prNumber: args.prNumber },
     });
   }
 }
