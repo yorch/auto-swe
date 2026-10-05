@@ -239,6 +239,8 @@ yarn docker:app:logs      # Tail logs (infra + app)
 yarn docker:app:build     # Rebuild app images
 ```
 
+`just` equivalents (optional; same compose files): `just infra-up|infra-down`, `just dev-up|dev-down|dev-logs|dev-build`, `just prod-*`. Run `just --list`.
+
 ### Quality Gates
 
 **Every quality gate must pass before you make a commit — not just before you open a pull
