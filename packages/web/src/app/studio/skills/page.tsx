@@ -153,7 +153,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
         patch.promptText = form.promptText;
       }
       const { scanWarnings: warnings, skill: saved } = await update.mutateAsync(patch);
-      setViewed({ ...sk, ...saved });
+      setViewed({ ...sk, ...saved, scanWarnings: warnings });
       setEditing(false);
       if (warnings.length > 0) {
         // Saved, but the scanner flagged the text — keep the modal open to say so.
@@ -274,10 +274,10 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           {sk.description && (
             <p className="text-sm text-paper-300">{visibleOrNull(sk.description)}</p>
           )}
-          {skill.scanWarnings.length > 0 && (
+          {sk.scanWarnings.length > 0 && (
             <Alert title="Scanner findings on this text" variant="warning">
               <ul className="list-disc space-y-0.5 pl-4 text-xs">
-                {skill.scanWarnings.map((w) => (
+                {sk.scanWarnings.map((w) => (
                   <li key={w}>{w}</li>
                 ))}
               </ul>
@@ -319,7 +319,9 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             </div>
           </div>
           {showHistory && (
-            <SkillHistory onRestored={(restored) => setViewed({ ...sk, ...restored })} skill={sk} />
+            <SkillHistory onRestored={(restored, warnings) =>
+                setViewed({ ...sk, ...restored, scanWarnings: warnings })
+              } skill={sk} />
           )}
         </div>
       )}

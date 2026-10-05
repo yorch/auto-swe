@@ -21,8 +21,8 @@ export function SkillHistory({
   onRestored,
   skill,
 }: {
-  /** Called with the saved skill after a restore, so the caller shows the revision it just made. */
-  onRestored?: (skill: Skill) => void;
+  /** Called with the saved skill and its scanner findings after a restore, so the caller shows the revision it just made. */
+  onRestored?: (skill: Skill, scanWarnings: string[]) => void;
   skill: Skill;
 }) {
   const {
@@ -157,7 +157,7 @@ export function SkillHistory({
           if (restoring !== null) {
             const res = await restore.mutateAsync({ id: skill.id, revision: restoring });
             setNotice({ revision: res.skill.currentRevision, warnings: res.scanWarnings });
-            onRestored?.(res.skill);
+            onRestored?.(res.skill, res.scanWarnings);
             setSelected(null);
             setRestoring(null);
           }
