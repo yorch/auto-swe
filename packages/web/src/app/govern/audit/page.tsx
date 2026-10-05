@@ -31,6 +31,10 @@ import { formatDate } from '@/lib/utils';
 
 const LIMIT = 50;
 
+// The gateway rejects a malformed actor id with a 400 that would replace the whole page
+// with an error; a hand-edited or stale link instead just drops the filter.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const SHELL_AUDIT_KEEP_DAYS = 90;
 
 const ACTION_OPTIONS = [
@@ -70,7 +74,9 @@ function AuditWorkspace() {
     action: ACTION_OPTIONS.some((o) => o.value === rawAction)
       ? ((rawAction || undefined) as AuditAction | undefined)
       : undefined,
-    actorId: params.get('actor') || undefined,
+    actorId: UUID_RE.test(params.get('actor') ?? '')
+      ? (params.get('actor') ?? undefined)
+      : undefined,
     entityType: params.get('entity') || undefined,
     search: search || undefined,
     ...rangeDays(range),

@@ -51,6 +51,14 @@ describe('GovernAuditPage', () => {
     expect(screen.getByText('system')).toBeTruthy();
   });
 
+  it('drops an actor filter that is not an id instead of erroring the page', async () => {
+    resetNavigation('actor=not-a-uuid', '/govern/audit');
+    const spy = mockLog(2);
+    render(withQuery(<GovernAuditPage />));
+    await screen.findByText('alice@example.com');
+    expect(urls(spy).every((u) => !u.includes('actorId'))).toBe(true);
+  });
+
   it('pages through the log with the shared pagination control', async () => {
     const spy = mockLog(120);
     render(withQuery(<GovernAuditPage />));
