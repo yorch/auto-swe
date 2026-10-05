@@ -330,19 +330,32 @@ function EditorInner({
 
   // Below lg the palette, outline and inspector are overlays on the canvas, so
   // opening one moves focus into it, and Escape closes it again.
+  const paletteTriggerRef = useRef<HTMLElement | null>(null);
+  const outlineTriggerRef = useRef<HTMLElement | null>(null);
+  const inspectorTriggerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (paletteOpen) {
+      paletteTriggerRef.current = rememberTrigger();
       focusFirst(paletteRef.current);
+    } else {
+      restoreTrigger(paletteTriggerRef);
     }
   }, [paletteOpen]);
   useEffect(() => {
     if (showOutline) {
+      outlineTriggerRef.current = rememberTrigger();
       focusFirst(outlineRef.current);
+    } else {
+      restoreTrigger(outlineTriggerRef);
     }
   }, [showOutline]);
   useEffect(() => {
     if (selectedNodeId && overlayMode()) {
+      // Selecting a different node keeps the first trigger: closing returns there.
+      inspectorTriggerRef.current ??= rememberTrigger();
       focusFirst(inspectorRef.current);
+    } else if (!selectedNodeId) {
+      restoreTrigger(inspectorTriggerRef);
     }
   }, [selectedNodeId]);
   const handleOverlayKeyDown = (event: React.KeyboardEvent) => {
@@ -652,6 +665,21 @@ function EditorInner({
       </div>
     </div>
   );
+}
+
+/** The element that had focus when an overlay opened, so closing can give focus back. */
+function rememberTrigger(): HTMLElement | null {
+  const el = document.activeElement;
+  return el instanceof HTMLElement && el !== document.body ? el : null;
+}
+
+/** Returns focus to the remembered trigger once its overlay closed, if it is still on the page. */
+function restoreTrigger(ref: { current: HTMLElement | null }) {
+  const el = ref.current;
+  ref.current = null;
+  if (el?.isConnected) {
+    el.focus();
+  }
 }
 
 /** Moves focus to the first control inside an overlay, or the overlay itself. */

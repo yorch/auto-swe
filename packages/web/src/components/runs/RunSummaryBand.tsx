@@ -21,6 +21,11 @@ interface RunSummaryBandProps {
 /**
  * What needs a person, or what came out of the run, shown above whichever layout is
  * chosen: pending approvals first, then the result or the failure.
+ *
+ * It composes the same cards as `RequestPanel` (`components/requests/`) on purpose
+ * rather than sharing one wrapper: this band is a full-width strip above a run's
+ * layout, the panel a narrow side sheet, and forcing one layout onto both costs more
+ * than the small duplication. Keep the two in step by hand when a card's props change.
  */
 export function RunSummaryBand({
   run,
