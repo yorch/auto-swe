@@ -30,7 +30,13 @@ import {
   useUsageScopes,
 } from '@/hooks/useAdmin';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
-import { dateRangePatch, parseDateRange, rangeDays, rangePhrase } from '@/lib/dateRange';
+import {
+  customRangeIgnored,
+  dateRangePatch,
+  parseDateRange,
+  rangeDays,
+  rangePhrase,
+} from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 import { humanizeKey } from '@/lib/govLabels';
 import { formatCost, formatCount, formatDuration, formatPercent, formatTokens } from '@/lib/utils';
@@ -253,7 +259,11 @@ function UsageWorkspace() {
                 value={scopeValue ?? ''}
               />
             )}
-            <DateRangeControl onChange={(r) => r && update(dateRangePatch(r))} value={range} />
+            <DateRangeControl
+              onChange={(r) => r && update(dateRangePatch(r))}
+              rangeIgnored={customRangeIgnored(params)}
+              value={range}
+            />
           </div>
         }
         chapter="§ Govern"

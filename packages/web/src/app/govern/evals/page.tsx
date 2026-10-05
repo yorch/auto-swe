@@ -23,7 +23,7 @@ import {
 } from '@/hooks/useAdmin';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
-import { dateRangePatch, describeRange, parseDateRange } from '@/lib/dateRange';
+import { customRangeIgnored, dateRangePatch, describeRange, parseDateRange } from '@/lib/dateRange';
 import { latestMean, scorerChange, worstMovingScorer } from '@/lib/evalTrend';
 import { cn, formatDate, scoreColor } from '@/lib/utils';
 
@@ -115,7 +115,11 @@ function EvalsWorkspace() {
               options={BREAKDOWN_OPTIONS}
               value={by}
             />
-            <DateRangeControl onChange={(r) => r && update(dateRangePatch(r))} value={range} />
+            <DateRangeControl
+              onChange={(r) => r && update(dateRangePatch(r))}
+              rangeIgnored={customRangeIgnored(params)}
+              value={range}
+            />
           </div>
         }
         chapter="§ Govern"

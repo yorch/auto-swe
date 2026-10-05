@@ -28,6 +28,25 @@ describe('DateRangeControl', () => {
     expect(onChange).toHaveBeenCalledWith({ from: '2026-01-02', kind: 'custom', to: '2026-01-05' });
   });
 
+  it('refuses a custom span longer than the limit, with an inline message', () => {
+    const onChange = vi.fn();
+    render(<DateRangeControl onChange={onChange} value={{ days: 30, kind: 'preset' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+    fireEvent.change(screen.getByLabelText('From date (UTC)'), { target: { value: '2024-01-01' } });
+    fireEvent.change(screen.getByLabelText('To date (UTC)'), { target: { value: '2025-06-01' } });
+    expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+    expect(screen.getByRole('alert').textContent).toContain('at most 366 days');
+  });
+
+  it('says so when the link asked for a range the page cannot serve', () => {
+    render(
+      <DateRangeControl onChange={() => {}} rangeIgnored value={{ days: 30, kind: 'preset' }} />
+    );
+    expect(screen.getByRole('status').textContent).toContain('default range is shown');
+  });
+
   it('hides the custom option when the source cannot serve it', () => {
     render(
       <DateRangeControl

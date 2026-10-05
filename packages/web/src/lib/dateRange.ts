@@ -9,6 +9,8 @@ export type DateRange =
   | { kind: 'custom'; from: string; to: string };
 
 export const DEFAULT_PRESETS = [7, 30, 90] as const;
+/** The longest custom span the gateway serves, in calendar days. */
+export const MAX_SPAN_DAYS = 366;
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -26,10 +28,20 @@ export function isIsoDay(value: string | null | undefined): value is string {
  * Reads `range`, `from` and `to` from the URL; anything unusable falls back to the default.
  * A page that serves presets only passes `allowCustom: false`, so a shared `range=custom`
  * link falls back to the default preset (see `customRangeIgnored` for telling the reader).
+ * So does a custom span longer than `maxSpanDays` or ending in the future: the gateway would
+ * refuse it, and a hand-edited link must not turn the page into an error.
  */
+export interface ParseDateRangeOptions {
+  allowCustom?: boolean;
+  defaultDays?: number;
+  maxSpanDays?: number;
+  now?: Date;
+  presets?: readonly number[];
+}
+
 export function parseDateRange(
   params: URLSearchParams | { get(name: string): string | null },
-  opts: { allowCustom?: boolean; defaultDays?: number; presets?: readonly number[] } = {}
+  opts: ParseDateRangeOptions = {}
 ): DateRange {
   const presets = opts.presets ?? DEFAULT_PRESETS;
   const fallback = opts.defaultDays ?? 30;
@@ -41,7 +53,9 @@ export function parseDateRange(
     range === 'custom' &&
     isIsoDay(from) &&
     isIsoDay(to) &&
-    from <= to
+    from <= to &&
+    to <= utcDay(opts.now ?? new Date()) &&
+    spanDays(from, to) <= (opts.maxSpanDays ?? MAX_SPAN_DAYS)
   ) {
     return { from, kind: 'custom', to };
   }
@@ -58,6 +72,11 @@ export function dateRangePatch(range: DateRange, defaultDays = 30): Record<strin
     return { from: range.from, range: 'custom', to: range.to };
   }
   return { from: null, range: range.days === defaultDays ? null : String(range.days), to: null };
+}
+
+/** Calendar days from `from` to `to`, counted inclusively. */
+function spanDays(from: string, to: string): number {
+  return Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS) + 1;
 }
 
 /** `YYYY-MM-DD` of a UTC instant. */
@@ -123,7 +142,10 @@ export function rangeKey(range: DateRange): string {
   return range.kind === 'preset' ? `${range.days}d` : `${range.from}..${range.to}`;
 }
 
-/** True when the URL asked for a custom range that a presets-only page cannot serve. */
-export function customRangeIgnored(params: { get(name: string): string | null }): boolean {
-  return params.get('range') === 'custom';
+/** True when the URL asked for a custom range that the page cannot serve (presets-only, too long, or in the future). */
+export function customRangeIgnored(
+  params: { get(name: string): string | null },
+  opts: ParseDateRangeOptions = {}
+): boolean {
+  return params.get('range') === 'custom' && parseDateRange(params, opts).kind !== 'custom';
 }

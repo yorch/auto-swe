@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { type DateRange, isIsoDay, utcDay } from '@/lib/dateRange';
+import { type DateRange, isIsoDay, MAX_SPAN_DAYS, utcDay } from '@/lib/dateRange';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { SegmentedControl } from './SegmentedControl';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The time range of a govern data page: day presets plus (where the data
@@ -14,16 +16,22 @@ export function DateRangeControl({
   allowAll = false,
   allowCustom = true,
   className,
+  maxSpanDays = MAX_SPAN_DAYS,
   onChange,
   presets = [7, 30, 90],
+  rangeIgnored = false,
   value,
 }: {
   /** Offers "All time"; the value is then `null` for no date filter. */
   allowAll?: boolean;
   allowCustom?: boolean;
   className?: string;
+  /** The longest custom span the data source serves. */
+  maxSpanDays?: number;
   onChange: (range: DateRange | null) => void;
   presets?: readonly number[];
+  /** The link asked for a custom range this page cannot serve, so a default is shown. */
+  rangeIgnored?: boolean;
   value: DateRange | null;
 }) {
   const options = [
@@ -54,7 +62,12 @@ export function DateRangeControl({
   }, [valueKey]);
 
   const today = utcDay(new Date());
-  const invalid = !isIsoDay(from) || !isIsoDay(to) || from > to || to > today;
+  const tooLong =
+    isIsoDay(from) &&
+    isIsoDay(to) &&
+    from <= to &&
+    Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS) + 1 > maxSpanDays;
+  const invalid = !isIsoDay(from) || !isIsoDay(to) || from > to || to > today || tooLong;
   const selected =
     customOpen || value?.kind === 'custom' ? 'custom' : value ? String(value.days) : 'all';
   const inputClass =
@@ -108,14 +121,21 @@ export function DateRangeControl({
           <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
             Dates are UTC
           </span>
-          {isIsoDay(from) && isIsoDay(to) && (from > to || to > today) && (
+          {isIsoDay(from) && isIsoDay(to) && (from > to || to > today || tooLong) && (
             <span className="w-full text-xs text-brick-400" role="alert">
               {from > to
                 ? 'The start date must be on or before the end date.'
-                : 'The end date cannot be in the future.'}
+                : to > today
+                  ? 'The end date cannot be in the future.'
+                  : `The range can span at most ${maxSpanDays} days.`}
             </span>
           )}
         </div>
+      )}
+      {rangeIgnored && (
+        <span className="w-full text-xs text-paper-400" role="status">
+          The date range in that link isn't available here, so the default range is shown.
+        </span>
       )}
     </div>
   );

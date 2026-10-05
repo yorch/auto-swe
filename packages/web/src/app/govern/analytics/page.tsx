@@ -16,7 +16,13 @@ import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useSort } from '@/hooks/useSort';
 import { useGlobalAnalytics } from '@/hooks/useTemplates';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
-import { dateRangePatch, parseDateRange, rangeDays, rangePhrase } from '@/lib/dateRange';
+import {
+  customRangeIgnored,
+  dateRangePatch,
+  parseDateRange,
+  rangeDays,
+  rangePhrase,
+} from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 import { outcomeTypeLabel } from '@/lib/govLabels';
 import { successTone } from '@/lib/tone';
@@ -141,6 +147,7 @@ function AnalyticsWorkspace() {
                 setPage(0);
               }
             }}
+            rangeIgnored={customRangeIgnored(params)}
             value={range}
           />
         }

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseDateRange, rangeDays, rangeKey, rangePhrase, rangeQuery } from './dateRange';
+import {
+  customRangeIgnored,
+  parseDateRange,
+  rangeDays,
+  rangeKey,
+  rangePhrase,
+  rangeQuery,
+} from './dateRange';
 
 describe('range helpers', () => {
   const custom = { from: '2026-09-01', kind: 'custom', to: '2026-09-14' } as const;
@@ -8,6 +15,18 @@ describe('range helpers', () => {
     const params = new URLSearchParams('range=custom&from=2026-09-01&to=2026-09-14');
     expect(parseDateRange(params)).toEqual(custom);
     expect(parseDateRange(params, { allowCustom: false })).toEqual({ days: 30, kind: 'preset' });
+  });
+
+  it('falls back to the default when the span is too long or ends in the future', () => {
+    const long = new URLSearchParams('range=custom&from=2024-01-01&to=2025-06-01');
+    expect(parseDateRange(long)).toEqual({ days: 30, kind: 'preset' });
+    expect(customRangeIgnored(long)).toBe(true);
+    expect(parseDateRange(long, { maxSpanDays: 1000 }).kind).toBe('custom');
+    const future = new URLSearchParams('range=custom&from=2026-09-01&to=2999-01-01');
+    expect(parseDateRange(future)).toEqual({ days: 30, kind: 'preset' });
+    const ok = new URLSearchParams('range=custom&from=2025-01-01&to=2025-12-31');
+    expect(parseDateRange(ok).kind).toBe('custom');
+    expect(customRangeIgnored(ok)).toBe(false);
   });
 
   it('maps a range to the gateway query', () => {

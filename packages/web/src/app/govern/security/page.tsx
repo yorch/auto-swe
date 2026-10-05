@@ -19,7 +19,7 @@ import { Stat } from '@/components/ui/Stat';
 import type { SecurityEventSummary, SecurityEventType } from '@/hooks/useAdmin';
 import { useSecurityEventSummary, useSecurityEvents } from '@/hooks/useAdmin';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
-import { dateRangePatch, dayBounds, parseDateRange } from '@/lib/dateRange';
+import { customRangeIgnored, dateRangePatch, dayBounds, parseDateRange } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 
 const TYPE_OPTIONS: Array<{ label: string; value: SecurityEventType | '' }> = [
@@ -147,6 +147,7 @@ function SecurityWorkspace() {
             </div>
             <DateRangeControl
               onChange={(r) => r && update({ ...dateRangePatch(r), offset: null })}
+              rangeIgnored={customRangeIgnored(params)}
               value={range}
             />
           </div>
