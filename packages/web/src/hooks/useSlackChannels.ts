@@ -292,6 +292,8 @@ export interface ChannelAuditEntry {
   tokensOutput: number;
   createdAt: string;
   endedAt: string | null;
+  /** The request this run belongs to, when it has one; the request panel is the first stop. */
+  workRequestId: string | null;
 }
 
 export function useChannelAudit(channelId: string | null, kind: ChannelAuditKind | 'all' = 'all') {

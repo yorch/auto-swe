@@ -13,6 +13,7 @@ import {
   useChannelAudit,
 } from '@/hooks/useSlackChannels';
 import { useUsers } from '@/hooks/useUsers';
+import { requestHref } from '@/lib/requestDisplay';
 import { emailsBySlackId, slackUserLabel } from '@/lib/slackUserLabel';
 import { formatCost, formatRelativeTime, formatTokens } from '@/lib/utils';
 
@@ -101,12 +102,19 @@ export function ChannelActivityTab({ channel }: { channel: SlackChannel }) {
                     </span>
                   </div>
                 </div>
-                <Link
-                  className="shrink-0 text-xs text-ember-400 hover:underline"
-                  href={`/runs/${e.runId}`}
-                >
-                  View run →
-                </Link>
+                <div className="flex shrink-0 flex-col items-end gap-1 text-xs">
+                  <Link
+                    className="text-ember-400 hover:underline"
+                    href={e.workRequestId ? requestHref(e.workRequestId) : `/runs/${e.runId}`}
+                  >
+                    View run →
+                  </Link>
+                  {e.workRequestId && (
+                    <Link className="text-paper-400 hover:underline" href={`/runs/${e.runId}`}>
+                      Diagnostics
+                    </Link>
+                  )}
+                </div>
               </div>
             </Card>
           ))}

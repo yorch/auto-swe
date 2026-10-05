@@ -908,6 +908,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
           status: true,
           tokensInputTotal: true,
           tokensOutputTotal: true,
+          workRequestId: true,
         },
         take: request.query.limit ?? 50,
         where: {
@@ -934,6 +935,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
           tokensOutput: Number(run.tokensOutputTotal ?? 0),
           userSlackId: (meta.userSlackId as string | null) ?? null,
           userText: (meta.userText as string | null) ?? null,
+          workRequestId: run.workRequestId ?? null,
         };
       });
 
