@@ -545,3 +545,39 @@ describe('teamAgentLibraryRoutes — team owner', () => {
     await app.close();
   });
 });
+
+describe('GET /api/v1/teams/:id/agent-library/options', () => {
+  it('lets any team member list keys, names and models only', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ENGINEER');
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { key: 'reviewer', modelSpec: 'anthropic/a', name: 'Reviewer', scope: 'GLOBAL' },
+      { key: 'reviewer', modelSpec: 'anthropic/b', name: 'Team reviewer', scope: 'TEAM' },
+      { key: 'planner', modelSpec: null, name: 'Planner', scope: 'GLOBAL' },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/teams/${TEAM}/agent-library/options`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual([
+      { key: 'reviewer', modelSpec: 'anthropic/b', name: 'Team reviewer' },
+      { key: 'planner', modelSpec: null, name: 'Planner' },
+    ]);
+    const arg = mockPrisma.agent.findMany.mock.calls[0][0];
+    expect(arg.select).toEqual({ key: true, modelSpec: true, name: true, scope: true });
+    expect(arg.where.OR).toContainEqual({ scope: 'TEAM', teamId: TEAM });
+    await app.close();
+  });
+
+  it('rejects a user who is not in the team', async () => {
+    const { app } = await buildTeamApp(null);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/teams/${TEAM}/agent-library/options`,
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+});

@@ -842,6 +842,7 @@ Writes cut a new immutable `version`.
 | `GET` | `/api/v1/platform/agent-library/:id/versions` | `ADMIN` | Every version of the lineage `:id` belongs to, newest first, with skills and author |
 | `POST` | `/api/v1/platform/agent-library/:id/restore` | `ADMIN` | Cut a new version from an older one (`{ versionId }`); never rewrites history |
 | `DELETE` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Delete / deactivate an Agent override |
+| `GET` | `/api/v1/teams/:id/agent-library/options` | Team member | Agent keys, names and models an override may inherit from (GLOBAL plus the team's own); no prompts or tools |
 | `GET` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | List TEAM-scope Agent overrides |
 | `POST` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | Create a TEAM-scope Agent override |
 | `PUT` | `/api/v1/teams/:id/agent-library/:agentId` | Team `ADMIN` | Update a TEAM-scope Agent override |

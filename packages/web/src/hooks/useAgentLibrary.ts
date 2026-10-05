@@ -129,6 +129,19 @@ export function useTeamAgents(teamId: string) {
   });
 }
 
+/** Agent keys a team override may name as a model parent; readable by any team member. */
+export function useTeamAgentOptions(teamId: string) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: { key: string; name: string; modelSpec: string | null }[] }>(
+          `/api/v1/teams/${teamId}/agent-library/options`
+        )
+        .then((r) => r.data),
+    queryKey: ['team-agent-options', teamId],
+  });
+}
+
 export type CreateTeamAgentBody = Omit<CreateAgentBody, 'scope' | 'teamId' | 'workflowTemplateId'>;
 
 export function useCreateTeamAgent(teamId: string) {
