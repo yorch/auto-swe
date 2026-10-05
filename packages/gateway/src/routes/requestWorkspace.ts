@@ -3,6 +3,7 @@ import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
+import { pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -177,17 +178,16 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
             ledger?.repository ??
             wr?.activeWorkflows[0]?.repository;
           const prNumber = ledger?.pullRequests.find((pr) => pr.prNumber != null)?.prNumber;
-          let reviewUrl: string | null = null;
-          if (prNumber && target?.repoName && target.organizationName) {
-            try {
-              const base = new URL(target.githubUrl ?? 'https://github.com');
-              if (base.protocol === 'https:' || base.protocol === 'http:') {
-                reviewUrl = `${base.href.replace(/\/$/, '')}/${encodeURIComponent(target.organizationName)}/${encodeURIComponent(target.repoName)}/pull/${prNumber}`;
-              }
-            } catch {
-              /* A malformed legacy URL is never linked. */
-            }
-          }
+          const reviewUrl = target
+            ? pullRequestUrl(
+                {
+                  githubUrl: target.githubUrl,
+                  organizationName: target.organizationName,
+                  repoName: target.repoName,
+                },
+                prNumber ?? null
+              )
+            : null;
           return {
             ...projectRunSummary(
               {

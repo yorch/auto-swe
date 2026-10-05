@@ -239,6 +239,7 @@ describe('webhook routes', () => {
   let openPrs: Array<Record<string, unknown>> = [];
   const updateCalls: UpdateCall[] = [];
   const updateManyCalls: UpdateCall[] = [];
+  const lifecycleWrites: UpdateCall[] = [];
   // Per-call override for updateMany's returned `count` (index-aligned with
   // updateManyCalls) — used to simulate the "already at this ciStatus" no-op
   // path for the duplicate-delivery idempotency test. `null` means every call
@@ -353,6 +354,11 @@ describe('webhook routes', () => {
             prRowStatus = args.data.status;
             return { count: 1 };
           }
+          // Lifecycle writes that touch neither: record and succeed.
+          if (!('ciStatus' in args.data)) {
+            lifecycleWrites.push(args);
+            return { count: 1 };
+          }
           // /ci writes `ciStatus`. An explicit updateManyResultCounts still
           // forces the count (used to stage races the row state can't express);
           // otherwise the ciStatus + headSha guard is evaluated for real.
@@ -419,6 +425,7 @@ describe('webhook routes', () => {
     openPrs = [];
     updateCalls.length = 0;
     updateManyCalls.length = 0;
+    lifecycleWrites.length = 0;
     updateManyResultCounts = null;
     prRowStatus = 'OPEN';
     prCiStatus.clear();
@@ -536,7 +543,10 @@ describe('webhook routes', () => {
         workflowId: 'eng-acme-payments-api-JIRA-1',
       });
       expect(updateManyCalls).toEqual([
-        { data: { status: 'MERGED' }, where: { id: 'pr-row-1', status: 'OPEN' } },
+        {
+          data: { closedAt: expect.any(Date), mergedAt: expect.any(Date), status: 'MERGED' },
+          where: { id: 'pr-row-1', status: 'OPEN' },
+        },
       ]);
       expect(prRowStatus).toBe('MERGED');
       expect(signalCalls).toEqual([
@@ -569,19 +579,108 @@ describe('webhook routes', () => {
       expect(evalCreateCalls).toHaveLength(0);
     });
 
-    it('ignores a non-merged close', async () => {
-      trackedPr = trackedRow();
-      const body = JSON.stringify({
-        action: 'closed',
-        pull_request: { merged: false, number: 42 },
-        repository: { full_name: 'acme/payments-api' },
+    describe('lifecycle events', () => {
+      const pr = (action: string, extra: Record<string, unknown> = {}, merged = false) => {
+        const body = JSON.stringify({
+          action,
+          pull_request: { merged, number: 42, ...extra },
+          repository: { full_name: 'acme/payments-api' },
+        });
+        return inject('/api/v1/webhooks/git', body, sign(body));
+      };
+
+      beforeEach(() => {
+        trackedPr = { id: 'pr-row-1' };
       });
-      const res = await inject('/api/v1/webhooks/git', body, sign(body));
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).data).toEqual({ ignored: true });
-      expect(updateCalls).toHaveLength(0);
-      expect(updateManyCalls).toHaveLength(0);
-      expect(signalCalls).toHaveLength(0);
+
+      it('records a close without a merge as CLOSED, without signalling the workflow', async () => {
+        const res = await pr('closed', { closed_at: '2026-10-01T12:00:00Z' });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).data).toEqual({ updated: true });
+        expect(updateManyCalls).toEqual([
+          {
+            data: { closedAt: new Date('2026-10-01T12:00:00Z'), status: 'CLOSED' },
+            where: { id: 'pr-row-1', status: 'OPEN' },
+          },
+        ]);
+        expect(prRowStatus).toBe('CLOSED');
+        expect(signalCalls).toHaveLength(0);
+        expect(evalCreateCalls).toHaveLength(0);
+      });
+
+      it('does nothing on a redelivered close', async () => {
+        await pr('closed');
+        const again = await pr('closed');
+        expect(JSON.parse(again.payload).data).toEqual({ updated: false });
+        expect(prRowStatus).toBe('CLOSED');
+      });
+
+      it('reopens a CLOSED PR and clears the close time', async () => {
+        prRowStatus = 'CLOSED';
+        const res = await pr('reopened');
+        expect(JSON.parse(res.payload).data).toEqual({ updated: true });
+        expect(updateManyCalls).toEqual([
+          {
+            data: { closedAt: null, status: 'OPEN' },
+            where: { id: 'pr-row-1', status: 'CLOSED' },
+          },
+        ]);
+        expect(prRowStatus).toBe('OPEN');
+      });
+
+      it('never reopens a MERGED PR', async () => {
+        prRowStatus = 'MERGED';
+        const res = await pr('reopened');
+        expect(JSON.parse(res.payload).data).toEqual({ updated: false });
+        expect(prRowStatus).toBe('MERGED');
+      });
+
+      it('tracks draft state from ready_for_review and converted_to_draft', async () => {
+        await pr('ready_for_review');
+        await pr('converted_to_draft');
+        expect(lifecycleWrites).toEqual([
+          { data: { isDraft: false }, where: { id: 'pr-row-1' } },
+          { data: { isDraft: true }, where: { id: 'pr-row-1' } },
+        ]);
+      });
+
+      it('refreshes the title on an edit, capped, and ignores an edit without one', async () => {
+        await pr('edited', { title: `  ${'x'.repeat(1000)}  ` });
+        await pr('edited');
+        expect(lifecycleWrites).toHaveLength(1);
+        expect(lifecycleWrites[0]?.data).toEqual({ title: 'x'.repeat(300) });
+      });
+
+      it('never creates a row for a PR the platform did not open', async () => {
+        trackedPr = null;
+        const res = await pr('closed');
+        expect(JSON.parse(res.payload).data).toEqual({
+          ignored: true,
+          reason: 'No tracked pull request',
+        });
+        expect(updateManyCalls).toHaveLength(0);
+      });
+
+      it('ignores the other actions', async () => {
+        for (const action of ['opened', 'synchronize', 'labeled', 'assigned']) {
+          const res = await pr(action);
+          expect(JSON.parse(res.payload).data).toEqual({ ignored: true });
+        }
+        expect(updateManyCalls).toHaveLength(0);
+      });
+
+      it('uses the time the host reports for a merge', async () => {
+        trackedPr = {
+          id: 'pr-row-1',
+          workflow: { repository: { team: null }, temporalWorkflowId: 'wf-1', workRequest: null },
+        };
+        await pr('closed', { merged_at: '2026-10-02T08:30:00Z' }, true);
+        expect(updateManyCalls[0]?.data).toEqual({
+          closedAt: new Date('2026-10-02T08:30:00Z'),
+          mergedAt: new Date('2026-10-02T08:30:00Z'),
+          status: 'MERGED',
+        });
+      });
     });
 
     it('ignores merged PRs with no tracked workflow', async () => {
@@ -624,8 +723,14 @@ describe('webhook routes', () => {
       expect(JSON.parse(res.payload).error.code).toBe('SIGNAL_FAILED');
       // Marked MERGED, then reverted — the row is recoverable.
       expect(updateManyCalls).toEqual([
-        { data: { status: 'MERGED' }, where: { id: 'pr-row-1', status: 'OPEN' } },
-        { data: { status: 'OPEN' }, where: { id: 'pr-row-1', status: 'MERGED' } },
+        {
+          data: { closedAt: expect.any(Date), mergedAt: expect.any(Date), status: 'MERGED' },
+          where: { id: 'pr-row-1', status: 'OPEN' },
+        },
+        {
+          data: { closedAt: null, mergedAt: null, status: 'OPEN' },
+          where: { id: 'pr-row-1', status: 'MERGED' },
+        },
       ]);
       expect(prRowStatus).toBe('OPEN');
       // Downstream side effects must not run on the failed path.
@@ -652,7 +757,10 @@ describe('webhook routes', () => {
       });
       // Marked MERGED and left there — no rollback write at all.
       expect(updateManyCalls).toEqual([
-        { data: { status: 'MERGED' }, where: { id: 'pr-row-1', status: 'OPEN' } },
+        {
+          data: { closedAt: expect.any(Date), mergedAt: expect.any(Date), status: 'MERGED' },
+          where: { id: 'pr-row-1', status: 'OPEN' },
+        },
       ]);
       expect(prRowStatus).toBe('MERGED');
       // The merge really happened, so the merge-label capture still runs.
@@ -1397,6 +1505,24 @@ describe('webhook routes', () => {
         expect(signalCalls).toHaveLength(0);
         expect(updateManyCalls).toHaveLength(0);
         expect(prRowStatus).toBe('OPEN');
+      });
+
+      it('/git does not record a close, reopen or edit either', async () => {
+        trackedPr = trackedOn('repo-github');
+        for (const [action, pull_request] of [
+          ['closed', { merged: false, number: 7 }],
+          ['reopened', { merged: false, number: 7 }],
+          ['edited', { merged: false, number: 7, title: 'hijacked' }],
+        ] as const) {
+          const body = JSON.stringify({
+            action,
+            pull_request,
+            repository: { full_name: 'acme/api', html_url: GITHUB_URL },
+          });
+          const res = await inject('/api/v1/webhooks/git', body, sign(body, 'a-secret'), GHE_A);
+          expect(JSON.parse(res.payload).data.ignored).toBe(true);
+        }
+        expect(updateManyCalls).toHaveLength(0);
       });
 
       it('/ci is not acted on, whatever html_url says', async () => {

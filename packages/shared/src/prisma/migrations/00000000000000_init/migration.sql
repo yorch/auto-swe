@@ -129,6 +129,11 @@ CREATE TABLE "pull_requests" (
     "head_sha" TEXT NOT NULL,
     "status" TEXT NOT NULL,
     "ci_status" TEXT NOT NULL DEFAULT 'PENDING',
+    "title" TEXT,
+    "is_draft" BOOLEAN NOT NULL DEFAULT false,
+    "opened_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "merged_at" TIMESTAMPTZ,
+    "closed_at" TIMESTAMPTZ,
 
     CONSTRAINT "pull_requests_pkey" PRIMARY KEY ("id")
 );
@@ -1538,6 +1543,9 @@ CREATE INDEX "pull_requests_workflow_id_idx" ON "pull_requests"("workflow_id");
 
 -- CreateIndex
 CREATE INDEX "pull_requests_repo_id_idx" ON "pull_requests"("repo_id");
+
+-- CreateIndex
+CREATE INDEX "pull_requests_status_opened_at_idx" ON "pull_requests"("status", "opened_at");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "personal_access_tokens_token_hash_key" ON "personal_access_tokens"("token_hash");

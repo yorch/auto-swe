@@ -90,6 +90,7 @@
     "./lib/slackRepoAccess": "./dist/lib/slackRepoAccess.js",
     "./lib/repoPermission": "./dist/lib/repoPermission.js",
     "./lib/repoMembership": "./dist/lib/repoMembership.js",
+    "./lib/pullRequest": "./dist/lib/pullRequest.js",
     "./lib/keyRotation": "./dist/lib/keyRotation.js",
     "./config": "./dist/config/index.js",
     "./config/cache": "./dist/config/cache.js",

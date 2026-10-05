@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
+import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import {
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
@@ -101,6 +102,8 @@ async function doCreateOrUpdatePullRequest(
     return { prNumber: existingPR.prNumber, prUrl };
   }
 
+  const title = formatPRTitle(request, workflowDefaults.prTitleTemplate);
+
   // Create the PR (or, on Temporal retries, reuse one a prior attempt created
   // on the host but crashed before persisting the DB row — the tracking row is
   // still written below). Only a prior attempt could have orphaned a PR, so
@@ -114,7 +117,7 @@ async function doCreateOrUpdatePullRequest(
       headBranch: codeResult.branch,
       repo: repoRef,
       reuseExisting: activityInfo().attempt > 1,
-      title: formatPRTitle(request, workflowDefaults.prTitleTemplate),
+      title,
     });
   } catch (err) {
     // "Draft" is a promise to the reviewer, so a repository that cannot hold
@@ -150,9 +153,11 @@ async function doCreateOrUpdatePullRequest(
     data: {
       ciStatus: 'PENDING',
       headSha: codeResult.headSha,
+      isDraft: options.draft === true,
       prNumber,
       repoId: repo.id,
       status: 'OPEN',
+      title: clampPullRequestTitle(title),
       workflowId: workflow?.id,
     },
   });

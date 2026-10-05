@@ -1,9 +1,11 @@
 import crypto from 'node:crypto';
+import type { Prisma } from '@auto-swe/shared';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { resolvePlatformCredential } from '@auto-swe/shared/lib/githubHostCredential';
 import { installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
+import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import {
   resolveGitHubConfig,
   resolveIssueTrackerConfig,
@@ -16,7 +18,7 @@ import {
   isWorkspaceProviderType,
   type WorkspaceProviderType,
 } from '@auto-swe/shared/lib/workspaceProviders';
-import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
@@ -63,7 +65,13 @@ import { resolveDefaultTemplate } from './workRequests.js';
 // malformed-but-signed body is ignored gracefully instead of throwing a 500.
 const PullRequestWebhookSchema = z.object({
   action: z.string(),
-  pull_request: z.object({ merged: z.boolean(), number: z.number() }),
+  pull_request: z.object({
+    closed_at: z.string().nullish(),
+    merged: z.boolean(),
+    merged_at: z.string().nullish(),
+    number: z.number(),
+    title: z.string().optional(),
+  }),
   // `html_url` carries the host `full_name` lacks; optional so a payload
   // without it still matches by name, as before.
   repository: z.object({ full_name: z.string(), html_url: z.string().optional() }),
@@ -84,20 +92,30 @@ const CheckRunWebhookSchema = z.object({
 // webhook route maps its own payloads to the same event types and reuses the
 // downstream DB-update + Temporal-signal logic unchanged.
 
-/** A PR-merge domain event extracted from a provider webhook payload. */
-export type PullRequestMergedEvent =
+/** Where a PR event happened: the repository and the PR's number in it. */
+interface PullRequestRef {
+  prNumber: number;
+  org: string;
+  repoName: string;
+  /** The repository's web URL, which names its host. */
+  repoHtmlUrl?: string;
+}
+
+/**
+ * A PR domain event extracted from a provider webhook payload. Only a merge
+ * signals the workflow; the rest record how the PR moved on its host.
+ */
+export type PullRequestEvent =
   /** Payload didn't match the expected shape at all. */
   | { type: 'unrecognized' }
-  /** Valid payload but not a merged-PR event (e.g. opened, closed-unmerged). */
+  /** Valid payload but not a lifecycle change we track (opened, synchronize, ...). */
   | { type: 'ignored' }
-  | {
-      type: 'merged';
-      prNumber: number;
-      org: string;
-      repoName: string;
-      /** The repository's web URL, which names its host. */
-      repoHtmlUrl?: string;
-    };
+  | ({ type: 'merged'; mergedAt: Date } & PullRequestRef)
+  /** Closed without merging. */
+  | ({ type: 'closed'; closedAt: Date } & PullRequestRef)
+  | ({ type: 'reopened' } & PullRequestRef)
+  | ({ type: 'draft'; isDraft: boolean } & PullRequestRef)
+  | ({ type: 'retitled'; title: string } & PullRequestRef);
 
 /** A CI check-completion domain event extracted from a provider webhook payload. */
 export type CheckRunCompletedEvent =
@@ -115,27 +133,46 @@ export type CheckRunCompletedEvent =
       logsUrl: string;
     };
 
+/** The host's timestamp when it sent a usable one, else now. */
+function eventTime(iso: string | null | undefined): Date {
+  const at = iso ? new Date(iso) : null;
+  return at && !Number.isNaN(at.getTime()) ? at : new Date();
+}
+
 /** Pure mapping from a GitHub `pull_request` webhook body to a domain event. */
-export function normalizeGitHubPullRequestEvent(body: unknown): PullRequestMergedEvent {
+export function normalizeGitHubPullRequestEvent(body: unknown): PullRequestEvent {
   const parsed = PullRequestWebhookSchema.safeParse(body);
   if (!parsed.success) {
     return { type: 'unrecognized' };
   }
   const payload = parsed.data;
-
-  // Only handle merged pull_request events
-  if (payload.action !== 'closed' || !payload.pull_request.merged) {
-    return { type: 'ignored' };
-  }
+  const pr = payload.pull_request;
 
   const [org, repoName] = payload.repository.full_name.split('/');
-  return {
+  const ref: PullRequestRef = {
     org,
-    prNumber: payload.pull_request.number,
+    prNumber: pr.number,
     repoHtmlUrl: payload.repository.html_url,
     repoName,
-    type: 'merged',
   };
+  switch (payload.action) {
+    case 'closed':
+      return pr.merged
+        ? { ...ref, mergedAt: eventTime(pr.merged_at), type: 'merged' }
+        : { ...ref, closedAt: eventTime(pr.closed_at), type: 'closed' };
+    case 'reopened':
+      return { ...ref, type: 'reopened' };
+    case 'ready_for_review':
+      return { ...ref, isDraft: false, type: 'draft' };
+    case 'converted_to_draft':
+      return { ...ref, isDraft: true, type: 'draft' };
+    case 'edited': {
+      const title = clampPullRequestTitle(pr.title);
+      return title ? { ...ref, title, type: 'retitled' } : { type: 'ignored' };
+    }
+    default:
+      return { type: 'ignored' };
+  }
 }
 
 /** Pure mapping from a GitHub `check_run` webhook body to a domain event. */
@@ -385,6 +422,49 @@ import { classifyAccessEvent } from '../lib/repoAccessWebhook.js';
 
 const TriggerParams = z.object({ token: z.string().min(1) });
 
+/**
+ * Record how a tracked PR moved on its host. Updates the row the platform
+ * already holds for (repository, number) and nothing else: a PR opened outside
+ * the platform has no row and is not created here. Every write is a guarded
+ * `updateMany`, so a redelivery that finds the row already changed is a no-op.
+ */
+async function recordPullRequestChange(
+  fastify: FastifyInstance,
+  event: Exclude<PullRequestEvent, { type: 'unrecognized' | 'ignored' | 'merged' }>,
+  repositoryWhere: Prisma.ConnectionWhereInput
+) {
+  const row = await fastify.prisma.pullRequest.findFirst({
+    select: { id: true },
+    where: { prNumber: event.prNumber, repository: repositoryWhere },
+  });
+  if (!row) {
+    return { ignored: true, reason: 'No tracked pull request' };
+  }
+  const where = { id: row.id };
+  const result = await (() => {
+    switch (event.type) {
+      case 'closed':
+        return fastify.prisma.pullRequest.updateMany({
+          data: { closedAt: event.closedAt, status: 'CLOSED' },
+          where: { ...where, status: 'OPEN' },
+        });
+      case 'reopened':
+        return fastify.prisma.pullRequest.updateMany({
+          data: { closedAt: null, status: 'OPEN' },
+          where: { ...where, status: 'CLOSED' },
+        });
+      case 'draft':
+        return fastify.prisma.pullRequest.updateMany({
+          data: { isDraft: event.isDraft },
+          where,
+        });
+      case 'retitled':
+        return fastify.prisma.pullRequest.updateMany({ data: { title: event.title }, where });
+    }
+  })();
+  return { updated: result.count > 0 };
+}
+
 export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/v1/webhooks/git
   fastify.post(
@@ -435,6 +515,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         verified.host
       );
 
+      if (event.type !== 'merged') {
+        return { data: await recordPullRequestChange(fastify, event, repositoryWhere) };
+      }
+
       // Find the tracked PR (include Slack context for the merge notification)
       const pullRequest = await fastify.prisma.pullRequest.findFirst({
         include: {
@@ -464,7 +548,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // (the lookup above is an optimistic fast-path): two concurrent
       // deliveries of the same merge race here and only one updates a row.
       const merged = await fastify.prisma.pullRequest.updateMany({
-        data: { status: 'MERGED' },
+        data: { closedAt: event.mergedAt, mergedAt: event.mergedAt, status: 'MERGED' },
         where: { id: pullRequest.id, status: 'OPEN' },
       });
       if (merged.count === 0) {
@@ -503,7 +587,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           );
           await fastify.prisma.pullRequest
             .updateMany({
-              data: { status: 'OPEN' },
+              data: { closedAt: null, mergedAt: null, status: 'OPEN' },
               where: { id: pullRequest.id, status: 'MERGED' },
             })
             .catch((rollbackErr: unknown) => {

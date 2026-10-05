@@ -82,6 +82,16 @@ describe('createOrUpdatePullRequest draft option', () => {
     expect(m.createPr.mock.calls[1]?.[0]).not.toHaveProperty('draft');
   });
 
+  it('records the title and whether the PR was opened as a draft', async () => {
+    await createOrUpdatePullRequest(request, codeResult, { draft: true });
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.pullRequest.create.mock.calls[0]?.[0].data).toMatchObject({
+      isDraft: true,
+      title: '[auto-swe] T-1',
+    });
+    expect(m.prisma.pullRequest.create.mock.calls[1]?.[0].data).toMatchObject({ isDraft: false });
+  });
+
   it('fails non-retryably when the repository cannot hold drafts, and opens nothing else', async () => {
     m.createPr.mockRejectedValue(new DraftPullRequestUnsupportedError('acme/api: no drafts'));
     await expect(
