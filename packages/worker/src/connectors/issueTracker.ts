@@ -55,18 +55,18 @@ function requireBaseUrl(config: IssueTrackerConnectionConfig): string {
  * only the private-address refusal (`checkProbeUrl`); loopback, metadata and
  * unspecified addresses and malformed or non-http(s) URLs are always refused.
  */
-async function assertSafeJiraBaseUrl(baseUrl: string): Promise<{ allowPrivate: boolean }> {
+export async function assertSafeJiraBaseUrl(baseUrl: string): Promise<{ allowPrivate: boolean }> {
   const safety = checkProbeUrl(baseUrl);
-  if (safety.ok) {
-    return { allowPrivate: false };
-  }
   const admin = await resolveIssueTrackerConfig().catch(() => null);
-  if (
-    admin?.allowPrivateNetwork &&
-    admin.baseUrl &&
-    sameOrigin(admin.baseUrl, baseUrl) &&
-    checkProbeUrl(baseUrl, { allowPrivate: true }).ok
-  ) {
+  // The opt-in is per origin and applies whether or not the text check passed: a named host that
+  // resolves to a private address passes the text check and is refused only at connect time.
+  const optedIn = Boolean(
+    admin?.allowPrivateNetwork && admin.baseUrl && sameOrigin(admin.baseUrl, baseUrl)
+  );
+  if (safety.ok) {
+    return { allowPrivate: optedIn };
+  }
+  if (optedIn && checkProbeUrl(baseUrl, { allowPrivate: true }).ok) {
     return { allowPrivate: true };
   }
   throw ApplicationFailure.nonRetryable(
