@@ -860,6 +860,22 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     expect(syncSlackHumanStepOutcomeMock).toHaveBeenCalledTimes(1);
   });
 
+  it('acknowledges the submission without waiting for the thread confirmation', async () => {
+    state.humanStep = pendingHumanStep();
+    const hung = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL, init?: { body?: string }) => {
+      if (String(url).includes('chat.postMessage')) {
+        fetchCalls.push({ body: init?.body ? JSON.parse(init.body) : null, url: String(url) });
+        return new Promise<Response>(() => {});
+      }
+      return hung(url, init as never);
+    }) as typeof fetch;
+    const res = await submitHitlModal('approve');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('');
+    expect(state.signalCalls).toHaveLength(1);
+  });
+
   it('leaves the announcement alone while more approvals are still needed', async () => {
     syncSlackHumanStepOutcomeMock.mockClear();
     state.humanStep = pendingHumanStep({ requiredApprovers: 2 });

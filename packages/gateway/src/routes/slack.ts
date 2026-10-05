@@ -1633,7 +1633,9 @@ async function resolveHitlStepFromSlack(
     });
   }
   // A modal submission carries no response_url, so a pending-approval note goes to the thread too.
-  await respondToInteraction(
+  // Not awaited: it costs a token lookup and a chat.postMessage, Slack wants the submission
+  // acknowledged within seconds, and the decision is already recorded. It never throws.
+  void respondToInteraction(
     {
       ...interaction,
       ...(where.channelId ? { channel: { id: where.channelId } } : {}),
