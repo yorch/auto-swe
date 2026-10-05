@@ -46,6 +46,41 @@ const EMPTY: FormState = {
   teamId: '',
 };
 
+/**
+ * Reads `https://<host>/<owner>/<repo>[/tree|blob/<ref>[/<path>]]` into form fields. A ref holding
+ * a slash is ambiguous in such a URL, so the first segment is taken as the ref. A `blob` link to a
+ * markdown file points at the skill file; the folder that holds it is the path. Null when the text
+ * is not a repository URL.
+ */
+export function parseRepositoryUrl(
+  text: string
+): Pick<FormState, 'host' | 'owner' | 'repo' | 'path' | 'ref'> | null {
+  let url: URL;
+  try {
+    url = new URL(text.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    return null;
+  }
+  const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  if (parts.length < 2) {
+    return null;
+  }
+  const [owner, rawRepo, kind, ref, ...rest] = parts;
+  const repo = rawRepo.replace(/\.git$/, '');
+  const out = { host: url.host, owner, path: '', ref: 'main', repo };
+  if ((kind === 'tree' || kind === 'blob') && ref) {
+    out.ref = ref;
+    if (kind === 'blob' && rest.length > 0 && /\.md$/i.test(rest[rest.length - 1])) {
+      rest.pop();
+    }
+    out.path = rest.join('/');
+  }
+  return out;
+}
+
 /** Why a previewed skill cannot be picked; null when it can. */
 export function unselectableReason(s: PreviewSkill): string | null {
   if (s.name === null || s.errors.length > 0) {
@@ -109,6 +144,7 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
   const readPreview = useReadPreviewSkill();
   const { data: teams } = useTeams();
   const [form, setForm] = useState<FormState>(EMPTY);
+  const [link, setLink] = useState('');
   const [previewed, setPreviewed] = useState<SourcePreview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Full texts read, by `sha:folder`: a text is about exactly the commit that was previewed.
@@ -121,6 +157,7 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
 
   function close() {
     setForm(EMPTY);
+    setLink('');
     setPreviewed(null);
     setSelected(new Set());
     setFulls({});
@@ -375,6 +412,20 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
   return (
     <Modal onClose={close} open={open} title="Add external source">
       <form className="space-y-4" onSubmit={runPreview}>
+        <Input
+          hint="Paste a link to the repository or a folder in it to fill the fields below"
+          id="skill-source-url"
+          label="GitHub link"
+          onChange={(e) => {
+            setLink(e.target.value);
+            const parsed = parseRepositoryUrl(e.target.value);
+            if (parsed) {
+              setForm((f) => ({ ...f, ...parsed }));
+            }
+          }}
+          placeholder="https://github.com/owner/repo/tree/main/skills"
+          value={link}
+        />
         <Input
           id="skill-source-host"
           label="Host"

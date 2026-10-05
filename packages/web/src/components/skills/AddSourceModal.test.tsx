@@ -21,7 +21,7 @@ vi.mock('@/hooks/useTeams', () => ({
   useTeams: () => ({ data: [{ id: 'team-1', name: 'Payments' }] }),
 }));
 
-const { AddSourceModal, unselectableReason } = await import('./AddSourceModal');
+const { AddSourceModal, parseRepositoryUrl, unselectableReason } = await import('./AddSourceModal');
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
@@ -300,5 +300,40 @@ describe('AddSourceModal', () => {
     await waitFor(() => expect(previewFn).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByLabelText('Full text of good')).toBeNull());
     expect(box('good').disabled).toBe(true);
+  });
+});
+
+describe('parseRepositoryUrl', () => {
+  it('reads tree and blob links, with folder and ref', () => {
+    expect(parseRepositoryUrl('https://github.com/acme/pack/tree/v2/skills/x')).toEqual({
+      host: 'github.com',
+      owner: 'acme',
+      path: 'skills/x',
+      ref: 'v2',
+      repo: 'pack',
+    });
+    expect(parseRepositoryUrl('https://ghe.corp/acme/pack/blob/main/skills/x/SKILL.md')).toEqual({
+      host: 'ghe.corp',
+      owner: 'acme',
+      path: 'skills/x',
+      ref: 'main',
+      repo: 'pack',
+    });
+    expect(parseRepositoryUrl('https://github.com/acme/pack.git')?.repo).toBe('pack');
+    expect(parseRepositoryUrl('not a url')).toBeNull();
+    expect(parseRepositoryUrl('https://github.com/acme')).toBeNull();
+  });
+});
+
+describe('AddSourceModal link paste', () => {
+  it('fills the fields from a pasted folder link', () => {
+    render(<AddSourceModal onClose={() => {}} open />);
+    fireEvent.change(screen.getByLabelText('GitHub link'), {
+      target: { value: 'https://github.com/acme/pack/tree/dev/skills' },
+    });
+    expect((screen.getByLabelText(/^Owner/) as HTMLInputElement).value).toBe('acme');
+    expect((screen.getByLabelText(/^Repository/) as HTMLInputElement).value).toBe('pack');
+    expect((screen.getByLabelText(/^Ref/) as HTMLInputElement).value).toBe('dev');
+    expect((screen.getByLabelText(/^Path/) as HTMLInputElement).value).toBe('skills');
   });
 });
