@@ -31,7 +31,7 @@ export function SegmentedControl<T extends string>({
     <fieldset
       aria-label={ariaLabel}
       className={cn(
-        'm-0 inline-flex min-w-0 items-center gap-0.5 rounded-md border border-ink-400 bg-ink-900/60 p-0.5',
+        'inline-flex min-w-0 max-w-full overflow-x-auto items-center gap-0.5 rounded-md border border-ink-400 bg-ink-900/60 p-0.5',
         className
       )}
     >

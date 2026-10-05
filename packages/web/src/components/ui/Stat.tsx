@@ -33,7 +33,7 @@ export function Stat({
 }) {
   return (
     <div className={cn('border-l border-ink-400 pl-5 py-1', className)}>
-      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">{label}</div>
+      <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-paper-400">{label}</div>
       <div className="mt-3 flex items-baseline gap-1.5">
         <span
           className={cn('tabular text-[40px] leading-none font-bold tracking-tight', TONE[tone])}
@@ -49,14 +49,14 @@ export function Stat({
       {delta && (
         <div
           className={cn(
-            'mt-2 font-mono text-[10px] uppercase tracking-wider',
+            'mt-2 font-mono text-[11px] uppercase tracking-wider',
             delta.positive ? 'text-moss-400' : 'text-brick-400'
           )}
         >
           {delta.positive ? '▲' : '▼'} {delta.value}
         </div>
       )}
-      {hint && <div className="mt-2 font-mono text-[10px] text-paper-500">{hint}</div>}
+      {hint && <div className="mt-2 font-mono text-[11px] text-paper-400">{hint}</div>}
     </div>
   );
 }

@@ -17,9 +17,12 @@ export function Pagination({
   rangeStart: number;
   total: number;
 }) {
+  if (total === 0) {
+    return null;
+  }
   return (
     <nav aria-label="Pagination" className="flex items-center justify-between">
-      <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+      <span className="font-mono text-[11px] uppercase tracking-wider text-paper-400">
         {rangeStart}–{rangeEnd} of {total}
       </span>
       <div className="flex gap-2">

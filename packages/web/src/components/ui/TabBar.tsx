@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 interface TabItem<T extends string> {
@@ -51,6 +51,25 @@ export function TabBar<T extends string>({
   const baseId = idPrefix ?? generated;
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
   const isLinkBar = tabs.some((t) => t.href);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [moreRight, setMoreRight] = useState(false);
+
+  // A fade at the right edge tells a phone user the strip scrolls on.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the tab set changes
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) {
+      return;
+    }
+    const measure = () => setMoreRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    measure();
+    el.addEventListener('scroll', measure, { passive: true });
+    window.addEventListener('resize', measure);
+    return () => {
+      el.removeEventListener('scroll', measure);
+      window.removeEventListener('resize', measure);
+    };
+  }, [tabs.length]);
 
   const tabClass = (selected: boolean) =>
     cn(
@@ -80,9 +99,9 @@ export function TabBar<T extends string>({
   };
 
   return (
-    <div className={cn('border-b border-ink-600', className)}>
+    <div className={cn('relative border-b border-ink-600', className)}>
       {isLinkBar ? (
-        <nav aria-label={ariaLabel} className="flex gap-1 overflow-x-auto">
+        <nav aria-label={ariaLabel} className="flex gap-1 overflow-x-auto" ref={scroller}>
           {tabs.map((tab) =>
             tab.href ? (
               <Link
@@ -107,7 +126,12 @@ export function TabBar<T extends string>({
           )}
         </nav>
       ) : (
-        <div aria-label={ariaLabel} className="flex gap-1 overflow-x-auto" role="tablist">
+        <div
+          aria-label={ariaLabel}
+          className="flex gap-1 overflow-x-auto"
+          ref={scroller}
+          role="tablist"
+        >
           {tabs.map((tab, i) => {
             const selected = active === tab.id;
             return (
@@ -132,6 +156,12 @@ export function TabBar<T extends string>({
             );
           })}
         </div>
+      )}
+      {moreRight && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-ink-900 to-transparent md:hidden"
+        />
       )}
     </div>
   );
