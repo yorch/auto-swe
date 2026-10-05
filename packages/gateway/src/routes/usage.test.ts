@@ -252,6 +252,28 @@ describe('usageRoutes GET /usage', () => {
     );
   });
 
+  it('never runs more than four queries at once', async () => {
+    const { app, prisma } = await buildApp();
+    let inFlight = 0;
+    let peak = 0;
+    const tracked = (value: unknown) => async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 2));
+      inFlight--;
+      return value;
+    };
+    prisma.agentTrace.groupBy.mockImplementation(tracked([]));
+    prisma.agentTrace.aggregate.mockImplementation(tracked(EMPTY_AGG));
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/usage',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(peak).toBeLessThanOrEqual(4);
+  });
+
   it('rolls one grouping up into totals and per-model, per-agent, per-activity breakdowns', async () => {
     const { app, prisma } = await buildApp();
     prisma.agentTrace.groupBy.mockImplementation(async (args: GroupByArgs) => {

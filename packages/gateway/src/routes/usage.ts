@@ -226,8 +226,11 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
       // One grouping by (model, agent, activity) serves the totals and all
       // three breakdowns: the key space is small, and it saves a full-window
       // scan per breakdown.
-      const [groups, failedGroups, unattributed, topRunGroups, previousPeriod] =
-        await asPlatformAdmin(user, PLATFORM_WIDE, ['AgentTrace'], () =>
+      const [groups, failedGroups, unattributed, topRunGroups] = await asPlatformAdmin(
+        user,
+        PLATFORM_WIDE,
+        ['AgentTrace'],
+        () =>
           Promise.all([
             prisma.agentTrace.groupBy({
               _count: { _all: true, durationMs: true },
@@ -253,19 +256,23 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
               take: TOP_RUNS,
               where: { ...llm, costUsd: { gt: 0 }, runId: { not: null } },
             }),
-            // The window of the same length just before this one, so the page can say
-            // whether spend is moving, not only how big it is.
-            prisma.agentTrace.aggregate({
-              _count: { _all: true },
-              _sum: { costUsd: true },
-              where: {
-                ...scope,
-                createdAt: { gte: new Date(since.getTime() - windowDays * DAY_MS), lt: since },
-                type: 'llm_response',
-              },
-            }),
           ])
-        );
+      );
+
+      // The window of the same length just before this one, so the page can say whether spend
+      // is moving, not only how big it is. Run after the batch above, not inside it, so no more
+      // than four queries ever hold pool connections together.
+      const previousPeriod = await asPlatformAdmin(user, PLATFORM_WIDE, ['AgentTrace'], () =>
+        prisma.agentTrace.aggregate({
+          _count: { _all: true },
+          _sum: { costUsd: true },
+          where: {
+            ...scope,
+            createdAt: { gte: new Date(since.getTime() - windowDays * DAY_MS), lt: since },
+            type: 'llm_response',
+          },
+        })
+      );
 
       // JSON keys keep a null model distinct from any real string.
       const keyOf = (g: { model: string | null; agentKey: string; nodeId: string }) =>
