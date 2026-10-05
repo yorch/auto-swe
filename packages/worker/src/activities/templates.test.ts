@@ -46,7 +46,8 @@ vi.mock('../lib/metrics.js', async (importOriginal) => ({
   recordRunFinalized: vi.fn(),
 }));
 
-vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
+vi.mock('@auto-swe/shared/lib/trackerSync', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/trackerSync')>()),
   syncTrackerOnEvent: vi.fn(),
 }));
 
@@ -1085,6 +1086,28 @@ describe('finalizeWorkflowRun', () => {
       expect(notify).toHaveBeenCalledTimes(expected);
       expect(tracker).toHaveBeenCalledTimes(expected);
     }
+    findRun.mockReset();
+  });
+
+  it('does not sync the tracker for a ticket id the platform generated', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const tracker = vi.mocked(syncTrackerOnEvent);
+    tracker.mockClear();
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue({
+      endedAt: null,
+      workflowId: 'eng-x',
+      workRequest: {
+        activeWorkflows: [],
+        connection: { team: { orgId: 'org-1' } },
+        externalTicketId: 'PRD-1-1',
+        payload: null,
+        ticketIsSynthetic: true,
+      },
+    } as never);
+    await finalizeRun('run-s', 'FAILED', undefined, 'reaper', true);
+    expect(tracker).not.toHaveBeenCalled();
     findRun.mockReset();
   });
 

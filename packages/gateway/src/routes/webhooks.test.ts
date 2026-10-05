@@ -83,7 +83,8 @@ vi.mock('@auto-swe/shared/lib/githubInstallation', async (importOriginal) => {
   };
 });
 
-vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
+vi.mock('@auto-swe/shared/lib/trackerSync', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/trackerSync')>()),
   syncTrackerOnEvent: vi.fn(async () => {}),
 }));
 
@@ -260,6 +261,8 @@ describe('webhook routes', () => {
    */
   const prCiStatus = new Map<string, string>();
   const signalCalls: SignalCall[] = [];
+  /** The arguments of every `pullRequest.findFirst`, to check which row wins a tie. */
+  const pullRequestLookups: Array<{ orderBy?: unknown }> = [];
   /** Workflow IDs whose signal should reject, simulating a Temporal outage. */
   const signalFailWorkflowIds = new Set<string>();
   /**
@@ -325,8 +328,15 @@ describe('webhook routes', () => {
             : null,
       },
       pullRequest: {
-        findFirst: async (args: { where?: { repository?: RepositoryWhere } }) =>
-          trackedPr && onBoundRepository(trackedPr, args.where?.repository) ? trackedPr : null,
+        findFirst: async (args: {
+          orderBy?: unknown;
+          where?: { repository?: RepositoryWhere };
+        }) => {
+          pullRequestLookups.push(args);
+          return trackedPr && onBoundRepository(trackedPr, args.where?.repository)
+            ? trackedPr
+            : null;
+        },
         // The real query filters on the event's head SHA and returns the row's
         // current ci_status; fixtures without a `headSha` match any SHA.
         findMany: async (args: { where: { headSha?: string; repository?: RepositoryWhere } }) =>
@@ -596,6 +606,12 @@ describe('webhook routes', () => {
         trackedPr = { id: 'pr-row-1' };
       });
 
+      it('looks the row up newest first, so a number held by two rows resolves to the newer', async () => {
+        pullRequestLookups.length = 0;
+        await pr('closed', { closed_at: '2026-10-01T12:00:00Z' });
+        expect(pullRequestLookups[0]?.orderBy).toEqual([{ openedAt: 'desc' }, { id: 'desc' }]);
+      });
+
       it('records a close without a merge as CLOSED, without signalling the workflow', async () => {
         const res = await pr('closed', { closed_at: '2026-10-01T12:00:00Z' });
         expect(res.statusCode).toBe(200);
@@ -800,6 +816,13 @@ describe('webhook routes', () => {
       expect(prRowStatus).toBe('MERGED');
       // The merge really happened, so the merge-label capture still runs.
       expect(evalCreateCalls).toHaveLength(1);
+    });
+
+    it('picks the newest row when the repository filter matches more than one', async () => {
+      trackedPr = trackedRow();
+      pullRequestLookups.length = 0;
+      await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
+      expect(pullRequestLookups[0]?.orderBy).toEqual([{ openedAt: 'desc' }, { id: 'desc' }]);
     });
 
     it('finds a PR an agent run opened and records its merge against the finished run', async () => {
@@ -1713,6 +1736,60 @@ describe('webhook routes', () => {
           'x-github-event': 'repository',
         });
         expect(accessRepositoryIds()).toEqual({ notIn: ['repo-ghe-a'] });
+      });
+    });
+
+    describe('tracker sync for an id the platform generated', () => {
+      beforeEach(() => {
+        vi.mocked(syncTrackerOnEvent).mockClear();
+      });
+
+      const withTicket = (ticketIsSynthetic: boolean) => ({
+        ...trackedOn('repo-github'),
+        workflow: {
+          repository: { githubUrl: null, team: null },
+          temporalWorkflowId: 'wf-1',
+          workRequest: { externalTicketId: 'agent-0a1b', ticketIsSynthetic },
+        },
+      });
+
+      it('skips the merge sync for a generated id but still records the merge and its eval row', async () => {
+        trackedPr = withTicket(true);
+        const body = mergedBody(GITHUB_URL);
+        const res = await inject('/api/v1/webhooks/git', body, sign(body));
+        expect(res.statusCode).toBe(200);
+        expect(syncTrackerOnEvent).not.toHaveBeenCalled();
+        expect(prRowStatus).toBe('MERGED');
+        expect(evalCreateCalls).toHaveLength(1);
+      });
+
+      it('still syncs the merge of a real ticket', async () => {
+        trackedPr = withTicket(false);
+        const body = mergedBody(GITHUB_URL);
+        await inject('/api/v1/webhooks/git', body, sign(body));
+        expect(syncTrackerOnEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ issueId: 'agent-0a1b' }),
+          expect.anything()
+        );
+      });
+
+      it.each([
+        [true, 0],
+        [false, 1],
+      ])('syncs a CI verdict only for a real ticket (synthetic=%s)', async (synthetic, calls) => {
+        openPrs = [
+          {
+            ...openOn('repo-github'),
+            workflow: {
+              temporalWorkflowId: 'wf-ci-1',
+              workRequest: { externalTicketId: 'PROJ-9', ticketIsSynthetic: synthetic },
+            },
+          },
+        ];
+        const body = checkBody();
+        const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+        expect(res.statusCode).toBe(200);
+        expect(syncTrackerOnEvent).toHaveBeenCalledTimes(calls);
       });
     });
 

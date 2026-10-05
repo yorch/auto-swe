@@ -12,7 +12,7 @@ import {
   resolveSlackBotTokenForSlackChannel,
 } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import { isTrackerTicket, syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -434,6 +434,7 @@ async function recordPullRequestChange(
   repositoryWhere: Prisma.ConnectionWhereInput
 ) {
   const row = await fastify.prisma.pullRequest.findFirst({
+    orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
     select: { id: true },
     where: { prNumber: event.prNumber, repository: repositoryWhere },
   });
@@ -526,11 +527,18 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             include: {
               repository: { include: { team: { select: { slackNotifyChannel: true } } } },
               workRequest: {
-                select: { externalTicketId: true, slackChannelId: true, slackMessageTs: true },
+                select: {
+                  externalTicketId: true,
+                  slackChannelId: true,
+                  slackMessageTs: true,
+                  ticketIsSynthetic: true,
+                },
               },
             },
           },
         },
+        // The repository filter can match more than one connection row; the newest PR wins.
+        orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
         where: {
           prNumber,
           repository: repositoryWhere,
@@ -664,8 +672,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Best-effort tracker sync on PR merge.
-      if (wr?.externalTicketId) {
+      // Best-effort tracker sync on PR merge — only for a ticket the tracker can know.
+      if (wr?.externalTicketId && isTrackerTicket(wr)) {
         const trackerConfig = await resolveIssueTrackerConfig();
         // The repository's own web base, not the instance's: it may be on
         // another host.
@@ -806,7 +814,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           },
           workflow: {
             include: {
-              workRequest: { select: { externalTicketId: true } },
+              workRequest: { select: { externalTicketId: true, ticketIsSynthetic: true } },
             },
           },
         },
@@ -1020,7 +1028,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const trackerConfig = await resolveIssueTrackerConfig();
       for (const pr of succeeded) {
         const ticketId = pr.workflow?.workRequest?.externalTicketId;
-        if (ticketId) {
+        if (ticketId && isTrackerTicket(pr.workflow?.workRequest)) {
           await syncTrackerOnEvent(
             verdictOf.get(pr.id)?.passed
               ? { issueId: ticketId, type: 'ci_passed' }

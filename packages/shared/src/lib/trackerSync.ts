@@ -19,3 +19,18 @@ export async function syncTrackerOnEvent(
     log?.warn({ err, event }, 'Tracker sync failed; continuing');
   }
 }
+
+/**
+ * Whether a request's ticket id names an issue in the tracker. An id the platform
+ * generated (`RunInput.ticketIsSynthetic`: an agent run, a PRD run, a scheduled
+ * fire, a launch that named no ticket) cannot exist there, so syncing it would
+ * only produce failed calls. Absent a request or an id there is nothing to sync.
+ */
+export function isTrackerTicket(
+  request:
+    | { externalTicketId?: string | null; ticketIsSynthetic?: boolean | null }
+    | null
+    | undefined
+): boolean {
+  return !!request?.externalTicketId && !request.ticketIsSynthetic;
+}

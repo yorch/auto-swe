@@ -20,7 +20,8 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveKnowledgeBaseConfig: vi.fn(async () => ({})),
   resolveWorkflowDefaults: vi.fn(async () => ({})),
 }));
-vi.mock('@auto-swe/shared/lib/trackerSync', () => ({
+vi.mock('@auto-swe/shared/lib/trackerSync', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/trackerSync')>()),
   syncTrackerOnEvent: vi.fn(async () => undefined),
 }));
 vi.mock('@temporalio/activity', async (orig) => ({

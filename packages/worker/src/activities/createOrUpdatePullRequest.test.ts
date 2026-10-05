@@ -12,7 +12,10 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveKnowledgeBaseConfig: vi.fn(),
   resolveWorkflowDefaults: vi.fn(),
 }));
-vi.mock('@auto-swe/shared/lib/trackerSync', () => ({ syncTrackerOnEvent: vi.fn() }));
+vi.mock('@auto-swe/shared/lib/trackerSync', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/trackerSync')>()),
+  syncTrackerOnEvent: vi.fn(),
+}));
 vi.mock('../lib/scm/index.js', () => ({ getScmProvider: vi.fn(), toRepoRef: vi.fn() }));
 vi.mock('../lib/slackNotify.js', () => ({ notifySlackPrReady: vi.fn() }));
 

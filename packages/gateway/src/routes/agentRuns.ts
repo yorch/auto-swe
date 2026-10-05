@@ -378,6 +378,8 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
                 requestPayload,
                 templateId: template.id,
                 templateVersion: template.activeVersion,
+                // `agent-<id>` is generated here, not a tracker ticket.
+                ticketIsSynthetic: true,
               },
             }),
       },
