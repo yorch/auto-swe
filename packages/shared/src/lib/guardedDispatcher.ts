@@ -300,3 +300,21 @@ export function createGuardedFetch(opts: GuardedFetchOptions = {}): typeof fetch
     }
   }) as typeof fetch;
 }
+
+/**
+ * A guarded fetch whose private-network waiver applies only to requests whose
+ * origin is in `privateOrigins`; every other origin resolves, checks and pins
+ * under the strict rules. For a call that talks to one trusted (often internal)
+ * host and may be sent elsewhere, such as a redirect to blob storage.
+ */
+export function createOriginScopedFetch(
+  privateOrigins: readonly string[],
+  opts: Omit<GuardedFetchOptions, 'allowPrivate'> = {}
+): typeof fetch {
+  const permissive = createGuardedFetch({ ...opts, allowPrivate: true });
+  const strict = createGuardedFetch({ ...opts, allowPrivate: false });
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    return (privateOrigins.includes(new URL(raw).origin) ? permissive : strict)(input, init);
+  }) as typeof fetch;
+}

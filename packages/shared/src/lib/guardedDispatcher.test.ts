@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   classifyAddress,
   createGuardedFetch,
+  createOriginScopedFetch,
   type HostResolver,
   makeGuardedLookup,
   type ResolvedAddress,
@@ -223,5 +224,30 @@ describe('createGuardedFetch', () => {
     });
     await ok('https://x.example/');
     expect(fetchImpl.mock.calls[0][1]?.dispatcher).toBeUndefined();
+  });
+});
+
+describe('createOriginScopedFetch', () => {
+  it('waives the private refusal for the listed origin only', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async () => new Response('ok'));
+    // `proxied` makes the up-front host check run, so the resolver decides.
+    const scoped = createOriginScopedFetch(['https://ghe.corp.example'], {
+      fetchImpl,
+      proxied: true,
+      resolver: resolverOf(v4('10.0.0.1')),
+    });
+    await scoped('https://ghe.corp.example/logs');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await expect(scoped('https://blob.example.net/x')).rejects.toBeInstanceOf(SsrfBlockedError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('never waives loopback for a listed origin', async () => {
+    const scoped = createOriginScopedFetch(['https://ghe.corp.example'], {
+      fetchImpl: vi.fn(),
+      proxied: true,
+      resolver: resolverOf(v4('127.0.0.1')),
+    });
+    await expect(scoped('https://ghe.corp.example/x')).rejects.toBeInstanceOf(SsrfBlockedError);
   });
 });

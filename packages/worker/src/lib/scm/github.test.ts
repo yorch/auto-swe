@@ -1,3 +1,4 @@
+import { createOriginScopedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
@@ -13,6 +14,10 @@ vi.mock('../githubAuth.js', () => ({
   resolveGitHubToken: vi.fn(async () => 'ghp_tok'),
 }));
 
+vi.mock('@auto-swe/shared/lib/guardedDispatcher', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@auto-swe/shared/lib/guardedDispatcher')>();
+  return { ...actual, createOriginScopedFetch: vi.fn(actual.createOriginScopedFetch) };
+});
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
 // The real rule, with the per-host credential lookup (a database read) stubbed.
@@ -149,6 +154,17 @@ describe('GitHubScmProvider.fetchCiLogs', () => {
     // github.com is no longer a trusted origin for that deployment's token.
     await provider.fetchCiLogs('https://github.com/acme/api/runs/7');
     expect(lastFetch().init.headers).not.toHaveProperty('Authorization');
+  });
+
+  it('waives the private-network refusal for the GitHub host only, not for other origins', async () => {
+    await provider.fetchCiLogs('https://github.com/acme/api/runs/1');
+    const calls = vi.mocked(createOriginScopedFetch).mock.calls;
+    const origins = calls[calls.length - 1][0];
+    expect(origins).toContain('https://github.com');
+    expect(origins).not.toContain('https://ci.example.com');
+    // A log on a foreign origin is not in the waived list, so it resolves strictly.
+    await provider.fetchCiLogs('https://ci.example.com/build/42/log');
+    expect(calls[calls.length - 1][0]).not.toContain('https://ci.example.com');
   });
 
   it('reports a non-2xx response instead of throwing', async () => {

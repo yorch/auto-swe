@@ -19,7 +19,7 @@
  *   the gateway enum does not yet accept `'mcp'`.
  */
 import { randomUUID } from 'node:crypto';
-import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
+import { createOriginScopedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { fetchGuarded } from '@auto-swe/shared/lib/guardedFetch';
 import { applyMcpHeaders, type McpHeader } from '@auto-swe/shared/lib/mcpHeaders';
 import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
@@ -152,13 +152,7 @@ export function bearerFetch(
  * or transport request to any other origin resolves, checks and pins under the strict rules.
  */
 export function originScopedFetch(serverUrl: URL, allowPrivate: boolean): typeof fetch {
-  const permissive = createGuardedFetch({ allowPrivate: true });
-  const strict = createGuardedFetch({ allowPrivate: false });
-  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    const own = allowPrivate && new URL(raw).origin === serverUrl.origin;
-    return (own ? permissive : strict)(input, init);
-  }) as typeof fetch;
+  return createOriginScopedFetch(allowPrivate ? [serverUrl.origin] : []);
 }
 
 /**
