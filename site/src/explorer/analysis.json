@@ -1851,7 +1851,7 @@
     {
       "body": "An ADMIN previews skills in a GitHub or GitHub Enterprise repository, then installs the chosen ones pinned to the commit that was previewed.",
       "category": "Agents",
-      "detail": "Preview writes nothing: it resolves the ref to a commit and reads each SKILL.md under the path. The install request names skills and the previewed commit, never text; the server fetches again at that commit and fails with 409 if the ref has moved. A non-github.com host must be an approved repository host, and one on a private network must also be listed in a separate setting; the platform credential for that host is the only one used, and a host with none is read anonymously. Fetches are bounded in requests, bytes, skills and time. Skills with scan warnings are refused while the blocking setting is on (it is on by default). One transaction takes a name lock, checks name conflicts across the scopes the skill would be visible in, and writes the source plus every skill at revision 1, unverified, with its source commit. Markdown and text siblings are kept as reference text unscanned and nothing is executed. Wherever a model reads an imported skill’s text, it is labelled third-party with its source and short commit while the revision it reads carries a source commit; an admin’s hand edit cuts a revision without one, which drops the label, and a deleted source drops the repository name (the label reads external@sha7). Updates to an imported source are a separate, reviewed flow: a scheduled check flags a moved ref, and an ADMIN diffs and accepts it.",
+      "detail": "Preview writes nothing: it resolves the ref to a commit and reads each SKILL.md under the path. The install request names skills and the previewed commit, never text; the server fetches again at that commit and fails with 409 if the ref has moved. A non-github.com host must be an approved repository host, and one on a private network must also be listed in a separate setting; the platform credential for that host is the only one used, and a host with none is read anonymously. Fetches are bounded in requests, bytes, skills and time. Skills with scan warnings are refused while the blocking setting is on (it is on by default). One transaction takes a name lock, checks name conflicts across the scopes the skill would be visible in, and writes the source plus every skill at revision 1, unverified, with its source commit. Markdown and text siblings are kept as reference text unscanned and nothing is executed. Wherever a model reads an imported skill’s text, it is labelled third-party with its source and short commit while the revision it reads carries a source commit; an admin’s hand edit cuts a revision without one, which drops the label, and a deleted source drops the repository name (the label reads external@sha7). Updates to an imported source are a separate, reviewed flow: a scheduled check flags a moved ref, and an ADMIN diffs and accepts it. A preview request that names one skill returns that skill’s complete incoming text, read at the previewed commit (409 if the ref has moved) and writing nothing. The dashboard’s External sources tab drives the whole flow, and a skill can be ticked only after its full text was read at the previewed commit; only skills whose text was read are sent. Skills the pinned commit holds that nothing installed uses can be installed later: the install is read by the pinned sha and never through the ref, runs in one transaction under a per-source lock plus the name lock, never moves the pin, and refuses with ALREADY_INSTALLED, NAME_CONFLICT, STALE_SHA, or SOURCE_CHANGED if the source was disabled, deleted or moved meanwhile. A folder first added upstream after the pin is UNKNOWN_SKILLS until an accept advances the pin. The skill list marks each imported skill with its source and the commit its current text was cut from. Repository-derived text in the dashboard (names, descriptions, paths, diff lines, full text) is rendered as plain text with every control, format, bidi, tag and other invisible character shown as a ⟨U+XXXX⟩ marker, except the variation selectors and joiners that make up an emoji; the gateway’s display strings replace those characters with ?.",
       "id": "skillImport",
       "refs": [
         "skillImportRoutes",
@@ -1865,15 +1865,20 @@
         "skillImportSetting",
         "schema",
         "skillProvenance",
-        "skillUpdateRoutes"
+        "skillUpdateRoutes",
+        "skillReadPreview",
+        "skillInstallMore",
+        "skillWebInstallGate",
+        "skillWebVisible",
+        "skillListExternal"
       ],
       "status": "Implemented",
       "title": "Skill import from an external GitHub repository"
     },
     {
-      "body": "A schedule flags when an imported source’s ref names a different commit; an ADMIN reads a per-skill diff and accepts it, which cuts new skill revisions. Nothing updates on its own.",
+      "body": "A schedule flags when an imported source’s ref names a different commit; an ADMIN reads a per-skill diff in the dashboard or the CLI and accepts it, which cuts new skill revisions. Nothing updates on its own.",
       "category": "Agents",
-      "detail": "The gateway upserts one Temporal schedule, auto-swe-skill-source-sync, at startup; it runs ScheduledSkillSourceSyncWorkflow, a single syncSkillSources activity. It is on by default (SKILL_SOURCE_SYNC_ENABLED, cadence SKILL_SOURCE_SYNC_CRON, default 41 5 * * *), read from the environment at gateway start, and paused rather than removed when disabled. The sweep visits each source that is not disabled, one at a time. A check resolves the ref to a commit and fetches no tree or file. It writes only latestSha, status, lastError and lastCheckedAt, guarded on the pinned commit and on the source not being disabled, so a concurrent accept or disable wins and the check’s write is dropped. A failing source does not stop the others; when a host answers that it is rate limited, only the source that got that answer has its check time moved; the host’s remaining sources are not asked and nothing is written for them until the next run. The same check runs on demand for one source. The diff reads the source at the checked commit (or a given one), by commit and never through the ref, and writes nothing. Per installed skill it reports unchanged, changed or unreadable, with a unified text diff against the live text, description and reference-file changes, scan warnings and whether an admin hand-edited it since import; installed skills whose folder left the source are flagged as removed and folders nothing installed uses are listed as added. A skill whose diff passes a fixed size or work bound has no complete diff and its full text has to be read separately. The accept takes the commit and may name skills, each bound to the installed revision the admin saw; without named skills it is bound to the commit alone. It refuses unless the commit is still the source’s latest, refuses with SKILL_CHANGED and writes nothing if a named skill was edited since, never overwrites a hand-edited skill unless it is named, refuses a skill whose diff is incomplete (truncated or too large) unless it is named, and never updates a skill that no longer parses or whose folder left the source, naming it being refused as NOT_INSTALLABLE, and refuses scan warnings while the blocking setting is on. One transaction cuts a new revision per updated skill, unverified and carrying the source commit, moves the pin only when nothing that changed upstream was left behind, and writes the audit entry; a latestSha that moved or a disable meanwhile rolls it all back. Runs already started keep the revisions they pinned. The CLI shows the diff, asks for confirmation (unless --yes) and, when skills are named with --skills, sends the installed revisions it showed.",
+      "detail": "The gateway upserts one Temporal schedule, auto-swe-skill-source-sync, at startup; it runs ScheduledSkillSourceSyncWorkflow, a single syncSkillSources activity. It is on by default (SKILL_SOURCE_SYNC_ENABLED, cadence SKILL_SOURCE_SYNC_CRON, default 41 5 * * *), read from the environment at gateway start, and paused rather than removed when disabled. The sweep visits each source that is not disabled, one at a time. A check resolves the ref to a commit and fetches no tree or file. It writes only latestSha, status, lastError and lastCheckedAt, guarded on the pinned commit and on the source not being disabled, so a concurrent accept or disable wins and the check’s write is dropped. A failing source does not stop the others; when a host answers that it is rate limited, only the source that got that answer has its check time moved; the host’s remaining sources are not asked and nothing is written for them until the next run. The same check runs on demand for one source. The diff reads the source at the checked commit (or a given one), by commit and never through the ref, and writes nothing. Per installed skill it reports unchanged, changed or unreadable, with a unified text diff against the live text, description and reference-file changes, scan warnings and whether an admin hand-edited it since import; installed skills whose folder left the source are flagged as removed and folders nothing installed uses are listed as added, each with the name conflicts and the scan block an install of it would meet. A skill whose diff passes a fixed size or work bound has no complete diff and its full text has to be read separately. The accept takes the commit and may name skills, each bound to the installed revision the admin saw; without named skills it is bound to the commit alone. It refuses unless the commit is still the source’s latest, refuses with SKILL_CHANGED and writes nothing if a named skill was edited since, never overwrites a hand-edited skill unless it is named, refuses a skill whose diff is incomplete (truncated or too large) unless it is named, and never updates a skill that no longer parses or whose folder left the source, naming it being refused as NOT_INSTALLABLE, and refuses scan warnings while the blocking setting is on. The accept transaction first takes the per-source lock that an install into the source also takes and re-reads the installed set; a skill installed since the plan was made refuses with SOURCE_CHANGED, so the pin never moves past a skill the review did not see. The same transaction cuts a new revision per updated skill, unverified and carrying the source commit, moves the pin only when nothing that changed upstream was left behind, and writes the audit entry; a latestSha that moved or a disable meanwhile rolls it all back. Runs already started keep the revisions they pinned. The CLI shows the diff, asks for confirmation (unless --yes) and, when skills are named with --skills, sends the installed revisions it showed. The dashboard’s Review update offers each changed skill for selection: one the scan blocks cannot be selected; one whose diff is incomplete or too large needs its full incoming text read at that commit and a confirmation that it was read; one hand-edited needs an explicit overwrite confirmation; those last two start unselected. A refusal meaning the reviewed state is stale (moved pin, edited skill, incomplete diff, changed or disabled source) reopens the diff rather than retrying.",
       "id": "skillUpdates",
       "refs": [
         "skillUpdateScheduleId",
@@ -1892,7 +1897,10 @@
         "skillUpdateRevision",
         "skillUpdateTx",
         "skillUpdateDiffBounds",
-        "skillUpdateCli"
+        "skillUpdateCli",
+        "skillAcceptLock",
+        "skillUpdateAddedConflicts",
+        "skillWebReviewGate"
       ],
       "status": "Implemented",
       "title": "Tracked skill-source updates: scheduled check, reviewed diff, bound accept"
@@ -2138,7 +2146,7 @@
     {
       "body": "Pinning to a commit fixes what is read; it does not vouch for the author, the files kept beside the text, or the host.",
       "category": "Agents",
-      "detail": "Reference files are stored unscanned, so whatever first reads them to an agent or a person must scan them first. The host check reads address text and literal addresses and does not resolve DNS, so a listed name is trusted to mean the intended server. Commit signatures are not checked. The scheduled check asks about the ref, not the history of the source’s path, so any commit on the ref flags the source, and in a monorepo an unrelated commit reads as an update whose diff shows nothing. A diff and an accept each read the whole new commit through the bounded fetch, so reviewing then accepting costs two budgeted fetches beside the check’s one request. An accept updates only skills already installed: a skill added upstream is listed and never installed, one removed upstream is flagged and stays, and an upstream rename is shown and not applied. Reference files from an accept are stored unscanned, like an import’s. There is no way to decline a change, so a skill left behind keeps the source flagged. Hand-edit detection compares content with the last revision an import or accept cut, so a revert to the same content reads as unedited. The review is an ADMIN API and CLI flow. Only imports take the name-allocation lock, so the skill API can still create a name an import has just checked.",
+      "detail": "Reference files are stored unscanned, so whatever first reads them to an agent or a person must scan them first. The host check reads address text and literal addresses and does not resolve DNS, so a listed name is trusted to mean the intended server. Commit signatures are not checked. The scheduled check asks about the ref, not the history of the source’s path, so any commit on the ref flags the source, and in a monorepo an unrelated commit reads as an update whose diff shows nothing. A diff and an accept each read the whole new commit through the bounded fetch, so reviewing then accepting costs two budgeted fetches beside the check’s one request. An accept updates only skills already installed: a skill added upstream is listed, and can be installed only once an accept has moved the pin (an install reads the pinned commit), one removed upstream is flagged and stays, and an upstream rename is shown and not applied. Reference files from an accept are stored unscanned, like an import’s. There is no way to decline a change, so a skill left behind keeps the source flagged. Hand-edit detection compares content with the last revision an import or accept cut, so a revert to the same content reads as unedited. The review is an ADMIN flow in the dashboard, the API and the CLI. Each full-text read the dashboard makes costs one more budgeted fetch of the whole source. Only imports (a first import or an install into an existing source) take the name-allocation lock, so the skill API can still create a name an import has just checked.",
       "id": "skillImportBounds",
       "refs": [
         "skillImportAccess",
@@ -2154,7 +2162,9 @@
         "skillUpdatePinRule",
         "skillUpdateRevision",
         "skillUpdateDiffBounds",
-        "skillUpdateRoutes"
+        "skillUpdateRoutes",
+        "skillInstallMore",
+        "skillReadPreview"
       ],
       "status": "Confirmed boundary",
       "title": "Skill import is pinned and bounded, not verified"
@@ -4053,6 +4063,70 @@
       "lines": 14,
       "path": "packages/cli/src/commands/skills.ts",
       "title": "The CLI confirms, then sends the installed revisions the diff showed"
+    },
+    {
+      "anchor": "export async function installIntoSource(",
+      "before": 14,
+      "id": "skillInstallMore",
+      "lines": 82,
+      "path": "packages/gateway/src/lib/skillSourceService.ts",
+      "title": "Install more skills from the pinned commit, under the source lock"
+    },
+    {
+      "anchor": "export async function readPreviewSkill(",
+      "before": 6,
+      "id": "skillReadPreview",
+      "lines": 32,
+      "path": "packages/gateway/src/lib/skillSourceService.ts",
+      "title": "One skill’s complete incoming text, read at the previewed commit"
+    },
+    {
+      "anchor": "await lockSkillSource(tx, source.id);",
+      "before": 3,
+      "id": "skillAcceptLock",
+      "lines": 16,
+      "path": "packages/gateway/src/lib/skillSourceUpdateService.ts",
+      "title": "An accept takes the source lock and refuses if the installed set changed"
+    },
+    {
+      "anchor": "// What an install of each added skill would collide with, decided as the install decides it.",
+      "before": 1,
+      "id": "skillUpdateAddedConflicts",
+      "lines": 22,
+      "path": "packages/gateway/src/lib/skillSourceUpdateService.ts",
+      "title": "Added skills carry the conflicts and scan block an install would meet"
+    },
+    {
+      "anchor": "externalSource: source ? { ...source, sha: shaOf.get(s.id) ?? null } : null,",
+      "before": 12,
+      "id": "skillListExternal",
+      "lines": 16,
+      "path": "packages/gateway/src/routes/skills.ts",
+      "title": "The skill list reports each imported skill’s source and commit"
+    },
+    {
+      "anchor": "const INVISIBLE = new RegExp(",
+      "before": 4,
+      "id": "skillWebVisible",
+      "lines": 18,
+      "path": "packages/web/src/lib/visibleText.ts",
+      "title": "The dashboard shows invisible characters as markers"
+    },
+    {
+      "anchor": "disabled={installing || reason !== null || !full}",
+      "before": 6,
+      "id": "skillWebInstallGate",
+      "lines": 14,
+      "path": "packages/web/src/components/skills/InstallSkillsModal.tsx",
+      "title": "A skill can be installed only after its full text was read"
+    },
+    {
+      "anchor": "const confirmedOf = (c: DiffChangedSkill) =>",
+      "before": 3,
+      "id": "skillWebReviewGate",
+      "lines": 10,
+      "path": "packages/web/src/components/skills/ReviewUpdateModal.tsx",
+      "title": "Review update gates a skill on its read and overwrite confirmations"
     },
     {
       "anchor": "export function checkProbeUrl(apiBase: string, opts: { allowPrivate?: boolean } = {}) {",
