@@ -416,88 +416,44 @@ function checkConnectorFetchesSetRedirect() {
 //
 // A `*.pg.test.ts` suite gates itself on an environment flag (`describe.skipIf(!enabled)`), because
 // it writes to a real database and the unit-test job has none. The `migrations` job runs each one
-// in a named step of `ci.yml` that sets that flag. Two mistakes are invisible: a new suite that no
-// step lists is never run anywhere, and a suite listed under the wrong flag has every test skipped
-// by its own gate. Both leave CI green — a skipped suite and an absent suite report the same thing.
+// in a named step of `ci.yml` that sets that flag. Two mistakes would be invisible: a new suite that
+// no step lists is never run anywhere, and a suite listed under the wrong flag has every test
+// skipped by its own gate. Both leave CI green — a skipped suite and an absent suite report the
+// same thing. A step with `if:` or `continue-on-error:` can skip or swallow a suite the same way.
+//
+// Like the MCP rule, this is a standing constraint, not a past incident: no unlisted suite has
+// reached main, the gap was caught twice in review.
 //
 // A tripwire over text, not a YAML parser: `ci.yml` is regular enough for a line scan. A flag set
 // on a job or workflow `env:` instead of the step is not seen, and a suite whose gate is not the
-// `process.env.X === '1'` form is refused rather than guessed at.
+// `process.env.X === '1'` form is refused rather than guessed at. A renamed suite needs no rule of
+// its own: its old path stops matching a file, so it is reported as not run by any step.
 // ---------------------------------------------------------------------------
 
 const CI_WORKFLOW = '.github/workflows/ci.yml';
 
-/** Each workflow step as `{ line, env, run }`: its own `env:` keys and the text of its `run:`. */
+/** Each workflow step as `{ line, text }`, the slice from its `- key:` line to the next one. */
 function workflowSteps(yml) {
   const steps = [];
-  const lines = yml.split('\n');
-  const indentOf = (l) => l.length - l.trimStart().length;
-  for (let i = 0; i < lines.length; i++) {
-    if (!/^\s*- \w+:/.test(lines[i])) {
-      continue;
+  yml.split('\n').forEach((text, i) => {
+    if (/^\s*- [A-Za-z]\w*:/.test(text)) {
+      steps.push({ line: i + 1, text: '' });
     }
-    const field = indentOf(lines[i]) + 2;
-    const step = { env: {}, line: i + 1, run: '' };
-    // The step spans the `- key:` line and everything indented at least as deep as its fields.
-    let end = i + 1;
-    while (end < lines.length && (lines[end].trim() === '' || indentOf(lines[end]) >= field)) {
-      end++;
+    if (steps.length > 0) {
+      steps[steps.length - 1].text += `${text}\n`;
     }
-    for (let j = i; j < end; j++) {
-      const text = lines[j].replace(/^(\s*)- /, '$1  ');
-      const key = text.match(/^\s*(env|run):\s*(.*)$/);
-      if (!key || indentOf(text) !== field) {
-        continue;
-      }
-      // `run: |` (or `>`) takes the deeper-indented lines after it; anything else is inline.
-      const block = [];
-      const inline = /^[|>]/.test(key[2]);
-      if (key[1] === 'run' && !inline) {
-        block.push(key[2]);
-      }
-      for (let k = j + 1; k < lines.length; k++) {
-        if (lines[k].trim() !== '' && indentOf(lines[k]) <= field) {
-          break;
-        }
-        if (key[1] === 'run') {
-          block.push(lines[k]);
-        } else {
-          const kv = lines[k].match(/^\s*(\w+):\s*['"]?([^'"#]*?)['"]?\s*(?:#.*)?$/);
-          if (kv) {
-            step.env[kv[1]] = kv[2];
-          }
-        }
-      }
-      if (key[1] === 'run') {
-        step.run += `${block.join('\n')}\n`;
-      }
-    }
-    steps.push(step);
-    i = end - 1;
-  }
+  });
   return steps;
 }
 
 function checkPgSuitesRunInCi() {
   const suites = walk('packages', (f) => f.endsWith('.pg.test.ts'));
-  const steps = workflowSteps(read(CI_WORKFLOW));
-  const named = new Map(); // suite path -> the steps that run it
-  for (const step of steps) {
-    for (const path of step.run.match(/packages\/[^\s'"]+\.pg\.test\.ts/g) ?? []) {
-      named.set(path, [...(named.get(path) ?? []), step]);
-    }
-  }
-
-  for (const path of named.keys()) {
-    if (!suites.includes(path)) {
-      fail(
-        CI_WORKFLOW,
-        named.get(path)[0].line,
-        'pg-suites-run-in-ci',
-        `a CI step runs ${path}, which does not exist`,
-        'A stale path after a rename or delete. Depending on the runner it either finds no tests ' +
-          'and passes, or the suite it was meant to run is now unlisted and never runs.'
-      );
+  const named = new Map(); // suite path -> the steps whose `yarn test` line names it
+  for (const step of workflowSteps(read(CI_WORKFLOW))) {
+    const lines = step.text.split('\n');
+    const runs = lines.filter((l) => !l.trim().startsWith('#') && l.includes('yarn test'));
+    for (const path of runs.join('\n').match(/packages\/[^\s'"]+\.pg\.test\.ts/g) ?? []) {
+      named.set(path, [...(named.get(path) ?? []), { ...step, lines }]);
     }
   }
 
@@ -508,15 +464,15 @@ function checkPgSuitesRunInCi() {
         file,
         1,
         'pg-suites-run-in-ci',
-        `${file} is not run by any step in ${CI_WORKFLOW}`,
+        `${file} is not run by any \`yarn test\` step in ${CI_WORKFLOW}`,
         'Database-backed suites are opt-in and the unit-test job skips them, so a suite no ' +
           'migrations-job step names never runs anywhere while CI stays green. Add a step that sets its flag.'
       );
       continue;
     }
-    // The gate: `const enabled = process.env.X === '1'`, read from code, not from its doc comment.
-    const gate = stripComments(read(file)).match(/process\.env\.(\w+)\s*===\s*'1'/);
-    if (!gate) {
+    // The gates: every `process.env.X === '1'` in the code, not in its doc comment.
+    const gates = [...stripComments(read(file)).matchAll(/process\.env\.(\w+)\s*===\s*'1'/g)];
+    if (gates.length === 0) {
       fail(
         file,
         1,
@@ -528,13 +484,26 @@ function checkPgSuitesRunInCi() {
       continue;
     }
     for (const step of runners) {
-      if (step.env[gate[1]] !== '1') {
+      for (const [, flag] of gates) {
+        if (
+          !step.lines.some((l) => new RegExp(`^\\s+${flag}:\\s*['"]?1['"]?\\s*(#.*)?$`).test(l))
+        ) {
+          fail(
+            CI_WORKFLOW,
+            step.line,
+            'pg-suites-run-in-ci',
+            `the step running ${file} does not set ${flag}: '1'`,
+            `The suite skips every test unless ${flag}=1, and a skipped suite is a passing step.`
+          );
+        }
+      }
+      if (step.lines.some((l) => /^\s+(?:- )?(?:if|continue-on-error):/.test(l))) {
         fail(
           CI_WORKFLOW,
           step.line,
           'pg-suites-run-in-ci',
-          `the step running ${file} does not set ${gate[1]}: '1'`,
-          `The suite skips every test unless ${gate[1]}=1, and a skipped suite is a passing step.`
+          `the step running ${file} has \`if:\` or \`continue-on-error:\``,
+          'A condition can skip the suite and continue-on-error swallows its failure; either way the step stays green.'
         );
       }
     }
