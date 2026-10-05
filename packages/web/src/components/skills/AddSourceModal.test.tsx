@@ -326,14 +326,38 @@ describe('parseRepositoryUrl', () => {
 });
 
 describe('AddSourceModal link paste', () => {
+  const value = (re: RegExp) => (screen.getByLabelText(re) as HTMLInputElement).value;
+
   it('fills the fields from a pasted folder link', () => {
     render(<AddSourceModal onClose={() => {}} open />);
-    fireEvent.change(screen.getByLabelText('GitHub link'), {
-      target: { value: 'https://github.com/acme/pack/tree/dev/skills' },
+    fireEvent.paste(screen.getByLabelText('GitHub link'), {
+      clipboardData: { getData: () => 'https://github.com/acme/pack/tree/dev/skills' },
     });
-    expect((screen.getByLabelText(/^Owner/) as HTMLInputElement).value).toBe('acme');
-    expect((screen.getByLabelText(/^Repository/) as HTMLInputElement).value).toBe('pack');
-    expect((screen.getByLabelText(/^Ref/) as HTMLInputElement).value).toBe('dev');
-    expect((screen.getByLabelText(/^Path/) as HTMLInputElement).value).toBe('skills');
+    expect(value(/^Owner/)).toBe('acme');
+    expect(value(/^Repository/)).toBe('pack');
+    expect(value(/^Ref/)).toBe('dev');
+    expect(value(/^Path/)).toBe('skills');
+  });
+
+  it('does not overwrite typed fields while a link is being typed', () => {
+    render(<AddSourceModal onClose={() => {}} open />);
+    fireEvent.change(screen.getByLabelText(/^Ref/), { target: { value: 'release' } });
+    fireEvent.change(screen.getByLabelText('GitHub link'), {
+      target: { value: 'https://github.com/acme/pack' },
+    });
+    expect(value(/^Ref/)).toBe('release');
+    expect(value(/^Owner/)).toBe('');
+  });
+
+  it('fills the fields from a typed link when the box loses focus', () => {
+    render(<AddSourceModal onClose={() => {}} open />);
+    const box = screen.getByLabelText('GitHub link');
+    fireEvent.change(box, { target: { value: 'https://github.com/acme/pack' } });
+    fireEvent.blur(box);
+    expect(value(/^Owner/)).toBe('acme');
+  });
+
+  it('treats a link with a malformed percent escape as not a link', () => {
+    expect(parseRepositoryUrl('https://github.com/acme/100%/tree/main')).toBeNull();
   });
 });

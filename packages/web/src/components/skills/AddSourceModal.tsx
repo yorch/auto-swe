@@ -64,7 +64,13 @@ export function parseRepositoryUrl(
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
     return null;
   }
-  const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  let parts: string[];
+  try {
+    parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  } catch {
+    // A stray `%` is not valid percent-encoding; treat the text as not a repository URL.
+    return null;
+  }
   if (parts.length < 2) {
     return null;
   }
@@ -145,6 +151,12 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
   const { data: teams } = useTeams();
   const [form, setForm] = useState<FormState>(EMPTY);
   const [link, setLink] = useState('');
+  const applyLink = (text: string) => {
+    const parsed = parseRepositoryUrl(text);
+    if (parsed) {
+      setForm((f) => ({ ...f, ...parsed }));
+    }
+  };
   const [previewed, setPreviewed] = useState<SourcePreview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Full texts read, by `sha:folder`: a text is about exactly the commit that was previewed.
@@ -416,12 +428,12 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
           hint="Paste a link to the repository or a folder in it to fill the fields below"
           id="skill-source-url"
           label="GitHub link"
-          onChange={(e) => {
-            setLink(e.target.value);
-            const parsed = parseRepositoryUrl(e.target.value);
-            if (parsed) {
-              setForm((f) => ({ ...f, ...parsed }));
-            }
+          // Fields are filled from a pasted link, or from a typed one when the box loses focus:
+          // parsing every keystroke would overwrite the ref and path with defaults mid-typing.
+          onBlur={() => applyLink(link)}
+          onChange={(e) => setLink(e.target.value)}
+          onPaste={(e) => {
+            applyLink(e.clipboardData.getData('text'));
           }}
           placeholder="https://github.com/owner/repo/tree/main/skills"
           value={link}
