@@ -10,6 +10,10 @@ export interface ConnectionEnvelopeColumns {
   apiKeyNonce: Uint8Array | null;
   apiKeyAuthTag: Uint8Array | null;
   apiKeyVersion: number;
+  headersCiphertext: Uint8Array | null;
+  headersNonce: Uint8Array | null;
+  headersAuthTag: Uint8Array | null;
+  headersKeyVersion: number;
 }
 
 export type RedactedConnection<T> = Omit<T, keyof ConnectionEnvelopeColumns> & {
@@ -24,6 +28,10 @@ export function redactConnection<T extends Partial<ConnectionEnvelopeColumns>>(
     apiKeyCiphertext,
     apiKeyNonce: _nonce,
     apiKeyVersion: _v,
+    headersAuthTag: _hTag,
+    headersCiphertext: _hCipher,
+    headersKeyVersion: _hV,
+    headersNonce: _hNonce,
     ...rest
   } = row;
   return { ...rest, hasApiToken: apiKeyCiphertext != null };

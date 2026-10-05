@@ -1,5 +1,13 @@
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
-import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import {
+  MAX_MCP_HEADERS,
+  type McpHeader,
+  NO_HEADER_COLUMNS,
+  openMcpHeaders,
+  sealMcpHeaders,
+  validateMcpHeaders,
+} from '@auto-swe/shared/lib/mcpHeaders';
+import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -18,6 +26,12 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  * An optional bearer token is stored in the Connection's existing AES-256-GCM `apiKey*` envelope
  * columns (unused by `mcp` rows), never in `config`. It is write-only: no response carries it, the
  * audit trail records only whether one is set, and it is sent only to the connection's own origin.
+ *
+ * Up to five custom headers follow the same rules in `headers*` columns (one sealed JSON list):
+ * responses and the audit trail carry their NAMES only. `Authorization` is not a custom header; the
+ * bearer token is where that credential lives. `config.allowPrivateNetwork` is the admin's opt-in
+ * for a server on an internal address, with the connectors' guard semantics: private ranges only,
+ * never loopback, link-local, unspecified or a metadata endpoint.
  */
 const BearerToken = z
   .string()
@@ -26,11 +40,21 @@ const BearerToken = z
   // A header value: visible ASCII only, so a pasted newline cannot smuggle in another header.
   .regex(/^[\x21-\x7e]+$/, 'The token must be visible characters with no spaces or line breaks');
 
+const HeaderName = z.string().min(1).max(100);
+const HeaderValue = z.string().min(1).max(2048);
+
 const CreateSchema = z.object({
+  /** Waives the private-network refusal for this connection's server (never loopback/metadata). */
+  allowPrivateNetwork: z.boolean().optional(),
   /** Optional bearer token the server requires; sent as `Authorization: Bearer …`. */
   bearerToken: BearerToken.optional(),
   /** Optional per-connection override of `loadMcpTools`'s per-call timeout (default 60 s). */
   callTimeoutMs: z.number().int().positive().optional(),
+  /** Custom request headers; values are sealed and never returned. */
+  headers: z
+    .array(z.object({ name: HeaderName, value: HeaderValue }))
+    .max(MAX_MCP_HEADERS)
+    .optional(),
   /** Optional per-connection override of `loadMcpTools`'s list-timeout (default 15 s). */
   listTimeoutMs: z.number().int().positive().optional(),
   name: z.string().min(1).max(200),
@@ -49,11 +73,20 @@ const CreateSchema = z.object({
  */
 const UpdateSchema = z
   .object({
+    allowPrivateNetwork: z.boolean().optional(),
     /** Replaces the stored token. Omit to keep it. */
     bearerToken: BearerToken.optional(),
     callTimeoutMs: z.number().int().positive().optional(),
     /** Removes the stored token. Cannot be combined with `bearerToken`. */
     clearBearerToken: z.boolean().optional(),
+    /**
+     * The complete header set after the edit. A row with a `value` sets it; a row without one keeps
+     * the stored value of that name. Omit the field to keep every header; send `[]` to remove all.
+     */
+    headers: z
+      .array(z.object({ name: HeaderName, value: HeaderValue.optional() }))
+      .max(MAX_MCP_HEADERS)
+      .optional(),
     listTimeoutMs: z.number().int().positive().optional(),
     name: z.string().min(1).max(200),
     url: z
@@ -90,7 +123,20 @@ const NO_TOKEN_COLUMNS = {
  */
 function mcpView<T extends Parameters<typeof redactConnection>[0]>(row: T) {
   const { hasApiToken, ...rest } = redactConnection(row);
-  return { ...rest, hasToken: hasApiToken };
+  const names = headerNamesOf(row);
+  return { ...rest, hasToken: hasApiToken, headerNames: names.names, headersUnreadable: names.bad };
+}
+
+/** The NAMES of a row's stored headers; a row that cannot be opened reports `bad`, never values. */
+function headerNamesOf(row: Parameters<typeof openMcpHeaders>[0]): {
+  names: string[];
+  bad: boolean;
+} {
+  try {
+    return { bad: false, names: openMcpHeaders(row).map((h) => h.name) };
+  } catch {
+    return { bad: true, names: [] };
+  }
 }
 
 function safeOrigin(rawUrl: string): string | null {
@@ -201,8 +247,15 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'MCP connection not found' } });
       }
-      const config = (conn.config ?? {}) as { url?: unknown; listTimeoutMs?: unknown };
-      const safety = typeof config.url === 'string' ? isSafeProbeUrl(config.url) : null;
+      const config = (conn.config ?? {}) as {
+        url?: unknown;
+        listTimeoutMs?: unknown;
+        allowPrivateNetwork?: unknown;
+      };
+      const safety =
+        typeof config.url === 'string'
+          ? checkProbeUrl(config.url, { allowPrivate: config.allowPrivateNetwork === true })
+          : null;
       if (!(safety?.ok && typeof config.url === 'string')) {
         return {
           data: { durationMs: 0, error: 'The saved server URL is not allowed.', ok: false },
@@ -233,7 +286,21 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           };
         }
       }
-      return { data: await probeMcpServer(config.url, timeoutMs, undefined, { bearerToken }) };
+      let headers: McpHeader[];
+      try {
+        headers = openMcpHeaders(conn);
+      } catch {
+        return {
+          data: {
+            durationMs: 0,
+            error: 'The stored headers could not be read. Re-enter them and save again.',
+            ok: false,
+          },
+        };
+      }
+      return {
+        data: await probeMcpServer(config.url, timeoutMs, undefined, { bearerToken, headers }),
+      };
     }
   );
 
@@ -242,12 +309,20 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: CreateSchema } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const { name, teamId, url, listTimeoutMs, callTimeoutMs, bearerToken } = request.body;
-      const safety = isSafeProbeUrl(url);
+      const { name, teamId, url, listTimeoutMs, callTimeoutMs, bearerToken, headers } =
+        request.body;
+      const allowPrivateNetwork = request.body.allowPrivateNetwork === true;
+      const safety = checkProbeUrl(url, { allowPrivate: allowPrivateNetwork });
       if (!safety.ok) {
         return reply
           .status(400)
           .send({ error: { code: 'UNSAFE_URL', message: `url rejected: ${safety.reason}` } });
+      }
+      const headerProblem = headers ? validateMcpHeaders(headers) : null;
+      if (headerProblem) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_HEADERS', message: headerProblem } });
       }
       const team = await fastify.prisma.team.findUnique({ where: { id: teamId } });
       if (!team?.isActive) {
@@ -257,6 +332,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const config = {
         url,
+        ...(allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
         ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
         ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
       };
@@ -267,6 +343,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           teamId,
           type: 'mcp',
           ...(bearerToken ? tokenColumns(bearerToken) : {}),
+          ...(headers?.length ? sealMcpHeaders(headers) : {}),
         },
         include: { team: { select: { id: true, name: true, slug: true } } },
       });
@@ -276,6 +353,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         after: {
           ...config,
           hasToken: !!bearerToken,
+          headerNames: (headers ?? []).map((h) => h.name),
           name,
           type: 'mcp',
           url: sanitizeAuditUrl(url),
@@ -294,6 +372,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const { name, url, listTimeoutMs, callTimeoutMs, bearerToken, clearBearerToken } =
         request.body;
+      const allowPrivateNetwork = request.body.allowPrivateNetwork === true;
       // Scope to type='mcp' so this route can never mutate a git_repo connection.
       const conn = await fastify.prisma.connection.findFirst({
         where: { id: request.params.id, type: 'mcp' },
@@ -303,7 +382,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'MCP connection not found' } });
       }
-      const safety = isSafeProbeUrl(url);
+      const safety = checkProbeUrl(url, { allowPrivate: allowPrivateNetwork });
       if (!safety.ok) {
         return reply
           .status(400)
@@ -325,15 +404,70 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
       }
+      // The same rule for custom headers: a stored value belongs to the origin it was saved for.
+      let storedHeaders: McpHeader[] = [];
+      try {
+        storedHeaders = openMcpHeaders(conn);
+      } catch {
+        // Unreadable stored headers can only be replaced, never kept.
+        if (request.body.headers === undefined) {
+          return reply.status(409).send({
+            error: {
+              code: 'HEADERS_UNREADABLE',
+              message: 'The stored headers could not be read. Re-enter them or remove them.',
+            },
+          });
+        }
+      }
+      let nextHeaders: McpHeader[] | undefined;
+      if (request.body.headers !== undefined) {
+        const byName = new Map(storedHeaders.map((h) => [h.name.toLowerCase(), h.value]));
+        nextHeaders = [];
+        for (const h of request.body.headers) {
+          const value = h.value ?? byName.get(h.name.toLowerCase());
+          if (value === undefined) {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_HEADERS',
+                message: `Enter a value for the ${h.name} header; none is stored.`,
+              },
+            });
+          }
+          nextHeaders.push({ name: h.name, value });
+        }
+        const problem = validateMcpHeaders(nextHeaders);
+        if (problem) {
+          return reply.status(400).send({ error: { code: 'INVALID_HEADERS', message: problem } });
+        }
+      }
+      const keptStoredValues =
+        nextHeaders === undefined
+          ? storedHeaders.length > 0
+          : request.body.headers?.some((h) => h.value === undefined) === true;
+      if (keptStoredValues) {
+        const previous = typeof before?.url === 'string' ? safeOrigin(before.url) : null;
+        if (previous !== safeOrigin(url)) {
+          return reply.status(409).send({
+            error: {
+              code: 'HEADERS_ORIGIN_CHANGE',
+              message:
+                'This connection has stored headers. Changing the server address would send them to a different host. Enter their values again or remove them first.',
+            },
+          });
+        }
+      }
+      const finalHeaderNames = (nextHeaders ?? storedHeaders).map((h) => h.name);
       const beforeAudit = {
         ...(before ?? {}),
         hasToken: hadToken,
+        headerNames: storedHeaders.map((h) => h.name),
         name: conn.name,
         type: 'mcp',
         ...(typeof before?.url === 'string' ? { url: sanitizeAuditUrl(before.url) } : {}),
       };
       const config = {
         url,
+        ...(allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
         ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
         ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
       };
@@ -343,6 +477,11 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           name,
           ...(bearerToken !== undefined ? tokenColumns(bearerToken) : {}),
           ...(clearBearerToken ? NO_TOKEN_COLUMNS : {}),
+          ...(nextHeaders === undefined
+            ? {}
+            : nextHeaders.length > 0
+              ? sealMcpHeaders(nextHeaders)
+              : NO_HEADER_COLUMNS),
         },
         include: { team: { select: { id: true, name: true, slug: true } } },
         where: { id: conn.id },
@@ -353,6 +492,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         after: {
           ...config,
           hasToken: bearerToken !== undefined ? true : clearBearerToken ? false : hadToken,
+          headerNames: finalHeaderNames,
           name,
           type: 'mcp',
           url: sanitizeAuditUrl(url),

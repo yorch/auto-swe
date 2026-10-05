@@ -1,4 +1,5 @@
 import { getSettingDefinition, resolveSettings } from '@auto-swe/shared/config';
+import type { McpHeader } from '@auto-swe/shared/lib/mcpHeaders';
 import { IMPLEMENTER_TOOL_IDS, MCP_TOOL_KEY } from '@auto-swe/shared/workflow/stepRegistry';
 import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
@@ -46,6 +47,10 @@ export interface ImplementerAgentOptions {
   mcpListTimeoutMs?: number;
   /** Decrypted bearer token for the MCP connection, if it has one. Never logged. */
   mcpBearerToken?: string;
+  /** Decrypted custom headers for the MCP connection, if it has any. Never logged. */
+  mcpHeaders?: readonly McpHeader[];
+  /** The MCP connection's opt-in for a server on a private address. */
+  mcpAllowPrivateNetwork?: boolean;
   /** Optional per-connection override of `loadMcpTools`'s per-call timeout (default 60 s). */
   mcpCallTimeoutMs?: number;
   /**
@@ -176,8 +181,10 @@ export async function createImplementerAgent(
   let closeMcp: (() => Promise<void>) | undefined;
   if (options?.mcpServerRef && isMcpToolEnabled(tools)) {
     const loaded = await loadMcpTools(options.mcpServerRef, tracer, {
+      allowPrivateNetwork: options.mcpAllowPrivateNetwork,
       bearerToken: options.mcpBearerToken,
       callTimeoutMs: options.mcpCallTimeoutMs,
+      headers: options.mcpHeaders,
       listTimeoutMs: options.mcpListTimeoutMs,
     });
     // Always adopt the returned close — it is NOOP on failure/empty paths and
@@ -317,8 +324,10 @@ export async function buildImplementerForActivity(
     {
       agentKey,
       maxToolOutputChars: settings['workspace.maxToolOutputChars'],
+      mcpAllowPrivateNetwork: mcpTarget?.allowPrivateNetwork,
       mcpBearerToken: mcpTarget?.bearerToken,
       mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
+      mcpHeaders: mcpTarget?.headers,
       mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
       mcpServerRef: mcpTarget?.url,
       resolveCtx: ctx,

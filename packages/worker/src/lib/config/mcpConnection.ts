@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
+import { type McpHeader, openMcpHeaders } from '@auto-swe/shared/lib/mcpHeaders';
 import { isMcpToolEnabled } from '../../agents/mcpTools.js';
 import { fetchActiveAgent } from './agentResolver.js';
 import { parseToolKeys } from './toolKeys.js';
@@ -22,6 +23,10 @@ export interface McpConnectionTarget {
    * `target.bearerToken` by name and hand it to `loadMcpTools`.
    */
   readonly bearerToken?: string;
+  /** The admin's opt-in for a server on a private address (never loopback or metadata). */
+  allowPrivateNetwork?: boolean;
+  /** Decrypted custom headers; non-enumerable for the same reason as `bearerToken`. */
+  readonly headers?: readonly McpHeader[];
 }
 
 /** A finite, strictly-positive number — `0`/negative/NaN/Infinity are invalid timeouts. */
@@ -52,6 +57,7 @@ export async function mcpUrlForConnection(
       url?: unknown;
       listTimeoutMs?: unknown;
       callTimeoutMs?: unknown;
+      allowPrivateNetwork?: unknown;
     } | null;
     const url = config && typeof config === 'object' ? config.url : null;
     if (typeof url !== 'string') {
@@ -61,6 +67,7 @@ export async function mcpUrlForConnection(
     const callTimeoutMs = readPositiveNumber(config?.callTimeoutMs);
     const target: McpConnectionTarget = {
       url,
+      ...(config?.allowPrivateNetwork === true ? { allowPrivateNetwork: true } : {}),
       ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
       ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
     };
@@ -82,6 +89,18 @@ export async function mcpUrlForConnection(
         return null;
       }
       Object.defineProperty(target, 'bearerToken', { enumerable: false, value: bearerToken });
+    }
+    let headers: McpHeader[];
+    try {
+      headers = openMcpHeaders(conn);
+    } catch {
+      // Same stance as an unreadable token: connecting without the headers the server expects can
+      // only fail confusingly. Nothing from the crypto layer's error is logged.
+      console.warn(`[mcp] stored headers for connection ${connectionId} cannot be read`);
+      return null;
+    }
+    if (headers.length > 0) {
+      Object.defineProperty(target, 'headers', { enumerable: false, value: headers });
     }
     return target;
   } catch {

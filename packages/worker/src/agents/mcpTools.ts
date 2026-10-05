@@ -19,7 +19,8 @@
  *   the gateway enum does not yet accept `'mcp'`.
  */
 import { randomUUID } from 'node:crypto';
-import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { applyMcpHeaders, type McpHeader } from '@auto-swe/shared/lib/mcpHeaders';
+import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
 import type { Tool } from '@mastra/core/tools';
 import { MCPClient } from '@mastra/mcp';
@@ -58,6 +59,16 @@ export interface LoadMcpToolsOptions {
    * traced, or included in an error message.
    */
   bearerToken?: string;
+  /**
+   * Custom request headers, already decrypted by the resolver. Sent to the server's own origin
+   * only, like the token; never logged, traced, or included in an error message.
+   */
+  headers?: readonly McpHeader[];
+  /**
+   * The connection's opt-in for a server on a private (RFC 1918 / ULA) address. Loopback,
+   * link-local, unspecified and metadata addresses are refused regardless.
+   */
+  allowPrivateNetwork?: boolean;
 }
 
 const DEFAULT_LIST_TIMEOUT_MS = 15_000;
@@ -81,14 +92,14 @@ export function isMcpToolEnabled(enabledTools?: string[] | null): boolean {
 }
 
 /** Validates that an mcpServerRef is an http(s) URL. Returns the parsed URL or null. */
-export function parseMcpServerRef(mcpServerRef: string): URL | null {
+export function parseMcpServerRef(mcpServerRef: string, allowPrivateNetwork = false): URL | null {
   // `isSafeProbeUrl` parses the ref, enforces the http(s)-only scheme (no stdio:
   // a `command` server would let a DB column drive arbitrary command execution on
   // the worker host), and is our defense-in-depth SSRF guard: the gateway's
   // `/mcp-connections` create route already rejects unsafe URLs at write time, but
   // this is the worker's last line of defense against a private/loopback/link-local
   // target reaching an MCP server connection. Reuse its parsed URL — no re-parse.
-  const safety = isSafeProbeUrl(mcpServerRef);
+  const safety = checkProbeUrl(mcpServerRef, { allowPrivate: allowPrivateNetwork });
   return safety.ok ? safety.url : null;
 }
 
@@ -110,17 +121,21 @@ type McpFetch = (
  */
 export function bearerFetch(
   serverUrl: URL,
-  token: string,
-  baseFetch: typeof fetch = fetch
+  token: string | undefined,
+  baseFetch: typeof fetch = fetch,
+  customHeaders: readonly McpHeader[] = []
 ): McpFetch {
   return async (input, init) => {
     const target = new URL(typeof input === 'string' ? input : input.toString());
     const headers = new Headers(init?.headers);
     if (target.origin === serverUrl.origin) {
-      headers.set('authorization', `Bearer ${token}`);
+      if (token) {
+        headers.set('authorization', `Bearer ${token}`);
+      }
     } else {
       headers.delete('authorization');
     }
+    applyMcpHeaders(target, serverUrl.origin, headers, customHeaders);
     const res = await baseFetch(target, { ...init, headers, redirect: 'manual' });
     if (res.status >= 300 && res.status < 400) {
       await res.body?.cancel().catch(() => undefined);
@@ -229,7 +244,7 @@ export async function loadMcpTools(
   const callTimeoutMs = options?.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   const start = Date.now();
 
-  const url = parseMcpServerRef(mcpServerRef);
+  const url = parseMcpServerRef(mcpServerRef, options?.allowPrivateNetwork === true);
   if (!url) {
     const error = `mcpServerRef must be an http(s) URL (stdio is not supported): ${mcpServerRef}`;
     console.warn(`[mcp] invalid server ref: ${error}`);
@@ -261,13 +276,13 @@ export async function loadMcpTools(
         [SERVER_NAME]: {
           timeout: callTimeoutMs,
           url,
-          // A token-less connection keeps the client's stock transport behaviour. With a token,
-          // one fetch carries it on both transports and `allowedHosts` pins the client to the
+          // A connection with no credential keeps the client's stock transport behaviour. With a
+          // token or custom headers, one fetch carries them on both transports and `allowedHosts` pins the client to the
           // connection's host as a second line behind the origin check in `bearerFetch`.
-          ...(options?.bearerToken
+          ...(options?.bearerToken || options?.headers?.length
             ? {
                 allowedHosts: [url.host],
-                fetch: bearerFetch(url, options.bearerToken),
+                fetch: bearerFetch(url, options.bearerToken, fetch, options.headers),
               }
             : {}),
         },

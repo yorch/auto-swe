@@ -374,3 +374,90 @@ describe('bearerFetch', () => {
     expect(base).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('parseMcpServerRef with allowPrivateNetwork', () => {
+  it('accepts RFC 1918 and ULA hosts only with the opt-in', () => {
+    for (const ref of ['http://10.0.0.5/mcp', 'http://192.168.1.1/mcp', 'http://[fd12::1]/mcp']) {
+      expect(parseMcpServerRef(ref)).toBeNull();
+      expect(parseMcpServerRef(ref, true)).not.toBeNull();
+    }
+  });
+
+  it('never accepts loopback, link-local, unspecified or metadata hosts, opt-in or not', () => {
+    for (const ref of [
+      'http://localhost/mcp',
+      'http://127.0.0.1/mcp',
+      'http://[::1]/mcp',
+      'http://0.0.0.0/mcp',
+      'http://169.254.169.254/mcp',
+      'http://[fe80::1]/mcp',
+      'http://metadata.google.internal/mcp',
+      'http://100.100.100.200/mcp',
+      'ftp://10.0.0.5/mcp',
+    ]) {
+      expect(parseMcpServerRef(ref, true), ref).toBeNull();
+    }
+  });
+
+  it('loadMcpTools connects to a private host only when the connection opted in', async () => {
+    listToolsetsWithErrors.mockResolvedValue({ errors: {}, toolsets: { mcp: {} } });
+    const refused = await loadMcpTools('http://10.0.0.5/mcp', makeTracer());
+    expect(refused.tools).toEqual({});
+    expect(constructorArgs).toHaveLength(0);
+    await loadMcpTools('http://10.0.0.5/mcp', makeTracer(), { allowPrivateNetwork: true });
+    expect(constructorArgs).toHaveLength(1);
+    const loopback = await loadMcpTools('http://127.0.0.1/mcp', makeTracer(), {
+      allowPrivateNetwork: true,
+    });
+    expect(loopback.tools).toEqual({});
+    expect(constructorArgs).toHaveLength(1);
+  });
+});
+
+describe('custom headers', () => {
+  const SECRET = 'tenant-secret-value-9876';
+  const server = new URL('https://mcp.example.com/mcp');
+  const custom = [{ name: 'X-Api-Key', value: SECRET }];
+
+  it('sends them to the server origin only, on top of the token', async () => {
+    const base = vi.fn(async () => new Response('{}', { status: 200 }));
+    const f = bearerFetch(server, 'tok', base as never, custom);
+    await f('https://mcp.example.com/messages');
+    await f('https://evil.example.net/x', { headers: { 'x-api-key': SECRET } });
+    await f('https://mcp.example.com:8443/mcp');
+    const calls = base.mock.calls as unknown as [URL, RequestInit][];
+    expect(new Headers(calls[0]?.[1].headers).get('x-api-key')).toBe(SECRET);
+    expect(new Headers(calls[0]?.[1].headers).get('authorization')).toBe('Bearer tok');
+    for (const call of calls.slice(1)) {
+      expect(new Headers(call[1].headers).get('x-api-key')).toBeNull();
+      expect(new Headers(call[1].headers).get('authorization')).toBeNull();
+    }
+  });
+
+  it('works without a token, and a custom header cannot displace one the transport set', async () => {
+    const base = vi.fn(async () => new Response('{}', { status: 200 }));
+    const f = bearerFetch(server, undefined, base as never, [
+      ...custom,
+      { name: 'X-Trace', value: 'mine' },
+    ]);
+    await f('https://mcp.example.com/mcp', { headers: { 'x-trace': 'sdk' } });
+    const headers = new Headers((base.mock.calls[0] as unknown as [URL, RequestInit])[1].headers);
+    expect(headers.get('x-api-key')).toBe(SECRET);
+    expect(headers.get('x-trace')).toBe('sdk');
+    expect(headers.get('authorization')).toBeNull();
+  });
+
+  it('installs the header fetch for a connection with headers but no token, and never logs them', async () => {
+    listToolsetsWithErrors.mockRejectedValue(new Error(`boom ${SECRET}`));
+    const logs: unknown[] = [];
+    const errSpy = vi.spyOn(console, 'error').mockImplementation((...a) => void logs.push(a));
+    const tracer = makeTracer();
+    await loadMcpTools('https://mcp.example.com/mcp', tracer, { headers: custom });
+    const servers = (constructorArgs[0] as { servers: { mcp: Record<string, unknown> } }).servers;
+    expect(typeof servers.mcp.fetch).toBe('function');
+    // The headers are inside the closure, not on any serialisable argument.
+    expect(JSON.stringify(constructorArgs)).not.toContain(SECRET);
+    expect(JSON.stringify(tracer.addActivityEvent.mock.calls)).not.toContain('X-Api-Key');
+    errSpy.mockRestore();
+  });
+});

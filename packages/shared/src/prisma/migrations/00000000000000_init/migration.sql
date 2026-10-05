@@ -177,6 +177,10 @@ CREATE TABLE "connections" (
     "api_key_nonce" BYTEA,
     "api_key_auth_tag" BYTEA,
     "api_key_version" INTEGER NOT NULL DEFAULT 1,
+    "headers_ciphertext" BYTEA,
+    "headers_nonce" BYTEA,
+    "headers_auth_tag" BYTEA,
+    "headers_key_version" INTEGER NOT NULL DEFAULT 1,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
