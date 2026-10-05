@@ -1,31 +1,13 @@
 import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
-import { CHANNEL_ASSISTANT_TEMPLATE_NAME } from '@auto-swe/shared/lib/channelTask';
+import {
+  CHANNEL_ASSISTANT_SPEC,
+  CHANNEL_ASSISTANT_TEMPLATE_NAME,
+} from '@auto-swe/shared/lib/channelTask';
 import { logError } from '../lib/activityLog.js';
 import { endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
-
-/**
- * Name of the GLOBAL workflow template that backs channel-run observability —
- * the stable `findFirst({ name, teamId: null })` lookup key. Imported from the
- * shared, vitest-aliased `@auto-swe/shared/lib/channelTask` so it can't drift
- * from the seed in `syncBuiltins`.
- */
-
-/**
- * The minimal spec we stamp onto each channel run's `specSnapshot` (the seeded
- * template version carries the canonical copy). A single terminal node — the run
- * is a trace container, not an interpreted graph; the `/runs` viewer renders the
- * AgentTrace event stream regardless of node mapping.
- */
-const CHANNEL_ASSISTANT_SPEC = {
-  description: 'Observability shell for channel-assistant turns and ambient digests.',
-  entry: 'done',
-  name: CHANNEL_ASSISTANT_TEMPLATE_NAME,
-  nodes: { done: { status: 'SUCCESS', type: 'terminate' } },
-  schemaVersion: 1,
-} as const;
 
 /**
  * Channel-run lifecycle activities — give channel-assistant turns + ambient
@@ -203,7 +185,8 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
   const teamId = input.teamId ?? channel?.teamId ?? undefined;
   const orgId = input.orgId ?? channel?.orgId ?? undefined;
 
-  // Snapshot the minimal spec + the channel metadata. The metadata rides along
+  // Snapshot the seeded template's own spec (CHANNEL_ASSISTANT_SPEC, so its description never
+  // goes stale) + the channel metadata. The metadata rides along
   // in the Json spec snapshot for the audit feed; visibility uses `channelId`.
   const specSnapshot = {
     ...CHANNEL_ASSISTANT_SPEC,

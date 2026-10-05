@@ -1,3 +1,4 @@
+import { CHANNEL_ASSISTANT_SPEC } from '@auto-swe/shared/lib/channelTask';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => {
@@ -65,6 +66,7 @@ describe('startChannelRun', () => {
     expect(data.workRequestId).toBeNull();
     // Linked relationally so run visibility can reach the channel's team.
     expect(data.channelId).toBe('chan-1');
+    expect(data.specSnapshot.description).toBe(CHANNEL_ASSISTANT_SPEC.description);
     // Channel metadata also rides along in the spec snapshot for the audit feed.
     expect(data.specSnapshot.channel).toMatchObject({
       channelId: 'chan-1',

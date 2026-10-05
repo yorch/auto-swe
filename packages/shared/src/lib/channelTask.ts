@@ -48,3 +48,22 @@ export const CHANNEL_TASK_TEMPLATE_NAME = 'Channel Task';
 export function isSystemManagedTemplate(t: { name: string; team: unknown | null }): boolean {
   return t.team === null && t.name === CHANNEL_ASSISTANT_TEMPLATE_NAME;
 }
+
+/**
+ * Minimal valid `WorkflowSpec` for the Channel Assistant template: a single
+ * terminal node. The `/runs` trace viewer renders the AgentTrace event stream
+ * regardless of node mapping, so a richer graph would be dead weight here.
+ *
+ * Typed loosely (object literal) so this file doesn't depend on the workflow spec
+ * package; it is parsed/validated wherever it's consumed.
+ */
+export const CHANNEL_ASSISTANT_SPEC = {
+  description:
+    "Records channel-assistant conversations so they appear in run history. Runs automatically; it can't be launched by hand.",
+  entry: 'done',
+  name: CHANNEL_ASSISTANT_TEMPLATE_NAME,
+  nodes: {
+    done: { status: 'SUCCESS', type: 'terminate' },
+  },
+  schemaVersion: 1,
+} as const;

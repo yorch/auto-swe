@@ -31,7 +31,11 @@ import {
 } from './agentPrompts.js';
 import { AGENT_RUN_SPEC, AGENT_RUN_TEMPLATE_NAME, AGENT_RUN_TEMPLATE_ORIGIN } from './agentRun.js';
 import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
-import { CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME } from './channelTask.js';
+import {
+  CHANNEL_ASSISTANT_SPEC,
+  CHANNEL_ASSISTANT_TEMPLATE_NAME,
+  CHANNEL_TASK_TEMPLATE_NAME,
+} from './channelTask.js';
 import {
   initialRevision,
   isRevisionConflict,
@@ -59,26 +63,11 @@ const SWE_ORIGIN = 'swe-starter';
  * uses to resolve this template's id + active version at run time. The name
  * constant lives in `./channelTask.js` (re-exported here for compatibility).
  */
-export { CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME } from './channelTask.js';
-
-/**
- * Minimal valid `WorkflowSpec` for the Channel Assistant template: a single
- * terminal node. The `/runs` trace viewer renders the AgentTrace event stream
- * regardless of node mapping, so a richer graph would be dead weight here.
- *
- * Typed loosely (object literal) so this file doesn't depend on the workflow spec
- * package; it is parsed/validated wherever it's consumed.
- */
-export const CHANNEL_ASSISTANT_SPEC = {
-  description:
-    "Records channel-assistant conversations so they appear in run history. Runs automatically; it can't be launched by hand.",
-  entry: 'done',
-  name: CHANNEL_ASSISTANT_TEMPLATE_NAME,
-  nodes: {
-    done: { status: 'SUCCESS', type: 'terminate' },
-  },
-  schemaVersion: 1,
-} as const;
+export {
+  CHANNEL_ASSISTANT_SPEC,
+  CHANNEL_ASSISTANT_TEMPLATE_NAME,
+  CHANNEL_TASK_TEMPLATE_NAME,
+} from './channelTask.js';
 
 /**
  * Channel assistant: `WorkflowSpec` for the GLOBAL "Channel Task" template — a
