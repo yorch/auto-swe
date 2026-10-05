@@ -27,7 +27,6 @@ import {
   useEdgesState,
   useNodesInitialized,
   useNodesState,
-  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -41,6 +40,7 @@ import {
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
+import { useFitFlow } from './fitFlow';
 import { FlowChrome } from './flowChrome';
 import { foldBookkeeping } from './foldBookkeeping';
 import { foldGroups } from './foldGroups';
@@ -170,14 +170,18 @@ function InnerDag({
   // measured when they arrive with the spec. Fit again once they are measured
   // and whenever a different spec (another version) is shown, so the whole
   // graph is on screen on load instead of clipped at the canvas edge.
-  const { fitView } = useReactFlow();
+  const fit = useFitFlow();
   const nodesInitialized = useNodesInitialized();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: specKey is the trigger — a different spec must be refitted.
+  // Folding bookkeeping or a group changes which nodes are drawn without changing the
+  // spec, so the set of drawn ids is a trigger too. Statuses do not change it, so a
+  // live run's colours never pull the viewer back from where they have panned to.
+  const drawnKey = initial.nodes.map((n) => n.id).join('\u0000');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: specKey and drawnKey are the triggers — a different spec, or a different set of drawn nodes, must be refitted.
   useEffect(() => {
     if (nodesInitialized && view === 'graph') {
-      void fitView(FIT_VIEW_OPTIONS);
+      fit();
     }
-  }, [nodesInitialized, specKey, fitView, view]);
+  }, [nodesInitialized, specKey, drawnKey, fit, view]);
 
   // Reflect external selection by setting React Flow's `selected` flag.
   const nodesWithSelection = useMemo(
@@ -390,7 +394,7 @@ function InnerDag({
             proOptions={{ hideAttribution: true }}
             zoomOnDoubleClick={false}
           >
-            <FlowChrome />
+            <FlowChrome onFit={fit} />
           </ReactFlow>
         </div>
       )}

@@ -30,6 +30,7 @@ import {
   ReactFlowProvider,
   type Node as RFNode,
   useEdgesState,
+  useNodesInitialized,
   useNodesState,
   useReactFlow,
 } from '@xyflow/react';
@@ -41,6 +42,7 @@ import { TOKEN } from '@/lib/palette';
 import { cn, formatCost } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
+import { useFitFlow } from './fitFlow';
 import { FlowChrome } from './flowChrome';
 import { makeDefaultNodeFor } from './makeDefaultNode';
 import { NodeInspector } from './NodeInspector';
@@ -97,6 +99,17 @@ function EditorInner({
   const inspectorRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const { screenToFlowPosition } = useReactFlow();
+  const fit = useFitFlow();
+  const nodesInitialized = useNodesInitialized();
+  // Once, when the first nodes are measured: React Flow's own fit centres a graph too
+  // large for the readable floor, cutting off its start. Later edits are the author's to frame.
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (nodesInitialized && !fitted.current) {
+      fitted.current = true;
+      fit();
+    }
+  }, [nodesInitialized, fit]);
 
   const stepRegistryByName = useMemo(
     () => new Map(stepRegistry.map((s) => [s.name, s])),
@@ -647,7 +660,7 @@ function EditorInner({
             proOptions={{ hideAttribution: true }}
             zoomOnDoubleClick={false}
           >
-            <FlowChrome />
+            <FlowChrome onFit={fit} />
           </ReactFlow>
         </div>
 
