@@ -53,11 +53,15 @@ function TemplateRuns({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
   const { data: template } = useWorkflowTemplate(id ?? '');
-  const [offset, setOffset] = useState(0);
   const [statusFilter, setStatusFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
   // Set by the step table on the analytics page: only runs in which that node failed.
   const failedNodeId = useSearchParams().get('failedStep') ?? '';
+  // The page belongs to the failed-step filter it was reached under: when that filter changes
+  // or clears, the stored offset no longer points into the same list, so it reads as 0.
+  const [paging, setPaging] = useState({ filter: failedNodeId, offset: 0 });
+  const offset = paging.filter === failedNodeId ? paging.offset : 0;
+  const setOffset = (next: number) => setPaging({ filter: failedNodeId, offset: next });
 
   // Both filters run server-side, so the total and the pagination describe
   // the filtered set. This reads /workflow-runs (not the template-scoped
