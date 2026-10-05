@@ -1722,9 +1722,9 @@
     {
       "body": "Approval, decision, input form and editable review nodes pause a run until response or timeout.",
       "category": "Governance",
-      "detail": "WorkflowHumanStep stores context, deadlines and response data. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it from the web inbox or a Slack button edits that message to show the decision and any note and drops its buttons; the edit is best effort, so a Slack failure is logged and never undoes the recorded answer.",
+      "detail": "WorkflowHumanStep stores context, deadlines and response data. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the web inbox and other API clients) or a Slack button edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently.",
       "id": "hitl",
-      "refs": ["spec", "schema", "hitlSlackEdit", "hitlSlackCaller"],
+      "refs": ["spec", "schema", "hitlSlackEdit", "hitlSlackCaller", "hitlSlackButton"],
       "status": "Implemented",
       "title": "Four human interaction types"
     },
@@ -1758,7 +1758,7 @@
     {
       "body": "Call a named remote tool from a workflow or attach an MCP server toolset to an enabled agent.",
       "category": "Integrations",
-      "detail": "Generic agent nodes do not acquire local workspace tools; they may receive MCP tools. Enabling a connection type in the generic registry does not imply readSource/writeOutcome implements it. A connection may carry one bearer token, stored in the connection’s encrypted envelope columns and write-only: responses say only whether one is set, and audit rows record a boolean. With a token, every request goes to the server’s own origin with Authorization: Bearer, no other origin receives it, a redirect is refused, and the token is removed from connect error text; a token that cannot be decrypted yields no tools rather than an unauthenticated connection. Pointing a connection at another origin while keeping its stored token is refused with 409 TOKEN_ORIGIN_CHANGE. The token belongs to the connection, so every run that uses it presents the same credential, not the launching user’s. The admin connection test lists tools with the stored token, trying streamable HTTP and then the legacy SSE transport.",
+      "detail": "Generic agent nodes do not acquire local workspace tools; they may receive MCP tools. Enabling a connection type in the generic registry does not imply readSource/writeOutcome implements it. A connection may carry one bearer token, stored in the connection’s encrypted envelope columns and write-only: responses say only whether one is set, and audit rows record a boolean. With a token, the Authorization: Bearer header is attached only to requests for the server’s own origin and stripped from any other, the client is also pinned to the connection’s host, a redirect is refused, and the token is removed from connect error text. A token that cannot be decrypted yields no agent tools and makes an mcp workflow node fail, rather than connecting unauthenticated. Pointing a connection at another origin while keeping its stored token is refused with 409 TOKEN_ORIGIN_CHANGE. The token belongs to the connection, so every run that uses it presents the same credential, not the launching user’s. The admin connection test lists tools with the stored token, using streamable HTTP and falling back to the legacy SSE transport after a failure that another transport might fix; a URL ending /sse goes straight to SSE.",
       "id": "mcp",
       "refs": [
         "agentNode",
@@ -1832,7 +1832,7 @@
     {
       "body": "Track tokens and catalog-priced USD across runs, runless workflows, teams, organizations and Slack channels, and stop a capped organization’s spend at launch and before each model call.",
       "category": "Operations",
-      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. The organization USD cap is checked at launch and again before every budgeted model call, which refuses with a non-retryable BUDGET_EXCEEDED naming the organization. Both read finalized, in-flight and runless spend; the mid-run read goes through a per-organization cache of one config window. One rule, billedOrgId, places a run for the in-flight count, the mid-run guard and finalization billing: the work request’s connection, else the run’s own connection, else the repository of its own ledger row, and the first source that exists decides. A scheduled fire gets its own ledger row and run connection from its schedule’s repository, and epic planning declares the first repository’s team as its spend owner, so neither sits outside the cap. A scheduled run reaper finalizes and bills runs whose workflow ended without finalizing them. Prompt-cache reads and writes are priced at cache rates: a model’s catalog row may set read, 5-minute-write and 1-hour-write multipliers, each falling back to the code table, where Anthropic 1-hour writes cost twice input. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization, and the usage page opens for anyone who holds at least one of those scopes rather than by platform role. A model with no catalog price is refused when the organization its run bills to has a monthly USD cap (resolved by the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection), when a runless workflow’s spend owner is a capped organization, and when the call belongs to a channel with a monthly cap; a repo-less channel task bills its channel, so only the channel cap refuses it. Anywhere else it is recorded at zero USD with token usage retained. The usage report accepts a custom since/until range of whole UTC days (at most 366, not in the future) in place of the preset window; its series is bucketed by week above 90 days.",
+      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. The organization USD cap is checked at launch and again before every budgeted model call, which refuses with a non-retryable BUDGET_EXCEEDED naming the organization. Both read finalized, in-flight and runless spend; the mid-run read goes through a per-organization cache of one config window. One rule, billedOrgId, places a run for the in-flight count, the mid-run guard and finalization billing: the work request’s connection, else the run’s own connection, else the repository of its own ledger row, and the first source that exists decides. A scheduled fire gets its own ledger row and run connection from its schedule’s repository, and epic planning declares the first repository’s team as its spend owner, so neither sits outside the cap. A scheduled run reaper finalizes and bills runs whose workflow ended without finalizing them. Prompt-cache reads and writes are priced at cache rates: a model’s catalog row may set read, 5-minute-write and 1-hour-write multipliers, each falling back to the code table, where Anthropic 1-hour writes cost twice input. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization, and the usage page opens for anyone who holds at least one of those scopes rather than by platform role. A model with no catalog price is refused when the organization its run bills to has a monthly USD cap (resolved by the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection), when a runless workflow’s spend owner is a capped organization, and when the call belongs to a channel with a monthly cap; a repo-less channel task bills its channel, so only the channel cap refuses it. Anywhere else it is recorded at zero USD with token usage retained. The usage report and the workflow-template analytics accept a custom since/until range of whole UTC days (at most 366, not in the future) in place of the preset window; the usage series is bucketed by week above 90 days.",
       "id": "budget",
       "refs": [
         "trace",
@@ -1948,7 +1948,7 @@
     {
       "body": "Read and write Notion pages, Zendesk comments, tracker issues and Slack messages.",
       "category": "Integrations",
-      "detail": "These have concrete worker connectors. HubSpot and generic http_api branches in genericActions currently return placeholders. MCP has its own executor instead. Their requests refuse redirects rather than follow them, so a credential cannot leave the configured host.",
+      "detail": "These have concrete worker connectors. HubSpot and generic http_api branches in genericActions currently return placeholders. MCP has its own executor instead. Their requests either refuse redirects (Notion, Zendesk, Slack and Linear; Jira treats a 3xx as a failure) or, for GitHub Issues, re-check every hop through a guarded fetch, so a credential cannot leave the configured origin.",
       "id": "connectors",
       "refs": ["generic", "write", "connectorRedirectError"],
       "status": "Implemented",
@@ -2114,9 +2114,9 @@
       "title": "Tracked skill-source updates: scheduled check, reviewed diff, bound accept"
     },
     {
-      "body": "Track each pull request the platform opens, with its state, draft flag and title kept current from host webhooks, and list pull requests and tickets with per-row visibility.",
+      "body": "Track each pull request a workflow’s pull-request step opens, with its state, draft flag and title kept current from host webhooks, and list pull requests and tickets with per-row visibility.",
       "category": "Engineering",
-      "detail": "A PullRequest row records OPEN, MERGED or CLOSED (closed without merging), an isDraft flag, a title capped at 300 characters and opened, merged and closed times. Signed pull_request webhooks update only a row the platform already holds for that repository and number: closed, reopened, ready_for_review, converted_to_draft and edited (with a non-empty title) are each a guarded update, so a redelivery that finds the row already changed is a no-op, and a pull request opened outside the platform is never created. Only a merge signals the workflow. It is accepted from OPEN or CLOSED, so a reopen that was lost or late cannot strand it; a transient signal failure rolls the row back to its previous status, and a terminal one keeps MERGED. When a run’s own pull request was closed unmerged, the pull-request activity fails non-retryably with PR_CLOSED_BY_REVIEWER instead of opening a replacement; a new run of the same request has its own ledger row and is not stopped. GET /api/v1/pull-requests (ENGINEER and above) lists newest first. A non-ADMIN sees a row only when the repository is reachable to them, and the ticket, request, cost and run on it come from its ledger row only while that row is on the same repository, the run only when the caller may see that run. GET /api/v1/tickets groups requests by external ticket id. A request counts for its requester, for anyone who can see one of its runs, and for anyone who reaches a repository it targets; cost and pull-request aggregates count only repositories the caller reaches, so two teams can read one ticket differently. On the server, scope defaults to MINE (requests the caller submitted), pull requests to every state, and tickets exclude agent runs, channel tasks and launches that named no ticket unless includeAutomated is set. The dashboard’s Pull requests page, by contrast, opens on OPEN.",
+      "detail": "A PullRequest row records OPEN, MERGED or CLOSED (closed without merging), an isDraft flag, a title capped at 300 characters and opened, merged and closed times. Signed pull_request webhooks update only a row the platform already holds for that repository and number: closed, reopened, ready_for_review, converted_to_draft and edited (with a non-empty title) each update only that row. Close (only from OPEN) and reopen (only from CLOSED) are guarded by status, so a redelivery is a no-op; draft and title updates are not, so an out-of-order delivery can leave an older value. A pull request opened outside the platform is never created. Of the pull_request events only a merge signals the workflow (CI results arrive separately, through check_run webhooks). A merge is accepted from OPEN or CLOSED, so a reopen that was lost or late cannot strand it; a transient signal failure rolls the row back to its previous status, and a terminal one keeps MERGED. When a run’s own pull request was closed unmerged, the pull-request activity fails non-retryably with PR_CLOSED_BY_REVIEWER instead of opening a replacement; a new run of the same request has its own ledger row and is not stopped. GET /api/v1/pull-requests (ENGINEER and above) lists newest first. A non-ADMIN sees a row only when the repository is reachable to them, and the ticket, request, cost and run on it come from its ledger row only while that row is on the same repository, the run only when the caller may see that run. GET /api/v1/tickets groups requests by external ticket id. A request counts for its requester, for anyone who can see one of its runs, and for anyone who reaches a repository it targets or holds a ledger row on; cost and pull-request aggregates count only repositories the caller reaches, so two teams can read one ticket differently. On the server, scope defaults to MINE (requests the caller submitted), pull requests to every state, and tickets exclude agent runs, channel tasks and template launches that named no ticket unless includeAutomated is set. The dashboard’s Pull requests page, by contrast, opens on OPEN.",
       "id": "workViews",
       "refs": [
         "schema",
@@ -2426,9 +2426,9 @@
       "title": "Deactivating a team does not remove repository access"
     },
     {
-      "body": "A close, reopen or draft change only updates a row; the workflow hears about a merge and nothing else.",
+      "body": "A pull-request webhook updates a row; of those events only a merge reaches the workflow, and only a delivered webhook updates anything.",
       "category": "Reliability",
-      "detail": "A run waiting on its merge keeps waiting after its pull request is closed unmerged, until a merge arrives or the wait ends; the PR_CLOSED_BY_REVIEWER refusal appears only when a later push step reaches the pull-request activity. A webhook for a pull request the platform did not open finds no row and changes nothing. Reopening restores only CLOSED to OPEN, and event times come from the host’s payload when it parses, else the time of receipt. The ticket list shows the tracker’s title, status and link as captured when a request was submitted, from the newest visible request that holds an answer; they are not refreshed. RunInput.ticketIsSynthetic is recorded by the template launch and the template webhook paths and defaults to false, so other automated launches are recognised by agent-run template origin, the channel templates or a channel id instead.",
+      "detail": "Only pull requests that a workflow’s pull-request step opens get a row; an Agent Run’s draft pull request is opened through the SCM provider directly and is not recorded. CLOSED and MERGED come only from signed pull_request webhooks, so without delivery (polling-only CI, a lost delivery) the row stays OPEN, and the list and the PR_CLOSED_BY_REVIEWER refusal both depend on delivery. A run waiting on its merge keeps waiting after its pull request is closed unmerged, until a merge arrives or the wait ends; the refusal appears only when a later push step reaches the pull-request activity. A webhook for a pull request the platform did not open finds no row and changes nothing. Reopening restores only CLOSED to OPEN, and event times come from the host’s payload when it parses, else the time of receipt. The ticket list shows the tracker’s title, status and link as captured when a request was submitted, from the newest visible request that holds an answer; they are not refreshed. RunInput.ticketIsSynthetic is set only by the template launch and template webhook paths and defaults to false. Agent runs, channel tasks and the channel assistant are filtered by template origin, template name or channel id, but PRD runs (PRD-… ids) and scheduled fires (…-SCHED-… ids) are neither flagged nor matched, so they are listed as tickets.",
       "id": "prTrackingBounds",
       "refs": [
         "prEvents",
@@ -2497,7 +2497,7 @@
     "PullRequest": "SCM pull-request tracking linked to a workflow and connection: OPEN/MERGED/CLOSED state, draft flag, capped title, and open, merge and close times.",
     "RepoAccess": "Schema entity; inspect fields and relationship declarations below.",
     "RepoDependency": "Directed repository dependency with source/provenance and contracts.",
-    "RunInput": "Stored submitted payload and request history, reused by runs; records whether the ticket id is a synthetic correlation key.",
+    "RunInput": "Stored submitted payload and request history, reused by runs; records whether a template launch’s ticket id fell back to the request id.",
     "ScannerPattern": "Schema entity; inspect fields and relationship declarations below.",
     "ScheduledWorkRequest": "Standing repository automation mapped to a Temporal schedule.",
     "Session": "Schema entity; inspect fields and relationship declarations below.",
@@ -4572,9 +4572,9 @@
       "anchor": "data: { closedAt: event.mergedAt, mergedAt: event.mergedAt, status: 'MERGED' },",
       "before": 6,
       "id": "prMergeFromClosed",
-      "lines": 16,
+      "lines": 72,
       "path": "packages/gateway/src/routes/webhooks.ts",
-      "title": "Merge accepted from OPEN or CLOSED, atomically"
+      "title": "Merge accepted from OPEN or CLOSED; rollback or keep on signal failure"
     },
     {
       "anchor": "if (latest?.status === 'CLOSED') {",
@@ -4585,10 +4585,10 @@
       "title": "No replacement PR after a reviewer closed it"
     },
     {
-      "anchor": "const filters: Prisma.PullRequestWhereInput[] = [",
-      "before": 1,
+      "anchor": "onRequest: requireAuth({ requiredRole: 'ENGINEER' }),",
+      "before": 2,
       "id": "prList",
-      "lines": 30,
+      "lines": 44,
       "path": "packages/gateway/src/routes/pullRequests.ts",
       "title": "Pull-request list filters and visibility"
     },
@@ -4714,11 +4714,19 @@
     },
     {
       "anchor": "'/:id/agent-library/options',",
-      "before": 1,
+      "before": 9,
       "id": "agentOptions",
-      "lines": 22,
+      "lines": 32,
       "path": "packages/gateway/src/routes/agentLibrary.ts",
       "title": "Team members read agent keys an override may name"
+    },
+    {
+      "anchor": "// Replaces the buttons with the decision, so a decided step reads as decided in place.",
+      "before": 0,
+      "id": "hitlSlackButton",
+      "lines": 10,
+      "path": "packages/gateway/src/routes/slack.ts",
+      "title": "Slack button resolution also edits the message"
     }
   ],
   "usecases": [
