@@ -32,13 +32,13 @@ import {
   useWorkflowGenerationJob,
   useWorkflowTemplates,
 } from '@/hooks/useTemplates';
-import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { requiresRoleTitle } from '@/lib/roles';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
+import { restoreTemplate } from './restoreTemplate';
 
 const SPEC_SCHEMA_VERSION = 1;
 
@@ -93,20 +93,7 @@ function RestoreButton({
       onClick={async () => {
         onError(null);
         try {
-          if (template.activeVersion === null) {
-            await update.mutateAsync({ status: 'DRAFT' });
-          } else {
-            try {
-              await update.mutateAsync({ status: 'ACTIVE' });
-            } catch (err) {
-              // An unreviewed AI-generated active version cannot serve runs, so activating is
-              // refused. Restore to draft rather than dead-ending: it can be reviewed there.
-              if (!(err instanceof ApiError && err.code === 'REVIEW_REQUIRED')) {
-                throw err;
-              }
-              await update.mutateAsync({ status: 'DRAFT' });
-            }
-          }
+          await restoreTemplate(template.activeVersion, (status) => update.mutateAsync({ status }));
         } catch (err) {
           onError(`Could not restore "${template.name}": ${errMsg(err, 'restore failed')}`);
         }

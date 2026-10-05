@@ -3,7 +3,14 @@ import type { AgentRow } from '@/hooks/useAgentLibrary';
 import { broaderFallbacks } from './agentFallback';
 
 const row = (over: Partial<AgentRow>): AgentRow =>
-  ({ isActive: true, key: 'implementer', orgId: null, scope: 'GLOBAL', teamId: null, ...over }) as AgentRow;
+  ({
+    isActive: true,
+    key: 'implementer',
+    orgId: null,
+    scope: 'GLOBAL',
+    teamId: null,
+    ...over,
+  }) as AgentRow;
 
 describe('broaderFallbacks', () => {
   it('is empty when no broader row exists, so deactivating would fail runs', () => {
@@ -36,7 +43,7 @@ describe('broaderFallbacks', () => {
     ]);
   });
 
-  it('does not claim an organization fallback when the row\'s organization is unknown', () => {
+  it("does not claim an organization fallback when the row's organization is unknown", () => {
     const team = row({ scope: 'TEAM', teamId: 't1' });
     expect(broaderFallbacks(team, [team, row({ orgId: 'o1', scope: 'ORGANIZATION' })])).toEqual([]);
   });

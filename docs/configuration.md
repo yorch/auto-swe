@@ -199,6 +199,21 @@ The singleton integration tables are **not** absorbed into the registry. Their s
 relational, their secrets use the AES-256-GCM envelope, and they work; the registry covers what had
 no home.
 
+**Clearing a stored secret.** A save can only replace a secret, so
+`DELETE /api/v1/platform/config/:integration/secrets/:field` removes one. It accepts the secret
+fields of `github` (`token`, `webhookSecret`, `appClientSecret`, `appPrivateKey`), `slack`
+(`botToken`, `clientSecret`, `signingSecret`), `issue-tracker` (`apiToken`, `webhookSecret`),
+`knowledge-base` and `figma` (`apiToken`); any other field is refused with `NOT_A_SECRET`, and a
+field with nothing stored returns `NOT_STORED`. Clearing hands the value back to its environment
+variable when one is set, and to "not configured" when it is not. The call is audited.
+
+**Test connection with unsaved values.** `POST /api/v1/platform/config/github/test` and
+`/slack/test` accept an optional draft body. A field left out, or a secret left blank, uses the
+stored value. The GitHub test also has a host guard: the stored token is valid on the stored API
+host only, so a draft that changes the API URL must carry the token typed alongside it. A typed
+API URL must be a public address; loopback, link-local and private addresses are refused. Failures
+report fixed wording per status class and never echo the remote response body.
+
 ---
 
 ## 6. Adding a setting
@@ -217,6 +232,9 @@ from the definition.
 
 ## Limitations
 
+- **The draft GitHub test cannot reach a private address.** A GitHub Enterprise host on a private
+  network is refused when its URL is typed but unsaved; the stored configuration is not re-checked
+  by that guard, so save it and test the saved values.
 - **The registry does not yet cover every compiled-in constant.** Temporal retry and timeout
   profiles (`packages/worker/src/workflows/proxyOptions.ts`), the context-spill budgets in
   `runnable.ts`, the model price table in `costTracking.ts`, and several agent loop caps are still
