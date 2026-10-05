@@ -7,6 +7,7 @@ import { vi } from 'vitest';
  */
 export function mockViewport(initialWidth: number) {
   let width = initialWidth;
+  const counts = { listenerAdds: 0 };
   interface Entry {
     query: string;
     listeners: Set<() => void>;
@@ -24,7 +25,10 @@ export function mockViewport(initialWidth: number) {
     const entry: Entry = { last: evaluate(query), listeners: new Set(), query };
     entries.push(entry);
     return {
-      addEventListener: (_: string, cb: () => void) => entry.listeners.add(cb),
+      addEventListener: (_: string, cb: () => void) => {
+        counts.listenerAdds += 1;
+        entry.listeners.add(cb);
+      },
       get matches() {
         return evaluate(query);
       },
@@ -34,6 +38,8 @@ export function mockViewport(initialWidth: number) {
   }) as unknown as typeof window.matchMedia;
 
   return {
+    /** How many `change` listeners have been attached so far (a resubscribe attaches another). */
+    counts,
     setViewportWidth(next: number) {
       width = next;
       for (const e of entries) {

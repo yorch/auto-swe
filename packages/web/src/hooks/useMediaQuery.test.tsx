@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { clearViewport, mockViewport } from '@/test/matchMedia';
 import { matchesQuery, useIsNarrow, WIDE_QUERY } from './useMediaQuery';
@@ -34,6 +35,21 @@ describe('useIsNarrow', () => {
     clearViewport();
     render(<Probe />);
     expect(screen.getByTestId('probe').textContent).toBe('wide');
+  });
+
+  it('subscribes once, however often the component re-renders', () => {
+    const viewport = mockViewport(500);
+    let bump: () => void = () => {};
+    function Ticker() {
+      const [, setTick] = useState(0);
+      bump = () => setTick((n) => n + 1);
+      return <Probe />;
+    }
+    render(<Ticker />);
+    for (let i = 0; i < 20; i++) {
+      act(() => bump());
+    }
+    expect(viewport.counts.listenerAdds).toBe(1);
   });
 
   it('breaks exactly at 1024px, where the lg: classes do', () => {

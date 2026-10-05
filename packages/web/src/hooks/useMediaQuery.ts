@@ -1,6 +1,6 @@
 'use client';
 
-import { useSyncExternalStore } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 
 /**
  * The width at which the run viewer goes from one stacked column to its side-by-side layout.
@@ -31,8 +31,14 @@ export function subscribeToQuery(query: string, onChange: () => void): () => voi
  * cannot say, so a render without a viewport behaves as the desktop layout does.
  */
 export function useMediaQuery(query: string, fallback = true): boolean {
+  // A stable `subscribe`: React resubscribes whenever its identity changes, and an inline arrow
+  // would do that on every render (ten times a second while the replay plays).
+  const subscribe = useCallback(
+    (onChange: () => void) => subscribeToQuery(query, onChange),
+    [query]
+  );
   return useSyncExternalStore(
-    (onChange) => subscribeToQuery(query, onChange),
+    subscribe,
     () => matchesQuery(query, fallback),
     () => fallback
   );
