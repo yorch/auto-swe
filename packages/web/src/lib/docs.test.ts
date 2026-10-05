@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { deriveDescription, orderDocs } from './docs';
 
 describe('deriveDescription', () => {
+  it('keeps underscores inside words and drops emphasis ones', () => {
+    expect(deriveDescription('# T\n\nSet AUTO_SWE_TOKEN to _sign in_ and __go__.')).toBe(
+      'Set AUTO_SWE_TOKEN to sign in and go.'
+    );
+  });
+
+  it("keeps an image's alt text and drops its path", () => {
+    expect(deriveDescription('# T\n\n![Diagram](./a_b.png) Overview of it.')).toBe(
+      'Diagram Overview of it.'
+    );
+  });
+
   it('skips front matter, headings and horizontal rules', () => {
     expect(deriveDescription('---\ntitle: x\n---\n# Title\n\n---\n\nFirst paragraph.')).toBe(
       'First paragraph.'

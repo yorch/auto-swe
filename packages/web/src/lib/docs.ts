@@ -56,8 +56,11 @@ export function deriveDescription(raw: string): string {
   }
   const text = lines
     .join(' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/[*_`]/g, '')
+    // Emphasis markers only: an underscore inside a word (AUTO_SWE_TOKEN) is part of it.
+    .replace(/[*`]/g, '')
+    .replace(/(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   if (text.length <= MAX_DESCRIPTION) {

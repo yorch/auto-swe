@@ -17,7 +17,9 @@ export function UrlRow({ label, url, help }: UrlRowProps) {
         <code className="min-w-0 flex-1 break-all rounded-sm sm:truncate border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-[11px] text-paper-300">
           {url}
         </code>
-        <CopyButton value={url} />
+        <div className="self-start sm:self-auto">
+          <CopyButton value={url} />
+        </div>
       </div>
       {help && <p className="text-[11px] text-paper-600">{help}</p>}
     </div>

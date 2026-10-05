@@ -96,7 +96,8 @@ function RequestsWorkspace() {
         subtitle="Everything you asked for, with retries kept together."
         title="Requests"
       />
-      <div className="flex flex-wrap items-end gap-4">
+      {/* items-start: the segmented control is shorter than the fields, so bottom alignment dropped its label below theirs. */}
+      <div className="flex flex-wrap items-start gap-4">
         <Select
           label="Type"
           onChange={(value) => update({ offset: null, type: value === 'epics' ? 'epics' : null })}

@@ -21,6 +21,13 @@ export function tabPanelProps(idPrefix: string, id: string) {
 }
 
 /**
+ * Fades the right edge of a scrolling tab row to say there is more. A mask rather than an
+ * overlay, so it works on any card background; hidden from md up, where the row fits.
+ */
+const FADE_RIGHT =
+  '[mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent)] md:[mask-image:none]';
+
+/**
  * Underlined section tabs. Tabs with an `href` are `next/link`s in a labelled
  * `<nav>`, marked `aria-current="page"` when active — sub-pages stay linkable,
  * middle-clickable and prefetched. Tabs without one are in-page sections and
@@ -101,7 +108,11 @@ export function TabBar<T extends string>({
   return (
     <div className={cn('relative border-b border-ink-600', className)}>
       {isLinkBar ? (
-        <nav aria-label={ariaLabel} className="flex gap-1 overflow-x-auto" ref={scroller}>
+        <nav
+          aria-label={ariaLabel}
+          className={cn('flex gap-1 overflow-x-auto', moreRight && FADE_RIGHT)}
+          ref={scroller}
+        >
           {tabs.map((tab) =>
             tab.href ? (
               <Link
@@ -128,7 +139,7 @@ export function TabBar<T extends string>({
       ) : (
         <div
           aria-label={ariaLabel}
-          className="flex gap-1 overflow-x-auto"
+          className={cn('flex gap-1 overflow-x-auto', moreRight && FADE_RIGHT)}
           ref={scroller}
           role="tablist"
         >
@@ -156,12 +167,6 @@ export function TabBar<T extends string>({
             );
           })}
         </div>
-      )}
-      {moreRight && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-ink-900 to-transparent md:hidden"
-        />
       )}
     </div>
   );

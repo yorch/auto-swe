@@ -372,9 +372,12 @@ export default function StudioMcpConnectionsPage() {
     <div className="space-y-8">
       <PageHeader
         actions={
-          <Button onClick={() => setNewOpen(true)} variant="primary">
-            Create connection
-          </Button>
+          // While the list is empty its empty state carries the same button.
+          connections?.length ? (
+            <Button onClick={() => setNewOpen(true)} variant="primary">
+              Create connection
+            </Button>
+          ) : undefined
         }
         subtitle={
           <>

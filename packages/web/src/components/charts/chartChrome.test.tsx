@@ -23,9 +23,11 @@ describe('ChartFrame', () => {
 
 describe('EmptyChart', () => {
   it('is a compact sentence, not a chart-sized void', () => {
-    render(<EmptyChart hint="Start work to see trends." label="No runs yet." />);
-    expect(screen.getByText('No runs yet.')).toBeTruthy();
-    expect(screen.getByText('Start work to see trends.')).toBeTruthy();
+    render(
+      <EmptyChart hint="Try a wider date range, or start work." label="No runs in this range." />
+    );
+    expect(screen.getByText('No runs in this range.')).toBeTruthy();
+    expect(screen.getByText('Try a wider date range, or start work.')).toBeTruthy();
   });
 });
 

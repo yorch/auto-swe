@@ -64,7 +64,7 @@ export function SectionHeader({
           </span>
         )}
       </div>
-      {actions && <div className="max-w-full overflow-x-auto max-sm:w-full">{actions}</div>}
+      {actions && <div className="max-w-full max-sm:w-full max-sm:overflow-x-auto">{actions}</div>}
     </div>
   );
 }
