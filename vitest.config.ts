@@ -379,6 +379,7 @@ export default defineConfig({
     },
     environment: 'node',
     globals: true,
+    setupFiles: ['./vitest.setup.ts'],
     // Default `.test.ts` is Node; React component tests are `.test.tsx` and
     // opt into jsdom via a `// @vitest-environment jsdom` pragma at the top
     // of each file. (The deprecated `environmentMatchGlobs` got replaced by

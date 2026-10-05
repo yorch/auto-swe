@@ -10,6 +10,7 @@ import {
   type ResolvedAddress,
   resolveAndCheck,
   SsrfBlockedError,
+  usesEnvProxy,
 } from './guardedDispatcher.js';
 
 const v4 = (address: string): ResolvedAddress => ({ address, family: 4 });
@@ -266,5 +267,74 @@ describe('createOriginScopedFetch', () => {
       resolver: resolverOf(v4('127.0.0.1')),
     });
     await expect(scoped('https://ghe.corp.example/x')).rejects.toBeInstanceOf(SsrfBlockedError);
+  });
+});
+
+describe('connecting through the pinned dispatcher', () => {
+  // A local server stands in for a public host: the classifier is injected, never read from the
+  // environment, so production classification is untouched.
+  const allowAll = () => 'ok' as const;
+  const listen = async () => {
+    const seen: { host?: string }[] = [];
+    const server = createServer((req, res) => {
+      seen.push({ host: req.headers.host });
+      res.end('pinned');
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    return { port: (server.address() as AddressInfo).port, seen, server };
+  };
+
+  it('reaches the checked address, resolving the name exactly once', async () => {
+    const { port, seen, server } = await listen();
+    try {
+      const resolver = vi.fn<HostResolver>().mockResolvedValue([v4('127.0.0.1')]);
+      const guarded = createGuardedFetch({ classify: allowAll, resolver });
+      const res = await guarded(`http://pin.test:${port}/`);
+      expect(await res.text()).toBe('pinned');
+      expect(resolver).toHaveBeenCalledTimes(1);
+      expect(seen[0].host).toBe(`pin.test:${port}`);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('still connects when an unreachable IPv6 address is listed before a reachable IPv4 one', async () => {
+    const { port, server } = await listen();
+    try {
+      const guarded = createGuardedFetch({
+        classify: allowAll,
+        resolver: resolverOf(v6('2001:db8::1'), v4('127.0.0.1')),
+      });
+      const res = await guarded(`http://dual.test:${port}/`);
+      expect(await res.text()).toBe('pinned');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('offers IPv4 first whichever order the resolver gave', async () => {
+    const lookup = makeGuardedLookup({
+      resolver: resolverOf(v6('2606:2800:220:1::1'), v4('93.184.216.34')),
+    });
+    const all = await new Promise<unknown>((resolve) => {
+      lookup('dual.example', { all: true }, (_e, a) => resolve(a));
+    });
+    expect(all).toEqual([v4('93.184.216.34'), v6('2606:2800:220:1::1')]);
+    const one = await new Promise<unknown>((resolve) => {
+      lookup('dual.example', {}, (_e, a) => resolve(a));
+    });
+    expect(one).toBe('93.184.216.34');
+  });
+});
+
+describe('usesEnvProxy', () => {
+  it('detects the environment variable, the flag and NODE_OPTIONS', () => {
+    expect(usesEnvProxy({}, [])).toBe(false);
+    expect(usesEnvProxy({ NODE_USE_ENV_PROXY: '1' }, [])).toBe(true);
+    expect(usesEnvProxy({}, ['--use-env-proxy'])).toBe(true);
+    expect(usesEnvProxy({ NODE_OPTIONS: '--max-old-space-size=512 --use-env-proxy' }, [])).toBe(
+      true
+    );
+    expect(usesEnvProxy({ NODE_OPTIONS: '--max-old-space-size=512' }, [])).toBe(false);
   });
 });

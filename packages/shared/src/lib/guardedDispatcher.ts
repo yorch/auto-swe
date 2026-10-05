@@ -20,7 +20,7 @@
  * Loopback, link-local, unspecified, multicast/reserved and cloud-metadata
  * addresses are refused regardless.
  *
- * Limits: with a process-wide proxy (`NODE_USE_ENV_PROXY`) the proxy performs the
+ * Limits: with a process-wide proxy (`NODE_USE_ENV_PROXY`, `--use-env-proxy`) the proxy performs the
  * final resolution, so the target host is checked up front but the connection
  * cannot be pinned. A literal IP is classified directly.
  */
@@ -43,6 +43,11 @@ export interface GuardOptions {
   resolver?: HostResolver;
   /** Wall-clock bound on the resolution. Default 5 s. */
   dnsTimeoutMs?: number;
+  /**
+   * Replaces the address classifier. Tests only, injected by the caller — never read from the
+   * environment — so a local server on 127.0.0.1 can stand in for a "public" host.
+   */
+  classify?: (address: string, allowPrivate: boolean) => AddressVerdict;
 }
 
 export const SSRF_BLOCKED_CODE = 'ESSRF_BLOCKED';
@@ -57,6 +62,7 @@ export class SsrfBlockedError extends Error {
 }
 
 const DEFAULT_DNS_TIMEOUT_MS = 5000;
+const AUTO_SELECT_ATTEMPT_TIMEOUT_MS = 300;
 
 export const defaultResolver: HostResolver = (hostname) =>
   new Promise((resolve, reject) => {
@@ -126,7 +132,7 @@ export async function resolveAndCheck(
 ): Promise<ResolvedAddress[]> {
   const host = bareHost(hostname);
   if (isIP(host) !== 0) {
-    const verdict = classifyAddress(host, opts.allowPrivate);
+    const verdict = (opts.classify ?? classifyAddress)(host, opts.allowPrivate === true);
     if (verdict !== 'ok') {
       throw refusal(host, new Set([verdict]));
     }
@@ -153,7 +159,7 @@ export async function resolveAndCheck(
   }
   const verdicts = new Set<AddressVerdict>();
   for (const a of addresses) {
-    verdicts.add(classifyAddress(a.address, opts.allowPrivate));
+    verdicts.add((opts.classify ?? classifyAddress)(a.address, opts.allowPrivate === true));
   }
   verdicts.delete('ok');
   if (verdicts.size > 0) {
@@ -185,7 +191,10 @@ export function makeGuardedLookup(opts: GuardOptions = {}) {
       (addresses) => {
         const want =
           o.family === 4 || o.family === 'IPv4' ? 4 : o.family === 6 || o.family === 'IPv6' ? 6 : 0;
-        const usable = want === 0 ? addresses : addresses.filter((a) => a.family === want);
+        // IPv4 first, then IPv6: a host with no IPv6 route must not stall or fail on an AAAA
+        // record that resolution listed first. The sort is stable within a family.
+        const ordered = [...addresses].sort((a, b) => a.family - b.family);
+        const usable = want === 0 ? ordered : ordered.filter((a) => a.family === want);
         if (usable.length === 0) {
           cb(new SsrfBlockedError(`host '${bareHost(hostname)}' has no usable address`));
           return;
@@ -203,7 +212,17 @@ export function makeGuardedLookup(opts: GuardOptions = {}) {
 
 /** An undici dispatcher whose every connection goes through {@link makeGuardedLookup}. */
 export function guardedDispatcher(opts: GuardOptions = {}): Dispatcher {
-  return new Agent({ connect: { lookup: makeGuardedLookup(opts) as never } });
+  return new Agent({
+    // HTTP/1.1 only, as before the guard; ALPN never offers h2.
+    allowH2: false,
+    connect: {
+      // Try the checked addresses in turn (Happy Eyeballs) instead of failing on the first
+      // unreachable one, with a short per-attempt wait.
+      autoSelectFamily: true,
+      autoSelectFamilyAttemptTimeout: AUTO_SELECT_ATTEMPT_TIMEOUT_MS,
+      lookup: makeGuardedLookup(opts) as never,
+    },
+  });
 }
 
 const sharedAgents = new Map<boolean, Dispatcher>();
@@ -217,8 +236,15 @@ function sharedDispatcher(allowPrivate: boolean): Dispatcher {
 }
 
 /** True when the process routes fetch through an environment proxy, which resolves the target itself. */
-export function usesEnvProxy(env: NodeJS.ProcessEnv = process.env): boolean {
-  return /^(1|true)$/i.test(env.NODE_USE_ENV_PROXY ?? '');
+export function usesEnvProxy(
+  env: NodeJS.ProcessEnv = process.env,
+  execArgv: readonly string[] = process.execArgv
+): boolean {
+  return (
+    /^(1|true)$/i.test(env.NODE_USE_ENV_PROXY ?? '') ||
+    execArgv.includes('--use-env-proxy') ||
+    /(^|\s)--use-env-proxy(\s|$)/.test(env.NODE_OPTIONS ?? '')
+  );
 }
 
 function causeChainBlocked(err: unknown): SsrfBlockedError | null {
@@ -232,23 +258,31 @@ function causeChainBlocked(err: unknown): SsrfBlockedError | null {
   return null;
 }
 
-const nativeFetch = globalThis.fetch;
-
 /**
  * The fetch that honours the pinned dispatcher. A dispatcher must come from the
  * same undici as the fetch that drives it — the copy bundled in Node speaks a
  * different handler API than the `undici` package, so mixing them fails at
- * connect time — hence the package's own `fetch`. If something has replaced the
- * global `fetch` (a test double, an instrumentation wrapper) that replacement
- * wins, so it still sees every request.
+ * connect time — hence the package's own `fetch`, always. A replaced global
+ * `fetch` (a test double, an instrumentation wrapper) is deliberately not
+ * consulted: it would bypass the dispatcher, and with it the pin. Tests pass
+ * `fetchImpl`.
  */
-const defaultFetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
-  globalThis.fetch === nativeFetch
-    ? (undiciFetch as unknown as typeof fetch)(input, init)
-    : globalThis.fetch(input, init)) as typeof fetch;
+let defaultFetch = undiciFetch as unknown as typeof fetch;
+
+/**
+ * Test seam: swaps the fetch that drives the dispatcher, for a suite whose
+ * doubles live on `globalThis.fetch`. Refused in production, so a deployed
+ * process can only ever use undici's fetch with the pinned dispatcher.
+ */
+export function setDefaultFetchForTests(fn: typeof fetch): void {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('setDefaultFetchForTests is not available in production');
+  }
+  defaultFetch = fn;
+}
 
 export interface GuardedFetchOptions extends GuardOptions {
-  /** The underlying fetch. Defaults to undici's, or a replaced global `fetch`. */
+  /** The underlying fetch. Defaults to undici's. */
   fetchImpl?: typeof fetch;
   /** Overrides proxy detection (tests). */
   proxied?: boolean;
