@@ -247,6 +247,8 @@ yarn docker:app:logs         # Tail logs (infra + app)
 yarn docker:app:build        # Rebuild app images
 ```
 
+With [`just`](https://just.systems) installed, `just infra-up`, `just dev-up`, `just prod-up` (and the matching `-down`/`-logs`/`-ps` recipes; `just --list`) wrap the same compose stacks.
+
 ## Project structure
 
 ```text
