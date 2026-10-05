@@ -269,6 +269,33 @@ describe('checkProbeUrl wording for never-allowed hosts', () => {
     }
   });
 
+  it.each([
+    ['http://0.0.0.0/mcp', "host '0.0.0.0' is an unspecified address and is never allowed"],
+    ['http://[::]/mcp', "host '::' is an unspecified address and is never allowed"],
+    [
+      'http://169.254.169.254/latest',
+      "host '169.254.169.254' is a link-local or cloud metadata address and is never allowed",
+    ],
+    [
+      'http://[::ffff:169.254.169.254]/latest',
+      "host '::ffff:a9fe:a9fe' is a link-local or cloud metadata address and is never allowed",
+    ],
+    [
+      'http://[::ffff:127.0.0.1]/mcp',
+      "host '::ffff:7f00:1' is a loopback address and is never allowed",
+    ],
+    [
+      'http://[fe80::1]/mcp',
+      "host 'fe80::1' is a link-local or cloud metadata address and is never allowed",
+    ],
+  ])('words %s by what it is, with or without the opt-in', (url, reason) => {
+    for (const allowPrivate of [false, true]) {
+      const res = checkProbeUrl(url, { allowPrivate });
+      expect(res.ok).toBe(false);
+      expect(!res.ok && res.reason).toBe(reason);
+    }
+  });
+
   it('still waives a private range with the opt-in', () => {
     expect(checkProbeUrl('http://10.0.0.5/mcp', { allowPrivate: true }).ok).toBe(true);
     const strict = checkProbeUrl('http://10.0.0.5/mcp');

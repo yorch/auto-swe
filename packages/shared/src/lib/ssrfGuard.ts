@@ -173,27 +173,41 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
  * network opt-in is for a self-hosted server on an internal address, never for
  * these.
  */
-function isNeverAllowedHost(url: URL): boolean {
+type NeverAllowedKind = 'link-local' | 'loopback' | 'unspecified';
+
+/**
+ * Which never-allowed class a URL's host falls in, or null. The host is classified after an
+ * embedded IPv4 is extracted, so `::ffff:169.254.169.254` reads as the metadata address it is.
+ */
+function neverAllowedKind(url: URL): { effective: string; kind: NeverAllowedKind } | null {
   const raw = url.hostname.toLowerCase();
   const bare = (raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw).replace(
     /\.+$/,
     ''
   );
   const effective = extractEmbeddedIpv4(bare) ?? bare;
-  return (
-    effective === 'localhost' ||
-    effective.endsWith('.localhost') ||
+  if (
     effective === 'metadata' ||
     effective === 'metadata.google.internal' ||
-    effective === '::' ||
-    effective === '::1' ||
     effective === '100.100.100.200' ||
     effective.startsWith('fd00:ec2:') ||
-    /^127\./.test(effective) ||
     /^169\.254\./.test(effective) ||
-    /^fe[89ab][0-9a-f]:/.test(effective) ||
-    /^0\./.test(effective)
-  );
+    /^fe[89ab][0-9a-f]:/.test(effective)
+  ) {
+    return { effective, kind: 'link-local' };
+  }
+  if (effective === '::' || /^0\./.test(effective)) {
+    return { effective, kind: 'unspecified' };
+  }
+  if (
+    effective === 'localhost' ||
+    effective.endsWith('.localhost') ||
+    effective === '::1' ||
+    /^127\./.test(effective)
+  ) {
+    return { effective, kind: 'loopback' };
+  }
+  return null;
 }
 
 /**
@@ -210,12 +224,15 @@ export function checkProbeUrl(apiBase: string, opts: { allowPrivate?: boolean } 
     return safety;
   }
   const url = new URL(apiBase);
-  if (isNeverAllowedHost(url)) {
+  const never = neverAllowedKind(url);
+  if (never) {
     // Say so rather than "on a private network", which invites the opt-in that cannot help.
     const host = url.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '');
-    const kind = /^(169\.254\.|fe[89ab][0-9a-f]:|fd00:ec2:|100\.100\.100\.200)/i.test(host)
-      ? 'a link-local or cloud metadata address'
-      : 'a loopback address';
+    const kind = {
+      'link-local': 'a link-local or cloud metadata address',
+      loopback: 'a loopback address',
+      unspecified: 'an unspecified address',
+    }[never.kind];
     return { ...safety, reason: `host '${host}' is ${kind} and is never allowed` };
   }
   return opts.allowPrivate ? ({ ok: true, url } as const) : safety;
