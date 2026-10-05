@@ -44,6 +44,8 @@ export interface ImplementerAgentOptions {
   mcpServerRef?: string | null;
   /** Optional per-connection override of `loadMcpTools`'s list-timeout (default 15 s). */
   mcpListTimeoutMs?: number;
+  /** Decrypted bearer token for the MCP connection, if it has one. Never logged. */
+  mcpBearerToken?: string;
   /** Optional per-connection override of `loadMcpTools`'s per-call timeout (default 60 s). */
   mcpCallTimeoutMs?: number;
   /**
@@ -174,6 +176,7 @@ export async function createImplementerAgent(
   let closeMcp: (() => Promise<void>) | undefined;
   if (options?.mcpServerRef && isMcpToolEnabled(tools)) {
     const loaded = await loadMcpTools(options.mcpServerRef, tracer, {
+      bearerToken: options.mcpBearerToken,
       callTimeoutMs: options.mcpCallTimeoutMs,
       listTimeoutMs: options.mcpListTimeoutMs,
     });
@@ -314,6 +317,7 @@ export async function buildImplementerForActivity(
     {
       agentKey,
       maxToolOutputChars: settings['workspace.maxToolOutputChars'],
+      mcpBearerToken: mcpTarget?.bearerToken,
       mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
       mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
       mcpServerRef: mcpTarget?.url,
