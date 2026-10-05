@@ -71,9 +71,7 @@ export { CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME } from './c
  */
 export const CHANNEL_ASSISTANT_SPEC = {
   description:
-    'Observability shell for channel-assistant turns and ambient digests. ' +
-    'Not interpreted — a lightweight run is created per channel turn so its ' +
-    'agent traces (LLM calls) are visible in the run viewer.',
+    "Records channel-assistant conversations so they appear in run history. Runs automatically; it can't be launched by hand.",
   entry: 'done',
   name: CHANNEL_ASSISTANT_TEMPLATE_NAME,
   nodes: {
@@ -905,6 +903,11 @@ export const RENAMED_TEMPLATES: Readonly<Record<string, string>> = {
  * in {@link syncAgents}.
  */
 export const SUPERSEDED_TEMPLATE_DESCRIPTIONS: Readonly<Record<string, readonly string[]>> = {
+  [CHANNEL_ASSISTANT_TEMPLATE_NAME]: [
+    'Observability shell for channel-assistant turns and ambient digests. ' +
+      'Not interpreted — a lightweight run is created per channel turn so its ' +
+      'agent traces (LLM calls) are visible in the run viewer.',
+  ],
   'agent-reviewed-pr': [
     'Implement, run the automated review network (up to 3 attempts), open a PR, then wait ' +
       'for CI. Fully automated — no human approval steps. Use this when the agent review ' +

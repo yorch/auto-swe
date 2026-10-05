@@ -1,5 +1,6 @@
 'use client';
 
+import { CHANNEL_ASSISTANT_TEMPLATE_NAME } from '@auto-swe/shared/lib/channelTask';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
@@ -454,6 +455,10 @@ export default function TemplatesPage() {
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('current');
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  // The built-in Channel Assistant template only records channel conversations: the platform
+  // starts it, so it is shown but cannot be run or archived by hand.
+  const isSystemManaged = (t: WorkflowTemplateSummary) =>
+    t.team === null && t.name === CHANNEL_ASSISTANT_TEMPLATE_NAME;
   const visibleTemplates = (templates ?? []).filter((t) => matchesStatusFilter(t, statusFilter));
 
   const handleFork = async (starter: StarterTemplate) => {
@@ -572,6 +577,11 @@ export default function TemplatesPage() {
                             {t.name}
                           </Link>
                           <VersionTags isDefault={t.isDefault} />
+                          {isSystemManaged(t) && (
+                            <Badge tone="neutral" variant="outline">
+                              Used by channel assistants
+                            </Badge>
+                          )}
                           {t.webhookConfigured && (
                             <Badge
                               title="Webhook trigger active"
@@ -615,9 +625,7 @@ export default function TemplatesPage() {
                             </span>
                           </Link>
                         ) : (
-                          <span className="font-mono text-[11px] uppercase tracking-wider text-paper-500">
-                            never
-                          </span>
+                          <span className="text-xs text-paper-500">Never</span>
                         )}
                       </Td>
                       <Td
@@ -628,8 +636,8 @@ export default function TemplatesPage() {
                       </Td>
                       <Td className="px-4 py-3 text-right">
                         <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">
-                          {t.status === 'ARCHIVED' ? null : t.status === 'ACTIVE' &&
-                            t.activeVersion !== null ? (
+                          {t.status === 'ARCHIVED' || isSystemManaged(t) ? null : t.status ===
+                              'ACTIVE' && t.activeVersion !== null ? (
                             <ButtonLink
                               className="whitespace-nowrap"
                               href={`/start?template=${encodeURIComponent(t.id)}`}
@@ -668,15 +676,18 @@ export default function TemplatesPage() {
                           {canWrite(t.team?.id) && t.status === 'ARCHIVED' && (
                             <RestoreButton onError={setRestoreError} template={t} />
                           )}
-                          {canWrite(t.team?.id) && t.status !== 'ARCHIVED' && (
-                            <Button
-                              onClick={() => setArchiveTarget({ id: t.id, name: t.name })}
-                              size="sm"
-                              variant="danger"
-                            >
-                              Archive
-                            </Button>
-                          )}
+                          {canWrite(t.team?.id) &&
+                            t.status !== 'ARCHIVED' &&
+                            !isSystemManaged(t) && (
+                              <Button
+                                className="text-brick-400 hover:text-brick-400"
+                                onClick={() => setArchiveTarget({ id: t.id, name: t.name })}
+                                size="sm"
+                                variant="ghost"
+                              >
+                                Archive
+                              </Button>
+                            )}
                         </div>
                       </Td>
                     </TRow>

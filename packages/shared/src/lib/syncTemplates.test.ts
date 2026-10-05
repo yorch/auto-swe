@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import {
+  CHANNEL_ASSISTANT_SPEC,
+  CHANNEL_ASSISTANT_TEMPLATE_NAME,
   RENAMED_TEMPLATES,
   SUPERSEDED_TEMPLATE_DESCRIPTIONS,
   seedSweStarter,
@@ -132,7 +134,10 @@ describe('superseded descriptions', () => {
 
   it('never lists a current description as superseded', () => {
     for (const [name, olds] of Object.entries(SUPERSEDED_TEMPLATE_DESCRIPTIONS)) {
-      const current = BUILTIN_TEMPLATES.find((t) => t.name === name);
+      const current =
+        name === CHANNEL_ASSISTANT_TEMPLATE_NAME
+          ? CHANNEL_ASSISTANT_SPEC
+          : BUILTIN_TEMPLATES.find((t) => t.name === name);
       expect(current, name).toBeDefined();
       expect(olds).not.toContain(current?.description);
     }
