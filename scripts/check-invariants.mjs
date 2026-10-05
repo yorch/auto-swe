@@ -412,6 +412,47 @@ function checkConnectorFetchesSetRedirect() {
 }
 
 // ---------------------------------------------------------------------------
+// INVARIANT 7 — a fetch to an operator-supplied URL resolves and pins its address.
+//
+// The text guard (`ssrfGuard.ts`) reads the host name only, so a public name that resolves to an
+// internal address passes it. `createGuardedFetch` (`shared/lib/guardedDispatcher.ts`) resolves the
+// name, refuses the request if any answer is internal, and connects only to a checked address. In
+// the modules below every outbound request is to such a URL, so a bare `fetch(…)` there is the
+// text-only check again: it type-checks, the tests pass against a stubbed fetch, and a request to
+// `10.1.1.17.nip.io` reaches the internal host.
+//
+// Tripwire over text, scoped to files whose every request is operator-supplied (a module that also
+// calls a fixed public host, such as the issue-tracker connector's Linear call, is not listed and
+// is reviewed by hand). It sees `fetch(` and `globalThis.fetch(`; an aliased or injected fetch is
+// not seen.
+// ---------------------------------------------------------------------------
+
+const GUARDED_FETCH_MODULES = [
+  'packages/gateway/src/lib/bundleFetch.ts',
+  'packages/gateway/src/lib/credentialService.ts',
+  'packages/shared/src/lib/modelDiscovery.ts',
+  'packages/shared/src/lib/integrations/atlassianClient.ts',
+  'packages/shared/src/lib/integrations/providers/githubIssues.ts',
+  'packages/worker/src/agents/mcpTools.ts',
+];
+
+function checkOperatorUrlFetchesAreGuarded() {
+  for (const file of GUARDED_FETCH_MODULES) {
+    const src = stripComments(read(file));
+    for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\s*\(/g)) {
+      fail(
+        file,
+        src.slice(0, m.index).split('\n').length,
+        'operator-url-fetch-is-guarded',
+        'a bare fetch(…) in a module whose requests go to operator-supplied URLs',
+        'The text guard does not resolve DNS, so a public name that resolves to an internal address ' +
+          'reaches it. Use createGuardedFetch() from shared/lib/guardedDispatcher.'
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // INVARIANT 6 — every database-backed test suite runs in CI, with its opt-in flag set.
 //
 // A `*.pg.test.ts` suite gates itself on an environment flag (`describe.skipIf(!enabled)`), because
@@ -515,6 +556,7 @@ checkDockerfileYarnProvisioning();
 checkLayoutRendersPerRequest();
 checkMcpCodeHasNoDatabaseAccess();
 checkConnectorFetchesSetRedirect();
+checkOperatorUrlFetchesAreGuarded();
 checkPgSuitesRunInCi();
 
 if (failures.length > 0) {
@@ -530,10 +572,11 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('Invariant check passed — 6 invariants, no violations.');
+console.log('Invariant check passed — 7 invariants, no violations.');
 console.log('  workspace image is inherited, never written inline at a call site');
 console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
 console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
 console.log('  MCP code takes no database access: it reaches data only through a REST route');
 console.log('  connector fetches state a redirect policy');
+console.log('  fetches to operator-supplied URLs resolve and pin their address');
 console.log('  every database-backed test suite runs in CI with its opt-in flag set');

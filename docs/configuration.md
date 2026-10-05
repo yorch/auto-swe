@@ -222,6 +222,23 @@ guard the connector applies at run time: GitHub needs a public address, and the 
 knowledge base honour the `allowPrivateNetwork` value on the form. Failures report fixed wording
 per status class and never echo the remote response body.
 
+**Outbound URL guard.** Every request to an operator-supplied URL (connector base URLs, MCP
+servers, bundle URLs, provider `apiBase` probes, skill sources, CI log links) is checked twice. The
+text check (`shared/lib/ssrfGuard.ts`) refuses a bad scheme and a host written as a loopback,
+private, link-local or metadata name or address, and is the early error at save time. At
+connection time `createGuardedFetch` (`shared/lib/guardedDispatcher.ts`) resolves the host name
+once, classifies every address it returns with the same rules (plus multicast and reserved ranges),
+and refuses the request if any one is refused, so a public name such as `10.1.1.17.nip.io` or a
+rebinding name does not reach an internal host. The connection is then made to an address from that
+checked answer (the check is the dispatcher's `lookup`), while TLS server name and `Host` stay the
+hostname, so certificate validation is unchanged. A private address is allowed only where the call
+site's opt-in (`allowPrivateNetwork`, or an opted-in skill-source host) allows it; loopback,
+link-local, unspecified, multicast, reserved and cloud-metadata addresses are refused regardless.
+A DNS failure or timeout (5 s) refuses with a fixed message and never echoes resolver detail.
+Redirects are followed by hand or refused, so each hop passes through the same guard.
+`yarn invariants:check` fails a bare `fetch(…)` in the modules whose requests are all
+operator-supplied.
+
 ---
 
 ## 6. Adding a setting
@@ -240,6 +257,13 @@ from the definition.
 
 ## Limitations
 
+- **Pinning needs a direct connection.** With a process-wide proxy (`NODE_USE_ENV_PROXY`) the proxy
+  resolves the target, so the host is resolved and checked beforehand but the connection cannot be
+  pinned to that answer. A literal IP address is classified as written. The guard does not cover the
+  Okta issuer's discovery fetch (made by the sign-in library at start-up), the model providers'
+  own SDK calls from the worker, the GitHub Enterprise and Octokit calls (those hosts are governed
+  by `github.repositoryHosts`, and a private host is legitimate there), or fixed public hosts such
+  as Slack, Linear, Notion and Figma.
 - **The draft GitHub test cannot reach a private address.** A GitHub Enterprise host on a private
   network is refused when its URL is typed but unsaved; the stored configuration is not re-checked
   by that guard, so save it and test the saved values.

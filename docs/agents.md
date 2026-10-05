@@ -901,9 +901,10 @@ template override is never badged, because it may use a different model or crede
 ## 11. Limitations
 
 - **MCP authentication is a static bearer token plus up to five static custom headers.** OAuth flows
-  and per-user tokens are not supported. The SSRF guard reads the URL's host text and does not resolve
-  DNS, so a public hostname that resolves to a private address passes it, with or without the
-  private-network opt-in, as it does for the tracker and knowledge-base connectors. A server that redirects (for example `/mcp` to `/mcp/`) is
+  and per-user tokens are not supported. The SSRF guard checks the URL's host text and then resolves the name at connection time and
+  connects only to a checked address (see `docs/configuration.md` §5, outbound URL guard), so a
+  public hostname that resolves to a private address is refused unless the connection opts in to a
+  private network, and one that resolves to loopback, link-local or metadata never connects. A server that redirects (for example `/mcp` to `/mcp/`) is
   refused by the token-carrying client and by the Test probe, so the connection URL must be the final
   one. Rotating the token is an edit of the connection; runs already connected keep the token they
   started with.
@@ -965,9 +966,9 @@ template override is never badged, because it may use a different model or crede
   There is no GitLab, Bitbucket or plain-git support.
 - **A source's commit is not verified.** The commit sha pins what was read, but the platform does not
   check a commit or tag signature, so it attests to where the text came from, not who wrote it.
-- **The host check works on the text of the host, not on DNS.** The SSRF guard refuses literal private
-  and metadata addresses and names like `localhost` or `*.internal`; a public-looking hostname that
-  resolves to a private address is not caught here, as with every other outbound fetch. A
+- **A private-network host is trusted by name.** The SSRF guard refuses literal private and metadata
+  addresses and names like `localhost` or `*.internal`, and every request also resolves the host and
+  refuses a name that answers with a private, loopback, link-local or metadata address. A
   private-network GitHub Enterprise host is allowed only through the two-list opt-in above, and the
   listed name is then trusted to mean the server the admin intends.
 - **A source is imported once.** Nothing re-checks the repository or updates the installed skills

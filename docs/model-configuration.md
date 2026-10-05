@@ -588,8 +588,8 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   pages per provider are followed.
 - **A local `apiBase` is always refused.** Credentials have no `allowPrivateNetwork` flag, so an
   Ollama or other private-address endpoint is reported as `blocked address`, in discovery and in the
-  credential **Test** alike. The guard reads the URL text and does not resolve DNS, and the scheduled
-  run makes these calls from the worker.
+  credential **Test** alike. The guard also resolves the host and refuses a name that answers with a private
+  address, and the scheduled run makes these calls from the worker.
 - **Retirement flags reflect what one key can see.** A key restricted to some models (an OpenAI
   project key, say) flags every other priced model of that provider as possibly retired.
 - **A retirement flag is a hint.** A provider may serve an alias or a pinned id it does not list, so
