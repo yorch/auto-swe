@@ -145,6 +145,8 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
       for (const [key, name, origin] of [
         ['tpl', 'wv-plain', null],
         ['agentTpl', 'wv-agent', AGENT_RUN_TEMPLATE_ORIGIN],
+        // Owned by team A: its team sees every run of it, whatever repository it ran on.
+        ['tplA', 'wv-team-a', null],
       ] as const) {
         ids[key] = (
           await prisma.workflowTemplate.create({
@@ -153,7 +155,8 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
               name: `${name}-${suffix}`,
               origin,
               status: 'ACTIVE',
-              // GLOBAL: a team-owned template would make its team see every run of it.
+              // The others are GLOBAL: a team-owned template makes its team see every run.
+              teamId: key === 'tplA' ? ids.teama : null,
             },
           })
         ).id;
@@ -323,6 +326,36 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
       },
     });
 
+    // An automated request filed under TKT-1 by an agent run, with cost of its own.
+    const automated = await request({
+      cost: 50,
+      createdAt: new Date('2026-01-03T00:00:00Z'),
+      repo: 'repoa',
+      ticket: ticket('1'),
+      user: 'alice',
+    });
+    await run(automated.wr.id, 'RUNNING', 'agentTpl');
+
+    // Team B's request, run by a template team A owns: alice sees it through the
+    // template, though its repository is B's.
+    const cross = await request({
+      createdAt: new Date('2025-12-01T00:00:00Z'),
+      repo: 'repob',
+      ticket: ticket('XTEAM'),
+      user: 'bob',
+    });
+    await prisma.workflowRun.create({
+      data: {
+        connectionId: ids.repob,
+        specSnapshot: {},
+        status: 'SUCCESS',
+        templateId: ids.tplA,
+        templateVersion: 1,
+        workflowId: `wf-${cross.wr.id}`,
+        workRequestId: cross.wr.id,
+      },
+    });
+
     // A PRD-style request: it names its repository on the request and has no ledger row.
     const prd = await request({
       connection: 'repoa',
@@ -345,14 +378,18 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
   afterAll(async () => {
     const repos = [ids.repoa, ids.repob];
     await prisma.pullRequest.deleteMany({ where: { repoId: { in: repos } } });
-    await prisma.workflowRun.deleteMany({ where: { templateId: { in: [ids.tpl, ids.agentTpl] } } });
+    await prisma.workflowRun.deleteMany({
+      where: { templateId: { in: [ids.tpl, ids.agentTpl, ids.tplA] } },
+    });
     const people = [ids.alice, ids.bob, ids.carol, ids.admin, ids.frank, ids.gina];
     await prisma.activeWorkflow.deleteMany({
       where: { workRequest: { requestedById: { in: people } } },
     });
     await prisma.runInput.deleteMany({ where: { requestedById: { in: people } } });
     await unscoped(async () => {
-      await prisma.workflowTemplate.deleteMany({ where: { id: { in: [ids.tpl, ids.agentTpl] } } });
+      await prisma.workflowTemplate.deleteMany({
+        where: { id: { in: [ids.tpl, ids.agentTpl, ids.tplA] } },
+      });
       await prisma.connection.deleteMany({ where: { id: { in: repos } } });
       await prisma.team.deleteMany({ where: { id: { in: [ids.teama, ids.teamb, ids.teamc] } } });
       await prisma.organization.deleteMany({ where: { id: ids.org } });
@@ -500,6 +537,30 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
       });
     });
 
+    it('leaves automated requests out of a listed ticket’s figures unless asked', async () => {
+      const hidden = find((await tickets('alice')).data, '1');
+      expect(hidden).toMatchObject({ costUsd: 1.5, requestCount: 1, runCounts: { SUCCESS: 1 } });
+      const shown = find((await tickets('alice', '&includeAutomated=true')).data, '1');
+      expect(shown).toMatchObject({
+        costUsd: 51.5,
+        requestCount: 2,
+        runCounts: { RUNNING: 1, SUCCESS: 1 },
+      });
+      const admin = find((await tickets('admin')).data, '1');
+      expect(admin).toMatchObject({ costUsd: 5.5, requestCount: 2 });
+    });
+
+    it('does not let a team filter reveal a ticket through a run the caller sees by template', async () => {
+      // alice sees bob's XTEAM request because team A owns the template of its run...
+      expect(find((await tickets('alice')).data, 'XTEAM')).toBeDefined();
+      // ...but its repository is team B's, so neither team filter lists it for her.
+      expect(find((await tickets('alice', `&teamId=${ids.teamb}`)).data, 'XTEAM')).toBeUndefined();
+      expect(find((await tickets('alice', `&teamId=${ids.teama}`)).data, 'XTEAM')).toBeUndefined();
+      // bob, who reaches B, can filter by it; an ADMIN can too.
+      expect(find((await tickets('bob', `&teamId=${ids.teamb}`)).data, 'XTEAM')).toBeDefined();
+      expect(find((await tickets('admin', `&teamId=${ids.teamb}`)).data, 'XTEAM')).toBeDefined();
+    });
+
     it('shows an outsider nothing, not even the total', async () => {
       const res = await tickets('carol', '&includeAutomated=true');
       expect(res.data).toEqual([]);
@@ -536,15 +597,16 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
         ticket('SINGLE'),
         ticket('EPIC'),
         ticket('1'),
+        ticket('XTEAM'),
       ]);
-      expect(all.meta.total).toBe(4);
+      expect(all.meta.total).toBe(5);
       const second = await tickets('alice', '&limit=2&offset=2');
       expect(second.data.map((g) => g.ticketId)).toEqual([ticket('EPIC'), ticket('1')]);
-      expect(second.meta.total).toBe(4);
+      expect(second.meta.total).toBe(5);
       // The hidden launches never take a slot or count.
       const first = await tickets('alice', '&limit=1');
       expect(first.data).toHaveLength(1);
-      expect(first.meta.total).toBe(4);
+      expect(first.meta.total).toBe(5);
     });
 
     it('lets a search choose the tickets while the aggregates cover all their visible requests', async () => {
@@ -562,7 +624,9 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
         'bob',
         `/api/v1/tickets?search=${suffix}&includeAutomated=true`
       );
-      expect(res.data.map((g) => g.ticketId).sort()).toEqual([ticket('1'), ticket('PRD')].sort());
+      expect(res.data.map((g) => g.ticketId).sort()).toEqual(
+        [ticket('1'), ticket('PRD'), ticket('XTEAM')].sort()
+      );
       expect(find(res.data, '1')?.requestCount).toBe(1);
     });
   });

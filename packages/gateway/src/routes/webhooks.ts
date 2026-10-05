@@ -561,8 +561,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Signal the Temporal workflow. The workflow's merge wait only unblocks
       // via this signal, so a TRANSIENT failure after the row moved to MERGED
       // would strand it: a later delivery would no longer match the
-      // `status: 'OPEN'` lookup and would be ignored. Roll the row back to OPEN
-      // and answer non-2xx, which marks the delivery failed in GitHub's webhook
+      // OPEN/CLOSED lookup and would be ignored. Roll the row back to its
+      // previous status (OPEN or CLOSED) and answer non-2xx, which marks the delivery failed in GitHub's webhook
       // UI. GitHub does NOT retry a failed delivery on its own — recovery is a
       // human pressing "Redeliver" (or the CI/merge state being re-observed);
       // the rollback is what makes that redelivery able to work.
@@ -570,7 +570,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // A TERMINAL failure is the opposite case: the execution is gone (never
       // started, already completed, or terminated), so no redelivery can ever
       // land the signal and there is no run left to strand. Rolling back would
-      // then record OPEN for a PR that IS merged on GitHub and invite an
+      // then record a pre-merge status for a PR that IS merged on GitHub and invite an
       // endless redeliver-fail-redeliver loop that can never succeed. Keep
       // MERGED — recording the merge is the correct outcome — and answer 200.
       let signalSent = true;
@@ -584,7 +584,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         if (!isTerminalSignalError(err)) {
           request.log.error(
             { err, prNumber, prRowId: pullRequest.id },
-            'Merge Temporal signal failed; rolling PR back to OPEN'
+            'Merge Temporal signal failed; rolling PR back to its previous status'
           );
           await fastify.prisma.pullRequest
             .updateMany({

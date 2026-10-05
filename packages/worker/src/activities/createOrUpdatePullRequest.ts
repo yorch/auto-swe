@@ -108,7 +108,7 @@ async function doCreateOrUpdatePullRequest(
   // quietly open a replacement: the close is a decision. A new run of the same
   // request has its own ledger row, so it is not stopped by this one.
   const latest = await prisma.pullRequest.findFirst({
-    orderBy: { openedAt: 'desc' },
+    orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
     select: { prNumber: true, status: true },
     where: {
       repoId: repo.id,

@@ -108,7 +108,11 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
           OR: [
             { activeWorkflows: { some: { repository: reachableAnd(inTeam) } } },
             { connection: reachableAnd(inTeam) },
-            { workflowRuns: { some: { AND: [runVisibility, { connection: inTeam }] } } },
+            {
+              workflowRuns: {
+                some: { AND: [runVisibility, { connection: reachableAnd(inTeam) }] },
+              },
+            },
           ],
         });
       }
@@ -122,26 +126,28 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // Agent runs, channel tasks and the channel assistant file their own
       // synthetic ids, and a launch that named no ticket files the request's own
-      // id: none of those is a ticket.
-      if (!includeAutomated) {
-        filters.push({
-          NOT: {
-            workflowRuns: {
-              some: {
-                OR: [
-                  { template: { origin: AGENT_RUN_TEMPLATE_ORIGIN } },
-                  {
-                    template: {
-                      name: { in: [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME] },
-                    },
+      // id: none of those is a ticket. The same predicate bounds a listed ticket's
+      // aggregates, so hiding automated work hides its cost and runs too.
+      const notAutomated: Prisma.RunInputWhereInput = {
+        NOT: {
+          workflowRuns: {
+            some: {
+              OR: [
+                { template: { origin: AGENT_RUN_TEMPLATE_ORIGIN } },
+                {
+                  template: {
+                    name: { in: [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME] },
                   },
-                  { channelId: { not: null } },
-                ],
-              },
+                },
+                { channelId: { not: null } },
+              ],
             },
           },
-          ticketIsSynthetic: false,
-        });
+        },
+        ticketIsSynthetic: false,
+      };
+      if (!includeAutomated) {
+        filters.push(notAutomated);
       }
       const where: Prisma.RunInputWhereInput = { AND: filters };
 
@@ -161,7 +167,13 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
       const requests = await fastify.prisma.runInput.findMany({
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         select: { externalTicketId: true, id: true },
-        where: { AND: [visibleRequests, { externalTicketId: { in: tickets } }] },
+        where: {
+          AND: [
+            visibleRequests,
+            { externalTicketId: { in: tickets } },
+            ...(includeAutomated ? [] : [notAutomated]),
+          ],
+        },
       });
       const requestIds = requests.map((row) => row.id);
 

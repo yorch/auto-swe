@@ -111,7 +111,8 @@ status, the `latestRun`, the `pullRequests` (repository, number, state, draft, l
 matching request; a later run of an old request does not move it).
 
 **Automated work is hidden by default.** The ids these launches file are correlation keys, not
-tickets, so unless `includeAutomated=true` the list leaves out:
+tickets, so unless `includeAutomated=true` the list leaves them out, and a listed ticket's requests,
+runs, cost and pull requests leave them out too:
 
 - requests with an agent run (a run of a template whose origin is the agent-run origin);
 - requests with a Channel Assistant or Channel Task run, or any run in a Slack channel;
@@ -129,8 +130,10 @@ group:
 
 The cost and PRs of a cross-repo epic therefore split by team: a member of one repository's team
 sees that repository's child, not the epic's own ledger row, not another repository's child. A
-`teamId` filter applies to the same rows, and only to repositories the caller can reach, so it can
-never reveal that an epic touches a team the caller cannot see. A ticket with no visible request does
+`teamId` filter matches a request only through a repository the caller can reach (a ledger row, the
+request's target, or a run the caller sees whose repository it is), so it can never reveal that a
+ticket touches a team's repository the caller cannot reach, even when the caller sees one of its runs
+through a template. A ticket with no visible request does
 not appear or count toward `meta.total`.
 
 **Tracker text.** `title` and `status` are the tracker's answer when the newest visible request that
@@ -169,7 +172,12 @@ http(s) address.
   merge keeps waiting until it times out or is cancelled.
 - Close and reopen events are applied in arrival order. If a `reopened` is lost, or arrives before
   the `closed` it follows, the row reads `CLOSED` for a PR that is open until the next merge or close
-  event corrects it. A merge is still recorded from either state.
+  event corrects it. A merge is still recorded from either state. Because the close guard reads that
+  row, a lost `reopened` also makes a re-push in that workflow fail with `PR_CLOSED_BY_REVIEWER`
+  although the PR is open on the host.
+- The close guard finds a PR through the execution's own ledger row linked to its request. An
+  execution with no such row (a self-registered ledger row with no request, an unmatched scheduled
+  anchor) is not covered and may open a new PR after a close.
 - A ticket's title, status and link are a snapshot from submit time, and exist only when a tracker
   is configured; they do not follow later edits in the tracker.
 - `meta.total` for tickets is the number of groups, which the database counts by listing them; a
