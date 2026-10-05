@@ -859,7 +859,9 @@ Writes cut a new immutable `version`.
 For admins, each row of the library table carries a "No credential" badge on its Model cell when the
 provider it calls has no usable credential (and the row is not pinned to its own `credentialId`).
 The status comes from the one `GET /api/v1/platform/readiness` response the page already shares with
-the setup banner, and a sub-role persona takes its parent's status.
+the setup banner, and a sub-role persona takes its parent's status. Readiness describes only the
+platform-wide agents, so the badge appears on platform-wide rows alone; a team, organization or
+template override is never badged, because it may use a different model or credential.
 
 | Method | Path | Min role | Purpose |
 |---|---|---|---|

@@ -45,11 +45,28 @@ describe('missingCredentialProvider', () => {
     );
   });
   it('gives a sub-role persona its parent’s status', () => {
-    const persona = { credentialId: null, inheritsModelFrom: 'planner', modelSpec: null };
+    const persona = {
+      credentialId: null,
+      inheritsModelFrom: 'planner',
+      modelSpec: null,
+      scope: 'GLOBAL' as const,
+    };
     expect(missingCredentialProvider(persona, agents, providers)).toBe('openai');
     expect(
       missingCredentialProvider({ ...persona, inheritsModelFrom: 'reviewer' }, agents, providers)
     ).toBeNull();
+  });
+  it('does not judge an override below the platform-wide scope from platform-wide readiness', () => {
+    expect(
+      missingCredentialProvider({ ...planner, scope: 'TEAM' as const }, agents, providers)
+    ).toBe(null);
+    const persona = {
+      credentialId: null,
+      inheritsModelFrom: 'planner',
+      modelSpec: null,
+      scope: 'WORKFLOW_TEMPLATE' as const,
+    };
+    expect(missingCredentialProvider(persona, agents, providers)).toBeNull();
   });
   it('says nothing while readiness has not loaded', () => {
     expect(missingCredentialProvider(planner, agents, [])).toBeNull();
