@@ -54,3 +54,30 @@ describe('parseUnifiedDiff', () => {
     expect(isUnifiedDiff('just a plan')).toBe(false);
   });
 });
+
+describe('parseUnifiedDiff without per-file diff headers', () => {
+  const PLAIN = `--- a/one.txt\t2026-01-01
++++ b/one.txt\t2026-01-02
+@@ -1,2 +1,2 @@
+ keep
+-old
++new
+--- a/two.txt\t2026-01-01
++++ b/two.txt\t2026-01-02
+@@ -1 +1,2 @@
+ head
++tail
+`;
+
+  it('ends a hunk when its header counts are used up and starts the next file', () => {
+    const files = parseUnifiedDiff(PLAIN);
+    expect(files).toHaveLength(2);
+    expect(files[0]).toMatchObject({ added: 1, name: 'one.txt', removed: 1 });
+    expect(files[1]).toMatchObject({ added: 1, removed: 0 });
+  });
+
+  it('does not count a following file header as a removed line', () => {
+    const [first] = parseUnifiedDiff(PLAIN);
+    expect(first.lines.some((l) => l.text.startsWith('--- a/two'))).toBe(false);
+  });
+});
