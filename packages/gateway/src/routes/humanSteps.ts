@@ -52,6 +52,8 @@ const HumanStepResponseSchema = z.object({
   byName: z.string().nullable(),
   comment: z.string().nullable(),
   resolvedAt: z.string().nullable(),
+  /** A submitted review's text or a chosen decision option; null for other kinds. */
+  value: z.string().nullable(),
 });
 
 const HumanStepListItemSchema = z.object({
@@ -166,6 +168,7 @@ const openInboxStreams = new Map<string, number>();
  * writes no row, so that response is appended when no row already accounts for it.
  */
 function stepResponses(s: {
+  kind: string;
   humanApprovals: {
     action: string;
     resolvedAt: Date | null;
@@ -184,6 +187,7 @@ function stepResponses(s: {
     byName: a.resolvedByUser?.name ?? null,
     comment: commentOf(a.value),
     resolvedAt: formatDate(a.resolvedAt),
+    value: null,
   }));
   if (s.status !== 'RESOLVED' || !s.payload || typeof s.payload !== 'object') return rows;
   const action = String((s.payload as { action?: unknown }).action ?? 'respond');
@@ -199,8 +203,16 @@ function stepResponses(s: {
       byName: s.resolvedByUser?.name ?? null,
       comment: commentOf(s.payload),
       resolvedAt: formatDate(s.resolvedAt),
+      value: valueOf(s.kind, s.payload),
     },
   ];
+}
+
+/** The answer text a requester can read: a review's notes or the option a decision picked. */
+function valueOf(kind: string, payload: unknown): string | null {
+  if (kind !== 'REVIEW' && kind !== 'DECISION') return null;
+  const value = (payload as { value?: unknown }).value;
+  return typeof value === 'string' && value ? value : null;
 }
 
 export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {

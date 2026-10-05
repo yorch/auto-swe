@@ -176,6 +176,7 @@ describe('human step routes', () => {
           byName: 'Ada',
           comment: 'Looks right',
           resolvedAt: '2026-06-01T01:00:00.000Z',
+          value: null,
         },
       ]);
     });
@@ -246,6 +247,25 @@ describe('human step routes', () => {
       ];
       const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
       expect(JSON.parse(res.payload).data[0].responses).toHaveLength(1);
+    });
+  });
+
+  describe('GET / review value', () => {
+    it('shows the submitted review text to whoever reads the step', async () => {
+      listRows = [
+        pendingStep({
+          kind: 'REVIEW',
+          payload: { action: 'submit', resolvedBy: USER_ID, value: 'Needs a rollback plan' },
+          resolvedAt: new Date('2026-06-01T02:00:00Z'),
+          resolvedBy: USER_ID,
+          resolvedByUser: { name: 'Grace' },
+          status: 'RESOLVED',
+        }),
+      ];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      expect(JSON.parse(res.payload).data[0].responses).toMatchObject([
+        { action: 'submit', value: 'Needs a rollback plan' },
+      ]);
     });
   });
 

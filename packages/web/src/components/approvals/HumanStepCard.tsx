@@ -119,7 +119,12 @@ function getTimeoutColor(timeoutAt: string): string {
 const ACTION_LABEL: Record<string, string> = {
   approve: 'Approved',
   reject: 'Rejected',
+  select: 'Chose',
+  submit: 'Submitted',
 };
+
+/** The server caps an approver's note; the counter keeps the limit visible. */
+const MAX_COMMENT_LENGTH = 2000;
 
 /** A reject must carry enough of a reason to be useful to whoever reads it. */
 const MIN_REJECT_REASON = 5;
@@ -348,6 +353,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
               {r.comment && (
                 <p className="mt-0.5 whitespace-pre-wrap text-paper-400">{r.comment}</p>
               )}
+              {r.value && <p className="mt-0.5 whitespace-pre-wrap text-paper-400">{r.value}</p>}
             </li>
           ))}
         </ul>
@@ -537,6 +543,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
       )}
 
       <Modal
+        dismissible={pendingAction === null}
         onClose={() => setDialog(null)}
         open={dialog !== null}
         title={dialog === 'reject' ? `Reject ${step.title}?` : `Approve ${step.title}?`}
@@ -548,8 +555,10 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         </p>
         <Textarea
           compact
+          hint={`${comment.length} / ${MAX_COMMENT_LENGTH}`}
           id={`human-step-${step.id}-comment`}
           label={dialog === 'reject' ? 'Reason (required)' : 'Comment (optional)'}
+          maxLength={MAX_COMMENT_LENGTH}
           onChange={(e) => setComment(e.target.value)}
           placeholder={
             dialog === 'reject' ? 'What needs to change?' : 'Add a note for the requester…'

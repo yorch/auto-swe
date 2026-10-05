@@ -149,3 +149,54 @@ describe('HumanStepCard approvals', () => {
     expect(screen.getByText('Wrong table')).toBeTruthy();
   });
 });
+
+describe('HumanStepCard dialog and responses', () => {
+  it('locks the approve dialog against dismissal while the answer is being sent', async () => {
+    mutateAsync.mockReturnValueOnce(new Promise(() => {}));
+    render(<HumanStepCard step={approvalStep()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    const closeButton = () =>
+      screen
+        .getAllByLabelText('Close')
+        .find((b) => b.closest('dialog')?.textContent?.includes('Approve Approve plan?')) as
+        | HTMLButtonElement
+        | undefined;
+    expect(closeButton()?.disabled).toBe(false);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Approve' }).at(-1) as HTMLElement);
+    await screen.findByText('Approving…');
+    expect(closeButton()?.disabled).toBe(true);
+  });
+
+  it('caps the note and shows how much of it is used', () => {
+    render(<HumanStepCard step={approvalStep()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    const note = screen.getByLabelText('Comment (optional)') as HTMLTextAreaElement;
+    expect(note.maxLength).toBe(2000);
+    fireEvent.change(note, { target: { value: 'abc' } });
+    expect(screen.getByText('3 / 2000')).toBeTruthy();
+  });
+
+  it('labels a submitted review and shows what was submitted', () => {
+    render(
+      <HumanStepCard
+        step={approvalStep({
+          kind: 'REVIEW',
+          responses: [
+            {
+              action: 'submit',
+              byName: 'Grace',
+              comment: null,
+              resolvedAt: null,
+              value: 'Needs a rollback plan',
+            },
+          ],
+          status: 'RESOLVED',
+        })}
+      />
+    );
+    expect(screen.getByText(/Grace · Submitted/)).toBeTruthy();
+    expect(screen.getByText('Needs a rollback plan')).toBeTruthy();
+  });
+});

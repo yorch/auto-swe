@@ -608,6 +608,8 @@ export interface HumanStepResponse {
   byName: string | null;
   comment: string | null;
   resolvedAt: string | null;
+  /** A submitted review's text or a chosen decision option; null for other kinds. */
+  value?: string | null;
 }
 
 /** Shape of a pending human action (humanApproval/Decision/Input/Review node). */
