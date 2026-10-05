@@ -85,11 +85,18 @@ export default function RunDetailPage({ params }: PageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const { layout, setLayout } = useUserPreferences();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const { data: approvalSteps } = useApprovals();
+  // Both open and answered steps for this run: the open ones need a person, the answered ones
+  // show who decided and what they said.
+  const { data: approvalSteps } = useApprovals('ALL', 'requestedAt:desc', false, id);
 
   const pendingSteps = useMemo(
-    () => (approvalSteps ?? []).filter((s) => s.runId === id),
-    [approvalSteps, id]
+    () => (approvalSteps ?? []).filter((s) => s.status === 'PENDING'),
+    [approvalSteps]
+  );
+  const answeredSteps = useMemo(
+    () =>
+      (approvalSteps ?? []).filter((s) => s.status !== 'PENDING' && (s.responses?.length ?? 0) > 0),
+    [approvalSteps]
   );
 
   const dagOverlay = useMemo(
@@ -301,6 +308,7 @@ export default function RunDetailPage({ params }: PageProps) {
 
       {/* ── Pending approvals + result or failure, whichever layout is chosen ── */}
       <RunSummaryBand
+        answeredSteps={answeredSteps}
         failedStep={failedStep}
         onJumpToFailure={handleJumpToFailure}
         onReRun={failureCardReRun}

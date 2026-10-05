@@ -45,6 +45,15 @@ const approval = {
   status: 'PENDING',
   title: 'Approve the plan',
 };
+const answered = {
+  ...approval,
+  id: 'h2',
+  responses: [
+    { action: 'approve', byName: 'Dana', comment: 'Ship it', resolvedAt: null, value: null },
+  ],
+  status: 'APPROVED',
+  title: 'Approved the design',
+};
 const idle = { isPending: false, isSuccess: false, mutate: vi.fn(), reset: vi.fn() };
 
 vi.mock('@auto-swe/shared/workflow', async (importOriginal) => ({
@@ -65,7 +74,7 @@ vi.mock('@/hooks/useRuns', () => ({
     toggleFullTraces: vi.fn(),
   }),
 }));
-vi.mock('@/hooks/useApprovals', () => ({ useApprovals: () => ({ data: [approval] }) }));
+vi.mock('@/hooks/useApprovals', () => ({ useApprovals: () => ({ data: [approval, answered] }) }));
 vi.mock('@/hooks/useRunReRun', () => ({
   useRunReRun: () => ({
     cancel: vi.fn(),
@@ -115,6 +124,7 @@ describe('run page summary band', () => {
       state.layout = layout;
       await renderPage();
       expect(screen.getByText('Approve the plan')).toBeTruthy();
+      expect(screen.getByText('Approved the design')).toBeTruthy();
       expect(screen.getAllByText(/Tests would not pass/).length).toBeGreaterThan(0);
     }
   );

@@ -14,13 +14,15 @@ interface RunSummaryBandProps {
   run: WorkflowRunDetail;
   failedStep: WorkflowStepRecord | null;
   pendingSteps: NonNullable<ReturnType<typeof useApprovals>['data']>;
+  /** Steps already answered, shown with who decided and what they said. */
+  answeredSteps?: NonNullable<ReturnType<typeof useApprovals>['data']>;
   onJumpToFailure?: () => void;
   onReRun?: () => void;
 }
 
 /**
  * What needs a person, or what came out of the run, shown above whichever layout is
- * chosen: pending approvals first, then the result or the failure.
+ * chosen: pending approvals and the answers already given first, then the result or the failure.
  *
  * It composes the same cards as `RequestPanel` (`components/requests/`) on purpose
  * rather than sharing one wrapper: this band is a full-width strip above a run's
@@ -31,6 +33,7 @@ export function RunSummaryBand({
   run,
   failedStep,
   pendingSteps,
+  answeredSteps = [],
   onJumpToFailure,
   onReRun,
 }: RunSummaryBandProps) {
@@ -43,7 +46,7 @@ export function RunSummaryBand({
     typeof run.result === 'object' &&
     Object.keys(run.result as Record<string, unknown>).length > 0;
 
-  if (pendingSteps.length === 0 && !hasResult && !failedStep) {
+  if (pendingSteps.length === 0 && answeredSteps.length === 0 && !hasResult && !failedStep) {
     return null;
   }
 
@@ -55,6 +58,14 @@ export function RunSummaryBand({
           className="space-y-3 rounded-md border border-amber-400/20 bg-amber-400/5 p-3"
         >
           {pendingSteps.map((step) => (
+            <HumanStepCard key={step.id} showRunLink={false} step={step} />
+          ))}
+        </section>
+      )}
+      {answeredSteps.length > 0 && (
+        <section aria-label="Approver responses" className="space-y-3">
+          <h3 className="text-sm font-semibold">Responses</h3>
+          {answeredSteps.map((step) => (
             <HumanStepCard key={step.id} showRunLink={false} step={step} />
           ))}
         </section>
