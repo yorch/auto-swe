@@ -134,7 +134,9 @@ runs, cost and pull requests leave them out too:
   flagged as well as recognised by their template or channel.
 
 A request flagged `ticketIsSynthetic` names no tracker issue, so none of the tracker syncs (PR opened,
-workflow started, CI verdict, merge, workflow finished) is attempted for it. A Channel Assistant
+workflow started, CI verdict, merge, workflow finished) is attempted for it, and neither is the
+knowledge-base PR link write-back, which would otherwise search the knowledge base for a page
+matching the generated id. A Channel Assistant
 turn files no request of its own, so there is nothing to flag. The Slack merge note and
 the merge evaluation row do not depend on the tracker and still run.
 

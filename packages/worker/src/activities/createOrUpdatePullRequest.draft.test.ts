@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const m = vi.hoisted(() => ({
   createPr: vi.fn(),
   isDraft: vi.fn(),
+  kb: { searchPages: vi.fn(), updatePageWithPrLink: vi.fn() },
   prisma: {
     activeWorkflow: { findFirst: vi.fn() },
     connection: { findUniqueOrThrow: vi.fn() },
@@ -14,7 +15,7 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: m.prisma }));
 vi.mock('@auto-swe/shared/lib/integrations/registry', () => ({
-  createKnowledgeBaseProvider: vi.fn(() => null),
+  createKnowledgeBaseProvider: vi.fn(() => m.kb),
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveIssueTrackerConfig: vi.fn(),
@@ -122,6 +123,19 @@ describe('the tracker sync when a PR is opened', () => {
     m.prisma.runInput.findUnique.mockResolvedValue({ ticketIsSynthetic });
     await createOrUpdatePullRequest(request, codeResult);
     expect(syncTrackerOnEvent).toHaveBeenCalledTimes(calls);
+  });
+});
+
+describe('the knowledge-base PR link write-back when a PR is opened', () => {
+  it.each([
+    [true, 0],
+    [false, 1],
+  ])('with ticketIsSynthetic=%s writes the link %i time(s)', async (ticketIsSynthetic, calls) => {
+    m.prisma.runInput.findUnique.mockResolvedValue({ ticketIsSynthetic });
+    m.kb.searchPages.mockResolvedValue([{ id: 'page-1', title: 'T-1 spec' }]);
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.kb.searchPages).toHaveBeenCalledTimes(calls);
+    expect(m.kb.updatePageWithPrLink).toHaveBeenCalledTimes(calls);
   });
 });
 

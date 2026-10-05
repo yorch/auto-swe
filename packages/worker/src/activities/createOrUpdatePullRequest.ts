@@ -189,11 +189,13 @@ async function doCreateOrUpdatePullRequest(
     workRequestId: request.workRequestId,
   });
 
+  // A platform-generated ticket id names neither a tracker issue nor a knowledge-base page.
+  const hasRealTicket =
+    !!request.externalTicketId &&
+    (await requestHasTrackerTicket(request.workRequestId, request.externalTicketId));
+
   // Best-effort tracker sync on PR opened.
-  if (
-    request.externalTicketId &&
-    (await requestHasTrackerTicket(request.workRequestId, request.externalTicketId))
-  ) {
+  if (request.externalTicketId && hasRealTicket) {
     const trackerConfig = await resolveIssueTrackerConfig();
     await syncTrackerOnEvent(
       {
@@ -208,7 +210,7 @@ async function doCreateOrUpdatePullRequest(
 
   // Best-effort Confluence PR link write-back — search for a page matching the
   // ticket ID and append the PR link. Never blocks the PR creation path.
-  if (request.externalTicketId) {
+  if (request.externalTicketId && hasRealTicket) {
     try {
       const kbConfig = await resolveKnowledgeBaseConfig();
       const kbProvider = createKnowledgeBaseProvider(kbConfig);
