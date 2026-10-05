@@ -754,6 +754,7 @@ __metadata:
     "@opentelemetry/exporter-trace-otlp-grpc": "npm:0.222.0"
     "@opentelemetry/instrumentation-http": "npm:0.222.0"
     "@opentelemetry/instrumentation-undici": "npm:0.32.0"
+    "@opentelemetry/resources": "npm:2.11.0"
     "@opentelemetry/sdk-logs": "npm:0.222.0"
     "@opentelemetry/sdk-metrics": "npm:2.11.0"
     "@opentelemetry/sdk-trace-base": "npm:2.11.0"

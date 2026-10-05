@@ -10,10 +10,22 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import type { WorkflowSpanTarget } from './workflowSpanSink.js';
 
-export function initTelemetry(serviceName: string): { shutdown: () => Promise<void> } {
+export function initTelemetry(serviceName: string): {
+  shutdown: () => Promise<void>;
+  /** Where workflow spans are exported; undefined when telemetry is disabled. */
+  workflowSpans?: WorkflowSpanTarget;
+} {
   const endpoint = resolveOtelExporterEndpoint();
-  return initSharedTelemetry({
+  // One exporter behind two batch processors: the SDK's for spans a tracer ends,
+  // and one for workflow spans, which carry ids chosen inside the workflow
+  // isolate and so cannot come from a tracer. Batching keeps a burst of run
+  // endings from exceeding the OTLP exporter's concurrent-export limit, which
+  // would drop the SDK processor's batches too.
+  const traceExporter = endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined;
+  const telemetry = initSharedTelemetry({
     esmModules: ['http', 'https'],
     // Undici is global `fetch`, which the AI SDK providers and Octokit call
     // through; `http` never sees it. It hooks diagnostics channels, so it needs
@@ -31,6 +43,18 @@ export function initTelemetry(serviceName: string): { shutdown: () => Promise<vo
         })
       : undefined,
     serviceName,
-    traceExporter: endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined,
+    traceExporter,
   });
+  const processor =
+    traceExporter && telemetry.resource ? new BatchSpanProcessor(traceExporter) : undefined;
+  return {
+    // The batch processor is shut down first, so its final batch reaches the
+    // exporter before the SDK shuts that exporter down.
+    shutdown: async () => {
+      await processor?.shutdown();
+      await telemetry.shutdown();
+    },
+    workflowSpans:
+      processor && telemetry.resource ? { processor, resource: telemetry.resource } : undefined,
+  };
 }
