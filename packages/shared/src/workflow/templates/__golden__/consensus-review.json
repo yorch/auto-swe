@@ -1,5 +1,5 @@
 {
-  "description": "Run two independent agent review-network calls in parallel (fanOut with concurrency=2). Both reviewers must approve before the PR opens; if either rejects the agent addresses the combined feedback and tries again (up to 3 rounds). Demonstrates fanOut for parallel quality gates rather than parallel work.",
+  "description": "Implement the change, open the pull request and wait for CI (a failing CI is fixed by the agent: 2 fix attempts, and a third failure fails the run). Then two independent agent reviewers check the code that passed CI at the same time. Both must approve; if either rejects, the agent addresses the combined feedback, CI runs again, and both reviewers look again (up to 3 rounds). Use it when you want two independent opinions before a person sees the pull request.",
   "entry": "setValidating",
   "name": "consensus-review",
   "nodes": {

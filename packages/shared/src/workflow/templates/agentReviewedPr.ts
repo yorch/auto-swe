@@ -23,10 +23,10 @@ import {
  */
 export const AGENT_REVIEWED_PR_SPEC: WorkflowSpec = {
   description:
-    'Implement, run the automated review network (up to 3 attempts), open a PR, ' +
-    'then wait for CI. No human approval steps, and it never merges: the run ends ' +
-    'when CI is green and the pull request waits for a person. Use this when the ' +
-    'agent review loop is a sufficient quality gate before a PR.',
+    'Implement the change, have the review agents check it (up to 3 attempts), open a pull ' +
+    'request, then wait for CI. No human approval steps, and it never merges: the run ends ' +
+    'when CI is green and the pull request waits for a person. Use this when the agent ' +
+    'review is a sufficient quality gate before a pull request.',
   entry: 'setValidating',
   name: 'agent-reviewed-pr',
   nodes: mergeNodes(

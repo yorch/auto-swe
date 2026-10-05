@@ -205,6 +205,20 @@ describe('human step routes', () => {
       expect(row.myResponse).toBeNull();
     });
 
+    it('falls back to the resolver email when the account has no name', async () => {
+      listRows = [
+        pendingStep({
+          payload: { action: 'approve', resolvedBy: USER_ID },
+          resolvedAt: new Date('2026-06-01T02:00:00Z'),
+          resolvedByUser: { email: 'ada@example.com', name: null },
+          status: 'RESOLVED',
+        }),
+      ];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      const [row] = JSON.parse(res.payload).data;
+      expect(row.responses).toMatchObject([{ action: 'approve', byName: 'ada@example.com' }]);
+    });
+
     it('keeps a reject that resolved a multi-approver step after an approval', async () => {
       const OTHER = 'user-2';
       listRows = [
@@ -491,10 +505,24 @@ describe('human step routes', () => {
       expect(updateManyCalls.some((c) => c.data.status === 'PENDING')).toBe(false);
     });
 
+    it('refuses a reject without a reason of at least 5 characters', async () => {
+      stepRow = pendingStep();
+      for (const comment of [undefined, '', '  no ', '1234']) {
+        const res = await respond({
+          action: 'reject',
+          ...(comment === undefined ? {} : { comment }),
+        });
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.payload).error.code).toBe('REASON_REQUIRED');
+      }
+      expect(updateManyCalls).toHaveLength(0);
+      expect(signalCalls).toHaveLength(0);
+    });
+
     it('rolls the row back to PENDING and returns 502 when the Temporal signal fails', async () => {
       stepRow = pendingStep();
       signalError = new Error('Temporal unreachable');
-      const res = await respond({ action: 'reject' });
+      const res = await respond({ action: 'reject', comment: 'Wrong approach' });
       expect(res.statusCode).toBe(502);
       expect(JSON.parse(res.payload).error.code).toBe('SIGNAL_FAILED');
 

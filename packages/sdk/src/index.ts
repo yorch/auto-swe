@@ -17,6 +17,7 @@ import {
   buildBundleManifest,
   parseBundle,
   signContentHash,
+  unsupportedBundleDependencies,
   validateBundleScannerPatterns,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
@@ -130,6 +131,14 @@ export function validateBundle(manifest: unknown): ValidateBundleResult {
   const patternErrors = validateBundleScannerPatterns(bundle);
   if (patternErrors.length > 0) {
     return { errors: patternErrors, ok: false };
+  }
+  // The server refuses a dependency on a connection type it cannot run.
+  const unsupported = unsupportedBundleDependencies(bundle);
+  if (unsupported.length > 0) {
+    return {
+      errors: [`bundle requires unsupported connection type(s): ${unsupported.join(', ')}`],
+      ok: false,
+    };
   }
   return { bundle, ok: true };
 }

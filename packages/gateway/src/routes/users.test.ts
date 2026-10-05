@@ -47,6 +47,7 @@ async function buildApp() {
   const authState: AuthState = { role: 'ADMIN', sub: 'admin-1' };
 
   const mockPrisma = {
+    account: { create: vi.fn().mockResolvedValue({}) },
     configAuditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
@@ -269,7 +270,7 @@ describe('userRoutes', () => {
 
   describe('POST /api/v1/users', () => {
     it('creates a user and returns a generated temporaryPassword when none was given', async () => {
-      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null); // email pre-check
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null); // email pre-check
       ctx.mockPrisma.user.create.mockResolvedValueOnce({
         createdAt: new Date('2026-01-01'),
         email: 'new@example.com',
@@ -293,8 +294,72 @@ describe('userRoutes', () => {
       expect(body.data.temporaryPassword.length).toBeGreaterThan(0);
     });
 
+    it('creates a verified user with a better-auth credential account for the password', async () => {
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.create.mockResolvedValueOnce({
+        createdAt: new Date('2026-01-01'),
+        email: 'cred@example.com',
+        id: USER_ID,
+        isActive: true,
+        role: 'ENGINEER',
+        slackId: null,
+      });
+      ctx.mockPrisma.account.create.mockClear();
+
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { email: 'cred@example.com', password: 'supersecret1' },
+        url: '/api/v1/users',
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(ctx.mockPrisma.user.create.mock.calls[0]?.[0].data.emailVerified).toBe(true);
+      const data = ctx.mockPrisma.account.create.mock.calls[0]?.[0].data;
+      expect(data).toMatchObject({ accountId: USER_ID, providerId: 'credential', userId: USER_ID });
+      // The stored hash is better-auth's own, so its verifier accepts the password.
+      const { verifyPassword } = await import('better-auth/crypto');
+      expect(await verifyPassword({ hash: data.password, password: 'supersecret1' })).toBe(true);
+    });
+
+    it('stores a mixed-case, padded email trimmed and lower-cased and checks case-insensitively', async () => {
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.create.mockResolvedValueOnce({
+        createdAt: new Date('2026-01-01'),
+        email: 'mixed@example.com',
+        id: USER_ID,
+        isActive: true,
+        role: 'ENGINEER',
+        slackId: null,
+      });
+
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { email: '  Mixed@Example.COM ' },
+        url: '/api/v1/users',
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(ctx.mockPrisma.user.findFirst).toHaveBeenCalledWith({
+        where: { email: { equals: 'mixed@example.com', mode: 'insensitive' } },
+      });
+      expect(ctx.mockPrisma.user.create.mock.calls[0]?.[0].data.email).toBe('mixed@example.com');
+    });
+
+    it('rejects a password longer than better-auth accepts', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { email: 'long@example.com', password: 'x'.repeat(129) },
+        url: '/api/v1/users',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(ctx.mockPrisma.user.create).not.toHaveBeenCalled();
+    });
+
     it('omits temporaryPassword when a password was supplied', async () => {
-      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
       ctx.mockPrisma.user.create.mockResolvedValueOnce({
         createdAt: new Date('2026-01-01'),
         email: 'withpw@example.com',
@@ -317,7 +382,7 @@ describe('userRoutes', () => {
     });
 
     it('returns 409 USER_EXISTS when the email pre-check finds a match', async () => {
-      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'existing' });
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce({ id: 'existing' });
 
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
@@ -332,7 +397,7 @@ describe('userRoutes', () => {
     });
 
     it('returns 409 SLACK_ID_TAKEN when the slackId pre-check finds a match', async () => {
-      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
       ctx.mockPrisma.user.findFirst.mockResolvedValueOnce({ id: 'other-user' });
 
       const res = await ctx.app.inject({
@@ -348,7 +413,7 @@ describe('userRoutes', () => {
     });
 
     it('maps a concurrent P2002 on email to 409 USER_EXISTS (race past the pre-check)', async () => {
-      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
       ctx.mockPrisma.user.create.mockRejectedValueOnce(
         Object.assign(new Error('Unique constraint failed'), {
           code: 'P2002',
@@ -368,7 +433,7 @@ describe('userRoutes', () => {
     });
 
     it('maps a concurrent P2002 on slackId to 409 SLACK_ID_TAKEN (race past the pre-check)', async () => {
-      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
       ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
       ctx.mockPrisma.user.create.mockRejectedValueOnce(
         Object.assign(new Error('Unique constraint failed'), {
@@ -396,7 +461,7 @@ describe('userRoutes', () => {
         url: '/api/v1/users',
       });
       expect(res.statusCode).toBe(400);
-      expect(ctx.mockPrisma.user.findUnique).not.toHaveBeenCalled();
+      expect(ctx.mockPrisma.user.findFirst).not.toHaveBeenCalled();
     });
 
     it('returns 400 for a password shorter than 8 characters', async () => {
@@ -446,7 +511,7 @@ describe('userRoutes', () => {
 
   describe('POST /api/v1/users/invite', () => {
     it('creates a pre-active user, attaches the default team, and fires a magic link', async () => {
-      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
       ctx.mockPrisma.user.create.mockResolvedValueOnce({
         email: 'invitee@example.com',
         id: USER_ID,
@@ -480,7 +545,7 @@ describe('userRoutes', () => {
     });
 
     it('still succeeds (201) when the default team row is missing', async () => {
-      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
       ctx.mockPrisma.user.create.mockResolvedValueOnce({
         email: 'noteam@example.com',
         id: USER_ID,
@@ -500,8 +565,29 @@ describe('userRoutes', () => {
       expect(ctx.mockPrisma.teamMembership.upsert).not.toHaveBeenCalled();
     });
 
+    it('lower-cases the invited email before storing it', async () => {
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.create.mockResolvedValueOnce({
+        email: 'invitee@example.com',
+        emailVerified: true,
+        id: USER_ID,
+        isActive: true,
+        role: 'ENGINEER',
+      });
+
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { email: 'Invitee@Example.com' },
+        url: '/api/v1/users/invite',
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(ctx.mockPrisma.user.create.mock.calls[0]?.[0].data.email).toBe('invitee@example.com');
+    });
+
     it('returns 409 USER_EXISTS when the email already exists', async () => {
-      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'existing' });
+      ctx.mockPrisma.user.findFirst.mockResolvedValueOnce({ id: 'existing' });
 
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,

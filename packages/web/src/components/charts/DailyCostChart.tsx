@@ -8,11 +8,13 @@ import {
   axisLabel,
   CHART_HEIGHT,
   ChartFrame,
+  type ChartGranularity,
   ChartTooltip,
   chartAriaLabel,
   EmptyChart,
   formatDateLabel,
   GRID_STROKE,
+  granularityWords,
   TOOLTIP_CURSOR_FILL,
 } from './chartChrome';
 
@@ -33,23 +35,26 @@ interface Props {
   data: { date: string; costUsd: number; calls: number }[];
   /** Names the chart for assistive tech; the card title usually says the same. */
   title?: string;
+  /** One bar per `day` (default) or per `week` when the gateway buckets a long window. */
+  granularity?: ChartGranularity;
 }
 
-/** LLM spend per day. One series, so the card title names it and there is no legend. */
-export function DailyCostChart({ data, title }: Props) {
+/** LLM spend per day, or per week for a long window. One series, so the card title names it and there is no legend. */
+export function DailyCostChart({ data, granularity = 'day', title }: Props) {
+  const words = granularityWords(granularity);
   if (data.every((d) => d.calls === 0)) {
     return <EmptyChart label="No LLM calls in this window." />;
   }
 
   const total = data.reduce((n, d) => n + d.costUsd, 0);
   const peak = data.reduce((a, d) => (d.costUsd > a.costUsd ? d : a), data[0]);
-  const summary = `Daily LLM cost in US dollars over ${data.length} days, ${formatCost(total)} in total. Highest day ${formatDateLabel(peak.date)} at ${formatCost(peak.costUsd)}.`;
+  const summary = `${words.adjective} LLM cost in US dollars over ${data.length} ${words.plural}, ${formatCost(total)} in total. Highest ${words.singular} ${formatDateLabel(peak.date)} at ${formatCost(peak.costUsd)}.`;
 
   return (
     <ChartFrame
-      ariaLabel={chartAriaLabel(title, 'Daily LLM cost', summary)}
+      ariaLabel={chartAriaLabel(title, `${words.adjective} LLM cost`, summary)}
       table={{
-        columns: ['Date (UTC)', 'Cost (USD)', 'Calls'],
+        columns: [words.dateColumn, 'Cost (USD)', 'Calls'],
         rows: data.map((d) => [formatDateLabel(d.date), formatCost(d.costUsd), d.calls]),
       }}
     >
@@ -74,7 +79,9 @@ export function DailyCostChart({ data, title }: Props) {
               `${formatCost(Number(value))} · ${item.payload.calls} calls`,
               'Cost',
             ]}
-            labelFormatter={(label) => `${formatDateLabel(label)} (UTC)`}
+            labelFormatter={(label) =>
+              `${granularity === 'week' ? 'Week of ' : ''}${formatDateLabel(label)} (UTC)`
+            }
           />
           <Bar dataKey="costUsd" fill={TOKEN.ember400} maxBarSize={28} radius={[4, 4, 0, 0]} />
         </BarChart>

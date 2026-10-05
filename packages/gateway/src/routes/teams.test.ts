@@ -45,6 +45,8 @@ interface State {
   /** Rows `connectionTeamShare.findMany` returns, and the queries it was asked. */
   shares?: Array<{ connection: Record<string, unknown> }>;
   shareQueries?: Array<{ where: Record<string, unknown> }>;
+  /** Rows written to the configuration audit log. */
+  audits?: Array<{ action: string; entityType: string; [key: string]: unknown }>;
 }
 
 const TEAM_ID = '00000000-0000-4000-8000-000000000001';
@@ -104,6 +106,12 @@ function buildApp(state: State): FastifyInstance {
       return 1;
     },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+    configAuditLog: {
+      create: async ({ data }: { data: { action: string; entityType: string } }) => {
+        state.audits = [...(state.audits ?? []), data];
+        return data;
+      },
+    },
     connectionTeamShare: {
       findMany: async (args: { where: Record<string, unknown> }) => {
         state.shareQueries = [...(state.shareQueries ?? []), args];
@@ -243,6 +251,7 @@ describe('POST /api/v1/teams', () => {
 
     expect(res.statusCode).toBe(201);
     expect(res.json().data.orgId).toBe('org-default');
+    expect(state.audits).toMatchObject([{ action: 'CREATE', entityType: 'Team' }]);
   });
 
   it('400s when the requested org does not exist (P5)', async () => {
@@ -410,6 +419,20 @@ describe('PUT /api/v1/teams/:id/shell-image-allowlist', () => {
       'ghcr.io/acme/ci-tools:latest',
       'docker.io/library/python:3.13-slim',
     ]);
+    expect(state.audits).toMatchObject([
+      {
+        action: 'UPDATE',
+        afterJson: {
+          shellImageAllowlist: [
+            'ghcr.io/acme/ci-tools:latest',
+            'docker.io/library/python:3.13-slim',
+          ],
+        },
+        beforeJson: { shellImageAllowlist: expect.any(Array) },
+        entityId: TEAM_ID,
+        entityType: 'Team',
+      },
+    ]);
   });
 
   it('rejects images with shell metacharacters (the Zod regex guard)', async () => {
@@ -505,6 +528,15 @@ describe('PUT /api/v1/teams/:id/egress-allowlist', () => {
       data: { egressAllowlist: ['registry.npmjs.org', 'api.github.com'] },
     });
     expect(state.teams[0].egressAllowlist).toEqual(['registry.npmjs.org', 'api.github.com']);
+    expect(state.audits).toMatchObject([
+      {
+        action: 'UPDATE',
+        afterJson: { egressAllowlist: ['registry.npmjs.org', 'api.github.com'] },
+        beforeJson: { egressAllowlist: expect.any(Array) },
+        entityId: TEAM_ID,
+        entityType: 'Team',
+      },
+    ]);
   });
 
   it('rejects invalid hostnames (shell metacharacters)', async () => {

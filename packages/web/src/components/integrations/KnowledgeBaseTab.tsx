@@ -17,7 +17,7 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
-import { clearableField, clearableIntField } from '@/lib/configFieldPatch';
+import { clearableField, clearableIntField, countChanges } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
@@ -37,6 +37,31 @@ const PROVIDER_HINTS: Record<
     token: 'Notion integration token',
   },
 };
+
+/**
+ * What a Spaces edit sends, or undefined when it changes nothing. Retyping the stored list is not
+ * a change, and a field holding only separators ("," or ", ,") is stray input rather than a
+ * request to clear — only a field the person emptied outright clears the stored list.
+ */
+function spacesEdit(
+  raw: string,
+  touched: boolean,
+  stored: string[] | null | undefined
+): string[] | undefined {
+  if (!touched) {
+    return undefined;
+  }
+  const list = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (list.length === 0 && raw.trim() !== '') {
+    return undefined;
+  }
+  const current = stored ?? [];
+  const same = list.length === current.length && list.every((v, n) => v === current[n]);
+  return same ? undefined : list;
+}
 
 export function KnowledgeBaseTab() {
   const {
@@ -58,9 +83,34 @@ export function KnowledgeBaseTab() {
   const [email, setEmail] = usePrefilledField(data?.email);
   const [apiToken, setApiToken] = useState('');
   const [spacesRaw, setSpacesRaw] = useState('');
+  // The field starts blank (the stored list shows beside it), so blank alone cannot mean "clear".
+  const [spacesTouched, setSpacesTouched] = useState(false);
   const [maxPages, setMaxPages] = usePrefilledField(data?.maxPages);
 
-  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
+  // What Save would send: omitted keys are unchanged, so their count is the unsaved edits.
+  // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
+  const spacesChange = spacesEdit(spacesRaw, spacesTouched, data?.spaces);
+  // Notion's API address is fixed, so it has no base URL and no private-network switch.
+  const isNotion = (provider === '' ? data?.provider : provider) === 'notion';
+  const body: KnowledgeBaseConfigInput = {
+    allowPrivateNetwork:
+      isNotion || allowPrivateNetwork === data?.allowPrivateNetwork
+        ? undefined
+        : allowPrivateNetwork,
+    apiToken: apiToken || undefined,
+    baseUrl: isNotion ? undefined : clearableField(baseUrl, data?.baseUrl),
+    email: clearableField(email, data?.email),
+    enabled: enabled === data?.enabled ? undefined : enabled,
+    maxPages: clearableIntField(maxPages, data?.maxPages),
+    spaces: spacesChange,
+  };
+  if (provider && provider !== (data?.provider ?? 'disabled')) {
+    body.provider = provider === 'disabled' ? null : provider;
+  }
+  const dirtyCount = countChanges(body);
+
+  const { saved, error, testing, testResult, submit, runTest } =
+    useIntegrationConfigForm(dirtyCount);
 
   const effectiveProvider = (provider === '' ? data?.provider : provider) as
     | KnowledgeBaseProvider
@@ -75,33 +125,16 @@ export function KnowledgeBaseTab() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const body: KnowledgeBaseConfigInput = {};
-    if (provider) {
-      body.provider = provider === 'disabled' ? null : provider;
-    }
-    if (enabled !== undefined) {
-      body.enabled = enabled;
-    }
-    // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
-    body.baseUrl = clearableField(baseUrl, data?.baseUrl);
-    if (allowPrivateNetwork !== undefined) {
-      body.allowPrivateNetwork = allowPrivateNetwork;
-    }
-    body.email = clearableField(email, data?.email);
-    if (apiToken) {
-      body.apiToken = apiToken;
-    }
-    if (spacesRaw) {
-      body.spaces = spacesRaw
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-    body.maxPages = clearableIntField(maxPages, data?.maxPages);
-
     submit(
       () => update.mutateAsync(body),
-      () => setApiToken('')
+      () => {
+        setApiToken('');
+        setSpacesRaw('');
+        setSpacesTouched(false);
+        setProvider('');
+        setEnabled(undefined);
+        setAllowPrivateNetwork(undefined);
+      }
     );
   };
 
@@ -115,7 +148,7 @@ export function KnowledgeBaseTab() {
     if (enabled !== undefined) {
       draft.enabled = enabled;
     }
-    const baseUrlDraft = clearableField(baseUrl, data?.baseUrl);
+    const baseUrlDraft = isNotion ? undefined : clearableField(baseUrl, data?.baseUrl);
     if (baseUrlDraft !== undefined) {
       draft.baseUrl = baseUrlDraft;
     }
@@ -126,11 +159,8 @@ export function KnowledgeBaseTab() {
     if (apiToken) {
       draft.apiToken = apiToken;
     }
-    if (spacesRaw) {
-      draft.spaces = spacesRaw
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
+    if (spacesChange) {
+      draft.spaces = spacesChange;
     }
     if (allowPrivateNetwork !== undefined) {
       draft.allowPrivateNetwork = allowPrivateNetwork;
@@ -209,34 +239,38 @@ export function KnowledgeBaseTab() {
               value={enabled === undefined ? '' : String(enabled)}
             />
           </ConfigField>
-          <ConfigField
-            current={data?.baseUrl || undefined}
-            id="kb-base-url"
-            label="Base URL"
-            source={sources.baseUrl}
-          >
-            <Input
-              compact
-              id="kb-base-url"
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
-              value={baseUrl}
-            />
-          </ConfigField>
-          <Checkbox
-            checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
-            hint={
-              <>
-                Allows a base URL on a private-network address (internal, <code>.local</code>,
-                private IP). Loopback, link-local and cloud-metadata addresses are always refused;
-                use the host's LAN address or <code>host.docker.internal</code> instead. Only enable
-                this for a trusted self-hosted instance you control.
-              </>
-            }
-            id="kb-allow-private-network"
-            label="Allow private/internal network base URL"
-            onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
-          />
+          {!isNotion && (
+            <>
+              <ConfigField
+                current={data?.baseUrl || undefined}
+                id="kb-base-url"
+                label="Base URL"
+                source={sources.baseUrl}
+              >
+                <Input
+                  compact
+                  id="kb-base-url"
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
+                  value={baseUrl}
+                />
+              </ConfigField>
+              <Checkbox
+                checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
+                hint={
+                  <>
+                    Allows a base URL on a private-network address (internal, <code>.local</code>,
+                    private IP). Loopback, link-local and cloud-metadata addresses are always
+                    refused; use the host's LAN address or <code>host.docker.internal</code>{' '}
+                    instead. Only enable this for a trusted self-hosted instance you control.
+                  </>
+                }
+                id="kb-allow-private-network"
+                label="Allow private/internal network base URL"
+                onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
+              />
+            </>
+          )}
           {effectiveProvider === 'confluence' && (
             <ConfigField
               current={data?.email || undefined}
@@ -272,7 +306,10 @@ export function KnowledgeBaseTab() {
             <Input
               compact
               id="kb-spaces"
-              onChange={(e) => setSpacesRaw(e.target.value)}
+              onChange={(e) => {
+                setSpacesRaw(e.target.value);
+                setSpacesTouched(true);
+              }}
               placeholder={hints?.spaces ?? 'ENG, ARCH'}
               value={spacesRaw}
             />
@@ -315,7 +352,12 @@ export function KnowledgeBaseTab() {
         <TestResultAlert result={testResult} />
       </Card>
 
-      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
+      <IntegrationFormFooter
+        dirtyCount={dirtyCount}
+        error={error}
+        isPending={update.isPending}
+        saved={saved}
+      />
     </form>
   );
 }

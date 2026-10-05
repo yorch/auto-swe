@@ -218,6 +218,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedFetch.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/mcpHeaders',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/mcpHeaders.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/ssrfGuard',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ssrfGuard.ts'),
       },

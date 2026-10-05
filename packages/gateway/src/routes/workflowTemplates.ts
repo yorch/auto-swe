@@ -30,7 +30,8 @@ import {
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { customRangeFields, refineCustomRange, resolveCustomRange } from '../lib/dateWindow.js';
+import { writeAuditLog } from '../lib/auditLog.js';
+import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
@@ -332,6 +333,33 @@ type TemplateWithIncludes = Prisma.WorkflowTemplateGetPayload<{ include: typeof 
  * with persisted state). Shared by `POST /` (status ACTIVE) and `POST /generate`
  * (status DRAFT) so the persist/audit shape lives in one place.
  */
+/// Auditable subset of a template row: what it is and what it serves, never its spec text.
+function templateAuditFields(row: {
+  activeVersion: number | null;
+  description: string;
+  experimentSplit: number | null;
+  experimentVersion: number | null;
+  id: string;
+  isDefault: boolean;
+  name: string;
+  status: string;
+  teamId: string | null;
+  workspaceProvider: string | null;
+}) {
+  return {
+    activeVersion: row.activeVersion,
+    description: row.description,
+    experimentSplit: row.experimentSplit,
+    experimentVersion: row.experimentVersion,
+    id: row.id,
+    isDefault: row.isDefault,
+    name: row.name,
+    status: row.status,
+    teamId: row.teamId,
+    workspaceProvider: row.workspaceProvider,
+  };
+}
+
 async function createTemplateWithInitialVersion(
   prisma: FastifyInstance['prisma'],
   args: {
@@ -697,15 +725,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const DAY = 24 * 60 * 60 * 1000;
-      // A custom range is whole UTC days; a preset is a rolling window ending now.
-      const custom = resolveCustomRange(request.query);
-      const windowDays = custom?.days ?? request.query.window;
-      const windowStart = custom?.start ?? new Date(Date.now() - windowDays * DAY);
-      const windowEnd = custom?.end ?? null;
-      // The window before this one is read in the same query, for the "vs previous" figures.
-      const previousStart =
-        custom?.previousStart ?? new Date(windowStart.getTime() - windowDays * DAY);
+      // Whole UTC days, custom range or preset alike, so a preset covers the same span a custom
+      // range of that many days would, and the previous period lines up with it.
+      const {
+        days: windowDays,
+        end: windowEnd,
+        previousStart,
+        start: windowStart,
+      } = resolveWindow(request.query, request.query.window);
       const ANALYTICS_ROW_CAP = 10_000;
       const rowsQuery = fastify.prisma.workflowRun.findMany({
         orderBy: { startedAt: 'desc' },
@@ -735,7 +762,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         },
         take: ANALYTICS_ROW_CAP + 1,
         where: {
-          startedAt: { gte: previousStart, ...(windowEnd ? { lt: windowEnd } : {}) },
+          startedAt: { gte: previousStart, lt: windowEnd },
           // Visibility: same run-level visibility predicate used on /runs so
           // global templates do not leak cross-team work-request runs.
           ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
@@ -790,11 +817,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       return {
         data: {
           ...analytics,
-          daily: computeDailyRunSeries(
-            current,
-            windowStart,
-            windowEnd ? new Date(windowEnd.getTime() - 1) : new Date()
-          ),
+          daily: computeDailyRunSeries(current, windowStart, new Date(windowEnd.getTime() - 1)),
           isTruncated,
           previous: prev && {
             autonomyRate: prev.autonomyRate,
@@ -926,6 +949,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           status: 'DRAFT',
           teamId: teamId ?? null,
           workspaceProvider: request.body.workspaceProvider ?? null,
+        });
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: user,
+          after: { ...templateAuditFields(tpl), generatedBy: 'workflow_author' },
+          entityId: tpl.id,
+          entityType: 'WorkflowTemplate',
         });
         const warnings = [
           ...(await validateSpecRefs(fastify.prisma, parsedSpec)),
@@ -1105,6 +1135,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           status: 'ACTIVE',
           teamId: teamId ?? null,
           workspaceProvider: workspaceProvider ?? 'git_repo',
+        });
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: user,
+          after: templateAuditFields(tpl),
+          entityId: tpl.id,
+          entityType: 'WorkflowTemplate',
         });
         // Non-fatal: surface unresolved agent/mcp refs as warnings (never blocks save).
         const warnings = [
@@ -1328,6 +1365,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           include: TEMPLATE_INCLUDE,
           where: { id: existing.id },
         });
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: templateAuditFields(updated),
+        before: templateAuditFields(existing),
+        entityId: existing.id,
+        entityType: 'WorkflowTemplate',
       });
       const lastRuns = await loadLastRuns(
         fastify,
@@ -1714,6 +1759,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'VERSION_CONFLICT', message: 'Concurrent version writes — please retry' },
         });
       }
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { newVersion: created.version },
+        before: { newVersion: null },
+        entityId: tpl.id,
+        entityType: 'WorkflowTemplate',
+      });
       const warnings = [
         ...(await validateSpecRefs(fastify.prisma, parsed as WorkflowSpec)),
         ...specValidationWarnings(parsed as WorkflowSpec),
@@ -1778,6 +1831,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: { activeVersion: request.body.version, status: 'ACTIVE' },
         include: TEMPLATE_INCLUDE,
         where: { id: tpl.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: templateAuditFields(updated),
+        before: templateAuditFields(tpl),
+        entityId: tpl.id,
+        entityType: 'WorkflowTemplate',
       });
       const lastRuns = await loadLastRuns(
         fastify,
@@ -2086,6 +2147,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: { webhookToken: token },
         where: { id: existing.id },
       });
+      // Only whether a webhook exists is recorded — never the token, which is a credential.
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { webhookEnabled: true },
+        before: { webhookEnabled: existing.webhookToken != null },
+        entityId: existing.id,
+        entityType: 'WorkflowTemplate',
+      });
       return reply.status(200).send({ data: { webhookToken: token } });
     }
   );
@@ -2111,6 +2181,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       await fastify.prisma.workflowTemplate.update({
         data: { webhookToken: null },
         where: { id: existing.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { webhookEnabled: false },
+        before: { webhookEnabled: existing.webhookToken != null },
+        entityId: existing.id,
+        entityType: 'WorkflowTemplate',
       });
       return reply.status(204).send();
     }
@@ -2194,7 +2272,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
         });
       }
-      const windowStart = new Date(Date.now() - request.query.window * 24 * 60 * 60 * 1000);
+      // Whole UTC days, as the cross-template rollup and custom ranges are.
+      const { start: windowStart } = resolveWindow({}, request.query.window);
       // Hard cap on rows pulled into memory. Templates with high run volume
       // would otherwise OOM the gateway on a 90d window. At the cap the rollup
       // becomes an approximation of the most recent N runs/steps in the window.

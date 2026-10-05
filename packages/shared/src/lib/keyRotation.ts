@@ -83,6 +83,13 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
       keyVersion: 'apiKeyVersion',
       nonce: 'apiKeyNonce',
     },
+    // `mcp` connections' custom request headers, sealed as one envelope (no last-four column).
+    {
+      authTag: 'headersAuthTag',
+      ciphertext: 'headersCiphertext',
+      keyVersion: 'headersKeyVersion',
+      nonce: 'headersNonce',
+    },
   ],
   connectionCredential: [fieldsFor('token')],
   figmaConfig: [fieldsFor('apiToken')],

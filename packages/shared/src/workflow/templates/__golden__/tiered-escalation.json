@@ -1,5 +1,5 @@
 {
-  "description": "After implementation, a human categorises the change risk (low / medium / high). Low-risk changes go straight to PR; medium require senior sign-off; high-risk changes require team-lead approval with a 48-hour window.",
+  "description": "After implementation, a person rates the change's risk (low, medium or high). Low-risk changes go straight to a pull request, medium-risk ones need senior sign-off, and high-risk ones need team-lead approval within 48 hours.",
   "entry": "setValidating",
   "name": "tiered-escalation",
   "nodes": {

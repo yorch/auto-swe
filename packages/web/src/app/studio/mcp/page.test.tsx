@@ -126,4 +126,111 @@ describe('MCP connections page', () => {
       expect(bodyOf(spy, '/mcp-connections')).toMatchObject({ bearerToken: 'sk-created' });
     });
   });
+
+  describe('private network and custom headers', () => {
+    const WITH_HEADERS = {
+      ...CONNECTION,
+      config: { allowPrivateNetwork: true, url: 'http://10.0.0.5/mcp' },
+      headerNames: ['X-Api-Key'],
+    };
+
+    function mount(row: Record<string, unknown>) {
+      return setupFetchMock({
+        'GET /api/v1/platform/mcp-connections': () => ({ data: [row] }),
+        'GET /api/v1/teams': () => ({ data: [{ id: 't1', name: 'Platform', slug: 'platform' }] }),
+        'PATCH /api/v1/platform/mcp-connections/m1': () => ({ data: row }),
+        'POST /api/v1/platform/mcp-connections': () => ({ data: row }),
+      });
+    }
+
+    it('shows header names and the private-network flag, never values', async () => {
+      mount(WITH_HEADERS);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      expect(await screen.findByText(/Headers: X-Api-Key/)).toBeTruthy();
+      expect(screen.getByText(/Private network/)).toBeTruthy();
+    });
+
+    it('keeps a stored header when its value is left blank, and shows it masked', async () => {
+      const spy = mount(WITH_HEADERS);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      const value = screen.getByLabelText('Header 1 value') as HTMLInputElement;
+      expect(value.type).toBe('password');
+      expect(value.value).toBe('');
+      expect((screen.getByLabelText('Header 1 name') as HTMLInputElement).value).toBe('X-Api-Key');
+      expect(
+        (document.getElementById('mcp-edit-private-network') as HTMLInputElement).checked
+      ).toBe(true);
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(spy.mock.calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+      expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toMatchObject({
+        allowPrivateNetwork: true,
+        headers: [{ name: 'X-Api-Key' }],
+      });
+    });
+
+    it('removes a stored header with an empty list', async () => {
+      const spy = mount(WITH_HEADERS);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(screen.getByRole('button', { name: /Remove header 1/ }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(spy.mock.calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+      expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toMatchObject({ headers: [] });
+    });
+
+    it('lets a connection with unreadable stored headers be saved, and removes them on request', async () => {
+      const spy = mount({ ...CONNECTION, headersUnreadable: true });
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Remove stored headers' }));
+      expect(screen.getByText(/will be removed when you save/)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(spy.mock.calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+      expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toMatchObject({ headers: [] });
+    });
+
+    it('states the header set even when an unreadable connection is saved untouched', async () => {
+      const spy = mount({ ...CONNECTION, headersUnreadable: true });
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(spy.mock.calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+      expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toHaveProperty('headers');
+    });
+
+    it('sends the flag and new headers with a new connection, and wants a value for each', async () => {
+      const spy = mount(CONNECTION);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Create connection' }));
+      fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'n' } });
+      fireEvent.change(screen.getByLabelText(/^Server URL/), {
+        target: { value: 'http://10.0.0.5/mcp' },
+      });
+      fireEvent.click(screen.getByLabelText(/This server is on a private network/));
+      fireEvent.click(screen.getByRole('button', { name: 'Add header' }));
+      fireEvent.change(screen.getByLabelText('Header 1 name'), { target: { value: 'X-Tenant' } });
+      const form = screen.getByLabelText(/^Name/).closest('form') as HTMLFormElement;
+      fireEvent.submit(form);
+      expect(await screen.findByText(/Enter a value for the X-Tenant header/)).toBeTruthy();
+      expect(spy.mock.calls.some(([, i]) => i?.method === 'POST')).toBe(false);
+      fireEvent.change(screen.getByLabelText('Header 1 value'), { target: { value: 'acme' } });
+      fireEvent.submit(form);
+      await waitFor(() => expect(spy.mock.calls.some(([, i]) => i?.method === 'POST')).toBe(true));
+      expect(bodyOf(spy, '/mcp-connections')).toMatchObject({
+        allowPrivateNetwork: true,
+        headers: [{ name: 'X-Tenant', value: 'acme' }],
+      });
+    });
+
+    it('stops offering Add header at five rows', async () => {
+      mount(CONNECTION);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Create connection' }));
+      for (let i = 0; i < 5; i++) {
+        fireEvent.click(screen.getByRole('button', { name: 'Add header' }));
+      }
+      expect(screen.queryByRole('button', { name: 'Add header' })).toBeNull();
+    });
+  });
 });

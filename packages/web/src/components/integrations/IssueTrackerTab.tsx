@@ -18,7 +18,7 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
-import { clearableField } from '@/lib/configFieldPatch';
+import { clearableField, countChanges } from '@/lib/configFieldPatch';
 import { errMsg } from '@/lib/errors';
 import { ConfigField } from './ConfigField';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
@@ -74,7 +74,28 @@ export function IssueTrackerTab() {
 
   const detectFields = useDetectJiraFields();
 
-  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
+  // What Save would send: omitted keys are unchanged, so their count is the unsaved edits.
+  // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
+  const body: IssueTrackerConfigInput = {
+    allowPrivateNetwork:
+      allowPrivateNetwork === data?.allowPrivateNetwork ? undefined : allowPrivateNetwork,
+    apiToken: apiToken || undefined,
+    baseUrl: clearableField(baseUrl, data?.baseUrl),
+    defaultProjectKey: clearableField(defaultProjectKey, data?.defaultProjectKey),
+    email: clearableField(email, data?.email),
+    epicIssueType: clearableField(epicIssueType, data?.epicIssueType),
+    storyIssueType: clearableField(storyIssueType, data?.storyIssueType),
+    storyPointsFieldId: clearableField(storyPointsFieldId, data?.storyPointsFieldId),
+    webhookSecret: webhookSecret || undefined,
+    webhookTriggerStatus: clearableField(webhookTriggerStatus, data?.webhookTriggerStatus),
+  };
+  if (provider && provider !== (data?.provider ?? 'disabled')) {
+    body.provider = provider === 'disabled' ? null : provider;
+  }
+  const dirtyCount = countChanges(body);
+
+  const { saved, error, testing, testResult, submit, runTest } =
+    useIntegrationConfigForm(dirtyCount);
   const [testTicketId, setTestTicketId] = useState('');
   const [detectResult, setDetectResult] = useState<string | null>(null);
 
@@ -91,33 +112,13 @@ export function IssueTrackerTab() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const body: IssueTrackerConfigInput = {};
-    if (provider) {
-      body.provider = provider === 'disabled' ? null : provider;
-    }
-    // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
-    body.baseUrl = clearableField(baseUrl, data?.baseUrl);
-    if (allowPrivateNetwork !== undefined) {
-      body.allowPrivateNetwork = allowPrivateNetwork;
-    }
-    body.email = clearableField(email, data?.email);
-    if (apiToken) {
-      body.apiToken = apiToken;
-    }
-    body.storyPointsFieldId = clearableField(storyPointsFieldId, data?.storyPointsFieldId);
-    body.epicIssueType = clearableField(epicIssueType, data?.epicIssueType);
-    body.storyIssueType = clearableField(storyIssueType, data?.storyIssueType);
-    body.defaultProjectKey = clearableField(defaultProjectKey, data?.defaultProjectKey);
-    if (webhookSecret) {
-      body.webhookSecret = webhookSecret;
-    }
-    body.webhookTriggerStatus = clearableField(webhookTriggerStatus, data?.webhookTriggerStatus);
-
     submit(
       () => update.mutateAsync(body),
       () => {
         setApiToken('');
         setWebhookSecret('');
+        setProvider('');
+        setAllowPrivateNetwork(undefined);
       }
     );
   };
@@ -438,7 +439,12 @@ export function IssueTrackerTab() {
         <TestResultAlert result={testResult} />
       </Card>
 
-      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
+      <IntegrationFormFooter
+        dirtyCount={dirtyCount}
+        error={error}
+        isPending={update.isPending}
+        saved={saved}
+      />
     </form>
   );
 }

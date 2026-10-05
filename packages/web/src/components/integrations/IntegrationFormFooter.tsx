@@ -20,10 +20,13 @@ export function TestResultAlert({ result }: { result: TestResult | null }) {
  * submit button. Render it as the last child of the tab's `<form>`.
  */
 export function IntegrationFormFooter({
+  dirtyCount,
   error,
   isPending,
   saved,
 }: {
+  /** How many fields differ from what is saved; Save is disabled at zero. */
+  dirtyCount: number;
   error: string | null;
   isPending: boolean;
   saved: boolean;
@@ -34,9 +37,12 @@ export function IntegrationFormFooter({
       {error && <Alert>{error}</Alert>}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-400 bg-ink-800/95 px-4 py-3">
         <p className="min-w-0 text-xs text-paper-500">
-          Saves the settings on this tab. Blank secret fields keep their current value.
+          {dirtyCount === 0
+            ? 'No unsaved changes'
+            : `${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}`}
+          . Blank secret fields keep their current value.
         </p>
-        <Button disabled={isPending} type="submit" variant="primary">
+        <Button disabled={isPending || dirtyCount === 0} type="submit" variant="primary">
           {isPending ? 'Saving…' : 'Save changes'}
         </Button>
       </div>

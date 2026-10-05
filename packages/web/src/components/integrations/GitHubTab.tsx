@@ -18,7 +18,7 @@ import {
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { API_BASE } from '@/lib/config';
-import { clearableField } from '@/lib/configFieldPatch';
+import { clearableField, countChanges } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { GitHubHostCredentialsCard } from './GitHubHostCredentialsCard';
 import { GitHubHostSecretsCard } from './GitHubHostSecretsCard';
@@ -52,36 +52,30 @@ export function GitHubTab() {
   // mode reads as `auto`, which is what the worker treats it as.
   const [authMode, setAuthMode] = usePrefilledField(data?.authMode ?? 'auto');
 
-  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
+  // What Save would send: omitted keys are unchanged, so their count is the unsaved edits.
+  // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
+  const body: GitHubConfigInput = {
+    apiUrl: clearableField(apiUrl, data?.apiUrl),
+    appClientId: clearableField(appClientId, data?.appClientId),
+    appClientSecret: appClientSecret || undefined,
+    appId: clearableField(appId, data?.appId),
+    appInstallationId: clearableField(appInstallationId, data?.appInstallationId),
+    appPrivateKey: appPrivateKey || undefined,
+    authMode: authMode === (data?.authMode ?? 'auto') ? undefined : authMode,
+    baseUrl: clearableField(baseUrl, data?.baseUrl),
+    token: token || undefined,
+    webhookSecret: webhookSecret || undefined,
+  };
+  const dirtyCount = countChanges(body);
+
+  const { saved, error, testing, testResult, submit, runTest } =
+    useIntegrationConfigForm(dirtyCount);
 
   const webhookUrl = `${API_BASE}/api/v1/webhooks/git`;
   const ciWebhookUrl = `${API_BASE}/api/v1/webhooks/ci`;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    const body: GitHubConfigInput = {};
-    if (token) {
-      body.token = token;
-    }
-    if (webhookSecret) {
-      body.webhookSecret = webhookSecret;
-    }
-    // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
-    body.baseUrl = clearableField(baseUrl, data?.baseUrl);
-    body.apiUrl = clearableField(apiUrl, data?.apiUrl);
-    body.appId = clearableField(appId, data?.appId);
-    body.appClientId = clearableField(appClientId, data?.appClientId);
-    if (appClientSecret) {
-      body.appClientSecret = appClientSecret;
-    }
-    if (appPrivateKey) {
-      body.appPrivateKey = appPrivateKey;
-    }
-    body.appInstallationId = clearableField(appInstallationId, data?.appInstallationId);
-    if (authMode !== (data?.authMode ?? 'auto')) {
-      body.authMode = authMode;
-    }
 
     submit(
       () => update.mutateAsync(body),
@@ -335,7 +329,12 @@ export function GitHubTab() {
           </div>
         </Card>
 
-        <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
+        <IntegrationFormFooter
+          dirtyCount={dirtyCount}
+          error={error}
+          isPending={update.isPending}
+          saved={saved}
+        />
       </form>
       <GitHubHostCredentialsCard />
       <GitHubHostSecretsCard />

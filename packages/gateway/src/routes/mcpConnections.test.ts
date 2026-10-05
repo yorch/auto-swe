@@ -8,6 +8,7 @@ vi.mock('../lib/mcpProbe.js', () => ({
 }));
 
 import { _resetKeyCacheForTests, decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { openMcpHeaders, sealMcpHeaders } from '@auto-swe/shared/lib/mcpHeaders';
 import { probeMcpServer } from '../lib/mcpProbe.js';
 
 function newMockPrisma() {
@@ -109,6 +110,7 @@ describe('mcpConnectionRoutes', () => {
       expect(JSON.parse(res.payload).data).toMatchObject({ ok: true, toolCount: 3 });
       expect(probeMcpServer).toHaveBeenCalledWith('https://mcp.example.com/mcp', 4000, undefined, {
         bearerToken: undefined,
+        headers: [],
       });
     });
 
@@ -572,6 +574,7 @@ describe('mcpConnectionRoutes', () => {
         undefined,
         {
           bearerToken: TOKEN,
+          headers: [],
         }
       );
       expect(res.payload).not.toContain(TOKEN);
@@ -587,6 +590,334 @@ describe('mcpConnectionRoutes', () => {
       expect(JSON.parse(res.payload).data.ok).toBe(false);
       expect(probeMcpServer).not.toHaveBeenCalled();
       await app.close();
+    });
+  });
+
+  describe('allowPrivateNetwork', () => {
+    const BASE = '/api/v1/platform/mcp-connections';
+    const create = async (url: string, allowPrivateNetwork?: boolean) => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
+      mockPrisma.connection.create.mockImplementation(async ({ data }) => ({
+        id: ID,
+        type: 'mcp',
+        ...data,
+      }));
+      const res = await app.inject({
+        body: { allowPrivateNetwork, name: 'internal', teamId: TEAM, url },
+        headers: AUTH,
+        method: 'POST',
+        url: BASE,
+      });
+      return { app, mockPrisma, res };
+    };
+
+    it('refuses a private address by default', async () => {
+      const { res } = await create('http://10.0.0.5:8080/mcp');
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('UNSAFE_URL');
+    });
+
+    it('accepts RFC 1918 and ULA addresses with the opt-in and records it in config and audit', async () => {
+      for (const target of ['http://10.0.0.5:8080/mcp', 'http://[fd12:3456::1]/mcp']) {
+        const { mockPrisma, res } = await create(target, true);
+        expect(res.statusCode, target).toBe(201);
+        expect(mockPrisma.connection.create.mock.calls[0]?.[0].data.config).toMatchObject({
+          allowPrivateNetwork: true,
+        });
+        expect(JSON.stringify(mockPrisma.configAuditLog.create.mock.calls)).toContain(
+          '"allowPrivateNetwork":true'
+        );
+      }
+    });
+
+    it('never accepts loopback, link-local, unspecified or metadata addresses, even with the opt-in', async () => {
+      for (const target of [
+        'http://127.0.0.1:8080/mcp',
+        'http://localhost/mcp',
+        'http://[::1]/mcp',
+        'http://0.0.0.0/mcp',
+        'http://169.254.169.254/latest',
+        'http://[fe80::1]/mcp',
+        'http://metadata.google.internal/mcp',
+        'http://100.100.100.200/mcp',
+        'http://[::ffff:127.0.0.1]/mcp',
+      ]) {
+        const { mockPrisma, res } = await create(target, true);
+        expect(res.statusCode, target).toBe(400);
+        expect(mockPrisma.connection.create, target).not.toHaveBeenCalled();
+      }
+    });
+
+    it('does not persist the flag when it is off', async () => {
+      const { mockPrisma } = await create('https://mcp.example.com/mcp', false);
+      expect(mockPrisma.connection.create.mock.calls[0]?.[0].data.config).toEqual({
+        url: 'https://mcp.example.com/mcp',
+      });
+    });
+
+    it('refuses a private edit without the opt-in and a loopback one with it', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: { url: 'https://mcp.example.com/mcp' },
+        id: ID,
+        name: 'docs',
+        type: 'mcp',
+      });
+      const patch = (body: Record<string, unknown>) =>
+        app.inject({ body, headers: AUTH, method: 'PATCH', url: `${BASE}/${ID}` });
+      expect((await patch({ name: 'x', url: 'http://10.0.0.5/mcp' })).statusCode).toBe(400);
+      expect(
+        (await patch({ allowPrivateNetwork: true, name: 'x', url: 'http://127.0.0.1/mcp' }))
+          .statusCode
+      ).toBe(400);
+      expect(mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('the test probe honours the saved flag and still refuses loopback and metadata', async () => {
+      const { app, mockPrisma } = await buildApp();
+      const test = () => app.inject({ headers: AUTH, method: 'POST', url: `${BASE}/${ID}/test` });
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: { url: 'http://10.0.0.5/mcp' },
+        id: ID,
+      });
+      expect(JSON.parse((await test()).payload).data.ok).toBe(false);
+      expect(probeMcpServer).not.toHaveBeenCalled();
+
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: { allowPrivateNetwork: true, url: 'http://10.0.0.5/mcp' },
+        id: ID,
+      });
+      expect(JSON.parse((await test()).payload).data.ok).toBe(true);
+      expect(probeMcpServer).toHaveBeenCalledTimes(1);
+
+      for (const url of ['http://127.0.0.1/mcp', 'http://169.254.169.254/']) {
+        mockPrisma.connection.findFirst.mockResolvedValue({
+          config: { allowPrivateNetwork: true, url },
+          id: ID,
+        });
+        expect(JSON.parse((await test()).payload).data.ok).toBe(false);
+      }
+      expect(probeMcpServer).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('custom headers', () => {
+    const BASE = '/api/v1/platform/mcp-connections';
+    const SECRET = 'tenant-secret-value-9876';
+    const URL_OK = 'https://mcp.example.com/mcp';
+
+    function rowWithHeaders(headers: { name: string; value: string }[], over = {}) {
+      return {
+        config: { url: URL_OK },
+        id: ID,
+        name: 'docs',
+        type: 'mcp',
+        ...sealMcpHeaders(headers),
+        ...over,
+      };
+    }
+
+    async function createWith(headers: unknown) {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
+      mockPrisma.connection.create.mockImplementation(async ({ data }) => ({
+        id: ID,
+        type: 'mcp',
+        ...data,
+      }));
+      const res = await app.inject({
+        body: { headers, name: 'docs', teamId: TEAM, url: URL_OK },
+        headers: AUTH,
+        method: 'POST',
+        url: BASE,
+      });
+      return { app, mockPrisma, res };
+    }
+
+    it('seals created headers, returns names only and audits names only', async () => {
+      const { mockPrisma, res } = await createWith([
+        { name: 'X-Api-Key', value: SECRET },
+        { name: 'X-Tenant', value: 'acme' },
+      ]);
+      expect(res.statusCode).toBe(201);
+      const data = mockPrisma.connection.create.mock.calls[0]?.[0].data;
+      expect(JSON.stringify(data.config)).not.toContain(SECRET);
+      expect(Buffer.from(data.headersCiphertext).toString('utf8')).not.toContain(SECRET);
+      expect(openMcpHeaders(data)).toEqual([
+        { name: 'X-Api-Key', value: SECRET },
+        { name: 'X-Tenant', value: 'acme' },
+      ]);
+      const body = JSON.parse(res.payload).data;
+      expect(body.headerNames).toEqual(['X-Api-Key', 'X-Tenant']);
+      expect(res.payload).not.toContain(SECRET);
+      expect(res.payload).not.toContain('headersCiphertext');
+      const audit = JSON.stringify(mockPrisma.configAuditLog.create.mock.calls);
+      expect(audit).not.toContain(SECRET);
+      expect(audit).toContain('X-Api-Key');
+    });
+
+    it('refuses forbidden, malformed, duplicate and excess headers', async () => {
+      const bad: unknown[] = [
+        [{ name: 'Authorization', value: 'Bearer x' }],
+        [{ name: 'authorization', value: 'x' }],
+        [{ name: 'Connection', value: 'close' }],
+        [{ name: 'Keep-Alive', value: '1' }],
+        [{ name: 'Proxy-Authorization', value: 'x' }],
+        [{ name: 'Proxy-Foo', value: 'x' }],
+        [{ name: 'TE', value: 'x' }],
+        [{ name: 'Trailer', value: 'x' }],
+        [{ name: 'Transfer-Encoding', value: 'chunked' }],
+        [{ name: 'Upgrade', value: 'x' }],
+        [{ name: 'Host', value: 'evil.example' }],
+        [{ name: 'Content-Length', value: '1' }],
+        [{ name: 'Cookie', value: 'a=b' }],
+        [{ name: 'mcp-session-id', value: 'x' }],
+        [{ name: 'Bad Name', value: 'x' }],
+        [{ name: 'X-A', value: 'line\nbreak' }],
+        [
+          { name: 'X-A', value: '1' },
+          { name: 'x-a', value: '2' },
+        ],
+        Array.from({ length: 6 }, (_, i) => ({ name: `X-H${i}`, value: 'v' })),
+      ];
+      for (const headers of bad) {
+        const { mockPrisma, res } = await createWith(headers);
+        expect(res.statusCode, JSON.stringify(headers)).toBe(400);
+        expect(mockPrisma.connection.create).not.toHaveBeenCalled();
+      }
+    });
+
+    it('lists header names and never values', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findMany.mockResolvedValue([
+        rowWithHeaders([{ name: 'X-Api-Key', value: SECRET }]),
+      ]);
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: BASE });
+      expect(res.payload).not.toContain(SECRET);
+      expect(JSON.parse(res.payload).data[0].headerNames).toEqual(['X-Api-Key']);
+    });
+
+    it('keeps a stored value for a row sent without one, and replaces one sent with a value', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(
+        rowWithHeaders([
+          { name: 'X-Api-Key', value: SECRET },
+          { name: 'X-Old', value: 'gone' },
+        ])
+      );
+      mockPrisma.connection.update.mockImplementation(async ({ data }) => ({
+        id: ID,
+        type: 'mcp',
+        ...data,
+      }));
+      const res = await app.inject({
+        body: {
+          headers: [{ name: 'x-api-key' }, { name: 'X-New', value: 'fresh' }],
+          name: 'docs',
+          url: URL_OK,
+        },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `${BASE}/${ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+      const data = mockPrisma.connection.update.mock.calls[0]?.[0].data;
+      expect(openMcpHeaders(data)).toEqual([
+        { name: 'x-api-key', value: SECRET },
+        { name: 'X-New', value: 'fresh' },
+      ]);
+      expect(res.payload).not.toContain(SECRET);
+      const audit = JSON.stringify(mockPrisma.configAuditLog.create.mock.calls);
+      expect(audit).not.toContain(SECRET);
+      expect(audit).not.toContain('fresh');
+    });
+
+    it('removes every header with an empty list and leaves them alone when omitted', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(
+        rowWithHeaders([{ name: 'X-Api-Key', value: SECRET }])
+      );
+      mockPrisma.connection.update.mockImplementation(async ({ data }) => ({
+        id: ID,
+        type: 'mcp',
+        ...data,
+      }));
+      const patch = (body: Record<string, unknown>) =>
+        app.inject({ body, headers: AUTH, method: 'PATCH', url: `${BASE}/${ID}` });
+      expect((await patch({ headers: [], name: 'docs', url: URL_OK })).statusCode).toBe(200);
+      expect(mockPrisma.connection.update.mock.calls[0]?.[0].data).toMatchObject({
+        headersCiphertext: null,
+      });
+      expect((await patch({ name: 'docs', url: URL_OK })).statusCode).toBe(200);
+      expect(Object.keys(mockPrisma.connection.update.mock.calls[1]?.[0].data)).not.toContain(
+        'headersCiphertext'
+      );
+    });
+
+    it('refuses a value-less row when nothing is stored for that name', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: { url: URL_OK },
+        id: ID,
+        name: 'docs',
+        type: 'mcp',
+      });
+      const res = await app.inject({
+        body: { headers: [{ name: 'X-Api-Key' }], name: 'docs', url: URL_OK },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `${BASE}/${ID}`,
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('will not move stored header values to a different origin', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(
+        rowWithHeaders([{ name: 'X-Api-Key', value: SECRET }])
+      );
+      const patch = (body: Record<string, unknown>) =>
+        app.inject({ body, headers: AUTH, method: 'PATCH', url: `${BASE}/${ID}` });
+      const moved = 'https://other.example.com/mcp';
+      for (const body of [
+        { name: 'docs', url: moved },
+        { headers: [{ name: 'X-Api-Key' }], name: 'docs', url: moved },
+      ]) {
+        const res = await patch(body);
+        expect(res.statusCode).toBe(409);
+        expect(JSON.parse(res.payload).error.code).toBe('HEADERS_ORIGIN_CHANGE');
+      }
+      expect(mockPrisma.connection.update).not.toHaveBeenCalled();
+      // Re-entering the value is the explicit approval.
+      mockPrisma.connection.update.mockImplementation(async ({ data }) => ({ id: ID, ...data }));
+      const ok = await patch({
+        headers: [{ name: 'X-Api-Key', value: SECRET }],
+        name: 'docs',
+        url: moved,
+      });
+      expect(ok.statusCode).toBe(200);
+    });
+
+    it('hands decrypted headers to the probe and reports an unreadable envelope', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(
+        rowWithHeaders([{ name: 'X-Api-Key', value: SECRET }])
+      );
+      const res = await app.inject({ headers: AUTH, method: 'POST', url: `${BASE}/${ID}/test` });
+      expect(probeMcpServer).toHaveBeenCalledWith(URL_OK, 15_000, undefined, {
+        bearerToken: undefined,
+        headers: [{ name: 'X-Api-Key', value: SECRET }],
+      });
+      expect(res.payload).not.toContain(SECRET);
+
+      vi.mocked(probeMcpServer).mockClear();
+      mockPrisma.connection.findFirst.mockResolvedValue(
+        rowWithHeaders([], { headersCiphertext: new Uint8Array(8) })
+      );
+      const bad = await app.inject({ headers: AUTH, method: 'POST', url: `${BASE}/${ID}/test` });
+      expect(JSON.parse(bad.payload).data.ok).toBe(false);
+      expect(probeMcpServer).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,6 +1,10 @@
 'use client';
 
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import {
+  getWorkspaceProviderMetadata,
+  isWorkspaceProviderType,
+} from '@auto-swe/shared/lib/workspaceProviders';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import { useId, useRef, useState } from 'react';
 import { WorkflowLaunchSummary } from '@/components/requests/WorkflowLaunchSummary';
@@ -10,6 +14,7 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import {
   buildInitialPayload,
+  ConnectionPicker,
   SchemaFieldInput,
   validatePayload,
 } from '@/components/workflow/schemaForm';
@@ -38,8 +43,20 @@ export function WorkflowLaunchForm({
   const { data: connections = [] } = useRepositories();
   const errors = schema ? validatePayload(schema, payload) : {};
   const required = new Set(schema?.required ?? []);
+  // A workspace provider can need a target connection the input schema never asks for; the
+  // launch is refused without one, so the form has to collect it.
+  const providerConnectionTypes =
+    template.workspaceProvider && isWorkspaceProviderType(template.workspaceProvider)
+      ? (getWorkspaceProviderMetadata(template.workspaceProvider)?.connectionTypes ?? [])
+      : [];
+  const schemaHasConnection = Object.entries(schema?.properties ?? {}).some(
+    ([key, prop]) => key === 'connectionId' && prop.type === 'connection'
+  );
+  const needsConnection = providerConnectionTypes.length > 0 && !schemaHasConnection;
+  const connectionError =
+    needsConnection && !payload.connectionId ? 'Choose a connection to run against' : undefined;
   function displayValue(key: string, value: unknown) {
-    if (schema?.properties[key]?.type === 'connection') {
+    if (schema?.properties[key]?.type === 'connection' || key === 'connectionId') {
       const connection = connections.find((item) => item.id === value);
       return connection ? connectionLabel(connection) : 'Selected connection';
     }
@@ -47,7 +64,7 @@ export function WorkflowLaunchForm({
   }
   function reviewInputs() {
     setAttempted(true);
-    if (!Object.keys(errors).length && label.trim()) {
+    if (!Object.keys(errors).length && !connectionError && label.trim()) {
       setReview(true);
     }
   }
@@ -86,7 +103,7 @@ export function WorkflowLaunchForm({
             {Object.entries(payload).map(([key, value]) => (
               <div key={key}>
                 <dt className="text-paper-400">
-                  {schema?.properties[key]?.type === 'connection'
+                  {schema?.properties[key]?.type === 'connection' || key === 'connectionId'
                     ? 'Target connection'
                     : key.replace(/([A-Z])/g, ' $1')}
                 </dt>
@@ -146,6 +163,16 @@ export function WorkflowLaunchForm({
                 value={payload[key]}
               />
             ))}
+          {needsConnection && (
+            <ConnectionPicker
+              connectionTypes={providerConnectionTypes}
+              error={attempted ? connectionError : undefined}
+              label="Target connection"
+              onChange={(value) => setPayload((prev) => ({ ...prev, connectionId: value }))}
+              required
+              value={typeof payload.connectionId === 'string' ? payload.connectionId : ''}
+            />
+          )}
           <div className="flex justify-end">
             <Button onClick={reviewInputs} variant="primary">
               Review workflow

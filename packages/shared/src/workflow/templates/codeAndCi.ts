@@ -18,9 +18,9 @@ import {
  */
 export const CODE_AND_CI_SPEC: WorkflowSpec = {
   description:
-    'Fully automated: implement, run lint + typecheck + tests locally, open a PR, ' +
-    'then loop on CI failures (fetch logs → fix → push) up to 3 times. ' +
-    'No review network, no human approval. Use for low-risk, well-tested codebases.',
+    'Fully automated: implement the change, run lint, type checks and tests, open a pull ' +
+    'request, then fix CI failures from the logs and push, up to 3 times. No agent review ' +
+    'and no human approval. Use for low-risk, well-tested codebases.',
   entry: 'setValidating',
   name: 'code-and-ci',
   nodes: mergeNodes(

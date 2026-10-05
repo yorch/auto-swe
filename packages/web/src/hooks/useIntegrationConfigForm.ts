@@ -2,6 +2,36 @@
 
 import { useState } from 'react';
 import { errMsg } from '@/lib/errors';
+import { useUnsavedChangesGuard } from './useUnsavedChangesGuard';
+
+const FIELD_LABELS: Record<string, string> = {
+  apiBase: 'API base URL',
+  apiToken: 'API token',
+  appId: 'App ID',
+  baseUrl: 'Base URL',
+  email: 'Email',
+  maxNodes: 'Max nodes',
+  maxPages: 'Max pages',
+  spaces: 'Spaces',
+};
+
+/**
+ * The gateway reports a rejected body as `body/baseUrl Invalid URL`. Turn that into a sentence
+ * about the field the person sees; any other message passes through unchanged.
+ */
+export function friendlyValidationMessage(message: string): string {
+  const match = /^(?:body)?\/([A-Za-z0-9_]+) (.+)$/.exec(message);
+  if (!match) {
+    return message;
+  }
+  const [, field = '', problem = ''] = match;
+  const label = FIELD_LABELS[field] ?? field.replace(/([A-Z])/g, ' $1').toLowerCase();
+  const name = label.charAt(0).toUpperCase() + label.slice(1);
+  if (/invalid url/i.test(problem)) {
+    return `${name} must be a full URL, for example https://example.com.`;
+  }
+  return `${name}: ${problem.charAt(0).toLowerCase()}${problem.slice(1)}`;
+}
 
 /** The `{ ok, detail }` shape every `test<X>Connection()` helper resolves to. */
 export interface TestResult {
@@ -12,6 +42,10 @@ export interface TestResult {
 }
 
 export interface UseIntegrationConfigFormResult {
+  /** How many fields differ from what is saved. */
+  dirtyCount: number;
+  /** At least one field differs from what is saved. */
+  isDirty: boolean;
   saved: boolean;
   /** True while `submit()`'s runner is in flight — disable the save button on it. */
   saving: boolean;
@@ -38,9 +72,13 @@ export interface UseIntegrationConfigFormResult {
  * caller-owned (blank = "keep current") and are NOT seeded here; this hook only
  * factors out the identical save/test lifecycle (`saved`/`error`/`testing`/
  * `testResult` + the two try/catch runners) that each tab
- * previously hand-rolled. Body-building and secret-clearing stay in the tab.
+ * previously hand-rolled. A tab passes how many of its fields differ from the
+ * saved config (`countChanges` of the body it would submit), which drives the
+ * footer's Save state and the leave-page guard. Body-building and secret-clearing stay in the tab.
  */
-export function useIntegrationConfigForm(): UseIntegrationConfigFormResult {
+export function useIntegrationConfigForm(dirtyCount = 0): UseIntegrationConfigFormResult {
+  // Leaving the page (reload, close, in-app link) with edits asks first.
+  useUnsavedChangesGuard(dirtyCount > 0);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +95,7 @@ export function useIntegrationConfigForm(): UseIntegrationConfigFormResult {
       setSaved(true);
       onSuccess?.(result);
     } catch (err) {
-      setError(errMsg(err, 'Failed to save'));
+      setError(friendlyValidationMessage(errMsg(err, 'Failed to save')));
     } finally {
       setSaving(false);
     }
@@ -75,5 +113,15 @@ export function useIntegrationConfigForm(): UseIntegrationConfigFormResult {
     }
   };
 
-  return { error, runTest, saved, saving, submit, testing, testResult };
+  return {
+    dirtyCount,
+    error,
+    isDirty: dirtyCount > 0,
+    runTest,
+    saved,
+    saving,
+    submit,
+    testing,
+    testResult,
+  };
 }

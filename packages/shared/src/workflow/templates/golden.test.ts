@@ -181,13 +181,6 @@ function consensusReviewAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
   Object.assign(nodes, ciFixNodes());
   return {
     ...g,
-    description:
-      'Implement, open the PR and wait for CI (a failing CI is fixed by the agent: 2 fix ' +
-      'attempts, and a third failure fails the run), then run two independent agent ' +
-      'review-network calls in parallel (fanOut with concurrency=2) on the code that passed CI. ' +
-      'Both reviewers must approve; if either rejects the agent addresses the combined feedback, ' +
-      'CI runs again, and both reviewers run again (up to 3 rounds). ' +
-      'Demonstrates fanOut for parallel quality gates rather than parallel work.',
     nodes: nodes as WorkflowSpec['nodes'],
   };
 }

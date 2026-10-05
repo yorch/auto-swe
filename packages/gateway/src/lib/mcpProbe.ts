@@ -5,7 +5,7 @@
  *
  * Like the worker, it tries streamable HTTP first and falls back to the legacy HTTP+SSE transport
  * (a URL ending `/sse` goes straight to it). A stored bearer token is sent as
- * `Authorization: Bearer …` on every request to the connection's own origin and nowhere else: a
+ * `Authorization: Bearer …` (and any custom headers) on every request to the connection's own origin and nowhere else: a
  * redirect is never followed, and an SSE `endpoint` on another origin is refused before any
  * request is made to it.
  *
@@ -13,10 +13,13 @@
  * can name the internal address that was tried, so neither is passed through. Redirects are never
  * followed: the SSRF guard approved one URL, not wherever it points.
  */
+import type { McpHeader } from '@auto-swe/shared/lib/mcpHeaders';
 
 export interface McpProbeOptions {
   /** Plaintext token to send; the caller decrypts it and nothing here stores or logs it. */
   bearerToken?: string;
+  /** Custom headers, already decrypted; sent to the connection's own origin only, like the token. */
+  headers?: readonly McpHeader[];
 }
 
 export interface McpProbeResult {
@@ -275,6 +278,9 @@ export async function probeMcpServer(
   const authHeaders: Record<string, string> = opts.bearerToken
     ? { authorization: `Bearer ${opts.bearerToken}` }
     : {};
+  const customHeaders: Record<string, string> = Object.fromEntries(
+    (opts.headers ?? []).map((h) => [h.name, h.value])
+  );
 
   /**
    * Every request goes through here. The token is attached only when the target is the
@@ -291,7 +297,8 @@ export async function probeMcpServer(
     try {
       res = await fetchImpl(target, {
         ...init,
-        headers: { ...(init.headers as Record<string, string>), ...authHeaders },
+        // Protocol and token headers win: a custom header cannot displace either.
+        headers: { ...customHeaders, ...(init.headers as Record<string, string>), ...authHeaders },
         redirect: 'manual',
         signal: init.signal ?? signal,
       });
@@ -307,9 +314,11 @@ export async function probeMcpServer(
     }
     if (res.status === 401 || res.status === 403) {
       throw new ProbeError(
-        opts.bearerToken
-          ? 'The server rejected the stored bearer token.'
-          : 'The server requires authentication. Add a bearer token to this connection.',
+        Object.keys(customHeaders).length > 0
+          ? "The server rejected the request's credentials (bearer token or custom headers)."
+          : opts.bearerToken
+            ? 'The server rejected the stored bearer token.'
+            : 'The server requires authentication. Add a bearer token to this connection.',
         true
       );
     }

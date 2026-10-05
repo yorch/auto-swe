@@ -47,6 +47,11 @@ function onClickCapture(event: MouseEvent) {
   }
 }
 
+/** True while any mounted form has unsaved edits. */
+export function hasUnsavedChanges(): boolean {
+  return dirtySources.size > 0;
+}
+
 function track(source: symbol) {
   if (dirtySources.size === 0) {
     window.addEventListener('beforeunload', onBeforeUnload);

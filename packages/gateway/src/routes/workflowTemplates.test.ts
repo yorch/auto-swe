@@ -107,6 +107,8 @@ function buildApp(state: {
   }> = [];
   // exposed via state for assertions
   (state as unknown as { shellAudits: typeof shellAudits }).shellAudits = shellAudits;
+  const configAudits: Array<{ action: string; entityType: string; [key: string]: unknown }> = [];
+  (state as unknown as { configAudits: typeof configAudits }).configAudits = configAudits;
 
   type PrismaMock = Record<string, unknown> & {
     $transaction?: (fn: (tx: PrismaMock) => Promise<unknown>) => Promise<unknown>;
@@ -118,6 +120,12 @@ function buildApp(state: {
   app.decorate(
     'prisma',
     Object.assign(prismaMock, {
+      configAuditLog: {
+        create: async ({ data }: { data: { action: string; entityType: string } }) => {
+          configAudits.push(data);
+          return data;
+        },
+      },
       humanErrorBaseline: {
         findMany: async () =>
           (
@@ -448,6 +456,54 @@ describe('workflow-templates routes', () => {
     expect(body.data.activeVersion).toBe(1);
     expect(body.data.status).toBe('ACTIVE');
     expect(body.data.versionCount).toBe(1);
+    const audits = (state as unknown as { configAudits: Array<{ entityType: string }> })
+      .configAudits;
+    expect(audits.map((a) => a.entityType)).toContain('WorkflowTemplate');
+    expect(audits[0]).toMatchObject({ action: 'CREATE', entityType: 'WorkflowTemplate' });
+  });
+
+  it('audits webhook regenerate and revoke without recording the token', async () => {
+    const created = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        name: 'webhook-audit',
+        spec: VALID_SPEC,
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates',
+    });
+    const id = created.json().data.id as string;
+    const audits = (state as unknown as { configAudits: Array<Record<string, unknown>> })
+      .configAudits;
+    audits.length = 0;
+
+    const regen = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      url: `/api/v1/workflow-templates/${id}/webhook/regenerate`,
+    });
+    expect(regen.statusCode).toBe(200);
+    const token = regen.json().data.webhookToken as string;
+    expect(audits[0]).toMatchObject({
+      action: 'UPDATE',
+      afterJson: { webhookEnabled: true },
+      beforeJson: { webhookEnabled: false },
+      entityId: id,
+      entityType: 'WorkflowTemplate',
+    });
+
+    const revoke = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'DELETE',
+      url: `/api/v1/workflow-templates/${id}/webhook`,
+    });
+    expect(revoke.statusCode).toBe(204);
+    expect(audits[1]).toMatchObject({
+      afterJson: { webhookEnabled: false },
+      beforeJson: { webhookEnabled: true },
+    });
+    expect(JSON.stringify(audits)).not.toContain(token);
   });
 
   it('saves an unparseable cond expression but surfaces it as a warning (non-blocking)', async () => {
@@ -1897,6 +1953,31 @@ describe('GET /workflow-templates/analytics custom range', () => {
     expect((await get('since=2026-01-10')).statusCode).toBe(400);
     expect((await get('since=2026-01-10&until=2026-01-01')).statusCode).toBe(400);
     expect((await get('since=2024-01-01&until=2026-01-01')).statusCode).toBe(400);
+    await app.close();
+  });
+});
+
+describe('GET /workflow-templates/analytics preset window', () => {
+  it('covers exactly the last N whole UTC days, like a custom range of those days', async () => {
+    const state: Parameters<typeof buildApp>[0] = { runs: [], templates: [], versions: new Map() };
+    const app = buildApp(state);
+    await app.ready();
+    const get = (qs: string) =>
+      app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: `/api/v1/workflow-templates/analytics?${qs}`,
+      });
+    const day = (offset: number) =>
+      new Date(Date.now() + offset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const dates = (res: { json: () => { data: { daily: { date: string }[] } } }) =>
+      res.json().data.daily.map((d) => d.date);
+    const preset = await get('window=7');
+    expect(preset.statusCode).toBe(200);
+    expect(dates(preset)).toHaveLength(7);
+    expect(dates(preset).at(-1)).toBe(day(0));
+    const custom = await get(`since=${day(-6)}&until=${day(0)}`);
+    expect(dates(custom)).toEqual(dates(preset));
     await app.close();
   });
 });

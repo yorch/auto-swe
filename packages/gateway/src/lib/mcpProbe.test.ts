@@ -188,6 +188,17 @@ describe('probeMcpServer', () => {
       expect(f).toHaveBeenCalledTimes(2);
     });
 
+    it('names custom headers too when any are configured', async () => {
+      const f = vi.fn(async () => new Response('no', { status: 403 }));
+      const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never, {
+        bearerToken: TOKEN,
+        headers: [{ name: 'x-api-key', value: 'k' }],
+      });
+      expect(res.error).toBe(
+        "The server rejected the request's credentials (bearer token or custom headers)."
+      );
+    });
+
     /** A legacy SSE server: POST to the base URL is 404, GET opens the stream. */
     function legacyServer(opts: { endpoint?: string } = {}) {
       const enc = new TextEncoder();
@@ -314,6 +325,31 @@ describe('probeMcpServer', () => {
       const f = vi.fn(async () => new Response('nope', { status: 404 }));
       const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never);
       expect(res.error).toBe('The server answered with HTTP 404.');
+    });
+  });
+
+  describe('custom headers', () => {
+    const SECRET = 'hdr-probe-secret';
+
+    it('sends them on every request and keeps them out of the result', async () => {
+      const f = server(json({ id: 2, jsonrpc: '2.0', result: { tools: [] } }));
+      const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never, {
+        headers: [{ name: 'X-Api-Key', value: SECRET }],
+      });
+      expect(res.ok).toBe(true);
+      for (const [, init] of f.mock.calls) {
+        expect((init as RequestInit).headers).toMatchObject({ 'X-Api-Key': SECRET });
+      }
+      expect(JSON.stringify(res)).not.toContain(SECRET);
+    });
+
+    it('cannot displace the protocol headers the probe sets', async () => {
+      const f = server(json({ id: 2, jsonrpc: '2.0', result: { tools: [] } }));
+      await probeMcpServer('https://mcp.test/mcp', 5000, f as never, {
+        headers: [{ name: 'Content-Type', value: 'text/plain' }],
+      });
+      const first = f.mock.calls[0]?.[1] as RequestInit;
+      expect((first.headers as Record<string, string>)['content-type']).toBe('application/json');
     });
   });
 });

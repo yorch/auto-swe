@@ -336,6 +336,13 @@ model Connection {
   apiKeyAuthTag    Bytes? @map("api_key_auth_tag")
   apiKeyVersion    Int    @default(1) @map("api_key_version")
 
+  /// `mcp` connections only: custom request headers as one AES-256-GCM envelope over a JSON list
+  /// of `{ name, value }`. Write-only through the API; sent only to the connection's own origin.
+  headersCiphertext Bytes? @map("headers_ciphertext")
+  headersNonce      Bytes? @map("headers_nonce")
+  headersAuthTag    Bytes? @map("headers_auth_tag")
+  headersKeyVersion Int    @default(1) @map("headers_key_version")
+
   /// Added late: this model was one of the few without them, and the gap has
   /// already cost something. Without `updatedAt` there is no way to tell a
   /// column value an operator chose from one a column default wrote, which

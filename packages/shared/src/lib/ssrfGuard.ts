@@ -165,6 +165,8 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
   return { ok: true, url };
 }
 
+type NeverAllowedKind = 'link-local' | 'loopback' | 'unspecified';
+
 /**
  * Addresses no opt-in may reach: cloud metadata endpoints (link-local
  * 169.254.0.0/16 — AWS/Azure/GCP/Oracle — and IPv6 link-local fe80::/10, plus AWS's IPv6 `fd00:ec2::254`,
@@ -173,44 +175,63 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
  * network opt-in is for a self-hosted server on an internal address, never for
  * these.
  */
-function isNeverAllowedHost(url: URL): boolean {
+function neverAllowedKind(url: URL): { effective: string; kind: NeverAllowedKind } | null {
   const raw = url.hostname.toLowerCase();
   const bare = (raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw).replace(
     /\.+$/,
     ''
   );
   const effective = extractEmbeddedIpv4(bare) ?? bare;
-  return (
-    effective === 'localhost' ||
-    effective.endsWith('.localhost') ||
+  if (
     effective === 'metadata' ||
     effective === 'metadata.google.internal' ||
-    effective === '::' ||
-    effective === '::1' ||
     effective === '100.100.100.200' ||
     effective.startsWith('fd00:ec2:') ||
-    /^127\./.test(effective) ||
     /^169\.254\./.test(effective) ||
-    /^fe[89ab][0-9a-f]:/.test(effective) ||
-    /^0\./.test(effective)
-  );
+    /^fe[89ab][0-9a-f]:/.test(effective)
+  ) {
+    return { effective, kind: 'link-local' };
+  }
+  if (effective === '::' || /^0\./.test(effective)) {
+    return { effective, kind: 'unspecified' };
+  }
+  if (
+    effective === 'localhost' ||
+    effective.endsWith('.localhost') ||
+    effective === '::1' ||
+    /^127\./.test(effective)
+  ) {
+    return { effective, kind: 'loopback' };
+  }
+  return null;
 }
 
 /**
  * {@link isSafeProbeUrl}, with a per-host operator opt-in for private
  * addresses (the shape of the connectors' `allowPrivateNetwork`). With
  * `allowPrivate`, a refusal for a private/internal address is waived — but
- * never for the addresses {@link isNeverAllowedHost} names, and never for any
+ * never for the addresses {@link neverAllowedKind} names, and never for any
  * other refusal (a bad URL, a non-http scheme). The caller decides which exact
  * host `allowPrivate` applies to.
  */
 export function checkProbeUrl(apiBase: string, opts: { allowPrivate?: boolean } = {}) {
   const safety = isSafeProbeUrl(apiBase);
-  if (safety.ok || !opts.allowPrivate || !safety.private) {
+  if (safety.ok || !safety.private) {
     return safety;
   }
   const url = new URL(apiBase);
-  return isNeverAllowedHost(url) ? safety : ({ ok: true, url } as const);
+  const never = neverAllowedKind(url);
+  if (never) {
+    // Say so rather than "on a private network", which invites the opt-in that cannot help.
+    const host = url.hostname.replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+    const kind = {
+      'link-local': 'a link-local or cloud metadata address',
+      loopback: 'a loopback address',
+      unspecified: 'an unspecified address',
+    }[never.kind];
+    return { ...safety, reason: `host '${host}' is ${kind} and is never allowed` };
+  }
+  return opts.allowPrivate ? ({ ok: true, url } as const) : safety;
 }
 
 /**

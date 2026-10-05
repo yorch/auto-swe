@@ -37,3 +37,8 @@ export function clearableIntField(
   }
   return parsed;
 }
+
+/** How many fields a PATCH body would change: every key that is not omitted (`undefined`). */
+export function countChanges(body: object): number {
+  return Object.values(body).filter((value) => value !== undefined).length;
+}

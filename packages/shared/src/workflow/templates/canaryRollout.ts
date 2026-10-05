@@ -24,10 +24,11 @@ import {
  */
 export const CANARY_ROLLOUT_SPEC: WorkflowSpec = {
   description:
-    'Implement, review (up to 3 agent attempts), open PR, wait for CI, ' +
-    'then pause for a staging-deploy signal and finally a production-monitoring signal. ' +
-    'Models a canary/release-train pipeline where each promotion stage must be ' +
-    'explicitly confirmed by an external system before proceeding.',
+    'Implement, have the review agents check it (up to 3 attempts), open a pull request and ' +
+    'wait for CI. Then pause until an external system confirms the staging deploy, and ' +
+    'again until it confirms production monitoring is healthy. Models a canary or ' +
+    'release-train pipeline where each promotion stage must be confirmed before the next ' +
+    'one starts.',
   entry: 'setValidating',
   name: 'canary-rollout',
   nodes: mergeNodes(

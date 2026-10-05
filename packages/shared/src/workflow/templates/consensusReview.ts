@@ -33,12 +33,12 @@ import {
  */
 export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
   description:
-    'Implement, open the PR and wait for CI (a failing CI is fixed by the agent: 2 fix ' +
-    'attempts, and a third failure fails the run), then run two independent agent ' +
-    'review-network calls in parallel (fanOut with concurrency=2) on the code that passed CI. ' +
-    'Both reviewers must approve; if either rejects the agent addresses the combined feedback, ' +
-    'CI runs again, and both reviewers run again (up to 3 rounds). ' +
-    'Demonstrates fanOut for parallel quality gates rather than parallel work.',
+    'Implement the change, open the pull request and wait for CI (a failing CI is fixed by ' +
+    'the agent: 2 fix attempts, and a third failure fails the run). Then two independent ' +
+    'agent reviewers check the code that passed CI at the same time. Both must approve; if ' +
+    'either rejects, the agent addresses the combined feedback, CI runs again, and both ' +
+    'reviewers look again (up to 3 rounds). Use it when you want two independent opinions ' +
+    'before a person sees the pull request.',
   entry: 'setValidating',
   name: 'consensus-review',
   nodes: mergeNodes(

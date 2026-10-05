@@ -14,10 +14,10 @@ import {
  */
 export const FULL_SUPERVISED_SPEC: WorkflowSpec = {
   description:
-    'The kitchen-sink supervised workflow: collect requirements upfront, implement, ' +
-    'show the diff for review, let the reviewer decide whether to apply their notes, ' +
-    'then require final approval before the PR is opened. ' +
-    'Demonstrates all four HITL node types in sequence.',
+    'The most hands-on workflow: collect requirements up front, implement, show the diff ' +
+    'for review, let the reviewer decide whether to apply their notes, then require final ' +
+    'approval before the pull request is opened. Every kind of human step appears in ' +
+    'sequence, so it doubles as a tour of what a person can be asked to do.',
   entry: 'gatherContext',
   name: 'full-supervised',
   nodes: mergeNodes(

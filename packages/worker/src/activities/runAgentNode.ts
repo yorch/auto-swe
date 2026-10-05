@@ -92,8 +92,10 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
   let mcpTools: AgentTools | undefined;
   if (mcpTarget) {
     const loaded = await loadMcpTools(mcpTarget.url, tracer, {
+      allowPrivateNetwork: mcpTarget.allowPrivateNetwork,
       bearerToken: mcpTarget.bearerToken,
       callTimeoutMs: mcpTarget.callTimeoutMs,
+      headers: mcpTarget.headers,
       listTimeoutMs: mcpTarget.listTimeoutMs,
     });
     closeMcp = loaded.close;

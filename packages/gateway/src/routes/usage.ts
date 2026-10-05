@@ -7,6 +7,7 @@ import {
   refineCustomRange,
   resolveCustomRange,
   seriesBuckets,
+  utcDayStart,
 } from '../lib/dateWindow.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -119,12 +120,6 @@ function addGroup(accs: Acc[], g: Group, failed: Group | undefined): void {
     a.okDurationMs += (g._sum.durationMs ?? 0) - (failed?._sum.durationMs ?? 0);
     a.okDurationCount += g._count.durationMs - (failed?._count.durationMs ?? 0);
   }
-}
-
-/** Start of the UTC day `ms` falls in. */
-function utcDayStart(ms: number): number {
-  const d = new Date(ms);
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
 /** May `user` read the report for `scope`? See the module comment. */

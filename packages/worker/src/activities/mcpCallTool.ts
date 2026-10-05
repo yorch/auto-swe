@@ -46,10 +46,16 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
       `mcp node: connection '${input.connectionRef}' is not an active mcp connection`
     );
   }
-  const { url, listTimeoutMs, callTimeoutMs, bearerToken } = target;
+  const { url, listTimeoutMs, callTimeoutMs, bearerToken, headers, allowPrivateNetwork } = target;
 
   const tracer = new AgentTracer();
-  const loaded = await loadMcpTools(url, tracer, { bearerToken, callTimeoutMs, listTimeoutMs });
+  const loaded = await loadMcpTools(url, tracer, {
+    allowPrivateNetwork,
+    bearerToken,
+    callTimeoutMs,
+    headers,
+    listTimeoutMs,
+  });
   try {
     // Do not call an external tool for a run that was cancelled while connecting.
     throwIfActivityCancelled();

@@ -252,6 +252,29 @@ target, so serializing or logging the target cannot carry it, and it is scrubbed
 a failed connect. A token that no longer decrypts yields no MCP tools for the run. The Test button
 sends the same header to the same origin only, trying streamable HTTP first and then the legacy SSE transport (a URL ending `/sse` goes straight to it), as the worker does.
 
+**Custom headers.** A connection may carry up to five custom request headers (an API gateway key, a
+tenant id). They are entered at `/studio/mcp` as name/value rows with masked values and sealed as one
+JSON list in the Connection's `headers*` envelope columns, which `yarn keys:rotate` covers like every
+other secret. They are write-only: responses carry header **names** (`headerNames`) only, the audit
+trail records names only, and an edit sends the complete list, where a row without a value keeps the
+stored value of that name and an empty list removes them all. Names must be RFC 7230 tokens and unique
+ignoring case; hop-by-hop headers (`Connection`, `Keep-Alive`, `Proxy-*`, `TE`, `Trailer`,
+`Transfer-Encoding`, `Upgrade`), `Host`, `Content-Length`, `Content-Type`, `Accept`, `Cookie`,
+`Set-Cookie` and the MCP protocol headers are refused, and so is `Authorization`: the bearer token is
+the one place that credential lives. The same origin rule as the token applies: a URL edit to a
+different origin that keeps stored header values is refused (409 `HEADERS_ORIGIN_CHANGE`). The worker
+sends the headers through the same `bearerFetch` on both transports, only to the connection's own
+origin and never over a transport's own headers, and the Test probe does the same. They are
+non-enumerable on the resolved target and absent from every log and trace. Headers that no longer
+decrypt yield no MCP tools for the run.
+
+**Private networks.** An admin may tick "This server is on a private network"
+(`config.allowPrivateNetwork`) for a server on an RFC 1918 or unique-local address. It waives only the
+private-range refusal, with the semantics of the issue-tracker and knowledge-base connectors
+(`checkProbeUrl`): loopback, link-local, unspecified and cloud-metadata addresses are refused with or
+without it. Save, the Test probe and the worker's connect all apply the same check against the saved
+flag, and the flag appears in the audit trail.
+
 **Activation requires all three:**
 
 1. The resolved Agent has an `mcpConnectionId` pointing at an active `mcp` Connection.
@@ -274,7 +297,7 @@ sends the same header to the same origin only, trying streamable HTTP first and 
   `finally`. The generic `runAgentNode` path (declarative `agent` node) binds MCP the same way, so any
   agent — not just the implementer — can use MCP.
 - **Write-path:** admins manage `mcp` Connections at `/studio/mcp` (gateway CRUD
-  `/api/v1/studio/mcp` — `POST` create, `PATCH :id` edit url/name/timeouts/token,
+  `/api/v1/studio/mcp` — `POST` create, `PATCH :id` edit url/name/timeouts/token/headers/private-network flag,
   `DELETE :id` soft-delete; `PATCH` rebuilds `config` from the body so a blank timeout clears the
   override) and attach one to an Agent via the `mcpConnectionId` field on the
   agent-library form. `validateMcpConnectionRef` enforces that the reference is an active `mcp`
@@ -833,6 +856,13 @@ The single governed surface for per-key config. An Agent payload carries
 `IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash']`).
 Writes cut a new immutable `version`.
 
+For admins, each row of the library table carries a "No credential" badge on its Model cell when the
+provider it calls has no usable credential (and the row is not pinned to its own `credentialId`).
+The status comes from the one `GET /api/v1/platform/readiness` response the page already shares with
+the setup banner, and a sub-role persona takes its parent's status. Readiness describes only the
+platform-wide agents, so the badge appears on platform-wide rows alone; a team, organization or
+template override is never badged, because it may use a different model or credential.
+
 | Method | Path | Min role | Purpose |
 |---|---|---|---|
 | `GET` | `/api/v1/platform/agent-library` | `ADMIN` | List Agents (GLOBAL + overrides) with resolved fields |
@@ -870,8 +900,10 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
-- **MCP authentication is a single static bearer token.** OAuth flows, custom headers and
-  per-user tokens are not supported. A server that redirects (for example `/mcp` to `/mcp/`) is
+- **MCP authentication is a static bearer token plus up to five static custom headers.** OAuth flows
+  and per-user tokens are not supported. The SSRF guard reads the URL's host text and does not resolve
+  DNS, so a public hostname that resolves to a private address passes it, with or without the
+  private-network opt-in, as it does for the tracker and knowledge-base connectors. A server that redirects (for example `/mcp` to `/mcp/`) is
   refused by the token-carrying client and by the Test probe, so the connection URL must be the final
   one. Rotating the token is an edit of the connection; runs already connected keep the token they
   started with.

@@ -510,6 +510,16 @@ describe('systemConfigService', () => {
       expect(result.data.spaces).toEqual(['ENG', 'PROD']);
     });
 
+    it('creates the row with an empty spaces list on a first save that omits it', async () => {
+      mockPrisma.knowledgeBaseConfig.findUnique.mockResolvedValueOnce(null);
+      await updateKnowledgeBaseConfig(prisma, { enabled: true, provider: 'notion' });
+      const create = mockPrisma.knowledgeBaseConfig.upsert.mock.calls[0][0].create as Record<
+        string,
+        unknown
+      >;
+      expect(create.spaces).toEqual([]);
+    });
+
     it('spaces source is null when neither DB nor env has entries', async () => {
       mockPrisma.knowledgeBaseConfig.findUnique.mockResolvedValueOnce(null);
       const result = await getKnowledgeBaseConfig(prisma);
@@ -1200,6 +1210,30 @@ describe('systemConfigService', () => {
       const result = await testKnowledgeBaseConnection();
       expect(result.ok).toBe(false);
       expect(result.detail).toContain('missing baseUrl or apiToken');
+    });
+
+    it('tests Notion with only a token, never asking for a base URL', async () => {
+      resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
+        apiToken: null,
+        baseUrl: null,
+        enabled: true,
+        provider: 'notion',
+      } as never);
+      const missing = await testKnowledgeBaseConnection();
+      expect(missing.detail).toBe('Knowledge base (notion) missing apiToken.');
+
+      resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
+        apiToken: 'tok',
+        baseUrl: null,
+        enabled: true,
+        provider: 'notion',
+        spaces: [],
+      } as never);
+      mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
+        testConnection: vi.fn().mockResolvedValueOnce(undefined),
+      } as never);
+      const ok = await testKnowledgeBaseConnection();
+      expect(ok).toEqual({ detail: 'notion connection successful.', ok: true });
     });
 
     it('reports unsupported provider when the registry returns null', async () => {

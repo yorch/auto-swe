@@ -1,4 +1,5 @@
 import type { AgentRow, AgentScope } from '@/hooks/useAgentLibrary';
+import type { ReadinessProvider } from '@/hooks/useReadiness';
 
 /** How an agent binds its model, for list views: its own spec, or whom it inherits from. */
 export function modelLabel(a: Pick<AgentRow, 'modelSpec' | 'inheritsModelFrom'>): string {
@@ -53,4 +54,34 @@ export function toolKeysLabel(toolKeys: string[] | null): string {
     return 'No tools';
   }
   return toolKeys.join(', ');
+}
+
+const providerOf = (spec: string | null | undefined): string | null =>
+  spec?.split('/')[0]?.trim().toLowerCase() || null;
+
+/**
+ * The provider an agent will call that has no usable credential, or null. An agent pinned to its
+ * own credential is covered; a sub-role persona has the status of the agent it inherits from
+ * (the platform-wide one, since that is where a persona's parent is defined).
+ *
+ * Readiness reports only the platform-wide agents, so a team, organization or template override
+ * is never judged from it: it may pick a different model, provider or credential than the
+ * platform-wide row of the same key, and a verdict about that row would be a guess.
+ */
+export function missingCredentialProvider(
+  agent: Pick<AgentRow, 'modelSpec' | 'inheritsModelFrom' | 'credentialId' | 'scope'>,
+  agents: readonly Pick<AgentRow, 'key' | 'scope' | 'isActive' | 'modelSpec' | 'credentialId'>[],
+  providers: readonly ReadinessProvider[]
+): string | null {
+  if (agent.scope !== 'GLOBAL') {
+    return null;
+  }
+  const source = agent.modelSpec
+    ? agent
+    : agents.find((a) => a.scope === 'GLOBAL' && a.isActive && a.key === agent.inheritsModelFrom);
+  const provider = providerOf(source?.modelSpec);
+  if (!(source && provider) || source.credentialId) {
+    return null;
+  }
+  return providers.some((p) => p.provider === provider && !p.present) ? provider : null;
 }

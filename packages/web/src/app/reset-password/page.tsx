@@ -47,6 +47,10 @@ function ResetPasswordInner() {
       setPasswordError('Use at least 8 characters.');
       return;
     }
+    if (password.length > 128) {
+      setPasswordError('Use at most 128 characters.');
+      return;
+    }
     if (password !== confirm) {
       setConfirmError('The passwords do not match.');
       return;
@@ -78,7 +82,7 @@ function ResetPasswordInner() {
     <AuthLayout>
       <AuthHeading kicker="Reset password" title="Choose a new password">
         <p className="mb-8 text-sm text-paper-400">
-          Enter a new password of at least 8 characters. Once it is saved you will sign in with it.
+          Enter a new password of 8 to 128 characters. Once it is saved you will sign in with it.
         </p>
       </AuthHeading>
 
@@ -98,6 +102,7 @@ function ResetPasswordInner() {
           autoComplete="new-password"
           error={passwordError || undefined}
           label="New password"
+          maxLength={128}
           minLength={8}
           name="password"
           onChange={(e) => setPassword(e.target.value)}
@@ -110,6 +115,7 @@ function ResetPasswordInner() {
           autoComplete="new-password"
           error={confirmError || undefined}
           label="Confirm new password"
+          maxLength={128}
           minLength={8}
           name="confirm"
           onChange={(e) => setConfirm(e.target.value)}

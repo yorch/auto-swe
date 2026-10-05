@@ -2,7 +2,7 @@
 
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { useIntegrationConfigForm } from './useIntegrationConfigForm';
+import { friendlyValidationMessage, useIntegrationConfigForm } from './useIntegrationConfigForm';
 
 describe('useIntegrationConfigForm', () => {
   it('starts with clean state', () => {
@@ -95,5 +95,17 @@ describe('useIntegrationConfigForm', () => {
 
     expect(result.current.testResult).toEqual({ detail: 'unreachable', ok: false });
     expect(result.current.testing).toBe(false);
+  });
+});
+
+describe('friendlyValidationMessage', () => {
+  it('turns a rejected URL field into a sentence', () => {
+    expect(friendlyValidationMessage('body/baseUrl Invalid URL')).toBe(
+      'Base URL must be a full URL, for example https://example.com.'
+    );
+  });
+
+  it('leaves other messages alone', () => {
+    expect(friendlyValidationMessage('Failed to save')).toBe('Failed to save');
   });
 });

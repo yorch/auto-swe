@@ -69,6 +69,35 @@ describe('KnowledgeBaseTab connection test', () => {
   });
 });
 
+describe('KnowledgeBaseTab with Notion', () => {
+  it('has no base URL field and tests without one', async () => {
+    const spy = setupFetchMock({
+      '/api/v1/platform/config/knowledge-base': () => ({
+        data: {
+          allowPrivateNetwork: false,
+          apiToken: masked,
+          baseUrl: null,
+          email: null,
+          enabled: true,
+          maxPages: null,
+          provider: 'notion',
+          spaces: [],
+        },
+        sources: {},
+      }),
+      'POST /api/v1/platform/config/knowledge-base/test': () => ({ detail: 'ok', ok: true }),
+    });
+    render(withQuery(<KnowledgeBaseTab />));
+    const button = await screen.findByRole('button', { name: 'Test connection' });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByLabelText('Base URL')).toBeNull();
+    expect(screen.queryByLabelText(/private\/internal network/i)).toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByText('ok')).toBeTruthy());
+    expect(bodyOf(spy, '/config/knowledge-base/test')).toEqual({});
+  });
+});
+
 describe('FigmaTab connection test', () => {
   it('sends the typed token and labels the result as unsaved', async () => {
     const spy = setupFetchMock({

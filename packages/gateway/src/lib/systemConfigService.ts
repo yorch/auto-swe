@@ -917,7 +917,9 @@ export async function updateKnowledgeBaseConfig(
   sealInto(data, 'apiToken', apiToken);
 
   const row = await prisma.knowledgeBaseConfig.upsert({
-    create: { id: 'default', ...data },
+    // `spaces` is NOT NULL with no database default, so a first save that omits it must create an
+    // empty list rather than fail with P2011.
+    create: { id: 'default', spaces: spaces ?? [], ...data },
     update: data,
     where: { id: 'default' },
   });
@@ -971,18 +973,25 @@ export async function testKnowledgeBaseConnection(
   if (!config.provider || !config.enabled) {
     return { detail: `Knowledge base provider not configured or disabled.`, ok: false };
   }
-  if (!config.baseUrl || !config.apiToken) {
+  // Notion's API address is fixed, so only Confluence needs a base URL.
+  const needsBaseUrl = config.provider !== 'notion';
+  if ((needsBaseUrl && !config.baseUrl) || !config.apiToken) {
     return {
-      detail: `Knowledge base (${config.provider}) missing baseUrl or apiToken.`,
+      detail: needsBaseUrl
+        ? `Knowledge base (${config.provider}) missing baseUrl or apiToken.`
+        : `Knowledge base (${config.provider}) missing apiToken.`,
       ok: false,
     };
   }
   const hostChanged =
-    config.provider !== stored.provider || (config.baseUrl ?? null) !== (stored.baseUrl ?? null);
+    config.provider !== stored.provider ||
+    (needsBaseUrl && (config.baseUrl ?? null) !== (stored.baseUrl ?? null));
   if (!draft.apiToken && hostChanged) {
     return {
       detail: stored.apiToken
-        ? `Enter the API token again to test a different provider or base URL.`
+        ? needsBaseUrl
+          ? `Enter the API token again to test a different provider or base URL.`
+          : `Enter the API token again to test a different provider.`
         : `Enter the API token to test this provider and URL.`,
       ok: false,
     };

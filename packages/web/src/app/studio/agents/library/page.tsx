@@ -35,13 +35,21 @@ import {
   useDeleteAgent,
   useUpdateAgent,
 } from '@/hooks/useAgentLibrary';
+import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useAdminCredentials } from '@/hooks/useModelConfig';
+import { useReadiness } from '@/hooks/useReadiness';
 import { useSkills } from '@/hooks/useSkills';
 import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
-import { modelLabel, SCOPE_ORDER, scopeLabel, toolKeysLabel } from '@/lib/agentDisplay';
+import {
+  missingCredentialProvider,
+  modelLabel,
+  SCOPE_ORDER,
+  scopeLabel,
+  toolKeysLabel,
+} from '@/lib/agentDisplay';
 import { buildAgentUpdate } from '@/lib/agentEditPatch';
 import { errMsg } from '@/lib/errors';
 import { originLabel } from '@/lib/originLabel';
@@ -156,6 +164,9 @@ export default function AgentLibraryPage() {
   const { data: mcpConnections } = useMcpConnections();
   const { data: skills } = useSkills();
   const { data: credentials } = useAdminCredentials();
+  // Readiness already knows which providers lack a credential, so one request covers every row.
+  const isAdmin = useHasRole('ADMIN');
+  const { data: readiness } = useReadiness(isAdmin);
   const { data: slackChannels } = useSlackChannels();
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
@@ -428,6 +439,18 @@ export default function AgentLibraryPage() {
                       </Td>
                       <Td className="py-3 pr-3 font-mono text-[11px] text-paper-400" label="Model">
                         {modelLabel(a)}
+                        {missingCredentialProvider(a, agents ?? [], readiness?.providers ?? []) && (
+                          <div className="mt-1">
+                            <Badge
+                              className="whitespace-nowrap normal-case"
+                              title="Runs that use this agent fail at their first model call. Add a credential under Models."
+                              tone="brick"
+                              variant="text"
+                            >
+                              No credential
+                            </Badge>
+                          </div>
+                        )}
                       </Td>
                       <Td className="py-3 pr-3" label="Applies to">
                         <Badge className="whitespace-nowrap" tone="muted" variant="text">

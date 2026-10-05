@@ -15,9 +15,9 @@ import {
  */
 export const SECURITY_TRIAGE_SPEC: WorkflowSpec = {
   description:
-    'Implement, run a vulnerability scan, then ask a human how to proceed. ' +
-    'Three paths: fix the issues immediately, accept the risk and open the PR anyway, ' +
-    'or abandon the change entirely.',
+    'Implement, run a vulnerability scan, then ask a person how to proceed. Three choices: ' +
+    'fix the issues now, accept the risk and open the pull request anyway, or abandon the ' +
+    'change.',
   entry: 'setValidating',
   name: 'security-triage',
   nodes: mergeNodes(

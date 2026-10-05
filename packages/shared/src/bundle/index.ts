@@ -354,6 +354,20 @@ export function verifyContentHash(manifest: BundleManifest): {
 }
 
 /**
+ * Connection types a bundle may declare as dependencies: the ones the platform can run
+ * at the code level. The server refuses an install naming any other, and the SDK validator
+ * applies the same list so an author learns it before shipping.
+ */
+export const SUPPORTED_BUNDLE_CONNECTION_TYPES: readonly string[] = ['git_repo', 'mcp'];
+
+/** The declared dependency types this deployment cannot satisfy; empty means all are supported. */
+export function unsupportedBundleDependencies(manifest: BundleManifest): string[] {
+  return manifest.dependencies
+    .map((d) => d.connectionType)
+    .filter((t) => !SUPPORTED_BUNDLE_CONNECTION_TYPES.includes(t));
+}
+
+/**
  * Check every scanner pattern the bundle carries for compile errors, unsafe
  * flags, and over-long bodies — the same syntax-and-size gate the admin API
  * applies at `POST /admin/scanner-patterns`, shared here so install cannot be a

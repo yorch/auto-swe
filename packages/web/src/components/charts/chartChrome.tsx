@@ -158,6 +158,16 @@ export function ChartFrame({
 }
 
 /** Joins the optional title with a generated summary into an `aria-label`. */
+/** How wide one point on a time-series chart is: the gateway buckets long windows by week. */
+export type ChartGranularity = 'day' | 'week';
+
+/** The words a chart's summary, table and tooltip use for one point, per granularity. */
+export function granularityWords(granularity: ChartGranularity) {
+  return granularity === 'week'
+    ? { adjective: 'Weekly', dateColumn: 'Week starting (UTC)', plural: 'weeks', singular: 'week' }
+    : { adjective: 'Daily', dateColumn: 'Date (UTC)', plural: 'days', singular: 'day' };
+}
+
 export function chartAriaLabel(title: string | undefined, fallback: string, summary: string) {
   return `${title ?? fallback}. ${summary}`;
 }

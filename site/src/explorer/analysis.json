@@ -4468,10 +4468,10 @@
       "title": "The private-network opt-in waives only a private-address refusal"
     },
     {
-      "anchor": "function isNeverAllowedHost(url: URL): boolean {",
+      "anchor": "function neverAllowedKind(url: URL)",
       "before": 0,
       "id": "connectorNever",
-      "lines": 24,
+      "lines": 29,
       "path": "packages/shared/src/lib/ssrfGuard.ts",
       "title": "Addresses no opt-in reaches"
     },

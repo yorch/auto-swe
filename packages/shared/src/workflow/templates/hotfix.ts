@@ -17,10 +17,9 @@ import {
  */
 export const HOTFIX_SPEC: WorkflowSpec = {
   description:
-    'Fastest possible path from ticket to open PR. ' +
-    'Implement, run lint + typecheck (in warn mode so they never block), ' +
-    'then open the PR immediately — no review network, no CI wait, no human approval. ' +
-    'Intended for P0 production incidents only.',
+    'The fastest path from ticket to open pull request. Implement, run lint and type checks ' +
+    '(warnings never block), then open the pull request immediately: no agent review, no CI ' +
+    'wait, no human approval. Intended for urgent production incidents only.',
   entry: 'setValidating',
   name: 'hotfix',
   nodes: mergeNodes(
