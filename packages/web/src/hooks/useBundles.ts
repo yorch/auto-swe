@@ -60,8 +60,8 @@ export interface BundleInstallResult {
 
 export function usePreviewBundle() {
   return useMutation({
-    mutationFn: (url: string) =>
-      api.post<{ data: BundlePreview }>(`${BASE}/preview`, { url }).then((r) => r.data),
+    mutationFn: (source: { url: string } | { bundle: unknown }) =>
+      api.post<{ data: BundlePreview }>(`${BASE}/preview`, source).then((r) => r.data),
   });
 }
 
@@ -70,6 +70,19 @@ export function useInstallBundleFromUrl() {
   return useMutation({
     mutationFn: (body: { url: string; expectedContentHash: string; overwriteProtected: boolean }) =>
       api.post<{ data: BundleInstallResult }>(`${BASE}/install-from-url`, body).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+/** Install a bundle read from a local file, against the content hash the admin previewed. */
+export function useInstallBundleFromFile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      bundle: unknown;
+      expectedContentHash: string;
+      overwriteProtected: boolean;
+    }) => api.post<{ data: BundleInstallResult }>(`${BASE}/install`, body).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
