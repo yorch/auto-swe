@@ -2612,7 +2612,7 @@
       "WorkflowShellAudit"
     ]
   },
-  "reviewedCommit": "2bb67742beced5a7143bed5726e25dc0cd1b06ce",
+  "reviewedCommit": "ae54e6fb934202e5088595cf65721a5b85b7f331",
   "sourceHashes": {
     "docker-compose.app.yml": "96d57e466289e17048648c7e852e21c0ac24085526fae63c21e8c0ffe8b22cf6",
     "packages/cli/src/commands/skills.ts": "bdfa28470df98565ec676d471ffc23a7e7719aea79b6be638d0e2aedee7acbda",
@@ -2656,6 +2656,7 @@
     "packages/gateway/src/routes/securityEvents.ts": "9f9ce4a062d08831b237b2833d15671cc93b251125bed1cc32b5a10f93c09fad",
     "packages/gateway/src/routes/skillSources.ts": "092f0f27c461a122c281224a2bfbe790446b5ecb180f19d757255585d1f79819",
     "packages/gateway/src/routes/skills.ts": "efecc9b685bb0365f88d1043bd1c9c361c044a71d7110ba043d60af7cbbf7ecf",
+    "packages/gateway/src/routes/slack.ts": "0eeb0313df85ce819ab87597aa8c5b97957e5c8b182a89208475ad9265ca5b17",
     "packages/gateway/src/routes/systemConfig.ts": "48e5f9dad79dd4866723abecb2cce6ee833357931bb267712eddbe2ad3cef62e",
     "packages/gateway/src/routes/teams.ts": "5c9a6c556a47d570036fb4e74cbb913dc7cf64203c32945b0b5300e38197534e",
     "packages/gateway/src/routes/tickets.ts": "c11fb3e220af0bc8970e7a714a259dfa0a64ce50d9c6dc8aa5958f7b91d43f48",
