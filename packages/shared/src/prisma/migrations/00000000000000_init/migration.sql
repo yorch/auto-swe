@@ -558,6 +558,7 @@ CREATE TABLE "verifications" (
 CREATE TABLE "run_inputs" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "external_ticket_id" TEXT NOT NULL,
+    "ticket_is_synthetic" BOOLEAN NOT NULL DEFAULT false,
     "description" TEXT NOT NULL DEFAULT '',
     "request_payload" TEXT NOT NULL,
     "payload" JSONB,

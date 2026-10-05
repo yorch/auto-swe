@@ -1169,6 +1169,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             requestPayload: JSON.stringify(payload),
             templateId: template.id,
             templateVersion,
+            ticketIsSynthetic: externalTicketId === workRequestId,
           },
         },
         () =>

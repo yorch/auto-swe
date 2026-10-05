@@ -57,11 +57,18 @@ function readTicket(raw: unknown) {
 /**
  * Everything filed under one external ticket id, grouped.
  *
- * A group is built only from rows the caller may see: the requests (the same
- * rule as `GET /work-requests`), the runs (`buildWorkflowRunVisibilityFilter`),
- * and the ledger rows and PRs on repositories they can reach. Counts, cost and
- * title never include a row they could not list, and a group with no visible
- * request does not appear.
+ * Which tickets are listed, and in what order, is decided in the database: a
+ * `groupBy` over the requests the caller may see and the filters match, newest
+ * request first. The aggregates for a listed ticket then cover ALL of its visible
+ * requests, not only the ones a search or team filter matched.
+ *
+ * Every row is judged on its own. A request is visible to its requester, to
+ * anyone who can see one of its runs (`buildWorkflowRunVisibilityFilter`, the rule
+ * `GET /workflow-runs/requests` lists by), and to anyone who reaches a repository
+ * it has a ledger row on or targets. Runs use the run rule; ledger rows (cost) and
+ * pull requests count only on repositories the caller can reach. So a ticket
+ * worked by two teams, or an epic spanning both, reads differently to each, and a
+ * ticket with no visible request does not appear or count.
  */
 export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -77,98 +84,86 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
       const isAdmin = user.role === 'ADMIN';
       const reachable = reachableConnections(user, request.repoAccessGate);
       const runVisibility = buildWorkflowRunVisibilityFilter(user, request.repoAccessGate);
+      /** A repository predicate that a non-ADMIN also has to reach, in ONE clause. */
+      const reachableAnd = (repo: Prisma.ConnectionWhereInput): Prisma.ConnectionWhereInput =>
+        isAdmin ? repo : { AND: [reachable, repo] };
 
-      const requestWhere: Prisma.RunInputWhereInput = {
-        AND: [
-          isAdmin ? {} : { activeWorkflows: { some: { repository: reachable } } },
-          ...(scope === 'MINE' ? [{ requestedById: user.sub }] : []),
-          ...(teamId
-            ? [
-                {
-                  activeWorkflows: {
-                    some: {
-                      repository: { OR: [{ teamId }, { shares: { some: { teamId } } }] },
-                    },
-                  },
-                },
-              ]
-            : []),
-          ...(search
-            ? [
-                {
-                  OR: [
-                    { externalTicketId: { contains: search, mode: 'insensitive' as const } },
-                    { description: { contains: search, mode: 'insensitive' as const } },
-                  ],
-                },
-              ]
-            : []),
-          // Agent runs, channel tasks and the channel assistant file their own
-          // synthetic ids; they are not tickets.
-          ...(includeAutomated
-            ? []
-            : [
-                {
-                  NOT: {
-                    workflowRuns: {
-                      some: {
-                        OR: [
-                          { template: { origin: AGENT_RUN_TEMPLATE_ORIGIN } },
-                          {
-                            template: {
-                              name: {
-                                in: [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME],
-                              },
-                            },
-                          },
-                          { channelId: { not: null } },
-                        ],
-                      },
-                    },
-                  },
-                },
-              ]),
-        ],
-      };
-
-      const [requests, runActivity] = await Promise.all([
-        fastify.prisma.runInput.findMany({
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          select: { createdAt: true, externalTicketId: true, id: true },
-          where: requestWhere,
-        }),
-        fastify.prisma.workflowRun.groupBy({
-          _max: { startedAt: true },
-          by: ['workRequestId'],
-          where: { AND: [runVisibility, { workRequest: requestWhere }] },
-        }),
-      ]);
-      const lastRun = new Map(runActivity.map((row) => [row.workRequestId, row._max.startedAt]));
-
-      // A template launch with no ticket of its own files the work request's own
-      // uuid as the ticket id: a correlation key, not a ticket.
-      const groups = new Map<string, { ids: string[]; lastActivityAt: Date }>();
-      for (const row of requests) {
-        if (!includeAutomated && row.externalTicketId === row.id) {
-          continue;
-        }
-        const at = new Date(Math.max(row.createdAt.getTime(), lastRun.get(row.id)?.getTime() ?? 0));
-        const group = groups.get(row.externalTicketId);
-        if (group) {
-          group.ids.push(row.id);
-          if (at > group.lastActivityAt) {
-            group.lastActivityAt = at;
-          }
-        } else {
-          groups.set(row.externalTicketId, { ids: [row.id], lastActivityAt: at });
-        }
+      const visibleRequests: Prisma.RunInputWhereInput = isAdmin
+        ? {}
+        : {
+            OR: [
+              { requestedById: user.sub },
+              { workflowRuns: { some: runVisibility } },
+              { activeWorkflows: { some: { repository: reachable } } },
+              { connection: reachable },
+            ],
+          };
+      const filters: Prisma.RunInputWhereInput[] = [visibleRequests];
+      if (scope === 'MINE') {
+        filters.push({ requestedById: user.sub });
       }
-      const ordered = [...groups.entries()].sort(
-        ([ticketA, a], [ticketB, b]) =>
-          b.lastActivityAt.getTime() - a.lastActivityAt.getTime() || ticketA.localeCompare(ticketB)
-      );
-      const page = ordered.slice(offset, offset + limit);
-      const requestIds = page.flatMap(([, group]) => group.ids);
+      if (teamId) {
+        const inTeam = { OR: [{ teamId }, { shares: { some: { teamId } } }] };
+        filters.push({
+          OR: [
+            { activeWorkflows: { some: { repository: reachableAnd(inTeam) } } },
+            { connection: reachableAnd(inTeam) },
+            { workflowRuns: { some: { AND: [runVisibility, { connection: inTeam }] } } },
+          ],
+        });
+      }
+      if (search) {
+        filters.push({
+          OR: [
+            { externalTicketId: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } },
+          ],
+        });
+      }
+      // Agent runs, channel tasks and the channel assistant file their own
+      // synthetic ids, and a launch that named no ticket files the request's own
+      // id: none of those is a ticket.
+      if (!includeAutomated) {
+        filters.push({
+          NOT: {
+            workflowRuns: {
+              some: {
+                OR: [
+                  { template: { origin: AGENT_RUN_TEMPLATE_ORIGIN } },
+                  {
+                    template: {
+                      name: { in: [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME] },
+                    },
+                  },
+                  { channelId: { not: null } },
+                ],
+              },
+            },
+          },
+          ticketIsSynthetic: false,
+        });
+      }
+      const where: Prisma.RunInputWhereInput = { AND: filters };
+
+      const [page, everyTicket] = await Promise.all([
+        fastify.prisma.runInput.groupBy({
+          _max: { createdAt: true },
+          by: ['externalTicketId'],
+          orderBy: [{ _max: { createdAt: 'desc' } }, { externalTicketId: 'asc' }],
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.runInput.groupBy({ by: ['externalTicketId'], where }),
+      ]);
+      const tickets = page.map((row) => row.externalTicketId);
+
+      const requests = await fastify.prisma.runInput.findMany({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { externalTicketId: true, id: true },
+        where: { AND: [visibleRequests, { externalTicketId: { in: tickets } }] },
+      });
+      const requestIds = requests.map((row) => row.id);
 
       const [runs, ledgers, pullRequests, snapshots] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
@@ -206,30 +201,32 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       ]);
 
-      const data: TicketGroup[] = page.map(([ticketId, group]) => {
-        const ids = new Set(group.ids);
-        const groupRuns = runs.filter((run) => run.workRequestId && ids.has(run.workRequestId));
+      const data: TicketGroup[] = page.map((row) => {
+        const ticketId = row.externalTicketId;
+        const ids = requests.filter((r) => r.externalTicketId === ticketId).map((r) => r.id);
+        const own = new Set(ids);
+        const groupRuns = runs.filter((run) => run.workRequestId && own.has(run.workRequestId));
         const runCounts: Partial<Record<WorkflowRunStatus, number>> = {};
         for (const run of groupRuns) {
           const status = run.status as WorkflowRunStatus;
           runCounts[status] = (runCounts[status] ?? 0) + 1;
         }
         // The newest visible request that carries a tracker answer.
-        const snapshot = group.ids
+        const snapshot = ids
           .map((id) => snapshots.find((item) => item.workRequestId === id))
           .find((item) => item?.rawTicketData != null);
         const ticket = readTicket(snapshot?.rawTicketData);
         return {
           costUsd: ledgers
-            .filter((ledger) => ledger.workRequestId && ids.has(ledger.workRequestId))
+            .filter((ledger) => ledger.workRequestId && own.has(ledger.workRequestId))
             .reduce((sum, ledger) => sum + ledger.costUsdAccrued, 0),
-          lastActivityAt: group.lastActivityAt.toISOString(),
+          lastActivityAt: (row._max.createdAt ?? new Date(0)).toISOString(),
           latestRun: groupRuns[0]
             ? { id: groupRuns[0].id, status: groupRuns[0].status as WorkflowRunStatus }
             : null,
-          latestWorkRequestId: group.ids[0] as string,
+          latestWorkRequestId: ids[0] as string,
           pullRequests: pullRequests
-            .filter((pr) => pr.workflow?.workRequestId && ids.has(pr.workflow.workRequestId))
+            .filter((pr) => pr.workflow?.workRequestId && own.has(pr.workflow.workRequestId))
             .map((pr) => ({
               id: pr.id,
               isDraft: pr.isDraft,
@@ -244,7 +241,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
               status: pr.status as PullRequestState,
               url: pr.repository ? pullRequestUrl(pr.repository, pr.prNumber) : null,
             })),
-          requestCount: group.ids.length,
+          requestCount: ids.length,
           runCounts,
           status: ticket.status,
           ticketId,
@@ -252,7 +249,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
           url: ticket.url,
         };
       });
-      return { data, meta: { limit, offset, total: ordered.length } };
+      return { data, meta: { limit, offset, total: everyTicket.length } };
     }
   );
 };

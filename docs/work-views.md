@@ -89,8 +89,11 @@ counts the same filtered set.
 
 ## 3. `GET /api/v1/tickets`
 
-Groups everything filed under one `externalTicketId`, ordered by last activity (the newest of a
-request's creation and its runs' start). Paginated over groups.
+Groups everything filed under one `externalTicketId`. The grouping, the ordering and the paging are
+done in the database (`groupBy` over the matching requests), so a call reads one page of groups, not
+every request. Groups are ordered by the creation time of their newest matching request, newest
+first, then by ticket id; `meta.total` is the number of groups. Each page's aggregates are then read
+for that page's tickets only.
 
 | Parameter | Values | Default |
 |---|---|---|
@@ -98,27 +101,37 @@ request's creation and its runs' start). Paginated over groups.
 | `search` | substring of the ticket id or the request description | none |
 | `scope`, `teamId` | as for pull requests | `MINE` |
 
+`search`, `scope` and `teamId` choose **which tickets are listed**. The figures for a listed ticket
+cover all of its visible requests, not only the ones the filter matched, so searching for a request
+does not shrink its ticket's cost or run counts.
+
 A group carries the ticket id, `title`, `status` and `url`, `requestCount`, `runCounts` by run
 status, the `latestRun`, the `pullRequests` (repository, number, state, draft, link), the summed
-`costUsd`, `latestWorkRequestId` and `lastActivityAt`.
+`costUsd`, `latestWorkRequestId` and `lastActivityAt` (the creation time of the group's newest
+matching request; a later run of an old request does not move it).
 
 **Automated work is hidden by default.** The ids these launches file are correlation keys, not
 tickets, so unless `includeAutomated=true` the list leaves out:
 
 - requests with an agent run (a run of a template whose origin is the agent-run origin);
 - requests with a Channel Assistant or Channel Task run, or any run in a Slack channel;
-- a template launch whose ticket id is the request's own id (the fallback when a launch names none).
+- a template launch that named no ticket and filed the request's own id (`RunInput.ticketIsSynthetic`,
+  set at the two launch routes that fall back to it).
 
-**Visibility is per row.** A group is built only from rows the caller may see:
+**Visibility is per row.** A request is in scope when the caller requested it, when the caller can
+see one of its runs (`buildWorkflowRunVisibilityFilter`, the rule `GET /workflow-runs/requests`
+lists by), or when the caller reaches a repository it has a ledger row on or targets. Within a
+group:
 
-- the requests: an ADMIN's, or those with a ledger row on a repository the caller can reach — the
-  rule `GET /work-requests` applies;
-- the runs, through `buildWorkflowRunVisibilityFilter`;
-- the ledger rows (for cost) and the pull requests, on reachable repositories.
+- runs are counted through the run rule;
+- ledger rows (cost) and pull requests count only on repositories the caller can reach;
+- an ADMIN sees everything.
 
-Counts, cost and the tracker title come from those rows alone, and a group with no visible request
-does not appear — nor does it count toward `meta.total`. A ticket worked by two teams therefore
-reads differently to each of them.
+The cost and PRs of a cross-repo epic therefore split by team: a member of one repository's team
+sees that repository's child, not the epic's own ledger row, not another repository's child. A
+`teamId` filter applies to the same rows, and only to repositories the caller can reach, so it can
+never reveal that an epic touches a team the caller cannot see. A ticket with no visible request does
+not appear or count toward `meta.total`.
 
 **Tracker text.** `title` and `status` are the tracker's answer when the newest visible request that
 has one was submitted (`ContextSnapshot.rawTicketData`). They are untrusted text, capped, and
@@ -159,10 +172,12 @@ http(s) address.
   event corrects it. A merge is still recorded from either state.
 - A ticket's title, status and link are a snapshot from submit time, and exist only when a tracker
   is configured; they do not follow later edits in the tracker.
-- Tickets are grouped over every visible request matching the filters before they are paged, so a
-  deployment with a very large request history pays for that on each read.
+- `meta.total` for tickets is the number of groups, which the database counts by listing them; a
+  deployment with a very large number of distinct tickets pays for that on each read.
 - A launch that names its own ticket label is indistinguishable from a real ticket and is not
   treated as automated.
-- A request visible only because its requester launched it, with no ledger row on a repository the
-  caller reaches, is not listed under Tickets; `GET /work-requests` applies the same rule.
+- A requester who reaches none of a request's repositories sees the ticket and its runs but not its
+  cost or pull requests, which are judged by repository.
+- A ticket whose requests are all visible only through a team-owned template is listed too, as in
+  `GET /workflow-runs/requests`.
 - The list APIs are not exposed through the CLI or the MCP endpoint.
