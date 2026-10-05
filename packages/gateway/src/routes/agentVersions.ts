@@ -139,10 +139,15 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
       // A skill deactivated since then is not injected into the agent; say so rather than refuse.
       const inactiveSkills =
         source.skillRefs.length > 0
-          ? await fastify.prisma.skill.findMany({
-              select: { name: true },
-              where: { id: { in: source.skillRefs.map((r) => r.skillId) }, isActive: false },
-            })
+          ? await runUnscoped(
+              'admin checks the skills one agent version already references, at any scope',
+              ['Skill'],
+              () =>
+                fastify.prisma.skill.findMany({
+                  select: { name: true },
+                  where: { id: { in: source.skillRefs.map((r) => r.skillId) }, isActive: false },
+                })
+            )
           : [];
       const { agent, catalogWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
