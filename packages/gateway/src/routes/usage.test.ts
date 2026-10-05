@@ -215,6 +215,63 @@ describe('usageRoutes GET /usage', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('serves a custom range of whole UTC days, with an equal-length previous period', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/usage?since=2026-01-10&until=2026-01-16',
+    });
+    expect(res.statusCode).toBe(200);
+    const { daily, since, until, windowDays } = res.json().data;
+    expect(windowDays).toBe(7);
+    expect(since).toBe('2026-01-10T00:00:00.000Z');
+    expect(until).toBe('2026-01-17T00:00:00.000Z');
+    expect(daily).toHaveLength(7);
+    const previous = prisma.agentTrace.aggregate.mock.calls
+      .map(([a]) => a.where.createdAt)
+      .find((c) => c?.lt?.toISOString() === '2026-01-10T00:00:00.000Z');
+    expect(previous.gte.toISOString()).toBe('2026-01-03T00:00:00.000Z');
+  });
+
+  it('buckets a custom range over 90 days by week, keeping the query count bounded', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/usage?since=2025-10-01&until=2026-06-30',
+    });
+    expect(res.statusCode).toBe(200);
+    const { bucketDays, daily, windowDays } = res.json().data;
+    expect(windowDays).toBe(273);
+    expect(bucketDays).toBe(7);
+    expect(daily).toHaveLength(39);
+    expect(daily[0].date).toBe('2025-10-01');
+    expect(daily[1].date).toBe('2025-10-08');
+    const bucketCalls = prisma.agentTrace.aggregate.mock.calls.filter(
+      ([a]) =>
+        a.where.createdAt?.lt &&
+        a.where.createdAt.lt.getTime() - a.where.createdAt.gte.getTime() <= 7 * DAY_MS
+    );
+    expect(bucketCalls.length).toBeLessThanOrEqual(53);
+  });
+
+  it.each([
+    ['only since', 'since=2026-01-10'],
+    ['until before since', 'since=2026-01-10&until=2026-01-09'],
+    ['not a date', 'since=2026-13-40&until=2026-13-41'],
+    ['a future end', 'since=2026-01-10&until=2999-01-01'],
+    ['more than 366 days', 'since=2024-01-01&until=2025-06-01'],
+  ])('rejects a custom range with %s', async (_label, qs) => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/usage?${qs}`,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('bounds every query by the same whole-UTC-day window the bars cover', async () => {
     const { app, prisma } = await buildApp();
     const res = await app.inject({

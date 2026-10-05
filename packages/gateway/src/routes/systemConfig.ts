@@ -53,8 +53,8 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 /// Also:
 ///   POST /api/v1/platform/config/github/test          — live connection test (optional unsaved draft body)
 ///   POST /api/v1/platform/config/slack/test           — live connection test (optional unsaved draft body)
-///   POST /api/v1/platform/config/issue-tracker/test   — fetch a sample ticket
-///   POST /api/v1/platform/config/knowledge-base/test  — knowledge base connectivity test
+///   POST /api/v1/platform/config/issue-tracker/test   — fetch a sample ticket (optional unsaved draft body)
+///   POST /api/v1/platform/config/knowledge-base/test  — knowledge base connectivity test (optional unsaved draft body)
 ///   GET  /api/v1/platform/config/audit-log            — config change history
 ///
 /// All routes require platform ADMIN role.
@@ -234,8 +234,31 @@ const IssueTrackerPutBody = z.object({
   webhookTriggerStatus: z.string().max(200).nullable().optional(),
 });
 
+/// Unsaved tracker form values. A blank or omitted token means "use the stored one", which the
+/// service refuses to send to a different provider or base URL than the one it was saved for.
 const IssueTrackerTestBody = z.object({
+  allowPrivateNetwork: z.boolean().optional(),
+  apiToken: z.string().min(1).max(500).optional(),
+  baseUrl: z.string().url().max(500).nullable().optional(),
+  email: z.string().max(320).nullable().optional(),
+  instanceType: z.enum(['cloud', 'server', 'datacenter']).nullable().optional(),
+  provider: z.enum(['jira', 'linear', 'github']).nullable().optional(),
   ticketId: z.string().min(1).max(200),
+});
+
+const KnowledgeBaseTestBody = z.object({
+  allowPrivateNetwork: z.boolean().optional(),
+  apiToken: z.string().min(1).max(500).optional(),
+  baseUrl: z.string().url().max(500).nullable().optional(),
+  email: z.string().max(320).nullable().optional(),
+  enabled: z.boolean().optional(),
+  provider: z.enum(['confluence', 'notion']).nullable().optional(),
+  spaces: z.array(z.string().min(1).max(200)).max(20).optional(),
+});
+
+const FigmaTestBody = z.object({
+  apiToken: z.string().min(1).max(500).optional(),
+  enabled: z.boolean().optional(),
 });
 
 const KnowledgeBasePutBody = z.object({
@@ -402,7 +425,10 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.post(
     '/config/issue-tracker/test',
     { schema: { body: IssueTrackerTestBody, response: { 200: z.any() } } },
-    async (req, reply) => reply.send(await testIssueTrackerConnection(req.body.ticketId))
+    async (req, reply) => {
+      const { ticketId, ...draft } = req.body;
+      return reply.send(await testIssueTrackerConnection(ticketId, draft));
+    }
   );
 
   f.post(
@@ -462,8 +488,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.post(
     '/config/knowledge-base/test',
-    { schema: { response: { 200: z.any() } } },
-    async (_req, reply) => reply.send(await testKnowledgeBaseConnection())
+    { schema: { body: KnowledgeBaseTestBody.optional(), response: { 200: z.any() } } },
+    async (req, reply) => reply.send(await testKnowledgeBaseConnection(req.body ?? {}))
   );
 
   // ── Figma (design source) ────────────────────────────────────────────────────
@@ -482,8 +508,10 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     }
   );
 
-  f.post('/config/figma/test', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await testFigmaConnection())
+  f.post(
+    '/config/figma/test',
+    { schema: { body: FigmaTestBody.optional(), response: { 200: z.any() } } },
+    async (req, reply) => reply.send(await testFigmaConnection(req.body ?? {}))
   );
 
   // ── Config audit log ─────────────────────────────────────────────────────────

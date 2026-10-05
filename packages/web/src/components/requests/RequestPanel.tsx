@@ -5,9 +5,7 @@ import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { UNSAFE_PortalProvider } from 'react-aria';
 import { createPortal } from 'react-dom';
-import { HumanStepCard } from '@/components/approvals/HumanStepCard';
-import { FailureCard } from '@/components/runs/FailureCard';
-import { RunOutcomeCard } from '@/components/runs/RunOutcomeCard';
+import { RunSummary } from '@/components/runs/RunSummary';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -292,53 +290,13 @@ function AttemptContent({
         label="pending responses"
         onRetry={() => void approvalQuery.refetch()}
       />
-      {pending.length > 0 && (
-        <section className="space-y-3">
-          <h3 className="font-semibold">Needs a response</h3>
-          {pending.map((step) => (
-            <HumanStepCard key={step.id} showRunLink={false} step={step} />
-          ))}
-        </section>
-      )}
-      {answered.length > 0 && (
-        <section className="space-y-3">
-          <h3 className="font-semibold">Responses</h3>
-          {answered.map((step) => (
-            <HumanStepCard key={step.id} showRunLink={false} step={step} />
-          ))}
-        </section>
-      )}
-      {failedStep ? (
-        <FailureCard step={failedStep} />
-      ) : (
-        (run.status === 'FAILED' || run.status === 'TIMED_OUT') && (
-          <Alert>
-            The attempt {run.status === 'TIMED_OUT' ? 'timed out' : 'failed'}. Open the technical
-            details for more information.
-          </Alert>
-        )
-      )}
-      {run.status === 'SUCCESS' && (
-        <Alert variant="success">
-          Execution finished. Review the output before accepting the work.
-        </Alert>
-      )}
-      <RunOutcomeCard
-        isAgentRun={run.isAgentRun}
-        result={run.result}
-        templateName={run.templateName}
+      <RunSummary
+        answeredSteps={answered}
+        failedStep={failedStep}
+        pendingSteps={pending}
+        run={run}
+        variant="compact"
       />
-      {run.result != null && (
-        <details className="rounded-lg border border-ink-400 p-4">
-          <summary className="cursor-pointer text-sm font-semibold">Recorded output</summary>
-          <pre className="mt-3 whitespace-pre-wrap break-words text-xs text-paper-400">
-            {typeof run.result === 'string' ? run.result : JSON.stringify(run.result, null, 2)}
-          </pre>
-        </details>
-      )}
-      {run.status === 'SUCCESS' && run.result == null && (
-        <p className="text-sm text-paper-400">No result was recorded for this attempt.</p>
-      )}
       {canRetry && !retryOpen && (
         <Button onClick={() => setRetryOpen(true)}>Retry with instructions</Button>
       )}

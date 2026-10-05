@@ -933,13 +933,15 @@ export interface EvalScorerTrend {
   n: number;
   /** Mean normalized score over the whole window. */
   mean: number;
-  /** One entry per UTC day, oldest first; `mean` is null on a day with no signal. */
+  /** One entry per bucket (`bucketDays` long), oldest first; `mean` is null when it has no signal. */
   daily: Array<{ date: string; n: number; mean: number | null }>;
 }
 
 export interface EvalTrendsDto {
   /** The dimension each scorer's series is split by, when the request set one. */
   by?: 'judgeModel' | 'agentKey';
+  /** Days each `daily` entry covers: 1, or 7 for a range over 90 days. */
+  bucketDays: 1 | 7;
   windowDays: number;
   since: string;
   until: string;

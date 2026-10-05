@@ -21,7 +21,7 @@ vi.mock('@/hooks/useTeams', () => ({
   useTeams: () => ({ data: [{ id: 'team-1', name: 'Payments' }] }),
 }));
 
-const { AddSourceModal, unselectableReason } = await import('./AddSourceModal');
+const { AddSourceModal, parseRepositoryUrl, unselectableReason } = await import('./AddSourceModal');
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
@@ -300,5 +300,64 @@ describe('AddSourceModal', () => {
     await waitFor(() => expect(previewFn).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByLabelText('Full text of good')).toBeNull());
     expect(box('good').disabled).toBe(true);
+  });
+});
+
+describe('parseRepositoryUrl', () => {
+  it('reads tree and blob links, with folder and ref', () => {
+    expect(parseRepositoryUrl('https://github.com/acme/pack/tree/v2/skills/x')).toEqual({
+      host: 'github.com',
+      owner: 'acme',
+      path: 'skills/x',
+      ref: 'v2',
+      repo: 'pack',
+    });
+    expect(parseRepositoryUrl('https://ghe.corp/acme/pack/blob/main/skills/x/SKILL.md')).toEqual({
+      host: 'ghe.corp',
+      owner: 'acme',
+      path: 'skills/x',
+      ref: 'main',
+      repo: 'pack',
+    });
+    expect(parseRepositoryUrl('https://github.com/acme/pack.git')?.repo).toBe('pack');
+    expect(parseRepositoryUrl('not a url')).toBeNull();
+    expect(parseRepositoryUrl('https://github.com/acme')).toBeNull();
+  });
+});
+
+describe('AddSourceModal link paste', () => {
+  const value = (re: RegExp) => (screen.getByLabelText(re) as HTMLInputElement).value;
+
+  it('fills the fields from a pasted folder link', () => {
+    render(<AddSourceModal onClose={() => {}} open />);
+    fireEvent.paste(screen.getByLabelText('GitHub link'), {
+      clipboardData: { getData: () => 'https://github.com/acme/pack/tree/dev/skills' },
+    });
+    expect(value(/^Owner/)).toBe('acme');
+    expect(value(/^Repository/)).toBe('pack');
+    expect(value(/^Ref/)).toBe('dev');
+    expect(value(/^Path/)).toBe('skills');
+  });
+
+  it('does not overwrite typed fields while a link is being typed', () => {
+    render(<AddSourceModal onClose={() => {}} open />);
+    fireEvent.change(screen.getByLabelText(/^Ref/), { target: { value: 'release' } });
+    fireEvent.change(screen.getByLabelText('GitHub link'), {
+      target: { value: 'https://github.com/acme/pack' },
+    });
+    expect(value(/^Ref/)).toBe('release');
+    expect(value(/^Owner/)).toBe('');
+  });
+
+  it('fills the fields from a typed link when the box loses focus', () => {
+    render(<AddSourceModal onClose={() => {}} open />);
+    const box = screen.getByLabelText('GitHub link');
+    fireEvent.change(box, { target: { value: 'https://github.com/acme/pack' } });
+    fireEvent.blur(box);
+    expect(value(/^Owner/)).toBe('acme');
+  });
+
+  it('treats a link with a malformed percent escape as not a link', () => {
+    expect(parseRepositoryUrl('https://github.com/acme/100%/tree/main')).toBeNull();
   });
 });

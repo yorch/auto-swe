@@ -305,6 +305,40 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       .regex(/^[A-Za-z0-9_.-]+$/, 'invalid key'),
   });
 
+  // Any team member may read the agent keys an override can name — key, display name and model
+  // only, never a prompt, tool list or connection. The full library stays team-admin / ADMIN.
+  const teamMember = requireAuth({
+    requiredRole: 'ENGINEER',
+    requiredTeamRole: 'ENGINEER',
+    teamIdParam: 'id',
+  });
+
+  app.get(
+    '/:id/agent-library/options',
+    { onRequest: teamMember, schema: { params: TeamParams } },
+    async (request) => {
+      const rows = await fastify.prisma.agent.findMany({
+        orderBy: [{ key: 'asc' }, { version: 'desc' }],
+        select: { key: true, modelSpec: true, name: true, scope: true },
+        where: {
+          isActive: true,
+          OR: [{ scope: 'GLOBAL' }, { scope: 'TEAM', teamId: request.params.id }],
+        },
+      });
+      // One entry per key; a team's own agent shadows the GLOBAL one it overrides.
+      const byKey = new Map<string, (typeof rows)[number]>();
+      for (const r of rows) {
+        const seen = byKey.get(r.key);
+        if (!seen || (seen.scope === 'GLOBAL' && r.scope === 'TEAM')) {
+          byKey.set(r.key, r);
+        }
+      }
+      return {
+        data: [...byKey.values()].map(({ key, modelSpec, name }) => ({ key, modelSpec, name })),
+      };
+    }
+  );
+
   app.get(
     '/:id/agent-library',
     { onRequest: teamAdmin, schema: { params: TeamParams } },

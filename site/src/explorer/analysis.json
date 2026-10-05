@@ -3879,10 +3879,10 @@
       "title": "Suite health: stale rate and screened counts only"
     },
     {
-      "anchor": "const TrendsQuery = z.object({",
+      "anchor": "const TrendsQuery = refineCustomRange(",
       "before": 0,
       "id": "trendQuery",
-      "lines": 16,
+      "lines": 17,
       "path": "packages/gateway/src/routes/evals.ts",
       "title": "Trend breakdown and template filter"
     },

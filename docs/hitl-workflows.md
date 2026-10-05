@@ -316,9 +316,16 @@ An `APPROVAL` response may carry an optional `comment` (up to 2000 characters):
 { "action": "reject", "comment": "The migration drops a column the billing job still reads." }
 ```
 The comment is stored with the response, written to the audit log, and shown to the requester on the
-request panel. It is not part of the signal the workflow receives. A comment on any other kind
+request panel and on the full run page, beside who decided. It is not part of the signal the workflow receives. A comment on any other kind
 returns `400` with `INVALID_VALUE`. The web dialog requires a reason on reject and leaves a comment
 on approve optional; the API itself accepts a reject without one.
+
+**Slack message.** The worker records where it posted a step's announcement
+(`WorkflowHumanStep.slackMessage`). When the step resolves, from the web or from a Slack button, the
+gateway edits that message to show the decision, who made it, and the approver's comment, and drops
+the buttons. Comment text is escaped for Slack mrkdwn and clipped to 500 characters. A multi-approver
+step keeps its buttons until the last required approval. The edit is best-effort: a Slack failure
+never fails the response.
 
 Valid actions per kind:
 
@@ -342,6 +349,10 @@ lifecycle changes and delegated configuration grants are managed under `/govern/
 
 ## Limitations
 
+- **Slack buttons carry no comment.** A response given from a Slack button records the decision
+  only; a note needs the web dialog. Only the message the worker posted is edited, so a step whose
+  announcement failed to post, or that was announced before the message was recorded, shows nothing
+  in Slack.
 - **`humanInput` supports four field types** — `text`, `number`, `boolean`, `select`. There is no
   file upload, no multi-select, and no cross-field validation beyond what the spec declares.
 - **`humanDecision` takes 2–10 options.** Wider branching needs a `cond` chain downstream.

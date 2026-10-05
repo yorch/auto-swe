@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/Select';
 import {
   type KnowledgeBaseConfigInput,
   type KnowledgeBaseProvider,
+  type KnowledgeBaseTestDraft,
   testKnowledgeBaseConnection,
   useKnowledgeBaseConfig,
   useUpdateKnowledgeBaseConfig,
@@ -58,7 +59,6 @@ export function KnowledgeBaseTab() {
   const [apiToken, setApiToken] = useState('');
   const [spacesRaw, setSpacesRaw] = useState('');
   const [maxPages, setMaxPages] = usePrefilledField(data?.maxPages);
-  const [testQuery, setTestQuery] = useState('');
 
   const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
 
@@ -106,7 +106,37 @@ export function KnowledgeBaseTab() {
   };
 
   const handleTest = () => {
-    runTest(() => testKnowledgeBaseConnection(testQuery.trim()));
+    // Send what is on screen so the result describes what Save would store. A blank token means
+    // the stored one; unchanged fields are left out.
+    const draft: KnowledgeBaseTestDraft = {};
+    if (provider) {
+      draft.provider = provider === 'disabled' ? null : provider;
+    }
+    if (enabled !== undefined) {
+      draft.enabled = enabled;
+    }
+    const baseUrlDraft = clearableField(baseUrl, data?.baseUrl);
+    if (baseUrlDraft !== undefined) {
+      draft.baseUrl = baseUrlDraft;
+    }
+    const emailDraft = clearableField(email, data?.email);
+    if (emailDraft !== undefined) {
+      draft.email = emailDraft;
+    }
+    if (apiToken) {
+      draft.apiToken = apiToken;
+    }
+    if (spacesRaw) {
+      draft.spaces = spacesRaw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    if (allowPrivateNetwork !== undefined) {
+      draft.allowPrivateNetwork = allowPrivateNetwork;
+    }
+    const unsaved = Object.keys(draft).length > 0;
+    runTest(async () => ({ ...(await testKnowledgeBaseConnection(draft)), unsaved }));
   };
 
   if (isLoading || isError) {
@@ -270,29 +300,18 @@ export function KnowledgeBaseTab() {
           <CardTitle eyebrow="Knowledge base">Test connection</CardTitle>
         </CardHeader>
         <p className="mb-4 text-xs text-paper-500">
-          Runs a search query through the saved configuration to verify connectivity and access.
+          Runs a search through the configuration on screen, including values you have not saved
+          yet, to verify connectivity and access.
         </p>
-        <div className="flex items-end gap-3">
-          <div className="flex-1">
-            <Input
-              compact
-              id="kb-test-query"
-              label="Search query"
-              onChange={(e) => setTestQuery(e.target.value)}
-              placeholder="deployment runbook"
-              value={testQuery}
-            />
-          </div>
-          <Button
-            disabled={testing || !testQuery.trim() || !data?.provider}
-            onClick={handleTest}
-            size="sm"
-            type="button"
-            variant="secondary"
-          >
-            {testing ? 'Testing…' : 'Test connection'}
-          </Button>
-        </div>
+        <Button
+          disabled={testing || !effectiveProvider || effectiveProvider === 'disabled'}
+          onClick={handleTest}
+          size="sm"
+          type="button"
+          variant="secondary"
+        >
+          {testing ? 'Testing…' : 'Test connection'}
+        </Button>
         <TestResultAlert result={testResult} />
       </Card>
 

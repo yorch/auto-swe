@@ -27,6 +27,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import {
+  customRangeFields,
+  refineCustomRange,
+  resolveCustomRange,
+  seriesBuckets,
+} from '../lib/dateWindow.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { paginationQuery } from '../lib/pagination.js';
@@ -110,20 +116,23 @@ const TREND_WINDOWS = [7, 30, 90] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Per-day aggregates in flight at once — see `mapLimited`. */
 const TREND_CONCURRENCY = 3;
-const TrendsQuery = z.object({
-  /** Split each scorer's series by this column of the result rows. */
-  by: z.enum(['judgeModel', 'agentKey']).optional(),
-  source: z.enum(EVAL_SIGNAL_SOURCES).optional(),
-  /** Only results of runs of this workflow template (offline harness rows have no run). */
-  templateId: z.string().uuid().optional(),
-  window: z.coerce
-    .number()
-    .int()
-    .refine((n) => (TREND_WINDOWS as readonly number[]).includes(n), {
-      message: `window must be one of ${TREND_WINDOWS.join(', ')}`,
-    })
-    .default(30),
-});
+const TrendsQuery = refineCustomRange(
+  z.object({
+    ...customRangeFields,
+    /** Split each scorer's series by this column of the result rows. */
+    by: z.enum(['judgeModel', 'agentKey']).optional(),
+    source: z.enum(EVAL_SIGNAL_SOURCES).optional(),
+    /** Only results of runs of this workflow template (offline harness rows have no run). */
+    templateId: z.string().uuid().optional(),
+    window: z.coerce
+      .number()
+      .int()
+      .refine((n) => (TREND_WINDOWS as readonly number[]).includes(n), {
+        message: `window must be one of ${TREND_WINDOWS.join(', ')}`,
+      })
+      .default(30),
+  })
+);
 
 /** Start of the UTC day `ms` falls in. */
 function utcDayStart(ms: number): number {
@@ -324,24 +333,26 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── Per-scorer daily trend ──
   // Prisma cannot truncate to a day, so this is one bounded groupBy per UTC day
-  // (at most 90), a few at a time. Scorers are a small key space, and the
+  // (at most 90 days, or weekly above that: at most 53 queries), a few at a time. Scorers are a small key space, and the
   // window-wide figures are folded from the daily ones rather than re-scanned.
   app.get(
     '/evals/trends',
     { onRequest: adminOnly, schema: { querystring: TrendsQuery } },
     async (request) => {
-      const { by, source, templateId, window: windowDays } = request.query;
+      const { by, source, templateId } = request.query;
+      const custom = resolveCustomRange(request.query);
+      const windowDays = custom?.days ?? request.query.window;
       // Whole UTC days closed at the end of today, as the usage report does.
-      const until = utcDayStart(Date.now()) + DAY_MS;
-      const since = until - windowDays * DAY_MS;
-      const days = Array.from({ length: windowDays }, (_, i) => since + i * DAY_MS);
-      const perDay = await mapLimited(days, TREND_CONCURRENCY, (start) =>
+      const until = custom ? custom.end.getTime() : utcDayStart(Date.now()) + DAY_MS;
+      const since = custom ? custom.start.getTime() : until - windowDays * DAY_MS;
+      const { bucketDays, buckets } = seriesBuckets(since, windowDays);
+      const perDay = await mapLimited(buckets, TREND_CONCURRENCY, ({ end, start }) =>
         fastify.prisma.evalResult.groupBy({
           _avg: { value: true },
           _count: { _all: true },
           by: by ? ['scorer', by] : ['scorer'],
           where: {
-            createdAt: { gte: new Date(start), lt: new Date(start + DAY_MS) },
+            createdAt: { gte: new Date(start), lt: new Date(end) },
             ...(source ? { source } : {}),
             ...(templateId ? { run: { templateId } } : {}),
           },
@@ -386,7 +397,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         )
         .map((acc) => ({
           ...(by ? { breakdown: acc.breakdown } : {}),
-          daily: days.map((start, i) => {
+          daily: buckets.map(({ start }, i) => {
             const day = acc.daily.get(i);
             return {
               date: new Date(start).toISOString().slice(0, 10),
@@ -400,6 +411,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         }));
       const data: EvalTrendsDto = {
         ...(by ? { by } : {}),
+        bucketDays,
         scorers,
         since: new Date(since).toISOString(),
         until: new Date(until).toISOString(),

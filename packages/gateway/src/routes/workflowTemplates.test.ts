@@ -1872,6 +1872,35 @@ describe('GET /workflow-templates/analytics', () => {
   });
 });
 
+describe('GET /workflow-templates/analytics custom range', () => {
+  it('covers whole UTC days and rejects a malformed span', async () => {
+    const state: Parameters<typeof buildApp>[0] = { runs: [], templates: [], versions: new Map() };
+    const app = buildApp(state);
+    await app.ready();
+    const get = (qs: string) =>
+      app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: `/api/v1/workflow-templates/analytics?${qs}`,
+      });
+    const ok = await get('since=2026-01-10&until=2026-01-16');
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().data.daily.map((d: { date: string }) => d.date)).toEqual([
+      '2026-01-10',
+      '2026-01-11',
+      '2026-01-12',
+      '2026-01-13',
+      '2026-01-14',
+      '2026-01-15',
+      '2026-01-16',
+    ]);
+    expect((await get('since=2026-01-10')).statusCode).toBe(400);
+    expect((await get('since=2026-01-10&until=2026-01-01')).statusCode).toBe(400);
+    expect((await get('since=2024-01-01&until=2026-01-01')).statusCode).toBe(400);
+    await app.close();
+  });
+});
+
 describe('GET /workflow-templates/analytics trend', () => {
   it('reports the window before this one and a per-day series', async () => {
     const state: Parameters<typeof buildApp>[0] = { runs: [], templates: [], versions: new Map() };

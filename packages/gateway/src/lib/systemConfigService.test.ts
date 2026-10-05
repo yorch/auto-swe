@@ -49,6 +49,10 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 
 import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import {
+  KNOWLEDGE_BASE_FAILURE_MESSAGES,
+  KnowledgeBaseConnectionError,
+} from '@auto-swe/shared/lib/integrations/knowledgeBase';
+import {
   resolveFigmaConfig,
   resolveGitHubConfig,
   resolveIssueTrackerConfig,
@@ -1241,7 +1245,7 @@ describe('systemConfigService', () => {
         spaces: ['ENG'],
       } as never);
       mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
-        searchPages: vi.fn().mockResolvedValueOnce([]),
+        testConnection: vi.fn().mockResolvedValueOnce(undefined),
       } as never);
       const result = await testKnowledgeBaseConnection();
       expect(result.ok).toBe(true);
@@ -1257,11 +1261,38 @@ describe('systemConfigService', () => {
         spaces: [],
       } as never);
       mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
-        searchPages: vi.fn().mockRejectedValueOnce(new Error('403 forbidden')),
+        testConnection: vi
+          .fn()
+          .mockRejectedValueOnce(new KnowledgeBaseConnectionError('credentials')),
       } as never);
       const result = await testKnowledgeBaseConnection();
       expect(result.ok).toBe(false);
-      expect(result.detail).toBe('Connection failed: 403 forbidden');
+      expect(result.detail).toBe(
+        `Connection failed: ${KNOWLEDGE_BASE_FAILURE_MESSAGES.credentials}`
+      );
+    });
+
+    it('never repeats text from an unexpected provider error', async () => {
+      resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
+        apiToken: 'tok',
+        baseUrl: 'https://kb.example.com',
+        enabled: true,
+        provider: 'notion',
+        spaces: [],
+      } as never);
+      mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
+        testConnection: vi.fn().mockRejectedValueOnce(new Error('secret remote body')),
+      } as never);
+      const result = await testKnowledgeBaseConnection();
+      expect(result.ok).toBe(false);
+      expect(result.detail).not.toContain('secret remote body');
+    });
+
+    it('says to enter the token (not "again") when nothing is stored', async () => {
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce({ provider: null } as never);
+      const result = await testIssueTrackerConnection('X-1', { provider: 'jira' });
+      expect(result.ok).toBe(false);
+      expect(result.detail).toBe('Enter the API token to test this provider and URL.');
     });
   });
 
@@ -1297,6 +1328,104 @@ describe('systemConfigService', () => {
       const result = await testIssueTrackerConnection('PROJ-1');
       expect(result.ok).toBe(true);
       expect(result.detail).toBe('Fetched "Fix the thing" (status: In Progress) from jira.');
+    });
+  });
+
+  describe('connection tests with unsaved values', () => {
+    const storedJira = {
+      allowPrivateNetwork: false,
+      apiToken: 'stored-token',
+      baseUrl: 'https://acme.atlassian.net',
+      email: 'a@acme.test',
+      provider: 'jira',
+    };
+
+    it('tracker: tests typed values and sends the stored token to the stored host', async () => {
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(storedJira as never);
+      mockFetchTicket.mockResolvedValueOnce({ status: 'Open', title: 'T' } as never);
+      const result = await testIssueTrackerConnection('PROJ-1', { email: 'b@acme.test' });
+      expect(result.ok).toBe(true);
+      expect(mockFetchTicket.mock.calls.at(-1)?.[0]).toMatchObject({
+        apiToken: 'stored-token',
+        baseUrl: 'https://acme.atlassian.net',
+        email: 'b@acme.test',
+      });
+    });
+
+    it('tracker: a different typed base URL without a typed token never sees the stored one', async () => {
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(storedJira as never);
+      mockFetchTicket.mockClear();
+      const result = await testIssueTrackerConnection('PROJ-1', {
+        baseUrl: 'https://other.example.com',
+      });
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('Enter the API token again');
+      expect(mockFetchTicket).not.toHaveBeenCalled();
+    });
+
+    it('tracker: a typed internal URL is refused unless the form opts in', async () => {
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(storedJira as never);
+      mockFetchTicket.mockClear();
+      const result = await testIssueTrackerConnection('PROJ-1', {
+        apiToken: 'typed',
+        baseUrl: 'http://169.254.169.254',
+      });
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('Base URL refused');
+      expect(mockFetchTicket).not.toHaveBeenCalled();
+    });
+
+    it('tracker: switching provider needs the token typed too', async () => {
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(storedJira as never);
+      const result = await testIssueTrackerConnection('ENG-1', { provider: 'linear' });
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('Enter the API token again');
+    });
+
+    it('knowledge base: refuses to send the stored token to a different typed URL', async () => {
+      resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
+        apiToken: 'stored',
+        baseUrl: 'https://kb.example.com',
+        enabled: true,
+        provider: 'confluence',
+        spaces: [],
+      } as never);
+      mockCreateKnowledgeBaseProvider.mockClear();
+      const result = await testKnowledgeBaseConnection({ baseUrl: 'https://evil.example.com' });
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('Enter the API token again');
+      expect(mockCreateKnowledgeBaseProvider).not.toHaveBeenCalled();
+    });
+
+    it('knowledge base: tests a typed URL and token through the connector guard', async () => {
+      resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
+        apiToken: 'stored',
+        baseUrl: 'https://kb.example.com',
+        enabled: true,
+        provider: 'confluence',
+        spaces: [],
+      } as never);
+      mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
+        testConnection: vi.fn().mockResolvedValueOnce(undefined),
+      } as never);
+      const result = await testKnowledgeBaseConnection({
+        apiToken: 'typed',
+        baseUrl: 'https://new.example.com',
+      });
+      expect(result.ok).toBe(true);
+      expect(mockCreateKnowledgeBaseProvider.mock.calls.at(-1)?.[0]).toMatchObject({
+        apiToken: 'typed',
+        baseUrl: 'https://new.example.com',
+      });
+    });
+
+    it('figma: tests the typed token and the typed enabled flag', async () => {
+      resolveFigmaConfigMock.mockResolvedValueOnce({ apiToken: null, enabled: false } as never);
+      const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true });
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await testFigmaConnection({ apiToken: 'figd_typed', enabled: true });
+      expect(result.ok).toBe(true);
+      expect(fetchMock.mock.calls[0][1].headers).toEqual({ 'X-Figma-Token': 'figd_typed' });
     });
   });
 

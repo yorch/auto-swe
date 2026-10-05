@@ -7,6 +7,7 @@ vi.mock('../lib/mcpProbe.js', () => ({
   probeMcpServer: vi.fn(async () => ({ durationMs: 12, ok: true, toolCount: 3, toolNames: ['a'] })),
 }));
 
+import { _resetKeyCacheForTests, decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { probeMcpServer } from '../lib/mcpProbe.js';
 
 function newMockPrisma() {
@@ -41,7 +42,11 @@ const AUTH = { authorization: 'Bearer fake' };
 const TEAM = '11111111-1111-4111-8111-111111111111';
 const ID = '22222222-2222-4222-8222-222222222222';
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  process.env.CONFIG_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString('base64');
+  _resetKeyCacheForTests();
+});
 
 describe('mcpConnectionRoutes', () => {
   it('lists active mcp connections', async () => {
@@ -102,7 +107,9 @@ describe('mcpConnectionRoutes', () => {
       const res = await app.inject({ headers: AUTH, method: 'POST', url });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).data).toMatchObject({ ok: true, toolCount: 3 });
-      expect(probeMcpServer).toHaveBeenCalledWith('https://mcp.example.com/mcp', 4000);
+      expect(probeMcpServer).toHaveBeenCalledWith('https://mcp.example.com/mcp', 4000, undefined, {
+        bearerToken: undefined,
+      });
     });
 
     it('does not probe an address the SSRF guard refuses', async () => {
@@ -345,5 +352,241 @@ describe('mcpConnectionRoutes', () => {
     });
     expect(res.statusCode).toBe(400);
     await app.close();
+  });
+
+  describe('bearer token', () => {
+    const TOKEN = 'sk-mcp-secret-token-1234';
+    const BASE = '/api/v1/platform/mcp-connections';
+
+    /** A stored row as Prisma returns it: envelope columns present. */
+    function storedRow(over: Record<string, unknown> = {}) {
+      const enc = encryptSecret(TOKEN);
+      return {
+        apiKeyAuthTag: enc.authTag,
+        apiKeyCiphertext: enc.ciphertext,
+        apiKeyNonce: enc.nonce,
+        apiKeyVersion: enc.keyVersion,
+        config: { url: 'https://mcp.example.com/mcp' },
+        id: ID,
+        name: 'docs',
+        type: 'mcp',
+        ...over,
+      };
+    }
+
+    it('stores a created token encrypted, and returns only hasToken', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
+      mockPrisma.connection.create.mockImplementation(async ({ data }) => ({
+        id: ID,
+        name: 'docs',
+        type: 'mcp',
+        ...data,
+      }));
+      const res = await app.inject({
+        body: {
+          bearerToken: TOKEN,
+          name: 'docs',
+          teamId: TEAM,
+          url: 'https://mcp.example.com/mcp',
+        },
+        headers: AUTH,
+        method: 'POST',
+        url: BASE,
+      });
+      expect(res.statusCode).toBe(201);
+      const data = mockPrisma.connection.create.mock.calls[0]?.[0].data;
+      // Never in config, never plaintext in a column, and the envelope round-trips.
+      expect(JSON.stringify(data.config)).not.toContain(TOKEN);
+      expect(Buffer.from(data.apiKeyCiphertext).toString('utf8')).not.toContain(TOKEN);
+      expect(
+        decryptSecret({
+          authTag: data.apiKeyAuthTag,
+          ciphertext: data.apiKeyCiphertext,
+          keyVersion: data.apiKeyVersion,
+          nonce: data.apiKeyNonce,
+        })
+      ).toBe(TOKEN);
+      expect(res.payload).not.toContain(TOKEN);
+      expect(res.payload).not.toContain('apiKey');
+      expect(JSON.parse(res.payload).data.hasToken).toBe(true);
+      // The audit trail knows a token exists, not what it is.
+      const audit = JSON.stringify(mockPrisma.configAuditLog.create.mock.calls);
+      expect(audit).not.toContain(TOKEN);
+      expect(audit).toContain('"hasToken":true');
+      await app.close();
+    });
+
+    it('rejects a token that is not a clean header value', async () => {
+      const { app } = await buildApp();
+      for (const bad of ['has space', 'line\nbreak', '']) {
+        const res = await app.inject({
+          body: {
+            bearerToken: bad,
+            name: 'docs',
+            teamId: TEAM,
+            url: 'https://mcp.example.com/mcp',
+          },
+          headers: AUTH,
+          method: 'POST',
+          url: BASE,
+        });
+        expect(res.statusCode).toBe(400);
+        expect(res.payload).not.toContain(bad || 'zzzz-none');
+      }
+      await app.close();
+    });
+
+    it('never returns the token or its envelope when listing', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findMany.mockResolvedValue([storedRow(), { id: 'x', name: 'n' }]);
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: BASE });
+      expect(res.payload).not.toContain(TOKEN);
+      expect(res.payload).not.toContain('apiKey');
+      expect(JSON.parse(res.payload).data.map((r: { hasToken: boolean }) => r.hasToken)).toEqual([
+        true,
+        false,
+      ]);
+      await app.close();
+    });
+
+    it('keeps the stored token when an edit omits it', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(storedRow());
+      mockPrisma.connection.update.mockResolvedValue(storedRow({ name: 'renamed' }));
+      const res = await app.inject({
+        body: { name: 'renamed', url: 'https://mcp.example.com/mcp' },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `${BASE}/${ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+      const data = mockPrisma.connection.update.mock.calls[0]?.[0].data;
+      expect(Object.keys(data)).not.toContain('apiKeyCiphertext');
+      expect(JSON.parse(res.payload).data.hasToken).toBe(true);
+      await app.close();
+    });
+
+    it('replaces the token when an edit supplies one', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(storedRow());
+      mockPrisma.connection.update.mockResolvedValue(storedRow());
+      await app.inject({
+        body: {
+          bearerToken: 'sk-new-token-5678',
+          name: 'docs',
+          url: 'https://other.example.com/mcp',
+        },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `${BASE}/${ID}`,
+      });
+      const data = mockPrisma.connection.update.mock.calls[0]?.[0].data;
+      expect(
+        decryptSecret({
+          authTag: data.apiKeyAuthTag,
+          ciphertext: data.apiKeyCiphertext,
+          keyVersion: data.apiKeyVersion,
+          nonce: data.apiKeyNonce,
+        })
+      ).toBe('sk-new-token-5678');
+      const audit = JSON.stringify(mockPrisma.configAuditLog.create.mock.calls);
+      expect(audit).not.toContain('sk-new-token-5678');
+      expect(audit).not.toContain(TOKEN);
+      await app.close();
+    });
+
+    it('clears the stored token on request', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(storedRow());
+      mockPrisma.connection.update.mockResolvedValue(storedRow({ apiKeyCiphertext: null }));
+      const res = await app.inject({
+        body: { clearBearerToken: true, name: 'docs', url: 'https://mcp.example.com/mcp' },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `${BASE}/${ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(mockPrisma.connection.update.mock.calls[0]?.[0].data).toMatchObject({
+        apiKeyAuthTag: null,
+        apiKeyCiphertext: null,
+        apiKeyNonce: null,
+      });
+      expect(JSON.parse(res.payload).data.hasToken).toBe(false);
+      await app.close();
+    });
+
+    it('refuses a new token and a clear in the same request', async () => {
+      const { app } = await buildApp();
+      const res = await app.inject({
+        body: {
+          bearerToken: 'sk-abc',
+          clearBearerToken: true,
+          name: 'docs',
+          url: 'https://mcp.example.com/mcp',
+        },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `${BASE}/${ID}`,
+      });
+      expect(res.statusCode).toBe(400);
+      await app.close();
+    });
+
+    it('refuses to point a stored token at a different origin', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(storedRow());
+      const res = await app.inject({
+        body: { name: 'docs', url: 'https://attacker.example.net/mcp' },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `${BASE}/${ID}`,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('TOKEN_ORIGIN_CHANGE');
+      expect(mockPrisma.connection.update).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('allows a path change on the same origin to keep the token', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(storedRow());
+      mockPrisma.connection.update.mockResolvedValue(storedRow());
+      const res = await app.inject({
+        body: { name: 'docs', url: 'https://mcp.example.com/v2/mcp' },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `${BASE}/${ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+      await app.close();
+    });
+
+    it('hands the decrypted token to the probe, and nothing else carries it', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(storedRow());
+      const res = await app.inject({ headers: AUTH, method: 'POST', url: `${BASE}/${ID}/test` });
+      expect(probeMcpServer).toHaveBeenCalledWith(
+        'https://mcp.example.com/mcp',
+        15_000,
+        undefined,
+        {
+          bearerToken: TOKEN,
+        }
+      );
+      expect(res.payload).not.toContain(TOKEN);
+      await app.close();
+    });
+
+    it('reports an unreadable stored token without probing', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue(
+        storedRow({ apiKeyCiphertext: new Uint8Array(8) })
+      );
+      const res = await app.inject({ headers: AUTH, method: 'POST', url: `${BASE}/${ID}/test` });
+      expect(JSON.parse(res.payload).data.ok).toBe(false);
+      expect(probeMcpServer).not.toHaveBeenCalled();
+      await app.close();
+    });
   });
 });

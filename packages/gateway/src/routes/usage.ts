@@ -2,6 +2,12 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import {
+  customRangeFields,
+  refineCustomRange,
+  resolveCustomRange,
+  seriesBuckets,
+} from '../lib/dateWindow.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -31,8 +37,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DAILY_CONCURRENCY = 3;
 const TOP_RUNS = 10;
 
-const UsageQuery = z
+const UsageQueryBase = z
   .object({
+    ...customRangeFields,
     orgId: z.string().uuid().optional(),
     teamId: z.string().uuid().optional(),
     window: z.coerce
@@ -44,6 +51,7 @@ const UsageQuery = z
       .default(30),
   })
   .refine((q) => !(q.teamId && q.orgId), { message: 'pass teamId or orgId, not both' });
+const UsageQuery = refineCustomRange(UsageQueryBase);
 
 type UsageScope = { teamId?: string; orgId?: string };
 
@@ -205,7 +213,9 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { orgId, teamId, window: windowDays } = request.query;
+      const { orgId, teamId } = request.query;
+      const custom = resolveCustomRange(request.query);
+      const windowDays = custom?.days ?? request.query.window;
       const scope: UsageScope = teamId ? { teamId } : orgId ? { orgId } : {};
       if (!(await mayReadUsage(prisma, user, scope))) {
         return reply.status(403).send({
@@ -219,8 +229,8 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
       // Whole UTC days, closed at the end of today, so every query covers
       // exactly the rows the daily bars do — including a request that runs
       // across midnight.
-      const until = new Date(utcDayStart(Date.now()) + DAY_MS);
-      const since = new Date(until.getTime() - windowDays * DAY_MS);
+      const until = custom?.end ?? new Date(utcDayStart(Date.now()) + DAY_MS);
+      const since = custom?.start ?? new Date(until.getTime() - windowDays * DAY_MS);
       const llm = { ...scope, createdAt: { gte: since, lt: until }, type: 'llm_response' };
 
       // One grouping by (model, agent, activity) serves the totals and all
@@ -364,15 +374,15 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
       const teamName = new Map(teams.map((t) => [t.id, t.name]));
       const orgName = new Map(orgs.map((o) => [o.id, o.name]));
 
-      const days = Array.from({ length: windowDays }, (_, i) => since.getTime() + i * DAY_MS);
-      const daily = await mapLimited(days, DAILY_CONCURRENCY, async (start) => {
+      const { bucketDays, buckets } = seriesBuckets(since.getTime(), windowDays);
+      const daily = await mapLimited(buckets, DAILY_CONCURRENCY, async ({ end, start }) => {
         const row = await asPlatformAdmin(user, PLATFORM_WIDE, ['AgentTrace'], () =>
           prisma.agentTrace.aggregate({
             _count: { _all: true },
             _sum: { costUsd: true, inputTokens: true, outputTokens: true },
             where: {
               ...scope,
-              createdAt: { gte: new Date(start), lt: new Date(start + DAY_MS) },
+              createdAt: { gte: new Date(start), lt: new Date(end) },
               type: 'llm_response',
             },
           })
@@ -408,6 +418,7 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
 
       return {
         data: {
+          bucketDays,
           byActivity: ranked(byActivity, (nodeId) => ({ nodeId })),
           byAgent: ranked(byAgent, (agentKey) => ({ agentKey })),
           // A null model is an LLM call whose spec could not be resolved.

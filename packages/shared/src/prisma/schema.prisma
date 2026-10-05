@@ -1749,6 +1749,10 @@ model WorkflowHumanStep {
   /// Number of distinct approvals required before the step is resolved.
   /// Defaults to 1 for all steps created before this column was added.
   requiredApprovers Int            @default(1) @map("required_approvers")
+  /// The Slack message that announced this step: `{ channel, ts, text }`, where `text` is the
+  /// message header (no buttons). It lets the step's resolution, from the web or from Slack,
+  /// edit that message to show the decision. Null when nothing was posted.
+  slackMessage     Json?           @map("slack_message")
 
   humanApprovals   HumanApproval[]
 

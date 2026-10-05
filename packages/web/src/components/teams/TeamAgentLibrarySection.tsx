@@ -23,6 +23,7 @@ import {
   type UpdateAgentBody,
   useCreateTeamAgent,
   useDeleteTeamAgent,
+  useTeamAgentOptions,
   useTeamAgents,
   useUpdateTeamAgent,
 } from '@/hooks/useAgentLibrary';
@@ -44,7 +45,7 @@ const EMPTY: CreateTeamAgentBody = {
 };
 
 const CREATE_COPY: AgentFormCopy = {
-  inheritsModelFrom: { hint: 'Parent agent key to inherit the model from' },
+  inheritsModelFrom: { hint: 'Agent whose model this one uses' },
   key: { hint: 'GLOBAL key to override (e.g. reviewer) or a new custom key' },
   mcpConnection: { hint: "Bind this MCP server's tools at run time" },
   modelSpec: { hint: '<provider>/<model>, or blank to inherit' },
@@ -77,6 +78,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const isPlatformAdmin = useHasRole('ADMIN');
   const { data: mcpConnections } = useMcpConnections({ enabled: isPlatformAdmin });
   const { data: skills } = useTeamSkills(teamId);
+  const { data: parentAgents } = useTeamAgentOptions(teamId);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateTeamAgentBody>(EMPTY);
@@ -246,6 +248,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
           mcpConnections={mcpConnections ?? []}
           mode="create"
           onChange={(patch) => setForm({ ...form, ...patch })}
+          parentAgents={parentAgents}
           skills={skills ?? []}
           value={form}
         />
@@ -275,6 +278,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
               mcpConnections={mcpConnections ?? []}
               mode="edit"
               onChange={patchEditing}
+              parentAgents={parentAgents}
               skills={skills ?? []}
               value={{
                 ...editing,

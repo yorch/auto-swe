@@ -62,6 +62,7 @@ export function csvCell(value: unknown): string {
   }
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AuditJsonSchema = z.json();
 const AuditLogResponseSchema = z.object({
   data: z.array(
@@ -75,6 +76,8 @@ const AuditLogResponseSchema = z.object({
       entityId: z.string().optional(),
       entityType: z.string(),
       id: z.string(),
+      /** For a `WorkflowRun` row: the request it belongs to, so the UI can open its panel. */
+      workRequestId: z.string().nullable().optional(),
     })
   ),
   meta: z.object({
@@ -418,9 +421,29 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           })
         : [];
       const actorById = new Map(actors.map((a) => [a.id, { email: a.email, name: a.name }]));
+      // Audit rows store only the run id; one batched lookup per page finds the request each
+      // run belongs to, so the UI can open the request panel. The route is ADMIN-only, and an
+      // admin reaches every run.
+      const runIds = [
+        ...new Set(
+          rows.flatMap((r) =>
+            r.entityType === 'WorkflowRun' && UUID_RE.test(r.entityId) ? [r.entityId] : []
+          )
+        ),
+      ];
+      const runs = runIds.length
+        ? await fastify.prisma.workflowRun.findMany({
+            select: { id: true, workRequestId: true },
+            where: { id: { in: runIds } },
+          })
+        : [];
+      const requestByRun = new Map(runs.map((r) => [r.id, r.workRequestId]));
       return {
         data: rows.map((row) => ({
           ...row,
+          ...(row.entityType === 'WorkflowRun'
+            ? { workRequestId: requestByRun.get(row.entityId) ?? null }
+            : {}),
           actor: row.actorId ? (actorById.get(row.actorId) ?? null) : null,
           afterJson: row.afterJson as z.infer<typeof AuditJsonSchema> | null,
           beforeJson: row.beforeJson as z.infer<typeof AuditJsonSchema> | null,

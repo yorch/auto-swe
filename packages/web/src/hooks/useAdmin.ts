@@ -13,6 +13,7 @@ import type {
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useHasRole } from '@/hooks/useHasRole';
 import { api } from '@/lib/api';
+import { type DateRange, rangeKey, rangeQuery } from '@/lib/dateRange';
 import type { ScannerPatternType } from '@/lib/scannerPatternTypes';
 
 export interface ScannerPattern {
@@ -165,6 +166,8 @@ export interface AuditLogRow {
   beforeJson: unknown;
   afterJson: unknown;
   createdAt: string;
+  /** Only on a `WorkflowRun` row: the request that run belongs to, when it has one. */
+  workRequestId?: string | null;
 }
 
 export type AuditAction = 'CREATE' | 'DELETE' | 'UPDATE';
@@ -335,6 +338,8 @@ export interface PlatformUsage {
     teamId: string | null;
     teamName: string | null;
   })[];
+  /** Days each `daily` entry covers: 1, or 7 for a range over 90 days. */
+  bucketDays?: 1 | 7;
   daily: {
     calls: number;
     costUsd: number;
@@ -380,8 +385,8 @@ export function useUsageScopes() {
   });
 }
 
-export function usePlatformUsage(windowDays: number, scope: UsageScope = {}, enabled = true) {
-  const qs = new URLSearchParams({ window: String(windowDays) });
+export function usePlatformUsage(range: DateRange, scope: UsageScope = {}, enabled = true) {
+  const qs = new URLSearchParams(rangeQuery(range));
   if (scope.teamId) {
     qs.set('teamId', scope.teamId);
   }
@@ -394,7 +399,7 @@ export function usePlatformUsage(windowDays: number, scope: UsageScope = {}, ena
     placeholderData: keepPreviousData,
     queryFn: () =>
       api.get<{ data: PlatformUsage }>(`/api/v1/platform/usage?${qs}`).then((r) => r.data),
-    queryKey: ['platform-usage', windowDays, scope.teamId ?? null, scope.orgId ?? null],
+    queryKey: ['platform-usage', rangeKey(range), scope.teamId ?? null, scope.orgId ?? null],
     // Not polled: each report costs a full-window scan plus one query per day,
     // and spend does not move fast enough to need it. Refetched on focus.
     staleTime: 60_000,
@@ -539,9 +544,9 @@ export interface EvalTrendFilters {
   templateId?: string;
 }
 
-export function useEvalTrends(windowDays: number, filters: EvalTrendFilters = {}) {
+export function useEvalTrends(range: DateRange, filters: EvalTrendFilters = {}) {
   const { by, source, templateId } = filters;
-  const qs = new URLSearchParams({ window: String(windowDays) });
+  const qs = new URLSearchParams(rangeQuery(range));
   for (const [key, value] of Object.entries({ by, source, templateId })) {
     if (value) {
       qs.set(key, value);
@@ -551,7 +556,7 @@ export function useEvalTrends(windowDays: number, filters: EvalTrendFilters = {}
     placeholderData: keepPreviousData,
     queryFn: () =>
       api.get<{ data: EvalTrendsDto }>(`/api/v1/platform/evals/trends?${qs}`).then((r) => r.data),
-    queryKey: ['eval-trends', windowDays, source, by, templateId],
+    queryKey: ['eval-trends', rangeKey(range), source, by, templateId],
     // Up to one grouped query per day of the window: refresh rarely, and on
     // focus only once stale (the default), not every minute per open tab.
     refetchInterval: 5 * 60_000,

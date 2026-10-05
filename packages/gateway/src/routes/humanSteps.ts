@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import {
   buildWorkflowHumanStepControlFilter,
@@ -547,6 +548,16 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: result.runId,
         entityType: 'WorkflowRun',
       });
+
+      // Show the decision (and the approver's note) on the Slack message that announced the step.
+      if (result.status === 'RESOLVED') {
+        // Not awaited: the answer is already recorded and this never throws.
+        void syncSlackHumanStepOutcome(
+          { log: request.log, prisma: fastify.prisma },
+          result.stepId,
+          { action, comment, userId: user.sub, value }
+        );
+      }
 
       // `signalSent: false` means the decision was recorded but the workflow it
       // was meant for no longer exists — a 200 with a caveat, not a failure the

@@ -124,4 +124,17 @@ describe('GlobalAnalyticsPage', () => {
       expect(spy.mock.calls.some(([u]) => String(u).includes('window=90'))).toBe(true)
     );
   });
+
+  it('asks the gateway for a custom range from the link', async () => {
+    resetNavigation('range=custom&from=2026-09-01&to=2026-09-14', '/govern/analytics');
+    const spy = mock();
+    render(withQuery(<GlobalAnalyticsPage />));
+    await screen.findByText('Run cost');
+
+    expect(
+      spy.mock.calls.some(([u]) => String(u).includes('since=2026-09-01&until=2026-09-14'))
+    ).toBe(true);
+    expect(screen.queryByText(/only offers 7, 30 and 90/)).toBeNull();
+    expect(screen.getByLabelText('From date (UTC)')).toBeTruthy();
+  });
 });

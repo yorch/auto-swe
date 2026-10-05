@@ -95,7 +95,7 @@ export function useClearConfigSecret(integration: string) {
 }
 
 /** POST `…/test`. The body is empty for connectors that need no probe input. */
-function postConfigTest(slug: string, body: Record<string, string> = {}) {
+function postConfigTest(slug: string, body: Record<string, unknown> = {}) {
   return api.post<{ ok: boolean; detail: string }>(`${configPath(slug)}/test`, body);
 }
 
@@ -281,8 +281,20 @@ export const useUpdateIssueTrackerConfig = configMutation<
   IssueTrackerConfigInput
 >('issue-tracker');
 
-export const testIssueTrackerConnection = (ticketId: string) =>
-  postConfigTest('issue-tracker', { ticketId });
+/**
+ * The unsaved tracker form values a connection test may use. Anything left out (and a blank
+ * token) is tested as stored.
+ */
+export interface IssueTrackerTestDraft {
+  provider?: IssueTrackerProvider | null;
+  baseUrl?: string | null;
+  email?: string | null;
+  apiToken?: string;
+  allowPrivateNetwork?: boolean;
+}
+
+export const testIssueTrackerConnection = (ticketId: string, draft: IssueTrackerTestDraft = {}) =>
+  postConfigTest('issue-tracker', { ...draft, ticketId });
 
 const DetectJiraFieldsResponseSchema = z.object({
   fields: z.array(z.object({ id: z.string(), name: z.string() })),
@@ -334,8 +346,19 @@ export const useUpdateKnowledgeBaseConfig = configMutation<
   KnowledgeBaseConfigInput
 >('knowledge-base');
 
-export const testKnowledgeBaseConnection = (query: string) =>
-  postConfigTest('knowledge-base', { query });
+/** The unsaved knowledge-base form values a connection test may use; same rules as the tracker. */
+export interface KnowledgeBaseTestDraft {
+  provider?: KnowledgeBaseProvider | null;
+  enabled?: boolean;
+  baseUrl?: string | null;
+  email?: string | null;
+  apiToken?: string;
+  spaces?: string[];
+  allowPrivateNetwork?: boolean;
+}
+
+export const testKnowledgeBaseConnection = (draft: KnowledgeBaseTestDraft = {}) =>
+  postConfigTest('knowledge-base', { ...draft });
 
 // ── Figma (design source) config ──
 
@@ -355,7 +378,13 @@ export const useFigmaConfig = sourcedConfigQuery<FigmaConfig>('figma');
 
 export const useUpdateFigmaConfig = configMutation<FigmaConfig, FigmaConfigInput>('figma');
 
-export const testFigmaConnection = () => postConfigTest('figma');
+export interface FigmaTestDraft {
+  enabled?: boolean;
+  apiToken?: string;
+}
+
+export const testFigmaConnection = (draft: FigmaTestDraft = {}) =>
+  postConfigTest('figma', { ...draft });
 
 // ── Consolidation schedule config ──
 

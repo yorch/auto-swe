@@ -7,7 +7,6 @@ import { ScorerTrendChart } from '@/components/charts/ScorerTrendChart';
 import { SuiteHealthChart } from '@/components/charts/SuiteHealthChart';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
-import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -66,8 +65,7 @@ function ScoreCell({ value }: { value: number | null }) {
 
 function EvalsWorkspace() {
   const { params, update } = useUrlFilters();
-  const range = parseDateRange(params, { allowCustom: false });
-  const windowDays = range.kind === 'preset' ? range.days : 30;
+  const range = parseDateRange(params);
   const rawBy = params.get('by');
   const by: Breakdown = rawBy === 'judgeModel' || rawBy === 'agentKey' ? rawBy : '';
   const templateId = params.get('template') ?? '';
@@ -75,7 +73,7 @@ function EvalsWorkspace() {
   // looking at one scorer's trend never empties the list of every other result.
   const chosenScorer = params.get('scorer') ?? '';
   const [resultScorer, setResultScorer] = useState('');
-  const trendsQuery = useEvalTrends(windowDays, {
+  const trendsQuery = useEvalTrends(range, {
     by: by || undefined,
     templateId: templateId || undefined,
   });
@@ -84,6 +82,7 @@ function EvalsWorkspace() {
   const datasetsQuery = useEvalDatasets();
   const latestRuns = useLatestEvalRuns(5);
   const trends = trendsQuery.data?.scorers ?? [];
+  const weekly = trendsQuery.data?.bucketDays === 7;
   const scorerNames = [...new Set(trends.map((t) => t.scorer))];
   const datasets = datasetsQuery.data;
   // Until one is picked (or when the pick has no signal in this window), the scorer
@@ -117,8 +116,8 @@ function EvalsWorkspace() {
               value={by}
             />
             <DateRangeControl
-              allowCustom={false}
               onChange={(r) => r && update(dateRangePatch(r))}
+              rangeIgnored={customRangeIgnored(params)}
               value={range}
             />
           </div>
@@ -127,13 +126,6 @@ function EvalsWorkspace() {
         subtitle="Per-scorer quality signals over time, every captured result with a link to the run it scored, and the datasets offline runs score against. Days are UTC."
         title="Evals"
       />
-
-      {customRangeIgnored(params) && (
-        <Alert variant="info">
-          This page only offers 7, 30 and 90 day ranges, so the custom range in the link was
-          replaced by the last {windowDays} days.
-        </Alert>
-      )}
 
       <Card>
         <CardHeader>
@@ -189,7 +181,9 @@ function EvalsWorkspace() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow={`Daily mean · ${describeRange(range).toLowerCase()}`}>
+          <CardTitle
+            eyebrow={`${weekly ? 'Weekly' : 'Daily'} mean · ${describeRange(range).toLowerCase()}`}
+          >
             {scorer || 'Scorer trends'}
           </CardTitle>
         </CardHeader>
@@ -211,12 +205,12 @@ function EvalsWorkspace() {
                     daily: t.daily,
                     label: t.breakdown ?? '(none)',
                   }))}
-                  title={`${scorer || 'Scorer'} by ${by === 'judgeModel' ? 'judge model' : 'agent'}, daily mean`}
+                  title={`${scorer || 'Scorer'} by ${by === 'judgeModel' ? 'judge model' : 'agent'}, ${weekly ? 'weekly' : 'daily'} mean`}
                 />
               ) : charted.length === 1 && charted[0] ? (
                 <ScorerTrendChart
                   data={charted[0].daily}
-                  title={`${scorer || 'Scorer'} daily mean`}
+                  title={`${scorer || 'Scorer'} ${weekly ? 'weekly' : 'daily'} mean`}
                 />
               ) : (
                 <EmptyState title={`No ${scorer} signals in this window.`} />

@@ -16,7 +16,13 @@ import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useSort } from '@/hooks/useSort';
 import { useGlobalAnalytics } from '@/hooks/useTemplates';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
-import { customRangeIgnored, dateRangePatch, parseDateRange } from '@/lib/dateRange';
+import {
+  customRangeIgnored,
+  dateRangePatch,
+  parseDateRange,
+  rangeDays,
+  rangePhrase,
+} from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 import { outcomeTypeLabel } from '@/lib/govLabels';
 import { successTone } from '@/lib/tone';
@@ -55,14 +61,14 @@ const MIN_BASELINE_SAMPLE = 30;
 
 function AnalyticsWorkspace() {
   const { params, update } = useUrlFilters();
-  const range = parseDateRange(params, { allowCustom: false });
-  const windowDays = range.kind === 'preset' ? range.days : 30;
+  const range = parseDateRange(params);
+  const windowDays = rangeDays(range);
   const filter = (params.get('q') ?? '').slice(0, 100);
   const [page, setPage] = useState(0);
   const templateSort = useSort<TemplateSort>('runs', { ascendingFirst: ['name'] });
   const domainSort = useSort<DomainSort>('runs', { ascendingFirst: ['domain'] });
   const outcomeSort = useSort<OutcomeSort>('runs', { ascendingFirst: ['outcome'] });
-  const { data, isLoading, isError, isFetching, refetch, error } = useGlobalAnalytics(windowDays);
+  const { data, isLoading, isError, isFetching, refetch, error } = useGlobalAnalytics(range);
 
   const rows = useMemo(() => {
     if (!data) {
@@ -135,13 +141,13 @@ function AnalyticsWorkspace() {
       <PageHeader
         actions={
           <DateRangeControl
-            allowCustom={false}
             onChange={(r) => {
               if (r) {
                 update(dateRangePatch(r));
                 setPage(0);
               }
             }}
+            rangeIgnored={customRangeIgnored(params)}
             value={range}
           />
         }
@@ -149,13 +155,6 @@ function AnalyticsWorkspace() {
         subtitle="Run volume, outcomes, cost, and time saved across every workflow template on the platform."
         title="Platform analytics"
       />
-
-      {customRangeIgnored(params) && (
-        <Alert variant="info">
-          This page only offers 7, 30 and 90 day ranges, so the custom range in the link was
-          replaced by the last {windowDays} days.
-        </Alert>
-      )}
 
       <QueryBoundary
         error={error}
@@ -283,9 +282,7 @@ function AnalyticsWorkspace() {
               {rows.length === 0 ? (
                 <EmptyState
                   title={
-                    filter
-                      ? 'No templates match your filter.'
-                      : `No runs in the last ${windowDays} days.`
+                    filter ? 'No templates match your filter.' : `No runs in ${rangePhrase(range)}.`
                   }
                 />
               ) : (

@@ -22,6 +22,10 @@ vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: { __sentinel: 'Prisma.DbN
 const fetchSlackChannelIsPrivateMock = vi.fn<(...a: unknown[]) => Promise<boolean | null>>(
   async () => null
 );
+const syncSlackHumanStepOutcomeMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('../lib/hitlSlackSync.js', () => ({
+  syncSlackHumanStepOutcome: syncSlackHumanStepOutcomeMock,
+}));
 vi.mock('../lib/slack.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/slack.js')>()),
   // Forward the arguments: asserting only the branch taken would let a change
@@ -767,6 +771,34 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     expect(hintBody.response_type).toBe('ephemeral');
     expect(hintBody.replace_original).toBe(false);
     expect(hintBody.text).toMatch(/link your slack account/i);
+  });
+
+  it('edits the announcement to show the decision once the step resolves', async () => {
+    syncSlackHumanStepOutcomeMock.mockClear();
+    state.humanStep = pendingHumanStep();
+    await injectInteractive(interactivePayload());
+    expect(syncSlackHumanStepOutcomeMock).toHaveBeenCalledTimes(1);
+    expect(syncSlackHumanStepOutcomeMock).toHaveBeenCalledWith(expect.anything(), STEP_ID, {
+      action: 'approve',
+      userId: 'u1',
+      value: undefined,
+    });
+  });
+
+  it('acknowledges the button without waiting for the Slack edit', async () => {
+    syncSlackHumanStepOutcomeMock.mockClear();
+    syncSlackHumanStepOutcomeMock.mockImplementationOnce(() => new Promise<undefined>(() => {}));
+    state.humanStep = pendingHumanStep();
+    const res = await injectInteractive(interactivePayload());
+    expect(res.statusCode).toBe(200);
+    expect(syncSlackHumanStepOutcomeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the announcement alone while more approvals are still needed', async () => {
+    syncSlackHumanStepOutcomeMock.mockClear();
+    state.humanStep = pendingHumanStep({ requiredApprovers: 2 });
+    await injectInteractive(interactivePayload());
+    expect(syncSlackHumanStepOutcomeMock).not.toHaveBeenCalled();
   });
 
   it('happy path: resolves the step, signals the workflow, posts a thread confirmation', async () => {

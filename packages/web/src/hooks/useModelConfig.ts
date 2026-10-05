@@ -28,22 +28,6 @@ export interface ProviderCredentialRow {
   usage?: { agents: string[]; embedding: boolean };
 }
 
-export interface ConfigAuditRow {
-  id: string;
-  entityType:
-    | 'Agent'
-    | 'ProviderCredential'
-    | 'EmbeddingConfig'
-    | 'ModelCatalogEntry'
-    | 'ModelSuggestion';
-  entityId: string;
-  action: 'CREATE' | 'UPDATE' | 'DELETE';
-  actorId: string | null;
-  beforeJson: unknown;
-  afterJson: unknown;
-  createdAt: string;
-}
-
 export interface EmbeddingConfigRow {
   id: 'default';
   modelSpec: string;
@@ -111,42 +95,6 @@ export function useAdminTestCredential() {
         `/api/v1/platform/credentials/${id}/test`,
         {}
       ),
-  });
-}
-
-export function useAdminConfigAuditLog(filter?: {
-  entityType?:
-    | 'Agent'
-    | 'ProviderCredential'
-    | 'EmbeddingConfig'
-    | 'ModelCatalogEntry'
-    | 'ModelSuggestion';
-  entityId?: string;
-  limit?: number;
-}) {
-  const qs = new URLSearchParams();
-  if (filter?.entityType) {
-    qs.set('entityType', filter.entityType);
-  }
-  if (filter?.entityId) {
-    qs.set('entityId', filter.entityId);
-  }
-  if (filter?.limit !== undefined) {
-    qs.set('limit', String(filter.limit));
-  }
-  return useQuery({
-    queryFn: () =>
-      api
-        .get<{ data: ConfigAuditRow[] }>(
-          `/api/v1/platform/config-audit-log${qs.toString() ? `?${qs}` : ''}`
-        )
-        .then((r) => r.data),
-    queryKey: [
-      'admin-config-audit-log',
-      filter?.entityType ?? null,
-      filter?.entityId ?? null,
-      filter?.limit ?? null,
-    ],
   });
 }
 

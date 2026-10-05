@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import { isMcpToolEnabled } from '../../agents/mcpTools.js';
 import { fetchActiveAgent } from './agentResolver.js';
 import { parseToolKeys } from './toolKeys.js';
@@ -15,6 +16,12 @@ export interface McpConnectionTarget {
   url: string;
   listTimeoutMs?: number;
   callTimeoutMs?: number;
+  /**
+   * The decrypted bearer token, when the connection has one. Defined NON-enumerable so a spread,
+   * `JSON.stringify`, `Object.entries` or a log of the target can never carry it; consumers read
+   * `target.bearerToken` by name and hand it to `loadMcpTools`.
+   */
+  readonly bearerToken?: string;
 }
 
 /** A finite, strictly-positive number — `0`/negative/NaN/Infinity are invalid timeouts. */
@@ -52,11 +59,31 @@ export async function mcpUrlForConnection(
     }
     const listTimeoutMs = readPositiveNumber(config?.listTimeoutMs);
     const callTimeoutMs = readPositiveNumber(config?.callTimeoutMs);
-    return {
+    const target: McpConnectionTarget = {
       url,
       ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
       ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
     };
+    if (conn.apiKeyCiphertext && conn.apiKeyNonce && conn.apiKeyAuthTag) {
+      let bearerToken: string;
+      try {
+        bearerToken = decryptSecret({
+          authTag: conn.apiKeyAuthTag,
+          ciphertext: conn.apiKeyCiphertext,
+          keyVersion: conn.apiKeyVersion,
+          nonce: conn.apiKeyNonce,
+        });
+      } catch {
+        // Connecting without the credential the server expects can only fail confusingly, so
+        // the connection yields no tools. The error text is not logged: it is the crypto layer's.
+        console.warn(
+          `[mcp] stored bearer token for connection ${connectionId} cannot be decrypted`
+        );
+        return null;
+      }
+      Object.defineProperty(target, 'bearerToken', { enumerable: false, value: bearerToken });
+    }
+    return target;
   } catch {
     return null;
   }

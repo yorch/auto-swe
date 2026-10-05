@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
+import { SecretStatusRow } from '@/components/ui/SecretStatusRow';
 import { type ConfigSource, type MaskedField, useClearConfigSecret } from '@/hooks/useAdminConfig';
 import { ConfigField } from './ConfigField';
 
@@ -47,44 +47,43 @@ export function SecretStatus({
   const fallsBackToEnv = source === 'env';
 
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-paper-400">
-      <span>
+    <>
+      <SecretStatusRow
+        action={
+          stored && clear
+            ? {
+                ariaLabel: `Clear stored value for ${label}`,
+                label: 'Clear stored value',
+                onClick: () => setConfirming(true),
+              }
+            : undefined
+        }
+      >
         {stored
           ? `Stored in DB (ending ${current.lastFour}). Leave blank to keep it.`
           : fallsBackToEnv
             ? 'From environment. Saving a value here overrides it.'
             : 'Not set'}
-      </span>
+      </SecretStatusRow>
       {stored && clear && (
-        <>
-          <Button
-            aria-label={`Clear stored value for ${label}`}
-            onClick={() => setConfirming(true)}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            Clear stored value
-          </Button>
-          <ConfirmModal
-            confirmLabel="Clear value"
-            dangerous
-            message={
-              source === 'db'
-                ? 'The stored value is removed. If the matching environment variable is set, the platform uses that instead; otherwise this setting is empty and anything that depends on it stops working.'
-                : 'The stored value is removed.'
-            }
-            onClose={() => setConfirming(false)}
-            onConfirm={async () => {
-              await clearSecret.mutateAsync(clear.field);
-            }}
-            open={confirming}
-            pendingLabel="Clearing…"
-            title={`Clear ${label}?`}
-          />
-        </>
+        <ConfirmModal
+          confirmLabel="Clear value"
+          dangerous
+          message={
+            source === 'db'
+              ? 'The stored value is removed. If the matching environment variable is set, the platform uses that instead; otherwise this setting is empty and anything that depends on it stops working.'
+              : 'The stored value is removed.'
+          }
+          onClose={() => setConfirming(false)}
+          onConfirm={async () => {
+            await clearSecret.mutateAsync(clear.field);
+          }}
+          open={confirming}
+          pendingLabel="Clearing…"
+          title={`Clear ${label}?`}
+        />
       )}
-    </div>
+    </>
   );
 }
 

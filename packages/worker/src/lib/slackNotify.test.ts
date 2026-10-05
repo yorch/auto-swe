@@ -15,6 +15,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     runInput: { findUnique: vi.fn() },
     team: { findUnique: vi.fn() },
+    workflowHumanStep: { update: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
   },
 }));
@@ -478,6 +479,32 @@ describe('notifySlackHumanStep (Block Kit resolve buttons)', () => {
   function resolveButtons(buttons: Button[]): Button[] {
     return buttons.filter((b) => b.action_id.startsWith('hitl_resolve'));
   }
+
+  it('records where the step message landed so its resolution can edit it', async () => {
+    mockChannelResolution();
+    const update = vi.mocked(prisma.workflowHumanStep.update);
+    update.mockReset();
+    globalThis.fetch = (async () =>
+      ({
+        json: async () => ({ channel: 'C123', ok: true, ts: '99.1' }),
+      }) as unknown as Response) as typeof fetch;
+    await notifySlackHumanStep({
+      kind: 'APPROVAL',
+      runId: 'r1',
+      stepId: 'step-1',
+      title: 'Approve plan',
+    });
+    expect(update).toHaveBeenCalledWith({
+      data: {
+        slackMessage: {
+          channel: 'C123',
+          text: '*[JIRA-1]* *Approval required:* Approve plan',
+          ts: '99.1',
+        },
+      },
+      where: { id: 'step-1' },
+    });
+  });
 
   it('APPROVAL: attaches Approve/Reject buttons with {stepId, action} values + inbox link', async () => {
     mockChannelResolution();

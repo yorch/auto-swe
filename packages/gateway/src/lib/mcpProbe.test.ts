@@ -148,4 +148,172 @@ describe('probeMcpServer', () => {
     );
     expect(res.error).toMatch(/valid MCP response/);
   });
+
+  describe('bearer token and legacy SSE', () => {
+    const TOKEN = 'sk-probe-secret';
+    const authOf = (init?: RequestInit) =>
+      (init?.headers as Record<string, string> | undefined)?.authorization;
+
+    it('sends the token on every request, session close included', async () => {
+      const f = server(json({ id: 2, jsonrpc: '2.0', result: { tools: [] } }));
+      const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never, {
+        bearerToken: TOKEN,
+      });
+      expect(res.ok).toBe(true);
+      expect(f.mock.calls.length).toBeGreaterThanOrEqual(4);
+      for (const [, init] of f.mock.calls) {
+        expect(authOf(init as RequestInit)).toBe(`Bearer ${TOKEN}`);
+      }
+      expect(JSON.stringify(res)).not.toContain(TOKEN);
+    });
+
+    it('sends no Authorization header when no token is stored', async () => {
+      const f = server(json({ id: 2, jsonrpc: '2.0', result: { tools: [] } }));
+      await probeMcpServer('https://mcp.test/mcp', 5000, f as never);
+      for (const [, init] of f.mock.calls) {
+        expect(authOf(init as RequestInit)).toBeUndefined();
+      }
+    });
+
+    it('says whether a token was missing or rejected', async () => {
+      const f = vi.fn(async () => new Response('no', { status: 401 }));
+      const without = await probeMcpServer('https://mcp.test/mcp', 5000, f as never);
+      expect(without.error).toMatch(/Add a bearer token/);
+      const rejected = await probeMcpServer('https://mcp.test/mcp', 5000, f as never, {
+        bearerToken: TOKEN,
+      });
+      expect(rejected.error).toBe('The server rejected the stored bearer token.');
+      expect(rejected.error).not.toContain(TOKEN);
+      // An auth failure is final: no second transport is tried.
+      expect(f).toHaveBeenCalledTimes(2);
+    });
+
+    /** A legacy SSE server: POST to the base URL is 404, GET opens the stream. */
+    function legacyServer(opts: { endpoint?: string } = {}) {
+      const enc = new TextEncoder();
+      let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+      const sent = (e: string, d: string) =>
+        controller?.enqueue(enc.encode(`event: ${e}\ndata: ${d}\n\n`));
+      const calls: { url: string; init: RequestInit }[] = [];
+      const f = vi.fn(async (url: unknown, init?: RequestInit) => {
+        calls.push({ init: init ?? {}, url: String(url) });
+        if (init?.method === 'GET') {
+          const stream = new ReadableStream<Uint8Array>({
+            start(c) {
+              controller = c;
+              sent('endpoint', opts.endpoint ?? '/messages?sid=1');
+            },
+          });
+          return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+        }
+        if (init?.method === 'POST' && String(url) === 'https://mcp.test/mcp') {
+          return new Response('nope', { status: 404 });
+        }
+        if (init?.method === 'POST') {
+          const body = JSON.parse(String(init.body));
+          if (body.id !== undefined) {
+            const result =
+              body.method === 'initialize' ? {} : { tools: [{ name: 'x' }, { name: 'y' }] };
+            sent('message', JSON.stringify({ id: body.id, jsonrpc: '2.0', result }));
+          }
+          return new Response(null, { status: 202 });
+        }
+        return new Response(null, { status: 200 });
+      });
+      return { calls, f };
+    }
+
+    it('falls back to the legacy SSE transport when streamable HTTP is not there', async () => {
+      const { calls, f } = legacyServer();
+      const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never, {
+        bearerToken: TOKEN,
+      });
+      expect(res).toMatchObject({ ok: true, toolCount: 2, toolNames: ['x', 'y'] });
+      const get = calls.find((c) => c.init.method === 'GET');
+      expect(get?.url).toBe('https://mcp.test/mcp');
+      expect(authOf(get?.init)).toBe(`Bearer ${TOKEN}`);
+      const posts = calls.filter((c) => c.url === 'https://mcp.test/messages?sid=1');
+      expect(posts.length).toBe(3); // initialize, initialized, tools/list
+      for (const c of calls) {
+        expect(authOf(c.init)).toBe(`Bearer ${TOKEN}`);
+        expect(c.init.redirect).toBe('manual');
+      }
+    });
+
+    it('goes straight to SSE for a URL ending /sse', async () => {
+      const { calls, f } = legacyServer();
+      const res = await probeMcpServer('https://mcp.test/sse', 5000, f as never);
+      expect(res.ok).toBe(true);
+      expect(calls[0]?.init.method).toBe('GET');
+    });
+
+    it('never sends the token to an SSE endpoint on another origin', async () => {
+      const { calls, f } = legacyServer({ endpoint: 'https://evil.example.net/messages' });
+      const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never, {
+        bearerToken: TOKEN,
+      });
+      expect(res.ok).toBe(false);
+      expect(calls.some((c) => c.url.includes('evil.example.net'))).toBe(false);
+      expect(JSON.stringify(res)).not.toContain(TOKEN);
+    });
+
+    it('refuses a redirect on the SSE stream and does not follow it with the token', async () => {
+      const f = vi.fn(async (_url: unknown, init?: RequestInit) =>
+        init?.method === 'GET'
+          ? new Response(null, {
+              headers: { location: 'https://evil.example.net/sse' },
+              status: 302,
+            })
+          : new Response('nope', { status: 404 })
+      );
+      const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never, {
+        bearerToken: TOKEN,
+      });
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/redirected/);
+      expect(f.mock.calls.every(([u]) => !String(u).includes('evil'))).toBe(true);
+    });
+
+    it('removes each per-event abort listener once the read settles', async () => {
+      const { f } = legacyServer();
+      const add = vi.spyOn(EventTarget.prototype, 'addEventListener');
+      const remove = vi.spyOn(EventTarget.prototype, 'removeEventListener');
+      try {
+        const res = await probeMcpServer('https://mcp.test/sse', 5000, f as never);
+        expect(res.ok).toBe(true);
+        const added = add.mock.calls.filter(([type]) => type === 'abort').map(([, l]) => l);
+        const removed = remove.mock.calls.map(([, l]) => l);
+        expect(added.length).toBeGreaterThan(0);
+        for (const listener of added) {
+          expect(removed).toContain(listener);
+        }
+      } finally {
+        add.mockRestore();
+        remove.mockRestore();
+      }
+    });
+
+    it('reports the streamable error when an SSE stream never announces an endpoint', async () => {
+      const f = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        if (init?.method === 'GET') {
+          // A stream that stays open and silent.
+          return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            headers: { 'content-type': 'text/event-stream' },
+          });
+        }
+        return new Response('nope', { status: 404 });
+      });
+      const started = Date.now();
+      const res = await probeMcpServer('https://mcp.test/mcp', 20_000, f as never);
+      expect(res.error).toBe('The server answered with HTTP 404.');
+      // The silent stream was given up on after the short endpoint wait, not the whole deadline.
+      expect(Date.now() - started).toBeLessThan(8000);
+    }, 15_000);
+
+    it('reports the streamable error when the legacy transport fails too', async () => {
+      const f = vi.fn(async () => new Response('nope', { status: 404 }));
+      const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never);
+      expect(res.error).toBe('The server answered with HTTP 404.');
+    });
+  });
 });

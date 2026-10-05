@@ -448,7 +448,7 @@ key that wrote them is gone.
 
 ### Auditing changes
 
-**Admin → Model Config → Audit log** shows the last 100 mutations across agent configs and credentials. Secret material is redacted (only `lastFour` survives in `beforeJson`/`afterJson`). Use this when investigating cost spikes or unexpected behavior changes.
+**Admin → Model Config → Audit log** shows the last 100 mutations across agent configs and credentials. Secret material is redacted (only `lastFour` survives in `beforeJson`/`afterJson`). Use this when investigating cost spikes or unexpected behavior changes. The data comes from `GET /api/v1/platform/config/audit-log`; the older `GET /api/v1/platform/config-audit-log` endpoint no longer exists.
 
 ---
 
@@ -545,7 +545,7 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 | Startup check | `packages/worker/src/lib/config/assertReady.ts` | Walks every required row at worker boot |
 | Worker integration | `packages/worker/src/lib/models.ts` | Async `getModel` / `getModelSpec` (per-role chat models) |
 | Embeddings | `packages/worker/src/lib/embeddings.ts` | Reads the singleton `EmbeddingConfig` via `resolveEmbeddingConfig` |
-| Gateway routes | `packages/gateway/src/routes/modelConfig.ts` | Admin + team-scoped credential CRUD, embedding-config CRUD, audit log, credential probe |
+| Gateway routes | `packages/gateway/src/routes/modelConfig.ts` | Admin + team-scoped credential CRUD, embedding-config CRUD, credential probe |
 | Gateway routes | `packages/gateway/src/routes/modelCatalog.ts` + `lib/modelCatalogService.ts` | Model catalog CRUD and reset, the unpriced report, and the `catalogWarnings` agent and embedding saves return |
 | Dashboard | `packages/web/src/app/studio/models/page.tsx`, `packages/web/src/components/modelConfig/*` | Tabbed admin UI (Roles / Credentials / Embeddings / Audit log) + team detail integration |
 

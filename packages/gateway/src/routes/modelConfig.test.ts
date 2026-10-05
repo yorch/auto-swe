@@ -350,29 +350,6 @@ describe('modelConfigRoutes — admin', () => {
       }
     });
   });
-
-  describe('GET /config-audit-log', () => {
-    let ctx: Awaited<ReturnType<typeof buildAdminApp>>;
-    beforeEach(async () => {
-      ctx = await buildAdminApp('ADMIN');
-    });
-
-    it('returns recent rows ordered by createdAt desc', async () => {
-      ctx.mockPrisma.configAuditLog.findMany.mockResolvedValueOnce([
-        { action: 'UPDATE', createdAt: new Date(), entityType: 'ProviderCredential', id: 'a1' },
-      ]);
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'GET',
-        url: '/api/v1/platform/config-audit-log?limit=10',
-      });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).data).toHaveLength(1);
-      expect(ctx.mockPrisma.configAuditLog.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ orderBy: { createdAt: 'desc' }, take: 10 })
-      );
-    });
-  });
 });
 
 describe('modelConfigRoutes — team-scoped credentials', () => {

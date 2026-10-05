@@ -241,6 +241,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     let mcpTools: AgentTools | undefined;
     if (mcpTarget) {
       const loaded = await loadMcpTools(mcpTarget.url, tracer, {
+        bearerToken: mcpTarget.bearerToken,
         callTimeoutMs: mcpTarget.callTimeoutMs,
         listTimeoutMs: mcpTarget.listTimeoutMs,
       });

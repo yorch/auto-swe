@@ -83,6 +83,7 @@ vi.mock('../lib/systemConfigService.js', () => ({
     workflowDefaults: '00000000-0000-0000-0001-000000000004',
   },
   testDecryptSecrets: vi.fn(async () => ({})),
+  testFigmaConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testGitHubConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testIssueTrackerConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
   testKnowledgeBaseConnection: vi.fn(async () => ({ detail: 'not configured', ok: false })),
@@ -167,7 +168,10 @@ import {
   detectJiraFields,
   issueTrackerBaseUrlRefusal,
   knowledgeBaseBaseUrlRefusal,
+  testFigmaConnection,
   testGitHubConnection,
+  testIssueTrackerConnection,
+  testKnowledgeBaseConnection,
   testSlackConnection,
   updateCanaryConfig,
   updateConsolidationConfig,
@@ -315,6 +319,55 @@ describe('connection tests with unsaved form values', () => {
     expect(res.statusCode).toBe(200);
     expect(vi.mocked(testSlackConnection)).toHaveBeenCalledWith({ botToken: 'xoxb-typed' });
     await app.close();
+  });
+});
+
+describe('tracker, knowledge-base and Figma tests with unsaved form values', () => {
+  const postDraft = async (url: string, payload: Record<string, unknown>) => {
+    const app = await buildApp();
+    const res = await app.inject({ headers: AUTH_HEADER, method: 'POST', payload, url });
+    await app.close();
+    return res;
+  };
+
+  it('splits the ticket ID from the tracker draft', async () => {
+    const res = await postDraft('/api/v1/platform/config/issue-tracker/test', {
+      apiToken: 'typed',
+      baseUrl: 'https://jira.example.com',
+      ticketId: 'PROJ-1',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(testIssueTrackerConnection)).toHaveBeenCalledWith('PROJ-1', {
+      apiToken: 'typed',
+      baseUrl: 'https://jira.example.com',
+    });
+  });
+
+  it('rejects a tracker draft with a malformed base URL', async () => {
+    const res = await postDraft('/api/v1/platform/config/issue-tracker/test', {
+      baseUrl: 'not a url',
+      ticketId: 'PROJ-1',
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('passes the knowledge-base draft through, and an empty body means stored', async () => {
+    await postDraft('/api/v1/platform/config/knowledge-base/test', {
+      apiToken: 'typed',
+      enabled: true,
+    });
+    expect(vi.mocked(testKnowledgeBaseConnection)).toHaveBeenLastCalledWith({
+      apiToken: 'typed',
+      enabled: true,
+    });
+    await postDraft('/api/v1/platform/config/knowledge-base/test', {});
+    expect(vi.mocked(testKnowledgeBaseConnection)).toHaveBeenLastCalledWith({});
+  });
+
+  it('passes the Figma draft through', async () => {
+    const res = await postDraft('/api/v1/platform/config/figma/test', { apiToken: 'figd_typed' });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(testFigmaConnection)).toHaveBeenCalledWith({ apiToken: 'figd_typed' });
   });
 });
 

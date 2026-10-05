@@ -826,6 +826,7 @@ CREATE TABLE "workflow_human_steps" (
     "requested_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "timeout_at" TIMESTAMPTZ,
     "required_approvers" INTEGER NOT NULL DEFAULT 1,
+    "slack_message" JSONB,
 
     CONSTRAINT "workflow_human_steps_pkey" PRIMARY KEY ("id")
 );

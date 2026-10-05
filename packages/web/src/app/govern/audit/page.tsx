@@ -25,7 +25,13 @@ import {
 } from '@/hooks/useAdmin';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { entityHref, entityTypeLabel } from '@/lib/auditEntity';
-import { type DateRange, dateRangePatch, dayRange, parseDateRange } from '@/lib/dateRange';
+import {
+  customRangeIgnored,
+  type DateRange,
+  dateRangePatch,
+  dayRange,
+  parseDateRange,
+} from '@/lib/dateRange';
 import { errMsg } from '@/lib/errors';
 import { cn, FOCUS_RING, formatDate } from '@/lib/utils';
 
@@ -196,6 +202,7 @@ function AuditWorkspace() {
             // No range in the URL means all time, so a preset is always written out.
             setFilter(r ? dateRangePatch(r, -1) : { from: null, range: null, to: null })
           }
+          rangeIgnored={customRangeIgnored(params)}
           value={range}
         />
         {hasFilters && (
@@ -460,7 +467,7 @@ function AuditRow({
   onFilterActor: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const href = entityHref(row.entityType, row.entityId);
+  const href = entityHref(row.entityType, row.entityId, row.workRequestId);
   return (
     <>
       <TRow>

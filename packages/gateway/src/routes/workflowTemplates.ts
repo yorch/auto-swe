@@ -29,6 +29,7 @@ import {
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { customRangeFields, refineCustomRange, resolveCustomRange } from '../lib/dateWindow.js';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
@@ -681,9 +682,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   // Aggregates run counts + cost across every template visible to the caller.
   // Must come BEFORE the `/:id`-style routes so 'analytics' doesn't get matched
   // as a UUID parameter by Fastify's prefix tree.
-  const GlobalAnalyticsQuery = z.object({
-    window: z.coerce.number().int().min(1).max(365).default(30),
-  });
+  const GlobalAnalyticsQuery = refineCustomRange(
+    z.object({
+      ...customRangeFields,
+      window: z.coerce.number().int().min(1).max(365).default(30),
+    })
+  );
   app.get(
     '/analytics',
     {
@@ -693,9 +697,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const user = requireUser(request);
       const DAY = 24 * 60 * 60 * 1000;
-      const windowStart = new Date(Date.now() - request.query.window * DAY);
+      // A custom range is whole UTC days; a preset is a rolling window ending now.
+      const custom = resolveCustomRange(request.query);
+      const windowDays = custom?.days ?? request.query.window;
+      const windowStart = custom?.start ?? new Date(Date.now() - windowDays * DAY);
+      const windowEnd = custom?.end ?? null;
       // The window before this one is read in the same query, for the "vs previous" figures.
-      const previousStart = new Date(windowStart.getTime() - request.query.window * DAY);
+      const previousStart =
+        custom?.previousStart ?? new Date(windowStart.getTime() - windowDays * DAY);
       const ANALYTICS_ROW_CAP = 10_000;
       const rowsQuery = fastify.prisma.workflowRun.findMany({
         orderBy: { startedAt: 'desc' },
@@ -725,7 +734,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         },
         take: ANALYTICS_ROW_CAP + 1,
         where: {
-          startedAt: { gte: previousStart },
+          startedAt: { gte: previousStart, ...(windowEnd ? { lt: windowEnd } : {}) },
           // Visibility: same run-level visibility predicate used on /runs so
           // global templates do not leak cross-team work-request runs.
           ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
@@ -770,21 +779,21 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         outcomeType: b.outcomeType,
         sampleSize: b.sampleSize,
       }));
-      const analytics = computeGlobalAnalytics(
-        current.map(toRow),
-        request.query.window,
-        baselineRows
-      );
+      const analytics = computeGlobalAnalytics(current.map(toRow), windowDays, baselineRows);
       // The previous window is only trustworthy when the cap did not cut into it.
       const previousRows = kept.filter((r) => r.startedAt < windowStart);
       const previousComplete = !capped;
       const prev = previousComplete
-        ? computeGlobalAnalytics(previousRows.map(toRow), request.query.window)
+        ? computeGlobalAnalytics(previousRows.map(toRow), windowDays)
         : null;
       return {
         data: {
           ...analytics,
-          daily: computeDailyRunSeries(current, windowStart, new Date()),
+          daily: computeDailyRunSeries(
+            current,
+            windowStart,
+            windowEnd ? new Date(windowEnd.getTime() - 1) : new Date()
+          ),
           isTruncated,
           previous: prev && {
             autonomyRate: prev.autonomyRate,
