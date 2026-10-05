@@ -38,6 +38,31 @@ const PROVIDER_HINTS: Record<
   },
 };
 
+/**
+ * What a Spaces edit sends, or undefined when it changes nothing. Retyping the stored list is not
+ * a change, and a field holding only separators ("," or ", ,") is stray input rather than a
+ * request to clear — only a field the person emptied outright clears the stored list.
+ */
+function spacesEdit(
+  raw: string,
+  touched: boolean,
+  stored: string[] | null | undefined
+): string[] | undefined {
+  if (!touched) {
+    return undefined;
+  }
+  const list = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (list.length === 0 && raw.trim() !== '') {
+    return undefined;
+  }
+  const current = stored ?? [];
+  const same = list.length === current.length && list.every((v, n) => v === current[n]);
+  return same ? undefined : list;
+}
+
 export function KnowledgeBaseTab() {
   const {
     data: resp,
@@ -58,14 +83,13 @@ export function KnowledgeBaseTab() {
   const [email, setEmail] = usePrefilledField(data?.email);
   const [apiToken, setApiToken] = useState('');
   const [spacesRaw, setSpacesRaw] = useState('');
+  // The field starts blank (the stored list shows beside it), so blank alone cannot mean "clear".
+  const [spacesTouched, setSpacesTouched] = useState(false);
   const [maxPages, setMaxPages] = usePrefilledField(data?.maxPages);
 
   // What Save would send: omitted keys are unchanged, so their count is the unsaved edits.
   // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
-  const spaces = spacesRaw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const spacesChange = spacesEdit(spacesRaw, spacesTouched, data?.spaces);
   // Notion's API address is fixed, so it has no base URL and no private-network switch.
   const isNotion = (provider === '' ? data?.provider : provider) === 'notion';
   const body: KnowledgeBaseConfigInput = {
@@ -78,7 +102,7 @@ export function KnowledgeBaseTab() {
     email: clearableField(email, data?.email),
     enabled: enabled === data?.enabled ? undefined : enabled,
     maxPages: clearableIntField(maxPages, data?.maxPages),
-    spaces: spacesRaw ? spaces : undefined,
+    spaces: spacesChange,
   };
   if (provider && provider !== (data?.provider ?? 'disabled')) {
     body.provider = provider === 'disabled' ? null : provider;
@@ -106,6 +130,7 @@ export function KnowledgeBaseTab() {
       () => {
         setApiToken('');
         setSpacesRaw('');
+        setSpacesTouched(false);
         setProvider('');
         setEnabled(undefined);
         setAllowPrivateNetwork(undefined);
@@ -134,11 +159,8 @@ export function KnowledgeBaseTab() {
     if (apiToken) {
       draft.apiToken = apiToken;
     }
-    if (spacesRaw) {
-      draft.spaces = spacesRaw
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
+    if (spacesChange) {
+      draft.spaces = spacesChange;
     }
     if (allowPrivateNetwork !== undefined) {
       draft.allowPrivateNetwork = allowPrivateNetwork;
@@ -284,7 +306,10 @@ export function KnowledgeBaseTab() {
             <Input
               compact
               id="kb-spaces"
-              onChange={(e) => setSpacesRaw(e.target.value)}
+              onChange={(e) => {
+                setSpacesRaw(e.target.value);
+                setSpacesTouched(true);
+              }}
               placeholder={hints?.spaces ?? 'ENG, ARCH'}
               value={spacesRaw}
             />

@@ -191,3 +191,46 @@ describe('integration unsaved-changes guard', () => {
     expect(confirm).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('knowledge base spaces dirty tracking', () => {
+  const withSpaces = (spaces: string[]) => {
+    const original = configs.kb.data;
+    configs.kb.data = { ...original, spaces };
+    return () => {
+      configs.kb.data = original;
+    };
+  };
+
+  it('treats retyping the stored spaces as no change', async () => {
+    const restore = withSpaces(['ENG', 'ARCH']);
+    try {
+      mockConfig('kb');
+      render(withQuery(configs.kb.tab));
+      const input = await labelled('Spaces');
+      fireEvent.change(input, { target: { value: 'ENG,  ARCH' } });
+      expect(saveButton().disabled).toBe(true);
+      fireEvent.change(input, { target: { value: 'ENG' } });
+      expect(saveButton().disabled).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it('ignores a lone comma but clears when the field is emptied outright', async () => {
+    const restore = withSpaces(['ENG']);
+    try {
+      const spy = mockConfig('kb');
+      render(withQuery(configs.kb.tab));
+      const input = await labelled('Spaces');
+      fireEvent.change(input, { target: { value: ',' } });
+      expect(saveButton().disabled).toBe(true);
+      fireEvent.change(input, { target: { value: '' } });
+      expect(saveButton().disabled).toBe(false);
+      fireEvent.click(saveButton());
+      await waitFor(() => expect(screen.getByText('Settings saved.')).toBeTruthy());
+      expect(bodyOf(spy, configs.kb.path, 'PUT')).toEqual({ spaces: [] });
+    } finally {
+      restore();
+    }
+  });
+});

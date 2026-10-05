@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useState } from 'react';
 import { ConfigAuditLogTab } from '@/components/audit/ConfigAuditLogTab';
 import { FigmaTab } from '@/components/integrations/FigmaTab';
 import { GitHubTab } from '@/components/integrations/GitHubTab';
@@ -11,7 +11,6 @@ import { SourceBadge } from '@/components/integrations/SourceBadge';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
-import { hasUnsavedChanges, UNSAVED_CHANGES_PROMPT } from '@/hooks/useUnsavedChangesGuard';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 
 type Tab = 'github' | 'slack' | 'tracker' | 'knowledge-base' | 'figma' | 'audit-log';
@@ -47,6 +46,21 @@ function StudioIntegrationsPageInner() {
   const active: Tab = isTab(requestedTab) ? requestedTab : 'github';
   const installedSlackTeamId = params.get('slack_installed');
 
+  // A form tab stays mounted once opened (hidden while another is active), so its unsaved edits
+  // survive however the tab changes: the tab bar or the browser Back button, which the page
+  // cannot intercept. A link to another page still asks through the unsaved-changes guard that
+  // each form registers while it is dirty.
+  const [opened, setOpened] = useState<ReadonlySet<Tab>>(() => new Set([active]));
+  if (!opened.has(active)) {
+    setOpened(new Set([...opened, active]));
+  }
+  const panel = (tab: Tab, content: React.ReactNode) =>
+    opened.has(tab) || active === tab ? (
+      <div hidden={active !== tab} {...tabPanelProps('integrations', tab)}>
+        {content}
+      </div>
+    ) : null;
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -76,23 +90,19 @@ function StudioIntegrationsPageInner() {
       <TabBar
         active={active}
         idPrefix="integrations"
-        onChange={(tab) => {
-          // Switching tabs unmounts the open one, so unsaved edits would be lost silently.
-          if (tab !== active && hasUnsavedChanges() && !window.confirm(UNSAVED_CHANGES_PROMPT)) {
-            return;
-          }
-          update({ slack_installed: null, tab: tab === 'github' ? null : tab });
-        }}
+        onChange={(tab) => update({ slack_installed: null, tab: tab === 'github' ? null : tab })}
         tabs={TABS}
       />
-      <div {...tabPanelProps('integrations', active)}>
-        {active === 'github' && <GitHubTab />}
-        {active === 'slack' && <SlackTab installedTeamId={installedSlackTeamId} />}
-        {active === 'tracker' && <IssueTrackerTab />}
-        {active === 'knowledge-base' && <KnowledgeBaseTab />}
-        {active === 'figma' && <FigmaTab />}
-        {active === 'audit-log' && <ConfigAuditLogTab initialGroup="integrations" />}
-      </div>
+      {panel('github', <GitHubTab />)}
+      {panel('slack', <SlackTab installedTeamId={installedSlackTeamId} />)}
+      {panel('tracker', <IssueTrackerTab />)}
+      {panel('knowledge-base', <KnowledgeBaseTab />)}
+      {panel('figma', <FigmaTab />)}
+      {active === 'audit-log' && (
+        <div {...tabPanelProps('integrations', 'audit-log')}>
+          <ConfigAuditLogTab initialGroup="integrations" />
+        </div>
+      )}
     </div>
   );
 }
