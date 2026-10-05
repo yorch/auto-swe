@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { TabBar } from '@/components/ui/TabBar';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
