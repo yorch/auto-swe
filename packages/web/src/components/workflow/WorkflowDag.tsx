@@ -42,6 +42,7 @@ import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
 import { useFitFlow } from './fitFlow';
 import { FlowChrome } from './flowChrome';
+import { focusWhenReady } from './focusWhenReady';
 import { foldBookkeeping } from './foldBookkeeping';
 import { foldGroups } from './foldGroups';
 import { FIT_VIEW_OPTIONS, specToFlow } from './specToFlow';
@@ -229,20 +230,23 @@ function InnerDag({
 
   // Move DOM focus onto a node's React Flow wrapper so focus follows keyboard
   // selection (React Flow tags each wrapper with `data-id`).
-  const focusNodeEl = useCallback((id: string) => {
-    const el = containerRef.current?.querySelector<HTMLElement>(
-      `.react-flow__node[data-id="${CSS.escape(id)}"]`
-    );
-    el?.focus();
-  }, []);
+  const nodeEl = useCallback(
+    (id: string) =>
+      containerRef.current?.querySelector<HTMLElement>(
+        `.react-flow__node[data-id="${CSS.escape(id)}"]`
+      ) ?? null,
+    []
+  );
+  const focusNodeEl = useCallback((id: string) => nodeEl(id)?.focus(), [nodeEl]);
 
   useEffect(() => {
     const id = pendingFocus.current;
     if (id && nodes.some((n) => n.id === id)) {
       pendingFocus.current = null;
-      requestAnimationFrame(() => focusNodeEl(id));
+      // Not a single focus(): the nodes just put on the canvas are hidden until measured.
+      focusWhenReady(() => nodeEl(id));
     }
-  }, [nodes, focusNodeEl]);
+  }, [nodes, nodeEl]);
 
   // Keyboard graph traversal: arrows walk the edges, Home jumps to the entry
   // node, Enter/Space opens the anchored node in the inspector (or expands a
