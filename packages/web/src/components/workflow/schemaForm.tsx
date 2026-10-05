@@ -12,13 +12,14 @@ import { Select } from '@/components/ui/Select';
 import { useRepositories } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
 
-function ConnectionPicker({
+export function ConnectionPicker({
   id,
   label,
   hint,
   value,
   onChange,
   connectionType,
+  connectionTypes,
   required,
   error,
 }: {
@@ -28,13 +29,21 @@ function ConnectionPicker({
   value: string;
   onChange: (v: string) => void;
   connectionType?: string;
+  /** Any of these types; takes the place of `connectionType` when a provider accepts several. */
+  connectionTypes?: string[];
   required?: boolean;
   error?: string;
 }) {
   const { data: connections = [] } = useRepositories();
-  const visible = connectionType
-    ? connections.filter((c) => (c.type ?? 'git_repo') === connectionType)
+  const accepted = connectionTypes?.length
+    ? connectionTypes
+    : connectionType
+      ? [connectionType]
+      : [];
+  const visible = accepted.length
+    ? connections.filter((c) => accepted.includes(c.type ?? 'git_repo'))
     : connections;
+  const typeLabel = accepted.map((type) => type.replace(/_/g, ' ')).join(' or ');
 
   if (visible.length === 0) {
     return (
@@ -44,7 +53,7 @@ function ConnectionPicker({
           {required && <RequiredMark />}
         </span>
         <Alert className="text-xs">
-          No {connectionType ? `${connectionType.replace(/_/g, ' ')} ` : ''}connections configured.{' '}
+          No {typeLabel ? `${typeLabel} ` : ''}connections configured.{' '}
           <Link className="text-ember-400 hover:underline" href="/connections">
             Add one in Connections.
           </Link>
