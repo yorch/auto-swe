@@ -208,7 +208,7 @@ export function describeLaunchError(err: unknown): LaunchErrorView {
       };
     case 'AGENT_PIN_SHADOWED':
       return {
-        hint: 'Choose "Latest version" to run your organization’s version of this agent.',
+        hint: 'Set the Version field to "Latest" (on the details screen) to run your organization’s version of this agent.',
         message,
         retryable: false,
         title: 'That version cannot be pinned',

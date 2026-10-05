@@ -224,6 +224,28 @@ describe('AgentRunForm', () => {
     expect(launches).toHaveLength(1);
   });
 
+  it('keeps the hint and the runs link on a launch error shown on the review screen', async () => {
+    const codes = ['AGENT_PIN_SHADOWED', 'RUN_CONFLICT'];
+    let n = 0;
+    stubGateway({
+      launch: () =>
+        new Response(
+          JSON.stringify({ error: { code: codes[n++] ?? 'RUN_CONFLICT', message: 'refused' } }),
+          { headers: { 'content-type': 'application/json' }, status: 409 }
+        ),
+    });
+    render(withQuery(<AgentRunForm reviewBeforeLaunch />));
+    await fill();
+    fireEvent.click(screen.getByRole('button', { name: 'Review agent run' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Launch agent' }));
+    // The launch happens from the review screen, so that is where the error must be complete.
+    expect(await screen.findByText(/That version cannot be pinned/)).toBeTruthy();
+    expect(screen.getByText(/Version field to "Latest" \(on the details screen\)/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Launch agent' }));
+    expect(await screen.findByText(/Already started/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'View runs' }).getAttribute('href')).toBe('/runs');
+  });
+
   it('blocks launching when the platform has agent runs turned off', async () => {
     stubGateway({ limits: { ...LIMITS, enabled: false } });
     render(withQuery(<AgentRunForm />));
