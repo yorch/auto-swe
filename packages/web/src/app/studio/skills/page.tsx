@@ -187,7 +187,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           />
           {skill.isBuiltIn ? (
             <FieldWrapper hint="Prompt text is locked for built-in skills." label="Prompt text">
-              <pre className="w-full rounded-[9px] border border-ink-500 bg-ink-900 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
+              <pre className="w-full rounded-md border border-ink-500 bg-ink-900 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
                 {skill.promptText}
               </pre>
             </FieldWrapper>
@@ -233,7 +233,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           )}
           <div>
             <div className="label-mono mb-1.5">Prompt text</div>
-            <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
+            <pre className="max-h-96 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
               {visibleText(skill.promptText, { multiline: true })}
             </pre>
             {isAdmin && !skill.isVerified && !skill.isBuiltIn && (

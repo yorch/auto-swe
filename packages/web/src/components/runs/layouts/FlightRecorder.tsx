@@ -222,7 +222,7 @@ export function FlightRecorder({
         <div className="relative">
           <input
             aria-label="Replay position"
-            className="h-1.5 w-full cursor-pointer appearance-none rounded-[3px] accent-ember-400 outline-none"
+            className="h-1.5 w-full cursor-pointer appearance-none rounded-xs accent-ember-400 outline-none"
             max={1000}
             min={0}
             onChange={(e) => {

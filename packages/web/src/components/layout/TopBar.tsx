@@ -105,7 +105,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
       {/* Inbox badge */}
       {inboxCount > 0 && (
         <Link
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-2.5 py-[5px] text-[12.5px] font-semibold text-amber-400 no-underline max-sm:hidden"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-400/10 px-2.5 py-[5px] text-[12.5px] font-semibold text-amber-400 no-underline max-sm:hidden"
           href="/govern/approvals"
         >
           <span className="inline-block h-[7px] w-[7px] rounded-full bg-amber-400" />

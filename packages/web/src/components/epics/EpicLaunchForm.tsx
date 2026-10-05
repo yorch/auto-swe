@@ -138,7 +138,7 @@ export function EpicLaunchForm({
           <span className="label-mono block">Repositories ({repoIds.length} selected)</span>
           <span className="label-mono">pick 2 or more</span>
         </div>
-        <div className="max-h-64 overflow-y-auto rounded-[9px] border border-ink-500">
+        <div className="max-h-64 overflow-y-auto rounded-md border border-ink-500">
           {repos.map((r) => {
             const checked = repoIds.includes(r.id);
             return (

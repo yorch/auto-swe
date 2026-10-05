@@ -112,7 +112,7 @@ function UserMenu() {
         aria-controls={MENU_ID}
         aria-expanded={open}
         className={cn(
-          'flex w-full items-center gap-[9px] rounded-[10px] border border-ink-400 bg-ink-700 px-[11px] py-[9px] text-left text-[12.5px] hover:border-ink-300',
+          'flex w-full items-center gap-[9px] rounded-lg border border-ink-400 bg-ink-700 px-[11px] py-[9px] text-left text-[12.5px] hover:border-ink-300',
           FOCUS_RING
         )}
         onClick={() => setOpen((o) => !o)}
@@ -121,7 +121,7 @@ function UserMenu() {
       >
         <span
           aria-hidden="true"
-          className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] bg-gradient-to-br from-dust-400 to-ember-400 text-[11px] font-bold text-ink-950"
+          className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-sm bg-gradient-to-br from-dust-400 to-ember-400 text-[11px] font-bold text-ink-950"
         >
           {name[0].toUpperCase()}
         </span>
@@ -137,7 +137,7 @@ function UserMenu() {
       </button>
       {open && (
         <div
-          className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded-[10px] border border-ink-400 bg-ink-900 shadow-xl"
+          className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-ink-400 bg-ink-900 shadow-xl"
           id={MENU_ID}
         >
           <div className="truncate border-b border-ink-400 px-3 py-2 text-xs text-paper-400">
@@ -231,7 +231,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           href="/"
         >
           {/* Gradient logo mark */}
-          <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] bg-gradient-to-br from-ember-400 to-violet-400 shadow-[0_6px_18px_-6px_color-mix(in_oklab,var(--color-ember-400)_70%,transparent)]">
+          <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-sm bg-gradient-to-br from-ember-400 to-violet-400 shadow-[0_6px_18px_-6px_color-mix(in_oklab,var(--color-ember-400)_70%,transparent)]">
             <svg
               aria-hidden="true"
               className="text-paper-50"
@@ -290,7 +290,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           <Link
             aria-current={isStartWorkPath(pathname) ? 'page' : undefined}
             className={cn(
-              'flex items-center justify-center gap-2 rounded-[10px] border border-transparent bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-[9px] text-[13.5px] font-semibold text-white no-underline hover:brightness-110',
+              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-[9px] text-[13.5px] font-semibold text-white no-underline hover:brightness-110',
               FOCUS_RING
             )}
             href="/start"

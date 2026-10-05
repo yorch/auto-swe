@@ -21,7 +21,7 @@ export default async function DocsIndexPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {docs.map((doc) => (
           <Link
-            className="group block rounded-[14px] focus:outline-none focus-visible:ring-2 focus-visible:ring-ember-400"
+            className="group block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ember-400"
             href={`/docs/${doc.slug}`}
             key={doc.slug}
           >

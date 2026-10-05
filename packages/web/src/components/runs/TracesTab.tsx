@@ -591,7 +591,7 @@ export function TracesTab({
         <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-ink-600/50 bg-ink-900 px-4 py-2">
           <span className="text-paper-500 text-[11px]">
             Filtered to{' '}
-            <span className="rounded-[5px] bg-ink-600 px-1.5 py-0.5 font-mono text-[10px] text-paper-300">
+            <span className="rounded-sm bg-ink-600 px-1.5 py-0.5 font-mono text-[10px] text-paper-300">
               {filterNodeId}
             </span>
           </span>
@@ -666,7 +666,7 @@ export function TracesTab({
                       {group.ambiguous && (
                         <span
                           aria-describedby={noteId}
-                          className="rounded-[5px] bg-amber-400/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-400"
+                          className="rounded-sm bg-amber-400/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-400"
                         >
                           ambiguous
                         </span>
