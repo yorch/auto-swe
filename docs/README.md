@@ -35,6 +35,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [repo-access-gating.md](./repo-access-gating.md) | Making repository access agree with GitHub — the permission projection, the sweep and webhook refresh, and the advisory-then-enforce rollout |
 | [repositories.md](./repositories.md) | What identifies a repository (host, owner, name), which hosts its URLs may point at, and sharing it with other teams |
 | [user-github-credentials.md](./user-github-credentials.md) | A user's own GitHub or GitHub Enterprise token for a repository — used only for runs they launch, the host allowlist, and how the access gate judges it |
+| [work-views.md](./work-views.md) | The pull-request and ticket views — the recorded PR lifecycle and its webhook events, the two list APIs, and how visibility is applied to every row and aggregate |
 
 ## Configuration & operations
 
