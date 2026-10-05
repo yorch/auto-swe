@@ -28,8 +28,11 @@ describe('validateChannelForm', () => {
     expect(validateChannelForm(form, 'edit')).toEqual({});
   });
 
-  it('checks a schedule only while its feature is on, and explains a bad one', () => {
-    expect(validateChannelForm({ ...valid(), ambientCron: 'nonsense' }, 'edit')).toEqual({});
+  it('checks a stored schedule whether or not its feature is on, and explains a bad one', () => {
+    expect(
+      validateChannelForm({ ...valid(), ambientCron: 'nonsense' }, 'edit').ambientCron
+    ).toBeTruthy();
+    expect(validateChannelForm({ ...valid(), ambientCron: '' }, 'edit')).toEqual({});
     const bad = validateChannelForm(
       { ...valid(), ambientCron: '0 25 * * *', ambientEnabled: true },
       'edit'
@@ -50,7 +53,7 @@ describe('validateChannelForm', () => {
 });
 
 describe('form to body', () => {
-  it('drops a schedule whose feature is off and converts dollars to cents', () => {
+  it('keeps a schedule whose feature is off and converts dollars to cents', () => {
     const body = formToUpdateBody({
       ...valid(),
       ambientCron: '0 9 * * 1-5',
@@ -58,7 +61,8 @@ describe('form to body', () => {
       budgetDollars: '12.50',
       reactiveCooldownMinutes: '15',
     });
-    expect(body.ambientCron).toBeNull();
+    expect(body.ambientCron).toBe('0 9 * * 1-5');
+    expect(formToUpdateBody({ ...valid(), ambientCron: '  ' }).ambientCron).toBeNull();
     expect(body.monthlyBudgetUsdCents).toBe(1250);
     expect(body.reactiveCooldownMinutes).toBe(15);
     expect(body.orgFlagCooldownHours).toBeNull();

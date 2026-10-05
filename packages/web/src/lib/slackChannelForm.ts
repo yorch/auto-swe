@@ -138,7 +138,8 @@ export function validateChannelForm(
     [form.reactiveEnabled, 'reactiveCron', 'Reactive schedule'],
   ] as const) {
     const value = form[field].trim();
-    if (enabled && value) {
+    // A stored schedule is kept while its feature is off, so it must be valid either way.
+    if (value) {
       const preview = describeCron(value);
       if (!preview.ok) {
         errors[field] = preview.error;
@@ -158,16 +159,19 @@ export function validateChannelForm(
   return errors;
 }
 
-/** The schedule is stored only while its feature is on; blank means none. */
-function cronFor(enabled: boolean, value: string): string | null {
-  return enabled && value.trim() ? value.trim() : null;
+/**
+ * The schedule is sent whatever the toggle says, so switching a feature off and on again
+ * never loses it; only a blank field clears it. The server runs it only while enabled.
+ */
+function cronFor(value: string): string | null {
+  return value.trim() || null;
 }
 
 /** Call only after `validateChannelForm` returned no errors. */
 export function formToCreateBody(form: ChannelFormState): CreateSlackChannelBody {
   return {
     agentKey: form.agentKey || DEFAULT_CHANNEL_AGENT,
-    ambientCron: cronFor(form.ambientEnabled, form.ambientCron),
+    ambientCron: cronFor(form.ambientCron),
     ambientEnabled: form.ambientEnabled,
     consolidationEnabled: form.consolidationEnabled,
     followupSessionEnabled: form.followupSessionEnabled,
@@ -177,7 +181,7 @@ export function formToCreateBody(form: ChannelFormState): CreateSlackChannelBody
     orgFlaggingEnabled: form.orgFlaggingEnabled,
     passiveIngestEnabled: form.passiveIngestEnabled,
     personaPrompt: form.personaPrompt.trim() || null,
-    reactiveCron: cronFor(form.reactiveEnabled, form.reactiveCron),
+    reactiveCron: cronFor(form.reactiveCron),
     reactiveEnabled: form.reactiveEnabled,
     slackChannelId: form.slackChannelId.trim(),
     slackTeamId: form.slackTeamId.trim(),
@@ -189,7 +193,7 @@ export function formToCreateBody(form: ChannelFormState): CreateSlackChannelBody
 export function formToUpdateBody(form: ChannelFormState): UpdateSlackChannelBody {
   return {
     agentKey: form.agentKey || undefined,
-    ambientCron: cronFor(form.ambientEnabled, form.ambientCron),
+    ambientCron: cronFor(form.ambientCron),
     ambientEnabled: form.ambientEnabled,
     consolidationEnabled: form.consolidationEnabled,
     followupSessionEnabled: form.followupSessionEnabled,
@@ -203,7 +207,7 @@ export function formToUpdateBody(form: ChannelFormState): UpdateSlackChannelBody
     passiveIngestEnabled: form.passiveIngestEnabled,
     personaPrompt: form.personaPrompt.trim() || null,
     reactiveCooldownMinutes: parseOptionalPositiveInt(form.reactiveCooldownMinutes) ?? null,
-    reactiveCron: cronFor(form.reactiveEnabled, form.reactiveCron),
+    reactiveCron: cronFor(form.reactiveCron),
     reactiveEnabled: form.reactiveEnabled,
     reactiveLookbackMinutes: parseOptionalPositiveInt(form.reactiveLookbackMinutes) ?? null,
     teamId: form.teamId || undefined,
