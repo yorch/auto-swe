@@ -22,17 +22,27 @@ export function isIsoDay(value: string | null | undefined): value is string {
   return Number.isFinite(t) && new Date(t).toISOString().startsWith(value);
 }
 
-/** Reads `range`, `from` and `to` from the URL; anything unusable falls back to the default. */
+/**
+ * Reads `range`, `from` and `to` from the URL; anything unusable falls back to the default.
+ * A page that serves presets only passes `allowCustom: false`, so a shared `range=custom`
+ * link falls back to the default preset (see `customRangeIgnored` for telling the reader).
+ */
 export function parseDateRange(
   params: URLSearchParams | { get(name: string): string | null },
-  opts: { defaultDays?: number; presets?: readonly number[] } = {}
+  opts: { allowCustom?: boolean; defaultDays?: number; presets?: readonly number[] } = {}
 ): DateRange {
   const presets = opts.presets ?? DEFAULT_PRESETS;
   const fallback = opts.defaultDays ?? 30;
   const range = params.get('range');
   const from = params.get('from');
   const to = params.get('to');
-  if (range === 'custom' && isIsoDay(from) && isIsoDay(to) && from <= to) {
+  if (
+    opts.allowCustom !== false &&
+    range === 'custom' &&
+    isIsoDay(from) &&
+    isIsoDay(to) &&
+    from <= to
+  ) {
     return { from, kind: 'custom', to };
   }
   const days = Number(range);
@@ -55,23 +65,21 @@ export function utcDay(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Inclusive start and exclusive end instants of a range, as ISO strings. */
-export function rangeBounds(range: DateRange, now = new Date()): { since: string; until: string } {
-  if (range.kind === 'custom') {
-    return {
-      since: `${range.from}T00:00:00.000Z`,
-      until: new Date(Date.parse(`${range.to}T00:00:00.000Z`) + DAY_MS).toISOString(),
-    };
-  }
-  return {
-    since: new Date(now.getTime() - range.days * DAY_MS).toISOString(),
-    until: now.toISOString(),
-  };
-}
-
 /** Short heading for a range: "Last 30 days" or "1 Sep – 14 Sep 2026 (UTC)". */
 export function describeRange(range: DateRange): string {
   return range.kind === 'preset' ? `Last ${range.days} days` : `${range.from} to ${range.to} (UTC)`;
+}
+
+/**
+ * The inclusive first and last UTC calendar day of a range. A preset of N days is the N whole
+ * days ending with today, so "7 days" is seven calendar days wherever it is used.
+ */
+export function dayRange(range: DateRange, now = new Date()): { from: string; to: string } {
+  if (range.kind === 'custom') {
+    return { from: range.from, to: range.to };
+  }
+  const todayStart = Date.parse(`${utcDay(now)}T00:00:00.000Z`);
+  return { from: utcDay(new Date(todayStart - (range.days - 1) * DAY_MS)), to: utcDay(now) };
 }
 
 /**
@@ -80,13 +88,14 @@ export function describeRange(range: DateRange): string {
  * keyed on it is not refetched on every render.
  */
 export function dayBounds(range: DateRange, now = new Date()): { since: string; until: string } {
-  if (range.kind === 'custom') {
-    return rangeBounds(range);
-  }
-  const todayStart = Date.parse(`${utcDay(now)}T00:00:00.000Z`);
-  const until = todayStart + DAY_MS;
+  const { from, to } = dayRange(range, now);
   return {
-    since: new Date(until - range.days * DAY_MS).toISOString(),
-    until: new Date(until).toISOString(),
+    since: `${from}T00:00:00.000Z`,
+    until: new Date(Date.parse(`${to}T00:00:00.000Z`) + DAY_MS).toISOString(),
   };
+}
+
+/** True when the URL asked for a custom range that a presets-only page cannot serve. */
+export function customRangeIgnored(params: { get(name: string): string | null }): boolean {
+  return params.get('range') === 'custom';
 }

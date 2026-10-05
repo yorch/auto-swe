@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Suspense, useMemo, useState } from 'react';
 import { DailyCostChart } from '@/components/charts/DailyCostChart';
+import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
@@ -30,7 +31,7 @@ import {
   useUsageScopes,
 } from '@/hooks/useAdmin';
 import { useUrlParams } from '@/hooks/useUrlParams';
-import { dateRangePatch, parseDateRange } from '@/lib/dateRange';
+import { customRangeIgnored, dateRangePatch, parseDateRange } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 import { humanizeKey } from '@/lib/govLabels';
 import { formatCost, formatCount, formatDuration, formatPercent, formatTokens } from '@/lib/utils';
@@ -217,7 +218,7 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
 
 function UsageWorkspace() {
   const { params, update } = useUrlParams();
-  const range = parseDateRange(params);
+  const range = parseDateRange(params, { allowCustom: false });
   const windowDays = range.kind === 'preset' ? range.days : 30;
   const scopeOptions = useScopeOptions();
   const chosenScope = params.get('scope');
@@ -267,6 +268,13 @@ function UsageWorkspace() {
         subtitle="Every LLM and embedding call, including workflows that keep no run record, attributed to the team and organization whose spend it is. Days are UTC."
         title="LLM usage"
       />
+
+      {customRangeIgnored(params) && (
+        <Alert variant="info">
+          This page only offers 7, 30 and 90 day ranges, so the custom range in the link was
+          replaced by the last {windowDays} days.
+        </Alert>
+      )}
 
       {scopeOptions?.length === 0 && (
         <EmptyState title="You lead no team or organization, so there is no usage you can see." />

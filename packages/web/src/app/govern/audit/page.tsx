@@ -25,7 +25,7 @@ import {
 } from '@/hooks/useAdmin';
 import { useUrlParams } from '@/hooks/useUrlParams';
 import { entityHref, entityTypeLabel } from '@/lib/auditEntity';
-import { type DateRange, dateRangePatch, parseDateRange, utcDay } from '@/lib/dateRange';
+import { type DateRange, dateRangePatch, dayRange, parseDateRange } from '@/lib/dateRange';
 import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
 
@@ -51,14 +51,12 @@ const ACTION_LABEL: Record<AuditAction, string> = {
 };
 
 /** The URL's range as the inclusive UTC days the gateway filters on; null is all time. */
-function rangeDays(range: DateRange | null, now = new Date()): { since?: string; until?: string } {
+function rangeDays(range: DateRange | null): { since?: string; until?: string } {
   if (!range) {
     return {};
   }
-  if (range.kind === 'custom') {
-    return { since: range.from, until: range.to };
-  }
-  return { since: utcDay(new Date(now.getTime() - range.days * 86_400_000)), until: utcDay(now) };
+  const { from, to } = dayRange(range);
+  return { since: from, until: to };
 }
 
 function AuditWorkspace() {

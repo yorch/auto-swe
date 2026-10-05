@@ -16,7 +16,7 @@ import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useSort } from '@/hooks/useSort';
 import { useGlobalAnalytics } from '@/hooks/useTemplates';
 import { useUrlParams } from '@/hooks/useUrlParams';
-import { dateRangePatch, parseDateRange } from '@/lib/dateRange';
+import { customRangeIgnored, dateRangePatch, parseDateRange } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 import { outcomeTypeLabel } from '@/lib/govLabels';
 import { successTone } from '@/lib/tone';
@@ -55,7 +55,7 @@ const MIN_BASELINE_SAMPLE = 30;
 
 function AnalyticsWorkspace() {
   const { params, update } = useUrlParams();
-  const range = parseDateRange(params);
+  const range = parseDateRange(params, { allowCustom: false });
   const windowDays = range.kind === 'preset' ? range.days : 30;
   const filter = (params.get('q') ?? '').slice(0, 100);
   const [page, setPage] = useState(0);
@@ -149,6 +149,13 @@ function AnalyticsWorkspace() {
         subtitle="Run volume, outcomes, cost, and time saved across every workflow template on the platform."
         title="Platform analytics"
       />
+
+      {customRangeIgnored(params) && (
+        <Alert variant="info">
+          This page only offers 7, 30 and 90 day ranges, so the custom range in the link was
+          replaced by the last {windowDays} days.
+        </Alert>
+      )}
 
       <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="analytics">
         {!data ? (

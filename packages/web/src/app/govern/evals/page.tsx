@@ -7,6 +7,7 @@ import { ScorerTrendChart } from '@/components/charts/ScorerTrendChart';
 import { SuiteHealthChart } from '@/components/charts/SuiteHealthChart';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
+import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -23,7 +24,7 @@ import {
 } from '@/hooks/useAdmin';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { useUrlParams } from '@/hooks/useUrlParams';
-import { dateRangePatch, describeRange, parseDateRange } from '@/lib/dateRange';
+import { customRangeIgnored, dateRangePatch, describeRange, parseDateRange } from '@/lib/dateRange';
 import { latestMean, scorerChange, worstMovingScorer } from '@/lib/evalTrend';
 import { cn, formatDate, scoreColor } from '@/lib/utils';
 
@@ -65,7 +66,7 @@ function ScoreCell({ value }: { value: number | null }) {
 
 function EvalsWorkspace() {
   const { params, update } = useUrlParams();
-  const range = parseDateRange(params);
+  const range = parseDateRange(params, { allowCustom: false });
   const windowDays = range.kind === 'preset' ? range.days : 30;
   const rawBy = params.get('by');
   const by: Breakdown = rawBy === 'judgeModel' || rawBy === 'agentKey' ? rawBy : '';
@@ -126,6 +127,13 @@ function EvalsWorkspace() {
         subtitle="Per-scorer quality signals over time, every captured result with a link to the run it scored, and the datasets offline runs score against. Days are UTC."
         title="Evals"
       />
+
+      {customRangeIgnored(params) && (
+        <Alert variant="info">
+          This page only offers 7, 30 and 90 day ranges, so the custom range in the link was
+          replaced by the last {windowDays} days.
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>

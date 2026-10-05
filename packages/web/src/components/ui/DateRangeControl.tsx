@@ -34,13 +34,24 @@ export function DateRangeControl({
   const [customOpen, setCustomOpen] = useState(value?.kind === 'custom');
   const [from, setFrom] = useState(value?.kind === 'custom' ? value.from : '');
   const [to, setTo] = useState(value?.kind === 'custom' ? value.to : '');
+  // Keyed on what the range IS: the parent re-parses the URL every render, so the object
+  // changes identity constantly and must not decide when the editor opens or closes.
+  const valueKey = !value
+    ? 'all'
+    : value.kind === 'custom'
+      ? `custom:${value.from}:${value.to}`
+      : `preset:${value.days}`;
   useEffect(() => {
     if (value?.kind === 'custom') {
       setCustomOpen(true);
       setFrom(value.from);
       setTo(value.to);
+    } else {
+      // A preset (or all time) became the value: the custom editor has done its job.
+      setCustomOpen(false);
     }
-  }, [value]);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: `valueKey` stands for `value`
+  }, [valueKey]);
 
   const today = utcDay(new Date());
   const invalid = !isIsoDay(from) || !isIsoDay(to) || from > to || to > today;
@@ -94,6 +105,13 @@ export function DateRangeControl({
           <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
             Dates are UTC
           </span>
+          {isIsoDay(from) && isIsoDay(to) && (from > to || to > today) && (
+            <span className="w-full text-xs text-brick-400" role="alert">
+              {from > to
+                ? 'The start date must be on or before the end date.'
+                : 'The end date cannot be in the future.'}
+            </span>
+          )}
         </div>
       )}
     </div>
