@@ -74,7 +74,7 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
       </h4>
 
       {/* Mono locator */}
-      <div className="mb-2 break-all font-mono text-[10px] tracking-[0.08em] text-brick-400">
+      <div className="mb-2 font-mono max-lg:break-all text-[10px] tracking-[0.08em] text-brick-400">
         at {step.nodeId}
       </div>
 

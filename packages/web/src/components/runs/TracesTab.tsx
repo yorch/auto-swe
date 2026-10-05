@@ -443,7 +443,7 @@ function EventRow({
           </button>
 
           {/* Right: token/cost chip + otel link + duration + error chip */}
-          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2 lg:flex-nowrap">
             <TokenCostChip trace={trace} />
             <OtelLink trace={trace} />
             {durationLabel && (
@@ -592,7 +592,7 @@ export function TracesTab({
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-600/50 bg-ink-900 px-4 py-2 lg:flex-nowrap">
           <span className="text-paper-500 text-[11px]">
             Filtered to{' '}
-            <span className="break-all rounded-sm bg-ink-600 px-1.5 py-0.5 font-mono text-[10px] text-paper-300">
+            <span className="rounded-sm bg-ink-600 max-lg:break-all px-1.5 py-0.5 font-mono text-[10px] text-paper-300">
               {filterNodeId}
             </span>
           </span>
@@ -653,7 +653,7 @@ export function TracesTab({
                         !compact && filterNodeId ? 'top-[33px]' : 'top-0'
                       )}
                     >
-                      <span className="min-w-0 break-all font-mono text-[11px] font-medium text-paper-200">
+                      <span className="font-mono text-[11px] font-medium text-paper-200 max-lg:min-w-0 max-lg:break-all">
                         {group.nodeLabels.length > 0
                           ? group.nodeLabels.join(' | ')
                           : group.activityName}
