@@ -136,7 +136,14 @@ interface SavedNotice {
 export default function AgentLibraryPage() {
   // Every scope: filtering to GLOBAL hid organization, team, channel and
   // template overrides from the only page that manages them.
-  const { data: agents, error: loadError, isError, isLoading } = useAgentLibrary();
+  const {
+    data: agents,
+    error: loadError,
+    isError,
+    isFetching,
+    refetch,
+    isLoading,
+  } = useAgentLibrary();
   const { data: teams } = useTeams();
   const { data: templates } = useWorkflowTemplates();
   const { data: orgs } = useOrganizationDirectory();

@@ -152,7 +152,7 @@ Four equivalent entry points — pick the one that fits the workflow:
 
 `budgetTier` controls the LLM token budget: `STANDARD` (2M/500K tokens), `LARGE` (8M/2M), `EPIC` (20M/5M). The workflow is terminated with `BUDGET_EXCEEDED` if the limit is breached.
 
-For multi-repo changes, use **Epics** (`/epics` in the dashboard, or `POST /api/v1/epics`) — the Planner agent decomposes the brief into per-repo child workflows.
+For multi-repo changes, use **Epics** (the Epics type under Requests in the dashboard, or `POST /api/v1/epics`) — the Planner agent decomposes the brief into per-repo child workflows.
 
 ### Monitor
 

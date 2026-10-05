@@ -155,7 +155,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
   return (
     <div className="space-y-8">
       <div>
-        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Template'} />
+        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Workflow'} />
         <PageHeader
           actions={
             <div className="flex flex-wrap items-end gap-4">
@@ -182,7 +182,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
           }
           chapter="§ Workflows"
           className="mb-0 mt-4"
-          subtitle="Side-by-side diff of two versions of this template. Changed nodes are highlighted on both diagrams and expanded below."
+          subtitle="Side-by-side diff of two versions of this workflow. Changed nodes are highlighted on both diagrams and expanded below."
           title="Version diff"
         />
       </div>

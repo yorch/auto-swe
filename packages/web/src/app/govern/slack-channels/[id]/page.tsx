@@ -13,7 +13,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
 import { useSlackChannel } from '@/hooks/useSlackChannels';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { validateRouteParam } from '@/lib/routeParams';
 
 type Tab = 'settings' | 'memory' | 'open-items' | 'activity';
@@ -32,7 +32,7 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
   // quotes and a stale list entry cannot hide a channel that exists.
   const { data: channel, error, isError, isLoading } = useSlackChannel(id);
   // The tab lives in the URL so a view can be linked to and survives a reload.
-  const { params: query, update } = useUrlParams();
+  const { params: query, update } = useUrlFilters();
   const rawTab = query.get('tab');
   const tab: Tab = TABS.some((t) => t.id === rawTab) ? (rawTab as Tab) : 'settings';
   const setTab = (next: Tab) => update({ tab: next === 'settings' ? null : next });

@@ -10,10 +10,7 @@ import { cn } from '@/lib/utils';
 export function AuthLayout({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div
-      className={cn(
-        'flex min-h-screen items-center justify-center bg-ink-800 px-6 py-12',
-        className
-      )}
+      className={cn('flex min-h-dvh items-center justify-center bg-ink-800 px-6 py-12', className)}
     >
       <div className="w-full max-w-sm">{children}</div>
     </div>

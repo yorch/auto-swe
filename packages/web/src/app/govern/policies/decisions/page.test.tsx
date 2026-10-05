@@ -32,7 +32,7 @@ function mock() {
 }
 
 describe('AutonomyDecisionsPage URL state', () => {
-  it('pages through useUrlParams, writing the offset into the URL', async () => {
+  it('pages through useUrlFilters, writing the offset into the URL', async () => {
     mock();
     render(withQuery(<AutonomyDecisionsPage />));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Next page' })).toBeTruthy());

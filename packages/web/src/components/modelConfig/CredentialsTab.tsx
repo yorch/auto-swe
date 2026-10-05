@@ -38,7 +38,14 @@ const BUILTIN_PROVIDER_HINTS: Record<BuiltinProvider, string> = {
 };
 
 export function CredentialsTab() {
-  const { data: credentials, error: loadError, isError, isLoading } = useAdminCredentials();
+  const {
+    data: credentials,
+    error: loadError,
+    isError,
+    isFetching,
+    refetch,
+    isLoading,
+  } = useAdminCredentials();
   const [editing, setEditing] = useState<ProviderCredentialRow | null>(null);
   const [creating, setCreating] = useState(false);
   // Provider prefilled when "Add credential" is clicked on a missing provider.
@@ -123,7 +130,14 @@ export function CredentialsTab() {
           </ul>
         </section>
       )}
-      <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="credentials">
+      <QueryBoundary
+        error={loadError}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="credentials"
+        onRetry={() => void refetch()}
+      >
         <Table>
           <THead>
             <Th variant="compact">Provider</Th>

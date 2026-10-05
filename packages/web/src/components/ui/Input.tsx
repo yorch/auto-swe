@@ -27,7 +27,7 @@ export function Input({
         aria-describedby={fieldDescribedBy(inputId, hint, error)}
         aria-invalid={error ? true : undefined}
         className={cn(
-          'w-full rounded-[9px] border border-ink-400 bg-ink-900/60 text-paper-100 outline-none transition-colors',
+          'w-full rounded-md border border-ink-400 bg-ink-900/60 text-paper-100 outline-none transition-colors',
           compact ? 'h-8 px-2 font-mono text-xs' : 'h-10 px-3 text-sm',
           'focus:border-ember-400 focus:bg-ink-900/80',
           'placeholder:text-paper-600',

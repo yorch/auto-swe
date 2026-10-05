@@ -68,7 +68,7 @@ describe('request side panel', () => {
     expect(await screen.findByText('Review PR #7')).toBeTruthy();
     expect(screen.queryByText('An old failure')).toBeNull();
     expect(screen.queryByText('CI failed on the old attempt')).toBeNull();
-    const link = screen.getByRole('link', { name: /Open full page/ });
+    const link = screen.getByRole('link', { name: /Open full diagnostics/ });
     expect(link.getAttribute('href')).toBe('/runs/run-success');
     const calls = spy.mock.calls.map(([url]) => String(url));
     expect(calls.some((url) => url.includes('human-steps?runId=run-success'))).toBe(true);
@@ -106,7 +106,7 @@ describe('request side panel', () => {
     fireEvent.click(launch);
     fireEvent.click(launch);
     await waitFor(() =>
-      expect(screen.getByRole('link', { name: /Open full page/ }).getAttribute('href')).toBe(
+      expect(screen.getByRole('link', { name: /Open full diagnostics/ }).getAttribute('href')).toBe(
         '/runs/run-retry'
       )
     );

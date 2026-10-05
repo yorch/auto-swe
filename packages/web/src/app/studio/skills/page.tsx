@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { TabBar } from '@/components/ui/TabBar';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
@@ -204,7 +204,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           />
           {sk.isBuiltIn ? (
             <FieldWrapper hint="Prompt text is locked for built-in skills." label="Prompt text">
-              <pre className="w-full rounded-[9px] border border-ink-500 bg-ink-900 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
+              <pre className="w-full rounded-md border border-ink-500 bg-ink-900 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
                 {sk.promptText}
               </pre>
             </FieldWrapper>
@@ -267,7 +267,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           )}
           <div>
             <div className="label-mono mb-1.5">Prompt text</div>
-            <pre className="max-h-96 overflow-auto rounded-[9px] border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
+            <pre className="max-h-96 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
               {visibleText(sk.promptText, { multiline: true })}
             </pre>
             {isAdmin && !sk.isVerified && !sk.isBuiltIn && !movedOn && (
@@ -404,7 +404,14 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
 // ── Effectiveness Card ────────────────────────────────────────────────────────
 
 function EffectivenessCard() {
-  const { data, isLoading, isError, error: loadError } = useSkillEffectiveness();
+  const {
+    data,
+    isLoading,
+    isError,
+    isFetching,
+    error: loadError,
+    refetch,
+  } = useSkillEffectiveness();
   return (
     <Card>
       <CardHeader>
@@ -419,8 +426,10 @@ function EffectivenessCard() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="skill effectiveness"
+        onRetry={() => void refetch()}
       >
         {!data?.perSkill.length ? (
           <EmptyState className="py-6" title="No runs with active skills in this window yet." />
@@ -470,7 +479,7 @@ export default function StudioSkillsPage() {
   const [viewTarget, setViewTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
   const deleteSkill = useDeleteSkill();
-  const { data: skills, isLoading, isError, error: loadError } = useSkills();
+  const { data: skills, isLoading, isError, isFetching, error: loadError, refetch } = useSkills();
   const update = useUpdateSkill();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
@@ -503,6 +512,8 @@ export default function StudioSkillsPage() {
       {isAdmin && (
         <TabBar
           active={tab}
+          ariaLabel="Skill library views"
+          idPrefix="skills"
           onChange={setTab}
           tabs={[
             { id: 'skills', label: 'Skills' },
@@ -511,100 +522,116 @@ export default function StudioSkillsPage() {
         />
       )}
 
-      {isAdmin && tab === 'external' && <SkillSourcesTab />}
+      {isAdmin && tab === 'external' && (
+        <div {...tabPanelProps('skills', 'external')}>
+          <SkillSourcesTab />
+        </div>
+      )}
 
       {tab === 'skills' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>All skills</CardTitle>
-          </CardHeader>
-          {toggleError && <Alert variant="error">{toggleError}</Alert>}
-          <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="skills">
-            {!skills?.length ? (
-              <EmptyState title="No skills yet. Create one with the button above." />
-            ) : (
-              <Table>
-                <THead>
-                  <Th variant="compact">Name</Th>
-                  <Th variant="compact">Description</Th>
-                  <Th variant="compact">Used by</Th>
-                  <Th variant="compact">Active</Th>
-                  <Th variant="compact" />
-                </THead>
-                <tbody>
-                  {skills.map((skill) => (
-                    <TRow key={skill.id}>
-                      <Td className="py-2 pr-4">
-                        <button
-                          className="text-left hover:underline"
-                          onClick={() => setViewTarget(skill)}
-                          type="button"
-                        >
-                          <span className="font-medium text-paper-100">
-                            {visibleText(skill.name)}
+        <div {...(isAdmin ? tabPanelProps('skills', 'skills') : {})}>
+          <Card>
+            <CardHeader>
+              <CardTitle>All skills</CardTitle>
+            </CardHeader>
+            {toggleError && <Alert variant="error">{toggleError}</Alert>}
+            <QueryBoundary
+              error={loadError}
+              isError={isError}
+              isFetching={isFetching}
+              isLoading={isLoading}
+              label="skills"
+              onRetry={() => void refetch()}
+            >
+              {!skills?.length ? (
+                <EmptyState title="No skills yet. Create one with the button above." />
+              ) : (
+                <Table>
+                  <THead>
+                    <Th variant="compact">Name</Th>
+                    <Th variant="compact">Description</Th>
+                    <Th variant="compact">Used by</Th>
+                    <Th variant="compact">Active</Th>
+                    <Th variant="compact" />
+                  </THead>
+                  <tbody>
+                    {skills.map((skill) => (
+                      <TRow key={skill.id}>
+                        <Td className="py-2 pr-4">
+                          <button
+                            className="text-left hover:underline"
+                            onClick={() => setViewTarget(skill)}
+                            type="button"
+                          >
+                            <span className="font-medium text-paper-100">
+                              {visibleText(skill.name)}
+                            </span>
+                          </button>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                            {skill.isBuiltIn && (
+                              <Badge tone="muted" uppercase variant="text">
+                                built-in
+                              </Badge>
+                            )}
+                            {skill.origin && <OriginBadge origin={skill.origin} />}
+                            <ExternalBadge source={skill.externalSource} />
+                            {skill.isVerified && (
+                              <Badge tone="moss" variant="text">
+                                verified
+                              </Badge>
+                            )}
+                            {!skill.isVerified && !skill.isBuiltIn && (
+                              <Badge tone="amber" variant="text">
+                                unverified
+                              </Badge>
+                            )}
+                            {!skill.isBuiltIn && (
+                              <Badge tone="muted" variant="text">
+                                rev {skill.currentRevision}
+                              </Badge>
+                            )}
+                          </div>
+                        </Td>
+                        <Td className="max-w-xs py-2 pr-4">
+                          <span className="line-clamp-1 text-paper-400">
+                            {visibleOrNull(skill.description) ?? '—'}
                           </span>
-                        </button>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                          {skill.isBuiltIn && (
-                            <Badge tone="muted" uppercase variant="text">
-                              built-in
-                            </Badge>
-                          )}
-                          {skill.origin && <OriginBadge origin={skill.origin} />}
-                          <ExternalBadge source={skill.externalSource} />
-                          {skill.isVerified && (
-                            <Badge tone="moss" variant="text">
-                              verified
-                            </Badge>
-                          )}
-                          {!skill.isVerified && !skill.isBuiltIn && (
-                            <Badge tone="amber" variant="text">
-                              unverified
-                            </Badge>
-                          )}
-                          {!skill.isBuiltIn && (
-                            <Badge tone="muted" variant="text">
-                              rev {skill.currentRevision}
-                            </Badge>
-                          )}
-                        </div>
-                      </Td>
-                      <Td className="max-w-xs py-2 pr-4">
-                        <span className="line-clamp-1 text-paper-400">
-                          {visibleOrNull(skill.description) ?? '—'}
-                        </span>
-                      </Td>
-                      <Td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</Td>
-                      <Td className="py-2 pr-4">
-                        <ToggleSwitch
-                          checked={skill.isActive}
-                          disabled={togglingId === skill.id}
-                          onChange={() => handleToggleActive(skill)}
-                        />
-                      </Td>
-                      <Td className="py-2 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
-                            View / Edit
-                          </Button>
-                          {!skill.isBuiltIn && (
-                            <Button
-                              onClick={() => setDeleteTarget(skill)}
-                              size="sm"
-                              variant="danger"
-                            >
-                              Delete
+                        </Td>
+                        <Td className="py-2 pr-4 tabular-nums text-paper-400">
+                          {skill.usedByCount}
+                        </Td>
+                        <Td className="py-2 pr-4">
+                          <ToggleSwitch
+                            ariaLabel={`Active: ${visibleText(skill.name)}`}
+                            checked={skill.isActive}
+                            disabled={togglingId === skill.id}
+                            onChange={() => handleToggleActive(skill)}
+                          />
+                        </Td>
+                        <Td className="py-2 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
+                              View / Edit
                             </Button>
-                          )}
-                        </div>
-                      </Td>
-                    </TRow>
-                  ))}
-                </tbody>
-              </Table>
-            )}
-          </QueryBoundary>
-        </Card>
+                            {!skill.isBuiltIn && (
+                              <Button
+                                onClick={() => setDeleteTarget(skill)}
+                                size="sm"
+                                variant="danger"
+                              >
+                                Delete
+                              </Button>
+                            )}
+                          </div>
+                        </Td>
+                      </TRow>
+                    ))}
+                  </tbody>
+                </Table>
+              )}
+            </QueryBoundary>
+          </Card>
+        </div>
       )}
 
       {tab === 'skills' && <EffectivenessCard />}

@@ -20,7 +20,14 @@ import { navLabel } from '@/lib/navigation';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 export default function GovernSessionsPage() {
-  const { data: sessions, isLoading, isError, error: loadError } = useAdminSessions();
+  const {
+    data: sessions,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useAdminSessions();
   const revoke = useAdminRevokeSession();
   const revokeUser = useAdminRevokeUserSessions();
   const [revokeTarget, setRevokeTarget] = useState<{ email: string; id: string } | null>(null);

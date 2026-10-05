@@ -72,7 +72,7 @@ export function SplitRunPanel({
                         {branchPrefix && <span className="text-paper-600">{branchPrefix}</span>}
                         {specId}
                       </span>
-                      <span className="shrink-0 font-mono text-[9px] text-paper-600">
+                      <span className="shrink-0 font-mono text-[10px] text-paper-600">
                         ×{s.attempt}
                       </span>
                     </div>

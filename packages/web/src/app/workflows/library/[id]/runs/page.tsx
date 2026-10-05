@@ -1,9 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { Suspense, use, useState } from 'react';
-import { Badge } from '@/components/ui/Badge';
+import { Suspense, use } from 'react';
+import { RunListItem } from '@/components/runs/RunListItem';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -11,8 +10,6 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   TemplateBackLink,
   TemplateNotFound,
@@ -20,10 +17,10 @@ import {
 } from '@/components/workflow/templateNav';
 import { useAllWorkflowRuns } from '@/hooks/useRuns';
 import { useWorkflowTemplate } from '@/hooks/useTemplates';
+import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { nodeTitlesOf } from '@/lib/nodeTitles';
 import { validateRouteParam } from '@/lib/routeParams';
 import { isRunStatus, runStatusOptions } from '@/lib/runStatusOptions';
-import { formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -33,41 +30,23 @@ const PAGE_SIZE = 20;
 
 const RUN_STATUSES = runStatusOptions();
 
-function runDuration(start: string, end: string | null): string {
-  if (!end) {
-    return 'running';
-  }
-  return formatDuration(new Date(end).getTime() - new Date(start).getTime());
-}
-
-export default function TemplateRunsPage({ params }: PageProps) {
-  // `useSearchParams` needs a Suspense boundary for the page to prerender.
-  return (
-    <Suspense fallback={null}>
-      <TemplateRuns params={params} />
-    </Suspense>
-  );
-}
-
-function TemplateRuns({ params }: PageProps) {
-  const { id: rawId } = use(params);
+function TemplateRuns({ id: rawId }: { id: string }) {
   const id = validateRouteParam(rawId);
   const { data: template } = useWorkflowTemplate(id ?? '');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [versionFilter, setVersionFilter] = useState('');
+  const { params, update } = useUrlFilters();
+  const offset = parseOffset(params.get('offset'));
+  const statusFilter = params.get('status') ?? '';
+  const versionFilter = /^\d{1,6}$/.test(params.get('version') ?? '')
+    ? (params.get('version') ?? '')
+    : '';
   // Set by the step table on the analytics page: only runs in which that node failed.
-  const failedNodeId = useSearchParams().get('failedStep') ?? '';
-  // The page belongs to the failed-step filter it was reached under: when that filter changes
-  // or clears, the stored offset no longer points into the same list, so it reads as 0.
-  const [paging, setPaging] = useState({ filter: failedNodeId, offset: 0 });
-  const offset = paging.filter === failedNodeId ? paging.offset : 0;
-  const setOffset = (next: number) => setPaging({ filter: failedNodeId, offset: next });
+  const failedNodeId = params.get('failedStep') ?? '';
 
   // Both filters run server-side, so the total and the pagination describe
   // the filtered set. This reads /workflow-runs (not the template-scoped
   // endpoint) so a viewer who reaches the runs through a shared repository
   // still sees them.
-  const { data, error, isError, isLoading } = useAllWorkflowRuns({
+  const { data, error, isError, isFetching, refetch, isLoading } = useAllWorkflowRuns({
     limit: PAGE_SIZE,
     offset,
     status: isRunStatus(statusFilter) ? statusFilter : undefined,
@@ -86,8 +65,9 @@ function TemplateRuns({ params }: PageProps) {
 
   const nodeTitles = nodeTitlesOf(template?.activeVersionSpec?.spec);
 
-  const handlePrev = () => setOffset(Math.max(0, offset - PAGE_SIZE));
-  const handleNext = () => setOffset(offset + PAGE_SIZE);
+  const handlePrev = () =>
+    update({ offset: offset - PAGE_SIZE > 0 ? String(offset - PAGE_SIZE) : null });
+  const handleNext = () => update({ offset: String(offset + PAGE_SIZE) });
 
   if (!id) {
     return <TemplateNotFound />;
@@ -96,11 +76,11 @@ function TemplateRuns({ params }: PageProps) {
   return (
     <div className="space-y-8">
       <div>
-        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Template'} />
+        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Workflow'} />
         <PageHeader
           chapter="§ Workflows"
           className="mb-0 mt-4"
-          subtitle="Every execution of this template, newest first. Click a row to drill into a specific run."
+          subtitle="Every run of this workflow, newest first. Open one to see its request; use Diagnostics for the full trace."
           title="Run history"
         />
       </div>
@@ -114,10 +94,7 @@ function TemplateRuns({ params }: PageProps) {
           compact
           id="run-status-filter"
           label="Status"
-          onChange={(v) => {
-            setStatusFilter(v);
-            setOffset(0);
-          }}
+          onChange={(v) => update({ offset: null, status: v })}
           options={RUN_STATUSES.map((s) => ({ label: s.label, value: s.value }))}
           value={statusFilter}
         />
@@ -126,11 +103,8 @@ function TemplateRuns({ params }: PageProps) {
             className="w-auto"
             compact
             id="run-version-filter"
-            label="Template version"
-            onChange={(v) => {
-              setVersionFilter(v);
-              setOffset(0);
-            }}
+            label="Version"
+            onChange={(v) => update({ offset: null, version: v })}
             options={[
               { label: 'All versions', value: '' },
               ...versions.map((v) => ({ label: `v${v}`, value: String(v) })),
@@ -139,7 +113,7 @@ function TemplateRuns({ params }: PageProps) {
           />
         )}
         {failedNodeId && (
-          <span className="flex items-center gap-2 rounded-[9px] border border-ink-400 px-3 py-1.5 text-xs text-paper-300">
+          <span className="flex items-center gap-2 rounded-md border border-ink-400 px-3 py-1.5 text-xs text-paper-300">
             Runs where “{nodeTitles.get(failedNodeId) ?? failedNodeId}” failed
             <Link className="text-ember-400 hover:underline" href={`/workflows/library/${id}/runs`}>
               Clear
@@ -148,11 +122,7 @@ function TemplateRuns({ params }: PageProps) {
         )}
         {(statusFilter || versionFilter) && (
           <Button
-            onClick={() => {
-              setStatusFilter('');
-              setVersionFilter('');
-              setOffset(0);
-            }}
+            onClick={() => update({ offset: null, status: null, version: null })}
             size="sm"
             variant="ghost"
           >
@@ -164,77 +134,29 @@ function TemplateRuns({ params }: PageProps) {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="runs"
         loadingMessage="loading runs…"
+        onRetry={() => void refetch()}
       >
-        <Card className="overflow-hidden p-0" variant="inset">
-          <Table>
-            <THead>
-              <Th>Started</Th>
-              <Th>Status</Th>
-              <Th>Template ver.</Th>
-              <Th>Work request</Th>
-              <Th align="right">Duration</Th>
-            </THead>
-            <tbody>
+        {rows.length === 0 ? (
+          <EmptyState
+            title={
+              statusFilter || versionFilter
+                ? 'No runs match the current filters.'
+                : 'No runs yet — start work with this workflow to trigger one.'
+            }
+          />
+        ) : (
+          <Card className="overflow-hidden p-0" variant="inset">
+            <ul className="divide-y divide-ink-600">
               {rows.map((r) => (
-                <TRow className="hover:bg-ink-700/40" hover key={r.id}>
-                  <Td className="px-4 py-3">
-                    <Link className="text-paper-100 hover:text-ember-400" href={`/runs/${r.id}`}>
-                      {formatDate(r.startedAt)}
-                    </Link>
-                    <div className="font-mono text-[11px] text-paper-500">
-                      {formatRelativeTime(r.startedAt)}
-                    </div>
-                  </Td>
-                  <Td className="px-4 py-3">
-                    <StatusBadge status={r.status} />
-                  </Td>
-                  <Td className="px-4 py-3 font-mono text-xs text-paper-300">
-                    v{r.templateVersion}
-                  </Td>
-                  <Td className="px-4 py-3 text-xs">
-                    {r.workRequest ? (
-                      <>
-                        <div className="font-mono text-paper-100">
-                          {r.workRequest.externalTicketId}
-                        </div>
-                        <div className="max-w-md truncate text-paper-500">
-                          {r.workRequest.description}
-                        </div>
-                      </>
-                    ) : (
-                      <span className="font-mono text-[11px] uppercase tracking-wider text-paper-500">
-                        —
-                      </span>
-                    )}
-                  </Td>
-                  <Td align="right" className="tabular px-4 py-3 font-mono text-xs">
-                    {r.endedAt === null ? (
-                      <Badge className="text-xs" dot="pulse" tone="ember" variant="text">
-                        running
-                      </Badge>
-                    ) : (
-                      <span className="text-paper-300">{runDuration(r.startedAt, r.endedAt)}</span>
-                    )}
-                  </Td>
-                </TRow>
+                <RunListItem key={r.id} run={r} />
               ))}
-              {rows.length === 0 && (
-                <TableStatusRow colSpan={5}>
-                  <EmptyState
-                    title={
-                      statusFilter || versionFilter
-                        ? 'No runs match the current filters.'
-                        : 'No runs yet — start a new request to trigger one.'
-                    }
-                  />
-                </TableStatusRow>
-              )}
-            </tbody>
-          </Table>
-        </Card>
+            </ul>
+          </Card>
+        )}
 
         {total > PAGE_SIZE && (
           <div>
@@ -251,5 +173,14 @@ function TemplateRuns({ params }: PageProps) {
         )}
       </QueryBoundary>
     </div>
+  );
+}
+
+export default function TemplateRunsPage({ params }: PageProps) {
+  const { id } = use(params);
+  return (
+    <Suspense>
+      <TemplateRuns id={id} />
+    </Suspense>
   );
 }

@@ -11,14 +11,17 @@ import {
 } from 'recharts';
 import {
   AXIS_COMMON_PROPS,
+  axisLabel,
   CHART_HEIGHT,
+  ChartFrame,
   ChartTooltip,
+  chartAriaLabel,
   EmptyChart,
   formatDateLabel,
   GRID_STROKE,
   LEGEND_STYLE,
 } from './chartChrome';
-import { CHART_PALETTE } from './colors';
+import { CHART_PALETTE, OTHER_LABEL, seriesColor, seriesDash, topNWithOther } from './colors';
 
 export interface BreakdownSeries {
   label: string;
@@ -26,13 +29,20 @@ export interface BreakdownSeries {
   daily: { date: string; mean: number | null; n: number }[];
 }
 
-/** One row per day with a column per series label, so Recharts can draw them together. */
+/**
+ * The row column for the series at `index`. Labels are data (a real group can be
+ * called "date" or "Other"), so columns are keyed by position under a prefix no
+ * label can collide with, and the label travels as the line's `name`.
+ */
+export const seriesKey = (index: number) => `series:${index}`;
+
+/** One row per day with a column per series, so Recharts can draw them together. */
 export function pivotSeries(series: BreakdownSeries[]): Record<string, string | number | null>[] {
   const rows = new Map<string, Record<string, string | number | null>>();
-  for (const s of series) {
+  for (const [index, s] of series.entries()) {
     for (const d of s.daily) {
       const row = rows.get(d.date) ?? { date: d.date };
-      row[s.label] = d.mean;
+      row[seriesKey(index)] = d.mean;
       rows.set(d.date, row);
     }
   }
@@ -40,43 +50,108 @@ export function pivotSeries(series: BreakdownSeries[]): Record<string, string | 
 }
 
 /**
+ * Folds series beyond the palette into one "Other" series: per day, the mean
+ * across the folded series weighted by their signal counts.
+ */
+export function collapseSeries(
+  series: BreakdownSeries[],
+  max: number = CHART_PALETTE.length
+): BreakdownSeries[] {
+  const total = (s: BreakdownSeries) => s.daily.reduce((n, d) => n + d.n, 0);
+  return topNWithOther(series, max, total, (rest) => {
+    const days = new Map<string, { sum: number; n: number }>();
+    for (const s of rest) {
+      for (const d of s.daily) {
+        const acc = days.get(d.date) ?? { n: 0, sum: 0 };
+        if (d.mean !== null) {
+          acc.sum += d.mean * d.n;
+        }
+        acc.n += d.n;
+        days.set(d.date, acc);
+      }
+    }
+    return {
+      daily: [...days.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, { n, sum }]) => ({ date, mean: n > 0 ? sum / n : null, n })),
+      label: OTHER_LABEL,
+    };
+  });
+}
+
+/**
  * One scorer's daily mean score (0..1), one line per breakdown value. More than
  * one series, so there is a legend. A day without signals is a gap, not a zero.
  */
-export function ScorerBreakdownChart({ series }: { series: BreakdownSeries[] }) {
+export function ScorerBreakdownChart({
+  series: allSeries,
+  title,
+}: {
+  series: BreakdownSeries[];
+  /** Names the chart for assistive tech, e.g. the scorer's name. */
+  title?: string;
+}) {
+  const series = collapseSeries(allSeries);
   if (series.every((s) => s.daily.every((d) => d.n === 0))) {
     return <EmptyChart label="no signals in this window" />;
   }
 
+  const rows = pivotSeries(series);
+  const summary = `Daily mean score from 0 to 1 over ${rows.length} days for ${series.length} groups: ${series
+    .map((s) => s.label)
+    .join(', ')}.`;
+
   return (
-    <ResponsiveContainer height={CHART_HEIGHT} width="100%">
-      <LineChart data={pivotSeries(series)}>
-        <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
-        <XAxis
-          dataKey="date"
-          interval="preserveStartEnd"
-          tickFormatter={formatDateLabel}
-          {...AXIS_COMMON_PROPS}
-        />
-        <YAxis domain={[0, 1]} tickCount={5} {...AXIS_COMMON_PROPS} />
-        <ChartTooltip
-          formatter={(value) => Number(value).toFixed(2)}
-          labelFormatter={(label) => `${formatDateLabel(label)} (UTC)`}
-        />
-        <Legend wrapperStyle={LEGEND_STYLE} />
-        {series.map((s, i) => (
-          <Line
-            connectNulls={false}
-            dataKey={s.label}
-            dot={{ r: 2.5 }}
-            isAnimationActive={false}
-            key={s.label}
-            stroke={CHART_PALETTE[i % CHART_PALETTE.length]}
-            strokeWidth={1.5}
-            type="monotone"
+    <ChartFrame
+      ariaLabel={chartAriaLabel(title, 'Scorer breakdown', summary)}
+      table={{
+        columns: ['Date (UTC)', ...series.map((s) => `${s.label} (mean 0–1)`)],
+        rows: rows.map((r) => [
+          formatDateLabel(r.date),
+          ...series.map((_, i) => {
+            const v = r[seriesKey(i)];
+            return typeof v === 'number' ? v.toFixed(2) : '—';
+          }),
+        ]),
+      }}
+    >
+      <ResponsiveContainer height={CHART_HEIGHT} width="100%">
+        <LineChart accessibilityLayer={false} data={rows}>
+          <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
+          <XAxis
+            dataKey="date"
+            interval="preserveStartEnd"
+            tickFormatter={formatDateLabel}
+            {...AXIS_COMMON_PROPS}
           />
-        ))}
-      </LineChart>
-    </ResponsiveContainer>
+          <YAxis
+            domain={[0, 1]}
+            label={axisLabel('Mean score (0–1)', true)}
+            tickCount={5}
+            width={52}
+            {...AXIS_COMMON_PROPS}
+          />
+          <ChartTooltip
+            formatter={(value) => Number(value).toFixed(2)}
+            labelFormatter={(label) => `${formatDateLabel(label)} (UTC)`}
+          />
+          <Legend wrapperStyle={LEGEND_STYLE} />
+          {series.map((s, i) => (
+            <Line
+              connectNulls={false}
+              dataKey={seriesKey(i)}
+              dot={{ r: 2.5 }}
+              isAnimationActive={false}
+              key={seriesKey(i)}
+              name={s.label}
+              stroke={seriesColor(i, s.label)}
+              strokeDasharray={seriesDash(i, s.label)}
+              strokeWidth={1.5}
+              type="monotone"
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </ChartFrame>
   );
 }

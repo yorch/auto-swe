@@ -23,7 +23,7 @@ import {
   useLatestEvalRuns,
 } from '@/hooks/useAdmin';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { customRangeIgnored, dateRangePatch, describeRange, parseDateRange } from '@/lib/dateRange';
 import { latestMean, scorerChange, worstMovingScorer } from '@/lib/evalTrend';
 import { cn, formatDate, scoreColor } from '@/lib/utils';
@@ -65,7 +65,7 @@ function ScoreCell({ value }: { value: number | null }) {
 }
 
 function EvalsWorkspace() {
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   const range = parseDateRange(params, { allowCustom: false });
   const windowDays = range.kind === 'preset' ? range.days : 30;
   const rawBy = params.get('by');
@@ -194,8 +194,10 @@ function EvalsWorkspace() {
         <QueryBoundary
           error={trendsQuery.error}
           isError={trendsQuery.isError}
+          isFetching={trendsQuery.isFetching}
           isLoading={trendsQuery.isLoading}
           label="eval trends"
+          onRetry={() => void trendsQuery.refetch()}
         >
           {trends.length === 0 ? (
             <EmptyState title="No eval signals in this window." />
@@ -280,8 +282,10 @@ function EvalsWorkspace() {
         <QueryBoundary
           error={healthQuery.error}
           isError={healthQuery.isError}
+          isFetching={healthQuery.isFetching}
           isLoading={healthQuery.isLoading}
           label="suite health"
+          onRetry={() => void healthQuery.refetch()}
         >
           {healthQuery.data && (
             <SuiteHealthChart
@@ -310,8 +314,10 @@ function EvalsWorkspace() {
         <QueryBoundary
           error={datasetsQuery.error}
           isError={datasetsQuery.isError}
+          isFetching={datasetsQuery.isFetching}
           isLoading={datasetsQuery.isLoading}
           label="eval datasets"
+          onRetry={() => void datasetsQuery.refetch()}
         >
           {datasets && datasets.length > 0 ? (
             <div className="space-y-1">

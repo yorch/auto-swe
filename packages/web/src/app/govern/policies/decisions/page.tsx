@@ -13,7 +13,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAutonomyDecisions, useAutonomyPolicies } from '@/hooks/useAutonomyPolicies';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { useUsers } from '@/hooks/useUsers';
 import { eventLabel, KNOWN_AUTONOMY_EVENTS, riskClassLabel } from '@/lib/autonomyEvents';
 import { formatDate } from '@/lib/utils';
@@ -33,7 +33,7 @@ const EMPTY: Filters = { actorId: '', event: '', policyName: '', riskClass: '', 
 const FILTER_KEYS = ['policyName', 'riskClass', 'event', 'actorId', 'runId'] as const;
 
 export default function AutonomyDecisionsPage() {
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   // Filters and page live in the URL, so a filtered view can be shared and survives a reload.
   const filters: Filters = {
     actorId: params.get('actorId') ?? '',
@@ -44,7 +44,7 @@ export default function AutonomyDecisionsPage() {
   };
   const offset = Math.max(0, Number(params.get('offset')) || 0);
 
-  const { data, isLoading, isError, error } = useAutonomyDecisions({
+  const { data, isLoading, isError, isFetching, refetch, error } = useAutonomyDecisions({
     ...filters,
     limit: LIMIT,
     offset,
@@ -134,9 +134,11 @@ export default function AutonomyDecisionsPage() {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="autonomy decisions"
         loadingMessage="loading decisions…"
+        onRetry={() => void refetch()}
       >
         <Card className="overflow-x-auto p-0" variant="inset">
           <Table className="text-left">

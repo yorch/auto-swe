@@ -7,11 +7,13 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { LoadingState } from '@/components/ui/LoadingState';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { isOkResponse, probeGateway } from '@/hooks/useGatewayStatus';
 import { api } from '@/lib/api';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
+import { resolveLoginTab } from '@/lib/loginTab';
 import { signedOAuthQuery } from '@/lib/oauthQuery';
 import { safeRedirectPath } from '@/lib/safeRedirect';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
@@ -58,11 +60,36 @@ const TAB_OPTIONS: { label: string; value: Tab }[] = [
   { label: 'Password', value: 'password' },
 ];
 
-const SOCIAL_BUTTONS: { glyph: string; id: SocialProviderId; label: string }[] = [
-  { glyph: '◐', id: 'github', label: 'Continue with GitHub' },
-  { glyph: '◑', id: 'google', label: 'Continue with Google' },
-  { glyph: '◒', id: 'okta', label: 'Continue with Okta' },
+const SOCIAL_BUTTONS: { id: SocialProviderId; label: string }[] = [
+  { id: 'github', label: 'Continue with GitHub' },
+  { id: 'google', label: 'Continue with Google' },
+  { id: 'okta', label: 'Continue with Okta' },
 ];
+
+/** A small recognisable mark per provider, drawn inline so there is no asset to load. */
+function ProviderMark({ id }: { id: SocialProviderId }) {
+  if (id === 'github') {
+    return (
+      <svg aria-hidden="true" fill="currentColor" height={16} viewBox="0 0 16 16" width={16}>
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+      </svg>
+    );
+  }
+  if (id === 'okta') {
+    return (
+      <svg aria-hidden="true" fill="none" height={16} viewBox="0 0 16 16" width={16}>
+        <circle cx={8} cy={8} r={5} stroke="currentColor" strokeWidth={3} />
+      </svg>
+    );
+  }
+  return (
+    <span aria-hidden="true" className="text-[15px] font-bold leading-none">
+      G
+    </span>
+  );
+}
+
+type GatewayState = 'checking' | 'up' | 'down';
 
 export default function LoginPage() {
   // useSearchParams() requires a Suspense boundary above it when the page
@@ -99,11 +126,12 @@ function LoginPageInner() {
   // instead of the dashboard.
   const oauthQuery = signedOAuthQuery(searchParams.toString());
 
-  const [tab, setTab] = useState<Tab>('magic');
+  // The person's own pick; until they make one the default depends on what the gateway offers.
+  const [pickedTab, setPickedTab] = useState<Tab | null>(null);
   const [providers, setProviders] = useState<ProviderFlags>({
     github: false,
     google: false,
-    magicLink: true,
+    magicLink: false,
     okta: false,
   });
   /**
@@ -113,7 +141,8 @@ function LoginPageInner() {
    * action on this page will work either, and we want to say so loudly rather
    * than letting the user hit Submit and meet a generic "Failed to fetch".
    */
-  const [gatewayDown, setGatewayDown] = useState(false);
+  const [gateway, setGateway] = useState<GatewayState>('checking');
+  const gatewayDown = gateway === 'down';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -191,28 +220,27 @@ function LoginPageInner() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await probeGateway('/api/v1/auth/providers', isOkResponse);
+        const res = await probeGateway('/api/v1/auth/providers', isOkResponse, 5000);
         if (!res) {
           // Non-2xx — could be the real gateway throwing, or a wrong server
           // on the port. Either way the page can't continue, so surface it.
-          setGatewayDown(true);
+          setGateway('down');
           return;
         }
         const data = (await res.json()) as unknown;
         if (!looksLikeProviderResponse(data)) {
           // 200 OK but the body isn't our shape — almost certainly a different
           // server bound to the port. Surface as gateway-down.
-          setGatewayDown(true);
+          setGateway('down');
           return;
         }
         setProviders({ okta: false, ...data });
-        setGatewayDown(false);
-      } catch (err) {
+        setGateway('up');
+      } catch {
         // TypeError: network failure (DNS, server down, CORS rejected).
         // SyntaxError: 200 OK but body wasn't valid JSON (wrong server bound).
-        if (err instanceof TypeError || err instanceof SyntaxError) {
-          setGatewayDown(true);
-        }
+        // Any other failure still ends the "checking" state, or the form would never appear.
+        setGateway('down');
       }
     })();
   }, []);
@@ -303,6 +331,10 @@ function LoginPageInner() {
   };
 
   const hasSocial = providers.github || providers.google || providers.okta;
+  // Magic link is offered only when the gateway reports it enabled. A pending
+  // MCP sign-in cannot continue through a link, so it defaults to Password.
+  const magicAvailable = providers.magicLink;
+  const tab: Tab = resolveLoginTab(pickedTab, magicAvailable, !!oauthQuery);
 
   // Pending-approval short-circuit: the user authenticated successfully via
   // better-auth but their User row is isActive=false. Show an explanatory
@@ -311,19 +343,19 @@ function LoginPageInner() {
   if (pendingEmail) {
     return (
       <AuthLayout>
-        <AuthHeading kicker="¶ § auth/pending" kickerTone="amber" title="Awaiting approval.">
+        <AuthHeading kicker="Account pending" kickerTone="amber" title="Awaiting approval">
           <p className="mb-6 text-sm leading-relaxed text-paper-400">
             We received your sign-in for{' '}
             <span className="font-mono text-paper-100">{pendingEmail}</span>. An admin needs to
-            approve your account before you can use the workshop. Ping an admin once you're approved
-            — sign in again and you'll be in.
+            approve your account before you can use auto-swe. Ask an admin to approve it, then sign
+            in again.
           </p>
         </AuthHeading>
         <Card
           className="px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper-500"
           variant="inset"
         >
-          status: pending
+          Status: pending
         </Card>
         <Button
           className="mt-6"
@@ -334,14 +366,14 @@ function LoginPageInner() {
           size="sm"
           variant="secondary"
         >
-          ← Back to sign in
+          Back to sign in
         </Button>
       </AuthLayout>
     );
   }
 
   return (
-    <div className="relative grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
+    <div className="relative grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
       {/* LEFT — editorial panel (unchanged from prior design) */}
       <aside className="relative hidden flex-col justify-between overflow-hidden border-r border-ink-600 bg-ink-950 p-12 lg:flex">
         <div aria-hidden className="absolute inset-0 opacity-60">
@@ -377,11 +409,19 @@ function LoginPageInner() {
           <div className="flex items-center gap-2">
             <span
               className={`pulse-dot inline-block h-1.5 w-1.5 rounded-full ${
-                gatewayDown ? 'bg-brick-400' : 'bg-moss-400'
+                gateway === 'down'
+                  ? 'bg-brick-400'
+                  : gateway === 'up'
+                    ? 'bg-moss-400'
+                    : 'bg-paper-500'
               }`}
             />
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-400">
-              {gatewayDown ? 'gateway offline' : 'gateway online'}
+              {gateway === 'down'
+                ? 'gateway offline'
+                : gateway === 'up'
+                  ? 'gateway online'
+                  : 'checking gateway'}
             </span>
           </div>
         </header>
@@ -390,7 +430,7 @@ function LoginPageInner() {
           {/* Prerendered at build time, so the baked-in year can disagree with the
               client's clock across a New Year boundary. */}
           <span suppressHydrationWarning>© {new Date().getFullYear()} · brnby</span>
-          <span>v{APP_VERSION} · oauth + magic link + password</span>
+          <span>v{APP_VERSION}</span>
         </footer>
       </aside>
 
@@ -403,7 +443,7 @@ function LoginPageInner() {
           <span className="display-italic text-2xl leading-none text-ember-400">·swe</span>
         </div>
 
-        <AuthHeading title="Sign in." />
+        <AuthHeading title="Sign in" />
 
         {gatewayDown && (
           <Alert className="mb-6" title="Service unavailable" variant="error">
@@ -436,7 +476,7 @@ function LoginPageInner() {
                 onClick={() => handleSocialSignIn(b.id)}
                 variant="secondary"
               >
-                <span aria-hidden>{b.glyph}</span>
+                <ProviderMark id={b.id} />
                 <span>{b.label}</span>
               </Button>
             ))}
@@ -450,18 +490,20 @@ function LoginPageInner() {
           </div>
         )}
 
-        {/* Tab switcher: magic link vs password */}
-        <SegmentedControl
-          ariaLabel="Sign-in method"
-          className="mb-5"
-          onChange={(next) => {
-            setTab(next);
-            setError('');
-            setInfo('');
-          }}
-          options={TAB_OPTIONS}
-          value={tab}
-        />
+        {/* Tab switcher: only when the gateway offers more than one way to sign in */}
+        {magicAvailable && (
+          <SegmentedControl
+            ariaLabel="Sign-in method"
+            className="mb-5"
+            onChange={(next) => {
+              setPickedTab(next);
+              setError('');
+              setInfo('');
+            }}
+            options={TAB_OPTIONS}
+            value={tab}
+          />
+        )}
 
         {error && (
           <Alert className="mb-4">
@@ -494,7 +536,9 @@ function LoginPageInner() {
           </Alert>
         )}
 
-        {tab === 'magic' ? (
+        {gateway === 'checking' ? (
+          <LoadingState compact message="Checking sign-in options…" />
+        ) : tab === 'magic' ? (
           <form className="space-y-5" onSubmit={handleMagicLinkSubmit}>
             <Input
               autoComplete="email"
@@ -507,10 +551,10 @@ function LoginPageInner() {
               value={email}
             />
             <Button className="w-full" disabled={loading} size="lg" type="submit" variant="primary">
-              {loading ? 'Sending…' : 'Email me a sign-in link →'}
+              {loading ? 'Sending…' : 'Email me a sign-in link'}
             </Button>
             {IS_DEV && (
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
+              <p className="text-xs text-paper-500">
                 In dev, the magic link prints to the gateway stdout.
               </p>
             )}
@@ -538,7 +582,7 @@ function LoginPageInner() {
               value={password}
             />
             <Button className="w-full" disabled={loading} size="lg" type="submit" variant="primary">
-              {loading ? 'Authenticating…' : 'Enter →'}
+              {loading ? 'Signing in…' : 'Sign in'}
             </Button>
             <div className="flex items-center justify-end">
               <button

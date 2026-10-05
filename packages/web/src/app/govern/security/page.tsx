@@ -18,7 +18,7 @@ import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import type { SecurityEventSummary, SecurityEventType } from '@/hooks/useAdmin';
 import { useSecurityEventSummary, useSecurityEvents } from '@/hooks/useAdmin';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { dateRangePatch, dayBounds, parseDateRange } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 
@@ -111,7 +111,7 @@ function SummaryGroups({
 }
 
 function SecurityWorkspace() {
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   const range = parseDateRange(params);
   const bounds = dayBounds(range);
   const rawType = params.get('type');
@@ -124,6 +124,8 @@ function SecurityWorkspace() {
     data: page,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     error: loadError,
   } = useSecurityEvents({ ...bounds, limit: LIMIT, offset, type: typeFilter || undefined });
   const { data: summary } = useSecurityEventSummary(bounds);
@@ -161,8 +163,10 @@ function SecurityWorkspace() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="security events"
+        onRetry={() => void refetch()}
       >
         <Card>
           <CardHeader>

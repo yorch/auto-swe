@@ -85,7 +85,7 @@ export function EvalResultsTable({
     setPrevScorer(scorer);
     setOffset(0);
   }
-  const { data, error, isError, isLoading } = useEvalResults({
+  const { data, error, isError, isFetching, refetch, isLoading } = useEvalResults({
     evalRunId,
     limit: LIMIT,
     offset,
@@ -121,7 +121,14 @@ export function EvalResultsTable({
           value={source}
         />
       </div>
-      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="eval results">
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="eval results"
+        onRetry={() => void refetch()}
+      >
         <Table>
           <THead>
             <Th variant="dense">Time</Th>

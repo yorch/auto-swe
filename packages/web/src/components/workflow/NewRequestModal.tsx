@@ -20,7 +20,14 @@ export function NewRequestModal({
   open: boolean;
 }) {
   const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
-  const { data: templates, error, isError, isLoading } = useWorkflowTemplates(selectedTeamId);
+  const {
+    data: templates,
+    error,
+    isError,
+    isFetching,
+    refetch,
+    isLoading,
+  } = useWorkflowTemplates(selectedTeamId);
   const [templateId, setTemplateId] = useState('');
 
   const runnable = (templates ?? []).filter(
@@ -48,9 +55,11 @@ export function NewRequestModal({
         <QueryBoundary
           error={error}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="templates"
           loadingMessage="loading templates…"
+          onRetry={() => void refetch()}
         >
           {runnable.length === 0 ? (
             <EmptyState

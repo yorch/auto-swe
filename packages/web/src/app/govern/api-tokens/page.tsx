@@ -41,7 +41,14 @@ const STATUS_LABELS: Record<TokenStatus, string> = {
 };
 
 export default function GovernAccessTokensPage() {
-  const { data: tokens, isLoading, isError, error: loadError } = useAdminTokens();
+  const {
+    data: tokens,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useAdminTokens();
   const revokeToken = useAdminRevokeToken();
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<'' | TokenStatus>('');

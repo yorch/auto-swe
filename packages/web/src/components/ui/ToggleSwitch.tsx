@@ -1,8 +1,18 @@
 'use client';
 
-import { cn } from '@/lib/utils';
+import { cn, FOCUS_RING } from '@/lib/utils';
+
+/**
+ * A switch must have an accessible name: either a visible `label` or an
+ * `ariaLabel` (for a switch in a table row or card header with no adjacent
+ * text). The union makes leaving both out a type error.
+ */
+type ToggleSwitchName =
+  | { label: React.ReactNode; ariaLabel?: string }
+  | { label?: undefined; ariaLabel: string };
 
 export function ToggleSwitch({
+  ariaLabel,
   checked,
   onChange,
   disabled,
@@ -14,13 +24,18 @@ export function ToggleSwitch({
   onChange: () => void;
   disabled?: boolean;
   title?: string;
-  label?: React.ReactNode;
   className?: string;
-}) {
+} & ToggleSwitchName) {
   return (
     <button
       aria-checked={checked}
-      className={cn('flex items-center gap-2', label && 'cursor-pointer', className)}
+      aria-label={ariaLabel}
+      className={cn(
+        'flex items-center gap-2 rounded-full',
+        FOCUS_RING,
+        label && 'cursor-pointer',
+        className
+      )}
       disabled={disabled}
       onClick={onChange}
       role="switch"

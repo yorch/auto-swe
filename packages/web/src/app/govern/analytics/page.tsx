@@ -15,7 +15,7 @@ import { Stat } from '@/components/ui/Stat';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useSort } from '@/hooks/useSort';
 import { useGlobalAnalytics } from '@/hooks/useTemplates';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { customRangeIgnored, dateRangePatch, parseDateRange } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 import { outcomeTypeLabel } from '@/lib/govLabels';
@@ -54,7 +54,7 @@ const PAGE_SIZE = 25;
 const MIN_BASELINE_SAMPLE = 30;
 
 function AnalyticsWorkspace() {
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   const range = parseDateRange(params, { allowCustom: false });
   const windowDays = range.kind === 'preset' ? range.days : 30;
   const filter = (params.get('q') ?? '').slice(0, 100);
@@ -62,7 +62,7 @@ function AnalyticsWorkspace() {
   const templateSort = useSort<TemplateSort>('runs', { ascendingFirst: ['name'] });
   const domainSort = useSort<DomainSort>('runs', { ascendingFirst: ['domain'] });
   const outcomeSort = useSort<OutcomeSort>('runs', { ascendingFirst: ['outcome'] });
-  const { data, isLoading, isError, error } = useGlobalAnalytics(windowDays);
+  const { data, isLoading, isError, isFetching, refetch, error } = useGlobalAnalytics(windowDays);
 
   const rows = useMemo(() => {
     if (!data) {
@@ -157,7 +157,14 @@ function AnalyticsWorkspace() {
         </Alert>
       )}
 
-      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="analytics">
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="analytics"
+        onRetry={() => void refetch()}
+      >
         {!data ? (
           <EmptyState title="No analytics data available." />
         ) : (

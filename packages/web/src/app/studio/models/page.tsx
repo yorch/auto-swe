@@ -9,8 +9,8 @@ import { EmbeddingsTab } from '@/components/modelConfig/EmbeddingsTab';
 import { MidRunWarning } from '@/components/modelConfig/MidRunWarning';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { TabBar } from '@/components/ui/TabBar';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 
 type Tab = 'credentials' | 'catalog' | 'embeddings' | 'audit';
 
@@ -37,7 +37,7 @@ export default function StudioModelConfigPage() {
 
 function StudioModelConfigPageInner() {
   // The active tab lives in `?tab=` so a tab can be linked to (the setup checklist does).
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   const requested = params.get('tab');
   const active: Tab = isTab(requested) ? requested : 'credentials';
 
@@ -61,13 +61,16 @@ function StudioModelConfigPageInner() {
       <SetupBanner items={['credentials', 'embeddings']} />
       <TabBar
         active={active}
+        idPrefix="models"
         onChange={(tab) => update({ tab: tab === 'credentials' ? null : tab })}
         tabs={TABS}
       />
-      {active === 'credentials' && <CredentialsTab />}
-      {active === 'catalog' && <CatalogTab />}
-      {active === 'embeddings' && <EmbeddingsTab />}
-      {active === 'audit' && <ConfigAuditLogTab initialGroup="models" />}
+      <div {...tabPanelProps('models', active)}>
+        {active === 'credentials' && <CredentialsTab />}
+        {active === 'catalog' && <CatalogTab />}
+        {active === 'embeddings' && <EmbeddingsTab />}
+        {active === 'audit' && <ConfigAuditLogTab initialGroup="models" />}
+      </div>
     </div>
   );
 }

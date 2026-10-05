@@ -47,7 +47,7 @@ interface SelectProps {
 }
 
 const PILL_TRIGGER =
-  'inline-flex min-w-0 items-center gap-1.5 rounded-[8px] border border-ink-400 bg-ink-700 px-2.5 py-[5px] text-[12.5px] text-paper-400 outline-none transition-colors data-[hovered]:border-ink-300 data-[focus-visible]:ring-2 data-[focus-visible]:ring-ember-400';
+  'inline-flex min-w-0 items-center gap-1.5 rounded-md border border-ink-400 bg-ink-700 px-2.5 py-[5px] text-[12.5px] text-paper-400 outline-none transition-colors data-[hovered]:border-ink-300 data-[focus-visible]:ring-2 data-[focus-visible]:ring-ember-400';
 
 /**
  * A themed single-choice dropdown, the same in every browser (Firefox has no

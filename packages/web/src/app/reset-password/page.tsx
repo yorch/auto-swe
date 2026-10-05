@@ -30,28 +30,32 @@ function ResetPasswordInner() {
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [confirmError, setConfirmError] = useState('');
   const [done, setDone] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setPasswordError('');
+    setConfirmError('');
     if (!token) {
-      setError('No reset token in URL — request a new reset link.');
+      setError('This link has no reset token. Request a new reset link.');
       return;
     }
     if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
+      setPasswordError('Use at least 8 characters.');
       return;
     }
     if (password !== confirm) {
-      setError('Passwords do not match.');
+      setConfirmError('The passwords do not match.');
       return;
     }
     setLoading(true);
     try {
       await resetPassword(token, password);
       setDone(true);
-      // Tiny pause so the user sees the success state, then bounce to login.
+      // Tiny pause so the user sees the success state, then send them to sign in.
       setTimeout(() => router.replace('/login'), 1500);
     } catch (err: unknown) {
       setError(errMsg(err, 'Failed to reset password'));
@@ -63,8 +67,8 @@ function ResetPasswordInner() {
   if (done) {
     return (
       <AuthLayout className="text-center">
-        <AuthHeading kicker="¶ § auth/reset · done" kickerTone="moss" title="Password reset.">
-          <p className="text-sm text-paper-400">Sending you back to sign in…</p>
+        <AuthHeading kicker="Password reset" kickerTone="moss" title="Password updated">
+          <p className="text-sm text-paper-400">Taking you to sign in with your new password…</p>
         </AuthHeading>
       </AuthLayout>
     );
@@ -72,15 +76,15 @@ function ResetPasswordInner() {
 
   return (
     <AuthLayout>
-      <AuthHeading kicker="¶ § auth/reset" title="Choose a new password.">
+      <AuthHeading kicker="Reset password" title="Choose a new password">
         <p className="mb-8 text-sm text-paper-400">
-          Enter a new password (≥ 8 chars). You'll be signed back in once it's saved.
+          Enter a new password of at least 8 characters. Once it is saved you will sign in with it.
         </p>
       </AuthHeading>
 
       {!token && (
         <Alert className="mb-4" variant="warning">
-          no reset token in the url — request a fresh link from the login page
+          This link has no reset token. Request a fresh link from the sign-in page.
         </Alert>
       )}
       {error && (
@@ -92,6 +96,7 @@ function ResetPasswordInner() {
       <form className="space-y-5" onSubmit={handleSubmit}>
         <Input
           autoComplete="new-password"
+          error={passwordError || undefined}
           label="New password"
           minLength={8}
           name="password"
@@ -103,6 +108,7 @@ function ResetPasswordInner() {
         />
         <Input
           autoComplete="new-password"
+          error={confirmError || undefined}
           label="Confirm new password"
           minLength={8}
           name="confirm"
@@ -119,13 +125,13 @@ function ResetPasswordInner() {
           type="submit"
           variant="primary"
         >
-          {loading ? 'Saving…' : 'Save new password →'}
+          {loading ? 'Saving…' : 'Save new password'}
         </Button>
       </form>
 
       <div className="mt-6 text-center">
         <Link className="label-mono transition-colors hover:text-ember-400" href="/login">
-          ← back to sign in
+          Back to sign in
         </Link>
       </div>
     </AuthLayout>

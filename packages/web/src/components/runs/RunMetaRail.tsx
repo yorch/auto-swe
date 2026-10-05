@@ -1,22 +1,15 @@
 'use client';
 
-import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
+import type { WorkflowRunDetail } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
-import { classifyAgentRunFailure } from '@/lib/agentRun';
 import { cn, formatCost, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
-import { AgentRunFailureNote } from './AgentRunOutcomeCard';
 import { AutonomyDecisionsPanel } from './AutonomyDecisionsPanel';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
-import { FailureCard } from './FailureCard';
 import { RailRow, RailSection } from './Rail';
-import { RunOutcomeCard } from './RunOutcomeCard';
 
 interface RunMetaRailProps {
   run: WorkflowRunDetail;
-  failedStep: WorkflowStepRecord | null;
-  onJumpToFailure?: () => void;
-  onReRun?: () => void;
 }
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -36,7 +29,7 @@ function MonoValue({ children, accent }: { children: React.ReactNode; accent?: b
   );
 }
 
-export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMetaRailProps) {
+export function RunMetaRail({ run }: RunMetaRailProps) {
   const temporalUrl = useTemporalWorkflowUrl(run.workflowId);
   const shortWorkflowId =
     run.workflowId.length > 22 ? `${run.workflowId.slice(0, 22)}…` : run.workflowId;
@@ -46,7 +39,6 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
       : null;
 
   const isAgentRun = run.isAgentRun === true;
-  const agentFailure = isAgentRun ? classifyAgentRunFailure(failedStep?.error) : null;
   const totalTraces = run.traces?.length ?? 0;
   const cost = run.costUsdAccrued;
   const totalTokens = run.tokensInputTotal + run.tokensOutputTotal;
@@ -143,43 +135,6 @@ export function RunMetaRail({ run, failedStep, onJumpToFailure, onReRun }: RunMe
 
       {/* Autonomy decisions (P3) */}
       <AutonomyDecisionsPanel runId={run.id} />
-
-      {/* Non-SWE outcome card */}
-      {(() => {
-        const hasResult =
-          run.result != null &&
-          typeof run.result === 'object' &&
-          Object.keys(run.result as Record<string, unknown>).length > 0;
-        if (!hasResult) {
-          return null;
-        }
-        return (
-          <RailSection>
-            <RunOutcomeCard
-              isAgentRun={isAgentRun}
-              result={run.result}
-              templateName={run.templateName}
-            />
-          </RailSection>
-        );
-      })()}
-
-      {/* Failure card */}
-      {failedStep && (
-        <RailSection>
-          {agentFailure && (
-            <div className="mb-2">
-              <AgentRunFailureNote failure={agentFailure} />
-            </div>
-          )}
-          <FailureCard
-            onJumpToFailure={onJumpToFailure}
-            onReRun={onReRun}
-            size="full"
-            step={failedStep}
-          />
-        </RailSection>
-      )}
     </aside>
   );
 }

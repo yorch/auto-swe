@@ -30,7 +30,7 @@ import {
   usePlatformUsage,
   useUsageScopes,
 } from '@/hooks/useAdmin';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { customRangeIgnored, dateRangePatch, parseDateRange } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 import { humanizeKey } from '@/lib/govLabels';
@@ -217,7 +217,7 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
 }
 
 function UsageWorkspace() {
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   const range = parseDateRange(params, { allowCustom: false });
   const windowDays = range.kind === 'preset' ? range.days : 30;
   const scopeOptions = useScopeOptions();
@@ -230,7 +230,8 @@ function UsageWorkspace() {
       ? chosenScope
       : (scopeOptions?.[0]?.value ?? null);
   const scopes = useUsageScopes();
-  const { data, error, isError, isLoading, isPlaceholderData } = usePlatformUsage(
+  const { data, error, isError, isFetching, refetch, isLoading, isPlaceholderData } =
+    usePlatformUsage(
     windowDays,
     scopeOf(scopeValue ?? ''),
     scopeValue !== null
@@ -284,10 +285,19 @@ function UsageWorkspace() {
       <QueryBoundary
         error={scopes.error}
         isError={scopes.isError}
+        isFetching={scopes.isFetching}
         isLoading={scopes.isLoading}
         label="the scopes you can report on"
+        onRetry={() => void scopes.refetch()}
       >
-        <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="LLM usage">
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="LLM usage"
+          onRetry={() => void refetch()}
+        >
           {data && (
             <div
               aria-busy={isPlaceholderData}

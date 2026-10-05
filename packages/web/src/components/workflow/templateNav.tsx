@@ -45,7 +45,7 @@ export function TemplateNotFound() {
   return (
     <EmptyState
       action={<ButtonLink href="/workflows/library">Back to library</ButtonLink>}
-      title="Template not found"
+      title="Workflow not found"
     />
   );
 }

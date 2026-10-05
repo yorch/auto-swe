@@ -1,5 +1,5 @@
 import type { InputHTMLAttributes, ReactNode } from 'react';
-import { cn } from '@/lib/utils';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import { RequiredMark } from './FieldWrapper';
 
 type CheckboxProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & {
@@ -28,7 +28,7 @@ export function Checkbox({ className, disabled, hint, label, marked, ...props }:
       )}
     >
       <input
-        className="mt-0.5 h-4 w-4 shrink-0 accent-ember-400"
+        className={cn('mt-0.5 h-4 w-4 shrink-0 accent-ember-400', FOCUS_RING)}
         disabled={disabled}
         type="checkbox"
         {...props}

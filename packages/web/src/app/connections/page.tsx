@@ -47,7 +47,7 @@ function ConnectionTypeBadge({ type }: { type: string }) {
   const label = isConnectionType(type) ? getConnectionTypeMetadata(type).label : type;
   const tone: BadgeTone = type === 'git_repo' ? 'moss' : type === 'http_api' ? 'violet' : 'amber';
   return (
-    <Badge className="text-[9px]" tone={tone} uppercase variant="outline">
+    <Badge className="text-[10px]" tone={tone} uppercase variant="outline">
       {label}
     </Badge>
   );
@@ -88,6 +88,8 @@ export default function ConnectionsPage() {
     meta,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     error: loadError,
   } = useRepositories({
     includeInactive: canManage && showInactive,

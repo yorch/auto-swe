@@ -45,6 +45,8 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
     data: stats,
     error,
     isError,
+    isFetching,
+    refetch,
     isLoading,
   } = useWorkflowTemplateAnalytics(id ?? '', windowDays);
 
@@ -76,7 +78,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
   return (
     <div className="space-y-8">
       <div>
-        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Template'} />
+        <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Workflow'} />
         <PageHeader
           actions={
             <Select
@@ -91,7 +93,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
           }
           chapter="§ Workflows"
           className="mb-0 mt-4"
-          subtitle={`Observed performance and cost metrics for this template over the last ${windowDays} days.`}
+          subtitle={`Observed performance and cost metrics for this workflow over the last ${windowDays} days.`}
           title="Observed performance"
         />
       </div>
@@ -101,9 +103,11 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={!isError && (isLoading || !stats)}
         label="analytics"
         loadingMessage="loading analytics…"
+        onRetry={() => void refetch()}
       >
         {stats && stats.totalRuns === 0 && (
           <EmptyState

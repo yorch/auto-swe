@@ -10,8 +10,8 @@ import { SlackTab } from '@/components/integrations/SlackTab';
 import { SourceBadge } from '@/components/integrations/SourceBadge';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { TabBar } from '@/components/ui/TabBar';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 
 type Tab = 'github' | 'slack' | 'tracker' | 'knowledge-base' | 'figma' | 'audit-log';
 
@@ -41,7 +41,7 @@ export default function StudioIntegrationsPage() {
 function StudioIntegrationsPageInner() {
   // `?tab=` is the active tab (the Slack install callback lands on
   // `?tab=slack&slack_installed=<teamId>`), so every tab is linkable.
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   const requestedTab = params.get('tab');
   const active: Tab = isTab(requestedTab) ? requestedTab : 'github';
   const installedSlackTeamId = params.get('slack_installed');
@@ -64,15 +64,18 @@ function StudioIntegrationsPageInner() {
       <SetupBanner items={['github']} />
       <TabBar
         active={active}
+        idPrefix="integrations"
         onChange={(tab) => update({ slack_installed: null, tab: tab === 'github' ? null : tab })}
         tabs={TABS}
       />
-      {active === 'github' && <GitHubTab />}
-      {active === 'slack' && <SlackTab installedTeamId={installedSlackTeamId} />}
-      {active === 'tracker' && <IssueTrackerTab />}
-      {active === 'knowledge-base' && <KnowledgeBaseTab />}
-      {active === 'figma' && <FigmaTab />}
-      {active === 'audit-log' && <ConfigAuditLogTab initialGroup="integrations" />}
+      <div {...tabPanelProps('integrations', active)}>
+        {active === 'github' && <GitHubTab />}
+        {active === 'slack' && <SlackTab installedTeamId={installedSlackTeamId} />}
+        {active === 'tracker' && <IssueTrackerTab />}
+        {active === 'knowledge-base' && <KnowledgeBaseTab />}
+        {active === 'figma' && <FigmaTab />}
+        {active === 'audit-log' && <ConfigAuditLogTab initialGroup="integrations" />}
+      </div>
     </div>
   );
 }

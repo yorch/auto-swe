@@ -25,13 +25,18 @@ export type GatewayStatus = 'pending' | 'online' | 'offline' | 'unknown';
  */
 export async function probeGateway(
   path: string,
-  accept: (res: Response) => boolean
+  accept: (res: Response) => boolean,
+  timeoutMs?: number
 ): Promise<Response | null> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`);
+    res = await fetch(
+      `${API_BASE}${path}`,
+      timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : undefined
+    );
   } catch (err) {
-    if (isNetworkError(err)) {
+    // A probe that outlives its deadline is a gateway that is not answering.
+    if (isNetworkError(err) || (err instanceof DOMException && err.name === 'TimeoutError')) {
       return null;
     }
     throw err;

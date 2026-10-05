@@ -19,7 +19,7 @@ import {
 import { useHasRole } from '@/hooks/useHasRole';
 import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
 
@@ -70,7 +70,7 @@ const SCOPE_ID_PARAM = {
 } as const;
 
 export default function GovernSettingsPage() {
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   const isAdmin = useHasRole('ADMIN');
   // The viewed scope lives in the URL so a view can be linked to and survives a reload.
   const rawScope = params.get('scope');

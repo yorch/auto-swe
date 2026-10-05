@@ -23,7 +23,7 @@ import {
   useAdminPruneShellAudit,
   useAuditLog,
 } from '@/hooks/useAdmin';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { entityHref, entityTypeLabel } from '@/lib/auditEntity';
 import { type DateRange, dateRangePatch, dayRange, parseDateRange } from '@/lib/dateRange';
 import { errMsg } from '@/lib/errors';
@@ -60,7 +60,7 @@ function rangeDays(range: DateRange | null): { since?: string; until?: string } 
 }
 
 function AuditWorkspace() {
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   const range = params.get('range') ? parseDateRange(params) : null;
   const search = (params.get('search') ?? '').slice(0, 100);
   const [searchDraft, setSearchDraft] = useState(search);
@@ -86,7 +86,11 @@ function AuditWorkspace() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
-  const { data, isLoading, isError, error } = useAuditLog({ ...filters, limit: LIMIT, offset });
+  const { data, isLoading, isError, isFetching, refetch, error } = useAuditLog({
+    ...filters,
+    limit: LIMIT,
+    offset,
+  });
   const rows = data?.data ?? [];
   const total = data?.meta.total ?? 0;
   // Keep the filter offering a type the current filter selected, even once the
@@ -232,9 +236,11 @@ function AuditWorkspace() {
           <QueryBoundary
             error={error}
             isError={isError}
+            isFetching={isFetching}
             isLoading={isLoading}
             label="audit log"
             loadingMessage="loading audit log…"
+            onRetry={() => void refetch()}
           >
             {rows.length === 0 && (
               <EmptyState

@@ -87,3 +87,41 @@ describe('design tokens are the only colour scale in use', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/** The text ramp must stay readable (WCAG AA) on the surfaces it is documented for. */
+describe('paper text ramp contrast', () => {
+  const channel = (hex: string, offset: number) => {
+    const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (hex: string) =>
+    0.2126 * channel(hex, 1) + 0.7152 * channel(hex, 3) + 0.0722 * channel(hex, 5);
+  const ratio = (a: string, b: string) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const css = readFileSync(path.resolve(__dirname, '../app/globals.css'), 'utf8');
+  const color = (name: string) =>
+    css.match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1] as string;
+
+  it.each(['950', '900', '800', '700', '600', '500'])(
+    'paper-300..500 clear 4.5:1 on ink-%s',
+    (ink) => {
+      for (const paper of ['300', '400', '500']) {
+        expect(ratio(color(`paper-${paper}`), color(`ink-${ink}`))).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  );
+
+  it.each(['950', '900', '800', '700'])('paper-600 clears 4.5:1 on ink-%s', (ink) => {
+    expect(ratio(color('paper-600'), color(`ink-${ink}`))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('keeps visible steps between 300, 400, 500 and 600', () => {
+    const ink = color('ink-800');
+    const steps = ['300', '400', '500', '600'].map((p) => ratio(color(`paper-${p}`), ink));
+    for (let i = 1; i < steps.length; i++) {
+      expect(steps[i - 1] - steps[i]).toBeGreaterThan(0.9);
+    }
+  });
+});

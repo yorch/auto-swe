@@ -73,7 +73,7 @@ export function SkillRefEditor({
         <ul className="space-y-1">
           {refs.map((ref, i) => (
             <li
-              className="flex items-center gap-2 rounded-[9px] border border-ink-400 bg-ink-900/40 px-3 py-2 text-sm"
+              className="flex items-center gap-2 rounded-md border border-ink-400 bg-ink-900/40 px-3 py-2 text-sm"
               key={ref.skillId}
             >
               <span className="flex-1 text-paper-200">{nameFor(ref.skillId)}</span>

@@ -3,13 +3,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
-import EpicsPage from './page';
+import { EpicLaunchForm } from './EpicLaunchForm';
 
-// next/navigation router is replaced for the redirect assertion
 const pushSpy = vi.fn();
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: pushSpy }),
-}));
 
 // authStore drives the role gate on the "+ New epic" button — admin/lead only.
 vi.mock('@/stores/authStore', () => ({
@@ -50,8 +46,8 @@ const REPOS = [
   },
 ];
 
-describe('EpicsPage — new epic', () => {
-  it('rejects single-repo selection (use Work Requests instead)', async () => {
+describe('EpicLaunchForm', () => {
+  it('rejects single-repo selection ', async () => {
     setupFetchMock({
       'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
       'GET /api/v1/repositories': () => ({ data: REPOS }),
@@ -65,16 +61,8 @@ describe('EpicsPage — new epic', () => {
       }),
     });
 
-    render(withQuery(<EpicsPage />));
-    // Button is disabled={repos.length < 2}; wait for the repos fetch to
-    // resolve (button becomes enabled) before clicking, otherwise the click
-    // hits a disabled button and the modal never opens.
-    const newEpic = await waitFor(() => {
-      const btn = screen.getByRole('button', { name: /new epic/i }) as HTMLButtonElement;
-      expect(btn.disabled).toBe(false);
-      return btn;
-    });
-    fireEvent.click(newEpic);
+    render(withQuery(<EpicLaunchForm onLaunched={pushSpy} />));
+    await screen.findAllByRole('checkbox');
 
     fireEvent.change(screen.getByLabelText(/external ticket id/i), {
       target: { value: 'EPIC-100' },
@@ -111,16 +99,8 @@ describe('EpicsPage — new epic', () => {
       }),
     });
 
-    render(withQuery(<EpicsPage />));
-    // Button is disabled={repos.length < 2}; wait for the repos fetch to
-    // resolve (button becomes enabled) before clicking, otherwise the click
-    // hits a disabled button and the modal never opens.
-    const newEpic = await waitFor(() => {
-      const btn = screen.getByRole('button', { name: /new epic/i }) as HTMLButtonElement;
-      expect(btn.disabled).toBe(false);
-      return btn;
-    });
-    fireEvent.click(newEpic);
+    render(withQuery(<EpicLaunchForm onLaunched={pushSpy} />));
+    await screen.findAllByRole('checkbox');
 
     fireEvent.change(screen.getByLabelText(/external ticket id/i), {
       target: { value: 'EPIC-100' },
@@ -145,5 +125,48 @@ describe('EpicsPage — new epic', () => {
       externalTicketId: 'EPIC-100',
       repoIds: ['r1', 'r2'],
     });
+  });
+
+  it('shows a review step before launching when asked to', async () => {
+    const spy = setupFetchMock({
+      'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
+      'GET /api/v1/repositories': () => ({ data: REPOS }),
+      'POST /api/v1/epics': () => ({
+        data: {
+          detailPath: '/epics/e2',
+          epicWorkflowId: 'e2',
+          externalTicketId: 'E',
+          workRequestId: 'w',
+        },
+      }),
+    });
+    render(withQuery(<EpicLaunchForm onLaunched={pushSpy} reviewBeforeLaunch />));
+    const checkboxes = await screen.findAllByRole('checkbox');
+    fireEvent.change(screen.getByLabelText(/external ticket id/i), { target: { value: 'EPIC-1' } });
+    fireEvent.change(screen.getByLabelText(/description/i), { target: { value: 'Do the thing.' } });
+    fireEvent.click(checkboxes[0]);
+    fireEvent.click(checkboxes[1]);
+    fireEvent.click(screen.getByRole('button', { name: /review epic/i }));
+
+    expect(screen.getByText(/split this into per-repository requests/i)).toBeTruthy();
+    expect(screen.getByText('acme/payments-api')).toBeTruthy();
+    expect(pushSpy).not.toHaveBeenCalled();
+    expect(
+      spy.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'POST')
+    ).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: /back to details/i }));
+    expect(screen.getByLabelText(/external ticket id/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /review epic/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^launch epic$/i }));
+    await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/epics/e2'));
+  });
+
+  it('explains why launching is disabled with fewer than two repositories', async () => {
+    setupFetchMock({
+      'GET /api/v1/repositories': () => ({ data: [REPOS[0]] }),
+    });
+    render(withQuery(<EpicLaunchForm onLaunched={pushSpy} />));
+    expect(await screen.findByText(/fewer than two are available/i)).toBeTruthy();
   });
 });

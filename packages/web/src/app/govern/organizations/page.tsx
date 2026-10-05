@@ -9,13 +9,20 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import { useHasRole } from '@/hooks/useHasRole';
-import { useUrlParams } from '@/hooks/useUrlParams';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { navLabel } from '@/lib/navigation';
 
 export default function GovernOrganizationsPage() {
-  const { data: orgs, isLoading, isError, error: loadError } = useOrganizationDirectory();
+  const {
+    data: orgs,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useOrganizationDirectory();
   const isAdmin = useHasRole('ADMIN');
-  const { params, update } = useUrlParams();
+  const { params, update } = useUrlFilters();
   // The filter lives in the URL so the old Budget alerts link (`?alerting=1`) lands on it.
   const alertingOnly = params.get('alerting') === '1';
 
@@ -40,8 +47,10 @@ export default function GovernOrganizationsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="organizations"
+        onRetry={() => void refetch()}
       >
         <Card>
           <CardHeader>

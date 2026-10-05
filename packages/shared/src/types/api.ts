@@ -352,6 +352,8 @@ export interface WorkflowTemplateSummary {
     status: WorkflowRunStatus;
     startedAt: string;
     endedAt: string | null;
+    /** The request the run belongs to; open it first, diagnostics second. */
+    workRequestId: string | null;
   } | null;
   createdAt: string;
   updatedAt: string;

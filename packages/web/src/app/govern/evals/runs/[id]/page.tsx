@@ -135,7 +135,7 @@ function VerdictView({ summary }: { summary: unknown }) {
 export default function EvalRunPage({ params }: { params: Promise<{ id: string }> }) {
   const id = validateRouteParam(use(params).id);
   const [scorer, setScorer] = useState('');
-  const { data: run, error, isError, isLoading } = useEvalRun(id);
+  const { data: run, error, isError, isFetching, refetch, isLoading } = useEvalRun(id);
 
   return (
     <div className="space-y-8">
@@ -145,7 +145,14 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
       >
         ← Dataset
       </Link>
-      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="eval run">
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="eval run"
+        onRetry={() => void refetch()}
+      >
         {run && id && (
           <>
             <PageHeader

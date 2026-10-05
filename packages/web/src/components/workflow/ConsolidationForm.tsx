@@ -47,7 +47,14 @@ function toBody(form: ConsolidationFormState): ConsolidationConfigInput {
 }
 
 export function ConsolidationForm() {
-  const { data: consolidation, error: loadError, isError, isLoading } = useConsolidationConfig();
+  const {
+    data: consolidation,
+    error: loadError,
+    isError,
+    isFetching,
+    refetch,
+    isLoading,
+  } = useConsolidationConfig();
   const update = useUpdateConsolidationConfig();
   const { form, setField, submit, saved, error, dirtyCount, discard } = useConfigForm({
     data: consolidation,
@@ -70,8 +77,10 @@ export function ConsolidationForm() {
         compact
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="the consolidation schedule"
+        onRetry={() => void refetch()}
       >
         <form className="space-y-6" onSubmit={submit}>
           <Card>
