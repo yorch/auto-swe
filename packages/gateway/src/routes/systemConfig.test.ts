@@ -51,11 +51,20 @@ vi.mock('../lib/systemConfigService.js', () => ({
       super(reason);
     }
   },
+  CLEARABLE_SECRETS: {
+    figma: ['apiToken'],
+    github: ['token', 'webhookSecret', 'appClientSecret', 'appPrivateKey'],
+    'issue-tracker': ['apiToken', 'webhookSecret'],
+    'knowledge-base': ['apiToken'],
+    slack: ['botToken', 'clientSecret', 'signingSecret'],
+  },
+  clearStoredSecret: vi.fn(async () => true),
   detectJiraFields: vi.fn(async () => ({
     fields: [{ id: 'customfield_10016', name: 'Story Points' }],
     storyPointsFieldId: 'customfield_10016',
   })),
   getGitHubConfig: vi.fn(async () => ({ data: {}, sources: {} })),
+  getIntegrationConfig: vi.fn(async () => ({ data: { token: null }, sources: { token: null } })),
   getIssueTrackerConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getKnowledgeBaseConfig: vi.fn(async () => ({ data: {}, sources: {} })),
   getSlackConfig: vi.fn(async () => ({ data: {}, sources: {} })),
@@ -154,9 +163,12 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveCanaryConfig } from '@auto-swe/shared/lib/systemConfig';
 import {
   auditConfigWrite,
+  clearStoredSecret,
   detectJiraFields,
   issueTrackerBaseUrlRefusal,
   knowledgeBaseBaseUrlRefusal,
+  testGitHubConnection,
+  testSlackConnection,
   updateCanaryConfig,
   updateConsolidationConfig,
   updateIssueTrackerConfig,
@@ -251,6 +263,57 @@ describe('POST /config/issue-tracker/detect-fields', () => {
       url: '/api/v1/platform/config/issue-tracker/detect-fields',
     });
     expect(res.statusCode).toBe(500);
+    await app.close();
+  });
+});
+
+describe('connection tests with unsaved form values', () => {
+  it('passes the GitHub draft through to the test and rejects an invalid mode', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: { authMode: 'pat', token: 'ghp_typed' },
+      url: '/api/v1/platform/config/github/test',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(testGitHubConnection)).toHaveBeenCalledWith({
+      authMode: 'pat',
+      token: 'ghp_typed',
+    });
+    const bad = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: { authMode: 'nope' },
+      url: '/api/v1/platform/config/github/test',
+    });
+    expect(bad.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('still tests the stored GitHub config when the draft is empty', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: {},
+      url: '/api/v1/platform/config/github/test',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(testGitHubConnection)).toHaveBeenCalledWith({});
+    await app.close();
+  });
+
+  it('passes the Slack draft token through to the test', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      payload: { botToken: 'xoxb-typed' },
+      url: '/api/v1/platform/config/slack/test',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(testSlackConnection)).toHaveBeenCalledWith({ botToken: 'xoxb-typed' });
     await app.close();
   });
 });
@@ -562,6 +625,57 @@ describe('config audit coverage', () => {
       'admin-1',
       expect.objectContaining({ auditBeforeJson: { maxTddIterations: 5 } })
     );
+    await app.close();
+  });
+});
+
+describe('DELETE /config/:integration/secrets/:field', () => {
+  it('clears a stored secret and returns the refreshed masked config', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'DELETE',
+      url: '/api/v1/platform/config/github/secrets/token',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(clearStoredSecret)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'admin-1',
+      'github',
+      'token'
+    );
+    expect(JSON.parse(res.payload).data).toEqual({ token: null });
+    await app.close();
+  });
+
+  it('rejects a field that is not a secret of that integration', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'DELETE',
+      url: '/api/v1/platform/config/github/secrets/baseUrl',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(vi.mocked(clearStoredSecret)).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      'github',
+      'baseUrl'
+    );
+    await app.close();
+  });
+
+  it('answers 404 when nothing is stored', async () => {
+    vi.mocked(clearStoredSecret).mockResolvedValueOnce(false);
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'DELETE',
+      url: '/api/v1/platform/config/slack/secrets/botToken',
+    });
+    expect(res.statusCode).toBe(404);
     await app.close();
   });
 });

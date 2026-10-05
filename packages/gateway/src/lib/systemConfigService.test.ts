@@ -1001,7 +1001,77 @@ describe('systemConfigService', () => {
       );
       const result = await testGitHubConnection();
       expect(result.ok).toBe(false);
-      expect(result.detail).toBe('GitHub API returned 401: Bad credentials');
+      expect(result.detail).toBe('GitHub API returned 401: the token was rejected.');
+      expect(result.detail).not.toContain('Bad credentials');
+    });
+
+    it('tests the unsaved token typed into the form instead of the stored one', async () => {
+      resolveGitHubConfigMock.mockResolvedValueOnce({
+        apiUrl: 'https://api.github.com',
+        appId: null,
+        appInstallationId: null,
+        appPrivateKey: null,
+        authMode: null,
+        token: 'ghp_stored',
+      } as never);
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        json: async () => ({ login: 'typed-user' }),
+        ok: true,
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await testGitHubConnection({ token: 'ghp_typed' });
+      expect(result.detail).toBe('Authenticated as typed-user');
+      expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer ghp_typed');
+    });
+
+    it('uses a typed auth mode to pick PAT over a fully configured App', async () => {
+      resolveGitHubConfigMock.mockResolvedValueOnce({
+        apiUrl: 'https://api.github.com',
+        appId: '1',
+        appInstallationId: '2',
+        appPrivateKey: 'key',
+        authMode: 'app',
+        token: null,
+      } as never);
+      const result = await testGitHubConnection({ authMode: 'pat' });
+      expect(result.detail).toBe('No GitHub token configured.');
+    });
+
+    it('refuses to send the stored token to a different typed API URL', async () => {
+      resolveGitHubConfigMock.mockResolvedValueOnce({
+        apiUrl: 'https://api.github.com',
+        appId: null,
+        appInstallationId: null,
+        appPrivateKey: null,
+        authMode: null,
+        token: 'ghp_stored',
+      } as never);
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await testGitHubConnection({ apiUrl: 'https://evil.example.com' });
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('Enter the token again');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses a typed API URL on a private address even with a typed token', async () => {
+      resolveGitHubConfigMock.mockResolvedValueOnce({
+        apiUrl: 'https://api.github.com',
+        appId: null,
+        appInstallationId: null,
+        appPrivateKey: null,
+        authMode: null,
+        token: null,
+      } as never);
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await testGitHubConnection({
+        apiUrl: 'http://169.254.169.254/latest',
+        token: 'ghp_typed',
+      });
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('not allowed');
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('reports a connection failure when fetch throws', async () => {
@@ -1034,6 +1104,12 @@ describe('systemConfigService', () => {
       const result = await testSlackConnection();
       expect(result.ok).toBe(true);
       expect(result.detail).toBe('Authenticated as auto-swe-bot in workspace Acme');
+    });
+
+    it('tests the unsaved bot token typed into the form', async () => {
+      mockSlackAuthTest.mockResolvedValueOnce({ ok: true, team: 'Acme', user: 'bot' });
+      const result = await testSlackConnection({ botToken: 'xoxb-typed' });
+      expect(result.ok).toBe(true);
     });
 
     it('reports the Slack API error when auth.test() returns ok:false', async () => {
@@ -1299,5 +1375,56 @@ describe('systemConfigService', () => {
         })
       ).toBeNull();
     });
+  });
+});
+
+describe('clearStoredSecret', () => {
+  const log = { warn: vi.fn() } as unknown as FastifyBaseLogger;
+
+  function prismaWith(row: Record<string, unknown> | null) {
+    return {
+      configAuditLog: { create: vi.fn().mockResolvedValue({}) },
+      slackConfig: {
+        findUnique: vi.fn().mockResolvedValue(row),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+  }
+
+  it('nulls the envelope columns and audits the clear without recording the secret', async () => {
+    const prisma = prismaWith({ botTokenCiphertext: Buffer.from('x'), botTokenLastFour: 'abcd' });
+    const { clearStoredSecret } = await import('./systemConfigService.js');
+    const cleared = await clearStoredSecret(
+      prisma as unknown as PrismaClient,
+      log,
+      'admin-1',
+      'slack',
+      'botToken'
+    );
+    expect(cleared).toBe(true);
+    expect(prisma.slackConfig.update.mock.calls[0][0].data).toEqual({
+      botTokenAuthTag: null,
+      botTokenCiphertext: null,
+      botTokenKeyVersion: null,
+      botTokenLastFour: null,
+      botTokenNonce: null,
+    });
+    const audit = prisma.configAuditLog.create.mock.calls[0][0].data;
+    expect(audit.entityType).toBe('SlackConfig');
+    expect(audit.afterJson.cleared).toBe(true);
+  });
+
+  it('does nothing when no value is stored', async () => {
+    const prisma = prismaWith({ botTokenCiphertext: null });
+    const { clearStoredSecret } = await import('./systemConfigService.js');
+    const cleared = await clearStoredSecret(
+      prisma as unknown as PrismaClient,
+      log,
+      'admin-1',
+      'slack',
+      'botToken'
+    );
+    expect(cleared).toBe(false);
+    expect(prisma.slackConfig.update).not.toHaveBeenCalled();
   });
 });

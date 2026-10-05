@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
+import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { RequestList } from '@/components/requests/RequestList';
 import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
@@ -10,6 +11,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { useApprovals } from '@/hooks/useApprovals';
 import { type RequestScope, type RequestState, useRequests } from '@/hooks/useRequests';
 import { deniedMessage } from '@/lib/accessDenied';
 
@@ -56,6 +58,32 @@ function WorkSection({
           <EmptyState title={empty} />
         )}
       </QueryBoundary>
+    </section>
+  );
+}
+
+/** Approvals the current user can answer on any run, not only their own requests. */
+function WaitingOnYou() {
+  const query = useApprovals('PENDING', 'timeoutAt:asc', false, undefined, true);
+  const steps = query.data ?? [];
+  if (steps.length === 0) {
+    return null;
+  }
+  return (
+    <section>
+      <SectionHeader
+        actions={
+          <Link className="text-sm text-ember-400 hover:underline" href="/govern/approvals">
+            Open inbox →
+          </Link>
+        }
+        title="Waiting on you"
+      />
+      <div className="space-y-3">
+        {steps.slice(0, 5).map((step) => (
+          <HumanStepCard key={step.id} step={step} />
+        ))}
+      </div>
     </section>
   );
 }
@@ -107,6 +135,7 @@ export default function HomePage() {
         subtitle="See what needs your attention, follow your work, and review the results."
         title="Home"
       />
+      <WaitingOnYou />
       <SegmentedControl
         ariaLabel="Home scope"
         onChange={setScope}

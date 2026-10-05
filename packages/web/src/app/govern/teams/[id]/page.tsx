@@ -18,6 +18,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
+import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useRemoveTeamMember, useTeam, useUpdateTeam, useUpdateTeamMember } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 import { isRole } from '@/lib/roles';
@@ -80,7 +81,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [adding, setAdding] = useState(false);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
-  const [personaInput, setPersonaInput] = useState('');
+  const [personaInput, setPersonaInput] = usePrefilledField(team?.defaultPersonaPrompt);
   const [personaError, setPersonaError] = useState<string | null>(null);
   const [confirmClearPersona, setConfirmClearPersona] = useState(false);
   const [memberError, setMemberError] = useState<string | null>(null);
@@ -91,9 +92,15 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
 
   async function handleSavePersona() {
     setPersonaError(null);
+    const next = personaInput.trim();
+    // Save never clears: emptying the text is not a deliberate delete, so it
+    // is refused and the confirmed "Clear persona" action is the only way.
+    if (!next) {
+      setPersonaError('Enter a persona to save, or use "Clear persona" to remove the current one.');
+      return;
+    }
     try {
-      await updateTeam.mutateAsync({ defaultPersonaPrompt: personaInput.trim() || null });
-      setPersonaInput('');
+      await updateTeam.mutateAsync({ defaultPersonaPrompt: next });
     } catch (e) {
       setPersonaError(errMsg(e, 'Failed to update persona'));
     }
@@ -117,6 +124,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     return <TeamNotFound />;
   }
 
+  const personaUnchanged = personaInput.trim() === (team.defaultPersonaPrompt ?? '').trim();
   const memberships = team.memberships ?? [];
   const existingUserIds = memberships.map((m) => m.user?.id ?? '').filter(Boolean);
 
@@ -293,27 +301,24 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           </CardHeader>
           <div className="space-y-4">
             {personaError ? <Alert variant="error">{personaError}</Alert> : null}
-            <div>
-              <p className="text-sm text-paper-500">Current default persona</p>
-              {team.defaultPersonaPrompt ? (
-                <p className="mt-1 whitespace-pre-wrap text-sm text-paper-100">
-                  {team.defaultPersonaPrompt}
-                </p>
-              ) : (
-                <p className="mt-1 text-sm text-paper-500 italic">None set</p>
-              )}
-            </div>
+            {!team.defaultPersonaPrompt && (
+              <p className="text-sm text-paper-500 italic">No default persona set.</p>
+            )}
             <div className="flex items-end gap-3">
               <div className="flex-1">
                 <Textarea
-                  hint="Team-wide default persona for all channel assistants. Channels can override this individually. Leave blank to clear."
-                  label="New persona"
+                  hint="Team-wide default persona for all channel assistants. Channels can override this individually."
+                  label="Persona"
                   onChange={(e) => setPersonaInput(e.target.value)}
                   placeholder="You are a helpful assistant for this team…"
                   value={personaInput}
                 />
               </div>
-              <Button disabled={updateTeam.isPending} onClick={handleSavePersona} variant="primary">
+              <Button
+                disabled={updateTeam.isPending || personaUnchanged}
+                onClick={handleSavePersona}
+                variant="primary"
+              >
                 {updateTeam.isPending ? 'Saving…' : 'Save persona'}
               </Button>
             </div>
@@ -370,7 +375,6 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         onClose={() => setConfirmClearPersona(false)}
         onConfirm={async () => {
           await updateTeam.mutateAsync({ defaultPersonaPrompt: null });
-          setPersonaInput('');
         }}
         open={confirmClearPersona}
         title="Clear persona?"

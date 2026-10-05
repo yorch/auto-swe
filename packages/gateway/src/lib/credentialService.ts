@@ -86,6 +86,9 @@ export async function probeCredential(args: {
   }
 }
 
+/** Providers with a built-in SDK adapter; every other provider is OpenAI-compatible. */
+export const BUILTIN_PROVIDERS: readonly string[] = ['anthropic', 'openai', 'google'];
+
 /// Why a credential's key or `apiBase` cannot be saved, or null. A key with a
 /// control character or whitespace can never be a valid header value, and the
 /// resulting fetch error would quote it; userinfo in `apiBase` would be sent on.

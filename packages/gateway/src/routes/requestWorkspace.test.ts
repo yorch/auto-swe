@@ -60,6 +60,7 @@ describe('request workspace', () => {
       {
         ...latest[0],
         endedAt: null,
+        humanSteps: [{ timeoutAt: new Date('2026-06-01T03:00:00Z') }, { timeoutAt: null }],
         startedAt: new Date(),
         template: { name: 'Update deps', workspaceProvider: 'git_repo' },
         workflowId: 'wf-success',
@@ -78,6 +79,7 @@ describe('request workspace', () => {
     const response = await app.inject({ headers: auth, url: '/runs/requests?search=dependencies' });
     const row = response.json().data[0];
     expect(row).toMatchObject({ attemptCount: 3, pendingStepCount: 0, target: 'acme/api' });
+    expect(row.pendingStepDeadline).toBe('2026-06-01T03:00:00.000Z');
     expect(row.workRequest).toEqual({
       description: 'Update dependencies',
       externalTicketId: 'DEP-1',

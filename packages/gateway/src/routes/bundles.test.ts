@@ -3,6 +3,9 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {},
 }));
 
+const { fetchBundleJsonMock } = vi.hoisted(() => ({ fetchBundleJsonMock: vi.fn() }));
+vi.mock('../lib/bundleFetch.js', () => ({ fetchBundleJson: fetchBundleJsonMock }));
+
 import {
   BUNDLE_SCHEMA_VERSION,
   type BundleEntities,
@@ -18,7 +21,7 @@ function newMockPrisma() {
   const client = {
     // installBundle wraps its writes in a transaction; hand the callback this mock.
     $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(client)),
-    agent: { findMany: vi.fn().mockResolvedValue([]) },
+    agent: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     installedBundle: {
       findMany: vi.fn().mockResolvedValue([
@@ -35,9 +38,15 @@ function newMockPrisma() {
       findUnique: vi.fn().mockResolvedValue(null),
       upsert: vi.fn().mockResolvedValue({ id: '99999999-9999-4999-8999-999999999999' }),
     },
-    scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
-    skill: { findMany: vi.fn().mockResolvedValue([]) },
-    workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    scannerPattern: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
+    skill: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
+    workflowTemplate: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
   return client;
 }
@@ -371,6 +380,117 @@ describe('bundleRoutes', () => {
         entityId: '99999999-9999-4999-8999-999999999999',
       }),
     });
+    await app.close();
+  });
+});
+
+function bundleWithAgent() {
+  const entities = {
+    agents: [{ key: 'reviewer', name: 'Reviewer' }],
+    scannerPatterns: [],
+    skills: [],
+    templates: [],
+  } as unknown as BundleEntities;
+  const metadata = { createdAt: 'now', name: 'n', version: '2' };
+  return {
+    bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+    dependencies: [],
+    entities,
+    metadata: {
+      ...metadata,
+      contentHash: computeContentHash({
+        bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+        dependencies: [],
+        entities,
+        metadata,
+      }),
+    },
+  };
+}
+
+describe('bundle preview', () => {
+  it('reports what would be replaced, flags protected rows, and writes nothing', async () => {
+    const app = await buildApp();
+    const prisma = (app as unknown as { prisma: Record<string, Record<string, unknown>> }).prisma;
+    prisma.agent.findFirst = vi.fn().mockResolvedValue({ id: 'builtin', origin: 'swe-starter' });
+    prisma.installedBundle.findUnique = vi.fn().mockResolvedValue({ version: '1' });
+    const res = await app.inject({
+      body: { bundle: bundleWithAgent() },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/bundles/preview',
+    });
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.payload).data;
+    expect(data.trustState).toBe('UNVERIFIED');
+    expect(data.installedVersion).toBe('1');
+    expect(data.blockedReason).toBeNull();
+    expect(data.entities.agents).toEqual([
+      { action: 'replace', name: 'reviewer', protected: true },
+    ]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('says so when this deployment refuses unverified bundles', async () => {
+    vi.stubEnv('BUNDLE_ALLOW_UNVERIFIED', '0');
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { bundle: bundleWithAgent() },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/bundles/preview',
+    });
+    vi.stubEnv('BUNDLE_ALLOW_UNVERIFIED', '1');
+    expect(JSON.parse(res.payload).data.blockedReason).toContain('unverified');
+    await app.close();
+  });
+
+  it('400s on a tampered bundle and when neither bundle nor url is sent', async () => {
+    const app = await buildApp();
+    const tampered = bundleWithAgent();
+    tampered.metadata.version = '3';
+    const bad = await app.inject({
+      body: { bundle: tampered },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/bundles/preview',
+    });
+    expect(bad.statusCode).toBe(400);
+    const empty = await app.inject({
+      body: {},
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/bundles/preview',
+    });
+    expect(empty.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('refuses an install from a URL whose content changed since the preview', async () => {
+    fetchBundleJsonMock.mockResolvedValueOnce(bundleWithAgent());
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { expectedContentHash: 'sha256:something-else', url: 'https://example.com/b.json' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/bundles/install-from-url',
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('BUNDLE_CHANGED');
+    await app.close();
+  });
+
+  it('is admin only', async () => {
+    const app = await buildApp('ENGINEER');
+    const res = await app.inject({
+      body: { bundle: bundleWithAgent() },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/bundles/preview',
+    });
+    expect(res.statusCode).toBe(403);
     await app.close();
   });
 });

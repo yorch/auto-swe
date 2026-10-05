@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
@@ -28,21 +28,31 @@ export function TeamFormModal({
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // The parent builds `mode` as a fresh object every render, and its team query
+  // refetches on window focus. Resetting on `mode` would wipe what the user is
+  // typing each time that happens, so the form resets only when it opens or
+  // switches team, reading the latest `mode` through a ref.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const formKey = mode.kind === 'edit' ? mode.teamId : 'create';
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `formKey` is the intentional reset trigger; `mode` is read through a ref
   useEffect(() => {
     if (!open) {
       return;
     }
-    if (mode.kind === 'edit') {
-      setName(mode.initial.name);
+    const current = modeRef.current;
+    if (current.kind === 'edit') {
+      setName(current.initial.name);
       setSlug('');
-      setDescription(mode.initial.description ?? '');
+      setDescription(current.initial.description ?? '');
     } else {
       setName('');
       setSlug('');
       setDescription('');
     }
     setError(null);
-  }, [open, mode]);
+  }, [open, formKey]);
 
   function deriveSlug(value: string) {
     return value

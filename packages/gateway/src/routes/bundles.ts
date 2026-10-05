@@ -11,6 +11,7 @@ import {
   type InstallResult,
   installBundle,
   listInstalledBundles,
+  previewBundle,
   SkillChangedError,
 } from '../lib/bundleService.js';
 import { resolveBundleAllowUnverified, resolveBundleTrustedKeys } from '../lib/bundleTrust.js';
@@ -36,12 +37,29 @@ const ExportBody = z.object({
  */
 const InstallBody = z.object({ bundle: z.unknown(), overwriteProtected: z.boolean().optional() });
 const InstallFromUrlBody = z.object({
+  /**
+   * The content hash the admin reviewed in a preview. The install refuses when the URL now
+   * serves different content, so what is installed is what was shown.
+   */
+  expectedContentHash: z.string().min(1).max(200).optional(),
   overwriteProtected: z.boolean().optional(),
   url: z
     .string()
     .url()
     .refine((u) => /^https?:\/\//i.test(u), 'url must be an http(s) URL'),
 });
+
+/** Preview takes the bundle inline or a URL to fetch it from; exactly one. */
+const PreviewBody = z
+  .object({
+    bundle: z.unknown().optional(),
+    url: z
+      .string()
+      .url()
+      .refine((u) => /^https?:\/\//i.test(u), 'url must be an http(s) URL')
+      .optional(),
+  })
+  .refine((b) => (b.bundle !== undefined) !== (b.url !== undefined), 'send either bundle or url');
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -154,6 +172,46 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // Dry run: the same checks an install makes, and what it would create or replace. Writes nothing.
+  app.post(
+    '/bundles/preview',
+    { onRequest: adminOnly, schema: { body: PreviewBody } },
+    async (request, reply) => {
+      let raw: unknown = request.body.bundle;
+      if (request.body.url !== undefined) {
+        try {
+          raw = await fetchBundleJson(request.body.url);
+        } catch (err) {
+          return reply.status(400).send({
+            error: {
+              code: 'BUNDLE_FETCH_FAILED',
+              message: `failed to fetch bundle from ${request.body.url}: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          });
+        }
+      }
+      try {
+        const data = await previewBundle(fastify.prisma, raw, {
+          allowUnverified: resolveBundleAllowUnverified(),
+          trustedKeys: resolveBundleTrustedKeys(),
+        });
+        return reply.send({ data });
+      } catch (err) {
+        if (err instanceof BundleIntegrityError || err instanceof BundleDependencyError) {
+          return reply
+            .status(400)
+            .send({ error: { code: 'INVALID_BUNDLE', message: err.message } });
+        }
+        if (err instanceof z.ZodError) {
+          return reply.status(400).send({
+            error: { code: 'INVALID_BUNDLE', message: 'bundle failed schema validation' },
+          });
+        }
+        throw err;
+      }
+    }
+  );
+
   app.post(
     '/bundles/install',
     { onRequest: adminOnly, schema: { body: InstallBody } },
@@ -181,6 +239,17 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
           error: {
             code: 'BUNDLE_FETCH_FAILED',
             message: `failed to fetch bundle from ${url}: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        });
+      }
+      const expected = request.body.expectedContentHash;
+      const served = (raw as { metadata?: { contentHash?: unknown } } | null)?.metadata
+        ?.contentHash;
+      if (expected !== undefined && served !== expected) {
+        return reply.status(409).send({
+          error: {
+            code: 'BUNDLE_CHANGED',
+            message: 'The bundle at this URL changed since you previewed it. Preview it again.',
           },
         });
       }

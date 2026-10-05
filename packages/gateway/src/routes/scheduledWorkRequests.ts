@@ -376,12 +376,60 @@ const scheduleInclude = {
   template: { select: { id: true, name: true } },
 } as const;
 
+/**
+ * `scheduleInclude` plus what `canManage` reads: the owning team, the shared
+ * teams and the caller's own membership in each. Used by the list, so every row
+ * can say whether this caller may act on it.
+ */
+const scheduleListInclude = (userId: string) =>
+  ({
+    ...scheduleInclude,
+    repository: {
+      select: {
+        id: true,
+        organizationName: true,
+        repoName: true,
+        shares: {
+          select: {
+            team: {
+              select: { memberships: { select: { role: true, userId: true }, where: { userId } } },
+            },
+            teamId: true,
+          },
+        },
+        team: {
+          select: { memberships: { select: { role: true, userId: true }, where: { userId } } },
+        },
+        teamId: true,
+      },
+    },
+  }) as const;
+
+/**
+ * Whether the caller may edit, fire, pause or delete a listed schedule — the
+ * same `canManage` rule the write routes apply, so the dashboard can offer only
+ * what will not 403. A row without the membership data answers ADMIN-only.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: row shape comes from scheduleListInclude
+function rowCanManage(user: { role: string }, row: any): boolean {
+  if (user.role === 'ADMIN') {
+    return true;
+  }
+  const repo = row.repository;
+  if (!repo?.team || !Array.isArray(repo.shares)) {
+    return false;
+  }
+  return canManage(user, repo as unknown as RepoWithMembership, { teamId: row.teamId ?? null });
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: row shape comes from the include above; serialized explicitly
-function serializeSchedule(row: any, schedule: unknown) {
+function serializeSchedule(row: any, schedule: unknown, mayManage: boolean) {
   return {
     /** Whose own GitHub token fires may use — the last author of its contents. */
     actsAs: row.actsAsUser ?? null,
     budgetTier: row.budgetTier,
+    /** Whether the caller may edit, fire, pause or delete this schedule. */
+    canManage: mayManage,
     createdAt: row.createdAt,
     createdBy: row.createdBy,
     cronExpression: row.cronExpression,
@@ -392,7 +440,11 @@ function serializeSchedule(row: any, schedule: unknown) {
     isActive: row.isActive,
     lastFiredAt: row.lastFiredAt,
     name: row.name,
-    repository: row.repository,
+    repository: {
+      id: row.repository.id,
+      organizationName: row.repository.organizationName,
+      repoName: row.repository.repoName,
+    },
     schedule,
     /** Owning team; null means its team was deleted. */
     team: row.team ?? null,
@@ -624,7 +676,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       ['ScheduledWorkRequest'],
       () =>
         fastify.prisma.scheduledWorkRequest.findMany({
-          include: scheduleInclude,
+          include: scheduleListInclude(user.sub),
           orderBy: { createdAt: 'desc' },
           where:
             user.role === 'ADMIN'
@@ -641,7 +693,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         }
       })
     );
-    return { data: rows.map((row, i) => serializeSchedule(row, statuses[i])) };
+    return {
+      data: rows.map((row, i) => serializeSchedule(row, statuses[i], rowCanManage(user, row))),
+    };
   });
 
   app.post(
@@ -793,7 +847,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         nextRunAt: null,
         paused: !body.isActive,
       }));
-      return reply.status(201).send({ data: serializeSchedule(row, status) });
+      return reply.status(201).send({ data: serializeSchedule(row, status, true) });
     }
   );
 
@@ -1082,7 +1136,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         const status = await fastify.temporal
           .getWorkRequestScheduleStatus(row.id)
           .catch(() => ({ exists: true, lastRunAt: null, nextRunAt: null, paused: !row.isActive }));
-        return reply.send({ data: serializeSchedule(row, status) });
+        return reply.send({ data: serializeSchedule(row, status, true) });
       }
     }
   );

@@ -158,6 +158,7 @@ export default function GovernSettingsPage() {
                 );
               }}
               scope={selection.scope}
+              scopeKey={`${selection.scope}:${selection.teamId ?? ''}`}
               setting={setting}
             />
           ))}

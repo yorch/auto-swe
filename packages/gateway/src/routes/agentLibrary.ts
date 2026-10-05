@@ -246,12 +246,25 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.delete(
     '/agent-library/:id',
-    { onRequest: adminOnly, schema: { params: IdParams } },
+    {
+      onRequest: adminOnly,
+      schema: { params: IdParams, querystring: z.object({ force: booleanQueryParam(false) }) },
+    },
     async (request, reply) => {
       const actor = requireUser(request);
       const current = await fastify.prisma.agent.findUnique({ where: { id: request.params.id } });
       if (!current) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+      }
+      // A GLOBAL row is the last tier of the cascade: with no fallback past it, runs that need the
+      // key fail and the worker refuses to start. That is allowed, but only on purpose.
+      if (current.scope === 'GLOBAL' && current.isBuiltIn && !request.query.force) {
+        return reply.status(409).send({
+          error: {
+            code: 'BUILTIN_AGENT_REQUIRES_FORCE',
+            message: `'${current.key}' is a built-in agent with no fallback. Runs that need it will fail and the worker will refuse to start if it is required. Repeat the request with force=true to deactivate it anyway.`,
+          },
+        });
       }
       const count = await deactivateAgentLineage(fastify.prisma, {
         channelId: current.channelId,
@@ -264,6 +277,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'DELETE',
         actor,
+        after: { force: request.query.force === true, isBuiltIn: current.isBuiltIn },
         before: { key: current.key, scope: current.scope },
         entityId: current.id,
         entityType: 'Agent',

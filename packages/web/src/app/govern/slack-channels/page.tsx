@@ -37,6 +37,7 @@ import {
   useUpdateSlackChannel,
 } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
+import { centsToDollarsInput, dollarsInputToCents } from '@/lib/budgetPatch';
 import { errMsg } from '@/lib/errors';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 import { formatCents, formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
@@ -51,25 +52,6 @@ function fmtBudget(
   const spent = currentCostUsd !== undefined ? formatCost(currentCostUsd) : '—';
   const cap = budgetCents != null ? formatCents(budgetCents) : 'no cap';
   return `${spent} / ${cap}`;
-}
-
-function dollarsToCents(value: string): number | null {
-  const trimmed = value.trim();
-  if (trimmed === '') {
-    return null;
-  }
-  const num = Number.parseFloat(trimmed);
-  if (Number.isNaN(num) || num < 0) {
-    return null;
-  }
-  return Math.round(num * 100);
-}
-
-function centsToDisplayDollars(cents: number | null | undefined): string {
-  if (cents == null) {
-    return '';
-  }
-  return (cents / 100).toFixed(2);
 }
 
 // ── Create modal ─────────────────────────────────────────────────────────────
@@ -125,7 +107,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const budgetCents = dollarsToCents(form.budgetDollars);
+    const budgetCents = dollarsInputToCents(form.budgetDollars);
     if (form.budgetDollars.trim() !== '' && budgetCents === null) {
       setError('Budget must be a non-negative number (e.g. 10.00)');
       return;
@@ -255,6 +237,7 @@ function CreateChannelModal({ onClose, open }: { onClose: () => void; open: bool
           min="0"
           onChange={(e) => set('budgetDollars', e.target.value)}
           placeholder="50.00"
+          prefix="$"
           step="0.01"
           type="number"
           value={form.budgetDollars}
@@ -318,7 +301,7 @@ function buildEditForm(ch: SlackChannel): EditForm {
     agentKey: ch.agentKey,
     ambientCron: ch.ambientCron ?? '',
     ambientEnabled: ch.ambientEnabled,
-    budgetDollars: centsToDisplayDollars(ch.monthlyBudgetUsdCents),
+    budgetDollars: centsToDollarsInput(ch.monthlyBudgetUsdCents),
     consolidationEnabled: ch.consolidationEnabled,
     followupSessionEnabled: ch.followupSessionEnabled,
     isPrivate: ch.isPrivate,
@@ -351,7 +334,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const budgetCents = dollarsToCents(form.budgetDollars);
+    const budgetCents = dollarsInputToCents(form.budgetDollars);
     if (form.budgetDollars.trim() !== '' && budgetCents === null) {
       setError('Budget must be a non-negative number (e.g. 10.00)');
       return;
@@ -540,6 +523,7 @@ function EditChannelForm({ channel, onClose }: { channel: SlackChannel; onClose:
         min="0"
         onChange={(e) => set('budgetDollars', e.target.value)}
         placeholder="50.00"
+        prefix="$"
         step="0.01"
         type="number"
         value={form.budgetDollars}

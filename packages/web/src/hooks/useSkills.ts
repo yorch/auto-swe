@@ -16,6 +16,10 @@ export interface Skill {
   /** The revision this row's text is; send it back as `expectedRevision` on edit. */
   currentRevision: number;
   usedByCount: number;
+  /** Keys of the active agents that reference this skill. */
+  usedBy: string[];
+  /** Advisory scanner findings recorded on the current revision. */
+  scanWarnings: string[];
   /** Set for a skill imported from an external repository; `sha` is the commit its current text came from. */
   externalSource: { host: string; owner: string; repo: string; sha: string | null } | null;
   createdAt: string;

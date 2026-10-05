@@ -17,9 +17,14 @@ export function useApprovals(
   filter: ApprovalFilter = 'PENDING',
   sort: ApprovalSort = 'requestedAt:desc',
   overdueOnly = false,
-  runId?: string
+  runId?: string,
+  /** Only steps the current user can answer and has not already answered. */
+  actionable = false
 ) {
   const params = new URLSearchParams();
+  if (actionable) {
+    params.set('actionable', 'true');
+  }
   if (runId) {
     params.set('runId', runId);
   }
@@ -39,9 +44,10 @@ export function useApprovals(
       api
         .get<{ data: HumanStepSummary[] }>(`/api/v1/human-steps${qs ? `?${qs}` : ''}`)
         .then((r) => r.data),
-    queryKey: ['approvals', filter, sort, overdueOnly, runId],
-    // Keep a fallback poll (30 s for pending, disabled for history).
-    refetchInterval: filter === 'PENDING' ? 30_000 : false,
+    queryKey: ['approvals', filter, sort, overdueOnly, runId, actionable],
+    // Keep a fallback poll (30 s for pending, and for one run's steps, which show
+    // live status; the unscoped history view does not poll).
+    refetchInterval: filter === 'PENDING' || runId ? 30_000 : false,
   });
 }
 
@@ -68,17 +74,26 @@ export function useApprovalsStream() {
   }, [qc]);
 }
 
-/** Pending-approval count for the chrome; shares the default `useApprovals` cache entry. */
+/** Count of steps waiting on the current user, for the chrome. */
 export function useApprovalsCount(): number {
-  const { data } = useApprovals();
+  const { data } = useApprovals('PENDING', 'requestedAt:desc', false, undefined, true);
   return (data ?? []).length;
 }
 
 export function useRespondToApproval() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, action, value }: { id: string; action: string; value?: unknown }) =>
-      api.post(`/api/v1/human-steps/${id}/respond`, { action, value }),
+    mutationFn: ({
+      id,
+      action,
+      comment,
+      value,
+    }: {
+      id: string;
+      action: string;
+      comment?: string;
+      value?: unknown;
+    }) => api.post(`/api/v1/human-steps/${id}/respond`, { action, comment, value }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['approvals'] });
       qc.invalidateQueries({ queryKey: ['workflow-run'] });

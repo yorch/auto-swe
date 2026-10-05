@@ -96,7 +96,22 @@ describe('/api/v1/scheduled-work-requests', () => {
       createdAt: new Date(),
       createdBy: { email: 'lead@x.com', id: 'user-1', name: 'Lead' },
       lastFiredAt: null,
-      repository: { id: REPO_ID, organizationName: 'org', repoName: 'test' },
+      // What the list's `canManage` is derived from: the caller's membership in
+      // the owning team and in each team the repository is shared with.
+      repository: {
+        id: REPO_ID,
+        organizationName: 'org',
+        repoName: 'test',
+        shares: sharedTeams.map((t) => ({
+          team: { memberships: t.role ? [{ role: t.role, userId: 'user-1' }] : [] },
+          teamId: t.teamId,
+        })),
+        team: {
+          memberships:
+            membershipRole === 'NONE' ? [] : [{ role: membershipRole, userId: 'user-1' }],
+        },
+        teamId: 'team-1',
+      },
       template: null,
       updatedAt: new Date(),
       ...data,
@@ -1349,5 +1364,54 @@ describe('/api/v1/scheduled-work-requests', () => {
     expect(body.data).toHaveLength(1);
     expect(body.data[0].schedule.exists).toBe(true);
     expect(body.data[0].schedule.nextRunAt).toBe('2026-06-17T03:00:00.000Z');
+  });
+
+  describe('canManage on the list', () => {
+    const row = {
+      budgetTier: 'STANDARD',
+      cronExpression: '0 3 * * 1',
+      description: 'Update all dependencies',
+      externalTicketPrefix: 'DEPS',
+      id: SCHEDULE_ID,
+      isActive: true,
+      name: 'Weekly dependency update',
+      repoId: REPO_ID,
+      teamId: 'team-1',
+      templateId: null,
+      templateVersion: null,
+      workRequestId: WR_ID,
+    };
+    const list = async (token: string) =>
+      JSON.parse(
+        (await inject({ method: 'GET', token, url: '/api/v1/scheduled-work-requests' })).payload
+      ).data[0];
+
+    it('is true for the owning team lead and false for a plain member', async () => {
+      scheduleRow = { ...row };
+      membershipRole = 'LEAD';
+      expect((await list('eng-token')).canManage).toBe(true);
+      membershipRole = 'ENGINEER';
+      expect((await list('eng-token')).canManage).toBe(false);
+    });
+
+    it('is true for an ADMIN regardless of membership', async () => {
+      scheduleRow = { ...row };
+      membershipRole = 'NONE';
+      expect((await list('admin-token')).canManage).toBe(true);
+    });
+
+    it("is false for a shared team lead on another team's schedule", async () => {
+      scheduleRow = { ...row };
+      membershipRole = 'ENGINEER';
+      sharedTeams = [{ role: 'LEAD', teamId: 'team-2' }];
+      expect((await list('eng-token')).canManage).toBe(false);
+    });
+
+    it("is true for a shared team lead on their own team's schedule", async () => {
+      scheduleRow = { ...row, teamId: 'team-2' };
+      membershipRole = 'ENGINEER';
+      sharedTeams = [{ role: 'LEAD', teamId: 'team-2' }];
+      expect((await list('eng-token')).canManage).toBe(true);
+    });
   });
 });

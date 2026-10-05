@@ -10,9 +10,16 @@ import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { useExportBundle, useInstallBundleFromUrl, useInstalledBundles } from '@/hooks/useBundles';
+import {
+  type BundlePreview,
+  useExportBundle,
+  useInstallBundleFromUrl,
+  useInstalledBundles,
+  usePreviewBundle,
+} from '@/hooks/useBundles';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
+import { BundlePreviewModal } from './BundlePreviewModal';
 
 export default function StudioBundlesPage() {
   const {
@@ -24,24 +31,31 @@ export default function StudioBundlesPage() {
     error: loadError,
   } = useInstalledBundles();
   const installFromUrl = useInstallBundleFromUrl();
+  const previewBundle = usePreviewBundle();
   const exportBundle = useExportBundle();
 
   const [url, setUrl] = useState('');
+  const [preview, setPreview] = useState<BundlePreview | null>(null);
   const [exportForm, setExportForm] = useState({ name: '', origin: '', version: '1.0.0' });
-  const [error, setError] = useState<string | null>(null);
+  // Each card reports its own outcome, so an export failure is never shown above the install card.
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [installDone, setInstallDone] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportDone, setExportDone] = useState<string | null>(null);
 
-  async function handleInstall() {
-    setError(null);
+  async function handlePreview() {
+    setInstallError(null);
+    setInstallDone(null);
     try {
-      await installFromUrl.mutateAsync(url);
-      setUrl('');
+      setPreview(await previewBundle.mutateAsync(url.trim()));
     } catch (e) {
-      setError(errMsg(e, 'Install failed'));
+      setInstallError(errMsg(e, 'Could not load the bundle'));
     }
   }
 
   async function handleExport() {
-    setError(null);
+    setExportError(null);
+    setExportDone(null);
     try {
       const manifest = await exportBundle.mutateAsync({
         name: exportForm.name || 'bundle',
@@ -56,8 +70,9 @@ export default function StudioBundlesPage() {
       a.href = href;
       a.click();
       URL.revokeObjectURL(href);
+      setExportDone(`Downloaded ${exportForm.name || 'bundle'}.bundle.json.`);
     } catch (e) {
-      setError(errMsg(e, 'Export failed'));
+      setExportError(errMsg(e, 'Export failed'));
     }
   }
 
@@ -76,8 +91,6 @@ export default function StudioBundlesPage() {
         }
         title={navLabel('/studio/bundles')}
       />
-
-      {error && <Alert variant="error">{error}</Alert>}
 
       <Card>
         <CardHeader>
@@ -106,15 +119,26 @@ export default function StudioBundlesPage() {
             {exportBundle.isPending ? 'Exporting…' : 'Export & download'}
           </Button>
         </div>
+        {exportError && (
+          <Alert className="mt-3" variant="error">
+            {exportError}
+          </Alert>
+        )}
+        {exportDone && (
+          <Alert className="mt-3" variant="success">
+            {exportDone}
+          </Alert>
+        )}
       </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>Install from URL</CardTitle>
         </CardHeader>
-        <div className="flex items-end gap-3">
-          <div className="flex-1">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-0 flex-1 basis-64">
             <Input
+              hint="You review what it contains and what it replaces before anything is installed."
               label="Bundle URL (http/https)"
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://example.com/swe.bundle.json"
@@ -122,13 +146,23 @@ export default function StudioBundlesPage() {
             />
           </div>
           <Button
-            disabled={!url || installFromUrl.isPending}
-            onClick={handleInstall}
+            disabled={!url.trim() || previewBundle.isPending}
+            onClick={handlePreview}
             variant="primary"
           >
-            {installFromUrl.isPending ? 'Installing…' : 'Install'}
+            {previewBundle.isPending ? 'Loading…' : 'Preview'}
           </Button>
         </div>
+        {installError && (
+          <Alert className="mt-3" variant="error">
+            {installError}
+          </Alert>
+        )}
+        {installDone && (
+          <Alert className="mt-3" variant="success">
+            {installDone}
+          </Alert>
+        )}
       </Card>
 
       <Card>
@@ -172,6 +206,25 @@ export default function StudioBundlesPage() {
           )}
         </QueryBoundary>
       </Card>
+      {preview && (
+        <BundlePreviewModal
+          onClose={() => setPreview(null)}
+          onInstall={async (overwriteProtected) => {
+            const result = await installFromUrl.mutateAsync({
+              expectedContentHash: preview.contentHash,
+              overwriteProtected,
+              url: url.trim(),
+            });
+            const c = result.counts;
+            setInstallDone(
+              `Installed ${preview.name} ${preview.version}: ${c.agents} agents, ${c.skills} skills, ${c.scannerPatterns} scanner rules, ${c.templates} templates.`
+            );
+            setUrl('');
+            return result;
+          }}
+          preview={preview}
+        />
+      )}
     </div>
   );
 }
