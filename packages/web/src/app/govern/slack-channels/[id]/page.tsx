@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useState } from 'react';
+import { use } from 'react';
 import { ChannelActivityTab } from '@/components/slackChannels/ChannelActivityTab';
 import { ChannelMemoryTab } from '@/components/slackChannels/ChannelMemoryTab';
 import { ChannelOpenItemsTab } from '@/components/slackChannels/ChannelOpenItemsTab';
@@ -13,6 +13,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
 import { useSlackChannel } from '@/hooks/useSlackChannels';
+import { useUrlParams } from '@/hooks/useUrlParams';
 import { validateRouteParam } from '@/lib/routeParams';
 
 type Tab = 'settings' | 'memory' | 'open-items' | 'activity';
@@ -30,7 +31,11 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
   // The single-channel read, not the list: it carries the memory count the delete confirm
   // quotes and a stale list entry cannot hide a channel that exists.
   const { data: channel, error, isError, isLoading } = useSlackChannel(id);
-  const [tab, setTab] = useState<Tab>('settings');
+  // The tab lives in the URL so a view can be linked to and survives a reload.
+  const { params: query, update } = useUrlParams();
+  const rawTab = query.get('tab');
+  const tab: Tab = TABS.some((t) => t.id === rawTab) ? (rawTab as Tab) : 'settings';
+  const setTab = (next: Tab) => update({ tab: next === 'settings' ? null : next });
 
   return (
     <div className="space-y-6">
@@ -58,7 +63,11 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
             />
             <TabBar active={tab} onChange={setTab} tabs={TABS} />
             <div className="pt-2">
-              {tab === 'settings' && <ChannelSettingsTab channel={channel} key={channel.id} />}
+              {/* Stays mounted while another tab is open, so switching tabs never discards
+                  edits that have not been saved yet. */}
+              <div hidden={tab !== 'settings'}>
+                <ChannelSettingsTab channel={channel} key={channel.id} />
+              </div>
               {tab === 'memory' && <ChannelMemoryTab channel={channel} />}
               {tab === 'open-items' && <ChannelOpenItemsTab channel={channel} />}
               {tab === 'activity' && <ChannelActivityTab channel={channel} />}
