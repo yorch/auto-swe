@@ -135,6 +135,25 @@ describe('validateBundle', () => {
     }
   });
 
+  it('rejects a dependency on a connection type the server cannot run', () => {
+    const res = validateBundle(
+      defineBundle({
+        dependencies: [{ connectionType: 'git_repo' }, { connectionType: 'slack' }],
+        name: 'b',
+        version: '1',
+      })
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors[0]).toMatch(/unsupported connection type\(s\): slack/);
+    }
+    expect(
+      validateBundle(
+        defineBundle({ dependencies: [{ connectionType: 'mcp' }], name: 'b', version: '1' })
+      ).ok
+    ).toBe(true);
+  });
+
   it('rejects a malformed manifest', () => {
     expect(validateBundle({ not: 'a bundle' }).ok).toBe(false);
   });

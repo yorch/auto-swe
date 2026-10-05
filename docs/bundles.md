@@ -38,7 +38,7 @@ like:
     "signedBy": "acme-release-key"
   },
   "entities": { "agents": [], "skills": [], "scannerPatterns": [], "templates": [] },
-  "dependencies": [{ "connectionType": "slack" }, { "connectionType": "zendesk" }]
+  "dependencies": [{ "connectionType": "git_repo" }, { "connectionType": "mcp" }]
 }
 ```
 
@@ -56,7 +56,11 @@ content hash and verifies the detached signature against the deployment's trust 
 | Verification | Meaning |
 |---|---|
 | `VERIFIED` | Signature validates against a key in `BUNDLE_TRUSTED_KEYS` and the content hash matches |
-| `UNVERIFIED` | No signature, no matching trusted key, or hash mismatch; install is still allowed but flagged |
+| `UNVERIFIED` | No signature, or no matching trusted key; install is still allowed but flagged |
+
+A bundle whose content hash does not match its manifest is not installed as unverified: the install is
+refused with `400`. Likewise a bundle that declares a dependency on a connection type other than
+`git_repo` or `mcp` is refused, and `validateBundle` in the SDK reports both before shipping.
 
 `BUNDLE_TRUSTED_KEYS` is env-only (a JSON array of `{ id, publicKeyPem }`) so that DB write access
 does not let an attacker mark arbitrary content as verified. `BUNDLE_MAX_BYTES` caps the size of a

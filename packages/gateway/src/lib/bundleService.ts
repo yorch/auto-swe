@@ -11,6 +11,7 @@ import {
   buildBundleManifest,
   parseBundle,
   type TrustedKey,
+  unsupportedBundleDependencies,
   validateBundleScannerPatterns,
   validateBundleTemplates,
   verifyBundleSignature,
@@ -35,9 +36,6 @@ import { scanSkillAdvisory } from './skillScan.js';
  * sit on top and are never touched. Connection *instances* never travel in a
  * bundle — content only declares the connection *types* it needs (`dependencies`).
  */
-
-/** Connection/connector types the platform supports at the code level. */
-const SUPPORTED_CONNECTION_TYPES = new Set(['git_repo', 'mcp']);
 
 export class BundleIntegrityError extends Error {}
 export class BundleDependencyError extends Error {}
@@ -511,9 +509,7 @@ function validateBundleForInstall(raw: unknown, opts: InstallOptions): Validated
     );
   }
 
-  const unsupported = manifest.dependencies
-    .map((d) => d.connectionType)
-    .filter((t) => !SUPPORTED_CONNECTION_TYPES.has(t));
+  const unsupported = unsupportedBundleDependencies(manifest);
   if (unsupported.length > 0) {
     throw new BundleDependencyError(
       `bundle requires unsupported connection type(s): ${unsupported.join(', ')}`
