@@ -139,9 +139,15 @@ export default function RunDetailPage({ params }: PageProps) {
   );
 
   const traceAnchorRef = useRef<HTMLDivElement>(null);
+  // Selecting the failed step is what the layouts react to (filter, scroll, playhead);
+  // scrolling the anchor alone did nothing inside the overflow-hidden main.
+  const failedNodeId = run ? findFailedStep(run.status, run.steps)?.nodeId : undefined;
   const handleJumpToFailure = useCallback(() => {
+    if (failedNodeId) {
+      setSelectedNodeId(failedNodeId);
+    }
     traceAnchorRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+  }, [failedNodeId]);
   const reRunLocked = retryRun.locked;
   const handleReRun = retryRun.request;
 

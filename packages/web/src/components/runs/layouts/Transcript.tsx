@@ -1,9 +1,9 @@
 'use client';
 
 import type { WorkflowStepRecord } from '@auto-swe/shared/types/api';
-import { useRef, useState } from 'react';
-import { TracesTab } from '@/app/runs/[id]/TracesTab';
+import { useEffect, useRef } from 'react';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
+import { TracesTab } from '@/components/runs/TracesTab';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { specNodeIdOfRecording, traceBelongsToStep } from '@/lib/traceLinkage';
 import { cn, formatDuration } from '@/lib/utils';
@@ -68,14 +68,24 @@ function StepSpine({
   );
 }
 
-export function Transcript({ linker, run, traces }: RunLayoutProps) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+export function Transcript({
+  linker,
+  run,
+  selectedNodeId: selectedId,
+  setSelectedNodeId: setSelectedId,
+  traces,
+}: RunLayoutProps) {
   const stepRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  const handleSpineSelect = (id: string) => {
-    setSelectedId(id);
-    stepRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
+  // Selection is the page's, so "Jump to failure" can select a step from outside
+  // the layout; scrolling follows the selection rather than the click.
+  useEffect(() => {
+    if (selectedId) {
+      stepRefs.current[selectedId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [selectedId]);
+
+  const handleSpineSelect = (id: string) => setSelectedId(id);
 
   return (
     <div className="flex flex-1 overflow-hidden">

@@ -418,7 +418,7 @@ function EventRow({
 
             {/* Type glyph — .tg */}
             <Badge
-              className="shrink-0 px-1 py-px text-[8.5px] tracking-[0.08em]"
+              className="shrink-0 px-1 py-px text-[10px] tracking-[0.08em]"
               tone={glyph.tone}
               uppercase
             >

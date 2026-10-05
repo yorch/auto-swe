@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { SplitRunPanel } from '@/app/runs/[id]/SplitRunPanel';
-import { TracesTab } from '@/app/runs/[id]/TracesTab';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
+import { SplitRunPanel } from '@/components/runs/SplitRunPanel';
+import { TracesTab } from '@/components/runs/TracesTab';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';

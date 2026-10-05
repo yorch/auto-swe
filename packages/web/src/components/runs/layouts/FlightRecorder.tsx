@@ -2,7 +2,7 @@
 
 import type { WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { TracesTab } from '@/app/runs/[id]/TracesTab';
+import { TracesTab } from '@/components/runs/TracesTab';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { specNodeIdOfRecording } from '@/lib/traceLinkage';
@@ -75,7 +75,14 @@ function WaterfallBar({
   );
 }
 
-export function FlightRecorder({ linker, dagOverlay, run, spec, traces }: RunLayoutProps) {
+export function FlightRecorder({
+  linker,
+  dagOverlay,
+  run,
+  selectedNodeId,
+  spec,
+  traces,
+}: RunLayoutProps) {
   const totalMs = useMemo(() => {
     if (!run.startedAt || !run.endedAt) {
       return 0;
@@ -96,6 +103,27 @@ export function FlightRecorder({ linker, dagOverlay, run, spec, traces }: RunLay
   const feedRef = useRef<HTMLDivElement>(null);
 
   const currentMs = playhead * totalMs;
+
+  // A step selected from outside (the failure card's "Jump to failure") moves the
+  // playhead to the end of that step, so the feed shows what the step produced.
+  // Only the selection triggers it: the run is read through a ref so a poll
+  // refreshing `run` does not snap the playhead back.
+  const runRef = useRef({ run, totalMs });
+  runRef.current = { run, totalMs };
+  useEffect(() => {
+    const { run: current, totalMs: total } = runRef.current;
+    if (!selectedNodeId || !current.startedAt || total === 0) {
+      return;
+    }
+    const step = current.steps.find((candidate) => candidate.nodeId === selectedNodeId);
+    const at = step?.endedAt ?? step?.startedAt;
+    if (!at) {
+      return;
+    }
+    const fraction = (new Date(at).getTime() - new Date(current.startedAt).getTime()) / total;
+    setPlaying(false);
+    setPlayhead(Math.min(Math.max(fraction, 0), 1));
+  }, [selectedNodeId]);
 
   useEffect(() => {
     if (playing) {
