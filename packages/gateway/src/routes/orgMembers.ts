@@ -159,7 +159,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
       schema: {
         body: z.object({
-          email: z.string().email(),
+          email: z.string().trim().toLowerCase().email(),
           orgRole: z.enum(['ORG_ADMIN', 'ORG_MEMBER']).default('ORG_MEMBER'),
         }),
         params: OrgParamsSchema,
@@ -169,7 +169,9 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       const { orgId } = request.params;
       const { email, orgRole } = request.body;
 
-      const existing = await fastify.prisma.user.findUnique({ where: { email } });
+      const existing = await fastify.prisma.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+      });
       if (existing) {
         return reply
           .status(409)

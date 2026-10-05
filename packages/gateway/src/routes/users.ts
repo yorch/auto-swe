@@ -11,9 +11,13 @@ import { getDefaultClientOrigin } from '../lib/env.js';
 import { revokeMcpGrants } from '../lib/mcpGrants.js';
 import { invalidateUserAuthCache, requireAuth, requireUser } from '../plugins/auth.js';
 
+// better-auth looks accounts up by lower-cased email, so every stored address is too.
+const NormalisedEmail = z.string().trim().toLowerCase().email();
+
 const CreateUserSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8).optional(), // Auto-generated if not provided
+  email: NormalisedEmail,
+  // 128 is better-auth's default maximum password length.
+  password: z.string().min(8).max(128).optional(), // Auto-generated if not provided
   role: z.enum([Role.ADMIN, Role.LEAD, Role.ENGINEER]).default(Role.ENGINEER),
   // Non-empty so the truthiness guards on slackId can't be bypassed with "".
   slackId: z.string().min(1).optional(),
@@ -24,7 +28,7 @@ const UserParamsSchema = z.object({ id: z.string().uuid() });
 const UserLookupQuery = z.object({ email: z.string().trim().email() });
 
 const UpdateUserSchema = z.object({
-  email: z.string().email().optional(),
+  email: NormalisedEmail.optional(),
   isActive: z.boolean().optional(),
   role: z.enum([Role.ADMIN, Role.LEAD, Role.ENGINEER]).optional(),
   // Non-empty when present; null explicitly unlinks. "" can't slip past the
@@ -162,7 +166,9 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { email, password, role, slackId } = request.body;
 
-      const existing = await fastify.prisma.user.findUnique({ where: { email } });
+      const existing = await fastify.prisma.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+      });
       if (existing) {
         return reply.status(409).send({
           error: { code: 'USER_EXISTS', message: 'User with this email already exists' },
@@ -260,14 +266,16 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: Role.ADMIN }),
       schema: {
         body: z.object({
-          email: z.string().email(),
+          email: NormalisedEmail,
           role: z.enum([Role.ADMIN, Role.LEAD, Role.ENGINEER]).default(Role.ENGINEER),
         }),
       },
     },
     async (request, reply) => {
       const { email, role } = request.body;
-      const existing = await fastify.prisma.user.findUnique({ where: { email } });
+      const existing = await fastify.prisma.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+      });
       if (existing) {
         return reply.status(409).send({
           error: { code: 'USER_EXISTS', message: 'User with this email already exists' },
