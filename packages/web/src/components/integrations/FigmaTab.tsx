@@ -8,6 +8,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import {
   type FigmaConfigInput,
+  type FigmaTestDraft,
   testFigmaConnection,
   useFigmaConfig,
   useUpdateFigmaConfig,
@@ -58,7 +59,17 @@ export function FigmaTab() {
   };
 
   const handleTest = () => {
-    runTest(() => testFigmaConnection());
+    // A blank token means the stored one; the Figma host is fixed, so a typed token only ever
+    // goes to Figma.
+    const draft: FigmaTestDraft = {};
+    if (enabled !== undefined) {
+      draft.enabled = enabled;
+    }
+    if (apiToken) {
+      draft.apiToken = apiToken;
+    }
+    const unsaved = Object.keys(draft).length > 0;
+    runTest(async () => ({ ...(await testFigmaConnection(draft)), unsaved }));
   };
 
   if (isLoading || isError) {
@@ -139,10 +150,11 @@ export function FigmaTab() {
           <CardTitle eyebrow="Figma">Test connection</CardTitle>
         </CardHeader>
         <p className="mb-4 text-xs text-paper-500">
-          Calls the Figma API with the saved token to verify connectivity and access.
+          Calls the Figma API with the token on screen (or the saved one if you have not typed a new
+          token) to verify connectivity and access.
         </p>
         <Button
-          disabled={testing || !data?.enabled}
+          disabled={testing || !(enabled ?? data?.enabled)}
           onClick={handleTest}
           size="sm"
           type="button"

@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/Select';
 import {
   type IssueTrackerConfigInput,
   type IssueTrackerProvider,
+  type IssueTrackerTestDraft,
   testIssueTrackerConnection,
   useDetectJiraFields,
   useIssueTrackerConfig,
@@ -122,7 +123,31 @@ export function IssueTrackerTab() {
   };
 
   const handleTest = () => {
-    runTest(() => testIssueTrackerConnection(testTicketId.trim()));
+    // Send what is on screen so the result describes what Save would store. A blank token means
+    // the stored one; unchanged fields are left out.
+    const draft: IssueTrackerTestDraft = {};
+    if (provider) {
+      draft.provider = provider === 'disabled' ? null : provider;
+    }
+    const baseUrlDraft = clearableField(baseUrl, data?.baseUrl);
+    if (baseUrlDraft !== undefined) {
+      draft.baseUrl = baseUrlDraft;
+    }
+    const emailDraft = clearableField(email, data?.email);
+    if (emailDraft !== undefined) {
+      draft.email = emailDraft;
+    }
+    if (apiToken) {
+      draft.apiToken = apiToken;
+    }
+    if (allowPrivateNetwork !== undefined) {
+      draft.allowPrivateNetwork = allowPrivateNetwork;
+    }
+    const unsaved = Object.keys(draft).length > 0;
+    runTest(async () => ({
+      ...(await testIssueTrackerConnection(testTicketId.trim(), draft)),
+      unsaved,
+    }));
   };
 
   if (isLoading || isError) {
@@ -381,7 +406,8 @@ export function IssueTrackerTab() {
           <CardTitle eyebrow="Issue tracker">Test connection</CardTitle>
         </CardHeader>
         <p className="mb-4 text-xs text-paper-500">
-          Fetches a real ticket through the saved configuration and shows its title and status.
+          Fetches a real ticket through the configuration on screen, including values you have not
+          saved yet, and shows its title and status.
         </p>
         <div className="flex items-end gap-3">
           <div className="flex-1">
@@ -395,7 +421,12 @@ export function IssueTrackerTab() {
             />
           </div>
           <Button
-            disabled={testing || !testTicketId.trim() || !data?.provider}
+            disabled={
+              testing ||
+              !testTicketId.trim() ||
+              !effectiveProvider ||
+              effectiveProvider === 'disabled'
+            }
             onClick={handleTest}
             size="sm"
             type="button"

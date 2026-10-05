@@ -207,12 +207,15 @@ fields of `github` (`token`, `webhookSecret`, `appClientSecret`, `appPrivateKey`
 field with nothing stored returns `NOT_STORED`. Clearing hands the value back to its environment
 variable when one is set, and to "not configured" when it is not. The call is audited.
 
-**Test connection with unsaved values.** `POST /api/v1/platform/config/github/test` and
-`/slack/test` accept an optional draft body. A field left out, or a secret left blank, uses the
-stored value. The GitHub test also has a host guard: the stored token is valid on the stored API
-host only, so a draft that changes the API URL must carry the token typed alongside it. A typed
-API URL must be a public address; loopback, link-local and private addresses are refused. Failures
-report fixed wording per status class and never echo the remote response body.
+**Test connection with unsaved values.** The `github`, `slack`, `issue-tracker`, `knowledge-base`
+and `figma` `/test` routes accept an optional draft body (the tracker test also takes its
+`ticketId`). A field left out, or a secret left blank, uses the stored value. Each test has a host
+guard: a stored secret is valid on the stored host only, so a draft that changes the GitHub API
+URL, or the tracker or knowledge-base provider or base URL, must carry the secret typed alongside
+it. Figma's host is fixed, so a typed token can only reach Figma. A typed URL goes through the same
+guard the connector applies at run time: GitHub needs a public address, and the tracker and
+knowledge base honour the `allowPrivateNetwork` value on the form. Failures report fixed wording
+per status class and never echo the remote response body.
 
 ---
 

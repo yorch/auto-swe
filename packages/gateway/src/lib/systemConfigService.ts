@@ -703,14 +703,56 @@ export async function updateIssueTrackerConfig(
   };
 }
 
+/// Values typed into the tracker form but not saved. A field left out (or a secret left blank)
+/// means "use the stored value"; `null` on a non-secret clears it.
+export type IssueTrackerTestDraft = {
+  allowPrivateNetwork?: boolean;
+  apiToken?: string;
+  baseUrl?: string | null;
+  email?: string | null;
+  instanceType?: 'cloud' | 'server' | 'datacenter' | null;
+  provider?: 'jira' | 'linear' | 'github' | null;
+};
+
 /// Live connection test: fetches a caller-supplied ticket ID through the
-/// configured connector and reports its title/status (or the failure).
+/// configured connector (optionally overlaid with unsaved form values) and
+/// reports its title/status (or the failure).
 export async function testIssueTrackerConnection(
-  ticketId: string
+  ticketId: string,
+  draft: IssueTrackerTestDraft = {}
 ): Promise<{ detail: string; ok: boolean }> {
-  const config = await resolveIssueTrackerConfig();
+  const stored = await resolveIssueTrackerConfig();
+  const config = {
+    ...stored,
+    allowPrivateNetwork: draft.allowPrivateNetwork ?? stored.allowPrivateNetwork,
+    apiToken: draft.apiToken ?? stored.apiToken,
+    baseUrl: draft.baseUrl === undefined ? stored.baseUrl : draft.baseUrl,
+    email: draft.email === undefined ? stored.email : draft.email,
+    instanceType:
+      draft.instanceType === undefined ? stored.instanceType : (draft.instanceType ?? undefined),
+    provider: draft.provider === undefined ? stored.provider : draft.provider,
+  };
   if (!config.provider) {
     return { detail: 'No tracker provider configured.', ok: false };
+  }
+  // The stored token belongs to the stored provider and host. A typed provider or base URL that
+  // differs would send it somewhere it was never saved for, so it needs the token typed too.
+  const hostChanged =
+    config.provider !== stored.provider ||
+    (config.provider !== 'linear' && (config.baseUrl ?? null) !== (stored.baseUrl ?? null));
+  if (!draft.apiToken && hostChanged) {
+    return {
+      detail: `Enter the API token again to test a different provider or base URL.`,
+      ok: false,
+    };
+  }
+  // A typed URL was never saved, so it gets the guard the connector applies at run time
+  // (with the opt-in as the form states it).
+  if (config.provider !== 'linear' && config.baseUrl && hostChanged) {
+    const safety = checkConnectorBaseUrl(config.baseUrl, config.allowPrivateNetwork);
+    if (!safety.ok) {
+      return { detail: `Base URL refused: ${safety.reason}.`, ok: false };
+    }
   }
   // Imported lazily so unit tests can mock the connector module.
   const { fetchTicket } = await import('./issueTrackerClient.js');
@@ -898,14 +940,45 @@ export async function updateKnowledgeBaseConfig(
   };
 }
 
-export async function testKnowledgeBaseConnection(): Promise<{ detail: string; ok: boolean }> {
-  const config = await resolveKnowledgeBaseConfig();
+/// Values typed into the knowledge-base form but not saved; same rules as the tracker draft.
+export type KnowledgeBaseTestDraft = {
+  allowPrivateNetwork?: boolean;
+  apiToken?: string;
+  baseUrl?: string | null;
+  email?: string | null;
+  enabled?: boolean;
+  provider?: 'confluence' | 'notion' | null;
+  spaces?: string[];
+};
+
+export async function testKnowledgeBaseConnection(
+  draft: KnowledgeBaseTestDraft = {}
+): Promise<{ detail: string; ok: boolean }> {
+  const stored = await resolveKnowledgeBaseConfig();
+  const config = {
+    ...stored,
+    allowPrivateNetwork: draft.allowPrivateNetwork ?? stored.allowPrivateNetwork,
+    apiToken: draft.apiToken ?? stored.apiToken,
+    baseUrl: draft.baseUrl === undefined ? stored.baseUrl : draft.baseUrl,
+    email: draft.email === undefined ? stored.email : draft.email,
+    enabled: draft.enabled ?? stored.enabled,
+    provider: draft.provider === undefined ? stored.provider : draft.provider,
+    spaces: draft.spaces ?? stored.spaces,
+  };
   if (!config.provider || !config.enabled) {
-    return { detail: 'Knowledge base provider not configured or disabled.', ok: false };
+    return { detail: `Knowledge base provider not configured or disabled.`, ok: false };
   }
   if (!config.baseUrl || !config.apiToken) {
     return {
       detail: `Knowledge base (${config.provider}) missing baseUrl or apiToken.`,
+      ok: false,
+    };
+  }
+  const hostChanged =
+    config.provider !== stored.provider || (config.baseUrl ?? null) !== (stored.baseUrl ?? null);
+  if (!draft.apiToken && hostChanged) {
+    return {
+      detail: `Enter the API token again to test a different provider or base URL.`,
       ok: false,
     };
   }
@@ -1007,13 +1080,22 @@ export async function updateFigmaConfig(
   };
 }
 
-export async function testFigmaConnection(): Promise<{ detail: string; ok: boolean }> {
-  const config = await resolveFigmaConfig();
+/// Unsaved Figma form values. The host is fixed, so the typed token can only ever go to Figma.
+export type FigmaTestDraft = { apiToken?: string; enabled?: boolean };
+
+export async function testFigmaConnection(
+  draft: FigmaTestDraft = {}
+): Promise<{ detail: string; ok: boolean }> {
+  const stored = await resolveFigmaConfig();
+  const config = {
+    apiToken: draft.apiToken ?? stored.apiToken,
+    enabled: draft.enabled ?? stored.enabled,
+  };
   if (!config.enabled) {
-    return { detail: 'Figma connector is disabled.', ok: false };
+    return { detail: `Figma connector is disabled.`, ok: false };
   }
   if (!config.apiToken) {
-    return { detail: 'Figma connector missing API token.', ok: false };
+    return { detail: `Figma connector missing API token.`, ok: false };
   }
   try {
     const res = await fetch('https://api.figma.com/v1/me', {
@@ -1025,7 +1107,7 @@ export async function testFigmaConnection(): Promise<{ detail: string; ok: boole
     if (!res.ok) {
       return { detail: `Figma API returned ${res.status}.`, ok: false };
     }
-    return { detail: 'Figma connection successful.', ok: true };
+    return { detail: `Figma connection successful.`, ok: true };
   } catch (err) {
     return {
       detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,
