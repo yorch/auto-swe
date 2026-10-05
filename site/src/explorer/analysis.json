@@ -1210,8 +1210,8 @@
     "packages/worker/src/activities/channelReactive.ts": "7ba9d43274c12336716c0dc4a83d3fbd7bffd07f04784d42ab039a6178e13d72",
     "packages/worker/src/activities/channelRun.test.ts": "3e9b8c6cf8d24e5a02d778352b9305b0cc0f69b5d2c8ef5578f34f5cacca5fe6",
     "packages/worker/src/activities/channelRun.ts": "0f9e3beecd94833fea56316bcc6c2139cd5e0e000f29e826254074cf065d759a",
-    "packages/worker/src/activities/channelTask.test.ts": "ddade9dc0c76b13ae282a6461659db9e7d29b2966fc25f9607de289ba7e29b7e",
-    "packages/worker/src/activities/channelTask.ts": "ce388c9f5293f7bd62222eeff25a152f7660f37cee65e86a699a70e7540c4c61",
+    "packages/worker/src/activities/channelTask.test.ts": "b70853ee61ff047dce18477b8d516fd4d0504882fbd0396c710a401c9b38882b",
+    "packages/worker/src/activities/channelTask.ts": "00caf31b0d4c0a9bd52fd5b363a9f83de911a6acca5524dcebbbf2a13104de3e",
     "packages/worker/src/activities/channelTaskPlan.test.ts": "cf2cd74a3920c1e23fbafa43168cc9f67484c6b4d73bb34cfbd68017eeb8a87f",
     "packages/worker/src/activities/channelTaskPlan.ts": "ecaa020924b5407a7051454a7cd3bf251c81735de81940426bb05c6205dfc9b8",
     "packages/worker/src/activities/channelWorkflowDraft.test.ts": "5f67d6906b07e92643060175c766ec344cdc2314f467d2439524aa7281180d9c",
@@ -1227,7 +1227,7 @@
     "packages/worker/src/activities/containerStep.test.ts": "0a2890bffc4be00a8d86d5d46d2e14e58d3f17c19c5e3c5779175aef95eb9080",
     "packages/worker/src/activities/containerStep.ts": "e7f311ecf4d4a9ba344750fee2a94fbd96c797eedad2a7d561163c999cf457b2",
     "packages/worker/src/activities/contextOverflow.ts": "423607348dfa15bce10f28f95e91f459f77e34bfefc78df767de6642c5afacb4",
-    "packages/worker/src/activities/createOrUpdatePullRequest.draft.test.ts": "84a245fdba168a2072c1288a3ecef51057da3b90bfc8fd6e5dbb3bd3f8e29099",
+    "packages/worker/src/activities/createOrUpdatePullRequest.draft.test.ts": "2e943eb851f36fc59eea1c63d446c50c9b923c560598a168730e598f03a87515",
     "packages/worker/src/activities/createOrUpdatePullRequest.test.ts": "f2560c5e06ddcc7f8a36c37ad5458780ee6d5e68176f570f39fabebafb8c9921",
     "packages/worker/src/activities/createOrUpdatePullRequest.ts": "d49718b6fd9af4f41c0c6b8a8fdaea11adef074148194e7e8441ed94ae12d71b",
     "packages/worker/src/activities/decomposition.test.ts": "148f8146af218bf3a3f11e69e40b6664c633a4dfc347e06ca1b752af700ef1e7",
@@ -2621,7 +2621,7 @@
       "WorkflowShellAudit"
     ]
   },
-  "reviewedCommit": "ffdd800010326b769320324196fe1c6870036208",
+  "reviewedCommit": "4b50cd227a1cfb21b119cd6b4352b51f2fd18424",
   "sourceHashes": {
     "docker-compose.app.yml": "96d57e466289e17048648c7e852e21c0ac24085526fae63c21e8c0ffe8b22cf6",
     "packages/cli/src/commands/skills.ts": "bdfa28470df98565ec676d471ffc23a7e7719aea79b6be638d0e2aedee7acbda",
