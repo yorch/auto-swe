@@ -2,7 +2,7 @@ import type { PrismaClient } from '@auto-swe/shared';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
-import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { checkConnectorBaseUrl, checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
   resolveFigmaConfig,
   resolveGitHubConfig,
@@ -1303,6 +1303,16 @@ export async function listConfigAuditEntries(prisma: PrismaClient, take: number)
 
 // ─── Jira field detection ─────────────────────────────────────────────────────
 
+/// The configured tracker base URL failed the SSRF guard when it was used. The stored value can
+/// predate the save-time check and the `TRACKER_BASE_URL` env fallback is never save-checked, so
+/// the guard runs again at call time.
+export class BaseUrlRefusedError extends Error {
+  constructor(readonly reason: string) {
+    super(`Base URL refused: ${reason}`);
+    this.name = 'BaseUrlRefusedError';
+  }
+}
+
 /// Calls Jira GET /rest/api/3/field and returns all custom fields plus a best-guess
 /// for the Story Points field ID (e.g. `story_points` or a custom field named like it).
 export async function detectJiraFields(): Promise<{
@@ -1312,6 +1322,11 @@ export async function detectJiraFields(): Promise<{
   const config = await resolveIssueTrackerConfig();
   if (config.provider !== 'jira' || !config.baseUrl || !config.apiToken) {
     throw new Error('Jira is not configured');
+  }
+  // Same guard as the connector factory: strict, then the opt-in for private addresses only.
+  const safety = checkConnectorBaseUrl(config.baseUrl, config.allowPrivateNetwork);
+  if (!safety.ok) {
+    throw new BaseUrlRefusedError(safety.reason);
   }
   const client = new AtlassianClient({
     apiToken: config.apiToken,

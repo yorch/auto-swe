@@ -124,4 +124,62 @@ describe('generic workflow retry', () => {
     expect(start).not.toHaveBeenCalled();
     await app.close();
   });
+
+  it('refuses a template that is no longer active or visible to the caller, scoping the lookup like a fresh launch', async () => {
+    const { app, prisma, start } = await harness();
+    prisma.workflowTemplate.findFirst.mockResolvedValueOnce(null as never);
+    const response = await app.inject({ headers: auth, method: 'POST', url: '/retry' });
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe('TEMPLATE_NOT_FOUND');
+    expect(prisma.workflowTemplate.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'template-1',
+          OR: [{ teamId: null }, { team: expect.anything() }],
+          status: 'ACTIVE',
+        }),
+      })
+    );
+    expect(validateRunConnection).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('revalidates the run inputs against the template input schema', async () => {
+    const { app, prisma, start } = await harness();
+    prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
+      id: 'template-1',
+      inputSchema: {
+        properties: { pageId: { type: 'number' } },
+        required: ['pageId'],
+        type: 'object',
+      },
+      teamId: null,
+      workspaceProvider: null,
+    } as never);
+    const response = await app.inject({ headers: auth, method: 'POST', url: '/retry' });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('INVALID_INPUT');
+    expect(start).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('launches when the inputs satisfy the input schema', async () => {
+    const { app, prisma, start } = await harness();
+    prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
+      id: 'template-1',
+      inputSchema: {
+        properties: { pageId: { type: 'string' } },
+        required: ['pageId'],
+        type: 'object',
+      },
+      teamId: null,
+      workspaceProvider: null,
+    } as never);
+    expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+      201
+    );
+    expect(start).toHaveBeenCalled();
+    await app.close();
+  });
 });

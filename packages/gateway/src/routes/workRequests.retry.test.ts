@@ -16,10 +16,17 @@ describe('POST /work-requests/:id/retry', () => {
   let started: string[];
   /** The snapshot template row the retry looks up; null = an ordinary template. */
   let snapshotTemplate: { origin: string | null; teamId: string | null } | null;
+  /** The launchable row (ACTIVE + visible to the caller); null = archived or off-team. */
+  let launchable: { inputSchema: unknown } | null;
+  let launchWhere: unknown;
+  let payload: Record<string, unknown> | null;
 
   beforeEach(async () => {
     started = [];
     snapshotTemplate = null;
+    launchable = { inputSchema: null };
+    launchWhere = undefined;
+    payload = { ticket: 'T-1' };
     app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
@@ -69,12 +76,21 @@ describe('POST /work-requests/:id/retry', () => {
           description: 'do it',
           externalTicketId: 'T-1',
           id: WORK_REQUEST_ID,
+          payload,
           requestPayload: null,
           templateId: 'tpl-1',
           templateVersion: 2,
         }),
       },
-      workflowTemplate: { findFirst: async () => snapshotTemplate },
+      workflowTemplate: {
+        findFirst: async ({ where }: { where: { status?: string } }) => {
+          if (where.status) {
+            launchWhere = where;
+            return launchable;
+          }
+          return snapshotTemplate;
+        },
+      },
     };
     app.decorate('prisma', prismaMock as unknown as never);
     app.decorate('temporal', {
@@ -115,5 +131,46 @@ describe('POST /work-requests/:id/retry', () => {
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('USE_AGENT_RUN_RERUN');
     expect(started).toHaveLength(0);
+  });
+
+  const retry = () =>
+    app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      payload: {},
+      url: `/api/v1/work-requests/${WORK_REQUEST_ID}/retry`,
+    });
+
+  it('refuses a git-backed retry of a template that is archived or off the caller’s team', async () => {
+    launchable = null;
+    const res = await retry();
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('TEMPLATE_NOT_FOUND');
+    expect(launchWhere).toMatchObject({ id: 'tpl-1', status: 'ACTIVE' });
+    expect(started).toHaveLength(0);
+  });
+
+  it('refuses a git-backed retry whose recorded inputs fail the input schema', async () => {
+    launchable = {
+      inputSchema: { properties: { ticket: { type: 'number' } }, type: 'object' },
+    };
+    const res = await retry();
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVALID_INPUT');
+    expect(started).toHaveLength(0);
+  });
+
+  it('launches a git-backed retry whose inputs satisfy the schema', async () => {
+    launchable = {
+      inputSchema: { properties: { ticket: { type: 'string' } }, type: 'object' },
+    };
+    expect((await retry()).statusCode).toBe(201);
+    expect(started).toHaveLength(1);
+  });
+
+  it('skips the schema check for a request with no recorded payload', async () => {
+    payload = null;
+    launchable = { inputSchema: { properties: {}, required: ['x'], type: 'object' } };
+    expect((await retry()).statusCode).toBe(201);
   });
 });

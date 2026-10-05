@@ -8,12 +8,19 @@ import {
 } from '@auto-swe/shared/lib/skillRevision';
 import {
   fetchSkillSource,
+  normaliseSkillName,
   type SkillSourceDeps,
   type SourceSkill,
   safeDisplayPath,
 } from '@auto-swe/shared/lib/skillSource';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { type SkillSourceRow, scanAll } from './skillSourceService.js';
+import {
+  findConflicts,
+  lockSkillSource,
+  type SkillSourceRow,
+  type SourceScope,
+  scanAll,
+} from './skillSourceService.js';
 import { type TextDiff, unifiedDiff } from './textDiff.js';
 
 /**
@@ -110,7 +117,10 @@ interface UpdatePlan {
   added: SourceSkill[];
 }
 
-async function loadInstalled(prisma: PrismaClient, sourceId: string): Promise<InstalledRow[]> {
+async function loadInstalled(
+  prisma: Pick<PrismaClient, 'skill'>,
+  sourceId: string
+): Promise<InstalledRow[]> {
   return runUnscoped('skill source update reads the skills of one source', ['Skill'], () =>
     prisma.skill.findMany({
       orderBy: { name: 'asc' },
@@ -242,9 +252,21 @@ export async function diffSkillSource(
   ]);
   const scanOf = (s: SourceSkill) => scans.get(s) ?? [];
   const diffs = computeDiffs(plan.changed);
+  // What an install of each added skill would collide with, decided as the install decides it.
+  const conflicts = await findConflicts(
+    prisma,
+    plan.added.flatMap((s) => (s.name === null ? [] : [s.name])),
+    {
+      orgId: source.orgId,
+      scope: source.scope as SourceScope['scope'],
+      teamId: source.teamId,
+    }
+  );
 
   return {
     added: plan.added.map((s) => ({
+      blockedByScan: block && scanOf(s).length > 0,
+      conflicts: s.name === null ? [] : (conflicts.get(normaliseSkillName(s.name)) ?? []),
       description: s.description,
       errors: s.errors,
       folder: safeDisplayPath(s.folder),
@@ -503,6 +525,18 @@ export async function acceptSkillUpdate(
 
   return prisma.$transaction(
     async (tx) => {
+      await lockSkillSource(tx, source.id);
+      // An install that committed since the plan was made would leave a skill the plan
+      // never saw behind a pin this accept moves.
+      const now = await loadInstalled(tx, source.id);
+      const key = (rows: InstalledRow[]) =>
+        rows
+          .map((r) => `${r.id}\0${r.sourcePath}`)
+          .sort()
+          .join('\n');
+      if (key(now) !== key(installed)) {
+        throw new SkillUpdateRefusal('SOURCE_CHANGED');
+      }
       const accepted: AcceptedSkill[] = [];
       for (const c of chosen) {
         const next = nextRevision(

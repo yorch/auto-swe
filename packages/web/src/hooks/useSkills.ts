@@ -20,8 +20,8 @@ export interface Skill {
   usedBy: string[];
   /** Advisory scanner findings recorded on the current revision. */
   scanWarnings: string[];
-  /** The tracked source this skill was imported from, if any. */
-  sourceId: string | null;
+  /** Set for a skill imported from an external repository; `sha` is the commit its current text came from. */
+  externalSource: { host: string; owner: string; repo: string; sha: string | null } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -131,6 +131,19 @@ export function useUpdateSkill() {
   });
 }
 
+/**
+ * An admin attests to the text of the revision they read; a skill that moved on
+ * since answers 409 `SKILL_CHANGED`. The only way a skill becomes verified.
+ */
+export function useVerifySkill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, revision }: { id: string; revision: number }) =>
+      api.post<{ data: Skill }>(`/api/v1/platform/skills/${id}/verify`, { revision }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
+  });
+}
+
 export function useDeleteSkill() {
   const qc = useQueryClient();
   return useMutation({
@@ -140,15 +153,5 @@ export function useDeleteSkill() {
       // Agents reference skills by key; the library view shows those refs.
       qc.invalidateQueries({ queryKey: ['admin-agent-library'] });
     },
-  });
-}
-
-/** Marks the revision the admin read as human-verified; a skill that moved on answers 409. */
-export function useVerifySkill() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, revision }: { id: string; revision: number }) =>
-      api.post<{ data: Skill }>(`/api/v1/platform/skills/${id}/verify`, { revision }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   });
 }

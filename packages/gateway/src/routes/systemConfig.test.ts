@@ -46,6 +46,11 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 // Mock the service module so individual functions can be controlled per test.
 vi.mock('../lib/systemConfigService.js', () => ({
   auditConfigWrite: vi.fn(async () => {}),
+  BaseUrlRefusedError: class BaseUrlRefusedError extends Error {
+    constructor(readonly reason: string) {
+      super(reason);
+    }
+  },
   CLEARABLE_SECRETS: {
     figma: ['apiToken'],
     github: ['token', 'webhookSecret', 'appClientSecret', 'appPrivateKey'],
@@ -309,6 +314,22 @@ describe('connection tests with unsaved form values', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(vi.mocked(testSlackConnection)).toHaveBeenCalledWith({ botToken: 'xoxb-typed' });
+    await app.close();
+  });
+});
+
+describe('POST /config/issue-tracker/detect-fields base URL refusal', () => {
+  it('answers 400 BASE_URL_REFUSED when the configured URL fails the guard', async () => {
+    const { BaseUrlRefusedError } = await import('../lib/systemConfigService.js');
+    detectJiraFieldsMock.mockRejectedValue(new BaseUrlRefusedError("host '127.0.0.1' is internal"));
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'POST',
+      url: '/api/v1/platform/config/issue-tracker/detect-fields',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('BASE_URL_REFUSED');
     await app.close();
   });
 });

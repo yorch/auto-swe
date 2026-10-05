@@ -47,6 +47,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(),
 }));
 
+import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import {
   resolveFigmaConfig,
   resolveGitHubConfig,
@@ -56,6 +57,7 @@ import {
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import {
+  BaseUrlRefusedError,
   detectJiraFields,
   getFigmaConfig,
   getGitHubConfig,
@@ -847,6 +849,43 @@ describe('systemConfigService', () => {
         provider: null,
       } as never);
       await expect(detectJiraFields()).rejects.toThrow('Jira is not configured');
+    });
+
+    it.each([
+      ['loopback', 'http://127.0.0.1:8080', false],
+      ['loopback with the opt-in', 'http://127.0.0.1:8080', true],
+      ['cloud metadata', 'http://169.254.169.254', true],
+      ['link-local', 'http://169.254.10.10', true],
+      ['private range without the opt-in', 'http://10.0.0.5', false],
+      ['a non-http scheme', 'file:///etc/passwd', true],
+    ])('refuses %s and never builds a client', async (_name, baseUrl, allowPrivateNetwork) => {
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce({
+        allowPrivateNetwork,
+        apiToken: 'tok',
+        baseUrl,
+        email: 'bot@acme.com',
+        provider: 'jira',
+      } as never);
+      vi.mocked(AtlassianClient).mockClear();
+      mockAtlassianGet.mockClear();
+      await expect(detectJiraFields()).rejects.toBeInstanceOf(BaseUrlRefusedError);
+      expect(AtlassianClient).not.toHaveBeenCalled();
+      expect(mockAtlassianGet).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a private-range URL with the opt-in', 'http://10.0.0.5', true],
+      ['a public URL', 'https://acme.atlassian.net', false],
+    ])('allows %s', async (_name, baseUrl, allowPrivateNetwork) => {
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce({
+        allowPrivateNetwork,
+        apiToken: 'tok',
+        baseUrl,
+        email: 'bot@acme.com',
+        provider: 'jira',
+      } as never);
+      mockAtlassianGet.mockResolvedValueOnce([{ id: 'summary', name: 'Summary' }]);
+      await expect(detectJiraFields()).resolves.toMatchObject({ storyPointsFieldId: null });
     });
 
     it('returns all fields plus a best-guess storyPointsFieldId match', async () => {

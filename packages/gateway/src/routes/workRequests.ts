@@ -38,6 +38,11 @@ import {
 import { paginationQuery } from '../lib/pagination.js';
 import { retryTemplateRequest } from '../lib/retryTemplateRequest.js';
 import { isSystemTemplate } from '../lib/systemTemplate.js';
+import {
+  inputsSatisfySchema,
+  launchableTemplateWhere,
+  sendTemplateNotLaunchable,
+} from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { allocateWorkflowId, launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -887,6 +892,32 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             message: 'This is an agent run; re-run it with POST /api/v1/agent-runs/:id/rerun',
           },
         });
+      }
+      // The same launch checks as a fresh template launch: the template must be
+      // ACTIVE and visible to the caller, and a recorded payload must still
+      // satisfy its input schema. The recorded version is what runs.
+      const launchable = await fastify.prisma.workflowTemplate.findFirst({
+        select: { inputSchema: true },
+        where: launchableTemplateWhere(user, workRequest.templateId),
+      });
+      if (!launchable) {
+        return sendTemplateNotLaunchable(reply);
+      }
+      if (
+        workRequest.payload &&
+        typeof workRequest.payload === 'object' &&
+        !Array.isArray(workRequest.payload) &&
+        !inputsSatisfySchema(reply, launchable.inputSchema, {
+          ...workRequest.payload,
+          ...(request.body?.instructions &&
+          typeof (workRequest.payload as Record<string, unknown>).description === 'string'
+            ? {
+                description: `${workRequest.description}\n\nAdditional instructions for this attempt:\n${request.body.instructions}`,
+              }
+            : {}),
+        })
+      ) {
+        return;
       }
       // Bind the narrowed values: the start call below runs inside a closure,
       // where TS can't carry a property narrowing.

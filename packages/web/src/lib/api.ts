@@ -28,12 +28,15 @@ function isOnPublicAuthPage(): boolean {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string | null;
+  /** The gateway's `error.details`, when it sends some (e.g. the names behind a 409). Untrusted. */
+  readonly details: unknown;
 
-  constructor(message: string, status: number, code: string | null) {
+  constructor(message: string, status: number, code: string | null, details?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -180,7 +183,7 @@ export class ApiClient {
         ? err.message
         : `HTTP ${res.status}`;
     const code = err && typeof err.code === 'string' ? err.code : null;
-    return new ApiError(message, res.status, code);
+    return new ApiError(message, res.status, code, err?.details);
   }
 
   private tryRefresh(): Promise<boolean> {
