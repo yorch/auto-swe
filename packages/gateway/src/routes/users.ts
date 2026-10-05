@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Role } from '@auto-swe/shared';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import bcrypt from 'bcrypt';
+import { hashPassword } from 'better-auth/crypto';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -181,19 +182,43 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
 
       const plainPassword = password ?? crypto.randomBytes(16).toString('base64url');
       const passwordHash = await bcrypt.hash(plainPassword, 12);
+      // better-auth signs users in from its own credential Account (scrypt), never from the
+      // legacy bcrypt column, so the account needs that row or the temporary password cannot sign
+      // in at all. Same hash helper the seeded admin is provisioned with.
+      const credentialHash = await hashPassword(plainPassword);
 
       let user: UserRow;
       try {
-        user = await fastify.prisma.user.create({
-          data: { email, passwordHash, role, slackId },
-          select: {
-            createdAt: true,
-            email: true,
-            id: true,
-            isActive: true,
-            role: true,
-            slackId: true,
-          },
+        user = await fastify.prisma.$transaction(async (tx) => {
+          const created = await tx.user.create({
+            data: {
+              email,
+              // An administrator vouched for this address, and sign-in refuses an unverified
+              // email (requireEmailVerification), so a directly created account would otherwise
+              // be unusable. Matches /invite.
+              emailVerified: true,
+              passwordHash,
+              role,
+              slackId,
+            },
+            select: {
+              createdAt: true,
+              email: true,
+              id: true,
+              isActive: true,
+              role: true,
+              slackId: true,
+            },
+          });
+          await tx.account.create({
+            data: {
+              accountId: created.id,
+              password: credentialHash,
+              providerId: 'credential',
+              userId: created.id,
+            },
+          });
+          return created;
         });
       } catch (err) {
         // The pre-checks above cover the common case; this maps a concurrent

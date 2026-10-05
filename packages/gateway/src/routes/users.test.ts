@@ -47,6 +47,7 @@ async function buildApp() {
   const authState: AuthState = { role: 'ADMIN', sub: 'admin-1' };
 
   const mockPrisma = {
+    account: { create: vi.fn().mockResolvedValue({}) },
     configAuditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
@@ -291,6 +292,34 @@ describe('userRoutes', () => {
       expect(body.data.email).toBe('new@example.com');
       expect(typeof body.data.temporaryPassword).toBe('string');
       expect(body.data.temporaryPassword.length).toBeGreaterThan(0);
+    });
+
+    it('creates a verified user with a better-auth credential account for the password', async () => {
+      ctx.mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.user.create.mockResolvedValueOnce({
+        createdAt: new Date('2026-01-01'),
+        email: 'cred@example.com',
+        id: USER_ID,
+        isActive: true,
+        role: 'ENGINEER',
+        slackId: null,
+      });
+      ctx.mockPrisma.account.create.mockClear();
+
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { email: 'cred@example.com', password: 'supersecret1' },
+        url: '/api/v1/users',
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(ctx.mockPrisma.user.create.mock.calls[0]?.[0].data.emailVerified).toBe(true);
+      const data = ctx.mockPrisma.account.create.mock.calls[0]?.[0].data;
+      expect(data).toMatchObject({ accountId: USER_ID, providerId: 'credential', userId: USER_ID });
+      // The stored hash is better-auth's own, so its verifier accepts the password.
+      const { verifyPassword } = await import('better-auth/crypto');
+      expect(await verifyPassword({ hash: data.password, password: 'supersecret1' })).toBe(true);
     });
 
     it('omits temporaryPassword when a password was supplied', async () => {
