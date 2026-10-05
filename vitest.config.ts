@@ -383,6 +383,8 @@ export default defineConfig({
       'packages/*/src/**/*.test.ts',
       'packages/*/src/**/*.test.tsx',
       'site/scripts/**/*.test.mjs',
+      // Root build/CI scripts are plain ESM too; same reason as site/scripts above.
+      'scripts/**/*.test.mjs',
     ],
     // Anchor test discovery to the worktree directory (not the CWD from which
     // vitest is invoked) so the correct test files are found when running from
