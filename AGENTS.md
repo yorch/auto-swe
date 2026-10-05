@@ -91,7 +91,7 @@ use the `platform-explorer` skill for maintenance.
 
 Top-level files that matter:
 
-- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui) + Garage (`objectstore` profile) + setup containers
+- `docker-compose.infra.yml` — postgres + postgres-temporal + temporal (server + admin-tools + ui, the UI behind the `temporal-ui` profile) + Garage (`objectstore` profile) + setup containers
 - `docker-compose.app.yml` — gateway + worker + web + otel-lgtm (overlay; not runnable standalone)
 - `infra/` — helper scripts and Temporal dynamic config mounted into the temporal-setup containers
 - `tsconfig.base.json` — shared TS config inherited by every package
@@ -230,7 +230,7 @@ yarn format               # Format only (biome format --write)
 yarn docs:check           # Fail on stale countable claims in the living docs
 yarn invariants:check     # Fail on source rules the types and tests cannot reach (§5)
 
-# Docker (infra = postgres + postgres-temporal + temporal + garage; app = gateway + worker + web + otel-lgtm)
+# Docker (infra = postgres + postgres-temporal + temporal + temporal-ui [profile, local only] + garage; app = gateway + worker + web + otel-lgtm)
 yarn docker:infra:up      # Start infra services only
 yarn docker:infra:down    # Stop infra services
 yarn docker:app:up        # Start everything (infra + app)

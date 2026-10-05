@@ -4,8 +4,13 @@
 
 set shell := ["bash", "-cu"]
 
-infra := "docker compose -f docker-compose.infra.yml"
-dev := "docker compose -f docker-compose.app.yml -f docker-compose.infra.yml"
+# The Temporal Web UI is behind a Compose profile so it never starts in a
+# production stack (docker-compose.infra.yml is layered under
+# docker-compose.prod.yml too). The local recipes opt in.
+local := "--profile temporal-ui"
+
+infra := "docker compose " + local + " -f docker-compose.infra.yml"
+dev := "docker compose " + local + " -f docker-compose.app.yml -f docker-compose.infra.yml"
 prod := "docker compose -f docker-compose.infra.yml -f docker-compose.prod.yml"
 prod_traefik := prod + " -f docker-compose.traefik.yml"
 prod_watchtower := prod + " -f docker-compose.watchtower.yml"
@@ -15,7 +20,7 @@ prod_full := prod_traefik + " -f docker-compose.watchtower.yml"
 default:
     @just --list
 
-# Start backing services for native development (Postgres, Temporal, Garage with COMPOSE_PROFILES=objectstore).
+# Start backing services for native development (Postgres, Temporal + Web UI, Garage with COMPOSE_PROFILES=objectstore).
 infra-up:
     {{ infra }} up -d
 
@@ -64,11 +69,14 @@ prod-up: prod-pull
     {{ prod }} up -d
 
 # Built from the base files only so teardown does not need the Traefik
-# domains; --remove-orphans catches overlay-only services (watchtower).
+# domains; --remove-orphans catches overlay-only services (watchtower), and
+# `--profile temporal-ui` catches the Temporal UI — a profile-disabled service
+# is NOT treated as an orphan, so without it a previously-running UI container
+# survives every `down`.
 
 # Stop the production stack, whichever overlays started it.
 prod-down:
-    {{ prod }} down --remove-orphans
+    {{ prod }} --profile temporal-ui down --remove-orphans
 
 # Follow production logs. Pass a service name to filter them.
 prod-logs service="":

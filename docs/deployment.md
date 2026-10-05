@@ -257,7 +257,7 @@ The shipped `docker-compose.infra.yml` provisions:
 - `postgres-temporal` (a *separate* Postgres from the app DB — needed because Temporal owns the schema)
 - `temporal-setup` (one-shot container that installs the Temporal schema)
 - `temporal` (the server)
-- `temporal-setup-namespace` (one-shot container that creates the namespace) and `temporal-ui` (port `8233`)
+- `temporal-setup-namespace` (one-shot container that creates the namespace) and, for local development only, `temporal-ui` (port `8233`, behind the `temporal-ui` Compose profile; the local `yarn docker:*` / `just` entry points enable it, the production recipes do not)
 
 For real production, run these on dedicated infrastructure (not on the gateway/worker hosts). At minimum:
 - Multiple Temporal server replicas behind an internal load balancer.
@@ -453,7 +453,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] OAuth consent screens are published (Google) and homepage URLs filled (GitHub) for prod-grade UX.
 - [ ] Magic-link transport is verified end-to-end against a real inbox (not just SMTP 2xx).
 - [ ] Worker host is isolated — separate VPC subnet, no shared Docker socket, no inbound traffic.
-- [ ] Infra ports are not world-reachable. `docker-compose.infra.yml` publishes Postgres (5432), Temporal (7233/8233) and the object store (9000) — and `docker-compose.app.yml` Grafana (3001) and OTLP (4317/4318) — on loopback by default so the runbook can reach them from the host. An override such as `POSTGRES_PORT=55432` without the `127.0.0.1:` prefix publishes on every interface; keep the prefix, or firewall the port.
+- [ ] Infra ports are not world-reachable. `docker-compose.infra.yml` publishes Postgres (5432), Temporal (7233, plus 8233 for the Web UI only when the `temporal-ui` profile is enabled, which production must not do) and the object store (9000) — and `docker-compose.app.yml` Grafana (3001) and OTLP (4317/4318) — on loopback by default so the runbook can reach them from the host. An override such as `POSTGRES_PORT=55432` without the `127.0.0.1:` prefix publishes on every interface; keep the prefix, or firewall the port.
 - [ ] Reverse proxy enforces HTTPS and forwards `X-Forwarded-For` / `X-Forwarded-Proto`, and `TRUST_PROXY` names that proxy's IPs or CIDRs. The gateway rate-limits a verified user by user id and everything else by client IP; without `TRUST_PROXY` every anonymous request behind the proxy shares the proxy's IP and one limit. Do not set it when clients can reach the gateway directly — they could then choose their own IP.
 - [ ] Postgres connection uses TLS (`?sslmode=require`).
 - [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).

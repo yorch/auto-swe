@@ -97,7 +97,7 @@ cp .env.example .env
 # dashboard at /studio/models after starting the gateway+web. See
 # docs/model-configuration.md for the bootstrap flow.
 
-# 3. Start infrastructure (Postgres, Temporal, Garage)
+# 3. Start infrastructure (Postgres, Temporal + UI, Garage)
 # Garage starts only when COMPOSE_PROFILES includes objectstore (set by default in .env.example).
 yarn docker:infra:up
 
@@ -121,7 +121,7 @@ yarn dev:worker      # Terminal 3
 The full walkthrough, through connecting a repository and starting a first run, is in
 [`docs/quickstart.md`](./docs/quickstart.md).
 
-Temporal Web UI is available at `http://localhost:8233`.
+Temporal Web UI is available at `http://localhost:8233` (local dev only: it sits behind the `temporal-ui` Compose profile, which `yarn docker:*` and `just` enable and production does not).
 
 For production deployment, see [`docs/deployment.md`](./docs/deployment.md) — end-to-end runbook covering env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, backup, and a hardening checklist.
 
@@ -239,7 +239,7 @@ yarn db:seed             # Seed admin user + sample repository
 yarn dev:gateway         # Gateway in watch mode
 yarn dev:worker          # Worker in watch mode
 yarn dev:web             # Next.js dashboard (port 3000)
-yarn docker:infra:up     # Start infra services (postgres + temporal + garage). Garage starts only when COMPOSE_PROFILES includes objectstore. Observability (Grafana/OTel) starts with yarn docker:app:up.
+yarn docker:infra:up     # Start infra services (postgres + temporal + temporal-ui + garage). Garage starts only when COMPOSE_PROFILES includes objectstore. Observability (Grafana/OTel) starts with yarn docker:app:up.
 yarn docker:infra:down   # Stop infra services
 yarn docker:app:up           # Start everything (infra + app)
 yarn docker:app:down         # Stop everything
