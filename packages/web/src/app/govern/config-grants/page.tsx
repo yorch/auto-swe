@@ -14,7 +14,7 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { useUserOrgs } from '@/hooks/useAdmin';
+import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import {
   type ConfigGrant,
   useConfigGrantPreview,
@@ -51,7 +51,7 @@ export default function GovernConfigGrantsPage() {
   const preview = useConfigGrantPreview(pattern);
   const eligibleUsers = useEligibleUsers([]);
   const { data: teams } = useTeams();
-  const { data: orgs } = useUserOrgs();
+  const { data: orgs } = useOrganizationDirectory();
 
   const examplePatterns = useMemo(
     () => ['*', 'channel.*', 'workflow.runConcurrency', 'memory.*', 'workspace.*'],

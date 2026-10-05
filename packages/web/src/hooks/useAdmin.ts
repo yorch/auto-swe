@@ -11,6 +11,7 @@ import type {
   EvalTrendsDto,
 } from '@auto-swe/shared/types/api';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useHasRole } from '@/hooks/useHasRole';
 import { api } from '@/lib/api';
 import type { ScannerPatternType } from '@/lib/scannerPatternTypes';
 
@@ -424,6 +425,30 @@ export function useUserOrgs() {
     queryFn: () =>
       api.get<{ data: UserOrg[] }>('/api/v1/platform/organizations').then((r) => r.data),
     queryKey: ['user-orgs'],
+  });
+}
+
+/** An organization row as the directory returns it; `role` is the viewer's own, absent for admins. */
+export type DirectoryOrg = Omit<UserOrg, 'role'> & { role?: string };
+
+/**
+ * Every organization the viewer can act on: ALL active organizations for a platform admin
+ * (who may manage ones they are not a member of), the viewer's own memberships otherwise.
+ * Use this for organization pickers and the Organizations list; `useUserOrgs` stays the
+ * "my organizations" view.
+ */
+export function useOrganizationDirectory() {
+  const isAdmin = useHasRole('ADMIN');
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: DirectoryOrg[] }>(
+          isAdmin
+            ? '/api/v1/platform/organizations/budget-alerts'
+            : '/api/v1/platform/organizations'
+        )
+        .then((r) => r.data),
+    queryKey: ['user-orgs', isAdmin ? 'all' : 'mine'],
   });
 }
 

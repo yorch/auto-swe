@@ -9,7 +9,7 @@ import { Combobox } from '@/components/ui/Combobox';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
-import { useUserOrgs } from '@/hooks/useAdmin';
+import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import {
   type ScopeSelection,
   type SettingView,
@@ -83,7 +83,7 @@ export default function GovernSettingsPage() {
   const [rowStatus, setRowStatus] = useState<Record<string, SettingRowStatus>>({});
 
   const teams = useTeams();
-  const orgs = useUserOrgs();
+  const orgs = useOrganizationDirectory();
   const channels = useSlackChannels();
 
   const showScope = (nextScope: ViewScope, id = '') => {

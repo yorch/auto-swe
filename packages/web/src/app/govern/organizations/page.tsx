@@ -8,11 +8,13 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { useUserOrgs } from '@/hooks/useAdmin';
+import { useOrganizationDirectory } from '@/hooks/useAdmin';
+import { useHasRole } from '@/hooks/useHasRole';
 import { navLabel } from '@/lib/navigation';
 
 export default function GovernOrganizationsPage() {
-  const { data: orgs, isLoading, isError, error: loadError } = useUserOrgs();
+  const { data: orgs, isLoading, isError, error: loadError } = useOrganizationDirectory();
+  const isAdmin = useHasRole('ADMIN');
   const router = useRouter();
   const params = useSearchParams();
   // The filter lives in the URL so the old Budget alerts link (`?alerting=1`) lands on it.
@@ -25,7 +27,7 @@ export default function GovernOrganizationsPage() {
     <div className="space-y-8">
       <PageHeader
         chapter="§ Govern"
-        subtitle="Organizations you belong to. Alerts fire when this month's spend crosses the configured threshold."
+        subtitle="Every organization on the platform for admins, otherwise the ones you belong to. Alerts fire when this month's spend crosses the configured threshold."
         title={navLabel('/govern/organizations')}
       />
 
@@ -65,16 +67,18 @@ export default function GovernOrganizationsPage() {
             />
           ) : (
             <OrgBudgetTable
-              columns={[
-                'name',
-                'slug',
-                'role',
-                'cap',
-                'spent',
-                'threshold',
-                'percentUsed',
-                'status',
-              ]}
+              columns={(
+                [
+                  'name',
+                  'slug',
+                  'role',
+                  'cap',
+                  'spent',
+                  'threshold',
+                  'percentUsed',
+                  'status',
+                ] as const
+              ).filter((c) => (isAdmin ? c !== 'role' : true))}
               rows={rows}
             />
           )}

@@ -21,7 +21,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { useUserOrgs } from '@/hooks/useAdmin';
+import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import {
   type AgentRow,
   type AgentScope,
@@ -139,7 +139,7 @@ export default function AgentLibraryPage() {
   const { data: agents, error: loadError, isError, isLoading } = useAgentLibrary();
   const { data: teams } = useTeams();
   const { data: templates } = useWorkflowTemplates();
-  const { data: orgs } = useUserOrgs();
+  const { data: orgs } = useOrganizationDirectory();
   const [scopeFilter, setScopeFilter] = useState<'' | AgentScope>('');
   const [textFilter, setTextFilter] = useState('');
   const { data: mcpConnections } = useMcpConnections();
