@@ -1,7 +1,7 @@
 import type { AgentRow, AgentScope } from '@/hooks/useAgentLibrary';
 
 /** Most specific first: what a run resolves through, falling back down the list. */
-const SCOPE_ORDER: AgentScope[] = [
+const RESOLUTION_ORDER: AgentScope[] = [
   'WORKFLOW_TEMPLATE',
   'CHANNEL',
   'TEAM',
@@ -17,7 +17,7 @@ const SCOPE_ORDER: AgentScope[] = [
  * organization fallback is claimed.
  */
 export function broaderFallbacks(row: AgentRow, all: AgentRow[]): AgentScope[] {
-  const broader = SCOPE_ORDER.slice(SCOPE_ORDER.indexOf(row.scope) + 1);
+  const broader = RESOLUTION_ORDER.slice(RESOLUTION_ORDER.indexOf(row.scope) + 1);
   const ownOrgId =
     row.orgId ?? (row.teamId ? all.find((a) => a.teamId === row.teamId && a.orgId)?.orgId : null);
   return broader.filter((scope) =>

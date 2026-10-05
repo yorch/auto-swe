@@ -83,7 +83,7 @@ export function SettingRow({
   setting: SettingView;
   /// The scope currently being viewed, used only to word the disabled reason.
   scope: SettingScope;
-  /// Identity of the whole selection being viewed (scope plus team), which
+  /// Identity of the whole selection being viewed (scope plus the team, organization or channel id), which
   /// `scope` alone cannot give: two teams are the same `TEAM`. A change drops
   /// the draft even when the inherited value is equal across the two views,
   /// so Save can never write an override the operator did not mean at the
