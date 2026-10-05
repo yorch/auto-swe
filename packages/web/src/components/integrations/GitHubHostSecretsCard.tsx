@@ -109,7 +109,7 @@ export function GitHubHostSecretsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle eyebrow="GitHub Enterprise">Per-host webhook secrets</CardTitle>
+        <CardTitle eyebrow="Webhooks">Per-host webhook secrets</CardTitle>
       </CardHeader>
       <p className="mb-4 text-xs text-paper-500">
         A GitHub Enterprise Server host names itself in each delivery. When it has a secret here,

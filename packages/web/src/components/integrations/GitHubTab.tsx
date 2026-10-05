@@ -288,7 +288,7 @@ export function GitHubTab() {
                 id="gh-auth-mode"
                 onChange={(v) => setAuthMode(v)}
                 options={[
-                  { label: 'auto (app if configured, else PAT)', value: 'auto' },
+                  { label: 'Automatic: GitHub App if configured, else token', value: 'auto' },
                   { label: 'pat (always use PAT)', value: 'pat' },
                   { label: 'app (always use App)', value: 'app' },
                 ]}

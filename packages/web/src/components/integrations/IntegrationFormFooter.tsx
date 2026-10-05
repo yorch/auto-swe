@@ -32,7 +32,10 @@ export function IntegrationFormFooter({
     <>
       {saved && <Alert variant="success">Settings saved.</Alert>}
       {error && <Alert>{error}</Alert>}
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-400 bg-ink-800/95 px-4 py-3">
+        <p className="min-w-0 text-xs text-paper-500">
+          Saves the settings on this tab. Blank secret fields keep their current value.
+        </p>
         <Button disabled={isPending} type="submit" variant="primary">
           {isPending ? 'Saving…' : 'Save changes'}
         </Button>

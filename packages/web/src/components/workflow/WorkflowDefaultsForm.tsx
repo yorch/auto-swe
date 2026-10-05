@@ -149,7 +149,7 @@ function FieldGroup({ label, children }: { label: string; children: ReactNode })
   return (
     <div>
       <p className="label-mono mb-3">{label}</p>
-      <div className="grid grid-cols-2 gap-4">{children}</div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>
     </div>
   );
 }
@@ -233,9 +233,7 @@ export function WorkflowDefaultsForm() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Resources &amp; tuning">
-            Resource &amp; tuning defaults (Tier 2)
-          </CardTitle>
+          <CardTitle eyebrow="Resources &amp; tuning">Resource &amp; tuning defaults</CardTitle>
         </CardHeader>
         <div className="space-y-6">
           <FieldGroup label="Per-tier token budgets">

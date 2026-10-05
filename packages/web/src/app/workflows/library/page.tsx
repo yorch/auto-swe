@@ -593,11 +593,16 @@ export default function TemplatesPage() {
                           )}
                         </div>
                         {t.description && (
-                          <div className="text-xs text-paper-500">{t.description}</div>
+                          <div
+                            className="line-clamp-2 max-w-md text-xs text-paper-500"
+                            title={t.description}
+                          >
+                            {t.description}
+                          </div>
                         )}
                       </Td>
                       <Td className="px-4 py-3 text-paper-400" label="Team">
-                        {t.team?.name ?? <em className="text-paper-500">global</em>}
+                        {t.team?.name ?? <span className="text-paper-500">Platform-wide</span>}
                       </Td>
                       <Td className="px-4 py-3" label="Status">
                         <StatusBadge status={t.status} />

@@ -63,13 +63,9 @@ export function RevalidationForm() {
 
   return (
     <>
-      <SectionHeader
-        className="mt-8"
-        hint="re-runs eval references to catch stale golden tests"
-        title="Eval re-validation"
-      />
+      <SectionHeader className="mt-8" title="Eval re-validation" />
       <p className="mb-5 text-sm text-paper-400">
-        Periodically re-runs each EvalCase&apos;s reference against current repo state to detect
+        Periodically re-runs each eval case&apos;s reference against current repo state to detect
         stale golden tests. Quarantines cases that no longer pass (not the agent&apos;s fault) and
         restores them when they pass again.
       </p>

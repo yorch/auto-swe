@@ -366,17 +366,19 @@ function PatternRow({
 
 function PatternSection({
   description,
+  id,
   patterns,
   title,
   actions,
 }: {
   description?: string;
+  id: string;
   patterns: ScannerPattern[];
   title: string;
   actions: RowActions;
 }) {
   return (
-    <Card>
+    <Card className="scroll-mt-4" id={id}>
       <CardHeader className={description ? 'mb-1' : undefined}>
         <CardTitle>{title}</CardTitle>
       </CardHeader>
@@ -447,10 +449,23 @@ export default function GovernScannerPage() {
         onRetry={() => void refetch()}
       >
         {actionError && <Alert variant="error">{actionError}</Alert>}
+        <nav aria-label="Jump to a category" className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-paper-500">Jump to</span>
+          {SCANNER_PATTERN_TYPE_ORDER.map((type) => (
+            <a
+              className="rounded-md border border-ink-400 px-2 py-1 text-paper-300 hover:border-ink-300 hover:text-paper-100"
+              href={`#scanner-${type}`}
+              key={type}
+            >
+              {SCANNER_PATTERN_TYPE_INFO[type].title}
+            </a>
+          ))}
+        </nav>
         {SCANNER_PATTERN_TYPE_ORDER.map((type) => (
           <PatternSection
             actions={rowActions}
             description={SCANNER_PATTERN_TYPE_INFO[type].description}
+            id={`scanner-${type}`}
             key={type}
             patterns={patterns?.filter((p) => p.type === type) ?? []}
             title={SCANNER_PATTERN_TYPE_INFO[type].title}

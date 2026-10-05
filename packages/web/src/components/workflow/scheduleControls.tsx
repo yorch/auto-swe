@@ -36,10 +36,10 @@ export function ScheduleToggleRow({
       {schedule?.exists && (
         <span className={`ml-auto text-xs ${schedule.paused ? 'text-paper-500' : 'text-moss-400'}`}>
           {schedule.paused
-            ? 'Paused in Temporal'
+            ? 'Paused'
             : schedule.nextRunAt
               ? `Next run: ${formatDate(schedule.nextRunAt)}`
-              : 'Active in Temporal'}
+              : 'Scheduled'}
         </span>
       )}
     </div>

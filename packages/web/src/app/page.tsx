@@ -166,14 +166,12 @@ export default function HomePage() {
         title="Recent results"
       />
       <section className="rounded-xl border border-ink-400 bg-ink-700 p-6">
-        <h2 className="text-lg font-semibold">Ready to start something?</h2>
+        <h2 className="text-lg font-semibold">Looking for something to run?</h2>
         <p className="mt-2 text-sm text-paper-400">
-          Run a workflow with defined checks and approvals, or give an agent a task on a repository.
+          Browse the workflows with defined checks and approvals, then use Start work above to run
+          one or give an agent a task on a repository.
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
-          <ButtonLink href="/start" variant="primary">
-            Start work
-          </ButtonLink>
           <ButtonLink href="/workflows/library">Browse workflows</ButtonLink>
         </div>
       </section>
