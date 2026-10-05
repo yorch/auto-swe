@@ -1657,9 +1657,9 @@
     {
       "body": "A trusted signature proves publisher/content integrity, not safe execution or correct prompts.",
       "category": "Distribution",
-      "detail": "Install validates hash/schema and trust policy; skills and agents still require local verification. References to deployment-local MCP IDs may need rewiring.",
+      "detail": "Install validates hash/schema and trust policy; skills and agents still require local verification. References to deployment-local MCP IDs may need rewiring. A bundle may declare dependencies only on git_repo and mcp connection types; the server refuses an install naming another, and the SDK’s validator applies the same list so an author learns it before shipping.",
       "id": "bundle",
-      "refs": ["bundles", "sdk"],
+      "refs": ["bundles", "sdk", "bundleConnTypes"],
       "status": "Implemented",
       "title": "Trust ≠ verification of behavior"
     }
@@ -1749,9 +1749,19 @@
     {
       "body": "Approval, decision, input form and editable review nodes pause a run until response or timeout.",
       "category": "Governance",
-      "detail": "WorkflowHumanStep stores context, deadlines and response data. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the web inbox and other API clients) or a Slack button edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently.",
+      "detail": "WorkflowHumanStep stores context, deadlines and response data. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the web inbox and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up under the clicker’s visibility filter, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the web inbox, the API and Slack alike (400 REASON_REQUIRED). An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal.",
       "id": "hitl",
-      "refs": ["spec", "schema", "hitlSlackEdit", "hitlSlackCaller", "hitlSlackButton"],
+      "refs": [
+        "spec",
+        "schema",
+        "hitlSlackEdit",
+        "hitlSlackCaller",
+        "hitlSlackButton",
+        "hitlSlackModalOpen",
+        "hitlSlackModalSign",
+        "hitlSlackModalSubmit",
+        "hitlReasonRequired"
+      ],
       "status": "Implemented",
       "title": "Four human interaction types"
     },
@@ -1785,7 +1795,7 @@
     {
       "body": "Call a named remote tool from a workflow or attach an MCP server toolset to an enabled agent.",
       "category": "Integrations",
-      "detail": "Generic agent nodes do not acquire local workspace tools; they may receive MCP tools. Enabling a connection type in the generic registry does not imply readSource/writeOutcome implements it. A connection may carry one bearer token, stored in the connection’s encrypted envelope columns and write-only: responses say only whether one is set, and audit rows record a boolean. With a token, the Authorization: Bearer header is attached only to requests for the server’s own origin and stripped from any other, the client is also pinned to the connection’s host, a redirect is refused, and the token is removed from connect error text. A token that cannot be decrypted yields no agent tools and makes an mcp workflow node fail, rather than connecting unauthenticated. Pointing a connection at another origin while keeping its stored token is refused with 409 TOKEN_ORIGIN_CHANGE. The token belongs to the connection, so every run that uses it presents the same credential, not the launching user’s. The admin connection test lists tools with the stored token, using streamable HTTP and falling back to the legacy SSE transport after a failure that another transport might fix; a URL ending /sse goes straight to SSE.",
+      "detail": "Generic agent nodes do not acquire local workspace tools; they may receive MCP tools. Enabling a connection type in the generic registry does not imply readSource/writeOutcome implements it. A connection may carry one bearer token, stored in the connection’s encrypted envelope columns and write-only: responses say only whether one is set, and audit rows record a boolean. With a token, the Authorization: Bearer header is attached only to requests for the server’s own origin and stripped from any other, the client is also pinned to the connection’s host, a redirect is refused, and the token is removed from connect error text. A connection may also carry up to five custom request headers (an API-gateway key, a tenant id): sealed together as one encrypted envelope that key rotation also covers, and write-only like the token, since responses list the header names and whether the set is unreadable and audit rows record names only. Names must be HTTP tokens and unique ignoring case, values visible ASCII with no line breaks and at most 2,048 characters. Authorization (the bearer token is where that credential lives), hop-by-hop headers, Host, Content-Length, Content-Type, Accept, Cookie, proxy-* headers and the MCP protocol headers are refused. Headers follow the token’s origin-only path on both transports, never overwrite a header the transport sets, and are removed from a request aimed at another origin. The connection test sends them too, with protocol and token headers taking precedence, and when headers are set its 401/403 message names the credentials in general rather than only the token. A stored set is re-validated when it is opened, so a row written by anything but the gateway route cannot put a forbidden header on the wire. A token or header set that cannot be decrypted yields no agent tools and makes an mcp workflow node fail, rather than connecting without what the server expects. Pointing a connection at another origin while keeping its stored token is refused with 409 TOKEN_ORIGIN_CHANGE, and keeping stored header values while changing the origin is refused with 409 HEADERS_ORIGIN_CHANGE. An unreadable header set can only be replaced or removed (409 HEADERS_UNREADABLE otherwise). The token and headers belong to the connection, so every run that uses it presents the same credentials, not the launching user’s. An ADMIN may also turn on allowPrivateNetwork for a connection. It uses the same guard as the tracker and knowledge-base connectors: with it on, a server on a private address is accepted when the connection is saved, when it is tested, and each time the worker loads its tools. Loopback, link-local (including cloud-metadata), unspecified and malformed addresses and non-http(s) schemes are refused whatever the flag says. The flag is part of the connection’s saved configuration, so an update that omits it turns it off. The admin connection test lists tools with the stored token, using streamable HTTP and falling back to the legacy SSE transport after a failure that another transport might fix; a URL ending /sse goes straight to SSE.",
       "id": "mcp",
       "refs": [
         "agentNode",
@@ -1794,7 +1804,18 @@
         "mcpBearerFetch",
         "mcpTokenStore",
         "mcpTokenResolve",
-        "mcpProbeFallback"
+        "mcpProbeFallback",
+        "mcpHeaderShape",
+        "mcpHeaderRules",
+        "mcpHeaderValidate",
+        "mcpHeaderView",
+        "mcpHeaderOrigin",
+        "mcpHeaderOpen",
+        "mcpHeaderResolve",
+        "mcpPrivateSave",
+        "mcpPrivateOptIn",
+        "mcpProbeHeaders",
+        "mcpProbeAuthMessage"
       ],
       "status": "Implemented",
       "title": "MCP as nodes and agent tools"
@@ -1859,7 +1880,7 @@
     {
       "body": "Track tokens and catalog-priced USD across runs, runless workflows, teams, organizations and Slack channels, and stop a capped organization’s spend at launch and before each model call.",
       "category": "Operations",
-      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. The organization USD cap is checked at launch and again before every budgeted model call, which refuses with a non-retryable BUDGET_EXCEEDED naming the organization. Both read finalized, in-flight and runless spend; the mid-run read goes through a per-organization cache of one config window. One rule, billedOrgId, places a run for the in-flight count, the mid-run guard and finalization billing: the work request’s connection, else the run’s own connection, else the repository of its own ledger row, and the first source that exists decides. A scheduled fire gets its own ledger row and run connection from its schedule’s repository, and epic planning declares the first repository’s team as its spend owner, so neither sits outside the cap. A scheduled run reaper finalizes and bills runs whose workflow ended without finalizing them. Prompt-cache reads and writes are priced at cache rates: a model’s catalog row may set read, 5-minute-write and 1-hour-write multipliers, each falling back to the code table, where Anthropic 1-hour writes cost twice input. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization, and the usage page opens for anyone who holds at least one of those scopes rather than by platform role. A model with no catalog price is refused when the organization its run bills to has a monthly USD cap (resolved by the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection), when a runless workflow’s spend owner is a capped organization, and when the call belongs to a channel with a monthly cap; a repo-less channel task bills its channel, so only the channel cap refuses it. Anywhere else it is recorded at zero USD with token usage retained. The usage report and the workflow-template analytics accept a custom since/until range of whole UTC days (at most 366, not in the future) in place of the preset window; the usage series is bucketed by week above 90 days.",
+      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. The organization USD cap is checked at launch and again before every budgeted model call, which refuses with a non-retryable BUDGET_EXCEEDED naming the organization. Both read finalized, in-flight and runless spend; the mid-run read goes through a per-organization cache of one config window. One rule, billedOrgId, places a run for the in-flight count, the mid-run guard and finalization billing: the work request’s connection, else the run’s own connection, else the repository of its own ledger row, and the first source that exists decides. A scheduled fire gets its own ledger row and run connection from its schedule’s repository, and epic planning declares the first repository’s team as its spend owner, so neither sits outside the cap. A scheduled run reaper finalizes and bills runs whose workflow ended without finalizing them. Prompt-cache reads and writes are priced at cache rates: a model’s catalog row may set read, 5-minute-write and 1-hour-write multipliers, each falling back to the code table, where Anthropic 1-hour writes cost twice input. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization, and the usage page opens for anyone who holds at least one of those scopes rather than by platform role. A model with no catalog price is refused when the organization its run bills to has a monthly USD cap (resolved by the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection), when a runless workflow’s spend owner is a capped organization, and when the call belongs to a channel with a monthly cap; a repo-less channel task bills its channel, so only the channel cap refuses it. Anywhere else it is recorded at zero USD with token usage retained. The usage report and the workflow-template analytics accept a custom since/until range of whole UTC days (at most 366, not in the future) in place of the preset window; the usage series is bucketed by week above 90 days. The 7, 30 and 90 day presets on the usage report and the workflow-template analytics likewise cover whole UTC days ending with today, so a preset spans the days a custom range of that length would and its previous period is the equal-length span directly before it.",
       "id": "budget",
       "refs": [
         "trace",
@@ -1879,7 +1900,8 @@
         "usageGate",
         "usdCapGuard",
         "dateRange",
-        "dateBuckets"
+        "dateBuckets",
+        "dateWindowPreset"
       ],
       "status": "Implemented",
       "title": "Cost, budgets & usage"
@@ -1923,9 +1945,16 @@
     {
       "body": "Filter and page the configuration audit log and runtime security events.",
       "category": "Governance",
-      "detail": "Audit rows name actors by email, and a deleted actor keeps its id. Security events page on the server, with all-time per-type counts from a separate summary route. Both views are ADMIN-only. On the audit route, a WorkflowRun row also carries the id of the request it belongs to.",
+      "detail": "Audit rows name actors by email, and a deleted actor keeps its id. Security events page on the server, with all-time per-type counts from a separate summary route. Both views are ADMIN-only. On the audit route, a WorkflowRun row also carries the id of the request it belongs to. Template, team and organization administration is recorded in the same log: template create (including a generated draft), edit, new version, promote and webhook enable or revoke; team create, update, deactivation, memberships and the shell-image and egress allowlists; organization rename and membership changes. A template entry holds identity, status, version and routing fields, never the spec text, and a webhook entry records only whether one exists, never the token. These entries are written after the change as a separate statement, not in its transaction, so a failed audit insert errors after the change has applied.",
       "id": "reviewViews",
-      "refs": ["auditLog", "securitySummary", "auditRunRequest"],
+      "refs": [
+        "auditLog",
+        "securitySummary",
+        "auditRunRequest",
+        "auditTemplateFields",
+        "auditWebhook",
+        "auditTeamFields"
+      ],
       "status": "Implemented",
       "title": "Audit and security-event review"
     },
@@ -1982,9 +2011,9 @@
       "title": "Non-engineering API handlers"
     },
     {
-      "body": "Connector requests to tracker and knowledge-base base URLs pass an SSRF guard whose private-network opt-in is narrow, and connector requests refuse or re-check every redirect.",
+      "body": "Connector requests to tracker and knowledge-base base URLs, and MCP server URLs, pass an SSRF guard whose private-network opt-in is narrow, and connector requests refuse or re-check every redirect.",
       "category": "Integrations",
-      "detail": "Jira, GitHub Issues and Confluence base URLs are checked strictly first when those connectors run, and Jira field detection, an ADMIN call, runs the same check before it builds its client and answers 400 BASE_URL_REFUSED for a refused URL, whether it came from the stored row or the environment fallback. Only when that check refuses a private address and the connector’s allowPrivateNetwork opt-in is on is the refusal waived, and the waiver is logged. The opt-in never reaches loopback, link-local (IPv4 and IPv6), cloud-metadata or unspecified addresses, nor a malformed URL or a scheme other than http(s). The worker’s Jira path honours the opt-in only for the exact origin an ADMIN configured. The tracker and knowledge-base save routes apply the same check and answer 400 BASE_URL_REFUSED for a stored target the connector would refuse, but only when the write touches the provider or URL or turns the opt-in on, so a save that only turns it off is never blocked. Redirects are never followed unchecked. Linear, Notion, Slack, Zendesk and Figma requests set redirect: error, and the Atlassian client treats any 3xx as a failure it does not retry. GitHub Issues and the CI-log download, which GitHub answers with redirects, go through a guarded fetch: redirects are followed by hand for at most three hops, the guard runs on every hop, the credential is sent only to the configured origin, only a short allowlist of benign headers crosses to another origin, a write cannot cross origins, and a 307 or 308 keeps the method and body. Figma has no opt-in: its host is a constant that is still run through the guard. The tracker, knowledge-base and Figma connection tests also accept unsaved form values. A blank token means the stored one, but a typed provider or base URL that differs from the saved one is refused unless the token is typed again, so a stored token is not sent to a target it was not saved for, and such a typed URL passes the guard first. Figma’s host is fixed, so a typed token can only go there. Knowledge-base test failures are fixed messages by class (credentials, not found, unreachable, failed), never text from the remote service, and the check uses a dedicated connection test that throws on a rejected credential instead of a search that returns nothing.",
+      "detail": "Jira, GitHub Issues and Confluence base URLs are checked strictly first when those connectors run, and Jira field detection, an ADMIN call, runs the same check before it builds its client and answers 400 BASE_URL_REFUSED for a refused URL, whether it came from the stored row or the environment fallback. Only when that check refuses a private address and the connector’s allowPrivateNetwork opt-in is on is the refusal waived, and the waiver is logged. The same guard and opt-in semantics apply to MCP connections, with the flag stored on each connection (see the MCP card). A refused loopback, link-local or unspecified address is reported as such, with or without the opt-in, rather than as a private-network refusal that would suggest the opt-in could help. The opt-in never reaches loopback, link-local (IPv4 and IPv6), cloud-metadata or unspecified addresses, nor a malformed URL or a scheme other than http(s). The worker’s Jira path honours the opt-in only for the exact origin an ADMIN configured. The tracker and knowledge-base save routes apply the same check and answer 400 BASE_URL_REFUSED for a stored target the connector would refuse, but only when the write touches the provider or URL or turns the opt-in on, so a save that only turns it off is never blocked. Redirects are never followed unchecked. Linear, Notion, Slack, Zendesk and Figma requests set redirect: error, and the Atlassian client treats any 3xx as a failure it does not retry. GitHub Issues and the CI-log download, which GitHub answers with redirects, go through a guarded fetch: redirects are followed by hand for at most three hops, the guard runs on every hop, the credential is sent only to the configured origin, only a short allowlist of benign headers crosses to another origin, a write cannot cross origins, and a 307 or 308 keeps the method and body. Figma has no opt-in: its host is a constant that is still run through the guard. The tracker, knowledge-base and Figma connection tests also accept unsaved form values. A blank token means the stored one, but a typed provider or base URL that differs from the saved one (for Notion, whose address is fixed, only a different provider counts) is refused unless the token is typed again, so a stored token is not sent to a target it was not saved for, and such a typed URL passes the guard first. Figma’s host is fixed, so a typed token can only go there. Knowledge-base test failures are fixed messages by class (credentials, not found, unreachable, failed), never text from the remote service, and the check uses a dedicated connection test that throws on a rejected credential instead of a search that returns nothing.",
       "id": "connectorGuard",
       "refs": [
         "connectorProbe",
@@ -2002,7 +2031,8 @@
         "connectorJiraDetect",
         "connectorHopCap",
         "connectorDraftTest",
-        "kbFixedFailure"
+        "kbFixedFailure",
+        "mcpPrivateOptIn"
       ],
       "status": "Implemented",
       "title": "Connector base URLs and redirects are guarded"
@@ -2430,7 +2460,7 @@
     {
       "body": "The guard reads URL text, so it blocks the obvious private targets and not every route to one.",
       "category": "Integrations",
-      "detail": "The check never resolves a name: a public hostname that points at an internal address passes, which only network policy outside the platform can stop. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs or Jira field detection is called, so a refused one surfaces at that point. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code.",
+      "detail": "The check never resolves a name: a public hostname that points at an internal address passes, which only network policy outside the platform can stop. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs or Jira field detection is called, so a refused one surfaces at that point. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code. An MCP connection’s opt-in is likewise per connection and likewise judged on host text alone, so with it on the connection’s server can be any address the worker can route to, including a name that resolves to a different private one.",
       "id": "connectorGuardBounds",
       "refs": [
         "connectorGuardText",
@@ -2441,7 +2471,8 @@
         "connectorGuardedFetch",
         "connectorJiraDetect",
         "connectorNoDns",
-        "connectorHopCap"
+        "connectorHopCap",
+        "mcpPrivateOptIn"
       ],
       "status": "Confirmed boundary",
       "title": "The connector SSRF guard is text-level, and the opt-in is coarse"
@@ -2490,7 +2521,7 @@
     "ConfigAuditLog": "Before/after change audit for configuration entities.",
     "ConfigPermission": "Scoped configuration write grant subject to role floors.",
     "ConfigSetting": "Validated registry value at a configuration scope.",
-    "Connection": "Team-owned typed integration target; repo coordinates or generic config plus encrypted token.",
+    "Connection": "Team-owned typed integration target; repo coordinates or generic config plus an encrypted token and, for mcp connections, an encrypted set of custom request headers.",
     "ConnectionCredential": "Schema entity; inspect fields and relationship declarations below.",
     "ConnectionTeamShare": "Schema entity; inspect fields and relationship declarations below.",
     "ContextSnapshot": "Captured request context: ticket, knowledge, Figma design and success criteria.",
@@ -4463,7 +4494,7 @@
       "anchor": "export function checkProbeUrl(apiBase: string, opts: { allowPrivate?: boolean } = {}) {",
       "before": 8,
       "id": "connectorProbe",
-      "lines": 18,
+      "lines": 27,
       "path": "packages/shared/src/lib/ssrfGuard.ts",
       "title": "The private-network opt-in waives only a private-address refusal"
     },
@@ -4785,7 +4816,167 @@
       "id": "hitlSlackButton",
       "lines": 10,
       "path": "packages/gateway/src/routes/slack.ts",
-      "title": "Slack button resolution also edits the message"
+      "title": "Slack resolution (button or modal) also edits the message"
+    },
+    {
+      "anchor": "const MAX_VALUE_LENGTH = 2048;",
+      "before": 2,
+      "id": "mcpHeaderShape",
+      "lines": 9,
+      "path": "packages/shared/src/lib/mcpHeaders.ts",
+      "title": "Header count, name and value shape"
+    },
+    {
+      "anchor": "const FORBIDDEN_NAMES = new Set([",
+      "before": 5,
+      "id": "mcpHeaderRules",
+      "lines": 37,
+      "path": "packages/shared/src/lib/mcpHeaders.ts",
+      "title": "Header names a connection may not set"
+    },
+    {
+      "anchor": "export function validateMcpHeaders(",
+      "before": 1,
+      "id": "mcpHeaderValidate",
+      "lines": 22,
+      "path": "packages/shared/src/lib/mcpHeaders.ts",
+      "title": "A header set is limited in size and unique by name"
+    },
+    {
+      "anchor": "function mcpView<T extends Parameters<typeof redactConnection>[0]>(row: T) {",
+      "before": 3,
+      "id": "mcpHeaderView",
+      "lines": 22,
+      "path": "packages/gateway/src/routes/mcpConnections.ts",
+      "title": "Responses carry header names, never values"
+    },
+    {
+      "anchor": "const keptStoredValues =",
+      "before": 0,
+      "id": "mcpHeaderOrigin",
+      "lines": 14,
+      "path": "packages/gateway/src/routes/mcpConnections.ts",
+      "title": "Kept header values refuse an origin change"
+    },
+    {
+      "anchor": "export function openMcpHeaders(",
+      "before": 6,
+      "id": "mcpHeaderOpen",
+      "lines": 43,
+      "path": "packages/shared/src/lib/mcpHeaders.ts",
+      "title": "Opening a stored set throws, and re-validates"
+    },
+    {
+      "anchor": "headers = openMcpHeaders(conn);",
+      "before": 2,
+      "id": "mcpHeaderResolve",
+      "lines": 14,
+      "path": "packages/worker/src/lib/config/mcpConnection.ts",
+      "title": "Worker yields no target when stored headers cannot be read"
+    },
+    {
+      "anchor": "const { name, teamId, url, listTimeoutMs, callTimeoutMs, bearerToken, headers } =",
+      "before": 0,
+      "id": "mcpPrivateSave",
+      "lines": 16,
+      "path": "packages/gateway/src/routes/mcpConnections.ts",
+      "title": "Create applies the connection’s private-network opt-in and validates headers"
+    },
+    {
+      "anchor": "export function parseMcpServerRef(",
+      "before": 1,
+      "id": "mcpPrivateOptIn",
+      "lines": 11,
+      "path": "packages/worker/src/agents/mcpTools.ts",
+      "title": "The worker re-checks the server URL with the connection’s opt-in"
+    },
+    {
+      "anchor": "async function openHitlCommentModal(",
+      "before": 7,
+      "id": "hitlSlackModalOpen",
+      "lines": 60,
+      "path": "packages/gateway/src/routes/slack.ts",
+      "title": "Approve and reject open a modal after a visibility lookup"
+    },
+    {
+      "anchor": "function signHitlModalMetadata(",
+      "before": 5,
+      "id": "hitlSlackModalSign",
+      "lines": 44,
+      "path": "packages/gateway/src/routes/slack.ts",
+      "title": "Modal metadata is signed and verified"
+    },
+    {
+      "anchor": "async function handleHitlModalSubmission(",
+      "before": 6,
+      "id": "hitlSlackModalSubmit",
+      "lines": 44,
+      "path": "packages/gateway/src/routes/slack.ts",
+      "title": "A submission must match the signed metadata and the Slack user"
+    },
+    {
+      "anchor": "(comment?.length ?? 0) < HITL_REJECT_REASON_MIN",
+      "before": 3,
+      "id": "hitlReasonRequired",
+      "lines": 11,
+      "path": "packages/gateway/src/lib/hitlResolve.ts",
+      "title": "The resolve core requires a reason to reject an approval"
+    },
+    {
+      "anchor": "export function resolveWindow(",
+      "before": 7,
+      "id": "dateWindowPreset",
+      "lines": 22,
+      "path": "packages/gateway/src/lib/dateWindow.ts",
+      "title": "Presets cover whole UTC days ending today"
+    },
+    {
+      "anchor": "function templateAuditFields(",
+      "before": 1,
+      "id": "auditTemplateFields",
+      "lines": 24,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "Template audit entries omit the spec text"
+    },
+    {
+      "anchor": "// Only whether a webhook exists is recorded — never the token, which is a credential.",
+      "before": 0,
+      "id": "auditWebhook",
+      "lines": 9,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "A webhook audit entry holds no token"
+    },
+    {
+      "anchor": "function teamAuditFields(",
+      "before": 1,
+      "id": "auditTeamFields",
+      "lines": 18,
+      "path": "packages/gateway/src/routes/teams.ts",
+      "title": "Team audit entries"
+    },
+    {
+      "anchor": "export const SUPPORTED_BUNDLE_CONNECTION_TYPES",
+      "before": 5,
+      "id": "bundleConnTypes",
+      "lines": 14,
+      "path": "packages/shared/src/bundle/index.ts",
+      "title": "Bundle dependency types the install accepts"
+    },
+    {
+      "anchor": "// Protocol and token headers win: a custom header cannot displace either.",
+      "before": 3,
+      "id": "mcpProbeHeaders",
+      "lines": 8,
+      "path": "packages/gateway/src/lib/mcpProbe.ts",
+      "title": "The connection test sends custom headers, and protocol and token headers win"
+    },
+    {
+      "anchor": "Object.keys(customHeaders).length > 0",
+      "before": 2,
+      "id": "mcpProbeAuthMessage",
+      "lines": 10,
+      "path": "packages/gateway/src/lib/mcpProbe.ts",
+      "title": "The auth failure message names credentials in general when headers are set"
     }
   ],
   "usecases": [
