@@ -112,7 +112,6 @@ export default function GovernConfigGrantsPage() {
     <div className="space-y-8">
       <div className="fade-up">
         <PageHeader
-          chapter="§ Govern"
           subtitle="Delegate fine-grained permission to change platform settings. Grants are bounded to known keys or groups — they never grant generic IAM or the ability to mint further grants."
           title={navLabel('/govern/config-grants')}
         />

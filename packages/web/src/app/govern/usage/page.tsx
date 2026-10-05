@@ -266,7 +266,6 @@ function UsageWorkspace() {
             />
           </div>
         }
-        chapter="§ Govern"
         subtitle="Every LLM and embedding call, including workflows that keep no run record, attributed to the team and organization whose spend it is. Days are UTC."
         title="LLM usage"
       />

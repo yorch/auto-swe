@@ -82,7 +82,6 @@ export default function GovernAccessTokensPage() {
 
   const header = (
     <PageHeader
-      chapter="§ Govern"
       subtitle="Platform admins can view and revoke any user's personal access token. Token values are never stored — only the non-secret prefix is shown."
       title={navLabel('/govern/api-tokens')}
     />

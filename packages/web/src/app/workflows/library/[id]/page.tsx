@@ -910,7 +910,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
               )}
             </>
           }
-          chapter="§ Workflows"
           className="mb-0 mt-4"
           subtitle={
             template.description ||

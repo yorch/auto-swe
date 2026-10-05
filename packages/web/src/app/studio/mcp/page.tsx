@@ -376,7 +376,6 @@ export default function StudioMcpConnectionsPage() {
             Create connection
           </Button>
         }
-        chapter="§ Studio"
         subtitle={
           <>
             MCP servers (http or https) whose tools an agent can call. Choose one in an agent&apos;s

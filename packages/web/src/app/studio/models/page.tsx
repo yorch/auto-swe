@@ -44,7 +44,6 @@ function StudioModelConfigPageInner() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Studio"
         subtitle={
           <>
             Encrypted provider credentials, the embedding model, and the audit trail. Each agent's

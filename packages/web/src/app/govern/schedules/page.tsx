@@ -444,7 +444,6 @@ export default function GovernSchedulesPage() {
             )}
           </div>
         }
-        chapter="§ Govern"
         subtitle="Recurring work: each schedule starts a workflow on a repeating timetable against one repository, such as a weekly dependency update. Every run reuses the same ticket and branch, so an open pull request is updated instead of duplicated. Runs appear in your run history. The workflow template is fixed when you save the schedule."
         title="Scheduled work requests"
       />

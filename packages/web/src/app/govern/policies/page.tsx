@@ -424,7 +424,6 @@ export default function AutonomyPoliciesPage() {
             </Button>
           </>
         }
-        chapter="§ Govern"
         subtitle="Which risk classes an agent may act on automatically and which need human approval — globally, per team, or per workflow template."
         title="Autonomy policies"
       />

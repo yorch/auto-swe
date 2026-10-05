@@ -334,7 +334,6 @@ export default function AgentLibraryPage() {
             New agent
           </Button>
         }
-        chapter="§ Studio"
         subtitle="Versioned agents. Saving an edit creates a new version; runs already in progress keep the version they started with, and History lets you compare or restore any version."
         title="Agent library"
       />

@@ -165,7 +165,6 @@ function AuditWorkspace() {
               {exporting ? 'Exporting…' : 'Export CSV'}
             </Button>
           }
-          chapter="§ Govern"
           subtitle="Lifecycle changes to users, access tokens, sessions, and configuration, newest first. Secret values and credential hashes are never stored here."
           title="Audit log"
         />

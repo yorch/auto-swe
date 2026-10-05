@@ -1,13 +1,11 @@
 import { cn } from '@/lib/utils';
 
 export function PageHeader({
-  chapter,
   title,
   subtitle,
   actions,
   className,
 }: {
-  chapter?: string;
   title: string;
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
@@ -21,11 +19,6 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
-        {chapter && (
-          <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.24em] text-ember-400">
-            {chapter}
-          </div>
-        )}
         <h1 className="break-words text-[26px] font-bold leading-tight tracking-tight text-paper-50 md:text-[32px]">
           {title}
         </h1>

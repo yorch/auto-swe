@@ -208,7 +208,6 @@ export default function GovernBaselinesPage() {
             New baseline
           </Button>
         }
-        chapter="§ Govern"
         subtitle="Manually-recorded human error rates that the analytics dashboard compares agent error rates against (the “vs human” column). Baselines are scoped to an organization and domain."
         title={navLabel('/govern/baselines')}
       />

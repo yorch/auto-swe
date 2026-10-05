@@ -132,7 +132,6 @@ export default function GovernLessonsPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Govern"
         subtitle="Agent lessons captured from completed workflows. Consolidation merges semantically similar lessons to reduce redundancy."
         title="Lessons"
       />

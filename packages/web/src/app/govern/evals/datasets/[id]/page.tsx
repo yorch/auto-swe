@@ -41,11 +41,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
       >
         {ds && (
           <>
-            <PageHeader
-              chapter={`§ Govern · Evals · ${ds.scope}`}
-              subtitle={ds.description ?? undefined}
-              title={ds.name}
-            />
+            <PageHeader subtitle={ds.description ?? undefined} title={ds.name} />
 
             <Card>
               <CardHeader>

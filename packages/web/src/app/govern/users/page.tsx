@@ -73,7 +73,6 @@ export default function UsersPage() {
 
   const header = (
     <PageHeader
-      chapter="§ Govern"
       subtitle="Manage who can sign in to the control plane. People who sign up with GitHub, Google or an email link wait in the pending queue until an admin approves them."
       title={navLabel('/govern/users')}
     />

@@ -63,7 +63,6 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
                   {channel.isActive ? 'Active' : 'Inactive'}
                 </Badge>
               }
-              chapter="§ Govern"
               className="mb-4"
               subtitle={`${channel.workspace.name ? `${channel.workspace.name} · ` : ''}Each channel belongs to a team and can set its own agent, schedules and monthly spend cap.`}
               title={channel.name ?? 'Unnamed channel'}

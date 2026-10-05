@@ -79,7 +79,6 @@ export default function StudioBundlesPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Studio"
         subtitle={
           <>
             Distribute library content (Agents, Skills, scanner patterns, Templates) across

@@ -2,6 +2,7 @@
 
 import { Suspense } from 'react';
 import { RunListItem } from '@/components/runs/RunListItem';
+import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
@@ -36,6 +37,7 @@ function RunsList() {
 
   const runs = data?.data ?? [];
   const total = data?.meta.total ?? 0;
+  const hasFilters = !!status || !!templateId || includeChannel;
 
   return (
     <div className="space-y-6">
@@ -81,7 +83,19 @@ function RunsList() {
         onRetry={() => void refetch()}
       >
         {runs.length === 0 ? (
-          <EmptyState title="No runs match these filters" />
+          hasFilters ? (
+            <EmptyState title="No runs match these filters" />
+          ) : (
+            <EmptyState
+              action={
+                <ButtonLink href="/start" variant="primary">
+                  Start work
+                </ButtonLink>
+              }
+              hint="Runs appear here once work has been started."
+              title="No runs yet"
+            />
+          )
         ) : (
           <Card className="overflow-hidden p-0">
             <ul className="divide-y divide-ink-600">

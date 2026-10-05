@@ -27,7 +27,6 @@ export default function TeamsPage() {
             </Button>
           )
         }
-        chapter="§ Govern"
         subtitle="Teams own repositories, members, sandbox allowlists and per-team agent overrides."
         title="Teams"
       />

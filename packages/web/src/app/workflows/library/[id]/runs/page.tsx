@@ -78,7 +78,6 @@ function TemplateRuns({ id: rawId }: { id: string }) {
       <div>
         <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Workflow'} />
         <PageHeader
-          chapter="§ Workflows"
           className="mb-0 mt-4"
           subtitle="Every run of this workflow, newest first. Open one to see its request; use Diagnostics for the full trace."
           title="Run history"

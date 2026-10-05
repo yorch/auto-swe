@@ -22,7 +22,8 @@ export default function EpicsPage() {
       </Link>
       <PageHeader
         actions={
-          canCreate && (
+          canCreate &&
+          epics.length > 0 && (
             <ButtonLink href="/start?mode=epic" variant="primary">
               Start an epic
             </ButtonLink>
@@ -31,11 +32,6 @@ export default function EpicsPage() {
         subtitle="Changes that span several repositories, split by the planner into ordered per-repository work."
         title="Epics"
       />
-
-      <p className="text-sm text-paper-400">
-        An epic breaks a brief into per-repository requests and runs them in dependency order.
-        Single-repository changes belong in Requests; start them from Start work.
-      </p>
 
       <QueryBoundary
         error={epicsQuery.error}

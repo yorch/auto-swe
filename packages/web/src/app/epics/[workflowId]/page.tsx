@@ -85,7 +85,6 @@ export default function EpicDetailPage({ params }: PageProps) {
             <StatusBadge status={epic.status} />
           </div>
         }
-        chapter="§ Requests"
         subtitle="A multi-repository change and the child workflows it fans out to."
         title={epic.externalTicketId}
       />

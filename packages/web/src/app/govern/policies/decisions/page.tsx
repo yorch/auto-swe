@@ -76,7 +76,6 @@ export default function AutonomyDecisionsPage() {
         ← Autonomy policies
       </Link>
       <PageHeader
-        chapter="§ Govern"
         subtitle="Every automatic or approval-required decision the autonomy policies made, newest first."
         title="Autonomy decisions"
       />

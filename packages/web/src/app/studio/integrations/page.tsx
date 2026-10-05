@@ -49,7 +49,6 @@ function StudioIntegrationsPageInner() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Studio"
         subtitle={
           <>
             Configure GitHub, Slack, issue tracker, knowledge base, and Figma credentials. Masked

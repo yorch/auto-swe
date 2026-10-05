@@ -438,7 +438,6 @@ export default function GovernScannerPage() {
             Create pattern
           </Button>
         }
-        chapter="§ Govern"
         subtitle="Regex patterns behind the runtime scanners: skill-content and LLM-output injection/exfiltration checks, shell command and sensitive-file blocking, advisory code security findings, and the PII eval scorer. Built-in patterns can be toggled but not deleted."
         title="Scanner patterns"
       />

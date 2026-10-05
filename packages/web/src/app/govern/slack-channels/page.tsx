@@ -46,7 +46,6 @@ export default function GovernSlackChannelsPage() {
             Register channel
           </Button>
         }
-        chapter="§ Govern"
         subtitle="Slack channels the assistant responds in. Open a channel to change its settings, review what it remembers, and handle its open items."
         title={navLabel('/govern/slack-channels')}
       />

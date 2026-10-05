@@ -538,7 +538,6 @@ export default function StudioSkillsPage() {
             Create skill
           </Button>
         }
-        chapter="§ Studio"
         subtitle="Reusable prompt-fragment instructions injected into an agent's system prompt. Attach them to agents in the Agent library. Every text change is saved as a revision you can compare and restore."
         title="Skill library"
       />

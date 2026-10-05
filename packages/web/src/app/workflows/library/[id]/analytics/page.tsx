@@ -91,7 +91,6 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
               value={String(windowDays)}
             />
           }
-          chapter="§ Workflows"
           className="mb-0 mt-4"
           subtitle={`Observed performance and cost metrics for this workflow over the last ${windowDays} days.`}
           title="Observed performance"

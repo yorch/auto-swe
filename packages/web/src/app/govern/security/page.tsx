@@ -152,7 +152,6 @@ function SecurityWorkspace() {
             />
           </div>
         }
-        chapter="§ Govern"
         subtitle="What the scanners stopped or flagged across all runs, newest first. Select an event with details to expand it. Events refresh every 30 seconds."
         title="Security events"
       />

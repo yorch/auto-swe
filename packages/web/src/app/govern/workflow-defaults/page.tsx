@@ -12,7 +12,6 @@ export default function GovernWorkflowPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Govern"
         subtitle={
           <>
             System-wide defaults applied to every new work request. For the settings a team or

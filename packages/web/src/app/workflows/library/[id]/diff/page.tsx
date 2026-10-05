@@ -257,7 +257,6 @@ function TemplateDiffContent({ params }: PageProps) {
               )}
             </div>
           }
-          chapter="§ Workflows"
           className="mb-0 mt-4"
           subtitle={
             before !== null && after !== null && before !== after

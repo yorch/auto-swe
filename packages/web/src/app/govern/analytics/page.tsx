@@ -151,7 +151,6 @@ function AnalyticsWorkspace() {
             value={range}
           />
         }
-        chapter="§ Govern"
         subtitle="Run volume, outcomes, cost, and time saved across every workflow template on the platform."
         title="Platform analytics"
       />

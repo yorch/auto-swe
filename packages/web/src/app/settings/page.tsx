@@ -140,7 +140,6 @@ export default function SettingsPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Account"
         subtitle="Profile, sign-in methods, and integrations. Changes apply to your account only."
         title="Account settings"
       />

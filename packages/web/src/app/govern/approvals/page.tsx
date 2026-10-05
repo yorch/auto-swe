@@ -51,20 +51,19 @@ export default function GovernApprovalsPage() {
   const visible = steps?.slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE) ?? [];
 
   return (
-    <div className="max-w-3xl space-y-8">
+    <div className="space-y-8">
       <PageHeader
         actions={
-          <Button disabled={isFetching} onClick={() => refetch()} size="sm" variant="ghost">
+          <Button disabled={isFetching} onClick={() => refetch()} size="sm" variant="secondary">
             {isFetching ? 'Refreshing…' : 'Refresh'}
           </Button>
         }
-        chapter="§ Govern"
         subtitle={
           isLoading || isError
             ? undefined
             : filter === 'PENDING'
               ? count === 0
-                ? 'No pending actions'
+                ? undefined
                 : `${count}${atCap ? '+' : ''} pending action${count !== 1 ? 's' : ''}`
               : atCap
                 ? `Showing ${count} steps, the most this list loads. Sort or filter to see others.`

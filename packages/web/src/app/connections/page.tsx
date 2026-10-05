@@ -147,7 +147,6 @@ export default function ConnectionsPage() {
             </>
           ) : undefined
         }
-        chapter="§ Work"
         subtitle="External systems — git repos, REST APIs, and other integrations — available to your workflows."
         title="Connections"
       />

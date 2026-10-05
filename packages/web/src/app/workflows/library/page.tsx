@@ -513,7 +513,6 @@ export default function TemplatesPage() {
             </Button>
           </span>
         }
-        chapter="§ Workflows"
         subtitle="Your reusable workflows. Pick one, run it with your inputs, and follow the request."
         title="Workflow library"
       />

@@ -122,7 +122,6 @@ function EvalsWorkspace() {
             />
           </div>
         }
-        chapter="§ Govern"
         subtitle="Per-scorer quality signals over time, every captured result with a link to the run it scored, and the datasets offline runs score against. Days are UTC."
         title="Evals"
       />
