@@ -331,6 +331,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const where = await auditWhere(request.query);
+      // Known before streaming starts, so the header can say the file is cut short.
+      const matching = await fastify.prisma.configAuditLog.count({ where });
       async function* lines() {
         yield 'time,action,actor,entity_type,entity_id,before,after\n';
         let cursor: string | undefined;
@@ -377,6 +379,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         .header('Content-Type', 'text/csv; charset=utf-8')
         .header('Content-Disposition', 'attachment; filename="audit-log.csv"')
         .header('X-Export-Row-Limit', String(AUDIT_EXPORT_MAX_ROWS))
+        .header('X-Export-Truncated', String(matching > AUDIT_EXPORT_MAX_ROWS))
         .send(Readable.from(lines()));
     }
   );

@@ -120,6 +120,8 @@ async function start() {
   // Explicitly list all methods used by the API so PUT/DELETE preflights pass.
   await app.register(cors, {
     credentials: true,
+    // Without this the browser hides the audit export's truncation flag from the dashboard.
+    exposedHeaders: ['X-Export-Truncated', 'X-Export-Row-Limit'],
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH'],
     origin: getCorsOrigins(),
   });

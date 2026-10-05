@@ -542,6 +542,23 @@ describe('adminRoutes', () => {
       );
     });
 
+    it('says when more rows matched than the export carries', async () => {
+      ctx.mockPrisma.configAuditLog.count.mockResolvedValueOnce(50_001);
+      const capped = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log/export',
+      });
+      expect(capped.headers['x-export-truncated']).toBe('true');
+      ctx.mockPrisma.configAuditLog.count.mockResolvedValueOnce(10);
+      const whole = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log/export',
+      });
+      expect(whole.headers['x-export-truncated']).toBe('false');
+    });
+
     it('is ADMIN-only', async () => {
       const { app } = await buildApp('ENGINEER');
       const res = await app.inject({

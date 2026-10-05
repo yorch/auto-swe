@@ -81,6 +81,7 @@ function AuditWorkspace() {
   const [pruneError, setPruneError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const { data, isLoading, isError, error } = useAuditLog({ ...filters, limit: LIMIT, offset });
   const rows = data?.data ?? [];
   const total = data?.meta.total ?? 0;
@@ -120,14 +121,21 @@ function AuditWorkspace() {
   async function handleExport() {
     setExporting(true);
     setExportError(null);
+    setExportNotice(null);
     try {
-      const csv = await exportAuditLog(filters);
+      const { csv, truncated } = await exportAuditLog(filters);
+      setExportNotice(
+        truncated
+          ? 'More entries matched than one export can hold, so the file has only the newest ones. Narrow the filters or the date range to export the rest.'
+          : null
+      );
       const href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
       const a = document.createElement('a');
       a.download = 'audit-log.csv';
       a.href = href;
       a.click();
-      URL.revokeObjectURL(href);
+      // Revoked later: some browsers start the download after click() returns.
+      setTimeout(() => URL.revokeObjectURL(href), 10_000);
     } catch (err) {
       setExportError(errMsg(err, 'Could not export the audit log'));
     } finally {
@@ -212,6 +220,7 @@ function AuditWorkspace() {
           </div>
         )}
         {exportError && <Alert variant="error">{exportError}</Alert>}
+        {exportNotice && <Alert variant="warning">{exportNotice}</Alert>}
       </section>
 
       <section className="fade-up stagger-2 space-y-3">
