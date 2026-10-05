@@ -31,7 +31,7 @@ describe('GitHubTab', () => {
     setupFetchMock({ '/api/v1/platform/config/github': () => config('pat') });
     render(withQuery(<GitHubTab />));
     const select = await screen.findByRole('button', { name: /auth mode/i });
-    expect(select.textContent).toContain('pat (always use PAT)');
+    expect(select.textContent).toContain('Token: always use the personal access token');
   });
 
   it('tests with the typed token and labels the result as unsaved', async () => {

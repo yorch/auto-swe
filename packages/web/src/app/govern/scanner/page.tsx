@@ -306,6 +306,11 @@ function PatternRow({
         >
           {pattern.label}
         </button>
+        {pattern.isBuiltIn && (
+          <Badge className="ml-1.5" tone="muted" uppercase variant="text">
+            built-in
+          </Badge>
+        )}
         {pattern.origin && (
           <Badge className="ml-1.5" tone="neutral">
             {pattern.origin}
@@ -317,19 +322,11 @@ function PatternRow({
           /{pattern.pattern}/{pattern.flags}
         </code>
       </Td>
-      <Td className="py-2 pr-4" label="Built-in">
-        {pattern.isBuiltIn && (
-          <Badge tone="muted" uppercase variant="text">
-            built-in
-          </Badge>
-        )}
-      </Td>
       <Td className="py-2 pr-4" label="Active">
         <ToggleSwitch
           ariaLabel={`Active: ${pattern.label}`}
           checked={pattern.isActive}
           disabled={update.isPending}
-          label={`${pattern.isActive ? 'Disable' : 'Enable'} ${pattern.label}`}
           onChange={requestToggle}
           title={`${pattern.isActive ? 'Disable' : 'Enable'} ${pattern.label}`}
         />
@@ -369,17 +366,19 @@ function PatternRow({
 
 function PatternSection({
   description,
+  id,
   patterns,
   title,
   actions,
 }: {
   description?: string;
+  id: string;
   patterns: ScannerPattern[];
   title: string;
   actions: RowActions;
 }) {
   return (
-    <Card>
+    <Card className="scroll-mt-4" id={id}>
       <CardHeader className={description ? 'mb-1' : undefined}>
         <CardTitle>{title}</CardTitle>
       </CardHeader>
@@ -391,7 +390,6 @@ function PatternSection({
           <THead>
             <Th variant="compact">Label</Th>
             <Th variant="compact">Pattern / Flags</Th>
-            <Th variant="compact">Built-in</Th>
             <Th variant="compact">Active</Th>
             <Th variant="compact" />
           </THead>
@@ -438,7 +436,6 @@ export default function GovernScannerPage() {
             Create pattern
           </Button>
         }
-        chapter="§ Govern"
         subtitle="Regex patterns behind the runtime scanners: skill-content and LLM-output injection/exfiltration checks, shell command and sensitive-file blocking, advisory code security findings, and the PII eval scorer. Built-in patterns can be toggled but not deleted."
         title="Scanner patterns"
       />
@@ -452,10 +449,23 @@ export default function GovernScannerPage() {
         onRetry={() => void refetch()}
       >
         {actionError && <Alert variant="error">{actionError}</Alert>}
+        <nav aria-label="Jump to a category" className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-paper-500">Jump to</span>
+          {SCANNER_PATTERN_TYPE_ORDER.map((type) => (
+            <a
+              className="rounded-md border border-ink-400 px-2 py-1 text-paper-300 hover:border-ink-300 hover:text-paper-100"
+              href={`#scanner-${type}`}
+              key={type}
+            >
+              {SCANNER_PATTERN_TYPE_INFO[type].title}
+            </a>
+          ))}
+        </nav>
         {SCANNER_PATTERN_TYPE_ORDER.map((type) => (
           <PatternSection
             actions={rowActions}
             description={SCANNER_PATTERN_TYPE_INFO[type].description}
+            id={`scanner-${type}`}
             key={type}
             patterns={patterns?.filter((p) => p.type === type) ?? []}
             title={SCANNER_PATTERN_TYPE_INFO[type].title}

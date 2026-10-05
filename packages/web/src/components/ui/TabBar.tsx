@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 interface TabItem<T extends string> {
@@ -19,6 +19,13 @@ export function tabPanelProps(idPrefix: string, id: string) {
     role: 'tabpanel' as const,
   };
 }
+
+/**
+ * Fades the right edge of a scrolling tab row to say there is more. A mask rather than an
+ * overlay, so it works on any card background; hidden from md up, where the row fits.
+ */
+const FADE_RIGHT =
+  '[mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent)] md:[mask-image:none]';
 
 /**
  * Underlined section tabs. Tabs with an `href` are `next/link`s in a labelled
@@ -51,6 +58,25 @@ export function TabBar<T extends string>({
   const baseId = idPrefix ?? generated;
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
   const isLinkBar = tabs.some((t) => t.href);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [moreRight, setMoreRight] = useState(false);
+
+  // A fade at the right edge tells a phone user the strip scrolls on.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the tab set changes
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) {
+      return;
+    }
+    const measure = () => setMoreRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    measure();
+    el.addEventListener('scroll', measure, { passive: true });
+    window.addEventListener('resize', measure);
+    return () => {
+      el.removeEventListener('scroll', measure);
+      window.removeEventListener('resize', measure);
+    };
+  }, [tabs.length]);
 
   const tabClass = (selected: boolean) =>
     cn(
@@ -80,9 +106,13 @@ export function TabBar<T extends string>({
   };
 
   return (
-    <div className={cn('border-b border-ink-600', className)}>
+    <div className={cn('relative border-b border-ink-600', className)}>
       {isLinkBar ? (
-        <nav aria-label={ariaLabel} className="flex gap-1 overflow-x-auto">
+        <nav
+          aria-label={ariaLabel}
+          className={cn('flex gap-1 overflow-x-auto', moreRight && FADE_RIGHT)}
+          ref={scroller}
+        >
           {tabs.map((tab) =>
             tab.href ? (
               <Link
@@ -107,7 +137,12 @@ export function TabBar<T extends string>({
           )}
         </nav>
       ) : (
-        <div aria-label={ariaLabel} className="flex gap-1 overflow-x-auto" role="tablist">
+        <div
+          aria-label={ariaLabel}
+          className={cn('flex gap-1 overflow-x-auto', moreRight && FADE_RIGHT)}
+          ref={scroller}
+          role="tablist"
+        >
           {tabs.map((tab, i) => {
             const selected = active === tab.id;
             return (

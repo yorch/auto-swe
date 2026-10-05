@@ -13,6 +13,7 @@ import {
   fromKey,
   toKey,
   validationProps,
+  withIds,
 } from './dropdown';
 
 export type ComboboxOption = DropdownOption;
@@ -77,7 +78,7 @@ export function Combobox({
       className={cn('block', className)}
       // Uncontrolled items so React Aria filters them; it re-reads them every
       // render, so options that arrive after mount still appear.
-      defaultItems={options}
+      defaultItems={withIds(options)}
       id={id}
       isDisabled={disabled}
       isRequired={required}

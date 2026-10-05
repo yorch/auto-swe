@@ -76,7 +76,6 @@ export default function AutonomyDecisionsPage() {
         ← Autonomy policies
       </Link>
       <PageHeader
-        chapter="§ Govern"
         subtitle="Every automatic or approval-required decision the autonomy policies made, newest first."
         title="Autonomy decisions"
       />
@@ -120,7 +119,7 @@ export default function AutonomyDecisionsPage() {
           onChange={(e) => setFilter('runId', e.target.value.trim())}
           value={filters.runId}
         />
-        <div className="flex items-end">
+        <div className="flex items-start sm:pt-6">
           <Button
             disabled={!anyFilter}
             onClick={() => navigate({ ...EMPTY, offset: 0 })}

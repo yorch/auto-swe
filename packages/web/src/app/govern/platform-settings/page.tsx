@@ -22,6 +22,7 @@ import { useTeams } from '@/hooks/useTeams';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
+import { GROUP_BLURBS, GROUP_TITLES } from '@/lib/settingGroups';
 
 /**
  * Every configurable knob, rendered from the registry definitions rather than
@@ -32,26 +33,6 @@ import { navLabel } from '@/lib/navigation';
  * chosen scope, so an operator can see what a team actually gets and change it
  * there, instead of only being able to move the platform-wide value.
  */
-
-const GROUP_TITLES: Record<string, string> = {
-  channel: 'Channel assistant',
-  memory: 'Semantic memory',
-  repoDependency: 'Repo dependency graph',
-  workflow: 'Workflow interpreter',
-  workspace: 'Agent workspace',
-};
-
-const GROUP_BLURBS: Record<string, string> = {
-  channel:
-    'How proactive the Slack assistant is and how much context it reads per turn. Overridable per channel, so one noisy channel can be tuned without touching the rest.',
-  memory: 'Relevance thresholds for what semantic memory surfaces.',
-  repoDependency:
-    'How confidently an LLM-inferred repo-to-repo dependency edge must be evidenced before it is promoted straight to active instead of waiting for a human confirm.',
-  workflow:
-    'Bounds on how far one run may expand. Frozen when a run starts, so changing them affects new runs only.',
-  workspace:
-    'Container images and isolation for agent workspaces, plus worker capacity. Mostly platform-wide.',
-};
 
 type ViewScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL';
 
@@ -166,8 +147,7 @@ export default function GovernSettingsPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Govern"
-        subtitle="Operator policy that used to be compiled into the worker. Values shown are what this scope resolves to; each row says where its value came from."
+        subtitle="Operator policy for agents, channels and workflows. Values shown are what this scope resolves to; each row says where its value came from."
         title={navLabel('/govern/platform-settings')}
       />
 

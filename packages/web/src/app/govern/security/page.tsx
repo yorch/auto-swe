@@ -78,7 +78,7 @@ function SummaryGroups({
                 noun: windowDays ? `vs previous ${windowDays} days` : 'vs the window before',
               })}
               hint={hint}
-              label={`${title} events`}
+              label="Total"
               tone={now > 0 ? tone : 'default'}
               value={now}
             />
@@ -152,7 +152,6 @@ function SecurityWorkspace() {
             />
           </div>
         }
-        chapter="§ Govern"
         subtitle="What the scanners stopped or flagged across all runs, newest first. Select an event with details to expand it. Events refresh every 30 seconds."
         title="Security events"
       />

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
+import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -1817,6 +1818,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           experimentVersion: true,
           id: true,
           inputSchema: true,
+          name: true,
           team: {
             select: {
               id: true,
@@ -1830,6 +1832,17 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!tpl) {
         return sendTemplateNotLaunchable(reply);
+      }
+      // The platform starts the Channel Assistant from Slack; a hand-launched run would
+      // have no channel to answer in.
+      if (isSystemManagedTemplate({ name: tpl.name, team: tpl.teamId ? {} : null })) {
+        return reply.status(409).send({
+          error: {
+            code: 'SYSTEM_MANAGED_TEMPLATE',
+            message:
+              'The Channel Assistant is started by the platform from Slack and cannot be run by hand.',
+          },
+        });
       }
       if (!tpl.activeVersion) {
         return reply.status(400).send({

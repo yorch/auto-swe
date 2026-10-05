@@ -34,6 +34,45 @@ const TITLE_OVERRIDES: Record<string, { title: string; description: string }> = 
   },
 };
 
+/**
+ * The first prose paragraph, flattened to one line and cut at a word boundary.
+ * Front matter, headings, horizontal rules and fences are skipped; a blockquote
+ * counts as prose with its marker removed.
+ */
+export function deriveDescription(raw: string): string {
+  let body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+  body = body.replace(/```[\s\S]*?```/g, '');
+  const lines: string[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const t = line.trim();
+    const isRule = /^([-*_])(\s*\1){2,}$/.test(t);
+    if (t === '' || /^#/.test(t) || isRule) {
+      if (lines.length > 0) {
+        break;
+      }
+      continue;
+    }
+    lines.push(t.replace(/^>\s?/, ''));
+  }
+  const text = lines
+    .join(' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    // Emphasis markers only: an underscore inside a word (AUTO_SWE_TOKEN) is part of it.
+    .replace(/[*`]/g, '')
+    .replace(/(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length <= MAX_DESCRIPTION) {
+    return text;
+  }
+  const cut = text.slice(0, MAX_DESCRIPTION);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > 60 ? cut.slice(0, space) : cut).replace(/[\s,;:.-]+$/, '')}…`;
+}
+
+const MAX_DESCRIPTION = 140;
+
 function deriveMeta(slug: string, raw: string): DocMeta {
   const override = TITLE_OVERRIDES[slug];
   if (override) {
@@ -41,10 +80,20 @@ function deriveMeta(slug: string, raw: string): DocMeta {
   }
 
   const title = raw.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? slug;
-  const firstPara = raw.match(/^(?!#|>|\s*$).+$/m)?.[0]?.trim() ?? '';
-  const description = firstPara.replace(/[*_`]/g, '').slice(0, 140);
+  const description = deriveDescription(raw);
 
   return { description, slug, title };
+}
+
+/** Slugs shown first on the docs index, in this order; everything else follows by title. */
+const PINNED_SLUGS = ['README', 'quickstart', 'product-overview'];
+
+export function orderDocs(docs: DocMeta[]): DocMeta[] {
+  const rank = (slug: string) => {
+    const i = PINNED_SLUGS.indexOf(slug);
+    return i === -1 ? PINNED_SLUGS.length : i;
+  };
+  return [...docs].sort((a, b) => rank(a.slug) - rank(b.slug) || a.title.localeCompare(b.title));
 }
 
 export const listDocs = cache(async (): Promise<DocMeta[]> => {
@@ -63,7 +112,7 @@ export const listDocs = cache(async (): Promise<DocMeta[]> => {
         return deriveMeta(slug, raw);
       })
   );
-  return docs.sort((a, b) => a.title.localeCompare(b.title));
+  return orderDocs(docs);
 });
 
 /**

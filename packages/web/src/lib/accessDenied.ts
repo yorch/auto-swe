@@ -1,6 +1,6 @@
 import type { Role } from '@auto-swe/shared';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
-import { pageTitle } from '@/lib/navigation';
+import { knownPageTitle } from '@/lib/navigation';
 import { isRole } from '@/lib/roles';
 
 /**
@@ -45,7 +45,7 @@ export function deniedMessage(
   if (denied.split('?')[0] === '/') {
     return null;
   }
-  const page = pageTitle(denied.split('?')[0]);
+  const page = knownPageTitle(denied.split('?')[0]) ?? 'this page';
   if (reason === 'inactive') {
     return `Your account is waiting for approval, so you cannot open ${page} yet. Ask an administrator to activate it.`;
   }

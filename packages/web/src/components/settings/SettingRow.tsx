@@ -134,11 +134,11 @@ export function SettingRow({
 
   return (
     <div className="border-t border-ink-600 py-4 first:border-t-0">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="text-sm font-medium text-paper-100">{setting.label}</span>
-            <code className="font-mono text-[10px] text-paper-500">{setting.key}</code>
+            <code className="break-all font-mono text-[10px] text-paper-500">{setting.key}</code>
             {setting.restartRequired && (
               <Badge tone="amber" uppercase variant="text">
                 restart required
@@ -172,7 +172,7 @@ export function SettingRow({
           </p>
         </div>
 
-        <div className="flex w-64 shrink-0 flex-col gap-2">
+        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-64">
           {isBoolean ? (
             <ToggleSwitch
               checked={boolDraft}

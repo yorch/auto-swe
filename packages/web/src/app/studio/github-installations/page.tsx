@@ -174,7 +174,6 @@ export default function StudioGithubInstallationsPage() {
             Add installation
           </Button>
         }
-        chapter="§ Studio"
         subtitle={
           <>
             Where the GitHub App is installed. The app&apos;s own credentials are instance-wide and

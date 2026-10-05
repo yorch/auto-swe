@@ -22,9 +22,12 @@ describe('ChartFrame', () => {
 });
 
 describe('EmptyChart', () => {
-  it('is as tall as a drawn chart', () => {
-    const { container } = render(<EmptyChart />);
-    expect((container.firstChild as HTMLElement).style.height).toBe('280px');
+  it('is a compact sentence, not a chart-sized void', () => {
+    render(
+      <EmptyChart hint="Try a wider date range, or start work." label="No runs in this range." />
+    );
+    expect(screen.getByText('No runs in this range.')).toBeTruthy();
+    expect(screen.getByText('Try a wider date range, or start work.')).toBeTruthy();
   });
 });
 

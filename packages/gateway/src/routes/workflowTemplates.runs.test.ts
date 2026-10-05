@@ -30,7 +30,7 @@ function uniqueViolation(): Error {
   return Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
 }
 
-function buildHarness(opts?: { inputSchema?: unknown }): Harness {
+function buildHarness(opts?: { inputSchema?: unknown; name?: string }): Harness {
   const h: Harness = {
     activeWorkflows: [],
     app: Fastify(),
@@ -76,6 +76,8 @@ function buildHarness(opts?: { inputSchema?: unknown }): Harness {
         activeVersion: 3,
         id: TEMPLATE_ID,
         inputSchema: opts?.inputSchema ?? null,
+        name: opts?.name ?? 'Some workflow',
+        teamId: null,
       }),
     },
   };
@@ -111,6 +113,18 @@ function run(h: Harness, opts?: { key?: string; payload?: Record<string, unknown
     url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
   });
 }
+
+describe('POST /workflow-templates/:id/runs for the Channel Assistant', () => {
+  it('refuses with 409 and starts nothing', async () => {
+    const h = buildHarness({ name: 'Channel Assistant' });
+    await h.app.ready();
+    const res = await run(h);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SYSTEM_MANAGED_TEMPLATE');
+    expect(h.started).toHaveLength(0);
+    expect(h.runInputs).toHaveLength(0);
+  });
+});
 
 describe('POST /workflow-templates/:id/runs', () => {
   let h: Harness;

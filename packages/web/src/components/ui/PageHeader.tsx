@@ -1,13 +1,11 @@
 import { cn } from '@/lib/utils';
 
 export function PageHeader({
-  chapter,
   title,
   subtitle,
   actions,
   className,
 }: {
-  chapter?: string;
   title: string;
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
@@ -16,16 +14,11 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        'mb-10 flex flex-col gap-4 md:flex-row md:items-end md:justify-between md:gap-6',
+        'mb-10 flex flex-col gap-4 md:flex-row md:flex-wrap md:items-end md:justify-between md:gap-6',
         className
       )}
     >
       <div className="min-w-0">
-        {chapter && (
-          <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.24em] text-ember-400">
-            {chapter}
-          </div>
-        )}
         <h1 className="break-words text-[26px] font-bold leading-tight tracking-tight text-paper-50 md:text-[32px]">
           {title}
         </h1>
@@ -54,24 +47,24 @@ export function SectionHeader({
   return (
     <div
       className={cn(
-        'mb-5 flex items-end justify-between gap-4 border-b border-ink-600 pb-3',
+        'mb-5 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-ink-600 pb-3',
         className
       )}
     >
-      <div className="flex items-baseline gap-3">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
         {number && (
-          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ember-400">
+          <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-ember-400">
             {number}
           </span>
         )}
         <h2 className="text-lg font-semibold tracking-tight text-paper-100">{title}</h2>
         {hint && (
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+          <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-paper-400">
             {hint}
           </span>
         )}
       </div>
-      {actions && <div className="shrink-0">{actions}</div>}
+      {actions && <div className="max-w-full max-sm:w-full max-sm:overflow-x-auto">{actions}</div>}
     </div>
   );
 }

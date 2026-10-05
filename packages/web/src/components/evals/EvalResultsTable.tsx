@@ -129,7 +129,7 @@ export function EvalResultsTable({
         label="eval results"
         onRetry={() => void refetch()}
       >
-        <Table>
+        <Table stacked>
           <THead>
             <Th variant="dense">Time</Th>
             <Th variant="dense">Source</Th>
@@ -142,19 +142,21 @@ export function EvalResultsTable({
           <tbody>
             {rows.map((row) => (
               <TRow hover key={row.id}>
-                <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
+                <Td className="px-4 py-2 font-mono text-[11px] text-paper-400" primary>
                   {formatDate(row.createdAt)}
                 </Td>
-                <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">{row.source}</Td>
-                <Td className="px-4 py-2 font-mono text-[11px] text-paper-200">
+                <Td className="px-4 py-2 font-mono text-[11px] text-paper-400" label="Source">
+                  {row.source}
+                </Td>
+                <Td className="px-4 py-2 font-mono text-[11px] text-paper-200" label="Scorer">
                   <span title={row.rationale ?? undefined}>{row.scorer}</span>
                 </Td>
-                <Td align="right" className="px-4 py-2 font-mono text-[11px]">
+                <Td align="right" className="px-4 py-2 font-mono text-[11px]" label="Score">
                   <span className="num" style={{ color: scoreColor(row.value) }}>
                     {formatScore(row)}
                   </span>
                 </Td>
-                <Td className="px-4 py-2 font-mono text-[11px] text-paper-500">
+                <Td className="px-4 py-2 font-mono text-[11px] text-paper-500" label="Origin">
                   <ResultOrigin row={row} showEvalRun={!evalRunId} />
                 </Td>
               </TRow>

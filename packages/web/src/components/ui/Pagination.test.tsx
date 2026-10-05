@@ -7,6 +7,21 @@ import { Pagination } from './Pagination';
 describe('Pagination', () => {
   const base = { rangeEnd: 25, rangeStart: 1, total: 60 };
 
+  it('renders nothing when there are no rows', () => {
+    const { container } = render(
+      <Pagination
+        hasNext={false}
+        hasPrev={false}
+        onNext={vi.fn()}
+        onPrev={vi.fn()}
+        rangeEnd={0}
+        rangeStart={0}
+        total={0}
+      />
+    );
+    expect(container.firstChild).toBeNull();
+  });
+
   it('is a labelled nav whose buttons call back and respect has-prev/has-next', () => {
     const onNext = vi.fn();
     const onPrev = vi.fn();

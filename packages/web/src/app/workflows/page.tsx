@@ -19,7 +19,7 @@ import { parseOffset } from '@/hooks/useUrlFilters';
 
 const PAGE_SIZE = 30;
 const STATES: { label: string; value: RequestState }[] = [
-  { label: 'All requests', value: 'all' },
+  { label: 'All statuses', value: 'all' },
   { label: 'In progress', value: 'active' },
   { label: 'Needs attention', value: 'attention' },
   { label: 'Finished', value: 'finished' },
@@ -96,22 +96,28 @@ function RequestsWorkspace() {
         subtitle="Everything you asked for, with retries kept together."
         title="Requests"
       />
-      <div className="flex flex-wrap items-end gap-4">
+      {/* items-start: the segmented control is shorter than the fields, so bottom alignment dropped its label below theirs. */}
+      <div className="flex flex-wrap items-start gap-4">
         <Select
           label="Type"
           onChange={(value) => update({ offset: null, type: value === 'epics' ? 'epics' : null })}
           options={TYPES}
           value={type}
         />
-        <SegmentedControl
-          ariaLabel="Request scope"
-          onChange={(value) => update({ offset: null, scope: value })}
-          options={[
-            { label: 'My requests', value: 'MINE' },
-            { label: 'Team requests', value: 'TEAM' },
-          ]}
-          value={scope}
-        />
+        <div className="flex flex-col gap-1.5">
+          <span className="label-mono" id="request-scope-label">
+            Scope
+          </span>
+          <SegmentedControl
+            ariaLabel="Request scope"
+            onChange={(value) => update({ offset: null, scope: value })}
+            options={[
+              { label: 'My requests', value: 'MINE' },
+              { label: 'Team requests', value: 'TEAM' },
+            ]}
+            value={scope}
+          />
+        </div>
         {!showEpics && (
           <>
             <div className="min-w-48 flex-1">

@@ -372,18 +372,18 @@ export default function StudioMcpConnectionsPage() {
     <div className="space-y-8">
       <PageHeader
         actions={
-          <Button onClick={() => setNewOpen(true)} variant="primary">
-            Create connection
-          </Button>
+          // While the list is empty its empty state carries the same button.
+          connections?.length ? (
+            <Button onClick={() => setNewOpen(true)} variant="primary">
+              Create connection
+            </Button>
+          ) : undefined
         }
-        chapter="§ Studio"
         subtitle={
           <>
-            MCP servers (http or https) whose tools an agent can call. Choose one in an agent&apos;s
-            MCP connection field in the Agent library; its tools then load at run time alongside the
-            agent&apos;s built-in tools. Use Test to check the server is reachable. If a server
-            requires a bearer token, add it to the connection; it is stored encrypted and never
-            shown again.
+            MCP servers whose tools an agent can call. Choose one in an agent&apos;s MCP connection
+            field in the Agent library. A bearer token, if the server needs one, is stored encrypted
+            and never shown again.
           </>
         }
         title="MCP connections"
@@ -404,8 +404,14 @@ export default function StudioMcpConnectionsPage() {
             </CardHeader>
             {!connections || connections.length === 0 ? (
               <EmptyState
+                action={
+                  <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
+                    Create connection
+                  </Button>
+                }
                 className="py-4"
-                title="No MCP connections yet. Create one to enable MCP tools for an agent."
+                hint="Create one to enable MCP tools for an agent."
+                title="No MCP connections yet."
               />
             ) : (
               <Table stacked>

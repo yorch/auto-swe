@@ -151,7 +151,6 @@ function AnalyticsWorkspace() {
             value={range}
           />
         }
-        chapter="§ Govern"
         subtitle="Run volume, outcomes, cost, and time saved across every workflow template on the platform."
         title="Platform analytics"
       />
@@ -230,7 +229,7 @@ function AnalyticsWorkspace() {
                 }
                 hint="Estimated from each template's expected human effort"
                 label="Time saved (estimate)"
-                tone="moss"
+                tone={(data.estimatedHumanTimeSavedTotal ?? 0) > 0 ? 'moss' : 'default'}
                 value={formatMinutes(data.estimatedHumanTimeSavedTotal ?? 0)}
               />
             </div>
@@ -242,7 +241,7 @@ function AnalyticsWorkspace() {
               <WorkflowsOverTimeChart data={data.daily ?? []} title="Workflow runs over time" />
             </Card>
 
-            <div className="grid grid-cols-2 gap-x-4 gap-y-8 lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-8 lg:grid-cols-3">
               <Stat
                 hint="Average cost of a run in this window"
                 label="Avg cost per run"
@@ -254,6 +253,7 @@ function AnalyticsWorkspace() {
                 value={formatPercent(data.autonomyRate)}
               />
               <Stat
+                className="max-lg:col-span-2"
                 hint="Share of finished runs where a person reviewed or approved"
                 label="Human review rate"
                 value={formatPercent(data.humanReviewRate)}

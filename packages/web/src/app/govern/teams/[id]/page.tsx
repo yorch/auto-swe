@@ -41,7 +41,7 @@ function TeamFrame({ children }: { children: React.ReactNode }) {
   return (
     <div className="space-y-8">
       <BackLink />
-      <PageHeader chapter="§ Govern" subtitle={SUBTITLE} title="Team" />
+      <PageHeader subtitle={SUBTITLE} title="Team" />
       {children}
     </div>
   );
@@ -139,7 +139,6 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             </Button>
           )
         }
-        chapter="§ Govern"
         subtitle={team.description || SUBTITLE}
         title={team.name}
       />

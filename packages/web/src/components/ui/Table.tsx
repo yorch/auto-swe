@@ -207,7 +207,9 @@ export function Td({
           {/* A real element, not CSS content: Safari drops table semantics on the
               display:block cells, and generated content is not reliably announced. */}
           <span className="hidden shrink-0 text-xs text-paper-500 max-sm:inline">{label}</span>
-          <span className="min-w-0">{children}</span>
+          <span className="min-w-0 max-sm:flex-1 max-sm:text-right max-sm:*:ml-auto">
+            {children}
+          </span>
         </>
       ) : (
         children

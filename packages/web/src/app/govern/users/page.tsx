@@ -73,7 +73,6 @@ export default function UsersPage() {
 
   const header = (
     <PageHeader
-      chapter="§ Govern"
       subtitle="Manage who can sign in to the control plane. People who sign up with GitHub, Google or an email link wait in the pending queue until an admin approves them."
       title={navLabel('/govern/users')}
     />
@@ -268,6 +267,11 @@ export default function UsersPage() {
                 <TRow key={u.id}>
                   <Td className="px-4 py-3 text-sm text-paper-100" primary>
                     {u.email}
+                    {u.id === currentUserId && (
+                      <Badge className="ml-2" tone="ember" variant="outline">
+                        You
+                      </Badge>
+                    )}
                   </Td>
                   <Td className="px-4 py-3" label="Role">
                     {/* Changing your own role could lock you out mid-session. */}
@@ -309,9 +313,7 @@ export default function UsersPage() {
                   <Td className="px-4 py-3 text-right">
                     {/* Suspending yourself would lock you out mid-session. */}
                     {u.id === currentUserId ? (
-                      <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                        you
-                      </span>
+                      <span className="sr-only">Your own account cannot be suspended</span>
                     ) : (
                       <Button
                         onClick={() => setSuspendTarget({ email: u.email, id: u.id })}

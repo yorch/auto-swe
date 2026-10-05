@@ -39,7 +39,13 @@ import {
 } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
 import { humanizeKey } from '@/lib/govLabels';
-import { formatCost, formatCount, formatDuration, formatPercent, formatTokens } from '@/lib/utils';
+import {
+  formatCount,
+  formatDuration,
+  formatPercent,
+  formatTokens,
+  formatTotalCost,
+} from '@/lib/utils';
 
 /** `''` is platform-wide; `team:<id>` and `org:<id>` name a tenant. */
 function scopeOf(value: string): UsageScope {
@@ -204,7 +210,7 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
                 {formatPercent(errorRate(r))}
               </Td>
               <Td align="right" className="px-4 py-2 font-mono text-xs text-paper-200">
-                {formatCost(r.costUsd)}
+                {formatTotalCost(r.costUsd)}
               </Td>
             </TRow>
           ))}
@@ -266,7 +272,6 @@ function UsageWorkspace() {
             />
           </div>
         }
-        chapter="§ Govern"
         subtitle="Every LLM and embedding call, including workflows that keep no run record, attributed to the team and organization whose spend it is. Days are UTC."
         title="LLM usage"
       />
@@ -312,10 +317,10 @@ function UsageWorkspace() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
                 <Stat
                   delta={delta}
-                  hint={`Previous ${windowDays} days: ${formatCost(data.previous.costUsd)}`}
+                  hint={`Previous ${windowDays} days: ${formatTotalCost(data.previous.costUsd)}`}
                   label="Spend"
                   tone="ember"
-                  value={formatCost(data.totals.costUsd)}
+                  value={formatTotalCost(data.totals.costUsd)}
                 />
                 <Stat label="LLM calls" value={formatCount(data.totals.calls)} />
                 <Stat
@@ -326,15 +331,29 @@ function UsageWorkspace() {
                 <Stat
                   hint="Authoring, scheduled evals, lesson consolidation and other work that keeps no run record"
                   label="Spend outside workflow runs"
-                  value={formatCost(data.unattributed.costUsd)}
+                  value={formatTotalCost(data.unattributed.costUsd)}
                 />
               </div>
 
               {data.totals.calls === 0 ? (
-                <EmptyState
-                  hint="Try a longer range or a different scope."
-                  title="No LLM calls in this window."
-                />
+                data.previous.calls === 0 ? (
+                  <EmptyState
+                    action={
+                      <Link href="/start">
+                        <Button size="sm" variant="secondary">
+                          Start work
+                        </Button>
+                      </Link>
+                    }
+                    hint="Usage appears after the first run."
+                    title="No LLM calls recorded yet."
+                  />
+                ) : (
+                  <EmptyState
+                    hint="Try a longer range or a different scope."
+                    title="No LLM calls in this window."
+                  />
+                )
               ) : (
                 <>
                   <Card>
@@ -408,7 +427,7 @@ function UsageWorkspace() {
                               align="right"
                               className="px-4 py-2 font-mono text-xs text-paper-200"
                             >
-                              {formatCost(r.costUsd)}
+                              {formatTotalCost(r.costUsd)}
                             </Td>
                           </TRow>
                         ))}

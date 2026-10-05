@@ -132,13 +132,12 @@ export default function GovernLessonsPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Govern"
         subtitle="Agent lessons captured from completed workflows. Consolidation merges semantically similar lessons to reduce redundancy."
         title="Lessons"
       />
 
       {/* Summary stats */}
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3">
         <Stat label="Active" value={totalActive} />
         <Stat label="Consolidated" tone="muted" value={totalConsolidated} />
         <Stat

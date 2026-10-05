@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProviderCredentialRow } from '@/hooks/useModelConfig';
-import { isLastPlatformCredential } from './CredentialsTab';
+import { isLastPlatformCredential, usedByLabel } from './CredentialsTab';
 
 const cred = (over: Partial<ProviderCredentialRow>): ProviderCredentialRow =>
   ({ id: 'a', provider: 'anthropic', scope: 'GLOBAL', ...over }) as ProviderCredentialRow;
@@ -26,5 +26,21 @@ describe('isLastPlatformCredential', () => {
     expect(isLastPlatformCredential(global, [global, cred({ id: 'o', provider: 'openai' })])).toBe(
       true
     );
+  });
+});
+
+describe('usedByLabel', () => {
+  it('counts embeddings apart from agents', () => {
+    expect(usedByLabel(['embeddings'])).toBe('Used by embeddings');
+    expect(usedByLabel(['implementer', 'embeddings'])).toBe(
+      'Used by 1 agent and embeddings: Implementer'
+    );
+  });
+
+  it('lists agents alone and truncates long lists', () => {
+    expect(usedByLabel(['implementer', 'reviewer'])).toBe(
+      'Used by 2 agents: Implementer, Reviewer'
+    );
+    expect(usedByLabel(['a', 'b', 'c', 'd', 'e', 'f'])).toContain('and 2 more');
   });
 });

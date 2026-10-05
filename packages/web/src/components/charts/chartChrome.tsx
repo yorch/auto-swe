@@ -162,20 +162,12 @@ export function chartAriaLabel(title: string | undefined, fallback: string, summ
   return `${title ?? fallback}. ${summary}`;
 }
 
-/** Same height as a drawn chart, so a card does not jump when data arrives. */
-export function EmptyChart({
-  height = CHART_HEIGHT,
-  label = 'no data',
-}: {
-  height?: number;
-  label?: string;
-}) {
+/** A settled empty result: a compact sentence, not a chart-sized void. */
+export function EmptyChart({ label = 'No data yet.', hint }: { label?: string; hint?: string }) {
   return (
-    <div
-      className="flex items-center justify-center font-mono text-[11px] uppercase tracking-[0.18em] text-paper-500"
-      style={{ height }}
-    >
-      <span>— {label} —</span>
+    <div className="flex min-h-[120px] flex-col items-center justify-center text-center">
+      <p className="text-sm text-paper-300">{label}</p>
+      {hint && <p className="mt-1 text-xs text-paper-500">{hint}</p>}
     </div>
   );
 }

@@ -30,6 +30,7 @@
     "./lib/skillRevision": "./dist/lib/skillRevision.js",
     "./lib/skillSource": "./dist/lib/skillSource/index.js",
     "./lib/skillSourceSync": "./dist/lib/skillSourceSync.js",
+    "./lib/seedPlaceholder": "./dist/lib/seedPlaceholder.js",
     "./lib/regexSafety": "./dist/lib/regexSafety.js",
     "./lib/modelSpec": "./dist/lib/modelSpec.js",
     "./lib/builtinModels": "./dist/lib/builtinModels.js",

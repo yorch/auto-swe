@@ -40,9 +40,9 @@ const TONE_CLASSES: Record<BadgeTone, Record<BadgeVariant, string>> = {
     text: 'text-moss-400',
   },
   muted: {
-    outline: 'border-ink-500 bg-ink-700 text-paper-600',
-    solid: 'bg-ink-600 text-paper-600',
-    text: 'text-paper-600',
+    outline: 'border-ink-500 bg-ink-700 text-paper-400',
+    solid: 'bg-ink-600 text-paper-400',
+    text: 'text-paper-400',
   },
   neutral: {
     outline: 'border-ink-500 bg-ink-700 text-paper-400',
@@ -90,7 +90,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        'font-mono text-[10px]',
+        'font-mono text-[11px]',
         VARIANT_BASE[variant],
         dot && 'inline-flex items-center gap-1.5',
         uppercase && 'uppercase tracking-wider',

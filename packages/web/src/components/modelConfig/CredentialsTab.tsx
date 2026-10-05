@@ -25,6 +25,7 @@ import {
 import { useReadiness } from '@/hooks/useReadiness';
 import { useTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { humanizeKey } from '@/lib/govLabels';
 
 type ProbeResult = { ok: boolean; status?: number; error?: string };
 
@@ -46,6 +47,22 @@ export function isLastPlatformCredential(
     target.scope === 'GLOBAL' &&
     !all.some((c) => c.id !== target.id && c.provider === target.provider && c.scope === 'GLOBAL')
   );
+}
+
+/**
+ * "Used by 2 agents and embeddings: Implementer, Reviewer". The readiness payload lists the
+ * embedding model under the key `embeddings`, which is not an agent, so it is counted apart.
+ */
+export function usedByLabel(usedBy: string[]): string {
+  const agents = usedBy.filter((key) => key !== 'embeddings');
+  const embeddings = agents.length !== usedBy.length;
+  if (agents.length === 0) {
+    return embeddings ? 'Used by embeddings' : 'Not used by any agent';
+  }
+  const count = `${agents.length} ${agents.length === 1 ? 'agent' : 'agents'}`;
+  const names = agents.slice(0, 4).map(humanizeKey).join(', ');
+  const more = agents.length > 4 ? ` and ${agents.length - 4} more` : '';
+  return `Used by ${count}${embeddings ? ' and embeddings' : ''}: ${names}${more}`;
 }
 
 function deleteMessage(target: ProviderCredentialRow, all: ProviderCredentialRow[]) {
@@ -151,11 +168,7 @@ export function CredentialsTab() {
                 <Badge tone={p.present ? 'moss' : 'brick'} variant="text">
                   {p.present ? 'Credential present' : 'Credential missing'}
                 </Badge>
-                <span className="text-xs text-paper-500">
-                  {p.usedBy.length} {p.usedBy.length === 1 ? 'user' : 'users'}:{' '}
-                  {p.usedBy.slice(0, 4).join(', ')}
-                  {p.usedBy.length > 4 && ` and ${p.usedBy.length - 4} more`}
-                </span>
+                <span className="text-xs text-paper-500">{usedByLabel(p.usedBy)}</span>
                 {!p.present && (
                   <Button
                     onClick={() => {
@@ -163,7 +176,7 @@ export function CredentialsTab() {
                       setCreating(true);
                     }}
                     size="sm"
-                    variant="ghost"
+                    variant="secondary"
                   >
                     Add credential
                   </Button>

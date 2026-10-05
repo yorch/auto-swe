@@ -7,7 +7,9 @@ import {
   formatPercent,
   formatRelativeTime,
   formatTokens,
+  formatTotalCost,
   isRecord,
+  plural,
 } from './utils.js';
 
 // These formatters deliberately follow the runtime's default locale, so the
@@ -109,6 +111,16 @@ describe('formatRelativeTime', () => {
   });
 });
 
+describe('plural', () => {
+  it('only pluralizes away from one', () => {
+    expect([plural(0, 'repo'), plural(1, 'repo'), plural(2, 'repo')]).toEqual([
+      '0 repos',
+      '1 repo',
+      '2 repos',
+    ]);
+  });
+});
+
 describe('formatCost', () => {
   it('renders an em dash for exactly zero', () => {
     expect(formatCost(0)).toBe('—');
@@ -120,6 +132,16 @@ describe('formatCost', () => {
 
   it('formats representable amounts as USD', () => {
     expect(formatCost(1234.5)).toBe(ref.usd.format(1234.5));
+  });
+});
+
+describe('formatTotalCost', () => {
+  it('renders a known zero total as a real amount', () => {
+    expect(formatTotalCost(0)).toBe(ref.usd.format(0));
+  });
+
+  it('defers to formatCost otherwise', () => {
+    expect(formatTotalCost(0.004)).toBe(formatCost(0.004));
   });
 });
 

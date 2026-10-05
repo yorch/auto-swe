@@ -39,6 +39,16 @@ afterEach(() => {
 });
 
 describe('SetupReadiness', () => {
+  it('reserves space while loading for admins, and nothing for others', () => {
+    gateway();
+    const { unmount } = render(withQuery(<SetupReadiness />));
+    expect(screen.getByTestId('setup-readiness-loading')).toBeTruthy();
+    unmount();
+    role = 'ENGINEER';
+    render(withQuery(<SetupReadiness />));
+    expect(screen.queryByTestId('setup-readiness-loading')).toBeNull();
+  });
+
   it('lists only what is missing, each linking to its fix', async () => {
     gateway();
     render(withQuery(<SetupReadiness />));

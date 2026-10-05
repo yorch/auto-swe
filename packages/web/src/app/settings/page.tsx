@@ -140,7 +140,6 @@ export default function SettingsPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Account"
         subtitle="Profile, sign-in methods, and integrations. Changes apply to your account only."
         title="Account settings"
       />
@@ -149,8 +148,6 @@ export default function SettingsPage() {
         <SectionHeader hint="who you are" number="01" title="Profile" />
         <Card variant="inset">
           <dl className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-4 text-sm">
-            <dt className="label-mono">User ID</dt>
-            <dd className="tabular font-mono text-xs text-paper-200">{user?.sub ?? '—'}</dd>
             <dt className="label-mono">Email</dt>
             <dd className="font-mono text-xs text-paper-200">{user?.email ?? '—'}</dd>
             <dt className="label-mono">Role</dt>
@@ -226,18 +223,14 @@ export default function SettingsPage() {
                         >
                           {busy === p.id ? 'Linking…' : 'Link'}
                         </Button>
-                      ) : (
-                        <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                          —
-                        </span>
-                      )
+                      ) : null
                     }
                     detail={
                       isLinked
                         ? `linked${account?.accountId ? ` · ${account.accountId.slice(0, 12)}…` : ''}`
                         : configured
                           ? p.description
-                          : 'not configured server-side'
+                          : 'Not enabled by your administrator'
                     }
                     dotClass={
                       isLinked
@@ -272,9 +265,14 @@ export default function SettingsPage() {
                   )
                 }
                 detail={
-                  user?.slackId
-                    ? `linked · ${user.slackId}`
-                    : 'Required for the `/auto-swe` slash command and per-step failure DMs.'
+                  user?.slackId ? (
+                    `linked · ${user.slackId}`
+                  ) : (
+                    <>
+                      Required for the <code className="font-mono">/auto-swe</code> slash command
+                      and per-step failure DMs.
+                    </>
+                  )
                 }
                 dotClass={user?.slackId ? 'bg-moss-400' : 'bg-ink-500'}
                 label="Slack"

@@ -1,6 +1,7 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '../generated/prisma/client.js';
+import { SEED_PLACEHOLDER_REPO } from '../lib/seedPlaceholder.js';
 import { syncBuiltins } from '../lib/syncBuiltins.js';
 
 const connectionString = process.env.DATABASE_URL;
@@ -96,15 +97,14 @@ async function main() {
   // uniqueness is a partial index (git_repo only), so use findFirst + create
   // rather than a compound-unique upsert.
   const existingRepo = await prisma.connection.findFirst({
-    where: { organizationName: 'your-org', repoName: 'your-repo', type: 'git_repo' },
+    where: { ...SEED_PLACEHOLDER_REPO, type: 'git_repo' },
   });
   const repo =
     existingRepo ??
     (await prisma.connection.create({
       data: {
         defaultBranch: 'main',
-        organizationName: 'your-org',
-        repoName: 'your-repo',
+        ...SEED_PLACEHOLDER_REPO,
         teamId: team.id,
         type: 'git_repo',
       },

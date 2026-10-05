@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useTeams } from '@/hooks/useTeams';
+import { plural } from '@/lib/utils';
 
 export default function TeamsPage() {
   const { data: teams, isLoading, isError, isFetching, refetch, error: loadError } = useTeams();
@@ -27,7 +28,6 @@ export default function TeamsPage() {
             </Button>
           )
         }
-        chapter="§ Govern"
         subtitle="Teams own repositories, members, sandbox allowlists and per-team agent overrides."
         title="Teams"
       />
@@ -52,8 +52,8 @@ export default function TeamsPage() {
                   <h3 className="font-semibold text-lg">{t.name}</h3>
                   <p className="text-sm text-paper-400 mt-1">{t.description || 'No description'}</p>
                   <div className="flex gap-4 mt-4 text-xs text-paper-400">
-                    <span>{t._count?.memberships ?? 0} members</span>
-                    <span>{t._count?.repositories ?? 0} repos</span>
+                    <span>{plural(t._count?.memberships ?? 0, 'member')}</span>
+                    <span>{plural(t._count?.repositories ?? 0, 'repo')}</span>
                   </div>
                 </Card>
               </Link>

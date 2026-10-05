@@ -38,7 +38,7 @@ interface Props {
 /** LLM spend per day. One series, so the card title names it and there is no legend. */
 export function DailyCostChart({ data, title }: Props) {
   if (data.every((d) => d.calls === 0)) {
-    return <EmptyChart label="no llm calls in this window" />;
+    return <EmptyChart label="No LLM calls in this window." />;
   }
 
   const total = data.reduce((n, d) => n + d.costUsd, 0);

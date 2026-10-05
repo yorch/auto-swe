@@ -22,7 +22,7 @@ const statusName = (status: string) => status.replace(/_/g, ' ').toLowerCase();
 
 export function WorkflowStatusChart({ data, title }: Props) {
   if (data.length === 0) {
-    return <EmptyChart label="no workflow data" />;
+    return <EmptyChart label="No runs in this range." />;
   }
 
   const summary = `Workflows by status: ${data.map((d) => `${d.count} ${statusName(d.status)}`).join(', ')}.`;

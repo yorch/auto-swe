@@ -201,7 +201,6 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         ← Organizations
       </Link>
       <PageHeader
-        chapter="§ Govern"
         subtitle={
           org
             ? `Members, profile, and monthly budget for ${org.slug}.`

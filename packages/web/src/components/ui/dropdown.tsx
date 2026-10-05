@@ -27,6 +27,16 @@ export interface DropdownOption {
 // select does. Only `null` (no selection) is absent; never test keys for
 // truthiness.
 export const toKey = (value: string) => value;
+
+/**
+ * Give each option a stable collection id. React Aria keys an unkeyed dynamic item by its
+ * position, so options that reorder or arrive later (a picker seeded with the current value,
+ * then filled when its list loads) would hand an existing item a new id, and React Aria throws
+ * "Cannot change the id of an item".
+ */
+export function withIds<T extends DropdownOption>(options: T[]): (T & { id: string })[] {
+  return options.map((option) => ({ ...option, id: toKey(option.value) }));
+}
 export const fromKey = (key: string | number | null) => (key === null ? null : String(key));
 
 export function optionText(option: DropdownOption): string {

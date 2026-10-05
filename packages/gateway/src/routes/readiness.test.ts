@@ -133,6 +133,18 @@ describe('GET /readiness', () => {
     expect(res.json().data.items.find((i: { id: string }) => i.id === 'credentials').ok).toBe(true);
   });
 
+  it('does not count the seeded placeholder repository as a connection', async () => {
+    const { app, prisma } = await buildApp();
+    await app.inject({ headers: AUTH, method: 'GET', url: URL });
+    expect(prisma.connection.count).toHaveBeenCalledWith({
+      where: {
+        isActive: true,
+        NOT: { organizationName: 'your-org', repoName: 'your-repo' },
+        type: 'git_repo',
+      },
+    });
+  });
+
   it('flags a missing embedding config, GitHub access and connections', async () => {
     const { app, prisma } = await buildApp();
     prisma.embeddingConfig.findUnique.mockResolvedValue(null);

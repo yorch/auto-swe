@@ -130,14 +130,6 @@ export default function ConnectionsPage() {
         actions={
           canManage ? (
             <>
-              <Checkbox
-                checked={showInactive}
-                label="Show inactive"
-                onChange={(e) => {
-                  setShowInactive(e.target.checked);
-                  setOffset(0);
-                }}
-              />
               <Button onClick={() => setMode({ kind: 'import' })} size="sm" variant="secondary">
                 Import from GitHub
               </Button>
@@ -147,19 +139,38 @@ export default function ConnectionsPage() {
             </>
           ) : undefined
         }
-        chapter="§ Work"
         subtitle="External systems — git repos, REST APIs, and other integrations — available to your workflows."
         title="Connections"
       />
-      <SetupBanner items={['connections']} />
-      <Input
-        aria-label="Search connections"
-        className="max-w-sm"
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search connections…"
-        type="search"
-        value={search}
+      <SetupBanner
+        here="/connections"
+        inPage={
+          canManage
+            ? { label: 'Add connection', onClick: () => setMode({ kind: 'create' }) }
+            : undefined
+        }
+        items={['connections']}
       />
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <Input
+          aria-label="Search connections"
+          className="max-w-sm"
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search connections…"
+          type="search"
+          value={search}
+        />
+        {canManage && (
+          <Checkbox
+            checked={showInactive}
+            label="Show inactive"
+            onChange={(e) => {
+              setShowInactive(e.target.checked);
+              setOffset(0);
+            }}
+          />
+        )}
+      </div>
       <QueryBoundary
         error={loadError}
         isError={isError}

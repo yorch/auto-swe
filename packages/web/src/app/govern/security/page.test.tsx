@@ -70,8 +70,9 @@ describe('GovernSecurityPage', () => {
     expect(await screen.findByText('117')).toBeTruthy();
     expect(screen.getByText('· 120')).toBeTruthy();
     // Blocked and advisory are separate groups; the blocked group shows its trend.
-    expect(screen.getByText('Blocked events')).toBeTruthy();
-    expect(screen.getByText('Advisory events')).toBeTruthy();
+    expect(screen.getByText('Blocked')).toBeTruthy();
+    expect(screen.getByText('Advisory')).toBeTruthy();
+    expect(screen.getAllByText('Total')).toHaveLength(2);
     expect(screen.getByText(/\+17% vs previous 30 days/)).toBeTruthy();
   });
 

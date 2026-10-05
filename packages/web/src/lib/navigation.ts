@@ -76,21 +76,21 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/studio/agents/library', icon: 'agents', label: 'Agents', minRole: 'ADMIN' },
       { href: '/studio/skills', icon: 'skills', label: 'Skills', minRole: 'ADMIN' },
-      { href: '/studio/mcp', icon: 'connections', label: 'MCP connections', minRole: 'ADMIN' },
+      { href: '/studio/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
       {
         href: '/studio/integrations',
-        icon: 'connections',
+        icon: 'puzzle',
         label: 'Integrations',
         minRole: 'ADMIN',
       },
       {
         href: '/studio/github-installations',
-        icon: 'connections',
+        icon: 'github',
         label: 'GitHub installations',
         minRole: 'ADMIN',
       },
-      { href: '/studio/models', icon: 'admin', label: 'Model configuration', minRole: 'ADMIN' },
-      { href: '/studio/bundles', icon: 'templates', label: 'Bundles', minRole: 'ADMIN' },
+      { href: '/studio/models', icon: 'sliders', label: 'Model configuration', minRole: 'ADMIN' },
+      { href: '/studio/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
     ],
     label: 'Studio',
   },
@@ -328,10 +328,14 @@ const EXTRA_PAGE_TITLES: [string, string][] = [
   ['/epics', 'Epics'],
   ['/docs', 'Docs'],
   ['/lessons', 'Lessons'],
+  ['/oauth/consent', 'Authorize app'],
 ];
 
-/** The TopBar title for `pathname` — the owning nav label, per the convention above. */
-export function pageTitle(pathname: string): string {
+/**
+ * The TopBar title for `pathname` — the owning nav label, per the convention above — or
+ * null when no page claims the path (a real not-found, or a page missing from the tables).
+ */
+export function knownPageTitle(pathname: string): string | null {
   for (const [prefix, title] of EXTRA_PAGE_TITLES) {
     if (pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`)) {
       return title;
@@ -348,7 +352,16 @@ export function pageTitle(pathname: string): string {
   if (pathname.startsWith('/studio')) {
     return 'Studio';
   }
-  return 'auto·swe';
+  return null;
+}
+
+/**
+ * A title that always renders. A path no page claims gets the generic `fallback`: it
+ * may be a chromed page missing from the tables as easily as a missing page, so it is
+ * never labelled "Not found" here.
+ */
+export function pageTitle(pathname: string, fallback = 'Page'): string {
+  return knownPageTitle(pathname) ?? fallback;
 }
 
 /** The label a page must use as its H1. Throws on an href with no nav entry. */
@@ -364,7 +377,6 @@ export function navLabel(href: string): string {
 const EXTRA_PAGE_SECTIONS: [string, string][] = [
   ['/start', 'Work'],
   ['/epics', 'Work'],
-  ['/docs', 'Account'],
   ['/lessons', 'Govern'],
 ];
 
@@ -374,6 +386,10 @@ const EXTRA_PAGE_SECTIONS: [string, string][] = [
  */
 export function pageSection(pathname: string): string | null {
   const href = activeNavHref(pathname, NAV_ITEMS);
+  // Docs sits in the Account sidebar group but is help, not account management.
+  if (href === '/docs') {
+    return 'Help';
+  }
   const group = NAV_GROUPS.find((g) => g.items.some((i) => i.href === href));
   if (group && pageTitle(pathname) !== 'Home') {
     // A sub-page with its own title (autonomy decisions) still sits in its parent's group.

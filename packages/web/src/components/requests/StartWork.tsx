@@ -1,10 +1,12 @@
 'use client';
 
+import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
 import { EpicLaunchForm } from '@/components/epics/EpicLaunchForm';
 import { WorkflowLaunchForm } from '@/components/requests/WorkflowLaunchForm';
+import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
 import { Combobox } from '@/components/ui/Combobox';
@@ -36,23 +38,27 @@ export function StartWork({
   const teamId = useTeamStore((state) => state.selectedTeamId);
   const templates = useWorkflowTemplates(teamId);
   const runnable = (templates.data ?? []).filter(
-    (template) => template.status === 'ACTIVE' && template.activeVersion !== null
+    (template) =>
+      template.status === 'ACTIVE' &&
+      template.activeVersion !== null &&
+      !isSystemManagedTemplate(template)
   );
   const template = runnable.find((item) => item.id === templateId);
   const unrunnableTemplate =
     !!initialTemplateId && !templates.isLoading && !templates.isError && !template;
   const onLaunched = (requestId: string) => router.push(requestHref(requestId));
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-6">
       <PageHeader
         actions={
-          <ButtonLink href="/workflows" variant="ghost">
+          <ButtonLink href="/workflows" variant="secondary">
             Back to requests
           </ButtonLink>
         }
         subtitle="Choose how to work, enter the details, then review before launching."
         title="Start work"
       />
+      <SetupBanner items={['credentials', 'github', 'connections']} />
       {unrunnableTemplate && (
         <Alert variant="warning">
           The workflow you picked is not available to run. It may be inactive, archived or not

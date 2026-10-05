@@ -27,7 +27,7 @@ interface Props {
  */
 export function ScorerTrendChart({ data, title }: Props) {
   if (data.every((d) => d.n === 0)) {
-    return <EmptyChart label="no signals in this window" />;
+    return <EmptyChart label="No signals in this window." />;
   }
 
   const scored = data.filter((d) => d.mean !== null);

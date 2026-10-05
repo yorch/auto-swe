@@ -44,7 +44,6 @@ function StudioModelConfigPageInner() {
   return (
     <div className="space-y-8">
       <PageHeader
-        chapter="§ Studio"
         subtitle={
           <>
             Encrypted provider credentials, the embedding model, and the audit trail. Each agent's
@@ -57,8 +56,8 @@ function StudioModelConfigPageInner() {
         }
         title="Model configuration"
       />
+      <SetupBanner here={`/studio/models?tab=${active}`} items={['credentials', 'embeddings']} />
       <MidRunWarning />
-      <SetupBanner items={['credentials', 'embeddings']} />
       <TabBar
         active={active}
         idPrefix="models"
