@@ -347,7 +347,14 @@ export default function GovernSchedulesPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ScheduledWorkRequestSummary | null>(null);
   const deleteSchedule = useDeleteSchedule();
-  const { data: schedules, isLoading, isError, refetch, error: loadError } = useSchedules();
+  const {
+    data: schedules,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useSchedules();
 
   return (
     <div className="space-y-8">
@@ -369,6 +376,7 @@ export default function GovernSchedulesPage() {
         <QueryBoundary
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="schedules"
           onRetry={() => void refetch()}

@@ -680,6 +680,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
     data: items,
     isLoading,
     isError,
+    isFetching,
     refetch,
     error: loadError,
   } = useChannelMemory(channel?.id ?? null, showConsolidated);
@@ -719,6 +720,7 @@ function MemoryModal({ channel, onClose }: { channel: SlackChannel | null; onClo
         <QueryBoundary
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="channel memory"
           onRetry={() => void refetch()}
@@ -830,6 +832,7 @@ function OpenItemsModal({
     data: items,
     isLoading,
     isError,
+    isFetching,
     refetch,
     error: loadError,
   } = useChannelOpenItems(channel?.id ?? null, statusFilter);
@@ -870,6 +873,7 @@ function OpenItemsModal({
         <QueryBoundary
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="open items"
           onRetry={() => void refetch()}
@@ -951,6 +955,7 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
     data: entries,
     error: loadError,
     isError,
+    isFetching,
     refetch,
     isLoading,
   } = useChannelAudit(channel?.id ?? null, kindFilter);
@@ -980,6 +985,7 @@ function AuditModal({ channel, onClose }: { channel: SlackChannel | null; onClos
           <QueryBoundary
             error={loadError}
             isError={isError}
+            isFetching={isFetching}
             isLoading={isLoading}
             label="audit entries"
             onRetry={() => void refetch()}
@@ -1181,7 +1187,14 @@ function ChannelRow({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function GovernSlackChannelsPage() {
-  const { data: channels, error: loadError, isError, isLoading, refetch } = useSlackChannels();
+  const {
+    data: channels,
+    error: loadError,
+    isError,
+    isFetching,
+    isLoading,
+    refetch,
+  } = useSlackChannels();
   const { data: teams } = useTeams();
   const deleteChannel = useDeleteSlackChannel();
 
@@ -1218,6 +1231,7 @@ export default function GovernSlackChannelsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="Slack channels"
         onRetry={() => void refetch()}

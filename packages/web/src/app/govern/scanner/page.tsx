@@ -382,7 +382,14 @@ function PatternSection({
 
 export default function GovernScannerPage() {
   const [newOpen, setNewOpen] = useState(false);
-  const { data: patterns, isLoading, isError, refetch, error: loadError } = useScannerPatterns();
+  const {
+    data: patterns,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useScannerPatterns();
   // One detail modal and one delete confirmation for the page, bound to the
   // selected row — not one of each mounted per row.
   const [viewTarget, setViewTarget] = useState<ScannerPattern | null>(null);
@@ -411,6 +418,7 @@ export default function GovernScannerPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="scanner patterns"
         onRetry={() => void refetch()}

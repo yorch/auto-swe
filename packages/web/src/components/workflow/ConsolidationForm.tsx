@@ -51,6 +51,7 @@ export function ConsolidationForm() {
     data: consolidation,
     error: loadError,
     isError,
+    isFetching,
     refetch,
     isLoading,
   } = useConsolidationConfig();
@@ -76,6 +77,7 @@ export function ConsolidationForm() {
         compact
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="the consolidation schedule"
         onRetry={() => void refetch()}

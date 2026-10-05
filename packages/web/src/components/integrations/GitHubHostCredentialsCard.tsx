@@ -186,6 +186,7 @@ export function GitHubHostCredentialsCard() {
     data: credentials,
     error: loadError,
     isError,
+    isFetching,
     refetch,
     isLoading,
   } = useGithubHostCredentials();
@@ -207,6 +208,7 @@ export function GitHubHostCredentialsCard() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="Host credentials"
         onRetry={() => void refetch()}

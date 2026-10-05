@@ -26,7 +26,7 @@ export default function AutonomyDecisionsPage() {
   const [filters, setFilters] = useState(form);
   const [offset, setOffset] = useState(0);
 
-  const { data, isLoading, isError, refetch, error } = useAutonomyDecisions({
+  const { data, isLoading, isError, isFetching, refetch, error } = useAutonomyDecisions({
     ...filters,
     limit: LIMIT,
     offset,
@@ -106,6 +106,7 @@ export default function AutonomyDecisionsPage() {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="autonomy decisions"
         loadingMessage="loading decisions…"

@@ -126,7 +126,7 @@ export default function UsagePage() {
   // Until the caller picks one, the first scope they may read: the whole
   // platform for an ADMIN, their first team (or organization) otherwise.
   const scopeValue = chosenScope ?? scopeOptions?.[0]?.value ?? null;
-  const { data, error, isError, refetch, isLoading } = usePlatformUsage(
+  const { data, error, isError, isFetching, refetch, isLoading } = usePlatformUsage(
     windowDays,
     scopeOf(scopeValue ?? ''),
     scopeValue !== null
@@ -167,6 +167,7 @@ export default function UsagePage() {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="LLM usage"
         onRetry={() => void refetch()}

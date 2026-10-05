@@ -251,7 +251,14 @@ export default function StudioMcpConnectionsPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<McpConnectionRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<McpConnectionRow | null>(null);
-  const { data: connections, isLoading, isError, refetch, error: loadError } = useMcpConnections();
+  const {
+    data: connections,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useMcpConnections();
   const del = useDeleteMcpConnection();
 
   return (
@@ -277,6 +284,7 @@ export default function StudioMcpConnectionsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="MCP connections"
         onRetry={() => void refetch()}

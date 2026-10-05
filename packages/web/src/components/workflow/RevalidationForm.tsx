@@ -47,6 +47,7 @@ export function RevalidationForm() {
     data: revalidation,
     error: loadError,
     isError,
+    isFetching,
     refetch,
     isLoading,
   } = useRevalidationConfig();
@@ -77,6 +78,7 @@ export function RevalidationForm() {
         compact
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="the re-validation schedule"
         onRetry={() => void refetch()}

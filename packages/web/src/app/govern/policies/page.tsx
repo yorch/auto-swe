@@ -345,7 +345,7 @@ function PolicyModal({
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AutonomyPoliciesPage() {
-  const { data: policies, isLoading, isError, refetch, error } = useAutonomyPolicies();
+  const { data: policies, isLoading, isError, isFetching, refetch, error } = useAutonomyPolicies();
   const deletePolicy = useDeleteAutonomyPolicy();
   const [deleteTarget, setDeleteTarget] = useState<AutonomyPolicy | null>(null);
   const [open, setOpen] = useState(false);
@@ -387,6 +387,7 @@ export default function AutonomyPoliciesPage() {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="policies"
         loadingMessage="loading policies…"

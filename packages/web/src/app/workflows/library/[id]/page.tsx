@@ -543,7 +543,14 @@ function WebhookCard({
 export default function TemplateDetailPage({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: template, isLoading, isError, refetch, error } = useWorkflowTemplate(id ?? '');
+  const {
+    data: template,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error,
+  } = useWorkflowTemplate(id ?? '');
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
   const { data: versionDetail } = useWorkflowTemplateVersion(id ?? '', effectiveVersion);
@@ -617,6 +624,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="workflow"
         loadingMessage="loading workflow…"

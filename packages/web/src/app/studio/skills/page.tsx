@@ -362,7 +362,14 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
 // ── Effectiveness Card ────────────────────────────────────────────────────────
 
 function EffectivenessCard() {
-  const { data, isLoading, isError, error: loadError, refetch } = useSkillEffectiveness();
+  const {
+    data,
+    isLoading,
+    isError,
+    isFetching,
+    error: loadError,
+    refetch,
+  } = useSkillEffectiveness();
   return (
     <Card>
       <CardHeader>
@@ -377,6 +384,7 @@ function EffectivenessCard() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="skill effectiveness"
         onRetry={() => void refetch()}
@@ -429,7 +437,7 @@ export default function StudioSkillsPage() {
   const [viewTarget, setViewTarget] = useState<Skill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
   const deleteSkill = useDeleteSkill();
-  const { data: skills, isLoading, isError, error: loadError, refetch } = useSkills();
+  const { data: skills, isLoading, isError, isFetching, error: loadError, refetch } = useSkills();
   const update = useUpdateSkill();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
@@ -481,6 +489,7 @@ export default function StudioSkillsPage() {
           <QueryBoundary
             error={loadError}
             isError={isError}
+            isFetching={isFetching}
             isLoading={isLoading}
             label="skills"
             onRetry={() => void refetch()}

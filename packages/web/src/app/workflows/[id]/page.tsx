@@ -21,7 +21,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
   const router = useRouter();
-  const { data: workflow, error, isError, isLoading, refetch } = useWorkflow(id ?? '');
+  const { data: workflow, error, isError, isFetching, isLoading, refetch } = useWorkflow(id ?? '');
   const requestId = workflow?.workRequest?.id;
   const temporalUrl = useTemporalWorkflowUrl(workflow?.temporalWorkflowId ?? '');
 
@@ -47,6 +47,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="request"
         onRetry={() => void refetch()}

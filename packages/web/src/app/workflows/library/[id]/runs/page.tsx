@@ -42,7 +42,7 @@ function TemplateRuns({ id: rawId }: { id: string }) {
   // the filtered set. This reads /workflow-runs (not the template-scoped
   // endpoint) so a viewer who reaches the runs through a shared repository
   // still sees them.
-  const { data, error, isError, refetch, isLoading } = useAllWorkflowRuns({
+  const { data, error, isError, isFetching, refetch, isLoading } = useAllWorkflowRuns({
     limit: PAGE_SIZE,
     offset,
     status: isRunStatus(statusFilter) ? statusFilter : undefined,
@@ -119,6 +119,7 @@ function TemplateRuns({ id: rawId }: { id: string }) {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="runs"
         loadingMessage="loading runs…"

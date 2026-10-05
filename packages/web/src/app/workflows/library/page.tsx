@@ -380,6 +380,7 @@ export default function TemplatesPage() {
     data: templates,
     isLoading,
     isError,
+    isFetching,
     refetch,
     error: loadError,
   } = useWorkflowTemplates(selectedTeamId);
@@ -472,6 +473,7 @@ export default function TemplatesPage() {
         <QueryBoundary
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="workflows"
           onRetry={() => void refetch()}

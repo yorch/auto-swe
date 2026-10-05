@@ -160,6 +160,7 @@ export default function StudioGithubInstallationsPage() {
     data: installations,
     isLoading,
     isError,
+    isFetching,
     refetch,
     error: loadError,
   } = useGithubInstallations();
@@ -188,6 +189,7 @@ export default function StudioGithubInstallationsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="GitHub installations"
         onRetry={() => void refetch()}

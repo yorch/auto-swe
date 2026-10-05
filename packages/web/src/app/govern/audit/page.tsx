@@ -31,7 +31,7 @@ const ACTION_OPTIONS = [
 export default function GovernAuditPage() {
   const [filters, setFilters] = useState<AuditLogFilters>({});
   const [offset, setOffset] = useState(0);
-  const { data, isLoading, isError, refetch, error } = useAuditLog({
+  const { data, isLoading, isError, isFetching, refetch, error } = useAuditLog({
     ...filters,
     limit: LIMIT,
     offset,
@@ -128,6 +128,7 @@ export default function GovernAuditPage() {
           <QueryBoundary
             error={error}
             isError={isError}
+            isFetching={isFetching}
             isLoading={isLoading}
             label="audit log"
             loadingMessage="loading audit log…"

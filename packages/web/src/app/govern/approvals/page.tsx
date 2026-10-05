@@ -83,6 +83,7 @@ export default function GovernApprovalsPage() {
         <QueryBoundary
           error={error}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="inbox"
           onRetry={() => void refetch()}

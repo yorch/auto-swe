@@ -31,7 +31,14 @@ interface SlackTabProps {
 }
 
 export function SlackTab({ installedTeamId }: SlackTabProps) {
-  const { data: resp, error: loadError, isError, refetch, isLoading } = useSlackConfig();
+  const {
+    data: resp,
+    error: loadError,
+    isError,
+    isFetching,
+    refetch,
+    isLoading,
+  } = useSlackConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateSlackConfig();
@@ -82,6 +89,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="Slack config"
         onRetry={() => void refetch()}
@@ -188,6 +196,7 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
     data: workspaces,
     error: workspacesError,
     isError: workspacesIsError,
+    isFetching: workspacesIsFetching,
     isLoading,
     refetch,
   } = useSlackWorkspaces();
@@ -220,6 +229,7 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
         <QueryBoundary
           error={workspacesError}
           isError
+          isFetching={workspacesIsFetching}
           isLoading={false}
           label="workspaces"
           onRetry={() => void refetch()}

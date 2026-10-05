@@ -24,6 +24,7 @@ export function NewRequestModal({
     data: templates,
     error,
     isError,
+    isFetching,
     refetch,
     isLoading,
   } = useWorkflowTemplates(selectedTeamId);
@@ -54,6 +55,7 @@ export function NewRequestModal({
         <QueryBoundary
           error={error}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="templates"
           loadingMessage="loading templates…"

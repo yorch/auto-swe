@@ -15,7 +15,14 @@ import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
 
 export default function StudioBundlesPage() {
-  const { data: bundles, isLoading, isError, refetch, error: loadError } = useInstalledBundles();
+  const {
+    data: bundles,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useInstalledBundles();
   const installFromUrl = useInstallBundleFromUrl();
   const exportBundle = useExportBundle();
 
@@ -131,6 +138,7 @@ export default function StudioBundlesPage() {
         <QueryBoundary
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="bundles"
           onRetry={() => void refetch()}

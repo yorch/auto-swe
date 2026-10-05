@@ -97,6 +97,7 @@ export function GitHubHostSecretsCard() {
     data: secrets,
     error: loadError,
     isError,
+    isFetching,
     refetch,
     isLoading,
   } = useGithubWebhookSecrets();
@@ -118,6 +119,7 @@ export function GitHubHostSecretsCard() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="Host webhook secrets"
         onRetry={() => void refetch()}

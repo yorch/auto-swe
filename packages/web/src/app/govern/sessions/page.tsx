@@ -12,7 +12,14 @@ import { useAdminRevokeSession, useAdminSessions } from '@/hooks/useAdmin';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 export default function GovernSessionsPage() {
-  const { data: sessions, isLoading, isError, refetch, error: loadError } = useAdminSessions();
+  const {
+    data: sessions,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useAdminSessions();
   const revoke = useAdminRevokeSession();
   const [revokeTarget, setRevokeTarget] = useState<{ email: string; id: string } | null>(null);
 
@@ -21,6 +28,7 @@ export default function GovernSessionsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="sessions"
         loadingMessage="loading sessions…"

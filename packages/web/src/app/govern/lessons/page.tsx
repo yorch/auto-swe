@@ -75,6 +75,7 @@ export default function GovernLessonsPage() {
     data: stats,
     isLoading: statsLoading,
     isError: statsIsError,
+    isFetching: statsIsFetching,
     error: statsError,
     refetch: refetchStats,
   } = useAdminLessonStats();
@@ -82,6 +83,7 @@ export default function GovernLessonsPage() {
     data: lessons,
     isLoading: lessonsLoading,
     isError: lessonsIsError,
+    isFetching: lessonsIsFetching,
     error: lessonsError,
     refetch: refetchLessons,
   } = useLessons(false, { limit: 20 });
@@ -168,6 +170,7 @@ export default function GovernLessonsPage() {
         <QueryBoundary
           error={statsError}
           isError={statsIsError}
+          isFetching={statsIsFetching}
           isLoading={statsLoading}
           label="lesson stats"
           onRetry={() => void refetchStats()}
@@ -206,6 +209,7 @@ export default function GovernLessonsPage() {
         <QueryBoundary
           error={lessonsError}
           isError={lessonsIsError}
+          isFetching={lessonsIsFetching}
           isLoading={lessonsLoading}
           label="lessons"
           onRetry={() => void refetchLessons()}

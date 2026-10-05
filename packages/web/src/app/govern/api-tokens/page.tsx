@@ -28,7 +28,14 @@ function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
 }
 
 export default function GovernAccessTokensPage() {
-  const { data: tokens, isLoading, isError, refetch, error: loadError } = useAdminTokens();
+  const {
+    data: tokens,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useAdminTokens();
   const revokeToken = useAdminRevokeToken();
   const pruneAudit = useAdminPruneShellAudit(90);
   const [pruneResult, setPruneResult] = useState<{ deleted: number } | null>(null);
@@ -65,6 +72,7 @@ export default function GovernAccessTokensPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="tokens"
         loadingMessage="loading tokens…"

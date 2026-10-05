@@ -64,6 +64,7 @@ export function AuditLogTable<T extends AuditLogEntry>({
   entries,
   error,
   isError,
+  isFetching,
   isLoading,
   onRetry,
   showEntityId = false,
@@ -75,6 +76,7 @@ export function AuditLogTable<T extends AuditLogEntry>({
   entries: T[] | undefined;
   error?: unknown;
   isError?: boolean;
+  isFetching?: boolean;
   isLoading: boolean;
   /** Re-runs the failed query; shows a Retry button on the error alert. */
   onRetry?: () => void;
@@ -87,6 +89,7 @@ export function AuditLogTable<T extends AuditLogEntry>({
     <QueryBoundary
       error={error}
       isError={isError}
+      isFetching={isFetching}
       isLoading={isLoading}
       label="audit log"
       onRetry={onRetry}

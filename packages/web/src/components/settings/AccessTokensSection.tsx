@@ -26,7 +26,14 @@ import { formatRelativeTime } from '@/lib/utils';
  * token" action belongs in the section header, so the section owns it.
  */
 export function AccessTokensSection({ number }: { number?: string }) {
-  const { data: tokens, error: loadError, isError, refetch, isLoading } = usePersonalAccessTokens();
+  const {
+    data: tokens,
+    error: loadError,
+    isError,
+    isFetching,
+    refetch,
+    isLoading,
+  } = usePersonalAccessTokens();
   const create = useCreatePat();
   const revoke = useRevokePat();
 
@@ -72,6 +79,7 @@ export function AccessTokensSection({ number }: { number?: string }) {
           compact
           error={loadError}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="tokens"
           onRetry={() => void refetch()}

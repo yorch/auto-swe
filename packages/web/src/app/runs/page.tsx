@@ -26,7 +26,7 @@ function RunsList() {
   const includeChannel = params.get('channel') === '1';
   const offset = parseOffset(params.get('offset'));
   const { data: templates = [] } = useWorkflowTemplates();
-  const { data, error, isError, isLoading, refetch } = useAllWorkflowRuns({
+  const { data, error, isError, isFetching, isLoading, refetch } = useAllWorkflowRuns({
     includeChannel,
     limit: PAGE_SIZE,
     offset,
@@ -75,6 +75,7 @@ function RunsList() {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="runs"
         onRetry={() => void refetch()}

@@ -161,6 +161,7 @@ export default function GovernBaselinesPage() {
     data: orgs,
     isLoading: orgsLoading,
     isError: orgsIsError,
+    isFetching: orgsIsFetching,
     refetch: refetchOrgs,
     error: orgsError,
   } = useUserOrgs();
@@ -168,6 +169,7 @@ export default function GovernBaselinesPage() {
     data: baselines,
     isLoading: baselinesLoading,
     isError: baselinesIsError,
+    isFetching: baselinesIsFetching,
     refetch,
     error: baselinesError,
   } = useHumanErrorBaselines(selectedOrgId === 'all' ? undefined : selectedOrgId);
@@ -204,6 +206,7 @@ export default function GovernBaselinesPage() {
       <QueryBoundary
         error={orgsIsError ? orgsError : baselinesError}
         isError={orgsIsError || baselinesIsError}
+        isFetching={orgsIsFetching || baselinesIsFetching}
         isLoading={orgsLoading || baselinesLoading}
         label="baselines"
         onRetry={() => void (orgsIsError ? refetchOrgs() : refetch())}

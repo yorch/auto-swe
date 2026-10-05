@@ -71,6 +71,7 @@ export default function ConnectionsPage() {
     meta,
     isLoading,
     isError,
+    isFetching,
     refetch,
     error: loadError,
   } = useRepositories({ includeInactive: canManage && showInactive });
@@ -84,6 +85,7 @@ export default function ConnectionsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="connections"
         onRetry={() => void refetch()}

@@ -41,6 +41,7 @@ export function CredentialsTab() {
     data: credentials,
     error: loadError,
     isError,
+    isFetching,
     refetch,
     isLoading,
   } = useAdminCredentials();
@@ -94,6 +95,7 @@ export function CredentialsTab() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="credentials"
         onRetry={() => void refetch()}

@@ -38,6 +38,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
     data: stats,
     error,
     isError,
+    isFetching,
     refetch,
     isLoading,
   } = useWorkflowTemplateAnalytics(id ?? '', windowDays);
@@ -87,6 +88,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={!isError && (isLoading || !stats)}
         label="analytics"
         loadingMessage="loading analytics…"

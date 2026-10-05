@@ -44,7 +44,7 @@ export default function GlobalAnalyticsPage() {
   const [sortKey, setSortKey] = useState<SortKey>('runs');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(0);
-  const { data, isLoading, isError, refetch, error } = useGlobalAnalytics(windowDays);
+  const { data, isLoading, isError, isFetching, refetch, error } = useGlobalAnalytics(windowDays);
 
   const handleSort = (k: SortKey) => {
     if (k === sortKey) {
@@ -117,6 +117,7 @@ export default function GlobalAnalyticsPage() {
       <QueryBoundary
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="analytics"
         onRetry={() => void refetch()}

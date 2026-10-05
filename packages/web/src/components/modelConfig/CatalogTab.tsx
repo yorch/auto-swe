@@ -57,6 +57,7 @@ export function CatalogTab() {
     data: entries,
     error,
     isError,
+    isFetching,
     refetch,
     isLoading,
   } = useModelCatalog({
@@ -94,6 +95,7 @@ export function CatalogTab() {
         <QueryBoundary
           error={error}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="model catalog"
           onRetry={() => void refetch()}

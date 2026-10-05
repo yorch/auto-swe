@@ -12,7 +12,7 @@ import { useHasRole } from '@/hooks/useHasRole';
 import { useTeams } from '@/hooks/useTeams';
 
 export default function TeamsPage() {
-  const { data: teams, isLoading, isError, refetch, error: loadError } = useTeams();
+  const { data: teams, isLoading, isError, isFetching, refetch, error: loadError } = useTeams();
   // POST /teams is ADMIN-only.
   const canCreate = useHasRole('ADMIN');
   const [creating, setCreating] = useState(false);
@@ -34,6 +34,7 @@ export default function TeamsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="teams"
         onRetry={() => void refetch()}

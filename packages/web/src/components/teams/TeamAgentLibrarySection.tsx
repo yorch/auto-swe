@@ -60,7 +60,14 @@ const EDIT_COPY: AgentFormCopy = {
  * library, resolved by `resolveAgent` ahead of GLOBAL for this team's runs.
  */
 export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
-  const { data: agents, error: loadError, isError, refetch, isLoading } = useTeamAgents(teamId);
+  const {
+    data: agents,
+    error: loadError,
+    isError,
+    isFetching,
+    refetch,
+    isLoading,
+  } = useTeamAgents(teamId);
   const createAgent = useCreateTeamAgent(teamId);
   const updateAgent = useUpdateTeamAgent(teamId);
   const deleteAgent = useDeleteTeamAgent(teamId);
@@ -168,6 +175,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="team agents"
         onRetry={() => void refetch()}

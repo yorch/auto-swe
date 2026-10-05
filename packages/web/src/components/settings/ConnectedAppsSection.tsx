@@ -23,7 +23,7 @@ function hostsOf(grant: McpGrant): string {
  * connected, since there is then nothing to show or to do.
  */
 export function ConnectedAppsSection({ number }: { number?: string }) {
-  const { data, error, isError, refetch, isLoading } = useMcpGrants();
+  const { data, error, isError, isFetching, refetch, isLoading } = useMcpGrants();
   const revoke = useRevokeMcpGrant();
   const [target, setTarget] = useState<McpGrant | null>(null);
 
@@ -44,6 +44,7 @@ export function ConnectedAppsSection({ number }: { number?: string }) {
           compact
           error={error}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="apps"
           onRetry={() => void refetch()}

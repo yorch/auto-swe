@@ -60,7 +60,7 @@ function TeamNotFound() {
 export default function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: team, error, isError, refetch, isLoading } = useTeam(id ?? '');
+  const { data: team, error, isError, isFetching, refetch, isLoading } = useTeam(id ?? '');
   const updateMember = useUpdateTeamMember(id ?? '');
   const removeMember = useRemoveTeamMember(id ?? '');
   const platformRole = useAuthStore((s) => s.user?.role);
@@ -105,6 +105,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         <QueryBoundary
           error={error}
           isError={isError}
+          isFetching={isFetching}
           isLoading={isLoading}
           label="team"
           onRetry={() => void refetch()}
