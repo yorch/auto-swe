@@ -54,7 +54,7 @@ const configs = {
       enabled: true,
       maxPages: 20,
       provider: 'confluence',
-      spaces: [],
+      spaces: [] as string[],
     },
     path: '/api/v1/platform/config/knowledge-base',
     tab: <KnowledgeBaseTab />,
