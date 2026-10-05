@@ -406,8 +406,13 @@ hidden template's own link is not shown.
   `workspace.agentRunAllowWorkflowChanges`, and a refused run publishes nothing, including its
   permitted files.
 - **No TDD loop, lesson retrieval, CI wait or fix loop.** An agent run opens (at most) a draft PR and
-  stops; it does not wait for CI or iterate on review. The PR is not recorded as a tracked
-  `PullRequest`, so CI webhooks do not signal the run.
+  stops; it does not wait for CI or iterate on review. The draft PR is tracked as a
+  `PullRequest` row on the run's own ledger row (see [work-views.md](./work-views.md)), so it appears
+  on `/pull-requests` and webhooks record its CI, merge, close and edits. The run has already ended by
+  then, so those events are recorded without signalling it. A failure to write the row does not fail
+  the run; it appears as a `pr.record_failed` event on the run. The run's `agent-<id>` ticket id is
+  generated, so no tracker sync is attempted for it; the Slack merge note and the merge evaluation row
+  still run.
 - **One repository per run,** and the repository must be a `git_repo` connection.
 - **A dead run can still hold a slot briefly.** Reconciliation (section 7) frees a slot only for a
   workflow Temporal reports finished or missing, at most 8 rows per admission call (a stale row behind

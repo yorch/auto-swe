@@ -11,8 +11,10 @@ how visibility is applied to every row and every aggregate.
 
 Every pull request the platform opens has one `PullRequest` row, created when the host accepts the
 PR: by the `createOrUpdatePullRequest` activity for a workflow's PR step, and by `runAgentTask` for
-the draft PR of an Agent Run with `deliver=draft_pr`. Both link the row to the execution's own
-ledger row. The row records:
+the draft PR of an Agent Run with `deliver=draft_pr`. The row links to a ledger row
+(`ActiveWorkflow`): the workflow step prefers the row of its own execution and falls back to any
+ledger row of the same request when the execution keeps none; the Agent Run step requires its own
+row (it refuses to run without one) and links that. The row records:
 
 | Column | Meaning |
 |---|---|
@@ -30,9 +32,11 @@ request has its own ledger row, is not stopped by that close, and opens a new PR
 history.
 
 An Agent Run is a new workflow each time, so the close guard does not apply to it: it opens one PR
-per run, on its own branch. Its row is refreshed rather than duplicated if the same (repository, PR
-number) is recorded again, and a failure to write the row is logged without failing the run, because
-the branch is already pushed and the PR open.
+per run, on its own branch, and inserts one row for it. The row is only ever inserted, never
+updated: the host has just opened a new PR, so an existing row with the same (repository, number)
+belongs to a different one. A failure to write it, including the unique index on (repository, number)
+refusing a collision, is logged and recorded on the run as a `pr.record_failed` activity event, and
+does not fail the run, because the branch is already pushed and the PR open.
 
 ### 1.1 Webhook events
 
@@ -126,7 +130,12 @@ runs, cost and pull requests leave them out too:
 - requests whose ticket id the platform generated (`RunInput.ticketIsSynthetic`): a template launch
   that named no ticket and filed the request's own id, a PRD run (`PRD-<id>`), a scheduled work
   request (`<prefix>-SCHED-<id>`), and a PRD story given a generated id because the tracker did not
-  assign one. A tracker- or user-supplied id is never flagged.
+  assign one. A tracker- or user-supplied id is never flagged. Agent runs are flagged as well as
+  recognised by their template.
+
+An id the platform generated names no tracker issue, so none of the tracker syncs (PR opened,
+workflow started, CI verdict, merge, workflow finished) is attempted for it. The Slack merge note and
+the merge evaluation row do not depend on the tracker and still run.
 
 **Visibility is per row.** A request is in scope when the caller requested it, when the caller can
 see one of its runs (`buildWorkflowRunVisibilityFilter`, the rule `GET /workflow-runs/requests`
@@ -191,6 +200,11 @@ http(s) address.
   is configured; they do not follow later edits in the tracker.
 - `meta.total` for tickets is the number of groups, which the database counts by listing them; a
   deployment with a very large number of distinct tickets pays for that on each read.
+- A repository's PR number is unique per connection row, but the webhook lookups match a repository
+  by owner and name (and host), which can cover more than one connection row. The lookups order by
+  `openedAt` then `id`, newest first, so the newest row wins. If an older row still holds a PR number
+  after a repository was repointed or recreated, a new Agent Run PR with that number is not
+  tracked (the insert is refused and traced), and the older row is never altered.
 - A launch that names its own ticket label is indistinguishable from a real ticket and is not
   treated as automated.
 - A requester who reaches none of a request's repositories sees the ticket and its runs but not its
