@@ -34,12 +34,16 @@ const MAX_TOOL_NAMES = 12;
 /** A stored per-connection timeout is admin-chosen; a probe never waits longer than this. */
 const MAX_TIMEOUT_MS = 60_000;
 const PROTOCOL_VERSION = '2025-03-26';
+/** How long a legacy SSE server may take to announce its POST endpoint before it is written off. */
+const SSE_ENDPOINT_WAIT_MS = 5_000;
 
 class ProbeError extends Error {
   constructor(
     message: string,
     /** True when trying the other transport cannot help (auth, redirect, timeout). */
-    readonly final = false
+    readonly final = false,
+    /** True when the probe's own deadline ran out. */
+    readonly timedOut = false
   ) {
     super(message);
   }
@@ -48,7 +52,11 @@ class ProbeError extends Error {
 type Fetch = typeof fetch;
 
 const timeoutError = (timeoutMs: number) =>
-  new ProbeError(`The server did not answer within ${Math.round(timeoutMs / 1000)} seconds.`, true);
+  new ProbeError(
+    `The server did not answer within ${Math.round(timeoutMs / 1000)} seconds.`,
+    true,
+    true
+  );
 
 /**
  * Reads a body up to a size cap. For an event stream the answer to `id` may arrive while the
@@ -196,30 +204,42 @@ class SseStream {
     this.reader = reader;
   }
 
-  async next(): Promise<SseEvent> {
+  /** The next event. `until` ends the wait sooner than the probe's own deadline when given. */
+  async next(until?: AbortSignal): Promise<SseEvent> {
+    const signal = until ? AbortSignal.any([this.signal, until]) : this.signal;
     for (;;) {
       const queued = this.queue.shift();
       if (queued) {
         return queued;
       }
       let step: Awaited<ReturnType<typeof this.reader.read>>;
+      // Removed once the read settles: next() runs once per event, and a listener left on the
+      // long-lived probe signal for each would pile up for the whole stream.
+      let onAbort: (() => void) | undefined;
       try {
         step = await Promise.race([
           this.reader.read(),
           new Promise<never>((_, reject) => {
-            if (this.signal.aborted) {
-              reject(new Error('aborted'));
+            onAbort = () => reject(new Error('aborted'));
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener('abort', onAbort, { once: true });
             }
-            this.signal.addEventListener('abort', () => reject(new Error('aborted')), {
-              once: true,
-            });
           }),
         ]);
       } catch {
         if (this.signal.aborted) {
           throw timeoutError(this.timeoutMs);
         }
+        if (signal.aborted) {
+          throw new ProbeError('The server did not announce where to send requests.');
+        }
         throw new ProbeError('The connection to the server broke while reading its answer.');
+      } finally {
+        if (onAbort) {
+          signal.removeEventListener('abort', onAbort);
+        }
       }
       if (step.done) {
         throw new ProbeError('The server closed the event stream before answering.');
@@ -370,7 +390,7 @@ export async function probeMcpServer(
   };
 
   /** Legacy HTTP+SSE: GET the stream, learn the POST endpoint from its first event, then answer on it. */
-  const legacySse = async (): Promise<McpProbeResult> => {
+  const legacySse = async (state: { endpointSeen: boolean }): Promise<McpProbeResult> => {
     const res = await send(url, {
       headers: { accept: 'text/event-stream' },
       method: 'GET',
@@ -382,11 +402,13 @@ export async function probeMcpServer(
     const stream = new SseStream(res, signal, timeoutMs);
     try {
       let endpoint: string | null = null;
+      const endpointDeadline = AbortSignal.timeout(Math.min(SSE_ENDPOINT_WAIT_MS, timeoutMs));
       while (!endpoint) {
-        const ev = await stream.next();
+        const ev = await stream.next(endpointDeadline);
         if (ev.event === 'endpoint' && ev.data) {
           try {
             endpoint = new URL(ev.data, url).toString();
+            state.endpointSeen = true;
           } catch {
             throw new ProbeError('The server did not answer with a valid MCP response.');
           }
@@ -441,7 +463,7 @@ export async function probeMcpServer(
 
   if (new URL(url).pathname.endsWith('/sse')) {
     try {
-      return await legacySse();
+      return await legacySse({ endpointSeen: false });
     } catch (err) {
       return failure(err);
     }
@@ -454,10 +476,16 @@ export async function probeMcpServer(
     }
     // Streamable HTTP failed in a way another transport might fix. If it does not either, the
     // streamable error is the one reported: it is the transport the connection is expected to use.
+    // Before an endpoint is announced, an SSE failure that only says "this is not a legacy server"
+    // (a stall, a closed stream, a wrong content type) is noise about the wrong transport, so the
+    // streamable error stands. A redirect or an auth refusal on the SSE GET is still worth saying.
+    const sse = { endpointSeen: false };
     try {
-      return await legacySse();
+      return await legacySse(sse);
     } catch (sseErr) {
-      return failure(sseErr instanceof ProbeError && sseErr.final ? sseErr : err);
+      const informative =
+        sseErr instanceof ProbeError && sseErr.final && (sse.endpointSeen || !sseErr.timedOut);
+      return failure(informative ? sseErr : err);
     }
   }
 }

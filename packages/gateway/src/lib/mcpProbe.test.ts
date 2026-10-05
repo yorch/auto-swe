@@ -274,6 +274,42 @@ describe('probeMcpServer', () => {
       expect(f.mock.calls.every(([u]) => !String(u).includes('evil'))).toBe(true);
     });
 
+    it('removes each per-event abort listener once the read settles', async () => {
+      const { f } = legacyServer();
+      const add = vi.spyOn(EventTarget.prototype, 'addEventListener');
+      const remove = vi.spyOn(EventTarget.prototype, 'removeEventListener');
+      try {
+        const res = await probeMcpServer('https://mcp.test/sse', 5000, f as never);
+        expect(res.ok).toBe(true);
+        const added = add.mock.calls.filter(([type]) => type === 'abort').map(([, l]) => l);
+        const removed = remove.mock.calls.map(([, l]) => l);
+        expect(added.length).toBeGreaterThan(0);
+        for (const listener of added) {
+          expect(removed).toContain(listener);
+        }
+      } finally {
+        add.mockRestore();
+        remove.mockRestore();
+      }
+    });
+
+    it('reports the streamable error when an SSE stream never announces an endpoint', async () => {
+      const f = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        if (init?.method === 'GET') {
+          // A stream that stays open and silent.
+          return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            headers: { 'content-type': 'text/event-stream' },
+          });
+        }
+        return new Response('nope', { status: 404 });
+      });
+      const started = Date.now();
+      const res = await probeMcpServer('https://mcp.test/mcp', 20_000, f as never);
+      expect(res.error).toBe('The server answered with HTTP 404.');
+      // The silent stream was given up on after the short endpoint wait, not the whole deadline.
+      expect(Date.now() - started).toBeLessThan(8000);
+    }, 15_000);
+
     it('reports the streamable error when the legacy transport fails too', async () => {
       const f = vi.fn(async () => new Response('nope', { status: 404 }));
       const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never);
