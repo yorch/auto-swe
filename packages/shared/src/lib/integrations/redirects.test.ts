@@ -119,6 +119,7 @@ describe('redirect behaviour against local servers', () => {
       apiToken: 't',
       baseUrl: origin.url,
       email: 'a@b.com',
+      fetchImpl: fetch,
       maxRetries: 3,
     });
     const err = (await client.get('/rest/api/3/myself').catch((e: unknown) => e)) as AtlassianError;
@@ -133,7 +134,11 @@ describe('redirect behaviour against local servers', () => {
     const origin = await listen((_req, _seen, res) => {
       res.writeHead(301, { location: `${target.url}/issue` }).end();
     });
-    const provider = new GitHubIssuesProvider({ apiToken: 'secret', baseUrl: origin.url });
+    const provider = new GitHubIssuesProvider({
+      apiToken: 'secret',
+      baseUrl: origin.url,
+      fetchImpl: fetch,
+    });
     expect(await provider.fetchIssue('o/r#1')).toBeNull();
     expect(origin.seen).toHaveLength(1);
     expect(target.seen).toHaveLength(0);
@@ -148,7 +153,11 @@ describe('redirect behaviour against local servers', () => {
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ number: 1, state: 'open', title: 'T' }));
     });
-    const provider = new GitHubIssuesProvider({ apiToken: 'secret', baseUrl: origin.url });
+    const provider = new GitHubIssuesProvider({
+      apiToken: 'secret',
+      baseUrl: origin.url,
+      fetchImpl: fetch,
+    });
     const issue = await provider.fetchIssue('o/r#1');
     expect(issue?.title).toBe('T');
     expect(origin.seen.map((s) => s.url)).toEqual([
@@ -167,7 +176,11 @@ describe('redirect behaviour against local servers', () => {
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ html_url: 'u', id: 1, number: 7, title: 'T' }));
     });
-    const provider = new GitHubIssuesProvider({ apiToken: 'secret', baseUrl: origin.url });
+    const provider = new GitHubIssuesProvider({
+      apiToken: 'secret',
+      baseUrl: origin.url,
+      fetchImpl: fetch,
+    });
     const created = await provider.createIssue({
       description: 'd',
       issueType: 'Story',
@@ -183,7 +196,11 @@ describe('redirect behaviour against local servers', () => {
     const origin = await listen((_req, _seen, res) => {
       res.writeHead(301, { location: '/again' }).end();
     });
-    const provider = new GitHubIssuesProvider({ apiToken: 'secret', baseUrl: origin.url });
+    const provider = new GitHubIssuesProvider({
+      apiToken: 'secret',
+      baseUrl: origin.url,
+      fetchImpl: fetch,
+    });
     expect(await provider.fetchIssue('o/r#1')).toBeNull();
     expect(origin.seen).toHaveLength(4);
   });

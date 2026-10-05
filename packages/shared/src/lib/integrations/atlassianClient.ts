@@ -1,4 +1,5 @@
 import { SpanStatusCode, trace } from '@opentelemetry/api';
+import { createGuardedFetch } from '../guardedDispatcher.js';
 
 const tracer = trace.getTracer('@auto-swe/shared', '0.1.0');
 
@@ -8,6 +9,10 @@ export interface AtlassianClientConfig {
   apiToken: string;
   timeoutMs?: number;
   maxRetries?: number;
+  /** The connector's `allowPrivateNetwork` opt-in: waives private addresses only, at resolution too. */
+  allowPrivateNetwork?: boolean;
+  /** Replaces the guarded fetch. Tests only: the connector registry never sets it. */
+  fetchImpl?: typeof fetch;
 }
 
 export class AtlassianError extends Error {
@@ -32,10 +37,13 @@ export class AtlassianClient {
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly authHeader: string;
+  private readonly guardedFetch: typeof fetch;
 
   constructor(private readonly config: AtlassianClientConfig) {
     this.timeoutMs = config.timeoutMs ?? 5000;
     this.maxRetries = config.maxRetries ?? 3;
+    this.guardedFetch =
+      config.fetchImpl ?? createGuardedFetch({ allowPrivate: config.allowPrivateNetwork === true });
     this.authHeader = `Basic ${Buffer.from(`${config.email}:${config.apiToken}`).toString('base64')}`;
   }
 
@@ -88,7 +96,7 @@ export class AtlassianClient {
             await new Promise((r) => setTimeout(r, delayMs));
           }
           try {
-            const res = await fetch(url, {
+            const res = await this.guardedFetch(url, {
               body: body !== undefined ? JSON.stringify(body) : undefined,
               headers,
               method,

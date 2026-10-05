@@ -1,4 +1,5 @@
 import type { IssueTrackerConnectionConfig } from '@auto-swe/shared';
+import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -54,10 +55,10 @@ function requireBaseUrl(config: IssueTrackerConnectionConfig): string {
  * only the private-address refusal (`checkProbeUrl`); loopback, metadata and
  * unspecified addresses and malformed or non-http(s) URLs are always refused.
  */
-async function assertSafeJiraBaseUrl(baseUrl: string): Promise<void> {
+async function assertSafeJiraBaseUrl(baseUrl: string): Promise<{ allowPrivate: boolean }> {
   const safety = checkProbeUrl(baseUrl);
   if (safety.ok) {
-    return;
+    return { allowPrivate: false };
   }
   const admin = await resolveIssueTrackerConfig().catch(() => null);
   if (
@@ -66,7 +67,7 @@ async function assertSafeJiraBaseUrl(baseUrl: string): Promise<void> {
     sameOrigin(admin.baseUrl, baseUrl) &&
     checkProbeUrl(baseUrl, { allowPrivate: true }).ok
   ) {
-    return;
+    return { allowPrivate: true };
   }
   throw ApplicationFailure.nonRetryable(
     `jira connection baseUrl rejected by the SSRF guard: ${safety.reason}`
@@ -136,10 +137,11 @@ async function jiraFetch<T>(
 ): Promise<T> {
   const baseUrl = requireBaseUrl(connection.config);
   const email = requireEmail(connection.config);
-  await assertSafeJiraBaseUrl(baseUrl);
+  const { allowPrivate } = await assertSafeJiraBaseUrl(baseUrl);
   const url = `${baseUrl}${path}`;
   const timeoutSignal = AbortSignal.timeout(ISSUE_TRACKER_TIMEOUT_MS);
-  const response = await fetch(url, {
+  // The text check above vets the URL; this one vets what it resolves to and pins the connection.
+  const response = await createGuardedFetch({ allowPrivate })(url, {
     ...init,
     headers: {
       Authorization: `Basic ${Buffer.from(`${email}:${connection.apiToken}`).toString('base64')}`,

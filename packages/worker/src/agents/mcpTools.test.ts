@@ -298,12 +298,12 @@ describe('bearer token', () => {
   const TOKEN = 'sk-mcp-very-secret-token';
   const ref = 'https://mcp.example.com/mcp';
 
-  it('passes no fetch or host policy to the client when the connection has no token', async () => {
+  it('passes the guarded fetch but no host policy when the connection has no token', async () => {
     listToolsetsWithErrors.mockResolvedValue({ errors: {}, toolsets: { mcp: {} } });
     await loadMcpTools(ref);
     const server = (constructorArgs[0] as { servers: { mcp: Record<string, unknown> } }).servers
       .mcp;
-    expect(server.fetch).toBeUndefined();
+    expect(typeof server.fetch).toBe('function');
     expect(server.allowedHosts).toBeUndefined();
   });
 

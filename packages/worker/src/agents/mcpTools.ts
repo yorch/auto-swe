@@ -19,6 +19,8 @@
  *   the gateway enum does not yet accept `'mcp'`.
  */
 import { randomUUID } from 'node:crypto';
+import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
+import { fetchGuarded } from '@auto-swe/shared/lib/guardedFetch';
 import { applyMcpHeaders, type McpHeader } from '@auto-swe/shared/lib/mcpHeaders';
 import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { MCP_TOOL_KEY } from '@auto-swe/shared/workflow';
@@ -143,6 +145,20 @@ export function bearerFetch(
     }
     return res;
   };
+}
+
+/**
+ * The fetch for a connection that carries no credential. Every request resolves, checks and pins
+ * its address; redirects, which the client's stock transport would follow blindly, are followed by
+ * hand so each hop passes the same text guard first.
+ */
+export function guardedMcpFetch(allowPrivate: boolean): McpFetch {
+  const pinned = createGuardedFetch({ allowPrivate });
+  return (input, init) =>
+    fetchGuarded(typeof input === 'string' ? input : input.toString(), init ?? {}, {
+      check: (hop) => checkProbeUrl(hop.toString(), { allowPrivate }).ok,
+      fetchImpl: pinned,
+    });
 }
 
 /** Removes a secret from text that may have been built from a failing request. */
@@ -276,15 +292,21 @@ export async function loadMcpTools(
         [SERVER_NAME]: {
           timeout: callTimeoutMs,
           url,
-          // A connection with no credential keeps the client's stock transport behaviour. With a
-          // token or custom headers, one fetch carries them on both transports and `allowedHosts` pins the client to the
-          // connection's host as a second line behind the origin check in `bearerFetch`.
+          // One fetch serves both transports. It resolves, checks and pins every connection (the
+          // text check on the ref is not enough: a public name can resolve to an internal address).
+          // With a token or custom headers it also carries them, and `allowedHosts` pins the client
+          // to the connection's host as a second line behind the origin check in `bearerFetch`.
           ...(options?.bearerToken || options?.headers?.length
             ? {
                 allowedHosts: [url.host],
-                fetch: bearerFetch(url, options.bearerToken, fetch, options.headers),
+                fetch: bearerFetch(
+                  url,
+                  options.bearerToken,
+                  createGuardedFetch({ allowPrivate: options.allowPrivateNetwork === true }),
+                  options.headers
+                ),
               }
-            : {}),
+            : { fetch: guardedMcpFetch(options?.allowPrivateNetwork === true) }),
         },
       },
       timeout: callTimeoutMs,

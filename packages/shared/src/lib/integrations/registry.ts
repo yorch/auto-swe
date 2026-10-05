@@ -94,6 +94,7 @@ export function createIssueTrackerProvider(
         return null;
       }
       const client = new AtlassianClient({
+        allowPrivateNetwork: config.allowPrivateNetwork,
         apiToken: config.apiToken,
         baseUrl: config.baseUrl,
         email: config.email,
@@ -119,6 +120,7 @@ export function createIssueTrackerProvider(
         return null;
       }
       return new GitHubIssuesProvider({
+        allowPrivateNetwork: config.allowPrivateNetwork,
         apiToken: config.apiToken,
         baseUrl: config.baseUrl ?? undefined,
         log: opts?.log,
@@ -145,6 +147,7 @@ export function createKnowledgeBaseProvider(
         return null;
       }
       const client = new AtlassianClient({
+        allowPrivateNetwork: config.allowPrivateNetwork,
         apiToken: config.apiToken,
         baseUrl: config.baseUrl,
         email: config.email,
