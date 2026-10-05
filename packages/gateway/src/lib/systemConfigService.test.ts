@@ -49,6 +49,10 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 
 import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import {
+  KNOWLEDGE_BASE_FAILURE_MESSAGES,
+  KnowledgeBaseConnectionError,
+} from '@auto-swe/shared/lib/integrations/knowledgeBase';
+import {
   resolveFigmaConfig,
   resolveGitHubConfig,
   resolveIssueTrackerConfig,
@@ -1241,7 +1245,7 @@ describe('systemConfigService', () => {
         spaces: ['ENG'],
       } as never);
       mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
-        searchPages: vi.fn().mockResolvedValueOnce([]),
+        testConnection: vi.fn().mockResolvedValueOnce(undefined),
       } as never);
       const result = await testKnowledgeBaseConnection();
       expect(result.ok).toBe(true);
@@ -1257,11 +1261,38 @@ describe('systemConfigService', () => {
         spaces: [],
       } as never);
       mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
-        searchPages: vi.fn().mockRejectedValueOnce(new Error('403 forbidden')),
+        testConnection: vi
+          .fn()
+          .mockRejectedValueOnce(new KnowledgeBaseConnectionError('credentials')),
       } as never);
       const result = await testKnowledgeBaseConnection();
       expect(result.ok).toBe(false);
-      expect(result.detail).toBe('Connection failed: 403 forbidden');
+      expect(result.detail).toBe(
+        `Connection failed: ${KNOWLEDGE_BASE_FAILURE_MESSAGES.credentials}`
+      );
+    });
+
+    it('never repeats text from an unexpected provider error', async () => {
+      resolveKnowledgeBaseConfigMock.mockResolvedValueOnce({
+        apiToken: 'tok',
+        baseUrl: 'https://kb.example.com',
+        enabled: true,
+        provider: 'notion',
+        spaces: [],
+      } as never);
+      mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
+        testConnection: vi.fn().mockRejectedValueOnce(new Error('secret remote body')),
+      } as never);
+      const result = await testKnowledgeBaseConnection();
+      expect(result.ok).toBe(false);
+      expect(result.detail).not.toContain('secret remote body');
+    });
+
+    it('says to enter the token (not "again") when nothing is stored', async () => {
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce({ provider: null } as never);
+      const result = await testIssueTrackerConnection('X-1', { provider: 'jira' });
+      expect(result.ok).toBe(false);
+      expect(result.detail).toBe('Enter the API token to test this provider and URL.');
     });
   });
 
@@ -1375,7 +1406,7 @@ describe('systemConfigService', () => {
         spaces: [],
       } as never);
       mockCreateKnowledgeBaseProvider.mockReturnValueOnce({
-        searchPages: vi.fn().mockResolvedValueOnce([]),
+        testConnection: vi.fn().mockResolvedValueOnce(undefined),
       } as never);
       const result = await testKnowledgeBaseConnection({
         apiToken: 'typed',

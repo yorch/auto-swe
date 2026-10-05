@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
+import { KnowledgeBaseConnectionError } from '@auto-swe/shared/lib/integrations/knowledgeBase';
 import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
 import { checkConnectorBaseUrl, checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import {
@@ -742,7 +743,9 @@ export async function testIssueTrackerConnection(
     (config.provider !== 'linear' && (config.baseUrl ?? null) !== (stored.baseUrl ?? null));
   if (!draft.apiToken && hostChanged) {
     return {
-      detail: `Enter the API token again to test a different provider or base URL.`,
+      detail: stored.apiToken
+        ? `Enter the API token again to test a different provider or base URL.`
+        : `Enter the API token to test this provider and URL.`,
       ok: false,
     };
   }
@@ -978,7 +981,9 @@ export async function testKnowledgeBaseConnection(
     config.provider !== stored.provider || (config.baseUrl ?? null) !== (stored.baseUrl ?? null);
   if (!draft.apiToken && hostChanged) {
     return {
-      detail: `Enter the API token again to test a different provider or base URL.`,
+      detail: stored.apiToken
+        ? `Enter the API token again to test a different provider or base URL.`
+        : `Enter the API token to test this provider and URL.`,
       ok: false,
     };
   }
@@ -1000,11 +1005,16 @@ export async function testKnowledgeBaseConnection(
         ok: false,
       };
     }
-    await kbProvider.searchPages('', config.spaces?.slice(0, 1) ?? []);
+    await kbProvider.testConnection(config.spaces?.slice(0, 1) ?? []);
     return { detail: `${config.provider} connection successful.`, ok: true };
   } catch (err) {
+    // Fixed strings by failure class, never text from the remote service.
     return {
-      detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,
+      detail: `Connection failed: ${
+        err instanceof KnowledgeBaseConnectionError
+          ? err.message
+          : 'The connection test could not complete.'
+      }`,
       ok: false,
     };
   }

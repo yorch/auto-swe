@@ -451,3 +451,33 @@ describe('NotionKnowledgeBaseProvider.updatePageWithPrLink', () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe('NotionKnowledgeBaseProvider — testConnection', () => {
+  it('resolves when the token is accepted', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({})));
+    await expect(
+      new NotionKnowledgeBaseProvider(config).testConnection([])
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    [401, 'credentials'],
+    [403, 'credentials'],
+    [404, 'not_found'],
+    [500, 'failed'],
+  ])('maps a %i response to %s without repeating the body', async (status, kind) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ message: 'remote text' }, false, status))
+    );
+    const err = await new NotionKnowledgeBaseProvider(config).testConnection([]).catch((e) => e);
+    expect(err.kind).toBe(kind);
+    expect(err.message).not.toContain('remote text');
+  });
+
+  it('reports unreachable when the request never gets a response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    const err = await new NotionKnowledgeBaseProvider(config).testConnection([]).catch((e) => e);
+    expect(err.kind).toBe('unreachable');
+  });
+});

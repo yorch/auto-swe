@@ -1,7 +1,11 @@
 import { adfToPlainText } from '../adf.js';
 import type { AtlassianClient } from '../atlassianClient.js';
 import { AtlassianError } from '../atlassianClient.js';
-import type { KnowledgeBaseProvider } from '../knowledgeBase.js';
+import {
+  classifyConnectionStatus,
+  KnowledgeBaseConnectionError,
+  type KnowledgeBaseProvider,
+} from '../knowledgeBase.js';
 import type { CreatedPage, KnowledgePage, PageCreateFields, SearchOptions } from '../types.js';
 
 interface ConfluenceProviderConfig {
@@ -51,6 +55,16 @@ export class ConfluenceProvider implements KnowledgeBaseProvider {
 
   private baseUrl(): string {
     return this.client.baseUrl;
+  }
+
+  async testConnection(_spaces: string[]): Promise<void> {
+    try {
+      await this.client.get('/wiki/rest/api/space?limit=1');
+    } catch (err) {
+      throw new KnowledgeBaseConnectionError(
+        classifyConnectionStatus(err instanceof AtlassianError ? err.status : undefined)
+      );
+    }
   }
 
   async fetchPage(id: string, _opts?: SearchOptions): Promise<KnowledgePage | null> {

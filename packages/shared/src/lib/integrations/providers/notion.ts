@@ -1,4 +1,8 @@
-import type { KnowledgeBaseProvider } from '../knowledgeBase.js';
+import {
+  classifyConnectionStatus,
+  KnowledgeBaseConnectionError,
+  type KnowledgeBaseProvider,
+} from '../knowledgeBase.js';
 import type { ResolvedKnowledgeBaseConfig } from '../registry.js';
 import type { CreatedPage, KnowledgePage, PageCreateFields, SearchOptions } from '../types.js';
 
@@ -111,9 +115,22 @@ export class NotionKnowledgeBaseProvider implements KnowledgeBaseProvider {
       if (res.status === 404) {
         throw Object.assign(new Error('Not found'), { status: 404 });
       }
-      throw new Error(`Notion API error ${res.status}: ${await res.text()}`);
+      throw Object.assign(new Error(`Notion API error ${res.status}: ${await res.text()}`), {
+        status: res.status,
+      });
     }
     return res.json() as Promise<T>;
+  }
+
+  async testConnection(_spaces: string[]): Promise<void> {
+    try {
+      await this.request('GET', '/users/me');
+    } catch (err) {
+      const status = (err as { status?: unknown } | null)?.status;
+      throw new KnowledgeBaseConnectionError(
+        classifyConnectionStatus(typeof status === 'number' ? status : undefined)
+      );
+    }
   }
 
   async fetchPage(pageId: string, _opts?: SearchOptions): Promise<KnowledgePage | null> {
