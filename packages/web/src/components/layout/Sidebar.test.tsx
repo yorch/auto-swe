@@ -23,9 +23,12 @@ describe('Sidebar govern sections', () => {
   it('starts every section open, so the pages inside are discoverable', () => {
     resetNavigation('', '/');
     render(<Sidebar onClose={() => undefined} open />);
-    const toggles = screen.getAllByRole('button', { expanded: true });
-    expect(toggles.length).toBeGreaterThan(0);
-    expect(screen.queryAllByRole('button', { expanded: false })).toHaveLength(0);
+    // The user menu trigger is also a disclosure; only the section toggles control a nav panel.
+    const sections = screen
+      .getAllByRole('button')
+      .filter((b) => b.getAttribute('aria-controls')?.startsWith('nav-section-'));
+    expect(sections.length).toBeGreaterThan(0);
+    expect(sections.every((b) => b.getAttribute('aria-expanded') === 'true')).toBe(true);
   });
 
   it('collapses on click, naming the panel it controls', () => {

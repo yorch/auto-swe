@@ -61,11 +61,11 @@ describe('SlackChannelDetailPage tabs', () => {
     const draft = (await screen.findByLabelText('Draft')) as HTMLInputElement;
     fireEvent.change(draft, { target: { value: 'half-typed' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Memory' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Memory' }));
     expect(nav.replace.at(-1)).toContain('tab=memory');
     expect(await screen.findByText('memory tab')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     expect((screen.getByLabelText('Draft') as HTMLInputElement).value).toBe('half-typed');
   });
 

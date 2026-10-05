@@ -275,6 +275,7 @@ describe('GovernEvalsPage', () => {
     expect(healthChart).toHaveBeenLastCalledWith({
       datasets: [expect.objectContaining({ slug: 'bench', staleRate: 0.25 })],
       maxStaleRate: 0.1,
+      title: 'Share of golden cases quarantined as stale, by dataset',
     });
   });
 

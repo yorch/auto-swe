@@ -120,7 +120,7 @@ describe('GovernAuditPage', () => {
     render(withQuery(<GovernAuditPage />));
     await screen.findByText('alice@example.com');
 
-    expect(screen.getByText('Change')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Change' })).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: /Show details/ })[0] as HTMLElement);
     expect(screen.getByText('Before')).toBeTruthy();
     expect(screen.getByText(/"role": "ENGINEER"/)).toBeTruthy();
