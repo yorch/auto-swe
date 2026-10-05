@@ -2,7 +2,6 @@
 
 import { KNOWN_RISK_CLASSES } from '@auto-swe/shared/lib/autonomyPolicy';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
@@ -14,6 +13,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAutonomyDecisions, useAutonomyPolicies } from '@/hooks/useAutonomyPolicies';
+import { useUrlParams } from '@/hooks/useUrlParams';
 import { useUsers } from '@/hooks/useUsers';
 import { eventLabel, KNOWN_AUTONOMY_EVENTS, riskClassLabel } from '@/lib/autonomyEvents';
 import { formatDate } from '@/lib/utils';
@@ -33,8 +33,7 @@ const EMPTY: Filters = { actorId: '', event: '', policyName: '', riskClass: '', 
 const FILTER_KEYS = ['policyName', 'riskClass', 'event', 'actorId', 'runId'] as const;
 
 export default function AutonomyDecisionsPage() {
-  const router = useRouter();
-  const params = useSearchParams();
+  const { params, update } = useUrlParams();
   // Filters and page live in the URL, so a filtered view can be shared and survives a reload.
   const filters: Filters = {
     actorId: params.get('actorId') ?? '',
@@ -55,17 +54,8 @@ export default function AutonomyDecisionsPage() {
   const emailById = new Map((users ?? []).map((u) => [u.id, u.email]));
 
   function navigate(next: Partial<Filters> & { offset?: number }) {
-    const merged = { ...filters, ...next };
-    const qs = new URLSearchParams();
-    for (const key of FILTER_KEYS) {
-      if (merged[key]) {
-        qs.set(key, merged[key]);
-      }
-    }
-    if (next.offset) {
-      qs.set('offset', String(next.offset));
-    }
-    router.replace(qs.size ? `/govern/policies/decisions?${qs}` : '/govern/policies/decisions');
+    const { offset: nextOffset, ...changed } = next;
+    update({ ...changed, offset: nextOffset ? String(nextOffset) : null });
   }
 
   // A filter change goes back to the first page.

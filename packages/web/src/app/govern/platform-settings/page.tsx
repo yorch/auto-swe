@@ -1,6 +1,5 @@
 'use client';
 
-import { useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { SettingRow, type SettingRowStatus } from '@/components/settings/SettingRow';
 import { Alert } from '@/components/ui/Alert';
@@ -20,6 +19,7 @@ import {
 import { useHasRole } from '@/hooks/useHasRole';
 import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
+import { useUrlParams } from '@/hooks/useUrlParams';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
 
@@ -70,8 +70,7 @@ const SCOPE_ID_PARAM = {
 } as const;
 
 export default function GovernSettingsPage() {
-  const router = useRouter();
-  const params = useSearchParams();
+  const { params, update } = useUrlParams();
   const isAdmin = useHasRole('ADMIN');
   // The viewed scope lives in the URL so a view can be linked to and survives a reload.
   const rawScope = params.get('scope');
@@ -87,15 +86,13 @@ export default function GovernSettingsPage() {
   const channels = useSlackChannels();
 
   const showScope = (nextScope: ViewScope, id = '') => {
-    const qs = new URLSearchParams();
-    if (nextScope !== 'GLOBAL') {
-      qs.set('scope', nextScope);
-      if (id) {
-        qs.set(SCOPE_ID_PARAM[nextScope], id);
-      }
-    }
     setRowStatus({});
-    router.replace(qs.size ? `/govern/platform-settings?${qs}` : '/govern/platform-settings');
+    update({
+      channelId: nextScope === 'CHANNEL' ? id : null,
+      orgId: nextScope === 'ORGANIZATION' ? id : null,
+      scope: nextScope === 'GLOBAL' ? null : nextScope,
+      teamId: nextScope === 'TEAM' ? id : null,
+    });
   };
 
   // A narrower view needs its team / organization / channel chosen before it means

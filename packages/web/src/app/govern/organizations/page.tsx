@@ -1,6 +1,5 @@
 'use client';
 
-import { useRouter, useSearchParams } from 'next/navigation';
 import { OrgBudgetTable } from '@/components/govern/OrgBudgetTable';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -10,13 +9,13 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import { useHasRole } from '@/hooks/useHasRole';
+import { useUrlParams } from '@/hooks/useUrlParams';
 import { navLabel } from '@/lib/navigation';
 
 export default function GovernOrganizationsPage() {
   const { data: orgs, isLoading, isError, error: loadError } = useOrganizationDirectory();
   const isAdmin = useHasRole('ADMIN');
-  const router = useRouter();
-  const params = useSearchParams();
+  const { params, update } = useUrlParams();
   // The filter lives in the URL so the old Budget alerts link (`?alerting=1`) lands on it.
   const alertingOnly = params.get('alerting') === '1';
 
@@ -50,11 +49,7 @@ export default function GovernOrganizationsPage() {
             <Checkbox
               checked={alertingOnly}
               label="Alerting only"
-              onChange={(e) =>
-                router.replace(
-                  e.target.checked ? '/govern/organizations?alerting=1' : '/govern/organizations'
-                )
-              }
+              onChange={(e) => update({ alerting: e.target.checked ? '1' : null })}
             />
           </CardHeader>
           {rows.length === 0 ? (
