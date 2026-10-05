@@ -236,6 +236,22 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 - Interpreted as an **http(s) URL** of a streamable-HTTP (or legacy SSE) MCP server, e.g. `https://mcp.example.com/mcp`.
 - Anything that is not `http://` or `https://` is rejected (`mcp.invalid_ref` activity event). **stdio MCP servers are deliberately unsupported** — the worker must never exec arbitrary commands sourced from a DB column.
 
+**Authentication.** A connection may carry one optional **bearer token**. It is entered at `/studio/mcp`
+in a masked, write-only field and stored in the Connection's AES-256-GCM `apiKey*` envelope columns
+(the same envelope as every other secret, so `yarn keys:rotate` re-encrypts it); it is never part of
+`config`. Responses carry only `hasToken`; an edit that omits the token keeps it, supplying one replaces
+it, and `clearBearerToken` removes it. The audit trail records whether a token is set, never its value.
+Changing a connection's URL to a different origin while keeping its stored token is refused (409
+`TOKEN_ORIGIN_CHANGE`): enter a new token or clear the old one first.
+
+The worker decrypts the token in `mcpUrlForConnection` and passes it to `loadMcpTools`, which gives the
+MCP client one `fetch` (`bearerFetch`) for both transports. That fetch adds `Authorization: Bearer …`
+only to requests for the connection's own origin, refuses redirects, and the client is also pinned to
+the connection's host with `allowedHosts`. The token is a non-enumerable property of the resolved
+target, so serializing or logging the target cannot carry it, and it is scrubbed from the error text of
+a failed connect. A token that no longer decrypts yields no MCP tools for the run. The Test button
+sends the same header to the same origin only, trying streamable HTTP first and then the legacy SSE transport (a URL ending `/sse` goes straight to it), as the worker does.
+
 **Activation requires all three:**
 
 1. The resolved Agent has an `mcpConnectionId` pointing at an active `mcp` Connection.
@@ -258,7 +274,7 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
   `finally`. The generic `runAgentNode` path (declarative `agent` node) binds MCP the same way, so any
   agent — not just the implementer — can use MCP.
 - **Write-path:** admins manage `mcp` Connections at `/studio/mcp` (gateway CRUD
-  `/api/v1/studio/mcp` — `POST` create, `PATCH :id` edit url/name/timeouts,
+  `/api/v1/studio/mcp` — `POST` create, `PATCH :id` edit url/name/timeouts/token,
   `DELETE :id` soft-delete; `PATCH` rebuilds `config` from the body so a blank timeout clears the
   override) and attach one to an Agent via the `mcpConnectionId` field on the
   agent-library form. `validateMcpConnectionRef` enforces that the reference is an active `mcp`
@@ -853,9 +869,11 @@ Writes cut a new immutable `version`.
 
 ## 11. Limitations
 
-- **The MCP connection test does not authenticate and speaks streamable HTTP only.** A server that
-  needs a bearer token or only offers the legacy event-stream transport reports as not reachable even
-  though the worker, which uses `@mastra/mcp`, may connect to it.
+- **MCP authentication is a single static bearer token.** OAuth flows, custom headers and
+  per-user tokens are not supported. A server that redirects (for example `/mcp` to `/mcp/`) is
+  refused by the token-carrying client and by the Test probe, so the connection URL must be the final
+  one. Rotating the token is an edit of the connection; runs already connected keep the token they
+  started with.
 
 - **A skill created after a run starts is not in its pin.** It resolves its current revision, which is
   also its only one. An epic's children are runs of their own and pin at their own start, so an edit

@@ -177,7 +177,7 @@ describe('mcpUrlForConnection bearer token', () => {
   });
 
   it('yields no connection, and logs no secret, when the stored token cannot be decrypted', async () => {
-    const row = withToken('sk-secret-123') as { apiKeyCiphertext: Uint8Array };
+    const row = withToken('sk-secret-123') as unknown as { apiKeyCiphertext: Uint8Array };
     row.apiKeyCiphertext = new Uint8Array(row.apiKeyCiphertext.length);
     findUnique.mockResolvedValue(row as never);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
