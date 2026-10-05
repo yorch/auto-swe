@@ -80,6 +80,36 @@ export function resolveCustomRange(q: { since?: string; until?: string }): Resol
   return { days, end, previousStart: new Date(start.getTime() - days * DAY_MS), start };
 }
 
+/** The start of the UTC calendar day containing `ms`. */
+export function utcDayStart(ms: number): number {
+  return Math.floor(ms / DAY_MS) * DAY_MS;
+}
+
+/**
+ * The window a report covers: the custom range when the query carries one, otherwise the last
+ * `presetDays` whole UTC days, closed at the end of today. A preset and a custom range therefore
+ * span the same inclusive UTC days, and the previous period is the same number of days directly
+ * before it, so "vs previous" compares like with like.
+ */
+export function resolveWindow(
+  q: { since?: string; until?: string },
+  presetDays: number,
+  now: number = Date.now()
+): ResolvedWindow {
+  const custom = resolveCustomRange(q);
+  if (custom) {
+    return custom;
+  }
+  const end = new Date(utcDayStart(now) + DAY_MS);
+  const start = new Date(end.getTime() - presetDays * DAY_MS);
+  return {
+    days: presetDays,
+    end,
+    previousStart: new Date(start.getTime() - presetDays * DAY_MS),
+    start,
+  };
+}
+
 /** Above this many days a chart series is bucketed by week, so a long range stays a bounded query count. */
 export const WEEKLY_BUCKET_ABOVE_DAYS = 90;
 

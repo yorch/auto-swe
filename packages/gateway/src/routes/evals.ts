@@ -32,6 +32,7 @@ import {
   refineCustomRange,
   resolveCustomRange,
   seriesBuckets,
+  utcDayStart,
 } from '../lib/dateWindow.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { recordRunFinalized } from '../lib/metrics.js';
@@ -133,12 +134,6 @@ const TrendsQuery = refineCustomRange(
       .default(30),
   })
 );
-
-/** Start of the UTC day `ms` falls in. */
-function utcDayStart(ms: number): number {
-  const d = new Date(ms);
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-}
 
 /** Did the harness record `summary.partial` — a verdict over only some of the cases? */
 function hasPartialVerdict(summary: unknown): boolean {

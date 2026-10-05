@@ -1901,6 +1901,31 @@ describe('GET /workflow-templates/analytics custom range', () => {
   });
 });
 
+describe('GET /workflow-templates/analytics preset window', () => {
+  it('covers exactly the last N whole UTC days, like a custom range of those days', async () => {
+    const state: Parameters<typeof buildApp>[0] = { runs: [], templates: [], versions: new Map() };
+    const app = buildApp(state);
+    await app.ready();
+    const get = (qs: string) =>
+      app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: `/api/v1/workflow-templates/analytics?${qs}`,
+      });
+    const day = (offset: number) =>
+      new Date(Date.now() + offset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const dates = (res: { json: () => { data: { daily: { date: string }[] } } }) =>
+      res.json().data.daily.map((d) => d.date);
+    const preset = await get('window=7');
+    expect(preset.statusCode).toBe(200);
+    expect(dates(preset)).toHaveLength(7);
+    expect(dates(preset).at(-1)).toBe(day(0));
+    const custom = await get(`since=${day(-6)}&until=${day(0)}`);
+    expect(dates(custom)).toEqual(dates(preset));
+    await app.close();
+  });
+});
+
 describe('GET /workflow-templates/analytics trend', () => {
   it('reports the window before this one and a per-day series', async () => {
     const state: Parameters<typeof buildApp>[0] = { runs: [], templates: [], versions: new Map() };
