@@ -17,8 +17,7 @@ import { upsertEmbeddingConfig } from '../lib/modelConfigService.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
- * Admin routes for provider credentials + the embedding-model singleton, plus
- * the config audit-log read. Per-role model/prompt config moved to the Agent
+ * Admin routes for provider credentials + the embedding-model singleton. Per-role model/prompt config moved to the Agent
  * library (`/api/v1/platform/agent-library`) in P1.5 — see `agentLibrary.ts`.
  *
  * Team-scoped credential variants live in `teamScopedConfigRoutes` (mounted by
@@ -72,20 +71,6 @@ const CredentialUpdateSchema = z.object({
 });
 
 const IdParams = z.object({ id: z.string().uuid() });
-
-const AuditQuery = z.object({
-  entityId: z.string().uuid().optional(),
-  entityType: z
-    .enum([
-      'Agent',
-      'ProviderCredential',
-      'EmbeddingConfig',
-      'ModelCatalogEntry',
-      'ModelSuggestion',
-    ])
-    .optional(),
-  limit: z.coerce.number().int().min(1).max(500).default(100),
-});
 
 const EMBEDDING_CONFIG_SENTINEL_UUID = '00000000-0000-4000-a000-000000000001';
 
@@ -316,24 +301,6 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'NOT_FOUND', message: 'Credential not found' } });
       }
       return { data: await testStoredCredential(cred) };
-    }
-  );
-
-  // ── Audit log ──────────────────────────────────────────────────────────
-
-  app.get(
-    '/config-audit-log',
-    { onRequest: adminOnly, schema: { querystring: AuditQuery } },
-    async (request) => {
-      const rows = await fastify.prisma.configAuditLog.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: request.query.limit,
-        where: {
-          ...(request.query.entityType && { entityType: request.query.entityType }),
-          ...(request.query.entityId && { entityId: request.query.entityId }),
-        },
-      });
-      return { data: rows };
     }
   );
 
