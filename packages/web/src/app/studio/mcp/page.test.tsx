@@ -179,6 +179,26 @@ describe('MCP connections page', () => {
       expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toMatchObject({ headers: [] });
     });
 
+    it('lets a connection with unreadable stored headers be saved, and removes them on request', async () => {
+      const spy = mount({ ...CONNECTION, headersUnreadable: true });
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Remove stored headers' }));
+      expect(screen.getByText(/will be removed when you save/)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(spy.mock.calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+      expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toMatchObject({ headers: [] });
+    });
+
+    it('states the header set even when an unreadable connection is saved untouched', async () => {
+      const spy = mount({ ...CONNECTION, headersUnreadable: true });
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(spy.mock.calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+      expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toHaveProperty('headers');
+    });
+
     it('sends the flag and new headers with a new connection, and wants a value for each', async () => {
       const spy = mount(CONNECTION);
       render(withQuery(<StudioMcpConnectionsPage />));

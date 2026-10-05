@@ -401,6 +401,7 @@ function EditMcpConnectionModal({
     url: connection?.config?.url ?? '',
   });
   const [clearToken, setClearToken] = useState(false);
+  const [removedUnreadable, setRemovedUnreadable] = useState(false);
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() =>
     (connection?.headerNames ?? []).map((name, key) => ({ key, name, stored: true, value: '' }))
   );
@@ -428,7 +429,12 @@ function EditMcpConnectionModal({
       return;
     }
     // Omitted keeps every stored header; a list (even empty) is the complete set after the save.
-    const touchedHeaders = headerRows.length > 0 || (connection.headerNames ?? []).length > 0;
+    // Unreadable stored headers count as touched: the gateway refuses an edit that leaves them
+    // unmentioned (it cannot tell whether to keep them), so the save must state the new set.
+    const touchedHeaders =
+      headerRows.length > 0 ||
+      (connection.headerNames ?? []).length > 0 ||
+      connection.headersUnreadable === true;
     try {
       await update.mutateAsync({
         body: {
@@ -482,8 +488,26 @@ function EditMcpConnectionModal({
         />
         {connection.headersUnreadable && (
           <Alert>
-            The stored headers can no longer be read. Remove them and enter them again, or they will
-            not be sent.
+            <p>
+              The stored headers can no longer be read, so they are not being sent. Remove them, or
+              enter the headers again below to replace them.
+            </p>
+            {removedUnreadable ? (
+              <p className="mt-2 font-medium">The stored headers will be removed when you save.</p>
+            ) : (
+              <Button
+                className="mt-2"
+                onClick={() => {
+                  setHeaderRows([]);
+                  setRemovedUnreadable(true);
+                }}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                Remove stored headers
+              </Button>
+            )}
           </Alert>
         )}
         <McpHeaderFields idPrefix="mcp-edit" onChange={setHeaderRows} rows={headerRows} />
