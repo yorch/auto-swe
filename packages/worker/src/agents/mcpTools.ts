@@ -148,15 +148,39 @@ export function bearerFetch(
 }
 
 /**
+ * A pinned fetch whose private-network opt-in applies to the connection's own origin only. A hop
+ * or transport request to any other origin resolves, checks and pins under the strict rules.
+ */
+export function originScopedFetch(serverUrl: URL, allowPrivate: boolean): typeof fetch {
+  const permissive = createGuardedFetch({ allowPrivate: true });
+  const strict = createGuardedFetch({ allowPrivate: false });
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const own = allowPrivate && new URL(raw).origin === serverUrl.origin;
+    return (own ? permissive : strict)(input, init);
+  }) as typeof fetch;
+}
+
+/**
  * The fetch for a connection that carries no credential. Every request resolves, checks and pins
  * its address; redirects, which the client's stock transport would follow blindly, are followed by
- * hand so each hop passes the same text guard first.
+ * hand so each hop passes the same text guard first. The private-network opt-in covers the
+ * connection's own origin only. `credentialOrigin` keeps the MCP session headers
+ * (`mcp-session-id`, `mcp-protocol-version`, …) on requests to that origin while a hop elsewhere
+ * forwards only the benign allowlist.
  */
-export function guardedMcpFetch(allowPrivate: boolean): McpFetch {
-  const pinned = createGuardedFetch({ allowPrivate });
+export function guardedMcpFetch(
+  serverUrl: URL,
+  allowPrivate: boolean,
+  pinned: typeof fetch = originScopedFetch(serverUrl, allowPrivate)
+): McpFetch {
   return (input, init) =>
     fetchGuarded(typeof input === 'string' ? input : input.toString(), init ?? {}, {
-      check: (hop) => checkProbeUrl(hop.toString(), { allowPrivate }).ok,
+      check: (hop) =>
+        checkProbeUrl(hop.toString(), {
+          allowPrivate: allowPrivate && hop.origin === serverUrl.origin,
+        }).ok,
+      credentialOrigin: serverUrl.origin,
       fetchImpl: pinned,
     });
 }
@@ -302,11 +326,11 @@ export async function loadMcpTools(
                 fetch: bearerFetch(
                   url,
                   options.bearerToken,
-                  createGuardedFetch({ allowPrivate: options.allowPrivateNetwork === true }),
+                  originScopedFetch(url, options.allowPrivateNetwork === true),
                   options.headers
                 ),
               }
-            : { fetch: guardedMcpFetch(options?.allowPrivateNetwork === true) }),
+            : { fetch: guardedMcpFetch(url, options?.allowPrivateNetwork === true) }),
         },
       },
       timeout: callTimeoutMs,
