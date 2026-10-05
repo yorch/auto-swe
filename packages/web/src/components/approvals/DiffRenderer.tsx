@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import { isUnifiedDiff, type ParsedDiffLine, parseUnifiedDiff } from './diffParse';
 
 const LINE_CLASS: Record<ParsedDiffLine['kind'], string> = {
@@ -39,7 +40,10 @@ function DiffBody({ content, maxHeight }: { content: string; maxHeight: string }
           <section className="rounded border border-ink-600" key={key}>
             <button
               aria-expanded={!isClosed}
-              className="flex w-full items-center gap-2 bg-ink-800 px-2 py-1.5 text-left text-xs hover:bg-ink-700"
+              className={cn(
+                FOCUS_RING,
+                'flex w-full items-center gap-2 bg-ink-800 px-2 py-1.5 text-left text-xs hover:bg-ink-700'
+              )}
               onClick={() => setClosed((c) => ({ ...c, [key]: !isClosed }))}
               type="button"
             >

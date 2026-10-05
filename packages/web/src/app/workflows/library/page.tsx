@@ -497,6 +497,7 @@ export default function TemplatesPage() {
         actions={
           <span title={manageTitle}>
             <Button
+              aria-describedby={manageTitle ? 'manage-reason' : undefined}
               disabled={!canManage}
               onClick={() => setGenerateOpen(true)}
               size="sm"
@@ -511,6 +512,12 @@ export default function TemplatesPage() {
         subtitle="Your reusable workflows. Pick one, run it with your inputs, and follow the request."
         title="Workflow library"
       />
+
+      {manageTitle && (
+        <p className="-mt-4 text-xs text-paper-500" id="manage-reason">
+          {manageTitle}.
+        </p>
+      )}
 
       {/* Workflows table */}
       <section>
@@ -704,11 +711,6 @@ export default function TemplatesPage() {
             Fork one to edit it as your own
           </span>
         </summary>
-        {manageTitle && (
-          <p className="mt-4 text-xs text-paper-500" id="manage-reason">
-            {manageTitle}.
-          </p>
-        )}
         {forkError && <Alert className="mb-4 mt-4">{forkError}</Alert>}
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {STARTER_TEMPLATES.map((s) => {

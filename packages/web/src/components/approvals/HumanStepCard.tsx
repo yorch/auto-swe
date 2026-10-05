@@ -14,6 +14,7 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRespondToApproval } from '@/hooks/useApprovals';
 import { errMsg } from '@/lib/errors';
+import { requestHref } from '@/lib/requestDisplay';
 import { formatDuration, formatRelativeTime } from '@/lib/utils';
 import { DiffRenderer } from './DiffRenderer';
 
@@ -280,7 +281,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                     {requestId ? (
                       <Link
                         className="font-mono underline text-paper-400 hover:text-paper-200"
-                        href={`/workflows?request=${encodeURIComponent(requestId)}`}
+                        href={requestHref(requestId)}
                       >
                         {step.run.workRequest.externalTicketId}
                       </Link>
@@ -292,11 +293,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 )}
                 <Link
                   className="underline text-paper-400 hover:text-paper-200"
-                  href={
-                    requestId
-                      ? `/workflows?request=${encodeURIComponent(requestId)}`
-                      : `/runs/${step.run.id}`
-                  }
+                  href={requestId ? requestHref(requestId) : `/runs/${step.run.id}`}
                 >
                   View request
                 </Link>

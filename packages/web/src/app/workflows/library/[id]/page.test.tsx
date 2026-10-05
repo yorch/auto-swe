@@ -56,7 +56,6 @@ vi.mock('@/hooks/useTeams', () => ({ useLedTeamIds: () => [] }));
 vi.mock('@/hooks/useTransientFlag', () => ({ useTransientFlag: () => [false, vi.fn()] }));
 vi.mock('@/components/workflow/WorkflowDag', () => ({ WorkflowDag: () => null }));
 vi.mock('@/components/workflow/TemplateEditor', () => ({ TemplateEditor: () => null }));
-vi.mock('@/components/workflow/RunTemplateModal', () => ({ RunTemplateModal: () => null }));
 vi.mock('@/components/workflow/RefineChatPanel', () => ({ RefineChatPanel: () => null }));
 vi.mock('@/components/workflow/PromoteVersionModal', () => ({ PromoteVersionModal: () => null }));
 vi.mock('@/components/workflow/templateNav', () => ({

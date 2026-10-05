@@ -270,7 +270,7 @@ function TemplateDiffContent({ params }: PageProps) {
           <p className="mt-2 text-xs text-paper-500">
             v{after} is AI-generated and needs review before it can be promoted. Review it from the{' '}
             <Link className="text-ember-400 hover:underline" href={`/workflows/library/${id}`}>
-              template page
+              workflow page
             </Link>
             .
           </p>
