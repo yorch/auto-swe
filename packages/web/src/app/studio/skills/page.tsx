@@ -470,6 +470,8 @@ export default function StudioSkillsPage() {
       {isAdmin && (
         <TabBar
           active={tab}
+          ariaLabel="Skill library views"
+          idPrefix="skills"
           onChange={setTab}
           tabs={[
             { id: 'skills', label: 'Skills' },
@@ -478,9 +480,14 @@ export default function StudioSkillsPage() {
         />
       )}
 
-      {isAdmin && tab === 'external' && <SkillSourcesTab />}
+      {isAdmin && tab === 'external' && (
+        <div {...tabPanelProps('skills', 'external')}>
+          <SkillSourcesTab />
+        </div>
+      )}
 
       {tab === 'skills' && (
+        <div {...(isAdmin ? tabPanelProps('skills', 'skills') : {})}>
         <Card>
           <CardHeader>
             <CardTitle>All skills</CardTitle>
@@ -551,7 +558,7 @@ export default function StudioSkillsPage() {
                       <Td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</Td>
                       <Td className="py-2 pr-4">
                         <ToggleSwitch
-                          ariaLabel={`Active: ${skill.name}`}
+                          ariaLabel={`Active: ${visibleText(skill.name)}`}
                           checked={skill.isActive}
                           disabled={togglingId === skill.id}
                           onChange={() => handleToggleActive(skill)}
@@ -580,6 +587,7 @@ export default function StudioSkillsPage() {
             )}
           </QueryBoundary>
         </Card>
+        </div>
       )}
 
       {tab === 'skills' && <EffectivenessCard />}
