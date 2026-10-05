@@ -92,7 +92,8 @@ export function Modal({
   eyebrow?: string;
   subtitle?: React.ReactNode;
   children: React.ReactNode;
-  size?: 'md' | 'lg';
+  /** `full` is for wide content such as a diff; it spans nearly the whole viewport. */
+  size?: 'md' | 'lg' | 'full';
   /**
    * Turn off for a modal whose content cannot be shown again — a one-time
    * secret — so a stray click cannot discard it. The close button and Escape
@@ -131,7 +132,12 @@ export function Modal({
     }
   }, [open, mounted]);
 
-  const width = size === 'lg' ? 'w-[min(720px,92vw)]' : 'w-[min(560px,92vw)]';
+  const width =
+    size === 'full'
+      ? 'w-[96vw] max-w-[1800px]'
+      : size === 'lg'
+        ? 'w-[min(720px,92vw)]'
+        : 'w-[min(560px,92vw)]';
   // Names the dialog from its own heading, so it is announced as more than
   // "dialog". useId keeps it unique when several modals share a title, as the
   // per-row dialogs of a table do.

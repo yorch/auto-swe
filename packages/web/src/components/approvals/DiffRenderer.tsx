@@ -80,8 +80,8 @@ export function DiffRenderer({ content }: { content: string }) {
           </Button>
         </div>
         <DiffBody content={content} maxHeight="max-h-[60vh]" />
-        <Modal onClose={() => setFull(false)} open={full} size="lg" title="Changes">
-          <DiffBody content={content} maxHeight="max-h-[75vh]" />
+        <Modal onClose={() => setFull(false)} open={full} size="full" title="Changes">
+          <DiffBody content={content} maxHeight="max-h-[78vh]" />
         </Modal>
       </div>
     );
