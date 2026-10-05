@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { skillVisibilityWhere } from './skillLibraryService.js';
+import { describe, expect, it, vi } from 'vitest';
+import { skillVisibilityWhere, updateSkill } from './skillLibraryService.js';
 
 /**
  * `skills` previously carried no tenant column, so the team-scoped list
@@ -37,5 +37,44 @@ describe('skillVisibilityWhere', () => {
         expect(Object.keys(branch).length).toBeGreaterThan(1);
       }
     }
+  });
+});
+
+describe('updateSkill provenance', () => {
+  const existing = {
+    currentRevision: 3,
+    description: null,
+    id: 's1',
+    isBuiltIn: false,
+    promptText: 'typed by hand',
+    sourcePath: null,
+  };
+
+  it('writes the provenance a restore passes onto the new revision', async () => {
+    const update = vi.fn().mockResolvedValue({ currentRevision: 4 });
+    const prisma = { skill: { update } };
+    await updateSkill(prisma as never, existing as never, { promptText: 'imported text' }, 'u1', {
+      referenceFiles: [{ content: 'c', path: 'a.md' }],
+      sourcePath: 'p/SKILL.md',
+      sourceSha: 'abc',
+    });
+    const rev = update.mock.calls[0][0].data.revisions.create;
+    expect(rev).toMatchObject({ revision: 4, sourcePath: 'p/SKILL.md', sourceSha: 'abc' });
+    expect(rev.referenceFiles).toEqual([{ content: 'c', path: 'a.md' }]);
+  });
+
+  it('writes none when the restored revision was not imported', async () => {
+    const update = vi.fn().mockResolvedValue({ currentRevision: 4 });
+    await updateSkill(
+      { skill: { update } } as never,
+      existing as never,
+      { promptText: 'x' },
+      'u1',
+      {}
+    );
+    expect(update.mock.calls[0][0].data.revisions.create).toMatchObject({
+      sourcePath: null,
+      sourceSha: null,
+    });
   });
 });

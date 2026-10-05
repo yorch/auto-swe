@@ -8,6 +8,7 @@ function newMockPrisma() {
     // Interactive transactions run against the same mock, as elsewhere in the
     // suite; a throw inside the callback propagates, which is what the
     // budget-reset route treats as "a worker claimed this hold first".
+    $queryRaw: vi.fn().mockResolvedValue([]),
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     channelBudgetHold: {
       // The route counts outstanding holds for the audit log; the shared
@@ -406,6 +407,11 @@ describe('slackChannelRoutes', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data.memoryItemsDeleted).toBe(7);
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    // The channel row is locked before its memory goes, so nothing can be added in between.
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPrisma.memoryItem.deleteMany.mock.invocationCallOrder[0]
+    );
     expect(mockPrisma.memoryItem.deleteMany).toHaveBeenCalledWith({
       where: { channelId: CHANNEL },
     });

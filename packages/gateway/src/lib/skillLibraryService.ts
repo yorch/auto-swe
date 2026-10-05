@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
+import type { SkillRevisionMeta } from '@auto-swe/shared/lib/skillRevision';
 import {
   initialRevision,
   nextRevision,
@@ -101,7 +102,11 @@ export async function updateSkill(
   prisma: PrismaClient,
   existing: SkillRow,
   body: { description?: string; isActive?: boolean; name?: string; promptText?: string },
-  actorId?: string | null
+  actorId?: string | null,
+  /// A restore passes the provenance of the revision it copies (`{}` when that one was not
+  /// imported), so the new revision says where its text came from instead of guessing from the
+  /// current one.
+  provenance?: Pick<SkillRevisionMeta, 'referenceFiles' | 'sourcePath' | 'sourceSha'>
 ): Promise<{ scanWarnings: string[]; updated: SkillRow }> {
   const { name, description, promptText, isActive } = body;
 
@@ -134,9 +139,10 @@ export async function updateSkill(
     // revision still says where that text came from (and keeps its label). A
     // change to the text itself makes it ours: the provenance is dropped.
     const carried =
-      typeof existing.sourcePath === 'string' && nextContent.promptText === existing.promptText
+      provenance ??
+      (typeof existing.sourcePath === 'string' && nextContent.promptText === existing.promptText
         ? await importedProvenance(prisma, existing)
-        : {};
+        : {});
     const next = nextRevision(existing, nextContent, {
       createdById: actorId,
       scanWarnings,

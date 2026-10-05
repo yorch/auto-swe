@@ -1,3 +1,4 @@
+import type { Prisma } from '@auto-swe/shared';
 import { isRevisionConflict } from '@auto-swe/shared/lib/skillRevision';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -88,7 +89,15 @@ export const skillRevisionRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma,
           existing,
           { description: source.description ?? undefined, promptText: source.promptText },
-          actor.sub
+          actor.sub,
+          // The restored text keeps the repository, path and files it was imported from.
+          source.sourceSha
+            ? {
+                referenceFiles: (source.referenceFiles ?? null) as Prisma.InputJsonValue | null,
+                sourcePath: source.sourcePath,
+                sourceSha: source.sourceSha,
+              }
+            : {}
         );
       } catch (err) {
         if (isRevisionConflict(err)) {

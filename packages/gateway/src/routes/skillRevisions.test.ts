@@ -102,6 +102,26 @@ describe('POST /skills/:id/revisions/:revision/restore', () => {
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(201);
     expect(updateSkill.mock.calls[0][2]).toEqual({ description: 'old', promptText: 'text 1' });
+    // Not imported: the empty provenance stops the service guessing from the current revision.
+    expect(updateSkill.mock.calls[0][4]).toEqual({});
+  });
+
+  it("carries an imported revision's source commit, path and files onto the new revision", async () => {
+    const { app, prisma } = await buildApp();
+    prisma.skillRevision.findUnique.mockResolvedValue({
+      description: 'old',
+      promptText: 'text 1',
+      referenceFiles: [{ content: 'c', path: 'a.md' }],
+      revision: 1,
+      sourcePath: 'skills/x/SKILL.md',
+      sourceSha: 'abc123',
+    });
+    await app.inject({ headers: AUTH, method: 'POST', url });
+    expect(updateSkill.mock.calls[0][4]).toEqual({
+      referenceFiles: [{ content: 'c', path: 'a.md' }],
+      sourcePath: 'skills/x/SKILL.md',
+      sourceSha: 'abc123',
+    });
   });
 
   it('refuses to restore the current revision', async () => {

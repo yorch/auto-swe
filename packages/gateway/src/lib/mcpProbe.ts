@@ -62,7 +62,7 @@ async function readCapped(
   let pending = '';
   let size = 0;
   for (;;) {
-    let step: ReadableStreamReadResult<Uint8Array>;
+    let step: Awaited<ReturnType<typeof reader.read>>;
     try {
       // fetch aborts its own body, but racing the signal makes the deadline hold for any body.
       step = await Promise.race([reader.read(), aborted]);

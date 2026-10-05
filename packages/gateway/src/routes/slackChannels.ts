@@ -959,6 +959,9 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       // orphans no screen reaches; delete them in the same transaction as the channel so
       // the count in the audit entry is exactly what went.
       const memoryItemsDeleted = await fastify.prisma.$transaction(async (tx) => {
+        // CLAUDE.md §7 exception: lock the channel row first, so a memory item cannot be written
+        // for it between the deleteMany below and the delete (the FK would SetNull it into an orphan).
+        await tx.$queryRaw`SELECT id FROM slack_channels WHERE id = ${current.id}::uuid FOR UPDATE`;
         const removed = await runUnscoped(
           'bounded to the one channel being deleted',
           ['MemoryItem'],

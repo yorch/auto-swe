@@ -70,7 +70,7 @@ describe('SkillHistory', () => {
   it('shows hidden characters in the diff as markers', async () => {
     setupFetchMock({
       'GET /api/v1/platform/skills/s1/revisions': () => {
-        const r = revisions();
+        const r = revisions() as { data: Array<Record<string, unknown>> };
         r.data[0].promptText = 'Be brief.\u202eevil\u200b';
         r.data[0].description = 'a\u202eb';
         return r;
