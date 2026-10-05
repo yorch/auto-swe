@@ -165,6 +165,8 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
   return { ok: true, url };
 }
 
+type NeverAllowedKind = 'link-local' | 'loopback' | 'unspecified';
+
 /**
  * Addresses no opt-in may reach: cloud metadata endpoints (link-local
  * 169.254.0.0/16 — AWS/Azure/GCP/Oracle — and IPv6 link-local fe80::/10, plus AWS's IPv6 `fd00:ec2::254`,
@@ -172,12 +174,6 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
  * unspecified addresses, which are the platform's own services. A private
  * network opt-in is for a self-hosted server on an internal address, never for
  * these.
- */
-type NeverAllowedKind = 'link-local' | 'loopback' | 'unspecified';
-
-/**
- * Which never-allowed class a URL's host falls in, or null. The host is classified after an
- * embedded IPv4 is extracted, so `::ffff:169.254.169.254` reads as the metadata address it is.
  */
 function neverAllowedKind(url: URL): { effective: string; kind: NeverAllowedKind } | null {
   const raw = url.hostname.toLowerCase();
@@ -214,7 +210,7 @@ function neverAllowedKind(url: URL): { effective: string; kind: NeverAllowedKind
  * {@link isSafeProbeUrl}, with a per-host operator opt-in for private
  * addresses (the shape of the connectors' `allowPrivateNetwork`). With
  * `allowPrivate`, a refusal for a private/internal address is waived — but
- * never for the addresses {@link isNeverAllowedHost} names, and never for any
+ * never for the addresses {@link neverAllowedKind} names, and never for any
  * other refusal (a bad URL, a non-http scheme). The caller decides which exact
  * host `allowPrivate` applies to.
  */
