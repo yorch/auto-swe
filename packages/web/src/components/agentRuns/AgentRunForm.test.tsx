@@ -240,7 +240,7 @@ describe('AgentRunForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Launch agent' }));
     // The launch happens from the review screen, so that is where the error must be complete.
     expect(await screen.findByText(/That version cannot be pinned/)).toBeTruthy();
-    expect(screen.getByText(/Choose "Latest version"/)).toBeTruthy();
+    expect(screen.getByText(/Version field to "Latest" \(on the details screen\)/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Launch agent' }));
     expect(await screen.findByText(/Already started/)).toBeTruthy();
     expect(screen.getByRole('link', { name: 'View runs' }).getAttribute('href')).toBe('/runs');
