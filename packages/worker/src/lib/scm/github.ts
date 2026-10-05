@@ -25,6 +25,7 @@ import {
 import { hostKey, installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
 import { PlatformCredentialHostError } from '@auto-swe/shared/lib/githubInstallation';
 import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
+import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { fetchGuarded } from '@auto-swe/shared/lib/guardedFetch';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -470,6 +471,8 @@ export class GitHubScmProvider implements ScmProvider {
       {
         check: (hop) => isSafeProbeUrl(hop.toString()).ok,
         credentialOrigin: target.url.origin,
+        // The URL is not ours, so each hop is also resolved, checked and pinned.
+        fetchImpl: createGuardedFetch(),
       }
     );
 

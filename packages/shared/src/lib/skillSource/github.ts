@@ -3,6 +3,7 @@ import { approvedRepositoryHosts } from '../connectionCredential.js';
 import { resolvePlatformCredential } from '../githubHostCredential.js';
 import { defaultApiUrlForHost, hostFamily } from '../githubHostScope.js';
 import { resolveGitHubToken } from '../githubInstallation.js';
+import { createGuardedFetch } from '../guardedDispatcher.js';
 import { checkProbeUrl } from '../ssrfGuard.js';
 import { resolveGitHubConfig } from '../systemConfig.js';
 import { networkError, SkillSourceError } from './errors.js';
@@ -221,7 +222,14 @@ export async function apiGet(access: SourceAccess, path: string): Promise<unknow
     }
     let res: Response;
     try {
-      res = await access.deps.fetch(url.toString(), {
+      // The text check above vets the URL; the default fetch also resolves the host, refuses an
+      // internal answer (private only for an opted-in host) and pins the connection. A fetch
+      // injected through `deps` is used as given.
+      const doFetch =
+        access.deps.fetch === defaultDeps.fetch
+          ? createGuardedFetch({ allowPrivate: access.privateHosts.has(url.host.toLowerCase()) })
+          : access.deps.fetch;
+      res = await doFetch(url.toString(), {
         headers,
         redirect: 'manual',
         // Per request, and for the whole fetch: the body read is covered too.
