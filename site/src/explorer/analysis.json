@@ -2404,7 +2404,7 @@
     {
       "body": "Pinning to a commit fixes what is read; it does not vouch for the author, the files kept beside the text, or the host.",
       "category": "Agents",
-      "detail": "Reference files are stored unscanned, so whatever first reads them to an agent or a person must scan them first. The host check reads address text and literal addresses and does not resolve DNS, so a listed name is trusted to mean the intended server. Commit signatures are not checked. The scheduled check asks about the ref, not the history of the source’s path, so any commit on the ref flags the source, and in a monorepo an unrelated commit reads as an update whose diff shows nothing. A diff and an accept each read the whole new commit through the bounded fetch, so reviewing then accepting costs two budgeted fetches beside the check’s one request. An accept updates only skills already installed: a skill added upstream is listed, and can be installed only once an accept has moved the pin (an install reads the pinned commit), one removed upstream is flagged and stays, and an upstream rename is shown and not applied. Reference files from an accept are stored unscanned, like an import’s. There is no way to decline a change, so a skill left behind keeps the source flagged. An install into a source reads only the pinned commit and an accept moves the pin only when nothing changed upstream is left behind, so a hand-edited or unparseable skill that is never accepted keeps the source flagged and keeps skills added upstream uninstallable. Hand-edit detection compares content with the last revision an import or accept cut, so a revert to the same content reads as unedited. The review is an ADMIN flow in the dashboard, the API and the CLI. Each full-text read the dashboard makes costs one more budgeted fetch of the whole source. Only imports (a first import or an install into an existing source) take the name-allocation lock, so the skill API can still create a name an import has just checked.",
+      "detail": "Reference files are stored unscanned, so whatever first reads them to an agent or a person must scan them first. The host check reads address text and literal addresses, and a fetch resolves and pins the host it connects to, so a listed name is trusted to mean the intended server only as far as that resolution allows. Commit signatures are not checked. The scheduled check asks about the ref, not the history of the source’s path, so any commit on the ref flags the source, and in a monorepo an unrelated commit reads as an update whose diff shows nothing. A diff and an accept each read the whole new commit through the bounded fetch, so reviewing then accepting costs two budgeted fetches beside the check’s one request. An accept updates only skills already installed: a skill added upstream is listed, and can be installed only once an accept has moved the pin (an install reads the pinned commit), one removed upstream is flagged and stays, and an upstream rename is shown and not applied. Reference files from an accept are stored unscanned, like an import’s. There is no way to decline a change, so a skill left behind keeps the source flagged. An install into a source reads only the pinned commit and an accept moves the pin only when nothing changed upstream is left behind, so a hand-edited or unparseable skill that is never accepted keeps the source flagged and keeps skills added upstream uninstallable. Hand-edit detection compares content with the last revision an import or accept cut, so a revert to the same content reads as unedited. The review is an ADMIN flow in the dashboard, the API and the CLI. Each full-text read the dashboard makes costs one more budgeted fetch of the whole source. Only imports (a first import or an install into an existing source) take the name-allocation lock, so the skill API can still create a name an import has just checked.",
       "id": "skillImportBounds",
       "refs": [
         "skillImportAccess",
@@ -2428,9 +2428,9 @@
       "title": "Skill import is pinned and bounded, not verified"
     },
     {
-      "body": "The guard reads URL text, so it blocks the obvious private targets and not every route to one.",
+      "body": "The guard checks URL text early and, at connection time, resolves the name and pins the connection to a checked address.",
       "category": "Integrations",
-      "detail": "The check never resolves a name: a public hostname that points at an internal address passes, which only network policy outside the platform can stop. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs or Jira field detection is called, so a refused one surfaces at that point. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code.",
+      "detail": "The text check alone does not resolve a name, so the dispatcher resolves it at connection time, refuses the request if any answer is internal and connects only to a checked address; behind a process-wide proxy the proxy resolves, so the target is checked but not pinned. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs or Jira field detection is called, so a refused one surfaces at that point. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code.",
       "id": "connectorGuardBounds",
       "refs": [
         "connectorGuardText",
@@ -2444,7 +2444,7 @@
         "connectorHopCap"
       ],
       "status": "Confirmed boundary",
-      "title": "The connector SSRF guard is text-level, and the opt-in is coarse"
+      "title": "The connector SSRF guard resolves and pins, and the opt-in is coarse"
     },
     {
       "body": "A team marked inactive keeps its members’ repository access and its shares.",
@@ -4572,12 +4572,12 @@
       "title": "Jira field detection runs the connector guard before it builds its client"
     },
     {
-      "anchor": "We resolve at hostname-text level only (no DNS lookup)",
+      "anchor": "This module reads the URL's host TEXT",
       "before": 1,
       "id": "connectorNoDns",
       "lines": 8,
       "path": "packages/shared/src/lib/ssrfGuard.ts",
-      "title": "The module states it works on hostname text only, with no DNS lookup"
+      "title": "The module states it is the text check and hands name resolution to the dispatcher"
     },
     {
       "anchor": "export const MAX_GUARDED_REDIRECTS = 3;",
