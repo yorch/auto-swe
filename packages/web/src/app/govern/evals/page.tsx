@@ -211,9 +211,13 @@ function EvalsWorkspace() {
                     daily: t.daily,
                     label: t.breakdown ?? '(none)',
                   }))}
+                  title={`${scorer || 'Scorer'} by ${by === 'judgeModel' ? 'judge model' : 'agent'}, daily mean`}
                 />
               ) : charted.length === 1 && charted[0] ? (
-                <ScorerTrendChart data={charted[0].daily} />
+                <ScorerTrendChart
+                  data={charted[0].daily}
+                  title={`${scorer || 'Scorer'} daily mean`}
+                />
               ) : (
                 <EmptyState title={`No ${scorer} signals in this window.`} />
               )}
@@ -293,6 +297,7 @@ function EvalsWorkspace() {
             <SuiteHealthChart
               datasets={healthQuery.data.datasets}
               maxStaleRate={healthQuery.data.thresholds.maxStaleRate}
+              title="Share of golden cases quarantined as stale, by dataset"
             />
           )}
         </QueryBoundary>

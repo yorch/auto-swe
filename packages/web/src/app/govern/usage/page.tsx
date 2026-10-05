@@ -343,7 +343,7 @@ function UsageWorkspace() {
                     <CardHeader>
                       <CardTitle>Spend per day</CardTitle>
                     </CardHeader>
-                    <DailyCostChart data={data.daily} />
+                    <DailyCostChart data={data.daily} title="LLM spend per day" />
                   </Card>
 
                   <Card className="p-0 overflow-hidden">

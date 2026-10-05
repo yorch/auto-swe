@@ -240,7 +240,7 @@ function AnalyticsWorkspace() {
               <CardHeader>
                 <CardTitle>Runs over time</CardTitle>
               </CardHeader>
-              <WorkflowsOverTimeChart data={data.daily ?? []} />
+              <WorkflowsOverTimeChart data={data.daily ?? []} title="Workflow runs over time" />
             </Card>
 
             <div className="grid grid-cols-2 gap-x-4 gap-y-8 lg:grid-cols-4">
