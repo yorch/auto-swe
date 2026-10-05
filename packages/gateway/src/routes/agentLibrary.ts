@@ -277,6 +277,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'DELETE',
         actor,
+        after: { force: request.query.force === true, isBuiltIn: current.isBuiltIn },
         before: { key: current.key, scope: current.scope },
         entityId: current.id,
         entityType: 'Agent',

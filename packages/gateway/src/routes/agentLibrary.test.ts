@@ -485,6 +485,10 @@ describe('agentLibraryRoutes — admin', () => {
     });
     expect(forced.statusCode).toBe(200);
     expect(mockPrisma.agent.updateMany).toHaveBeenCalledTimes(1);
+    const audit = mockPrisma.configAuditLog.create.mock.calls.at(-1)?.[0] as {
+      data: { afterJson: unknown };
+    };
+    expect(audit.data.afterJson).toEqual({ force: true, isBuiltIn: true });
     await app.close();
   });
 
