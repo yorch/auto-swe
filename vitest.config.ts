@@ -152,6 +152,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillSource/index.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/seedPlaceholder',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/seedPlaceholder.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/regexSafety',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/regexSafety.ts'),
       },

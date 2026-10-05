@@ -1,3 +1,4 @@
+import { SEED_PLACEHOLDER_REPO } from '@auto-swe/shared/lib/seedPlaceholder';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
@@ -8,7 +9,8 @@ import { requireAuth } from '../plugins/auth.js';
  *
  * Derived from real state, not a checklist a person ticks: every provider the active GLOBAL
  * agents (and the embedding model) are bound to must have a credential, GitHub must have a token
- * or an App, and at least one repository connection must exist. Each item carries the studio
+ * or an App, and at least one real repository connection must exist (the seeded sample
+ * repository does not count). Each item carries the studio
  * page that fixes it, so the dashboard can link straight there.
  */
 
@@ -50,7 +52,10 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
             where: { scope: 'GLOBAL' },
           }),
           fastify.prisma.embeddingConfig.findUnique({ where: { id: 'default' } }),
-          fastify.prisma.connection.count({ where: { isActive: true, type: 'git_repo' } }),
+          fastify.prisma.connection.count({
+            // The seeded sample repository is a placeholder, so it never satisfies this item.
+            where: { isActive: true, NOT: { ...SEED_PLACEHOLDER_REPO }, type: 'git_repo' },
+          }),
         ]);
         return { agents, connectionCount, credentials, embedding };
       }
