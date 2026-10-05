@@ -109,4 +109,55 @@ describe('Install from file', () => {
     fireEvent.change(screen.getByLabelText('Bundle file (.json)'), { target: { files: [big] } });
     expect(await screen.findByText(/larger than 5 MB/)).toBeTruthy();
   });
+
+  it('maps a 413 from the gateway to a plain message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).endsWith('/preview')
+          ? new Response(JSON.stringify({ error: { code: 'FST_ERR_CTP_BODY_TOO_LARGE' } }), {
+              headers: { 'content-type': 'application/json' },
+              status: 413,
+            })
+          : new Response(JSON.stringify({ data: [] }), {
+              headers: { 'content-type': 'application/json' },
+              status: 200,
+            })
+      )
+    );
+    render(withQuery(<StudioBundlesPage />));
+    fireEvent.change(screen.getByLabelText('Bundle file (.json)'), {
+      target: { files: [fileOf(JSON.stringify(BUNDLE))] },
+    });
+    expect(await screen.findByText('This bundle is larger than the server allows.')).toBeTruthy();
+  });
+
+  it('keeps the highlight while the pointer crosses children and ignores a drop mid-preview', async () => {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/preview')
+        ? new Promise<Response>(() => {})
+        : new Response(JSON.stringify({ data: [] }), {
+            headers: { 'content-type': 'application/json' },
+            status: 200,
+          })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    render(withQuery(<StudioBundlesPage />));
+    const input = screen.getByLabelText('Bundle file (.json)');
+    const zone = input.parentElement as HTMLElement;
+    fireEvent.dragEnter(zone);
+    fireEvent.dragEnter(input);
+    fireEvent.dragLeave(input);
+    expect(zone.className).toContain('border-ember-400');
+    fireEvent.dragLeave(zone);
+    expect(zone.className).not.toContain('border-ember-400');
+
+    fireEvent.change(input, { target: { files: [fileOf(JSON.stringify(BUNDLE))] } });
+    await waitFor(() =>
+      expect(fetchSpy.mock.calls.filter((c) => String(c[0]).endsWith('/preview'))).toHaveLength(1)
+    );
+    fireEvent.drop(zone, { dataTransfer: { files: [fileOf(JSON.stringify(BUNDLE), 'b.json')] } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchSpy.mock.calls.filter((c) => String(c[0]).endsWith('/preview'))).toHaveLength(1);
+  });
 });

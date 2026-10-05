@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -18,6 +18,7 @@ import {
   useInstalledBundles,
   usePreviewBundle,
 } from '@/hooks/useBundles';
+import { ApiError } from '@/lib/api';
 import { readBundleFile } from '@/lib/bundleFile';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
@@ -42,6 +43,8 @@ export default function StudioBundlesPage() {
   // Where the previewed bundle came from, so the install sends the same thing the admin reviewed.
   const [fileBundle, setFileBundle] = useState<unknown>(null);
   const [dragging, setDragging] = useState(false);
+  // dragenter/dragleave fire for every child the pointer crosses, so count them rather than flip.
+  const dragDepth = useRef(0);
   const [exportForm, setExportForm] = useState({ name: '', origin: '', version: '1.0.0' });
   // Each card reports its own outcome, so an export failure is never shown above the install card.
   const [installError, setInstallError] = useState<string | null>(null);
@@ -61,7 +64,8 @@ export default function StudioBundlesPage() {
   }
 
   async function handleFile(file: File | undefined) {
-    if (!file) {
+    // A drop while a preview is loading would race it and could replace what the admin is reviewing.
+    if (!file || previewBundle.isPending) {
       return;
     }
     setInstallError(null);
@@ -76,7 +80,11 @@ export default function StudioBundlesPage() {
       setFileBundle(read.bundle);
       setPreview(result);
     } catch (e) {
-      setInstallError(errMsg(e, 'Could not read the bundle'));
+      setInstallError(
+        e instanceof ApiError && e.status === 413
+          ? 'This bundle is larger than the server allows.'
+          : errMsg(e, 'Could not read the bundle')
+      );
     }
   }
 
@@ -209,13 +217,22 @@ export default function StudioBundlesPage() {
           className={`rounded-md border border-dashed p-4 transition-colors ${
             dragging ? 'border-ember-400 bg-ember-500/5' : 'border-ink-400'
           }`}
-          onDragLeave={() => setDragging(false)}
+          onDragEnter={() => {
+            dragDepth.current += 1;
+            setDragging(true);
+          }}
+          onDragLeave={() => {
+            dragDepth.current = Math.max(0, dragDepth.current - 1);
+            if (dragDepth.current === 0) {
+              setDragging(false);
+            }
+          }}
           onDragOver={(e) => {
             e.preventDefault();
-            setDragging(true);
           }}
           onDrop={(e) => {
             e.preventDefault();
+            dragDepth.current = 0;
             setDragging(false);
             void handleFile(e.dataTransfer.files[0]);
           }}
