@@ -35,14 +35,16 @@ function RepoStatsRow({
 }) {
   return (
     <TRow>
-      <Td className="py-3 pr-4 font-mono text-xs text-paper-300">
+      <Td className="py-3 pr-4 font-mono text-xs text-paper-300" primary>
         {repo.organizationName}/{repo.repoName}
       </Td>
-      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-200">{repo.activeCount}</Td>
-      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-500">
+      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-200" label="Active">
+        {repo.activeCount}
+      </Td>
+      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-500" label="Consolidated">
         {repo.consolidatedCount}
       </Td>
-      <Td className="py-3 pr-4 font-mono text-xs text-paper-500">
+      <Td className="py-3 pr-4 font-mono text-xs text-paper-500" label="Last run">
         {repo.lastConsolidatedAt ? (
           formatDate(repo.lastConsolidatedAt)
         ) : (
@@ -189,7 +191,7 @@ export default function GovernLessonsPage() {
           {!stats || stats.length === 0 ? (
             <EmptyState title="No repositories found." />
           ) : (
-            <Table>
+            <Table stacked>
               <THead>
                 <Th className="py-2 pl-0 pr-4">Repository</Th>
                 <Th align="center" className="py-2 pl-0 pr-4">

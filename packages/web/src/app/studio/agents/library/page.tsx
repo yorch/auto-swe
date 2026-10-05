@@ -363,106 +363,75 @@ export default function AgentLibraryPage() {
               title={filtering ? 'No agents match these filters.' : 'No agents yet.'}
             />
           ) : (
-            <>
-              {/* Narrow screens: one stacked card per agent instead of a six-column table. */}
-              <ul className="space-y-3 sm:hidden">
-                {visibleAgents.map((a) => (
-                  <li className="rounded-[9px] border border-ink-600 bg-ink-900/40 p-3" key={a.id}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-paper-100">{a.name}</div>
-                        <div className="font-mono text-[11px] text-paper-500">{a.key}</div>
-                      </div>
-                      <Badge tone="muted" variant="text">
-                        {scopeLabel(a.scope)}
-                        {scopeTarget(a, names) ? ` · ${scopeTarget(a, names)}` : ''}
-                      </Badge>
-                    </div>
-                    <dl className="mt-2 space-y-0.5 text-xs text-paper-400">
-                      <div>Model: {modelLabel(a)}</div>
-                      <div>
-                        Skills: {a.skillRefs.length} · Tools: {toolKeysLabel(a.toolKeys)}
-                      </div>
-                      <div>
-                        Version {a.version} · {a.isVerified ? 'Verified' : 'Unverified'}
-                      </div>
-                    </dl>
-                    <div className="mt-2">{rowActions(a)}</div>
-                  </li>
-                ))}
-              </ul>
-              <div className="hidden sm:block">
-                <Table>
-                  <THead>
-                    <Th className="pr-3" variant="compact">
-                      Agent
-                    </Th>
-                    <Th className="pr-3" variant="compact">
-                      Model
-                    </Th>
-                    <Th className="pr-3" variant="compact">
-                      Applies to
-                    </Th>
-                    <Th className="pr-3" variant="compact">
-                      Skills and tools
-                    </Th>
-                    <Th className="pr-3" variant="compact">
-                      Version
-                    </Th>
-                    <Th variant="compact" />
-                  </THead>
-                  <tbody>
-                    {visibleAgents.map((a, i) => {
-                      const sameKeyAsAbove = i > 0 && visibleAgents[i - 1].key === a.key;
-                      return (
-                        <TRow key={a.id}>
-                          <Td className="py-3 pr-3">
-                            <span className="text-paper-100">{a.name}</span>
-                            <div className="mt-0.5 font-mono text-[11px] text-paper-500">
-                              {sameKeyAsAbove ? `↳ override of ${a.key}` : a.key}
-                            </div>
-                            {a.description && (
-                              <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-paper-500">
-                                {a.description}
-                              </div>
-                            )}
-                          </Td>
-                          <Td className="py-3 pr-3 font-mono text-[11px] text-paper-400">
-                            {modelLabel(a)}
-                          </Td>
-                          <Td className="py-3 pr-3">
-                            <Badge tone="muted" variant="text">
-                              {scopeLabel(a.scope)}
-                            </Badge>
-                            {scopeTarget(a, names) && (
-                              <div className="mt-0.5 text-[11px] text-paper-400">
-                                {scopeTarget(a, names)}
-                              </div>
-                            )}
-                          </Td>
-                          <Td className="py-3 pr-3 text-xs text-paper-400">
-                            {a.skillRefs.length > 0
-                              ? `${a.skillRefs.length} ${a.skillRefs.length === 1 ? 'skill' : 'skills'}`
-                              : 'No skills'}
-                            <div className="text-paper-500">{toolKeysLabel(a.toolKeys)}</div>
-                          </Td>
-                          <Td className="py-3 pr-3 text-xs text-paper-400">
-                            <span className="tabular-nums">v{a.version}</span>
-                            <div>
-                              <Badge tone={a.isVerified ? 'moss' : 'muted'} variant="text">
-                                {a.isVerified ? 'Verified' : 'Unverified'}
-                              </Badge>
-                            </div>
-                            <div className="text-paper-500">{originLabel(a.origin)}</div>
-                          </Td>
-                          <Td className="py-3">{rowActions(a)}</Td>
-                        </TRow>
-                      );
-                    })}
-                  </tbody>
-                </Table>
-              </div>
-            </>
+            <Table stacked>
+              <THead>
+                <Th className="pr-3" variant="compact">
+                  Agent
+                </Th>
+                <Th className="pr-3" variant="compact">
+                  Model
+                </Th>
+                <Th className="pr-3" variant="compact">
+                  Applies to
+                </Th>
+                <Th className="pr-3" variant="compact">
+                  Skills and tools
+                </Th>
+                <Th className="pr-3" variant="compact">
+                  Version
+                </Th>
+                <Th variant="compact" />
+              </THead>
+              <tbody>
+                {visibleAgents.map((a, i) => {
+                  const sameKeyAsAbove = i > 0 && visibleAgents[i - 1].key === a.key;
+                  return (
+                    <TRow key={a.id}>
+                      <Td className="py-3 pr-3" primary>
+                        <span className="text-paper-100">{a.name}</span>
+                        <div className="mt-0.5 font-mono text-[11px] text-paper-500">
+                          {sameKeyAsAbove ? `↳ override of ${a.key}` : a.key}
+                        </div>
+                        {a.description && (
+                          <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-paper-500">
+                            {a.description}
+                          </div>
+                        )}
+                      </Td>
+                      <Td className="py-3 pr-3 font-mono text-[11px] text-paper-400" label="Model">
+                        {modelLabel(a)}
+                      </Td>
+                      <Td className="py-3 pr-3" label="Applies to">
+                        <Badge tone="muted" variant="text">
+                          {scopeLabel(a.scope)}
+                        </Badge>
+                        {scopeTarget(a, names) && (
+                          <div className="mt-0.5 text-[11px] text-paper-400">
+                            {scopeTarget(a, names)}
+                          </div>
+                        )}
+                      </Td>
+                      <Td className="py-3 pr-3 text-xs text-paper-400" label="Skills and tools">
+                        {a.skillRefs.length > 0
+                          ? `${a.skillRefs.length} ${a.skillRefs.length === 1 ? 'skill' : 'skills'}`
+                          : 'No skills'}
+                        <div className="text-paper-500">{toolKeysLabel(a.toolKeys)}</div>
+                      </Td>
+                      <Td className="py-3 pr-3 text-xs text-paper-400" label="Version">
+                        <span className="tabular-nums">v{a.version}</span>
+                        <div>
+                          <Badge tone={a.isVerified ? 'moss' : 'muted'} variant="text">
+                            {a.isVerified ? 'Verified' : 'Unverified'}
+                          </Badge>
+                        </div>
+                        <div className="text-paper-500">{originLabel(a.origin)}</div>
+                      </Td>
+                      <Td className="py-3">{rowActions(a)}</Td>
+                    </TRow>
+                  );
+                })}
+              </tbody>
+            </Table>
           )}
         </QueryBoundary>
       </Card>

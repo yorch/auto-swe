@@ -106,7 +106,7 @@ export function OrgBudgetTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <Table>
+      <Table stacked>
         <THead className="text-left text-xs text-paper-400">
           {columns.map((col) => (
             <Th align={COLUMNS[col].alignRight ? 'right' : 'left'} key={col} variant="dense">
@@ -122,6 +122,8 @@ export function OrgBudgetTable({
                   align={COLUMNS[col].alignRight ? 'right' : undefined}
                   className={COLUMNS[col].alignRight ? 'px-4 py-2 tabular-nums' : 'px-4 py-2'}
                   key={col}
+                  label={col === 'name' ? undefined : COLUMNS[col].label}
+                  primary={col === 'name'}
                 >
                   {COLUMNS[col].cell(org)}
                 </Td>

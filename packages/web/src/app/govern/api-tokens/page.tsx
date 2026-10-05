@@ -150,7 +150,7 @@ export default function GovernAccessTokensPage() {
         )}
 
         <Card className="overflow-x-auto p-0" variant="inset">
-          <Table>
+          <Table stacked>
             <THead>
               <Th>User</Th>
               <Th>Name</Th>
@@ -166,19 +166,28 @@ export default function GovernAccessTokensPage() {
                 const status = statusOf(t);
                 return (
                   <TRow key={t.id}>
-                    <Td className="px-4 py-3 text-sm text-paper-100">{t.user.email}</Td>
-                    <Td className="px-4 py-3 text-sm text-paper-200">{t.name}</Td>
-                    <Td className="px-4 py-3 font-mono text-[10px] text-paper-400">{t.prefix}</Td>
-                    <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                    <Td className="px-4 py-3 text-sm text-paper-100" primary>
+                      {t.user.email}
+                    </Td>
+                    <Td className="px-4 py-3 text-sm text-paper-200" label="Name">
+                      {t.name}
+                    </Td>
+                    <Td className="px-4 py-3 font-mono text-[10px] text-paper-400" label="Prefix">
+                      {t.prefix}
+                    </Td>
+                    <Td className="px-4 py-3 font-mono text-[11px] text-paper-400" label="Created">
                       {formatRelativeTime(t.createdAt)}
                     </Td>
-                    <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                    <Td
+                      className="px-4 py-3 font-mono text-[11px] text-paper-400"
+                      label="Last used"
+                    >
                       {t.lastUsedAt ? formatRelativeTime(t.lastUsedAt) : '—'}
                     </Td>
-                    <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                    <Td className="px-4 py-3 font-mono text-[11px] text-paper-400" label="Expires">
                       {t.expiresAt ? formatDate(t.expiresAt) : 'never'}
                     </Td>
-                    <Td className="px-4 py-3">
+                    <Td className="px-4 py-3" label="Status">
                       <StatusChip status={status} />
                     </Td>
                     <Td className="px-4 py-3 text-right">

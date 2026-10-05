@@ -138,7 +138,7 @@ export function CredentialsTab() {
         label="credentials"
         onRetry={() => void refetch()}
       >
-        <Table>
+        <Table stacked>
           <THead>
             <Th variant="compact">Provider</Th>
             <Th variant="compact">Scope</Th>
@@ -152,14 +152,20 @@ export function CredentialsTab() {
           <tbody>
             {(credentials ?? []).map((c) => (
               <TRow key={c.id}>
-                <Td className="py-2 font-mono text-xs">{c.provider}</Td>
-                <Td className="py-2 text-xs">
+                <Td className="py-2 font-mono text-xs" primary>
+                  {c.provider}
+                </Td>
+                <Td className="py-2 text-xs" label="Scope">
                   {c.scope}
                   {c.teamId && ` (${teamName(c.teamId)})`}
                 </Td>
-                <Td className="py-2 font-mono text-[11px] text-paper-400">{c.apiBase ?? '—'}</Td>
-                <Td className="py-2 font-mono text-xs">{c.maskedKey}</Td>
-                <Td className="py-2 text-xs">
+                <Td className="py-2 font-mono text-[11px] text-paper-400" label="API base">
+                  {c.apiBase ?? '—'}
+                </Td>
+                <Td className="py-2 font-mono text-xs" label="Key">
+                  {c.maskedKey}
+                </Td>
+                <Td className="py-2 text-xs" label="Test">
                   <Button
                     disabled={!!probePending[c.id]}
                     onClick={() => handleTest(c.id)}

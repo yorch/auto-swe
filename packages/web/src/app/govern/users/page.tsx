@@ -255,7 +255,7 @@ export default function UsersPage() {
           </Alert>
         )}
         <Card className="overflow-x-auto p-0" variant="inset">
-          <Table>
+          <Table stacked>
             <THead>
               <Th>Email</Th>
               <Th>Role</Th>
@@ -266,8 +266,10 @@ export default function UsersPage() {
             <tbody>
               {active.map((u) => (
                 <TRow key={u.id}>
-                  <Td className="px-4 py-3 text-sm text-paper-100">{u.email}</Td>
-                  <Td className="px-4 py-3">
+                  <Td className="px-4 py-3 text-sm text-paper-100" primary>
+                    {u.email}
+                  </Td>
+                  <Td className="px-4 py-3" label="Role">
                     {/* Changing your own role could lock you out mid-session. */}
                     {u.id === currentUserId ? (
                       <Badge tone="ember" uppercase variant="outline">
@@ -295,10 +297,10 @@ export default function UsersPage() {
                       />
                     )}
                   </Td>
-                  <Td className="px-4 py-3 font-mono text-xs text-paper-400">
+                  <Td className="px-4 py-3 font-mono text-xs text-paper-400" label="Slack">
                     {u.slackId ?? <span className="text-paper-500">—</span>}
                   </Td>
-                  <Td className="px-4 py-3 font-mono text-xs text-paper-400">
+                  <Td className="px-4 py-3 font-mono text-xs text-paper-400" label="Teams">
                     {(u.memberships ?? [])
                       .map((m) => m.team?.name)
                       .filter(Boolean)

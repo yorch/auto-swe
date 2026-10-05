@@ -106,7 +106,7 @@ export default function GovernSessionsPage() {
           </Alert>
         )}
         <Card className="overflow-x-auto p-0" variant="inset">
-          <Table>
+          <Table stacked>
             <THead>
               <Th>User</Th>
               <Th>Started</Th>
@@ -119,7 +119,7 @@ export default function GovernSessionsPage() {
             <tbody>
               {rows.map((s) => (
                 <TRow key={s.id}>
-                  <Td className="px-4 py-3 text-sm text-paper-100">
+                  <Td className="px-4 py-3 text-sm text-paper-100" primary>
                     {s.user.email}
                     {s.current && (
                       <Badge className="ml-2" tone="ember" variant="outline">
@@ -127,16 +127,19 @@ export default function GovernSessionsPage() {
                       </Badge>
                     )}
                   </Td>
-                  <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                  <Td className="px-4 py-3 font-mono text-[11px] text-paper-400" label="Started">
                     {formatDate(s.createdAt)}
                   </Td>
-                  <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                  <Td
+                    className="px-4 py-3 font-mono text-[11px] text-paper-400"
+                    label="Last active"
+                  >
                     {formatRelativeTime(s.updatedAt)}
                   </Td>
-                  <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                  <Td className="px-4 py-3 font-mono text-[11px] text-paper-400" label="Expires">
                     {formatRelativeTime(s.expiresAt)}
                   </Td>
-                  <Td className="px-4 py-3 font-mono text-[10px] text-paper-500">
+                  <Td className="px-4 py-3 font-mono text-[10px] text-paper-500" label="Device">
                     {s.ipAddress ?? '—'}
                     {s.userAgent && (
                       <span className="block max-w-[220px] truncate text-paper-600">
@@ -144,7 +147,9 @@ export default function GovernSessionsPage() {
                       </span>
                     )}
                   </Td>
-                  <Td className="px-4 py-3 font-mono text-[10px] text-paper-500">{s.token}</Td>
+                  <Td className="px-4 py-3 font-mono text-[10px] text-paper-500" label="Session">
+                    {s.token}
+                  </Td>
                   <Td align="right" className="px-4 py-3">
                     <Button
                       onClick={() => setRevokeTarget({ email: s.user.email, id: s.id })}

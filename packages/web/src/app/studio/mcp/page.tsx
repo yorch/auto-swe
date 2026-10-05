@@ -322,7 +322,7 @@ export default function StudioMcpConnectionsPage() {
                 title="No MCP connections yet. Create one to enable MCP tools for an agent."
               />
             ) : (
-              <Table>
+              <Table stacked>
                 <THead>
                   <Th variant="compact">Name</Th>
                   <Th variant="compact">URL</Th>
@@ -334,18 +334,25 @@ export default function StudioMcpConnectionsPage() {
                 <tbody>
                   {connections.map((c) => (
                     <TRow key={c.id}>
-                      <Td className="py-2 pr-4 font-mono text-xs text-paper-100">{c.name}</Td>
-                      <Td className="max-w-xs py-2 pr-4">
+                      <Td className="py-2 pr-4 font-mono text-xs text-paper-100" primary>
+                        {c.name}
+                      </Td>
+                      <Td className="max-w-xs py-2 pr-4" label="URL">
                         <code className="block truncate font-mono text-[11px] text-paper-300">
                           {c.config?.url}
                         </code>
                       </Td>
-                      <Td className="py-2 pr-4 text-xs text-paper-300">
+                      <Td
+                        className="py-2 pr-4 text-xs text-paper-300"
+                        label="Timeouts (list/call ms)"
+                      >
                         {c.config?.listTimeoutMs ?? 'default'} /{' '}
                         {c.config?.callTimeoutMs ?? 'default'}
                       </Td>
-                      <Td className="py-2 pr-4 text-xs text-paper-300">{c.team?.name ?? '—'}</Td>
-                      <Td className="py-2 pr-4 text-xs text-paper-300">
+                      <Td className="py-2 pr-4 text-xs text-paper-300" label="Team">
+                        {c.team?.name ?? '—'}
+                      </Td>
+                      <Td className="py-2 pr-4 text-xs text-paper-300" label="Used by">
                         {(c.usedBy ?? []).length === 0
                           ? 'No agents'
                           : (c.usedBy ?? []).map((a) => (

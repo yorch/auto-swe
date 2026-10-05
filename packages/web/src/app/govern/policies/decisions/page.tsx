@@ -141,7 +141,7 @@ export default function AutonomyDecisionsPage() {
         onRetry={() => void refetch()}
       >
         <Card className="overflow-x-auto p-0" variant="inset">
-          <Table className="text-left">
+          <Table className="text-left" stacked>
             <THead className="text-paper-400">
               <Th variant="dense">Created</Th>
               <Th variant="dense">Event</Th>
@@ -153,16 +153,22 @@ export default function AutonomyDecisionsPage() {
             <tbody>
               {data?.data.map((row) => (
                 <TRow hover key={row.id}>
-                  <Td className="px-4 py-2 text-paper-300">{formatDate(row.createdAt)}</Td>
-                  <Td className="px-4 py-2 text-paper-300">{eventLabel(row.event)}</Td>
-                  <Td className="px-4 py-2 text-paper-400">{row.policyName ?? '—'}</Td>
-                  <Td className="px-4 py-2 text-paper-400">
+                  <Td className="px-4 py-2 text-paper-300" primary>
+                    {formatDate(row.createdAt)}
+                  </Td>
+                  <Td className="px-4 py-2 text-paper-300" label="Event">
+                    {eventLabel(row.event)}
+                  </Td>
+                  <Td className="px-4 py-2 text-paper-400" label="Policy">
+                    {row.policyName ?? '—'}
+                  </Td>
+                  <Td className="px-4 py-2 text-paper-400" label="Risk class">
                     {row.riskClass ? riskClassLabel(row.riskClass) : '—'}
                   </Td>
-                  <Td className="px-4 py-2 text-xs text-paper-400">
+                  <Td className="px-4 py-2 text-xs text-paper-400" label="Actor">
                     {row.actorId ? (emailById.get(row.actorId) ?? 'Unknown user') : 'System'}
                   </Td>
-                  <Td className="px-4 py-2 font-mono text-xs">
+                  <Td className="px-4 py-2 font-mono text-xs" label="Run">
                     <Link
                       className="text-ember-400 hover:underline"
                       href={`/runs/${row.runId}`}

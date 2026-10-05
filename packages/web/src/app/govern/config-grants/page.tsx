@@ -283,7 +283,7 @@ export default function GovernConfigGrantsPage() {
             {(grants ?? []).length === 0 ? (
               <EmptyState title="No grants configured." />
             ) : (
-              <Table>
+              <Table stacked>
                 <THead>
                   <Th>Pattern</Th>
                   <Th>Scope</Th>
@@ -295,23 +295,29 @@ export default function GovernConfigGrantsPage() {
                 <tbody>
                   {(grants ?? []).map((g) => (
                     <TRow key={g.id}>
-                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-200">
+                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-200" primary>
                         {g.keyPattern}
                       </Td>
-                      <Td className="px-4 py-3 text-xs text-paper-400">
+                      <Td className="px-4 py-3 text-xs text-paper-400" label="Scope">
                         {g.scope === 'GLOBAL'
                           ? 'Platform'
                           : g.scope === 'ORGANIZATION'
                             ? 'Organization'
                             : 'Team'}
                       </Td>
-                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-300">
+                      <Td
+                        className="px-4 py-3 font-mono text-[11px] text-paper-300"
+                        label="Grantee"
+                      >
                         {g.user?.email ?? (g.role ? `${platformRoleLabel(g.role)} role` : '—')}
                       </Td>
-                      <Td className="px-4 py-3 text-xs text-paper-500">
+                      <Td className="px-4 py-3 text-xs text-paper-500" label="Bound to">
                         {g.team?.name ?? g.organization?.name ?? '—'}
                       </Td>
-                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+                      <Td
+                        className="px-4 py-3 font-mono text-[11px] text-paper-400"
+                        label="Created"
+                      >
                         {formatRelativeTime(g.createdAt)}
                       </Td>
                       <Td className="px-4 py-3 text-right">

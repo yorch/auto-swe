@@ -251,7 +251,7 @@ function AuditWorkspace() {
             )}
             {rows.length > 0 && (
               <div className="overflow-x-auto">
-                <Table>
+                <Table stacked>
                   <THead>
                     <Th>Time</Th>
                     <Th>Action</Th>
@@ -439,7 +439,7 @@ function AuditExpanded({ row }: { row: AuditLogRow }) {
             <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-paper-500">
               {label}
             </div>
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-[9px] border border-ink-400 bg-ink-900/60 p-2 font-mono text-[10px] text-paper-300">
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-ink-400 bg-ink-900/60 p-2 font-mono text-[10px] text-paper-300">
               {value == null ? 'Nothing stored' : JSON.stringify(value, null, 2)}
             </pre>
           </div>
@@ -462,16 +462,16 @@ function AuditRow({
   return (
     <>
       <TRow>
-        <Td className="px-4 py-3 font-mono text-[11px] text-paper-400">
+        <Td className="px-4 py-3 font-mono text-[11px] text-paper-400" primary>
           {formatDate(row.createdAt, { showSeconds: true })}
         </Td>
-        <Td className="px-4 py-3">
+        <Td className="px-4 py-3" label="Action">
           <AuditActionBadge action={row.action} />
         </Td>
-        <Td className="px-4 py-3">
+        <Td className="px-4 py-3" label="Actor">
           <AuditActor onFilter={onFilterActor} row={row} />
         </Td>
-        <Td className="px-4 py-3">
+        <Td className="px-4 py-3" label="Entity">
           <span className="text-xs text-paper-200">{entityTypeLabel(row.entityType)}</span>
           {href ? (
             <Link
@@ -487,7 +487,7 @@ function AuditRow({
             </span>
           )}
         </Td>
-        <Td className="px-4 py-3 font-mono text-[10px] text-paper-400">
+        <Td className="px-4 py-3 font-mono text-[10px] text-paper-400" label="Change">
           <button
             aria-expanded={open}
             className="w-full text-left hover:text-paper-200"
