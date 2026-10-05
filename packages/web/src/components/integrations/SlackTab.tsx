@@ -19,7 +19,7 @@ import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useSlackWorkspaces } from '@/hooks/useSlackChannels';
 import { API_BASE } from '@/lib/config';
-import { clearableField } from '@/lib/configFieldPatch';
+import { clearableField, countChanges } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
@@ -48,7 +48,18 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
   const [clientSecret, setClientSecret] = useState('');
   const [signingSecret, setSigningSecret] = useState('');
 
-  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
+  // What Save would send: omitted keys are unchanged, so their count is the unsaved edits.
+  const body: SlackConfigInput = {
+    botToken: botToken || undefined,
+    // Prefilled: omit when unchanged, send null when cleared.
+    clientId: clearableField(clientId, data?.clientId),
+    clientSecret: clientSecret || undefined,
+    signingSecret: signingSecret || undefined,
+  };
+  const dirtyCount = countChanges(body);
+
+  const { saved, error, testing, testResult, submit, runTest } =
+    useIntegrationConfigForm(dirtyCount);
 
   const slackRedirectUri = `${API_BASE}/api/auth/slack/callback`;
   const slackEventUrl = `${API_BASE}/api/v1/webhooks/slack/events`;
@@ -56,19 +67,6 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    const body: SlackConfigInput = {};
-    if (botToken) {
-      body.botToken = botToken;
-    }
-    // Prefilled: omit when unchanged, send null when cleared.
-    body.clientId = clearableField(clientId, data?.clientId);
-    if (clientSecret) {
-      body.clientSecret = clientSecret;
-    }
-    if (signingSecret) {
-      body.signingSecret = signingSecret;
-    }
 
     submit(
       () => update.mutateAsync(body),
@@ -187,7 +185,12 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
         </div>
       </Card>
 
-      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
+      <IntegrationFormFooter
+        dirtyCount={dirtyCount}
+        error={error}
+        isPending={update.isPending}
+        saved={saved}
+      />
     </form>
   );
 }

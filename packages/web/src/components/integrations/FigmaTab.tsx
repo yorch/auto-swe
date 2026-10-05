@@ -15,7 +15,7 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
-import { clearableIntField } from '@/lib/configFieldPatch';
+import { clearableIntField, countChanges } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
@@ -37,24 +37,26 @@ export function FigmaTab() {
   const [apiToken, setApiToken] = useState('');
   const [maxNodes, setMaxNodes] = usePrefilledField(data?.maxNodes);
 
-  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
+  // What Save would send: omitted keys are unchanged, so their count is the unsaved edits.
+  const body: FigmaConfigInput = {
+    apiToken: apiToken || undefined,
+    enabled: enabled === data?.enabled ? undefined : enabled,
+    // Prefilled: omit when unchanged, send null when cleared.
+    maxNodes: clearableIntField(maxNodes, data?.maxNodes),
+  };
+  const dirtyCount = countChanges(body);
+
+  const { saved, error, testing, testResult, submit, runTest } =
+    useIntegrationConfigForm(dirtyCount);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    const body: FigmaConfigInput = {};
-    if (enabled !== undefined) {
-      body.enabled = enabled;
-    }
-    if (apiToken) {
-      body.apiToken = apiToken;
-    }
-    // Prefilled: omit when unchanged, send null when cleared.
-    body.maxNodes = clearableIntField(maxNodes, data?.maxNodes);
-
     submit(
       () => update.mutateAsync(body),
-      () => setApiToken('')
+      () => {
+        setApiToken('');
+        setEnabled(undefined);
+      }
     );
   };
 
@@ -165,7 +167,12 @@ export function FigmaTab() {
         <TestResultAlert result={testResult} />
       </Card>
 
-      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
+      <IntegrationFormFooter
+        dirtyCount={dirtyCount}
+        error={error}
+        isPending={update.isPending}
+        saved={saved}
+      />
     </form>
   );
 }

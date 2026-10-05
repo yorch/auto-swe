@@ -17,7 +17,7 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
-import { clearableField, clearableIntField } from '@/lib/configFieldPatch';
+import { clearableField, clearableIntField, countChanges } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
@@ -60,7 +60,29 @@ export function KnowledgeBaseTab() {
   const [spacesRaw, setSpacesRaw] = useState('');
   const [maxPages, setMaxPages] = usePrefilledField(data?.maxPages);
 
-  const { saved, error, testing, testResult, submit, runTest } = useIntegrationConfigForm();
+  // What Save would send: omitted keys are unchanged, so their count is the unsaved edits.
+  // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
+  const spaces = spacesRaw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const body: KnowledgeBaseConfigInput = {
+    allowPrivateNetwork:
+      allowPrivateNetwork === data?.allowPrivateNetwork ? undefined : allowPrivateNetwork,
+    apiToken: apiToken || undefined,
+    baseUrl: clearableField(baseUrl, data?.baseUrl),
+    email: clearableField(email, data?.email),
+    enabled: enabled === data?.enabled ? undefined : enabled,
+    maxPages: clearableIntField(maxPages, data?.maxPages),
+    spaces: spacesRaw ? spaces : undefined,
+  };
+  if (provider && provider !== (data?.provider ?? 'disabled')) {
+    body.provider = provider === 'disabled' ? null : provider;
+  }
+  const dirtyCount = countChanges(body);
+
+  const { saved, error, testing, testResult, submit, runTest } =
+    useIntegrationConfigForm(dirtyCount);
 
   const effectiveProvider = (provider === '' ? data?.provider : provider) as
     | KnowledgeBaseProvider
@@ -75,33 +97,15 @@ export function KnowledgeBaseTab() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const body: KnowledgeBaseConfigInput = {};
-    if (provider) {
-      body.provider = provider === 'disabled' ? null : provider;
-    }
-    if (enabled !== undefined) {
-      body.enabled = enabled;
-    }
-    // Non-secret fields are prefilled: omit when unchanged, send null when cleared.
-    body.baseUrl = clearableField(baseUrl, data?.baseUrl);
-    if (allowPrivateNetwork !== undefined) {
-      body.allowPrivateNetwork = allowPrivateNetwork;
-    }
-    body.email = clearableField(email, data?.email);
-    if (apiToken) {
-      body.apiToken = apiToken;
-    }
-    if (spacesRaw) {
-      body.spaces = spacesRaw
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-    body.maxPages = clearableIntField(maxPages, data?.maxPages);
-
     submit(
       () => update.mutateAsync(body),
-      () => setApiToken('')
+      () => {
+        setApiToken('');
+        setSpacesRaw('');
+        setProvider('');
+        setEnabled(undefined);
+        setAllowPrivateNetwork(undefined);
+      }
     );
   };
 
@@ -315,7 +319,12 @@ export function KnowledgeBaseTab() {
         <TestResultAlert result={testResult} />
       </Card>
 
-      <IntegrationFormFooter error={error} isPending={update.isPending} saved={saved} />
+      <IntegrationFormFooter
+        dirtyCount={dirtyCount}
+        error={error}
+        isPending={update.isPending}
+        saved={saved}
+      />
     </form>
   );
 }
