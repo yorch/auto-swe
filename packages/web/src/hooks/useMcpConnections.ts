@@ -11,6 +11,8 @@ export interface McpConnectionRow {
   teamId: string;
   team?: { id: string; name: string; slug: string } | null;
   createdAt?: string;
+  /** Whether a bearer token is stored. The token itself is never returned. */
+  hasToken?: boolean;
   /** Agents whose current version binds this server. */
   usedBy?: { key: string; name: string; scope: string }[];
 }
@@ -24,6 +26,8 @@ export interface McpTestResult {
 }
 
 export interface CreateMcpConnectionBody {
+  /** Optional bearer token the server requires. Write-only. */
+  bearerToken?: string;
   name: string;
   url: string;
   teamId: string;
@@ -59,6 +63,10 @@ export function useCreateMcpConnection() {
 }
 
 export interface UpdateMcpConnectionBody {
+  /** Replaces the stored token. Omit to keep it. */
+  bearerToken?: string;
+  /** Removes the stored token. */
+  clearBearerToken?: boolean;
   name: string;
   url: string;
   /** Optional override of `loadMcpTools`'s list-timeout (default 15 s). Omit to clear. */

@@ -85,10 +85,77 @@ function McpTimeoutFields({
   );
 }
 
+/**
+ * The write-only bearer token field. The stored token is never shown, so the field is blank
+ * either way: typing replaces it, leaving it blank keeps it, and "Clear stored token" removes it
+ * on save. `onClearChange` is only passed when a token is already stored.
+ */
+function McpBearerTokenField({
+  clear,
+  hasToken,
+  id,
+  onChange,
+  onClearChange,
+  value,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  hasToken: boolean;
+  clear?: boolean;
+  onClearChange?: (v: boolean) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Input
+        autoComplete="off"
+        disabled={clear}
+        hint={
+          clear
+            ? 'The stored token is removed when you save.'
+            : hasToken
+              ? 'A token is stored. Leave blank to keep it, or enter a new one to replace it.'
+              : 'Only needed when the server requires authentication. Sent as a bearer token to this server only.'
+        }
+        id={id}
+        label="Bearer token (optional)"
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={hasToken ? '••••••••' : 'Not set'}
+        type="password"
+        value={value}
+      />
+      {hasToken && onClearChange && (
+        <div className="flex items-center gap-2 text-xs text-paper-400">
+          <span>{clear ? 'Will be cleared on save.' : 'Stored.'}</span>
+          <Button
+            aria-pressed={clear}
+            onClick={() => {
+              onClearChange(!clear);
+              onChange('');
+            }}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {clear ? 'Keep stored token' : 'Clear stored token'}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const { data: teams } = useTeams();
   const create = useCreateMcpConnection();
-  const initialForm = { callTimeoutMs: '', listTimeoutMs: '', name: '', teamId: '', url: '' };
+  const initialForm = {
+    bearerToken: '',
+    callTimeoutMs: '',
+    listTimeoutMs: '',
+    name: '',
+    teamId: '',
+    url: '',
+  };
   const [form, setForm] = useState(initialForm);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,6 +170,7 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
     }
     try {
       await create.mutateAsync({
+        ...(form.bearerToken.trim() ? { bearerToken: form.bearerToken.trim() } : {}),
         name: form.name,
         teamId: form.teamId,
         url: form.url,
@@ -135,6 +203,12 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
           required
           type="url"
           value={form.url}
+        />
+        <McpBearerTokenField
+          hasToken={false}
+          id="mcp-new-bearer-token"
+          onChange={(v) => setForm((f) => ({ ...f, bearerToken: v }))}
+          value={form.bearerToken}
         />
         <Combobox
           hint="The team owns the connection and manages it. Platform-wide agents can use any connection; a team's own agents can only use that team's."
@@ -177,11 +251,13 @@ function EditMcpConnectionModal({
   // Pre-fill from the row; keyed by connection id below so the form resets when a
   // different row is opened. Timeouts render as their number or blank (= default).
   const [form, setForm] = useState({
+    bearerToken: '',
     callTimeoutMs: connection?.config?.callTimeoutMs?.toString() ?? '',
     listTimeoutMs: connection?.config?.listTimeoutMs?.toString() ?? '',
     name: connection?.name ?? '',
     url: connection?.config?.url ?? '',
   });
+  const [clearToken, setClearToken] = useState(false);
 
   if (!connection) {
     return null;
@@ -203,6 +279,8 @@ function EditMcpConnectionModal({
     try {
       await update.mutateAsync({
         body: {
+          ...(form.bearerToken.trim() ? { bearerToken: form.bearerToken.trim() } : {}),
+          ...(clearToken ? { clearBearerToken: true } : {}),
           name: form.name,
           url: form.url,
           ...(parsed.listTimeoutMs !== null ? { listTimeoutMs: parsed.listTimeoutMs } : {}),
@@ -233,6 +311,14 @@ function EditMcpConnectionModal({
           required
           type="url"
           value={form.url}
+        />
+        <McpBearerTokenField
+          clear={clearToken}
+          hasToken={!!connection.hasToken}
+          id="mcp-edit-bearer-token"
+          onChange={(v) => setForm((f) => ({ ...f, bearerToken: v }))}
+          onClearChange={setClearToken}
+          value={form.bearerToken}
         />
         <McpTimeoutFields
           callTimeoutMs={form.callTimeoutMs}
@@ -297,7 +383,9 @@ export default function StudioMcpConnectionsPage() {
           <>
             MCP servers (http or https) whose tools an agent can call. Choose one in an agent&apos;s
             MCP connection field in the Agent library; its tools then load at run time alongside the
-            agent&apos;s built-in tools. Use Test to check the server is reachable.
+            agent&apos;s built-in tools. Use Test to check the server is reachable. If a server
+            requires a bearer token, add it to the connection; it is stored encrypted and never
+            shown again.
           </>
         }
         title="MCP connections"
@@ -341,6 +429,9 @@ export default function StudioMcpConnectionsPage() {
                         <code className="block truncate font-mono text-[11px] text-paper-300">
                           {c.config?.url}
                         </code>
+                        <span className="text-[11px] text-paper-500">
+                          {c.hasToken ? 'Bearer token stored' : 'No authentication'}
+                        </span>
                       </Td>
                       <Td
                         className="py-2 pr-4 text-xs text-paper-300"
