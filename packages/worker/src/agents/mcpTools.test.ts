@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  bearerFetch,
   isMcpToolEnabled,
   loadMcpTools,
   MCP_TOOL_KEY,
@@ -288,5 +289,88 @@ describe('loadMcpTools — connect failure isolation', () => {
     );
     vi.mocked(console.error).mockRestore();
     vi.mocked(console.warn).mockRestore();
+  });
+});
+
+// ── Bearer token ──
+
+describe('bearer token', () => {
+  const TOKEN = 'sk-mcp-very-secret-token';
+  const ref = 'https://mcp.example.com/mcp';
+
+  it('passes no fetch or host policy to the client when the connection has no token', async () => {
+    listToolsetsWithErrors.mockResolvedValue({ errors: {}, toolsets: { mcp: {} } });
+    await loadMcpTools(ref);
+    const server = (constructorArgs[0] as { servers: { mcp: Record<string, unknown> } }).servers
+      .mcp;
+    expect(server.fetch).toBeUndefined();
+    expect(server.allowedHosts).toBeUndefined();
+  });
+
+  it('gives the client one fetch that carries the token, pinned to the server host', async () => {
+    listToolsetsWithErrors.mockResolvedValue({ errors: {}, toolsets: { mcp: {} } });
+    await loadMcpTools(ref, undefined, { bearerToken: TOKEN });
+    const server = (
+      constructorArgs[0] as {
+        servers: { mcp: { fetch: unknown; allowedHosts: string[] } };
+      }
+    ).servers.mcp;
+    expect(typeof server.fetch).toBe('function');
+    expect(server.allowedHosts).toEqual(['mcp.example.com']);
+  });
+
+  it('never puts the token in a trace event or a logged error when connecting fails', async () => {
+    const tracer = makeTracer();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    listToolsetsWithErrors.mockRejectedValue(new Error(`bad header Bearer ${TOKEN}`));
+    await loadMcpTools(ref, tracer, { bearerToken: TOKEN });
+    const everything = JSON.stringify([
+      tracer.addActivityEvent.mock.calls,
+      errSpy.mock.calls,
+      constructorArgs.map((a) => JSON.stringify(a)),
+    ]);
+    expect(everything).not.toContain(TOKEN);
+    errSpy.mockRestore();
+  });
+});
+
+describe('bearerFetch', () => {
+  const TOKEN = 'sk-mcp-very-secret-token';
+  const server = new URL('https://mcp.example.com/mcp');
+
+  it('adds the Authorization header on requests to the server origin', async () => {
+    const base = vi.fn(async () => new Response('{}', { status: 200 }));
+    await bearerFetch(
+      server,
+      TOKEN,
+      base as never
+    )('https://mcp.example.com/messages?s=1', { headers: { accept: 'text/event-stream' } });
+    const init = base.mock.calls[0] as unknown as [URL, RequestInit];
+    const headers = new Headers(init[1].headers);
+    expect(headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+    expect(headers.get('accept')).toBe('text/event-stream');
+    expect(init[1].redirect).toBe('manual');
+  });
+
+  it('never sends the token to another origin, and strips one a caller set', async () => {
+    const base = vi.fn(async () => new Response('{}', { status: 200 }));
+    const f = bearerFetch(server, TOKEN, base as never);
+    await f('https://evil.example.net/messages', { headers: { authorization: `Bearer ${TOKEN}` } });
+    await f('http://mcp.example.com/mcp'); // same host, other scheme
+    await f('https://mcp.example.com:8443/mcp'); // same host, other port
+    for (const call of base.mock.calls as unknown as [URL, RequestInit][]) {
+      expect(new Headers(call[1].headers).get('authorization')).toBeNull();
+    }
+  });
+
+  it('refuses a redirect instead of following it to wherever it points', async () => {
+    const base = vi.fn(
+      async () =>
+        new Response(null, { headers: { location: 'https://evil.example.net' }, status: 307 })
+    );
+    await expect(bearerFetch(server, TOKEN, base as never)(server.toString())).rejects.toThrow(
+      /redirect/
+    );
+    expect(base).toHaveBeenCalledTimes(1);
   });
 });
