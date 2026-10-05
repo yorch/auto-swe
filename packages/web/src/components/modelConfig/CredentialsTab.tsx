@@ -25,6 +25,7 @@ import {
 import { useReadiness } from '@/hooks/useReadiness';
 import { useTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { humanizeKey } from '@/lib/govLabels';
 
 type ProbeResult = { ok: boolean; status?: number; error?: string };
 
@@ -152,8 +153,8 @@ export function CredentialsTab() {
                   {p.present ? 'Credential present' : 'Credential missing'}
                 </Badge>
                 <span className="text-xs text-paper-500">
-                  {p.usedBy.length} {p.usedBy.length === 1 ? 'user' : 'users'}:{' '}
-                  {p.usedBy.slice(0, 4).join(', ')}
+                  Used by {p.usedBy.length} {p.usedBy.length === 1 ? 'agent' : 'agents'}:{' '}
+                  {p.usedBy.slice(0, 4).map(humanizeKey).join(', ')}
                   {p.usedBy.length > 4 && ` and ${p.usedBy.length - 4} more`}
                 </span>
                 {!p.present && (
@@ -163,7 +164,7 @@ export function CredentialsTab() {
                       setCreating(true);
                     }}
                     size="sm"
-                    variant="ghost"
+                    variant="secondary"
                   >
                     Add credential
                   </Button>

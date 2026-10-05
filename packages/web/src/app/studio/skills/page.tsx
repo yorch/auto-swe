@@ -32,6 +32,7 @@ import {
 } from '@/hooks/useSkills';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
+import { originLabel } from '@/lib/originLabel';
 import { formatCost, formatDate, formatPercent } from '@/lib/utils';
 import { visibleOrNull, visibleText } from '@/lib/visibleText';
 
@@ -41,7 +42,7 @@ function OriginBadge({ origin }: { origin: string | null }) {
   }
   return (
     <Badge className="ml-1.5" tone="neutral">
-      {origin}
+      {originLabel(origin)}
     </Badge>
   );
 }
@@ -579,7 +580,7 @@ export default function StudioSkillsPage() {
               {!skills?.length ? (
                 <EmptyState title="No skills yet. Create one with the button above." />
               ) : (
-                <Table>
+                <Table stacked>
                   <THead>
                     <Th variant="compact">Name</Th>
                     <Th variant="compact">Description</Th>
@@ -590,7 +591,7 @@ export default function StudioSkillsPage() {
                   <tbody>
                     {skills.map((skill) => (
                       <TRow key={skill.id}>
-                        <Td className="py-2 pr-4">
+                        <Td className="py-2 pr-4" primary>
                           <button
                             className="text-left hover:underline"
                             onClick={() => setViewTarget(skill)}
@@ -625,15 +626,15 @@ export default function StudioSkillsPage() {
                             )}
                           </div>
                         </Td>
-                        <Td className="max-w-xs py-2 pr-4">
+                        <Td className="max-w-xs py-2 pr-4" label="Description">
                           <span className="line-clamp-1 text-paper-400">
                             {visibleOrNull(skill.description) ?? '—'}
                           </span>
                         </Td>
-                        <Td className="py-2 pr-4 tabular-nums text-paper-400">
+                        <Td className="py-2 pr-4 tabular-nums text-paper-400" label="Used by">
                           {skill.usedByCount}
                         </Td>
-                        <Td className="py-2 pr-4">
+                        <Td className="py-2 pr-4" label="Active">
                           <ToggleSwitch
                             ariaLabel={`Active: ${visibleText(skill.name)}`}
                             checked={skill.isActive}

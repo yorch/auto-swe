@@ -54,8 +54,21 @@ export function SetupReadiness() {
   );
 }
 
-/** A compact banner for a studio page, limited to the items that page can fix. */
-export function SetupBanner({ items }: { items: ReadinessItemId[] }) {
+/**
+ * A compact banner for a studio page, limited to the items that page can fix.
+ * `here` is the href of the page and tab the banner sits on: a "Fix this" link
+ * to where the person already is does nothing, so it is replaced by `inPage`
+ * (an action that works on the open page) or left out.
+ */
+export function SetupBanner({
+  items,
+  here,
+  inPage,
+}: {
+  items: ReadinessItemId[];
+  here?: string;
+  inPage?: { label: string; onClick: () => void };
+}) {
   const isAdmin = useHasRole('ADMIN');
   const { data } = useReadiness(isAdmin);
   const missing = data?.items.filter((i) => !i.ok && items.includes(i.id)) ?? [];
@@ -68,9 +81,21 @@ export function SetupBanner({ items }: { items: ReadinessItemId[] }) {
         {missing.map((item) => (
           <li key={item.id}>
             {item.detail}{' '}
-            <Link className="text-ember-400 hover:underline" href={item.href}>
-              Fix this →
-            </Link>
+            {item.href !== here ? (
+              <Link className="text-ember-400 hover:underline" href={item.href}>
+                Fix this →
+              </Link>
+            ) : (
+              inPage && (
+                <button
+                  className="text-ember-400 hover:underline"
+                  onClick={inPage.onClick}
+                  type="button"
+                >
+                  {inPage.label} →
+                </button>
+              )
+            )}
           </li>
         ))}
       </ul>

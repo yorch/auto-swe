@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -195,8 +196,11 @@ export function GitHubTab() {
           </CardHeader>
           <p className="mb-4 text-xs text-paper-500">
             GitHub App installation tokens are short-lived and scoped. Configure all four fields to
-            enable App auth. See <code className="font-mono">docs/github-app-setup.md</code> for
-            setup instructions.
+            enable App auth. See the{' '}
+            <Link className="text-ember-400 hover:underline" href="/docs/github-app-setup">
+              GitHub App setup guide
+            </Link>{' '}
+            for instructions.
           </p>
           <div className="space-y-4">
             <ConfigField

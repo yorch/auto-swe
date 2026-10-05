@@ -56,8 +56,8 @@ function StudioModelConfigPageInner() {
         }
         title="Model configuration"
       />
+      <SetupBanner here={`/studio/models?tab=${active}`} items={['credentials', 'embeddings']} />
       <MidRunWarning />
-      <SetupBanner items={['credentials', 'embeddings']} />
       <TabBar
         active={active}
         idPrefix="models"

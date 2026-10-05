@@ -10,6 +10,7 @@ import {
 import { AgentHistoryModal } from '@/components/agents/AgentHistoryModal';
 import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
 import { broaderFallbacks } from '@/components/agents/agentFallback';
+import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -43,6 +44,7 @@ import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { modelLabel, SCOPE_ORDER, scopeLabel, toolKeysLabel } from '@/lib/agentDisplay';
 import { buildAgentUpdate } from '@/lib/agentEditPatch';
 import { errMsg } from '@/lib/errors';
+import { originLabel } from '@/lib/originLabel';
 
 const EMPTY_CREATE: CreateAgentBody = {
   channelId: undefined,
@@ -126,14 +128,6 @@ function scopeTarget(
     return names.orgs.get(a.orgId) ?? 'An organization';
   }
   return null;
-}
-
-/** Plain-language provenance for the origin column. */
-function originLabel(origin: string | null): string {
-  if (!origin) {
-    return 'Custom';
-  }
-  return origin === 'swe-starter' ? 'Engineering starter' : origin;
 }
 
 /** What a save leaves to read: the saved agent is live; the scanner and catalog only advise. */
@@ -251,6 +245,14 @@ export default function AgentLibraryPage() {
   );
   const query = textFilter.trim().toLowerCase();
   // Sorted by key so an agent and its narrower-scope overrides sit together.
+  // Each key's overrides sit directly under its GLOBAL row, and keys are ordered by that row's
+  // display name, since the name is what the first column shows.
+  const keyNames = new Map<string, string>();
+  for (const a of agents ?? []) {
+    if (a.scope === 'GLOBAL' || !keyNames.has(a.key)) {
+      keyNames.set(a.key, a.name);
+    }
+  }
   const visibleAgents = (agents ?? [])
     .filter((a) => !scopeFilter || a.scope === scopeFilter)
     .filter(
@@ -258,7 +260,9 @@ export default function AgentLibraryPage() {
     )
     .sort(
       (a, b) =>
-        a.key.localeCompare(b.key) || SCOPE_ORDER.indexOf(a.scope) - SCOPE_ORDER.indexOf(b.scope)
+        (keyNames.get(a.key) ?? a.name).localeCompare(keyNames.get(b.key) ?? b.name) ||
+        a.key.localeCompare(b.key) ||
+        SCOPE_ORDER.indexOf(a.scope) - SCOPE_ORDER.indexOf(b.scope)
     );
   const filtering = Boolean(scopeFilter || query);
   // Agents a sub-role can borrow a model from: those with a model of their own.
@@ -311,9 +315,10 @@ export default function AgentLibraryPage() {
       </Button>
       <Button
         aria-label={`Deactivate ${a.key}`}
+        className="text-brick-400 hover:text-brick-600"
         onClick={() => setDeleting(a)}
         size="sm"
-        variant="danger"
+        variant="ghost"
       >
         Deactivate
       </Button>
@@ -337,6 +342,7 @@ export default function AgentLibraryPage() {
         subtitle="Versioned agents. Saving an edit creates a new version; runs already in progress keep the version they started with, and History lets you compare or restore any version."
         title="Agent library"
       />
+      <SetupBanner items={['credentials']} />
 
       <Card>
         <CardHeader>
@@ -346,7 +352,7 @@ export default function AgentLibraryPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Input
               aria-label="Search agents"
-              className="h-9 w-48"
+              className="h-9 w-full sm:w-48"
               onChange={(e) => setTextFilter(e.target.value)}
               placeholder="Search agents…"
               type="search"
@@ -412,7 +418,10 @@ export default function AgentLibraryPage() {
                           {sameKeyAsAbove ? `↳ override of ${a.key}` : a.key}
                         </div>
                         {a.description && (
-                          <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-paper-500">
+                          <div
+                            className="mt-0.5 line-clamp-2 max-w-xs text-xs text-paper-500"
+                            title={a.description}
+                          >
                             {a.description}
                           </div>
                         )}
@@ -421,7 +430,7 @@ export default function AgentLibraryPage() {
                         {modelLabel(a)}
                       </Td>
                       <Td className="py-3 pr-3" label="Applies to">
-                        <Badge tone="muted" variant="text">
+                        <Badge className="whitespace-nowrap" tone="muted" variant="text">
                           {scopeLabel(a.scope)}
                         </Badge>
                         {scopeTarget(a, names) && (

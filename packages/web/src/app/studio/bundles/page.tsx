@@ -84,8 +84,8 @@ export default function StudioBundlesPage() {
             Distribute library content (Agents, Skills, scanner patterns, Templates) across
             deployments. Install seeds a <strong>managed base layer</strong>; your team/template
             overrides sit on top. A bundle whose detached signature matches a deployment-trusted key
-            installs as <code className="text-paper-300">VERIFIED</code>, otherwise{' '}
-            <code className="text-paper-300">UNVERIFIED</code> (community).
+            installs as <strong>verified</strong>, otherwise as <strong>unverified</strong>{' '}
+            (community).
           </>
         }
         title={navLabel('/studio/bundles')}
@@ -96,28 +96,37 @@ export default function StudioBundlesPage() {
           <CardTitle>Export</CardTitle>
         </CardHeader>
         <div className="flex flex-wrap items-end gap-3">
-          <Input
-            label="Name"
-            onChange={(e) => setExportForm((f) => ({ ...f, name: e.target.value }))}
-            placeholder="swe-starter"
-            value={exportForm.name}
-          />
-          <Input
-            label="Version"
-            onChange={(e) => setExportForm((f) => ({ ...f, version: e.target.value }))}
-            value={exportForm.version}
-          />
-          <Input
-            hint="origin tag to export (blank = all GLOBAL content)"
-            label="Origin"
-            onChange={(e) => setExportForm((f) => ({ ...f, origin: e.target.value }))}
-            placeholder="swe-starter"
-            value={exportForm.origin}
-          />
+          <div className="w-full sm:w-64">
+            <Input
+              label="Name"
+              onChange={(e) => setExportForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="bundle"
+              value={exportForm.name}
+            />
+          </div>
+          <div className="w-full sm:w-64">
+            <Input
+              label="Version"
+              onChange={(e) => setExportForm((f) => ({ ...f, version: e.target.value }))}
+              value={exportForm.version}
+            />
+          </div>
+          <div className="w-full sm:w-64">
+            <Input
+              label="Origin"
+              onChange={(e) => setExportForm((f) => ({ ...f, origin: e.target.value }))}
+              placeholder="swe-starter"
+              value={exportForm.origin}
+            />
+          </div>
           <Button disabled={exportBundle.isPending} onClick={handleExport} variant="primary">
             {exportBundle.isPending ? 'Exporting…' : 'Export & download'}
           </Button>
         </div>
+        <p className="mt-2 text-xs text-paper-500">
+          Origin is the tag of the content to export. Leave it blank to export all platform-wide
+          content. A blank name downloads as bundle.bundle.json.
+        </p>
         {exportError && (
           <Alert className="mt-3" variant="error">
             {exportError}
@@ -177,9 +186,13 @@ export default function StudioBundlesPage() {
           onRetry={() => void refetch()}
         >
           {!bundles || bundles.length === 0 ? (
-            <EmptyState className="py-4" title="No bundles installed yet." />
+            <EmptyState
+              className="py-4"
+              hint="The built-in starter content is seeded with the platform, not installed from a bundle, so it is not listed here."
+              title="No bundles installed yet."
+            />
           ) : (
-            <Table>
+            <Table stacked>
               <THead>
                 <Th variant="compact">Name</Th>
                 <Th variant="compact">Version</Th>
@@ -189,15 +202,21 @@ export default function StudioBundlesPage() {
               <tbody>
                 {bundles.map((b) => (
                   <TRow key={b.name}>
-                    <Td className="py-2 pr-4 font-mono text-xs text-paper-100">{b.name}</Td>
-                    <Td className="py-2 pr-4 text-paper-300">{b.version}</Td>
-                    <Td className="py-2 pr-4">
+                    <Td className="py-2 pr-4 font-mono text-xs text-paper-100" primary>
+                      {b.name}
+                    </Td>
+                    <Td className="py-2 pr-4 text-paper-300" label="Version">
+                      {b.version}
+                    </Td>
+                    <Td className="py-2 pr-4" label="Trust">
                       <Badge tone={b.trustState === 'VERIFIED' ? 'moss' : 'amber'} variant="text">
-                        {b.trustState}
+                        {b.trustState === 'VERIFIED' ? 'Verified' : 'Unverified'}
                         {b.signedBy ? ` · ${b.signedBy}` : ''}
                       </Badge>
                     </Td>
-                    <Td className="py-2 pr-4 text-xs text-paper-400">{b.source ?? '—'}</Td>
+                    <Td className="py-2 pr-4 text-xs text-paper-400" label="Source">
+                      {b.source ?? '—'}
+                    </Td>
                   </TRow>
                 ))}
               </tbody>

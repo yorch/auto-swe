@@ -60,7 +60,18 @@ function StudioIntegrationsPageInner() {
         }
         title="Integrations"
       />
-      <SetupBanner items={['github']} />
+      <SetupBanner
+        here={`/studio/integrations?tab=${active}`}
+        inPage={{
+          label: 'Enter a token below',
+          onClick: () => {
+            const field = document.getElementById('gh-token');
+            field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            field?.focus();
+          },
+        }}
+        items={['github']}
+      />
       <TabBar
         active={active}
         idPrefix="integrations"
