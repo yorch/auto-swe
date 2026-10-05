@@ -9,8 +9,10 @@ how visibility is applied to every row and every aggregate.
 
 ## 1. Pull-request lifecycle
 
-Every pull request the platform opens has one `PullRequest` row, created by the
-`createOrUpdatePullRequest` activity when the host accepts the PR. The row records:
+Every pull request the platform opens has one `PullRequest` row, created when the host accepts the
+PR: by the `createOrUpdatePullRequest` activity for a workflow's PR step, and by `runAgentTask` for
+the draft PR of an Agent Run with `deliver=draft_pr`. Both link the row to the execution's own
+ledger row. The row records:
 
 | Column | Meaning |
 |---|---|
@@ -26,6 +28,11 @@ runs again in a workflow whose latest PR for the repository was closed without m
 non-retryably with `PR_CLOSED_BY_REVIEWER` instead of opening a replacement. A new run of the same
 request has its own ledger row, is not stopped by that close, and opens a new PR; the old row stays as
 history.
+
+An Agent Run is a new workflow each time, so the close guard does not apply to it: it opens one PR
+per run, on its own branch. Its row is refreshed rather than duplicated if the same (repository, PR
+number) is recorded again, and a failure to write the row is logged without failing the run, because
+the branch is already pushed and the PR open.
 
 ### 1.1 Webhook events
 
@@ -116,8 +123,10 @@ runs, cost and pull requests leave them out too:
 
 - requests with an agent run (a run of a template whose origin is the agent-run origin);
 - requests with a Channel Assistant or Channel Task run, or any run in a Slack channel;
-- a template launch that named no ticket and filed the request's own id (`RunInput.ticketIsSynthetic`,
-  set at the two launch routes that fall back to it).
+- requests whose ticket id the platform generated (`RunInput.ticketIsSynthetic`): a template launch
+  that named no ticket and filed the request's own id, a PRD run (`PRD-<id>`), a scheduled work
+  request (`<prefix>-SCHED-<id>`), and a PRD story given a generated id because the tracker did not
+  assign one. A tracker- or user-supplied id is never flagged.
 
 **Visibility is per row.** A request is in scope when the caller requested it, when the caller can
 see one of its runs (`buildWorkflowRunVisibilityFilter`, the rule `GET /workflow-runs/requests`
