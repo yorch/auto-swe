@@ -42,7 +42,7 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
       async () => {
         const [agents, credentials, embedding, connectionCount] = await Promise.all([
           fastify.prisma.agent.findMany({
-            select: { credentialId: true, key: true, modelSpec: true },
+            select: { credentialId: true, key: true, modelSpec: true, version: true },
             where: { isActive: true, modelSpec: { not: null }, scope: 'GLOBAL' },
           }),
           fastify.prisma.providerCredential.findMany({
@@ -59,7 +59,16 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
     const credentialProviders = new Set(credentials.map((c) => c.provider.toLowerCase()));
     const usedBy = new Map<string, Set<string>>();
     const uncovered = new Set<string>();
+    // Every version of an agent stays an active row, so only the highest one per key is what
+    // runs; counting the older ones reports a provider an agent no longer calls as missing.
+    const current = new Map<string, (typeof agents)[number]>();
     for (const agent of agents) {
+      const seen = current.get(agent.key);
+      if (!seen || agent.version > seen.version) {
+        current.set(agent.key, agent);
+      }
+    }
+    for (const agent of current.values()) {
       const provider = providerOf(agent.modelSpec);
       if (!provider) {
         continue;

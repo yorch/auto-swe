@@ -63,6 +63,23 @@ describe('GET /readiness', () => {
     expect(res.statusCode).toBe(403);
   });
 
+  it('counts only the highest active version of each agent', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findMany.mockResolvedValue([
+      { credentialId: null, key: 'implementer', modelSpec: 'mistral/old', version: 1 },
+      {
+        credentialId: null,
+        key: 'implementer',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        version: 2,
+      },
+    ]);
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: URL });
+    const { data } = res.json();
+    expect(data.ready).toBe(true);
+    expect(data.providers.map((p: { provider: string }) => p.provider)).not.toContain('mistral');
+  });
+
   it('reports ready when everything is configured', async () => {
     const { app } = await buildApp();
     const res = await app.inject({ headers: AUTH, method: 'GET', url: URL });
