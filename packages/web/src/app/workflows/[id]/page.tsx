@@ -1,5 +1,6 @@
 'use client';
 
+import { pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
 import { useRouter } from 'next/navigation';
 import { use, useEffect } from 'react';
 import { ButtonLink } from '@/components/ui/Button';
@@ -64,10 +65,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   // than reporting a record that exists as missing.
   const repo = workflow.repository;
   const pr = workflow.pullRequests.find((candidate) => candidate.prNumber !== null);
-  const prUrl =
-    repo && pr
-      ? `${(repo.githubUrl ?? 'https://github.com').replace(/\/$/, '')}/${repo.organizationName}/${repo.repoName}/pull/${pr.prNumber}`
-      : null;
+  const prUrl = repo && pr ? pullRequestUrl(repo, pr.prNumber) : null;
   return (
     <div className="space-y-4">
       <ButtonLink href="/workflows">Back to requests</ButtonLink>

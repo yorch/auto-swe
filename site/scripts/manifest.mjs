@@ -122,6 +122,7 @@ export const SIDEBAR = [
       'docs/repo-access-gating',
       'docs/repositories',
       'docs/user-github-credentials',
+      'docs/work-views',
       'docs/bundles',
     ],
   },

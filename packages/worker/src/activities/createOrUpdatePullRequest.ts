@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
+import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import {
   resolveIssueTrackerConfig,
   resolveKnowledgeBaseConfig,
@@ -101,6 +102,27 @@ async function doCreateOrUpdatePullRequest(
     return { prNumber: existingPR.prNumber, prUrl };
   }
 
+  const title = formatPRTitle(request, workflowDefaults.prTitleTemplate);
+
+  // A reviewer closed this workflow's PR without merging it. Repushing must not
+  // quietly open a replacement: the close is a decision. A new run of the same
+  // request has its own ledger row, so it is not stopped by this one.
+  const latest = await prisma.pullRequest.findFirst({
+    orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+    select: { prNumber: true, status: true },
+    where: {
+      repoId: repo.id,
+      workflow: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },
+    },
+  });
+  if (latest?.status === 'CLOSED') {
+    throw ApplicationFailure.nonRetryable(
+      `PR #${latest.prNumber} for ${codeResult.branch} was closed without merging, so no new pull ` +
+        'request is opened for this run. Reopen it, or start a new run of the request.',
+      'PR_CLOSED_BY_REVIEWER'
+    );
+  }
+
   // Create the PR (or, on Temporal retries, reuse one a prior attempt created
   // on the host but crashed before persisting the DB row — the tracking row is
   // still written below). Only a prior attempt could have orphaned a PR, so
@@ -114,7 +136,7 @@ async function doCreateOrUpdatePullRequest(
       headBranch: codeResult.branch,
       repo: repoRef,
       reuseExisting: activityInfo().attempt > 1,
-      title: formatPRTitle(request, workflowDefaults.prTitleTemplate),
+      title,
     });
   } catch (err) {
     // "Draft" is a promise to the reviewer, so a repository that cannot hold
@@ -150,9 +172,11 @@ async function doCreateOrUpdatePullRequest(
     data: {
       ciStatus: 'PENDING',
       headSha: codeResult.headSha,
+      isDraft: options.draft === true,
       prNumber,
       repoId: repo.id,
       status: 'OPEN',
+      title: clampPullRequestTitle(title),
       workflowId: workflow?.id,
     },
   });

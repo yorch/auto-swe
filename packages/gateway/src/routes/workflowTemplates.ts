@@ -1992,6 +1992,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             requestPayload: JSON.stringify(request.body),
             templateId: tpl.id,
             templateVersion: resolvedVersion,
+            ticketIsSynthetic: externalTicketId === workRequestId,
           },
         },
         () =>

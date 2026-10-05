@@ -36,6 +36,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/temporalTracing.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/pullRequest',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/pullRequest.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/crypto',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/crypto.ts'),
       },
