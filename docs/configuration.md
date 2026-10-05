@@ -10,6 +10,11 @@ everything else is data an operator can change without a deploy.**
 | Integrations | Singleton config tables | GitHub, Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/studio/integrations` and `/govern/workflow-defaults` |
 | Policy | The setting registry | Operator knobs that used to be constants in the worker | Admins and grant holders, at `/govern/platform-settings` |
 
+Each integration tab compares its form with the saved config: Save stays disabled with "No unsaved
+changes" until something differs (a typed secret or a cleared field counts), the footer shows the
+number of unsaved changes, and reloading, following an in-app link or switching tabs asks before it
+discards them.
+
 The bootstrap tier is deliberately not DB-backed. `CONFIG_ENCRYPTION_KEY` decrypts every other
 secret, and `BUNDLE_TRUSTED_KEYS` is the trust anchor for bundle signatures — anyone with database
 write access could otherwise mark a malicious bundle verified.

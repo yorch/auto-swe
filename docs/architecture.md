@@ -898,6 +898,13 @@ as the report. The page, its layout, and the sidebar entry all gate on that list
 rather than on the platform role, so a team LEAD or ORG_ADMIN whose platform role is ENGINEER reaches
 it; the report route still checks every request.
 
+Workflow analytics read the same whole-UTC-day windows. `GET /api/v1/workflow-templates/analytics`
+and `GET /api/v1/workflow-templates/:id/analytics` turn `window=<days>` into the last that many UTC
+days, closed at the end of today (`resolveWindow()` in `gateway/src/lib/dateWindow.ts`), so a preset
+and a custom `since`/`until` span of the same days report the same numbers, and the comparison
+period is the same number of days directly before. Weekly-bucketed charts (a usage or eval window
+above 90 days) say "week" in their summary, table and tooltips.
+
 ### Workspace hardening
 
 The agent workspace container executes LLM-generated commands, so its posture matters more than

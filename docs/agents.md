@@ -833,6 +833,11 @@ The single governed surface for per-key config. An Agent payload carries
 `IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash']`).
 Writes cut a new immutable `version`.
 
+For admins, each row of the library table carries a "No credential" badge on its Model cell when the
+provider it calls has no usable credential (and the row is not pinned to its own `credentialId`).
+The status comes from the one `GET /api/v1/platform/readiness` response the page already shares with
+the setup banner, and a sub-role persona takes its parent's status.
+
 | Method | Path | Min role | Purpose |
 |---|---|---|---|
 | `GET` | `/api/v1/platform/agent-library` | `ADMIN` | List Agents (GLOBAL + overrides) with resolved fields |
