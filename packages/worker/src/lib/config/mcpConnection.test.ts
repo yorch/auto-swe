@@ -220,10 +220,11 @@ describe('mcpUrlForConnection private-network opt-in and headers', () => {
   });
 
   it('yields no connection, and logs no secret, when the stored headers cannot be read', async () => {
-    const row = mcpConn(sealMcpHeaders([{ name: 'X-Api-Key', value: 'hdr-secret-1' }])) as {
-      headersCiphertext: Uint8Array;
-    };
-    row.headersCiphertext = new Uint8Array(row.headersCiphertext.length);
+    const sealed = sealMcpHeaders([{ name: 'X-Api-Key', value: 'hdr-secret-1' }]);
+    const row = mcpConn({
+      ...sealed,
+      headersCiphertext: new Uint8Array(sealed.headersCiphertext.length),
+    });
     findUnique.mockResolvedValue(row as never);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(await mcpUrlForConnection('c1')).toBeNull();
