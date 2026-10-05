@@ -739,25 +739,29 @@ interceptor (`lib/activitySpans.ts`), so an attempt's `llm.*` spans share one tr
 `temporal.workflow_id` attribute finds a run's traces in Tempo. The same trace ID is what
 `AgentTrace.otelTraceId` records, which is how the run viewer links an LLM call to Tempo.
 
-**Trace propagation.** A run's activities join the trace of whoever started the run, in three hops
-that never load OpenTelemetry into the workflow isolate:
+**Trace propagation.** A run has a workflow span, and its activities hang off it. The workflow span
+is a child of whoever started the run, so the hierarchy is starter → workflow → activity. None of it
+loads OpenTelemetry into the workflow isolate:
 
 | Hop | Where | What it does |
 |---|---|---|
 | Start | `traceContextClientInterceptor` (`shared/lib/temporalTracing.ts`), on the gateway's Temporal client and the worker's own | Writes the active W3C context (`traceparent`, `tracestate`) into an `x-auto-swe-trace` header on every workflow start and signal-with-start, and — on the gateway's client only — every signal and update |
-| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Copies that header, undecoded, onto every scheduled activity, local activity, child workflow and continue-as-new. A run that arrives without one gets a derived carrier: a trace id hashed from its workflow id and first run id (pure arithmetic, so replay-stable), whose span id is derived too, so the parent is a span that was never exported. The newest signal's or update's header travels beside it as `x-auto-swe-trace-signal` |
-| Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the starter's span, with a span link to the signal's span when the signal header is present |
+| Workflow | `workflows/traceContextInterceptor.ts`, registered through `interceptors.workflowModules` | Derives the run's workflow span id by arithmetic from its workflow id and run id (`workflows/workflowSpan.ts`, replay-stable), then rewrites that header so its parent span is the workflow span and puts it on every scheduled activity, local activity, child workflow and continue-as-new. A run that arrives without a usable header gets a derived trace id hashed from its workflow id and first run id, and its workflow span is the root of that trace. The newest signal's or update's header travels beside it as `x-auto-swe-trace-signal`. When the run's workflow code ends, the interceptor calls the `workflowSpans` sink |
+| Workflow span | `lib/workflowSpanSink.ts`, registered as a Temporal sink with `callDuringReplay: false` | Builds a finished `workflow.<type>` span with exactly the ids the interceptor derived — the tracer API cannot be told a span id, so it constructs the SDK's public `ReadableSpan` and hands it to a span processor in front of the OTLP exporter — with `temporal.workflow_id`, `temporal.run_id`, `temporal.workflow_type` and `temporal.outcome` attributes, an error status when the run failed, and the run's start and end times. With telemetry off the sink does nothing |
+| Activity | the activity interceptor | Extracts the header and starts `activity.<type>` as a child of the workflow span, with a span link to the signal's span when the signal header is present |
 
-So a gateway request — its Fastify and HTTP server spans — and every activity of the run it
-started, child workflows included, are one trace in Tempo. A workflow started without a span around
-it (a Temporal schedule) gets one trace per run from the derived carrier; its activities are children of a derived parent span that is never exported, and the carrier is flagged sampled so a parent-based sampler keeps them. An
-approval or steering signal does not move the run into the sender's trace: activities scheduled after
-it link to the signal's span instead, so the approval request is one click from the work it released.
-Headers are not part of the command
-stream Temporal compares on replay: `runnable.traceContext.replay.test.ts` replays every committed
-fixture with both workflow interceptors registered. `@temporalio/interceptors-opentelemetry` is not
-used: it pins the 1.x OpenTelemetry SDK beside this repo's 2.x one, and runs OpenTelemetry inside
-the isolate.
+So a gateway request — its Fastify and HTTP server spans — the run's workflow span, and every
+activity of the run, are one trace in Tempo. A child workflow's span is a child of its parent's
+workflow span, and each run of a continue-as-new chain has its own span, parented on the previous
+run's. A workflow started without a span around it (a Temporal schedule) gets one trace per run, with
+the workflow span as its root; the carrier is flagged sampled so a parent-based sampler keeps it, and
+a starter's own flags decide sampling otherwise. An approval or steering signal does not move the run
+into the sender's trace: activities scheduled after it link to the signal's span instead, so the
+approval request is one click from the work it released. Headers and sink calls are not part of the
+command stream Temporal compares on replay: `runnable.traceContext.replay.test.ts` replays every
+committed fixture with both workflow interceptors registered. `@temporalio/interceptors-opentelemetry`
+is not used: it pins the 1.x OpenTelemetry SDK beside this repo's 2.x one, and runs OpenTelemetry
+inside the isolate.
 
 **Instrumentation.** The gateway and worker start the OpenTelemetry SDK from a preload,
 `src/instrument.ts`, passed to `node --import` — the Dockerfile `CMD`, `yarn start` and `yarn dev`
@@ -1072,12 +1076,17 @@ Current constraints of the system as built. Deliberate product boundaries are in
   `import-in-the-middle` registers through `module.register()`, which Node 26 deprecates in favour
   of `module.registerHooks()`, and neither it nor the OpenTelemetry instrumentation package offers
   that yet. The start scripts and Dockerfile `CMD`s pass the flag, which silences only that code.
-- **A run's trace has no workflow span.** Activities hang directly off the span that started the
-  run; nothing represents the workflow itself or the time between activities, since producing one
-  would mean running OpenTelemetry inside the isolate. A schedule-started run's derived trace has
-  no root span either, so Tempo shows its activities as orphans of a parent that was never recorded.
-  A signal's link reaches only activities scheduled after it, and only the newest signal's: work
-  already running when it arrives, and earlier signals, are not linked.
+- **A run's workflow span is exported when its workflow code ends.** A long run, a human-approval
+  wait included, has no span in Tempo until it finishes, though its activities appear as they run,
+  under a parent the backend does not yet have. A run terminated or timed out from outside never runs
+  workflow code, so its span is never exported and its activities stay under a missing parent. A
+  workflow error that is not a Temporal failure fails the workflow task, which Temporal retries, so
+  it exports nothing until the run actually ends. The span is exported once per run in normal
+  operation, but a worker that dies after exporting and before Temporal records the completion
+  re-runs that final activation on another worker and exports it a second time. The span covers the
+  run, not the idle time between activities. A signal's link reaches only activities scheduled after
+  it, and only the newest signal's: work already running when it arrives, and earlier signals, are
+  not linked.
 - **Log export is limited to pino and the Temporal logger.** Plain `console` output other than the
   audit lines stays on stdout only. An audit line outside an activity (the unit-test path) is stdout
   only. Workflow-code logs arrive through the SDK's sink after the activation that produced them, so

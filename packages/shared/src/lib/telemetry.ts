@@ -1,5 +1,5 @@
 import { register } from 'node:module';
-import { resourceFromAttributes } from '@opentelemetry/resources';
+import { type Resource, resourceFromAttributes } from '@opentelemetry/resources';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 
@@ -32,7 +32,11 @@ export interface InitTelemetryOptions {
  * own first statement, so a call there runs after `http` and friends are
  * already bound and patches nothing.
  */
-export function initTelemetry(opts: InitTelemetryOptions): { shutdown: () => Promise<void> } {
+export function initTelemetry(opts: InitTelemetryOptions): {
+  /** The resource every exported span carries; absent when telemetry is disabled. */
+  resource?: Resource;
+  shutdown: () => Promise<void>;
+} {
   const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
   if (!endpoint) {
@@ -71,6 +75,7 @@ export function initTelemetry(opts: InitTelemetryOptions): { shutdown: () => Pro
   console.log(`OTel: telemetry initialized for ${opts.serviceName} → ${endpoint}`);
 
   return {
+    resource,
     shutdown: () => sdk.shutdown(),
   };
 }

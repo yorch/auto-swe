@@ -13,6 +13,8 @@ import {
   workflowInfo,
 } from '@temporalio/workflow';
 
+export * from './traceContextFailWorkflows.js';
+
 const { probe } = proxyActivities<{ probe(from: string): Promise<void> }>({
   startToCloseTimeout: '10s',
 });

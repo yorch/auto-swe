@@ -10,10 +10,20 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import type { WorkflowSpanTarget } from './workflowSpanSink.js';
 
-export function initTelemetry(serviceName: string): { shutdown: () => Promise<void> } {
+export function initTelemetry(serviceName: string): {
+  shutdown: () => Promise<void>;
+  /** Where workflow spans are exported; undefined when telemetry is disabled. */
+  workflowSpans?: WorkflowSpanTarget;
+} {
   const endpoint = resolveOtelExporterEndpoint();
-  return initSharedTelemetry({
+  // One exporter behind two processors: the SDK's batch processor for spans a
+  // tracer ends, and a simple one for workflow spans, which carry ids chosen
+  // inside the workflow isolate and so cannot come from a tracer.
+  const traceExporter = endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined;
+  const telemetry = initSharedTelemetry({
     esmModules: ['http', 'https'],
     // Undici is global `fetch`, which the AI SDK providers and Octokit call
     // through; `http` never sees it. It hooks diagnostics channels, so it needs
@@ -31,6 +41,13 @@ export function initTelemetry(serviceName: string): { shutdown: () => Promise<vo
         })
       : undefined,
     serviceName,
-    traceExporter: endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined,
+    traceExporter,
   });
+  return {
+    shutdown: telemetry.shutdown,
+    workflowSpans:
+      traceExporter && telemetry.resource
+        ? { processor: new SimpleSpanProcessor(traceExporter), resource: telemetry.resource }
+        : undefined,
+  };
 }

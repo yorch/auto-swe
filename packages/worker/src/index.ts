@@ -14,6 +14,7 @@ import { ignoredPriceOverrideVars } from './lib/costTracking.js';
 import { initMetrics } from './lib/metrics.js';
 import { OtelForwardingLogger } from './lib/otelLogger.js';
 import { initTemporalClient } from './lib/temporalClient.js';
+import { createWorkflowSpanSinks } from './lib/workflowSpanSink.js';
 
 async function run() {
   // Every provider credential and integration secret decrypts through this
@@ -110,6 +111,9 @@ async function run() {
     // host. The Temporal default (100) is far past what one host can serve.
     maxConcurrentActivityTaskExecutions: maxConcurrentActivities,
     namespace: 'default',
+    // Exports each run's workflow span, whose ids the trace-context workflow
+    // interceptor derives; see lib/workflowSpanSink.ts.
+    sinks: createWorkflowSpanSinks(otel.workflowSpans),
     taskQueue: 'engineering-workflow',
     // Temporal bundles workflows separately (V8 isolate).
     // Only type-only imports are allowed in workflow files.

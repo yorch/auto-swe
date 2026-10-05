@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import proto from '@temporalio/proto';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { createWorkflowSpanSinks } from '../lib/workflowSpanSink.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = path.resolve(__dirname, './__fixtures__');
@@ -47,6 +48,8 @@ describe('RunnableWorkflow — history replay with every workflow interceptor', 
                 path.resolve(__dirname, './traceContextInterceptor.ts'),
               ],
             },
+            // The interceptor emits to this sink; replay suppresses the call.
+            sinks: createWorkflowSpanSinks(undefined),
             workflowsPath: path.resolve(__dirname, './index.ts'),
           },
           history

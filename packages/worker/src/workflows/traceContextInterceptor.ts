@@ -1,9 +1,18 @@
 import {
+  CancelledFailure,
+  ContinueAsNew,
   defaultPayloadConverter,
   type Payload,
+  proxySinks,
+  TemporalFailure,
   type WorkflowInterceptors,
   workflowInfo,
 } from '@temporalio/workflow';
+import {
+  type WorkflowSpanOutcome,
+  type WorkflowSpanSinks,
+  workflowSpanContext,
+} from './workflowSpan.js';
 
 /**
  * Same name as `TRACE_CONTEXT_HEADER` in `@auto-swe/shared/lib/temporalTracing`,
@@ -15,62 +24,57 @@ export const TRACE_CONTEXT_HEADER = 'x-auto-swe-trace';
 /** Same as `TRACE_SIGNAL_HEADER` in `@auto-swe/shared/lib/temporalTracing`. */
 export const TRACE_SIGNAL_HEADER = 'x-auto-swe-trace-signal';
 
-/**
- * 128 bits from a string, as 32 hex digits — four independently seeded 32-bit
- * mixes (cyrb128). Pure arithmetic, so it is identical on every replay.
- */
-function hash128(text: string): string {
-  let h1 = 1779033703;
-  let h2 = 3144134277;
-  let h3 = 1013904242;
-  let h4 = 2773480762;
-  for (let i = 0; i < text.length; i++) {
-    const k = text.charCodeAt(i);
-    h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
-    h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
-    h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
-    h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+function decodeCarrier(payload: Payload | undefined): Record<string, string> | undefined {
+  if (!payload) {
+    return undefined;
   }
-  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
-  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
-  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
-  h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
-  return [h1, h2, h3, h4].map((n) => (n >>> 0).toString(16).padStart(8, '0')).join('');
+  try {
+    const value = defaultPayloadConverter.fromPayload<unknown>(payload);
+    return value && typeof value === 'object' ? (value as Record<string, string>) : undefined;
+  } catch {
+    // A header this worker cannot decode only costs the link: the run gets a derived trace.
+    return undefined;
+  }
 }
 
 /**
- * The carrier for a run nobody gave a trace context — one started by a
- * Temporal Schedule. The trace id is a hash of the run chain's identity, so
- * every activity of the run (continuations and children included, since they
- * carry this header on) lands in one trace instead of one root trace each.
- *
- * The span id is the first 16 hex digits of the trace id, and propagators read
- * it as a valid remote parent that was never exported, so the activities are
- * children of a span Tempo does not have — not roots. Flag `01` (sampled) is
- * deliberate: under a parent-based sampler it is what makes a schedule-started
- * run get sampled at all.
+ * How a run ended, as workflow code can see it. Only a `TemporalFailure` (or a
+ * continue-as-new) ends the run: any other thrown error fails the workflow
+ * *task*, which Temporal retries, so it is not an end and exports nothing.
  */
-function derivedCarrier(): Payload {
-  const { workflowId, firstExecutionRunId } = workflowInfo();
-  const hex = hash128(`${workflowId}/${firstExecutionRunId}`);
-  const traceparent = `00-${hex}-${hex.slice(0, 16)}-01`;
-  return defaultPayloadConverter.toPayload({ traceparent });
+function classify(err: unknown): { outcome: WorkflowSpanOutcome; message?: string } | undefined {
+  if (err instanceof ContinueAsNew) {
+    return { outcome: 'continued-as-new' };
+  }
+  if (err instanceof CancelledFailure) {
+    return { outcome: 'cancelled' };
+  }
+  if (err instanceof TemporalFailure) {
+    return { message: err.message, outcome: 'failed' };
+  }
+  return undefined;
 }
 
 /**
- * Workflow interceptor: forward the trace context the workflow was started with
- * to everything it schedules — activities, local activities, child workflows,
- * and its own continuation — so a gateway request and every activity of the
- * run it started share one trace.
+ * Workflow interceptor: give each run a workflow span and forward the trace
+ * context, re-parented on it, to everything the run schedules — activities,
+ * local activities, child workflows, and its own continuation — so a gateway
+ * request, the workflow, and every activity of the run share one trace as
+ * starter → workflow → activity.
  *
- * Pure header passing: a received payload is copied, never decoded, and
- * no OpenTelemetry code runs in the isolate. The one payload built here is the
- * derived carrier for a run started without a context. Headers are not part of the
- * command stream Temporal compares on replay, so recorded histories replay
- * unchanged (`runnable.traceContext.replay.test.ts`). A header already set by
- * the caller wins.
+ * No OpenTelemetry code runs in the isolate. The span's id is derived by
+ * arithmetic from the workflow id and run id (`workflowSpan.ts`), so every
+ * replay computes the same one; the carrier is decoded and rebuilt as plain
+ * JSON. The span itself is exported outside the isolate: when the run's
+ * workflow code ends, the interceptor hands a plain record to the
+ * `workflowSpans` sink (`callDuringReplay: false`, see `lib/workflowSpanSink.ts`),
+ * which builds and exports the span with exactly those ids. Headers and sink
+ * calls are not part of the command stream Temporal compares on replay, so
+ * recorded histories replay unchanged (`runnable.traceContext.replay.test.ts`).
+ * A header already set by the caller wins.
  */
 export const interceptors = (): WorkflowInterceptors => {
+  const { workflowSpans } = proxySinks<WorkflowSpanSinks>();
   let carried: Payload | undefined;
   // The newest signal or update's context. Activities scheduled after it link
   // to it (the signal's own trace is not theirs to join), so work that follows
@@ -90,11 +94,40 @@ export const interceptors = (): WorkflowInterceptors => {
   return {
     inbound: [
       {
-        execute(input, next) {
-          carried = input.headers[TRACE_CONTEXT_HEADER] ?? derivedCarrier();
+        async execute(input, next) {
+          const { workflowId, runId, firstExecutionRunId, runStartTime } = workflowInfo();
+          const span = workflowSpanContext(
+            decodeCarrier(input.headers[TRACE_CONTEXT_HEADER]),
+            workflowId,
+            runId,
+            firstExecutionRunId
+          );
+          carried = defaultPayloadConverter.toPayload(span.carrier);
           // A child or continuation inherits the parent's newest signal link.
           signalCarried = input.headers[TRACE_SIGNAL_HEADER];
-          return next(input);
+          const end = (ended: ReturnType<typeof classify>) => {
+            if (!ended) {
+              return;
+            }
+            workflowSpans.exportSpan({
+              endTimeMs: Date.now(),
+              ...(ended.message ? { errorMessage: ended.message } : {}),
+              flags: span.flags,
+              outcome: ended.outcome,
+              ...(span.parentSpanId ? { parentSpanId: span.parentSpanId } : {}),
+              spanId: span.spanId,
+              startTimeMs: runStartTime.getTime(),
+              traceId: span.traceId,
+            });
+          };
+          try {
+            const result = await next(input);
+            end({ outcome: 'completed' });
+            return result;
+          } catch (err) {
+            end(classify(err));
+            throw err;
+          }
         },
         handleSignal(input, next) {
           signalCarried = input.headers[TRACE_CONTEXT_HEADER] ?? signalCarried;

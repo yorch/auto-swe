@@ -31,14 +31,15 @@ function isCancellation(err: unknown): boolean {
  * an LLM span carry no trace ID at all. Under it, everything an attempt does
  * shares one trace, and the workflow ID on the span finds it in Tempo.
  *
- * The span's parent is the trace context of whoever started the workflow,
- * which the workflow forwards as a header on every activity it schedules (see
- * `@auto-swe/shared/lib/temporalTracing`). Every activity of a run therefore
- * shares the starter's trace — a gateway request's, say. A workflow started
- * without one (a schedule) gets a trace id derived from its identity by the
- * workflow interceptor, so its activities still share one trace. Activities
- * scheduled after a signal or update also carry a span link to that signal's
- * span.
+ * The span's parent is the run's workflow span, whose context the workflow
+ * forwards as a header on every activity it schedules (see
+ * `@auto-swe/shared/lib/temporalTracing` and `lib/workflowSpanSink.ts`). The
+ * workflow span is itself a child of whoever started the workflow — a gateway
+ * request, say — so every activity of a run shares the starter's trace. A
+ * workflow started without a context (a schedule) gets a trace id derived from
+ * its identity by the workflow interceptor, and its workflow span is the root.
+ * Activities scheduled after a signal or update also carry a span link to that
+ * signal's span.
  *
  * Not `@temporalio/interceptors-opentelemetry`: it pins the 1.x OpenTelemetry
  * SDK beside this repo's 2.x one, and runs OpenTelemetry inside the isolate.
