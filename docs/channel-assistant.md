@@ -167,6 +167,11 @@ Admins can view, edit, and delete channel memory from the admin surface. Editing
 kicks off `ReembedMemoryWorkflow` so its pgvector embedding catches up to the new text — started
 best-effort, because a Temporal hiccup must not fail the synchronous edit.
 
+Deleting a channel deletes its memory items in the same transaction as the channel row (the
+relation itself is `SetNull`, which would otherwise leave them orphaned), and the audit entry
+records how many went. The single-channel read carries `memoryItemCount` so the confirmation can
+state the number.
+
 Consolidation and lesson consolidation share `clusterByEmbedding` (`lib/embeddingClustering.ts`).
 
 ---

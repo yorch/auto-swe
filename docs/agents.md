@@ -266,7 +266,9 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 - **Test and usage:** `POST /api/v1/platform/mcp-connections/:id/test` connects to the saved URL
   over streamable HTTP, initializes, and lists the tools within the connection's list timeout,
   answering `{ ok, toolCount, toolNames, durationMs }` or a fixed reason. The SSRF guard runs first,
-  redirects are not followed, and the server's own error text is never returned.
+  redirects are not followed, and the server's own error text is never returned. Reading stops once
+  the matching answer is parsed (an event stream may be held open), the session is closed with a
+  best-effort `DELETE`, and the list timeout is clamped to 60 s.
   `GET /api/v1/platform/mcp-connections` adds `usedBy`: the agents whose current version binds each
   connection. A connection is owned by a team, but a platform-wide agent may bind any connection; a
   team's own agents only their team's.
