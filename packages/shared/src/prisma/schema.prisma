@@ -230,11 +230,21 @@ model PullRequest {
   repository Connection?     @relation(fields: [repoId], references: [id])
   prNumber   Int?            @map("pr_number")
   headSha    String          @map("head_sha")
+  /// OPEN | MERGED | CLOSED (closed unmerged); see `PULL_REQUEST_STATES`.
   status     String
   ciStatus   String          @default("PENDING") @map("ci_status")
+  /// The title the PR carried when opened, refreshed by `edited` webhooks. Host
+  /// text, untrusted: capped on write and rendered as plain text.
+  title      String?
+  isDraft    Boolean         @default(false) @map("is_draft")
+  openedAt   DateTime        @default(now()) @map("opened_at") @db.Timestamptz
+  mergedAt   DateTime?       @map("merged_at") @db.Timestamptz
+  closedAt   DateTime?       @map("closed_at") @db.Timestamptz
 
   @@index([workflowId])
   @@index([repoId])
+  // The pull-request list filters by state and pages newest-first.
+  @@index([status, openedAt])
   @@map("pull_requests")
 }
 
@@ -1169,6 +1179,9 @@ model Verification {
 model RunInput {
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   externalTicketId String      @map("external_ticket_id")
+  /// True when a launch named no ticket and filed the request's own id instead: a
+  /// correlation key, not a ticket. The ticket view leaves these out by default.
+  ticketIsSynthetic Boolean    @default(false) @map("ticket_is_synthetic")
   description      String      @default("")
   requestPayload   String      @map("request_payload")
   /// Generic run-input payload (P3); validated against the template's

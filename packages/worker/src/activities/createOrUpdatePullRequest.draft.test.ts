@@ -82,6 +82,16 @@ describe('createOrUpdatePullRequest draft option', () => {
     expect(m.createPr.mock.calls[1]?.[0]).not.toHaveProperty('draft');
   });
 
+  it('records the title and whether the PR was opened as a draft', async () => {
+    await createOrUpdatePullRequest(request, codeResult, { draft: true });
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.pullRequest.create.mock.calls[0]?.[0].data).toMatchObject({
+      isDraft: true,
+      title: '[auto-swe] T-1',
+    });
+    expect(m.prisma.pullRequest.create.mock.calls[1]?.[0].data).toMatchObject({ isDraft: false });
+  });
+
   it('fails non-retryably when the repository cannot hold drafts, and opens nothing else', async () => {
     m.createPr.mockRejectedValue(new DraftPullRequestUnsupportedError('acme/api: no drafts'));
     await expect(
@@ -122,6 +132,43 @@ describe('which ledger row a new PR is linked to', () => {
     expect(m.prisma.pullRequest.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ workflowId: 'request-row' }),
     });
+  });
+});
+
+describe('a PR a reviewer closed', () => {
+  const closedInLineage = (lineage: boolean) =>
+    m.prisma.pullRequest.findFirst.mockImplementation(
+      async (args: { where: { status?: string } }) =>
+        args.where.status === 'OPEN' || !lineage ? null : { prNumber: 5, status: 'CLOSED' }
+    );
+
+  it('is not replaced when the same workflow pushes again', async () => {
+    closedInLineage(true);
+    await expect(createOrUpdatePullRequest(request, codeResult)).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'PR_CLOSED_BY_REVIEWER',
+    });
+    expect(m.createPr).not.toHaveBeenCalled();
+    expect(m.prisma.pullRequest.create).not.toHaveBeenCalled();
+    // The lookup is scoped to this execution's own ledger lineage.
+    expect(m.prisma.pullRequest.findFirst.mock.calls.at(-1)?.[0].where).toMatchObject({
+      workflow: { temporalWorkflowId: 'wf-own', workRequestId: 'wr-1' },
+    });
+  });
+
+  it('does not stop a fresh run of the request, which opens its own PR', async () => {
+    closedInLineage(false);
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.pullRequest.create).toHaveBeenCalled();
+  });
+
+  it('does not stop a workflow whose latest PR is merged or open elsewhere', async () => {
+    m.prisma.pullRequest.findFirst.mockImplementation(
+      async (args: { where: { status?: string } }) =>
+        args.where.status === 'OPEN' ? null : { prNumber: 5, status: 'MERGED' }
+    );
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.pullRequest.create).toHaveBeenCalled();
   });
 });
 

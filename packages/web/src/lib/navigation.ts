@@ -52,6 +52,13 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Requests',
         minRole: 'ENGINEER',
       },
+      {
+        href: '/pull-requests',
+        icon: 'pullRequest',
+        label: 'Pull requests',
+        minRole: 'ENGINEER',
+      },
+      { href: '/tickets', icon: 'ticket', label: 'Tickets', minRole: 'ENGINEER' },
       { href: '/runs', icon: 'runs', label: 'All runs', minRole: 'ENGINEER' },
       { href: '/govern/approvals', icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       {
