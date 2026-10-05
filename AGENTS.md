@@ -239,6 +239,44 @@ yarn docker:app:logs      # Tail logs (infra + app)
 yarn docker:app:build     # Rebuild app images
 ```
 
+### Quality Gates
+
+**Every quality gate must pass before you make a commit — not just before you open a pull
+request.** A commit that breaks a gate is not "work in progress"; it is a broken commit, and
+because each one is pushed (below) it is a broken remote. Run them all, in this order, from the
+repository root:
+
+```bash
+yarn install --immutable        # lockfile in sync — CI refuses a drifted yarn.lock
+yarn typecheck                  # tsc across every workspace
+yarn lint                       # biome check (see the worktree caveat in Code Style)
+yarn test                       # vitest — the full suite, not only the files you touched
+yarn build                      # every workspace builds
+yarn docs:check                 # living-doc drift
+yarn invariants:check           # source invariants
+docker build -f packages/gateway/Dockerfile .   # each image CI builds
+docker build -f packages/worker/Dockerfile .
+docker build -f packages/web/Dockerfile .
+```
+
+- **All of them, every time.** A change you believe is docs-only or test-only still runs the
+  whole set: the doc check counts things in code, the site build reads `docs/`, and the Docker
+  builds fail on dependency changes nothing else executes.
+- **The Docker builds are part of the gate.** `.github/workflows/docker.yml` builds all three
+  images on every pull request, and an image that fails to build is invisible to typecheck, lint,
+  test and `yarn build` (§5 Source invariants, and the `prisma-docker-migrations` skill). If Docker
+  is genuinely unavailable in your environment, say so explicitly in the commit hand-off and the
+  pull request — never imply the images were built.
+- Also run `yarn workspace @auto-swe/site build` when you touch `docs/`, `site/`, the root or CLI
+  `README.md`, or `BUILTIN_TEMPLATES`, and the matching `*.pg.test.ts` suites (with Postgres up and
+  their flag set, as `ci.yml` does) when you touch code they cover.
+- **A failing gate is fixed, not bypassed.** Never commit with `--no-verify`, never skip, `.only`
+  or delete a test to get green, never add a `biome-ignore` or `@ts-expect-error` to silence a
+  real finding, and never re-record a replay fixture to make it pass (§5 Testing). If a gate fails
+  for a reason unrelated to your change, stop and report it rather than committing over it.
+- Report the outcome faithfully: name each gate you ran and its result. "Tests pass" means you ran
+  them and saw them pass.
+
 ### Git Workflow
 
 - **Commit each logical change separately** — don't batch unrelated changes into one commit
@@ -249,7 +287,19 @@ yarn docker:app:build     # Rebuild app images
   messages never reach `main`. Rationale written in a commit body is therefore discarded at
   merge. When a pull request's scope changes during review or a rebase, update the
   **description**, or the permanent history will describe work that was never merged.
-- Use conventional-style prefixes: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`
+- **Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):**
+  `<type>[optional scope][!]: <description>`, e.g. `fix(gateway): refuse a stale approval token`.
+  - `type` is one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `build`, `ci`, `chore`,
+    `revert`, `style`
+  - `scope` is optional and names the package or area (`gateway`, `worker`, `web`, `shared`,
+    `cli`, `sdk`, `site`)
+  - the description is lowercase-imperative, has no trailing period, and keeps the subject line
+    within 72 characters; a body, if any, follows a blank line
+  - a breaking change takes `!` after the type/scope and a `BREAKING CHANGE:` footer
+- **Pull request titles follow the same Conventional Commits format.** Because only squash merges
+  are enabled, the PR title becomes the commit subject on `main` — a non-conforming title produces
+  a non-conforming commit no matter how clean the branch commits were. When a PR's scope changes,
+  update its title along with its description.
 - Never commit `.env`, credentials, or secrets
 - Never force-push to `main`
 
