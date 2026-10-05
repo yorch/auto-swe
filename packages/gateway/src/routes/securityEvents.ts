@@ -70,20 +70,40 @@ function classifyEvent(trace: {
  */
 const COUNT_CONCURRENCY = 3;
 
-const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend({
-  runId: z.string().uuid().optional(),
-  type: z
-    .enum([
-      'SHELL_BLOCK',
-      'FILE_BLOCK',
-      'CONTENT_SECURITY_BLOCK',
-      'CONTENT_SECURITY_WARN',
-      'CODE_SECURITY',
-      'LLM_SUSPICIOUS',
-      'CHANNEL_SUSPICIOUS',
-    ])
-    .optional(),
+/** A window of event time: inclusive start, exclusive end, both ISO instants. */
+const WindowQuery = z.object({
+  since: z.iso.datetime().optional(),
+  until: z.iso.datetime().optional(),
 });
+
+function createdAtWindow(since?: string, until?: string) {
+  if (!since && !until) {
+    return {};
+  }
+  return {
+    createdAt: {
+      ...(since ? { gte: new Date(since) } : {}),
+      ...(until ? { lt: new Date(until) } : {}),
+    },
+  };
+}
+
+const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 })
+  .extend(WindowQuery.shape)
+  .extend({
+    runId: z.string().uuid().optional(),
+    type: z
+      .enum([
+        'SHELL_BLOCK',
+        'FILE_BLOCK',
+        'CONTENT_SECURITY_BLOCK',
+        'CONTENT_SECURITY_WARN',
+        'CODE_SECURITY',
+        'LLM_SUSPICIOUS',
+        'CHANNEL_SUSPICIOUS',
+      ])
+      .optional(),
+  });
 
 export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -95,7 +115,7 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { querystring: ListQuery },
     },
     async (request) => {
-      const { limit, offset, runId, type } = request.query;
+      const { limit, offset, runId, since, type, until } = request.query;
 
       // Each SecurityEventType maps to specific DB-level predicates so the
       // type filter is pushed into the query and pagination is correct.
@@ -104,6 +124,7 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
       const where = {
         OR: typeOr,
         ...(runId ? { runId } : {}),
+        ...createdAtWindow(since, until),
       };
 
       // ADMIN-only feed across every tenant.
@@ -156,25 +177,39 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // Per-type totals across every event, not just the page on screen. Each type
-  // is its own predicate, so this is one count per type; it is a separate route
-  // so paging through the list does not re-run them.
+  // Per-type totals, not just the page on screen. Each type is its own
+  // predicate, so this is one count per type; it is a separate route so paging
+  // through the list does not re-run them. With a window (`since` and `until`)
+  // the counts are for that window and `previous` carries the same counts for
+  // the window of equal length just before it, so a page can show a trend.
   app.get(
     '/security-events/summary',
-    { onRequest: requireAuth({ requiredRole: 'ADMIN' }) },
-    async () => {
+    { onRequest: requireAuth({ requiredRole: 'ADMIN' }), schema: { querystring: WindowQuery } },
+    async (request) => {
+      const { since, until } = request.query;
       const types = Object.keys(TYPE_PREDICATES) as SecurityEventType[];
-      // ADMIN-only totals across every tenant, like the feed above.
-      const totals = await mapLimited(types, COUNT_CONCURRENCY, (type) =>
-        runUnscoped('admin security summary spans every tenant', ['AgentTrace'], () =>
-          fastify.prisma.agentTrace.count({ where: TYPE_PREDICATES[type] })
-        )
-      );
-      const counts = Object.fromEntries(types.map((t, i) => [t, totals[i]])) as Record<
-        SecurityEventType,
-        number
-      >;
-      return { data: counts };
+      const countAll = (from?: string, to?: string) =>
+        // ADMIN-only totals across every tenant, like the feed above.
+        mapLimited(types, COUNT_CONCURRENCY, (type) =>
+          runUnscoped('admin security summary spans every tenant', ['AgentTrace'], () =>
+            fastify.prisma.agentTrace.count({
+              where: { ...TYPE_PREDICATES[type], ...createdAtWindow(from, to) },
+            })
+          )
+        ).then(
+          (totals) =>
+            Object.fromEntries(types.map((t, i) => [t, totals[i]])) as Record<
+              SecurityEventType,
+              number
+            >
+        );
+      const data = await countAll(since, until);
+      if (!since || !until) {
+        return { data };
+      }
+      const length = Date.parse(until) - Date.parse(since);
+      const previousSince = new Date(Date.parse(since) - length).toISOString();
+      return { data, previous: await countAll(previousSince, since) };
     }
   );
 };

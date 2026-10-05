@@ -512,6 +512,48 @@ export function computeGlobalAnalytics(
   };
 }
 
+/** Runs started per UTC day in a window, split the way the over-time chart stacks them. */
+export interface DailyRunCount {
+  /** `YYYY-MM-DD`, UTC. */
+  date: string;
+  completed: number;
+  failed: number;
+  /** Everything that is not finished yet or ended some other way (running, waiting, skipped). */
+  active: number;
+}
+
+/**
+ * One row per UTC day from `windowStart`'s day through `windowEnd`'s, oldest first, so a
+ * quiet day shows as zero rather than a gap. Rows outside the window are ignored.
+ */
+export function computeDailyRunSeries(
+  rows: Pick<GlobalAnalyticsTemplateRow, 'startedAt' | 'status'>[],
+  windowStart: Date,
+  windowEnd: Date
+): DailyRunCount[] {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const first = Math.floor(windowStart.getTime() / DAY_MS) * DAY_MS;
+  const days = new Map<string, DailyRunCount>();
+  for (let t = first; t <= windowEnd.getTime(); t += DAY_MS) {
+    const date = new Date(t).toISOString().slice(0, 10);
+    days.set(date, { active: 0, completed: 0, date, failed: 0 });
+  }
+  for (const r of rows) {
+    const cell = days.get(r.startedAt.toISOString().slice(0, 10));
+    if (!cell) {
+      continue;
+    }
+    if (r.status === 'SUCCESS') {
+      cell.completed += 1;
+    } else if (isFailureStatus(r.status)) {
+      cell.failed += 1;
+    } else {
+      cell.active += 1;
+    }
+  }
+  return [...days.values()];
+}
+
 /**
  * Approximation of the standard normal CDF (Abramowitz & Stegun 26.2.17).
  * Error < 7.5e-8 — well within what we need for a p-value display.

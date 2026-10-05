@@ -17,8 +17,10 @@ import {
 import { useAllWorkflowRuns } from '@/hooks/useRuns';
 import { useWorkflowTemplate } from '@/hooks/useTemplates';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
+import { nodeTitlesOf } from '@/lib/nodeTitles';
 import { validateRouteParam } from '@/lib/routeParams';
 import { isRunStatus, runStatusOptions } from '@/lib/runStatusOptions';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -37,6 +39,8 @@ function TemplateRuns({ id: rawId }: { id: string }) {
   const versionFilter = /^\d{1,6}$/.test(params.get('version') ?? '')
     ? (params.get('version') ?? '')
     : '';
+  // Set by the step table on the analytics page: only runs in which that node failed.
+  const failedNodeId = params.get('failedStep') ?? '';
 
   // Both filters run server-side, so the total and the pagination describe
   // the filtered set. This reads /workflow-runs (not the template-scoped
@@ -48,6 +52,7 @@ function TemplateRuns({ id: rawId }: { id: string }) {
     status: isRunStatus(statusFilter) ? statusFilter : undefined,
     templateId: id ?? undefined,
     templateVersion: versionFilter ? Number(versionFilter) : undefined,
+    ...(failedNodeId ? { failedNodeId } : {}),
   });
 
   const rows = data?.data ?? [];
@@ -57,6 +62,8 @@ function TemplateRuns({ id: rawId }: { id: string }) {
   // template query can fail for a shared-repository viewer; the dropdown then
   // has nothing to list and stays hidden, and the runs still load.
   const versions = (template?.versions ?? []).map((v) => v.version).sort((a, b) => b - a);
+
+  const nodeTitles = nodeTitlesOf(template?.activeVersionSpec?.spec);
 
   const handlePrev = () =>
     update({ offset: offset - PAGE_SIZE > 0 ? String(offset - PAGE_SIZE) : null });
@@ -104,6 +111,18 @@ function TemplateRuns({ id: rawId }: { id: string }) {
             ]}
             value={versionFilter}
           />
+        )}
+        {failedNodeId && (
+          <span className="flex items-center gap-2 rounded-md border border-ink-400 px-3 py-1.5 text-xs text-paper-300">
+            Runs where “{nodeTitles.get(failedNodeId) ?? failedNodeId}” failed
+            <button
+              className={cn('text-ember-400 hover:underline', FOCUS_RING)}
+              onClick={() => update({ failedStep: null, offset: null })}
+              type="button"
+            >
+              Clear
+            </button>
+          </span>
         )}
         {(statusFilter || versionFilter) && (
           <Button

@@ -87,6 +87,8 @@ const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 }).ext
    * so only they are shown them; the default keeps every picker active-only.
    */
   includeInactive: booleanQueryParam(false),
+  /** Case-insensitive match on a connection's repository, organization, name or description. */
+  q: z.string().trim().max(100).optional(),
 });
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
@@ -377,7 +379,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { includeInactive, limit, offset } = request.query;
+      const { includeInactive, limit, offset, q } = request.query;
       const showInactive = includeInactive && hasRole(user.role, Role.LEAD);
       // A deactivated connection is listed only to someone who could reactivate
       // it: a platform ADMIN, or a LEAD/ADMIN of the owning team (the bar
@@ -399,6 +401,22 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         where = {};
       } else {
         where = { AND: [reach, { OR: [{ isActive: true }, { team: ledTeams(user) }] }] };
+      }
+      if (q) {
+        const contains = { contains: q, mode: 'insensitive' as const };
+        where = {
+          AND: [
+            where,
+            {
+              OR: [
+                { repoName: contains },
+                { organizationName: contains },
+                { name: contains },
+                { description: contains },
+              ],
+            },
+          ],
+        };
       }
 
       const [repos, total] = await asPlatformAdmin(

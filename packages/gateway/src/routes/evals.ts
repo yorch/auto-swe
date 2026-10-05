@@ -141,6 +141,7 @@ function hasPartialVerdict(summary: unknown): boolean {
 }
 
 function toRunDto(run: {
+  dataset?: { name: string; slug: string } | null;
   id: string;
   datasetId: string;
   candidateRef: string;
@@ -154,6 +155,7 @@ function toRunDto(run: {
     baselineRef: run.baselineRef,
     candidateRef: run.candidateRef,
     datasetId: run.datasetId,
+    ...(run.dataset ? { datasetName: run.dataset.name, datasetSlug: run.dataset.slug } : {}),
     endedAt: run.endedAt?.toISOString() ?? null,
     id: run.id,
     partial: hasPartialVerdict(run.summary),
@@ -463,6 +465,8 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       const where = datasetId ? { datasetId } : {};
       const [rows, total] = await Promise.all([
         fastify.prisma.evalRun.findMany({
+          // The dataset's name, so a list across datasets says which benchmark each run scored.
+          include: { dataset: { select: { name: true, slug: true } } },
           // `id` breaks ties so offset pages neither repeat nor skip rows.
           orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
           skip: offset,
@@ -480,7 +484,10 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     '/evals/runs/:id',
     { onRequest: adminOnly, schema: { params: IdParam } },
     async (request, reply) => {
-      const run = await fastify.prisma.evalRun.findUnique({ where: { id: request.params.id } });
+      const run = await fastify.prisma.evalRun.findUnique({
+        include: { dataset: { select: { name: true, slug: true } } },
+        where: { id: request.params.id },
+      });
       if (!run) {
         return reply
           .status(404)

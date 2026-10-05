@@ -218,11 +218,26 @@ export async function listSettings(
   ctx: SettingResolveCtx,
   selector: ScopeSelector
 ): Promise<SettingView[]> {
+  const tenant = await resolveScopeTenant(prisma, selector);
+  // A channel or template view names only its own id, but a run in it resolves through the
+  // team and organization above it. Fill those in (the organization from the team when the
+  // row carries none) so this view shows what such a run actually gets.
+  let teamId = ctx.teamId ?? tenant.teamId;
+  let orgId = ctx.orgId ?? tenant.orgId;
+  if (!orgId && teamId) {
+    const team = await prisma.team.findUnique({ select: { orgId: true }, where: { id: teamId } });
+    orgId = team?.orgId ?? undefined;
+  }
+  teamId = teamId ?? undefined;
+  const fullCtx: SettingResolveCtx = {
+    ...ctx,
+    ...(orgId ? { orgId } : {}),
+    ...(teamId ? { teamId } : {}),
+  };
   // One query: `resolveEffectiveSettings` already loaded every override visible
   // from this context, including the row at the exact scope being asked about.
-  const { overrideAt, settings } = await resolveEffectiveSettings(ctx);
+  const { overrideAt, settings } = await resolveEffectiveSettings(fullCtx);
   const grants = actor.role === 'ADMIN' ? [] : await loadGrantsForActor(prisma, actor);
-  const tenant = await resolveScopeTenant(prisma, selector);
 
   return settings.map((resolved) => {
     const definition = getSettingDefinition(resolved.key as SettingKey);

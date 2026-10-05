@@ -33,7 +33,7 @@ export function EmbeddingsTab() {
   const [credentialId, setCredentialId] = useState<string>('');
   const [dirty, setDirty] = useState(false);
   const [catalogWarnings, setCatalogWarnings] = useState<string[]>([]);
-  const { error, submit } = useIntegrationConfigForm();
+  const { error, saved, submit } = useIntegrationConfigForm();
 
   // Sync form state to the query result. Re-keys on the row's updatedAt so a
   // server-side change (e.g. another admin saving) refreshes the form while
@@ -58,6 +58,16 @@ export function EmbeddingsTab() {
     );
   }
 
+  // A pinned credential covers any provider; otherwise one must exist for the chosen provider.
+  const embeddingProvider = modelSpec.split('/')[0]?.trim().toLowerCase() ?? '';
+  const noCredential =
+    !credentialId &&
+    embeddingProvider !== '' &&
+    credentials !== undefined &&
+    !credentials.some(
+      (c) => c.scope === 'GLOBAL' && c.provider.toLowerCase() === embeddingProvider
+    );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     void submit(
@@ -76,9 +86,9 @@ export function EmbeddingsTab() {
         <CardTitle eyebrow="Embeddings">System-wide model</CardTitle>
       </CardHeader>
       <p className="mb-4 text-xs text-paper-500">
-        Used by the semantic-memory commit step. Singleton — no per-team or per-template overrides.
-        The model MUST produce 1536-dimensional vectors (the <code>agent_lessons.embedding</code>{' '}
-        pgvector column is fixed-width).
+        Turns lessons and memory into vectors so the platform can find similar ones later. One model
+        serves the whole platform; teams and workflows cannot override it. The model must produce
+        1536-dimensional vectors, because stored memory has a fixed width.
       </p>
       <form className="space-y-4" onSubmit={handleSubmit}>
         <ModelSpecPicker
@@ -109,7 +119,14 @@ export function EmbeddingsTab() {
           ]}
           value={credentialId}
         />
+        {noCredential && (
+          <Alert variant="warning">
+            No credential is stored for {embeddingProvider}. Add one on the Credentials tab, or
+            memory and lesson search will fail.
+          </Alert>
+        )}
         {error && <Alert>{error}</Alert>}
+        {saved && !dirty && <Alert variant="success">Embedding model saved.</Alert>}
         {catalogWarnings.length > 0 && (
           <Alert variant="warning">Model catalog: {catalogWarnings.join(' ')}</Alert>
         )}

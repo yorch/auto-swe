@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
+import { SkillHistory } from '@/components/skills/SkillHistory';
 import { SkillSourcesTab } from '@/components/skills/SkillSourcesTab';
 import { shortSha } from '@/components/skills/sourceDisplay';
 import { Alert } from '@/components/ui/Alert';
@@ -87,6 +88,9 @@ function usageText(skill: Skill): string | null {
 
 function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: () => void }) {
   const update = useUpdateSkill();
+  const [showHistory, setShowHistory] = useState(false);
+  // The row handed in is a snapshot; the list is live, so a restore shows at once.
+  const { data: allSkills } = useSkills();
   const verify = useVerifySkill();
   const isAdmin = useHasRole('ADMIN');
   const [verifyError, setVerifyError] = useState<string | null>(null);
@@ -94,12 +98,23 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
   const [form, setForm] = useState({ description: '', isActive: true, name: '', promptText: '' });
   const [error, setError] = useState<string | null>(null);
   const [scanWarnings, setScanWarnings] = useState<string[]>([]);
+  // The revision on screen. Fixed when the modal opens and after an in-modal restore, so the text
+  // a reviewer reads and the revision Verify attests never drift apart while the list refetches.
+  const [viewed, setViewed] = useState<Skill | null>(skill);
 
   if (!skill) {
+    if (viewed) {
+      setViewed(null);
+    }
     return null;
   }
+  if (viewed?.id !== skill.id) {
+    setViewed(skill);
+  }
 
-  const sk = skill;
+  const sk = viewed?.id === skill.id ? viewed : skill;
+  const live = allSkills?.find((s) => s.id === skill.id);
+  const movedOn = !!live && live.currentRevision !== sk.currentRevision;
 
   function startEdit() {
     setForm({
@@ -137,7 +152,8 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
       if (!sk.isBuiltIn && form.promptText !== sk.promptText) {
         patch.promptText = form.promptText;
       }
-      const { scanWarnings: warnings } = await update.mutateAsync(patch);
+      const { scanWarnings: warnings, skill: saved } = await update.mutateAsync(patch);
+      setViewed({ ...sk, ...saved, scanWarnings: warnings });
       setEditing(false);
       if (warnings.length > 0) {
         // Saved, but the scanner flagged the text — keep the modal open to say so.
@@ -159,13 +175,13 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     } catch (err) {
       setVerifyError(
         err instanceof ApiError && err.code === 'SKILL_CHANGED'
-          ? 'This skill changed since you opened it. Close it, open it again and read its current text before verifying.'
+          ? 'This skill changed since you opened it. Reload it and read its current text before verifying.'
           : errMsg(err, 'Failed to verify the skill')
       );
     }
   }
 
-  const title = editing ? `Edit "${visibleText(skill.name)}"` : visibleText(skill.name);
+  const title = editing ? `Edit "${visibleText(sk.name)}"` : visibleText(sk.name);
 
   return (
     <Modal
@@ -173,6 +189,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
         setEditing(false);
         setScanWarnings([]);
         setVerifyError(null);
+        setShowHistory(false);
         onClose();
       }}
       open={!!skill}
@@ -194,10 +211,10 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             value={form.description}
           />
-          {skill.isBuiltIn ? (
+          {sk.isBuiltIn ? (
             <FieldWrapper hint="Prompt text is locked for built-in skills." label="Prompt text">
               <pre className="w-full rounded-md border border-ink-500 bg-ink-900 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
-                {skill.promptText}
+                {sk.promptText}
               </pre>
             </FieldWrapper>
           ) : (
@@ -226,24 +243,41 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
       ) : (
         <div className="space-y-5">
           <ScanWarnings warnings={scanWarnings} />
+          {movedOn && (
+            <Alert variant="warning">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>This skill changed since you opened it — reload to read the new text.</span>
+                <Button
+                  onClick={() => {
+                    setViewed(live);
+                    setVerifyError(null);
+                  }}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Reload
+                </Button>
+              </div>
+            </Alert>
+          )}
           <EntityMetaBadges
-            isActive={skill.isActive}
-            isBuiltIn={skill.isBuiltIn}
-            isVerified={skill.isVerified}
-            origin={skill.origin}
+            isActive={sk.isActive}
+            isBuiltIn={sk.isBuiltIn}
+            isVerified={sk.isVerified}
+            origin={sk.origin}
           >
-            <ExternalBadge source={skill.externalSource} />
+            <ExternalBadge source={sk.externalSource} />
             <Badge tone="neutral">
-              used by {skill.usedByCount} agent{skill.usedByCount !== 1 ? 's' : ''}
+              used by {sk.usedByCount} agent{sk.usedByCount !== 1 ? 's' : ''}
             </Badge>
           </EntityMetaBadges>
-          {skill.description && (
-            <p className="text-sm text-paper-300">{visibleOrNull(skill.description)}</p>
+          {sk.description && (
+            <p className="text-sm text-paper-300">{visibleOrNull(sk.description)}</p>
           )}
-          {skill.scanWarnings.length > 0 && (
+          {sk.scanWarnings.length > 0 && (
             <Alert title="Scanner findings on this text" variant="warning">
               <ul className="list-disc space-y-0.5 pl-4 text-xs">
-                {skill.scanWarnings.map((w) => (
+                {sk.scanWarnings.map((w) => (
                   <li key={w}>{w}</li>
                 ))}
               </ul>
@@ -252,15 +286,15 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           <div>
             <div className="label-mono mb-1.5">Prompt text</div>
             <pre className="max-h-96 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
-              {visibleText(skill.promptText, { multiline: true })}
+              {visibleText(sk.promptText, { multiline: true })}
             </pre>
-            {isAdmin && !skill.isVerified && !skill.isBuiltIn && (
+            {isAdmin && !sk.isVerified && !sk.isBuiltIn && !movedOn && (
               <div className="mt-3 flex items-center gap-3">
                 <Button disabled={verify.isPending} onClick={handleVerify} variant="secondary">
-                  Verify revision {skill.currentRevision}
+                  Verify revision {sk.currentRevision}
                 </Button>
                 <span className="text-xs text-paper-500">
-                  Attests that you read the text above, revision {skill.currentRevision}.
+                  Attests that you read the text above, revision {sk.currentRevision}.
                 </span>
               </div>
             )}
@@ -272,13 +306,26 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
           </div>
           <div className="flex items-center justify-between border-t border-ink-600 pt-4">
             <div className="space-y-0.5 text-xs text-paper-500">
-              <div>Created {formatDate(skill.createdAt)}</div>
-              <div>Updated {formatDate(skill.updatedAt)}</div>
+              <div>Created {formatDate(sk.createdAt)}</div>
+              <div>Updated {formatDate(sk.updatedAt)}</div>
             </div>
-            <Button onClick={startEdit} variant="secondary">
-              Edit
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => setShowHistory((v) => !v)} variant="ghost">
+                {showHistory ? 'Hide history' : 'History'}
+              </Button>
+              <Button onClick={startEdit} variant="secondary">
+                Edit
+              </Button>
+            </div>
           </div>
+          {showHistory && (
+            <SkillHistory
+              onRestored={(restored, warnings) =>
+                setViewed({ ...sk, ...restored, scanWarnings: warnings })
+              }
+              skill={sk}
+            />
+          )}
         </div>
       )}
     </Modal>
@@ -492,7 +539,7 @@ export default function StudioSkillsPage() {
           </Button>
         }
         chapter="§ Studio"
-        subtitle="Reusable prompt-fragment instructions injected into an agent's system prompt. Assigned to agent roles at any scope. Tool access control is managed separately via Agent Tool Access."
+        subtitle="Reusable prompt-fragment instructions injected into an agent's system prompt. Attach them to agents in the Agent library. Every text change is saved as a revision you can compare and restore."
         title="Skill library"
       />
 

@@ -13,7 +13,7 @@ export function useUrlFilters() {
   const router = useRouter();
   const pathname = usePathname();
   const update = useCallback(
-    (patch: Record<string, string | null>) => {
+    (patch: Record<string, string | null | undefined>) => {
       const next = new URLSearchParams(params);
       for (const [key, value] of Object.entries(patch)) {
         if (value) {

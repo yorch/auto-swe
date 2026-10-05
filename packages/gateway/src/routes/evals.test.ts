@@ -416,6 +416,7 @@ describe('evalRoutes', () => {
         {
           baselineRef: 'main',
           candidateRef: 'feat',
+          dataset: { name: 'Golden tickets', slug: 'golden' },
           datasetId: '11111111-1111-4111-8111-111111111111',
           endedAt: null,
           id: 'run-a',
@@ -433,8 +434,15 @@ describe('evalRoutes', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.meta).toEqual({ limit: 20, offset: 20, total: 21 });
-      expect(body.data[0]).toMatchObject({ endedAt: null, id: 'run-a', status: 'RUNNING' });
+      expect(body.data[0]).toMatchObject({
+        datasetName: 'Golden tickets',
+        datasetSlug: 'golden',
+        endedAt: null,
+        id: 'run-a',
+        status: 'RUNNING',
+      });
       expect(prisma.evalRun.findMany).toHaveBeenCalledWith({
+        include: { dataset: { select: { name: true, slug: true } } },
         orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
         skip: 20,
         take: 20,

@@ -30,6 +30,7 @@ import {
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { buildBudgetPatch, centsToDollarsInput, removeCapPatch } from '@/lib/budgetPatch';
 import { errMsg } from '@/lib/errors';
+import { ORG_ROLE_OPTIONS, platformRoleLabel } from '@/lib/govLabels';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatCents, formatPercent, formatTokens } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -202,12 +203,11 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       <PageHeader
         chapter="§ Govern"
         subtitle={
-          <>
-            Members, profile, and monthly budget for organization{' '}
-            <span className="font-mono text-xs">{orgId}</span>.
-          </>
+          org
+            ? `Members, profile, and monthly budget for ${org.slug}.`
+            : 'Members, profile, and monthly budget.'
         }
-        title="Organization settings"
+        title={org?.name ?? 'Organization'}
       />
 
       {error ? <Alert variant="error">{error}</Alert> : null}
@@ -246,9 +246,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     <Td className="py-3 pr-3 text-paper-100">
                       {m.user.email} {isMe ? <span className="text-paper-500">(you)</span> : null}
                     </Td>
-                    <Td className="py-3 pr-3 font-mono text-[11px] text-paper-400">
-                      {m.user.role}
-                    </Td>
+                    <Td className="py-3 pr-3 text-paper-400">{platformRoleLabel(m.user.role)}</Td>
                     <Td className="py-3 pr-3">
                       <Select
                         aria-label={`Org role for ${m.user.email}`}
@@ -258,10 +256,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                             handleRoleChange(m.userId, role);
                           }
                         }}
-                        options={[
-                          { label: 'ORG_ADMIN', value: 'ORG_ADMIN' },
-                          { label: 'ORG_MEMBER', value: 'ORG_MEMBER' },
-                        ]}
+                        options={ORG_ROLE_OPTIONS}
                         value={m.role}
                       />
                     </Td>
@@ -302,10 +297,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                           setAddRole(role);
                         }
                       }}
-                      options={[
-                        { label: 'ORG_MEMBER', value: 'ORG_MEMBER' },
-                        { label: 'ORG_ADMIN', value: 'ORG_ADMIN' },
-                      ]}
+                      options={ORG_ROLE_OPTIONS}
                       value={addRole}
                     />
                     <Button
@@ -335,10 +327,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                         setInviteRole(role);
                       }
                     }}
-                    options={[
-                      { label: 'ORG_MEMBER', value: 'ORG_MEMBER' },
-                      { label: 'ORG_ADMIN', value: 'ORG_ADMIN' },
-                    ]}
+                    options={ORG_ROLE_OPTIONS}
                     value={inviteRole}
                   />
                   <Button

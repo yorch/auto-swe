@@ -157,6 +157,44 @@ describe('GET /config/settings', () => {
   });
 });
 
+describe('GET /config/settings — channel view', () => {
+  it("resolves through the channel's team and organization, as a run in it would", async () => {
+    slackChannel.findUnique.mockResolvedValue({ orgId: null, teamId: TEAM_ID } as never);
+    team.findUnique.mockResolvedValue({ orgId: ORG_ID } as never);
+    configSetting.findMany.mockResolvedValue([
+      {
+        key: 'channel.historyMessageLimit',
+        orgId: ORG_ID,
+        scope: 'ORGANIZATION',
+        teamId: null,
+        value: 11,
+      },
+      {
+        key: 'channel.historyMessageLimit',
+        orgId: null,
+        scope: 'TEAM',
+        teamId: TEAM_ID,
+        value: 22,
+      },
+    ] as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'GET',
+      url: `/api/v1/platform/config/settings?scope=CHANNEL&channelId=${ORG_ID}`,
+    });
+    const settings = res.json().data as Array<Record<string, unknown>>;
+    expect(settings.find((s) => s.key === 'channel.historyMessageLimit')).toMatchObject({
+      source: 'TEAM',
+      value: 22,
+    });
+    const where = JSON.stringify(configSetting.findMany.mock.calls.at(-1));
+    expect(where).toContain(TEAM_ID);
+    expect(where).toContain(ORG_ID);
+    await app.close();
+  });
+});
+
 describe('GET /config/settings — scoped reads', () => {
   it("refuses to show another team's configuration to a non-member", async () => {
     // Grants authorise writes; a read has no grant to check, and the effective

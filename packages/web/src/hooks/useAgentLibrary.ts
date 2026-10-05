@@ -175,3 +175,37 @@ export function useDeleteTeamAgent(teamId: string) {
     },
   });
 }
+
+// ── Version history ───────────────────────────────────────────────────────────
+
+/** One version of an agent, with who saved it. */
+export interface AgentVersionRow extends AgentRow {
+  createdByEmail: string | null;
+}
+
+/** Every version of the lineage `id` belongs to, newest first. */
+export function useAgentVersions(id: string | null) {
+  return useQuery({
+    enabled: id !== null,
+    queryFn: () =>
+      api
+        .get<{ data: AgentVersionRow[] }>(`/api/v1/platform/agent-library/${id}/versions`)
+        .then((r) => r.data),
+    queryKey: [...KEY, 'versions', id],
+  });
+}
+
+/** Cut a new version carrying the settings of an older one. */
+export function useRestoreAgentVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, versionId }: { id: string; versionId: string }) =>
+      api.post<{
+        data: AgentRow;
+        scanWarnings?: string[];
+        catalogWarnings?: string[];
+        skillWarnings?: string[];
+      }>(`/api/v1/platform/agent-library/${id}/restore`, { versionId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}

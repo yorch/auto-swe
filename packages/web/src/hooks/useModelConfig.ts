@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { READINESS_KEY } from '@/hooks/useReadiness';
 import { api } from '@/lib/api';
 
 // Per-role model config (`ModelRoleConfig`) and its UI were retired in P1.5 —
@@ -68,6 +69,7 @@ export function useAdminCredentials() {
 /// Invalidate every query that may display a credential.
 function invalidateCredentialQueries(qc: ReturnType<typeof useQueryClient>): void {
   qc.invalidateQueries({ queryKey: ['admin-credentials'] });
+  qc.invalidateQueries({ queryKey: READINESS_KEY });
 }
 
 export function useAdminCreateCredential() {
@@ -168,6 +170,9 @@ export function useUpdateEmbeddingConfig() {
         '/api/v1/platform/embedding-config',
         body
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-embedding-config'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-embedding-config'] });
+      qc.invalidateQueries({ queryKey: READINESS_KEY });
+    },
   });
 }

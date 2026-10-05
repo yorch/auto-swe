@@ -28,6 +28,7 @@ import {
 import { useLedTeamIds } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { BUDGET_TIER_OPTIONS } from '@/lib/govLabels';
 import { formatDate } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -56,12 +57,6 @@ const EMPTY_FORM: ScheduleForm = {
   teamId: '',
   templateId: '',
 };
-
-const BUDGET_TIER_OPTIONS = [
-  { label: 'Standard', value: 'STANDARD' },
-  { label: 'Large', value: 'LARGE' },
-  { label: 'Epic', value: 'EPIC' },
-];
 
 function formFromSchedule(s: ScheduledWorkRequestSummary): ScheduleForm {
   return {

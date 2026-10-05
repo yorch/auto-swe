@@ -4,6 +4,13 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlatformUsage } from '@/hooks/useAdmin';
 
+const nav = vi.hoisted(() => ({ params: '', replace: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/govern/usage',
+  useRouter: () => ({ replace: nav.replace }),
+  useSearchParams: () => new URLSearchParams(nav.params),
+}));
+
 const usePlatformUsage = vi.fn();
 type Scopes = {
   platform: boolean;
@@ -13,7 +20,7 @@ type Scopes = {
 const auth = vi.hoisted(() => ({ scopes: undefined as unknown }));
 vi.mock('@/hooks/useAdmin', () => ({
   usePlatformUsage: (...args: unknown[]) => usePlatformUsage(...args),
-  useUsageScopes: () => ({ data: auth.scopes }),
+  useUsageScopes: () => ({ data: auth.scopes, isError: false, isLoading: false }),
 }));
 // Recharts needs a laid-out container; the chart has nothing page-specific to check.
 vi.mock('@/components/charts/DailyCostChart', () => ({
@@ -41,6 +48,7 @@ const usage: PlatformUsage = {
     { ...bucket, orgId: null, teamId: null, teamName: null },
   ],
   daily: [],
+  previous: { calls: 2, costUsd: 2 },
   scope: {},
   since: '2026-09-01T00:00:00.000Z',
   topRuns: [
@@ -72,27 +80,45 @@ const ADMIN_SCOPES: Scopes = {
 
 beforeEach(() => {
   auth.scopes = ADMIN_SCOPES;
+  nav.params = '';
+  nav.replace.mockReset();
   usePlatformUsage.mockReset().mockReturnValue({ data: usage, isLoading: false });
 });
 
 describe('UsagePage', () => {
-  it('renders spend, breakdowns, and links the costliest runs', () => {
+  it('renders spend with its previous-period context, and links the costliest runs', () => {
     render(<UsagePage />);
 
-    expect(screen.getByText('Without a run')).toBeTruthy();
-    expect(screen.getByText('(unresolved)')).toBeTruthy();
-    expect(screen.getByText('embedding')).toBeTruthy();
-    expect(screen.getByText('executeImplementation')).toBeTruthy();
+    expect(screen.getByText('Spend outside workflow runs')).toBeTruthy();
+    expect(screen.getByText(/\+25% vs previous 30 days/)).toBeTruthy();
     expect(screen.getByRole('link', { name: 'JIRA-7' }).getAttribute('href')).toBe('/runs/run-7');
   });
 
-  it('breaks spend down by team and organization, naming spend no team owns', () => {
+  it('breaks spend down over one table, switched by a control, naming spend no team owns', () => {
     render(<UsagePage />);
 
-    expect(screen.getByText('By team')).toBeTruthy();
-    expect(screen.getByText('(no team)')).toBeTruthy();
-    expect(screen.getByText('By organization')).toBeTruthy();
-    expect(screen.getAllByText('Acme').length).toBeGreaterThan(0);
+    // The default breakdown is by model; unresolved models are named in words.
+    expect(screen.getByText('Model not resolved')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Team' }));
+    expect(screen.getByText('Not attributed to a team')).toBeTruthy();
+    expect(screen.getByText('Payments')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
+    expect(screen.getByText('Execute implementation')).toBeTruthy();
+  });
+
+  it('shows one page-level empty state instead of empty tables', () => {
+    usePlatformUsage.mockReturnValue({
+      data: { ...usage, totals: { ...bucket, calls: 0, costUsd: 0, errors: 0 } },
+      isLoading: false,
+    });
+    render(<UsagePage />);
+    expect(screen.getAllByText('No LLM calls in this window.')).toHaveLength(1);
+  });
+
+  it('dims the previous scope while the next one loads', () => {
+    usePlatformUsage.mockReturnValue({ data: usage, isLoading: false, isPlaceholderData: true });
+    render(<UsagePage />);
+    expect(screen.getByRole('status').textContent).toBe('Updating…');
   });
 
   it('shows an ADMIN the whole platform by default', () => {
@@ -129,8 +155,11 @@ describe('UsagePage', () => {
     expect(usePlatformUsage).toHaveBeenLastCalledWith(30, {}, true);
 
     fireEvent.click(screen.getByRole('button', { name: '7d' }));
+    expect(nav.replace).toHaveBeenCalledWith('/govern/usage?range=7', { scroll: false });
 
-    expect(usePlatformUsage).toHaveBeenLastCalledWith(7, {}, true);
+    nav.params = 'range=90';
+    render(<UsagePage />);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(90, {}, true);
   });
 
   it('shows the error when the report fails to load, not a spinner', () => {

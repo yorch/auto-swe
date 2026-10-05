@@ -2,10 +2,10 @@
 
 import type { ReactNode } from 'react';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { SaveBar } from '@/components/ui/SaveBar';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
@@ -157,7 +157,7 @@ function FieldGroup({ label, children }: { label: string; children: ReactNode })
 export function WorkflowDefaultsForm() {
   const { data, error: loadError, isError, isLoading } = useWorkflowDefaultsConfig();
   const update = useUpdateWorkflowDefaultsConfig();
-  const { form, setField, submit, saved, error } = useConfigForm({
+  const { form, setField, submit, saved, error, dirtyCount, discard } = useConfigForm({
     data,
     initial: DEFAULTS,
     mutateAsync: update.mutateAsync,
@@ -240,7 +240,7 @@ export function WorkflowDefaultsForm() {
         <div className="space-y-6">
           <FieldGroup label="Per-tier token budgets">
             <NumberField
-              hint="STANDARD tier input-token cap."
+              hint="Standard tier input-token cap."
               id="budget-standard-input"
               label="Standard · input tokens"
               min={1}
@@ -248,7 +248,7 @@ export function WorkflowDefaultsForm() {
               value={form.budgetStandardInputTokens}
             />
             <NumberField
-              hint="STANDARD tier output-token cap."
+              hint="Standard tier output-token cap."
               id="budget-standard-output"
               label="Standard · output tokens"
               min={1}
@@ -256,7 +256,7 @@ export function WorkflowDefaultsForm() {
               value={form.budgetStandardOutputTokens}
             />
             <NumberField
-              hint="LARGE tier input-token cap."
+              hint="Large tier input-token cap."
               id="budget-large-input"
               label="Large · input tokens"
               min={1}
@@ -264,7 +264,7 @@ export function WorkflowDefaultsForm() {
               value={form.budgetLargeInputTokens}
             />
             <NumberField
-              hint="LARGE tier output-token cap."
+              hint="Large tier output-token cap."
               id="budget-large-output"
               label="Large · output tokens"
               min={1}
@@ -272,7 +272,7 @@ export function WorkflowDefaultsForm() {
               value={form.budgetLargeOutputTokens}
             />
             <NumberField
-              hint="EPIC tier input-token cap."
+              hint="Epic tier input-token cap."
               id="budget-epic-input"
               label="Epic · input tokens"
               min={1}
@@ -280,7 +280,7 @@ export function WorkflowDefaultsForm() {
               value={form.budgetEpicInputTokens}
             />
             <NumberField
-              hint="EPIC tier output-token cap."
+              hint="Epic tier output-token cap."
               id="budget-epic-output"
               label="Epic · output tokens"
               min={1}
@@ -418,14 +418,14 @@ export function WorkflowDefaultsForm() {
         </div>
       </Card>
 
-      {saved && <Alert variant="success">Settings saved.</Alert>}
-      {error && <Alert variant="error">{error}</Alert>}
-
-      <div className="flex justify-end">
-        <Button disabled={update.isPending} type="submit" variant="primary">
-          {update.isPending ? 'Saving…' : 'Save changes'}
-        </Button>
-      </div>
+      <SaveBar
+        dirtyCount={dirtyCount}
+        error={error}
+        onDiscard={discard}
+        pending={update.isPending}
+        saved={saved}
+        savedMessage="Workflow defaults saved."
+      />
     </form>
   );
 }

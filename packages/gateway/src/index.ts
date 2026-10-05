@@ -42,6 +42,7 @@ import temporalPlugin from './plugins/temporal.js';
 import { adminRoutes } from './routes/admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrary.js';
 import { agentRunRoutes } from './routes/agentRuns.js';
+import { agentVersionRoutes } from './routes/agentVersions.js';
 import { autonomyPolicyRoutes } from './routes/autonomyPolicies.js';
 import { bundleRoutes } from './routes/bundles.js';
 import { configSettingsRoutes } from './routes/configSettings.js';
@@ -63,11 +64,13 @@ import { organizationRoutes } from './routes/organizations.js';
 import { orgBudgetRoutes } from './routes/orgBudget.js';
 import { orgMembersRoutes } from './routes/orgMembers.js';
 import { prdRunRoutes } from './routes/prdRuns.js';
+import { readinessRoutes } from './routes/readiness.js';
 import { repoDependencyRoutes } from './routes/repoDependencies.js';
 import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
 import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
 import { securityEventRoutes } from './routes/securityEvents.js';
+import { skillRevisionRoutes } from './routes/skillRevisions.js';
 import { skillSourceRoutes } from './routes/skillSources.js';
 import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
 import { slackRoutes } from './routes/slack.js';
@@ -117,6 +120,8 @@ async function start() {
   // Explicitly list all methods used by the API so PUT/DELETE preflights pass.
   await app.register(cors, {
     credentials: true,
+    // Without this the browser hides the audit export's truncation flag from the dashboard.
+    exposedHeaders: ['X-Export-Truncated', 'X-Export-Row-Limit'],
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH'],
     origin: getCorsOrigins(),
   });
@@ -360,6 +365,7 @@ async function start() {
   // Deprecated alias — kept for one release.
   await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
   await app.register(usageRoutes, { prefix: '/api/v1/platform' });
+  await app.register(readinessRoutes, { prefix: '/api/v1/platform' });
   await app.register(orgMembersRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.
   await app.register(orgMembersRoutes, { prefix: '/api/v1/admin/organizations' });
@@ -371,6 +377,8 @@ async function start() {
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
   await app.register(skillSourceRoutes, { prefix: '/api/v1/platform' });
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/platform' });
+  await app.register(agentVersionRoutes, { prefix: '/api/v1/platform' });
+  await app.register(skillRevisionRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/admin' });
   await app.register(evalRoutes, { prefix: '/api/v1/platform' });

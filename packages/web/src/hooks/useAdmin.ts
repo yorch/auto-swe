@@ -11,6 +11,7 @@ import type {
   EvalTrendsDto,
 } from '@auto-swe/shared/types/api';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useHasRole } from '@/hooks/useHasRole';
 import { api } from '@/lib/api';
 import type { ScannerPatternType } from '@/lib/scannerPatternTypes';
 
@@ -89,6 +90,8 @@ export function useDeleteScannerPattern() {
 
 interface AdminSessionSummary {
   id: string;
+  /** The caller's own browser session. */
+  current: boolean;
   token: string;
   createdAt: string;
   updatedAt: string;
@@ -118,6 +121,17 @@ export function useAdminRevokeToken() {
 export function useAdminPruneShellAudit(days = 90) {
   return useMutation({
     mutationFn: () => api.post(`/api/v1/platform/shell-audit/prune?days=${days}`, {}),
+  });
+}
+
+export function useAdminRevokeUserSessions() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) =>
+      api
+        .post<{ data: { revoked: number } }>('/api/v1/platform/sessions/revoke-user', { userId })
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-sessions'] }),
   });
 }
 
@@ -159,6 +173,8 @@ export interface AuditLogFilters {
   action?: AuditAction;
   actorId?: string;
   entityType?: string;
+  /** Free text over the actor, entity type and entity id. */
+  search?: string;
   /** Inclusive UTC days, `YYYY-MM-DD`. */
   since?: string;
   until?: string;
@@ -182,6 +198,26 @@ export function useAuditLog(filters: AuditLogFilters & { limit: number; offset: 
     queryKey: ['audit-log', filters],
     refetchInterval: 30_000,
   });
+}
+
+/**
+ * The audit log as CSV text, under the same filters as the list. `truncated` is true when more
+ * rows matched than the export carries, so the file is only the newest part of the result.
+ */
+export async function exportAuditLog(
+  filters: AuditLogFilters
+): Promise<{ csv: string; truncated: boolean }> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      qs.set(key, String(value));
+    }
+  }
+  let truncated = false;
+  const csv = await api.get<string>(`/api/v1/platform/audit-log/export?${qs}`, (res) => {
+    truncated = res.headers.get('x-export-truncated') === 'true';
+  });
+  return { csv, truncated };
 }
 
 export type SecurityEventType =
@@ -210,14 +246,24 @@ export interface SecurityEvent {
   workRequestId: string | null;
 }
 
-export function useSecurityEvents(params: {
-  limit: number;
-  offset: number;
-  type?: SecurityEventType;
-}) {
+export interface SecurityEventWindow {
+  /** Inclusive start and exclusive end, as ISO instants. */
+  since?: string;
+  until?: string;
+}
+
+export function useSecurityEvents(
+  params: SecurityEventWindow & { limit: number; offset: number; type?: SecurityEventType }
+) {
   const qs = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
   if (params.type) {
     qs.set('type', params.type);
+  }
+  if (params.since) {
+    qs.set('since', params.since);
+  }
+  if (params.until) {
+    qs.set('until', params.until);
   }
   return useQuery({
     placeholderData: keepPreviousData,
@@ -230,18 +276,32 @@ export function useSecurityEvents(params: {
   });
 }
 
-/** Per-type totals across every security event, independent of the page shown. */
-export function useSecurityEventSummary() {
+export interface SecurityEventSummary {
+  /** Per-type counts in the window. */
+  counts: Record<SecurityEventType, number>;
+  /** The same counts for the window of equal length just before it; absent without a window. */
+  previous: Record<SecurityEventType, number> | null;
+}
+
+/** Per-type totals for a window (or all time), independent of the page shown. */
+export function useSecurityEventSummary(window: SecurityEventWindow = {}) {
+  const qs = new URLSearchParams();
+  if (window.since && window.until) {
+    qs.set('since', window.since);
+    qs.set('until', window.until);
+  }
   return useQuery({
+    placeholderData: keepPreviousData,
     queryFn: () =>
       api
-        .get<{ data: Record<SecurityEventType, number> }>(
-          '/api/v1/platform/security-events/summary'
-        )
-        .then((r) => r.data),
-    queryKey: ['security-events', 'summary'],
-    // Seven counts over all of agent_traces: refresh rarely, and on focus
-    // only once stale (the default), not every minute per open tab.
+        .get<{
+          data: Record<SecurityEventType, number>;
+          previous?: Record<SecurityEventType, number>;
+        }>(`/api/v1/platform/security-events/summary?${qs}`)
+        .then((r): SecurityEventSummary => ({ counts: r.data, previous: r.previous ?? null })),
+    queryKey: ['security-events', 'summary', window.since ?? null, window.until ?? null],
+    // Seven counts over all of agent_traces, twice with a window: refresh rarely,
+    // and on focus only once stale (the default), not every minute per open tab.
     refetchInterval: 5 * 60_000,
     staleTime: 5 * 60_000,
   });
@@ -282,6 +342,8 @@ export interface PlatformUsage {
     inputTokens: number;
     outputTokens: number;
   }[];
+  /** The window of the same length just before this one. */
+  previous: { calls: number; costUsd: number };
   scope: UsageScope;
   since: string;
   /** Exclusive end of the window: the end of the current UTC day. */
@@ -372,6 +434,30 @@ export function useUserOrgs() {
     queryFn: () =>
       api.get<{ data: UserOrg[] }>('/api/v1/platform/organizations').then((r) => r.data),
     queryKey: ['user-orgs'],
+  });
+}
+
+/** An organization row as the directory returns it; `role` is the viewer's own, absent for admins. */
+export type DirectoryOrg = Omit<UserOrg, 'role'> & { role?: string };
+
+/**
+ * Every organization the viewer can act on: ALL active organizations for a platform admin
+ * (who may manage ones they are not a member of), the viewer's own memberships otherwise.
+ * Use this for organization pickers and the Organizations list; `useUserOrgs` stays the
+ * "my organizations" view.
+ */
+export function useOrganizationDirectory() {
+  const isAdmin = useHasRole('ADMIN');
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: DirectoryOrg[] }>(
+          isAdmin
+            ? '/api/v1/platform/organizations/budget-alerts'
+            : '/api/v1/platform/organizations'
+        )
+        .then((r) => r.data),
+    queryKey: ['user-orgs', isAdmin ? 'all' : 'mine'],
   });
 }
 
@@ -502,6 +588,18 @@ export function useEvalRuns(datasetId: string | null, limit: number, offset: num
         `/api/v1/platform/evals/runs?datasetId=${datasetId}&limit=${limit}&offset=${offset}`
       ),
     queryKey: ['eval-runs', datasetId, limit, offset],
+    refetchInterval: 30_000,
+  });
+}
+
+/** The newest harness runs across every dataset, each carrying its dataset's name. */
+export function useLatestEvalRuns(limit: number) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: EvalRunDto[] }>(`/api/v1/platform/evals/runs?limit=${limit}`)
+        .then((r) => r.data),
+    queryKey: ['eval-runs', 'latest', limit],
     refetchInterval: 30_000,
   });
 }

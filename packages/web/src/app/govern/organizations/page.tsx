@@ -3,22 +3,37 @@
 import { OrgBudgetTable } from '@/components/govern/OrgBudgetTable';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { useUserOrgs } from '@/hooks/useAdmin';
+import { useOrganizationDirectory } from '@/hooks/useAdmin';
+import { useHasRole } from '@/hooks/useHasRole';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { navLabel } from '@/lib/navigation';
 
 export default function GovernOrganizationsPage() {
-  const { data: orgs, isLoading, isError, isFetching, refetch, error: loadError } = useUserOrgs();
+  const {
+    data: orgs,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useOrganizationDirectory();
+  const isAdmin = useHasRole('ADMIN');
+  const { params, update } = useUrlFilters();
+  // The filter lives in the URL so the old Budget alerts link (`?alerting=1`) lands on it.
+  const alertingOnly = params.get('alerting') === '1';
 
   const alertCount = (orgs ?? []).filter((o) => o.alert.triggered).length;
+  const rows = alertingOnly ? (orgs ?? []).filter((o) => o.alert.triggered) : (orgs ?? []);
 
   return (
     <div className="space-y-8">
       <PageHeader
         chapter="§ Govern"
-        subtitle="Organizations you belong to. Alerts fire when current month spend crosses the configured threshold."
+        subtitle="Every organization on the platform for admins, otherwise the ones you belong to. Alerts fire when this month's spend crosses the configured threshold."
         title={navLabel('/govern/organizations')}
       />
 
@@ -37,16 +52,27 @@ export default function GovernOrganizationsPage() {
         label="organizations"
         onRetry={() => void refetch()}
       >
-        {
-          <Card>
-            <CardHeader>
-              <CardTitle>All organizations</CardTitle>
-            </CardHeader>
-            {(orgs ?? []).length === 0 ? (
-              <EmptyState title="No organizations found." />
-            ) : (
-              <OrgBudgetTable
-                columns={[
+        <Card>
+          <CardHeader>
+            <CardTitle>{alertingOnly ? 'Alerting organizations' : 'All organizations'}</CardTitle>
+            <Checkbox
+              checked={alertingOnly}
+              label="Alerting only"
+              onChange={(e) => update({ alerting: e.target.checked ? '1' : null })}
+            />
+          </CardHeader>
+          {rows.length === 0 ? (
+            <EmptyState
+              title={
+                alertingOnly
+                  ? 'No organizations are above their alert threshold.'
+                  : 'No organizations found.'
+              }
+            />
+          ) : (
+            <OrgBudgetTable
+              columns={(
+                [
                   'name',
                   'slug',
                   'role',
@@ -55,12 +81,12 @@ export default function GovernOrganizationsPage() {
                   'threshold',
                   'percentUsed',
                   'status',
-                ]}
-                rows={orgs ?? []}
-              />
-            )}
-          </Card>
-        }
+                ] as const
+              ).filter((c) => (isAdmin ? c !== 'role' : true))}
+              rows={rows}
+            />
+          )}
+        </Card>
       </QueryBoundary>
     </div>
   );

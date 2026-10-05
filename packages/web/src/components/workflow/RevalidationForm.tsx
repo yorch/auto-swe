@@ -52,7 +52,7 @@ export function RevalidationForm() {
     isLoading,
   } = useRevalidationConfig();
   const update = useUpdateRevalidationConfig();
-  const { form, setField, submit, saved, error } = useConfigForm({
+  const { form, setField, submit, saved, error, dirtyCount, discard } = useConfigForm({
     data: revalidation,
     initial: INITIAL,
     mutateAsync: update.mutateAsync,
@@ -118,8 +118,10 @@ export function RevalidationForm() {
 
           <ScheduleFormFooter
             canRun={!!revalidation?.schedule.exists}
+            dirtyCount={dirtyCount}
             error={error}
             isSaving={update.isPending}
+            onDiscard={discard}
             runNow={runNow}
             saved={saved}
             savedMessage="Re-validation schedule saved and synced."

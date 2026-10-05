@@ -1,35 +1,23 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
 import { ConnectedAppsSection } from '@/components/settings/ConnectedAppsSection';
+import { GitHubCredentialsSection } from '@/components/settings/GitHubCredentialsSection';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { BUTTON_STYLE, Button, buttonClassName } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { useAuthProviders, useLinkedAccounts } from '@/hooks/useAccountSettings';
 import { API_BASE } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
-
-/** Subset of better-auth's list-accounts response shape we actually use. */
-interface LinkedAccount {
-  id: string;
-  providerId: string;
-  accountId: string;
-  createdAt?: string;
-}
-
-/** Reflects the public /api/v1/auth/providers shape. */
-interface ProviderFlags {
-  github: boolean;
-  google: boolean;
-  magicLink: boolean;
-  okta: boolean;
-}
 
 interface Provider {
   id: SocialProviderId;
@@ -91,13 +79,11 @@ export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const linkProvider = useAuthStore((s) => s.linkProvider);
-  const [providers, setProviders] = useState<ProviderFlags>({
-    github: false,
-    google: false,
-    magicLink: true,
-    okta: false,
-  });
-  const [linked, setLinked] = useState<LinkedAccount[]>([]);
+  const qc = useQueryClient();
+  const providersQuery = useAuthProviders();
+  const linkedQuery = useLinkedAccounts();
+  const providers = providersQuery.data;
+  const linked = linkedQuery.data ?? [];
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -106,28 +92,6 @@ export default function SettingsPage() {
     label: string;
     providerId: string;
   } | null>(null);
-
-  useEffect(() => {
-    // Parallel reads: which providers the backend is configured for, and
-    // which accounts the current user has linked. Both are tolerant of a
-    // missing better-auth session (legacy bcrypt-only users see an empty
-    // linked list and "—" everywhere).
-    Promise.all([
-      fetch(`${API_BASE}/api/v1/auth/providers`)
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null),
-      fetch(`${API_BASE}/api/auth/list-accounts`, { credentials: 'include' })
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null),
-    ]).then(([p, accts]) => {
-      if (p) {
-        setProviders(p as ProviderFlags);
-      }
-      if (Array.isArray(accts)) {
-        setLinked(accts as LinkedAccount[]);
-      }
-    });
-  }, []);
 
   const linkedIds = new Set(linked.map((a) => a.providerId));
 
@@ -169,7 +133,7 @@ export default function SettingsPage() {
       const errBody = (await res.json().catch(() => null)) as { message?: string } | null;
       throw new Error(errBody?.message ?? `unlink failed (${res.status})`);
     }
-    setLinked((prev) => prev.filter((a) => a.providerId !== providerId));
+    await qc.invalidateQueries({ queryKey: ['linked-accounts'] });
     setInfo(`${providerId} unlinked from this account.`);
   };
 
@@ -197,7 +161,7 @@ export default function SettingsPage() {
             </dd>
           </dl>
           <div className="mt-6 border-t border-ink-600 pt-4">
-            <Button onClick={handleLogout} size="sm" variant="danger">
+            <Button onClick={handleLogout} size="sm" variant="secondary">
               Sign out
             </Button>
           </div>
@@ -219,87 +183,104 @@ export default function SettingsPage() {
         )}
 
         <Card variant="inset">
-          <ul className="divide-y divide-ink-600">
-            {SOCIAL_PROVIDERS.map((p) => {
-              const isLinked = linkedIds.has(p.id);
-              const configured = providers[p.id];
-              const account = linked.find((a) => a.providerId === p.id);
-              return (
-                <LinkedAccountRow
-                  action={
-                    isLinked && account ? (
-                      <Button
-                        onClick={() =>
-                          setUnlinkTarget({
-                            accountId: account.id,
-                            label: p.label,
-                            providerId: p.id,
-                          })
-                        }
-                        size="sm"
-                        variant="danger"
-                      >
-                        Unlink
-                      </Button>
-                    ) : configured ? (
-                      <Button
-                        disabled={busy === p.id}
-                        onClick={() => handleLink(p.id)}
-                        size="sm"
-                        variant="secondary"
-                      >
-                        {busy === p.id ? 'Linking…' : 'Link'}
-                      </Button>
-                    ) : (
-                      <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                        —
-                      </span>
-                    )
-                  }
-                  detail={
-                    isLinked
-                      ? `linked${account?.accountId ? ` · ${account.accountId.slice(0, 12)}…` : ''}`
-                      : configured
-                        ? p.description
-                        : 'not configured server-side'
-                  }
-                  dotClass={
-                    isLinked ? (p.tone === 'ember' ? 'bg-ember-400' : 'bg-dust-400') : 'bg-ink-500'
-                  }
-                  key={p.id}
-                  label={p.label}
-                />
-              );
-            })}
+          <QueryBoundary
+            compact
+            error={providersQuery.error ?? linkedQuery.error}
+            isError={providersQuery.isError || linkedQuery.isError}
+            isFetching={providersQuery.isFetching || linkedQuery.isFetching}
+            isLoading={providersQuery.isLoading || linkedQuery.isLoading}
+            label="your sign-in methods"
+            onRetry={() => {
+              void providersQuery.refetch();
+              void linkedQuery.refetch();
+            }}
+          >
+            <ul className="divide-y divide-ink-600">
+              {SOCIAL_PROVIDERS.map((p) => {
+                const isLinked = linkedIds.has(p.id);
+                const configured = providers?.[p.id] ?? false;
+                const account = linked.find((a) => a.providerId === p.id);
+                return (
+                  <LinkedAccountRow
+                    action={
+                      isLinked && account ? (
+                        <Button
+                          onClick={() =>
+                            setUnlinkTarget({
+                              accountId: account.id,
+                              label: p.label,
+                              providerId: p.id,
+                            })
+                          }
+                          size="sm"
+                          variant="danger"
+                        >
+                          Unlink
+                        </Button>
+                      ) : configured ? (
+                        <Button
+                          disabled={busy === p.id}
+                          onClick={() => handleLink(p.id)}
+                          size="sm"
+                          variant="secondary"
+                        >
+                          {busy === p.id ? 'Linking…' : 'Link'}
+                        </Button>
+                      ) : (
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                          —
+                        </span>
+                      )
+                    }
+                    detail={
+                      isLinked
+                        ? `linked${account?.accountId ? ` · ${account.accountId.slice(0, 12)}…` : ''}`
+                        : configured
+                          ? p.description
+                          : 'not configured server-side'
+                    }
+                    dotClass={
+                      isLinked
+                        ? p.tone === 'ember'
+                          ? 'bg-ember-400'
+                          : 'bg-dust-400'
+                        : 'bg-ink-500'
+                    }
+                    key={p.id}
+                    label={p.label}
+                  />
+                );
+              })}
 
-            {/* Slack lives outside better-auth — keep its custom OAuth flow. */}
-            <LinkedAccountRow
-              action={
-                user?.slackId ? (
-                  <Badge tone="moss" uppercase variant="text">
-                    Connected
-                  </Badge>
-                ) : (
-                  // A full-page navigation to the gateway's OAuth start, not an
-                  // app route, so it stays a plain anchor rather than a ButtonLink.
-                  <a
-                    className={buttonClassName('secondary', 'sm')}
-                    href={`${API_BASE}/api/v1/auth/slack/connect`}
-                    style={BUTTON_STYLE}
-                  >
-                    Connect
-                  </a>
-                )
-              }
-              detail={
-                user?.slackId
-                  ? `linked · ${user.slackId}`
-                  : 'Required for the `/auto-swe` slash command and per-step failure DMs.'
-              }
-              dotClass={user?.slackId ? 'bg-moss-400' : 'bg-ink-500'}
-              label="Slack"
-            />
-          </ul>
+              {/* Slack lives outside better-auth — keep its custom OAuth flow. */}
+              <LinkedAccountRow
+                action={
+                  user?.slackId ? (
+                    <Badge tone="moss" uppercase variant="text">
+                      Connected
+                    </Badge>
+                  ) : (
+                    // A full-page navigation to the gateway's OAuth start, not an
+                    // app route, so it stays a plain anchor rather than a ButtonLink.
+                    <a
+                      className={buttonClassName('secondary', 'sm')}
+                      href={`${API_BASE}/api/v1/auth/slack/connect`}
+                      style={BUTTON_STYLE}
+                    >
+                      Connect
+                    </a>
+                  )
+                }
+                detail={
+                  user?.slackId
+                    ? `linked · ${user.slackId}`
+                    : 'Required for the `/auto-swe` slash command and per-step failure DMs.'
+                }
+                dotClass={user?.slackId ? 'bg-moss-400' : 'bg-ink-500'}
+                label="Slack"
+              />
+            </ul>
+          </QueryBoundary>
           <p className="mt-4 border-t border-ink-600 pt-3 font-mono text-[10px] uppercase tracking-wider text-paper-500">
             Unlinking is blocked if it would leave you without a sign-in method.
           </p>
@@ -310,9 +291,9 @@ export default function SettingsPage() {
         <SectionHeader hint="email + password / magic link" number="03" title="Credentials" />
         <Card variant="inset">
           <p className="text-xs text-paper-400">
-            Email+password credentials are managed via better-auth. Use the password reset flow on
-            the login page if you need to rotate it. Magic link works with no setup — any time you
-            need a fresh session, request one from the login page.
+            Use the password reset flow on the login page to change your password. Magic link works
+            with no setup: whenever you need a fresh session, request a sign-in link from the login
+            page.
           </p>
         </Card>
       </section>
@@ -322,7 +303,11 @@ export default function SettingsPage() {
       </section>
 
       <section>
-        <ConnectedAppsSection number="05" />
+        <GitHubCredentialsSection number="05" />
+      </section>
+
+      <section>
+        <ConnectedAppsSection number="06" />
       </section>
 
       <ConfirmModal

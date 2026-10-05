@@ -27,6 +27,11 @@ export interface NavItem {
    * whatever their platform role: a team LEAD or ORG_ADMIN by membership qualifies.
    */
   needsUsageScope?: true;
+  /**
+   * A collapsible subgroup inside the group (Govern's Access, Security, …). Items
+   * of one section are listed together, in the order they appear here.
+   */
+  section?: string;
   /** Other path prefixes this entry owns (a sub-area with no sidebar entry of its own). */
   alsoActiveFor?: string[];
 }
@@ -84,57 +89,154 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     items: [
-      { href: '/govern/security', icon: 'security', label: 'Security events', minRole: 'ADMIN' },
-      { href: '/govern/scanner', icon: 'security', label: 'Scanner patterns', minRole: 'ADMIN' },
+      {
+        href: '/govern/users',
+        icon: 'users',
+        label: 'Users',
+        minRole: 'ADMIN',
+        section: 'Access',
+      },
+      {
+        href: '/govern/teams',
+        icon: 'teams',
+        label: 'Teams',
+        minRole: 'ENGINEER',
+        section: 'Access',
+      },
+      // GET /platform/organizations and the organizations layout both require LEAD.
+      {
+        // Budget alerts is the "Alerting only" filter here now; the old URL redirects.
+        alsoActiveFor: ['/govern/budget-alerts'],
+        href: '/govern/organizations',
+        icon: 'building',
+        label: 'Organizations',
+        minRole: 'LEAD',
+        section: 'Access',
+      },
+      {
+        href: '/govern/sessions',
+        icon: 'monitor',
+        label: 'Sessions',
+        minRole: 'ADMIN',
+        section: 'Access',
+      },
+      {
+        href: '/govern/api-tokens',
+        icon: 'key',
+        label: 'API tokens',
+        minRole: 'ADMIN',
+        section: 'Access',
+      },
+      {
+        href: '/govern/scanner',
+        icon: 'scan',
+        label: 'Scanner patterns',
+        minRole: 'ADMIN',
+        section: 'Security',
+      },
       {
         href: '/govern/policies',
         icon: 'security',
         label: 'Autonomy policies',
         minRole: 'ADMIN',
+        section: 'Security',
       },
-      { href: '/govern/evals', icon: 'analytics', label: 'Evals', minRole: 'ADMIN' },
-      // The schedules API admits ENGINEERs (launch authorization is per repo).
-      { href: '/govern/schedules', icon: 'clock', label: 'Schedules', minRole: 'ENGINEER' },
       {
-        href: '/govern/budget-alerts',
-        icon: 'security',
-        label: 'Budget alerts',
+        href: '/govern/policies/decisions',
+        icon: 'gavel',
+        label: 'Autonomy decisions',
         minRole: 'ADMIN',
+        section: 'Security',
       },
-      { href: '/govern/teams', icon: 'teams', label: 'Teams', minRole: 'ENGINEER' },
-      // GET /platform/organizations and the organizations layout both require LEAD.
-      { href: '/govern/organizations', icon: 'teams', label: 'Organizations', minRole: 'LEAD' },
-      { href: '/govern/users', icon: 'users', label: 'Users', minRole: 'ADMIN' },
-      { href: '/govern/api-tokens', icon: 'key', label: 'API tokens', minRole: 'ADMIN' },
-      { href: '/govern/lessons', icon: 'memory', label: 'Lessons', minRole: 'ADMIN' },
-      { href: '/govern/analytics', icon: 'analytics', label: 'Analytics', minRole: 'ENGINEER' },
+      {
+        href: '/govern/security',
+        icon: 'alert',
+        label: 'Security events',
+        minRole: 'ADMIN',
+        section: 'Security',
+      },
+      {
+        href: '/govern/audit',
+        icon: 'list',
+        label: 'Audit log',
+        minRole: 'ADMIN',
+        section: 'Security',
+      },
+      {
+        href: '/govern/analytics',
+        icon: 'analytics',
+        label: 'Analytics',
+        minRole: 'ENGINEER',
+        section: 'Spend & insights',
+      },
       // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
       // the platform role; the gateway enforces which scopes each may read.
       {
         href: '/govern/usage',
-        icon: 'analytics',
+        icon: 'coin',
         label: 'LLM usage',
         minRole: 'ENGINEER',
         needsUsageScope: true,
-      },
-      // The baselines API and layout both require LEAD.
-      { href: '/govern/baselines', icon: 'analytics', label: 'Error baselines', minRole: 'LEAD' },
-      { href: '/govern/sessions', icon: 'clock', label: 'Sessions', minRole: 'ADMIN' },
-      { href: '/govern/slack-channels', icon: 'teams', label: 'Slack channels', minRole: 'ADMIN' },
-      {
-        href: '/govern/workflow-defaults',
-        icon: 'workflows',
-        label: 'Workflow defaults',
-        minRole: 'ADMIN',
+        section: 'Spend & insights',
       },
       {
         href: '/govern/platform-settings',
         icon: 'settings',
         label: 'Platform settings',
         minRole: 'LEAD',
+        section: 'Configuration',
       },
-      { href: '/govern/config-grants', icon: 'settings', label: 'Config grants', minRole: 'ADMIN' },
-      { href: '/govern/audit', icon: 'analytics', label: 'Audit log', minRole: 'ADMIN' },
+      {
+        href: '/govern/workflow-defaults',
+        icon: 'workflows',
+        label: 'Workflow defaults',
+        minRole: 'ADMIN',
+        section: 'Configuration',
+      },
+      {
+        href: '/govern/config-grants',
+        icon: 'lock',
+        label: 'Config grants',
+        minRole: 'ADMIN',
+        section: 'Configuration',
+      },
+      // The schedules API admits ENGINEERs (launch authorization is per repo).
+      {
+        href: '/govern/schedules',
+        icon: 'clock',
+        label: 'Schedules',
+        minRole: 'ENGINEER',
+        section: 'Configuration',
+      },
+      {
+        href: '/govern/slack-channels',
+        icon: 'chat',
+        label: 'Slack channels',
+        minRole: 'ADMIN',
+        section: 'Configuration',
+      },
+      {
+        href: '/govern/lessons',
+        icon: 'memory',
+        label: 'Lessons',
+        minRole: 'ADMIN',
+        section: 'Knowledge',
+      },
+      // The baselines API and layout both require LEAD.
+      {
+        href: '/govern/baselines',
+        icon: 'target',
+        label: 'Error baselines',
+        minRole: 'LEAD',
+        section: 'Knowledge',
+      },
+      {
+        href: '/govern/evals',
+        icon: 'flask',
+        label: 'Evals',
+        minRole: 'ADMIN',
+        section: 'Knowledge',
+      },
     ],
     label: 'Govern',
   },
@@ -165,6 +267,24 @@ export function visibleNavGroups(
         (!item.needsUsageScope || hasUsageScope || hasRole(role, 'ADMIN'))
     ),
   })).filter((group) => group.items.length > 0);
+}
+
+/**
+ * A group's visible items split into its sections, in first-appearance order.
+ * An item with no section lands in an unnamed leading block (`label: null`).
+ */
+export function navSections(items: NavItem[]): { label: string | null; items: NavItem[] }[] {
+  const out: { label: string | null; items: NavItem[] }[] = [];
+  for (const item of items) {
+    const label = item.section ?? null;
+    let block = out.find((b) => b.label === label);
+    if (!block) {
+      block = { items: [], label };
+      out.push(block);
+    }
+    block.items.push(item);
+  }
+  return out;
 }
 
 /** The most specific nav item whose href owns `pathname`, if any. */

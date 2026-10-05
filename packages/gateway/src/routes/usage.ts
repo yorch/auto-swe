@@ -259,6 +259,21 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
           ])
       );
 
+      // The window of the same length just before this one, so the page can say whether spend
+      // is moving, not only how big it is. Run after the batch above, not inside it, so no more
+      // than four queries ever hold pool connections together.
+      const previousPeriod = await asPlatformAdmin(user, PLATFORM_WIDE, ['AgentTrace'], () =>
+        prisma.agentTrace.aggregate({
+          _count: { _all: true },
+          _sum: { costUsd: true },
+          where: {
+            ...scope,
+            createdAt: { gte: new Date(since.getTime() - windowDays * DAY_MS), lt: since },
+            type: 'llm_response',
+          },
+        })
+      );
+
       // JSON keys keep a null model distinct from any real string.
       const keyOf = (g: { model: string | null; agentKey: string; nodeId: string }) =>
         JSON.stringify([g.model, g.agentKey, g.nodeId]);
@@ -408,6 +423,10 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
             teamName: id ? (teamName.get(id) ?? null) : null,
           })),
           daily,
+          previous: {
+            calls: previousPeriod._count._all,
+            costUsd: previousPeriod._sum.costUsd ?? 0,
+          },
           scope,
           since: since.toISOString(),
           // Ranked by spend inside the window, which for a run that started

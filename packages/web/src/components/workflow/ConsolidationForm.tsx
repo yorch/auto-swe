@@ -56,7 +56,7 @@ export function ConsolidationForm() {
     isLoading,
   } = useConsolidationConfig();
   const update = useUpdateConsolidationConfig();
-  const { form, setField, submit, saved, error } = useConfigForm({
+  const { form, setField, submit, saved, error, dirtyCount, discard } = useConfigForm({
     data: consolidation,
     initial: INITIAL,
     mutateAsync: update.mutateAsync,
@@ -132,8 +132,10 @@ export function ConsolidationForm() {
 
           <ScheduleFormFooter
             canRun={!!consolidation?.schedule.exists}
+            dirtyCount={dirtyCount}
             error={error}
             isSaving={update.isPending}
+            onDiscard={discard}
             runNow={runNow}
             saved={saved}
             savedMessage="Consolidation schedule saved and synced."

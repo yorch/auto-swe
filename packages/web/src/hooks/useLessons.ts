@@ -33,15 +33,23 @@ export function useAdminLessonStats() {
   });
 }
 
-export function useLessons(includeConsolidated = false, opts: ListOptions = {}) {
+export interface LessonListOptions extends ListOptions {
+  /** Only lessons whose summary or rationale contains this text. */
+  q?: string;
+  repoId?: string;
+}
+
+export function useLessons(includeConsolidated = false, opts: LessonListOptions = {}) {
+  const { q, repoId, ...page } = opts;
+  const base = new URLSearchParams({ includeConsolidated: includeConsolidated ? 'true' : 'false' });
+  if (repoId) {
+    base.set('repoId', repoId);
+  }
+  if (q) {
+    base.set('q', q);
+  }
   return useListQuery<Lesson>({
-    queryFn: () =>
-      api.get(
-        listUrl(
-          `/api/v1/lessons?includeConsolidated=${includeConsolidated ? 'true' : 'false'}`,
-          opts
-        )
-      ),
+    queryFn: () => api.get(listUrl(`/api/v1/lessons?${base.toString()}`, page)),
     queryKey: ['lessons', includeConsolidated, opts],
   });
 }

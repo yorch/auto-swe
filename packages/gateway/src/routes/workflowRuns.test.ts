@@ -103,6 +103,19 @@ describe('workflowRunRoutes GET / (list)', () => {
     expect(where.template).toEqual({ name: { notIn: ['Channel Assistant', 'Channel Task'] } });
   });
 
+  it('narrows to runs where one node failed', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/workflow-runs?failedNodeId=runTests',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(lastListWhere(prisma).steps).toEqual({
+      some: { nodeId: 'runTests', status: 'FAILED' },
+    });
+  });
+
   it('rejects an includeChannel value other than true/false', async () => {
     const { app } = await buildApp();
     const res = await app.inject({

@@ -28,8 +28,10 @@ A policy is a map from **risk class** to a rule:
 `action` is one of `auto` or `require_approval` — those two values are the whole vocabulary.
 `approverCount` raises the bar to a number of **distinct** approvers; it defaults to one.
 
-Risk classes are free-form strings, not an enum. The four above are the shipped fallback set; a
-deployment may use whatever names its workflows publish. A class nobody has written a rule for
+Risk classes are free-form strings, not an enum. The policy editor offers the known set
+(`KNOWN_RISK_CLASSES` in `shared/src/lib/autonomyPolicy.ts`: the four above plus `external_write`) as
+a picker and shows each by its plain-language name; a policy that already carries another class keeps
+it. The API accepts any name, so a deployment may use whatever its workflows publish. A class nobody has written a rule for
 resolves to `require_approval`, so adding a new class is safe by construction — it starts closed
 and an operator opens it deliberately.
 
@@ -135,8 +137,9 @@ expects.
 - **`approverCount` is a count, not a list.** A rule can demand two distinct approvers; it cannot
   demand a *particular* person, a role, or a group. Who is allowed to approve is whatever the run's
   team membership and RBAC already permit.
-- **Risk classes are unvalidated strings.** Nothing checks that a class a workflow publishes matches
-  a class a policy names. A typo does not error; it silently lands on the unknown-class default and
+- **Risk classes are unvalidated strings.** The editor offers only the known set, but the API and a
+  workflow step accept any name, and nothing checks that a class a workflow publishes matches a class
+  a policy names. A typo does not error; it silently lands on the unknown-class default and
   requires approval, which is safe but is not the rule the author thought they wrote.
 - **Scope is template or team, never channel or organization.** The other config cascades in this
   platform resolve through five levels; this one has three, and a channel-resident run inherits its

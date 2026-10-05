@@ -241,9 +241,37 @@ describe('usageRoutes GET /usage', () => {
       .map(([args]) => args.where)
       .filter((w) => w.runId === undefined)
       .map((w) => [w.createdAt.gte.getTime(), w.createdAt.lt.getTime()]);
-    expect(dayBounds).toEqual(
+    // The first aggregate is the previous period: the same length, ending where this one starts.
+    expect(dayBounds[0]).toEqual([sinceMs - 7 * DAY_MS, sinceMs]);
+    expect(res.json().data.previous).toEqual({
+      calls: expect.any(Number),
+      costUsd: expect.any(Number),
+    });
+    expect(dayBounds.slice(1)).toEqual(
       Array.from({ length: 7 }, (_, i) => [sinceMs + i * DAY_MS, sinceMs + (i + 1) * DAY_MS])
     );
+  });
+
+  it('never runs more than four queries at once', async () => {
+    const { app, prisma } = await buildApp();
+    let inFlight = 0;
+    let peak = 0;
+    const tracked = (value: unknown) => async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 2));
+      inFlight--;
+      return value;
+    };
+    prisma.agentTrace.groupBy.mockImplementation(tracked([]));
+    prisma.agentTrace.aggregate.mockImplementation(tracked(EMPTY_AGG));
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/usage',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(peak).toBeLessThanOrEqual(4);
   });
 
   it('rolls one grouping up into totals and per-model, per-agent, per-activity breakdowns', async () => {

@@ -1,5 +1,6 @@
 'use client';
 
+import { KNOWN_RISK_CLASSES } from '@auto-swe/shared/lib/autonomyPolicy';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
@@ -22,6 +23,7 @@ import {
 } from '@/hooks/useAutonomyPolicies';
 import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
+import { riskClassLabel } from '@/lib/autonomyEvents';
 import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
 
@@ -127,6 +129,30 @@ function formToBody(form: PolicyForm): AutonomyPolicyForm {
   return body;
 }
 
+/** One line per policy: what each risk class does ("External communication: approval from 1"). */
+function ruleSummary(rules: AutonomyPolicy['rules']): string[] {
+  return Object.entries(rules).map(([riskClass, rule]) =>
+    rule.action === 'auto'
+      ? `${riskClassLabel(riskClass)}: automatic`
+      : `${riskClassLabel(riskClass)}: approval from ${rule.approverCount ?? 1}`
+  );
+}
+
+/** The risk classes still free to pick: the known set minus those other rules use, plus `current`. */
+function riskClassOptions(rules: RuleRow[], current: string) {
+  const used = new Set(rules.map((r) => r.riskClass).filter((c) => c && c !== current));
+  const options: { label: string; value: string }[] = KNOWN_RISK_CLASSES.filter(
+    (c) => !used.has(c.key)
+  ).map((c) => ({
+    label: c.label,
+    value: c.key,
+  }));
+  if (current && !options.some((o) => o.value === current)) {
+    options.push({ label: riskClassLabel(current), value: current });
+  }
+  return options;
+}
+
 function scopeLabel(policy: AutonomyPolicy): string {
   if (policy.template) {
     return `Template: ${policy.template.name}`;
@@ -177,7 +203,7 @@ function PolicyModal({
         continue;
       }
       if (riskClasses.has(r.riskClass.trim())) {
-        setError(`Duplicate risk class: ${r.riskClass.trim()}`);
+        setError(`Duplicate risk class: ${riskClassLabel(r.riskClass.trim())}`);
         return;
       }
       riskClasses.add(r.riskClass.trim());
@@ -213,12 +239,19 @@ function PolicyModal({
     }));
   }
 
+  const unusedClasses = riskClassOptions(form.rules, '');
+
   function addRule() {
     setForm((f) => ({
       ...f,
       rules: [
         ...f.rules,
-        { action: 'auto', approverCount: '', id: crypto.randomUUID(), riskClass: '' },
+        {
+          action: 'require_approval',
+          approverCount: '1',
+          id: crypto.randomUUID(),
+          riskClass: riskClassOptions(f.rules, '')[0]?.value ?? '',
+        },
       ],
     }));
   }
@@ -284,13 +317,17 @@ function PolicyModal({
           </CardHeader>
           <div className="space-y-3">
             {form.rules.map((r, i) => (
-              <div className="grid grid-cols-[1fr_120px_80px_40px] gap-2 items-end" key={r.id}>
-                <Input
-                  aria-label={i === 0 ? undefined : `Risk class, rule ${i + 1}`}
+              <div
+                className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_150px_90px_40px]"
+                key={r.id}
+              >
+                <Select
+                  aria-label={`Risk class, rule ${i + 1}`}
                   id={`rule-${r.id}-risk-class`}
                   label={i === 0 ? 'Risk class' : undefined}
-                  onChange={(e) => setRuleField(i, { riskClass: e.target.value })}
-                  placeholder="e.g. external_communication"
+                  onChange={(v) => setRuleField(i, { riskClass: v })}
+                  options={riskClassOptions(form.rules, r.riskClass)}
+                  placeholder="Choose a risk class"
                   value={r.riskClass}
                 />
                 <Select
@@ -325,9 +362,17 @@ function PolicyModal({
                 </Button>
               </div>
             ))}
-            <Button onClick={addRule} type="button" variant="secondary">
+            <Button
+              disabled={unusedClasses.length === 0}
+              onClick={addRule}
+              type="button"
+              variant="secondary"
+            >
               Add risk class
             </Button>
+            <p className="text-xs text-paper-500">
+              A risk class with no rule here requires approval.
+            </p>
           </div>
         </Card>
         {error && <Alert>{error}</Alert>}
@@ -372,7 +417,7 @@ export default function AutonomyPoliciesPage() {
         actions={
           <>
             <ButtonLink href="/govern/policies/decisions" variant="secondary">
-              Audit decisions
+              Review decisions
             </ButtonLink>
             <Button onClick={startCreate} variant="primary">
               New policy
@@ -396,18 +441,19 @@ export default function AutonomyPoliciesPage() {
         <Card className="p-0" variant="inset">
           <div className="divide-y divide-ink-600">
             {sorted.map((p) => (
-              <div className="flex items-start justify-between p-4" key={p.id}>
-                <div className="space-y-1">
-                  <p className="font-medium text-sm">{p.name}</p>
+              <div className="flex flex-wrap items-start justify-between gap-3 p-4" key={p.id}>
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-medium">{p.name}</p>
                   <p className="text-xs text-paper-400">{scopeLabel(p)}</p>
                   {p.description && <p className="text-xs text-paper-500">{p.description}</p>}
-                  <p className="text-xs text-paper-500">
-                    {Object.keys(p.rules).length} rule
-                    {Object.keys(p.rules).length === 1 ? '' : 's'} · updated{' '}
-                    {formatDate(p.updatedAt)}
-                  </p>
+                  <ul className="space-y-0.5 pt-1 text-xs text-paper-300">
+                    {ruleSummary(p.rules).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                  <p className="pt-1 text-xs text-paper-500">Updated {formatDate(p.updatedAt)}</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex shrink-0 gap-2">
                   <Button onClick={() => startEdit(p)} size="sm" variant="secondary">
                     Edit
                   </Button>

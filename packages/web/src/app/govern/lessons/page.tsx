@@ -1,14 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
@@ -19,37 +22,29 @@ import {
   useDeleteLesson,
   useLessons,
 } from '@/hooks/useLessons';
-import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
+
+const PAGE_SIZE = 20;
 
 function RepoStatsRow({
   repo,
-  onTrigger,
+  onAsk,
 }: {
   repo: LessonRepoStats;
-  onTrigger: (repoId: string) => Promise<void>;
+  onAsk: (repo: LessonRepoStats) => void;
 }) {
-  const [triggering, setTriggering] = useState(false);
-
-  const handleTrigger = async () => {
-    setTriggering(true);
-    try {
-      await onTrigger(repo.id);
-    } finally {
-      setTriggering(false);
-    }
-  };
-
   return (
     <TRow>
-      <Td className="py-3 pr-4 font-mono text-xs text-paper-300">
+      <Td className="py-3 pr-4 font-mono text-xs text-paper-300" primary>
         {repo.organizationName}/{repo.repoName}
       </Td>
-      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-200">{repo.activeCount}</Td>
-      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-500">
+      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-200" label="Active">
+        {repo.activeCount}
+      </Td>
+      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-500" label="Consolidated">
         {repo.consolidatedCount}
       </Td>
-      <Td className="py-3 pr-4 font-mono text-xs text-paper-500">
+      <Td className="py-3 pr-4 font-mono text-xs text-paper-500" label="Last run">
         {repo.lastConsolidatedAt ? (
           formatDate(repo.lastConsolidatedAt)
         ) : (
@@ -58,12 +53,12 @@ function RepoStatsRow({
       </Td>
       <Td className="py-3 text-right">
         <Button
-          disabled={triggering || repo.activeCount === 0}
-          onClick={handleTrigger}
+          disabled={repo.activeCount === 0}
+          onClick={() => onAsk(repo)}
           size="sm"
           variant="secondary"
         >
-          {triggering ? 'Triggering…' : 'Run now'}
+          Run now
         </Button>
       </Td>
     </TRow>
@@ -79,42 +74,56 @@ export default function GovernLessonsPage() {
     error: statsError,
     refetch: refetchStats,
   } = useAdminLessonStats();
+  const [repoFilter, setRepoFilter] = useState('');
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  const [offset, setOffset] = useState(0);
+  // The search box filters the server's list, so wait for a pause in typing.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setQuery(search.trim());
+      setOffset(0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
   const {
     data: lessons,
+    meta: lessonsMeta,
     isLoading: lessonsLoading,
     isError: lessonsIsError,
     isFetching: lessonsIsFetching,
     error: lessonsError,
     refetch: refetchLessons,
-  } = useLessons(false, { limit: 20 });
+  } = useLessons(false, {
+    limit: PAGE_SIZE,
+    offset,
+    q: query || undefined,
+    repoId: repoFilter || undefined,
+  });
   const { data: consolidation } = useConsolidationConfig();
   const deleteLesson = useDeleteLesson();
 
-  const [triggeringAll, setTriggeringAll] = useState(false);
   const [deleting, setDeleting] = useState<{ id: string; summary: string } | null>(null);
-  const [triggerError, setTriggerError] = useState<string | null>(null);
+  // `null` = nothing asked; `'all'` = every repository; otherwise one repository.
+  const [consolidating, setConsolidating] = useState<'all' | LessonRepoStats | null>(null);
+  const [triggerNotice, setTriggerNotice] = useState<string | null>(null);
 
-  const handleTriggerAll = async () => {
-    setTriggeringAll(true);
-    setTriggerError(null);
-    try {
+  const runConsolidation = async () => {
+    const target = consolidating;
+    if (!target) {
+      return;
+    }
+    setTriggerNotice(null);
+    if (target === 'all') {
       await triggerConsolidationNow();
-      void refetchStats();
-    } catch (err) {
-      setTriggerError(errMsg(err, 'Failed to trigger'));
-    } finally {
-      setTriggeringAll(false);
+      setTriggerNotice('Consolidation started for every repository. Counts update as it finishes.');
+    } else {
+      await triggerRepoConsolidation(target.id);
+      setTriggerNotice(
+        `Consolidation started for ${target.organizationName}/${target.repoName}. Counts update as it finishes.`
+      );
     }
-  };
-
-  const handleTriggerRepo = async (repoId: string) => {
-    setTriggerError(null);
-    try {
-      await triggerRepoConsolidation(repoId);
-      void refetchStats();
-    } catch (err) {
-      setTriggerError(errMsg(err, 'Failed to trigger'));
-    }
+    void refetchStats();
   };
 
   const totalActive = stats?.reduce((sum, r) => sum + r.activeCount, 0) ?? 0;
@@ -157,15 +166,19 @@ export default function GovernLessonsPage() {
         <CardHeader>
           <CardTitle eyebrow="Repositories">Lesson breakdown by repository</CardTitle>
           <Button
-            disabled={triggeringAll || !consolidation?.schedule.exists}
-            onClick={handleTriggerAll}
+            disabled={!consolidation?.schedule.exists}
+            onClick={() => setConsolidating('all')}
             size="sm"
             variant="secondary"
           >
-            {triggeringAll ? 'Triggering…' : 'Run all now'}
+            Run all now
           </Button>
         </CardHeader>
-        {triggerError && <Alert className="mb-4">{triggerError}</Alert>}
+        {triggerNotice && (
+          <Alert className="mb-4" variant="success">
+            {triggerNotice}
+          </Alert>
+        )}
 
         <QueryBoundary
           error={statsError}
@@ -178,7 +191,7 @@ export default function GovernLessonsPage() {
           {!stats || stats.length === 0 ? (
             <EmptyState title="No repositories found." />
           ) : (
-            <Table>
+            <Table stacked>
               <THead>
                 <Th className="py-2 pl-0 pr-4">Repository</Th>
                 <Th align="center" className="py-2 pl-0 pr-4">
@@ -192,7 +205,7 @@ export default function GovernLessonsPage() {
               </THead>
               <tbody>
                 {stats.map((repo) => (
-                  <RepoStatsRow key={repo.id} onTrigger={handleTriggerRepo} repo={repo} />
+                  <RepoStatsRow key={repo.id} onAsk={setConsolidating} repo={repo} />
                 ))}
               </tbody>
             </Table>
@@ -205,6 +218,30 @@ export default function GovernLessonsPage() {
         <CardHeader>
           <CardTitle eyebrow="Recent">Active lessons</CardTitle>
         </CardHeader>
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+          <Select
+            label="Repository"
+            onChange={(v) => {
+              setRepoFilter(v);
+              setOffset(0);
+            }}
+            options={[
+              { label: 'All repositories', value: '' },
+              ...(stats ?? []).map((r) => ({
+                label: `${r.organizationName}/${r.repoName}`,
+                value: r.id,
+              })),
+            ]}
+            value={repoFilter}
+          />
+          <Input
+            label="Search lessons"
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Words in a lesson or its rationale"
+            type="search"
+            value={search}
+          />
+        </div>
 
         <QueryBoundary
           error={lessonsError}
@@ -215,10 +252,12 @@ export default function GovernLessonsPage() {
           onRetry={() => void refetchLessons()}
         >
           {!lessons || lessons.length === 0 ? (
-            <EmptyState title="No active lessons." />
+            <EmptyState
+              title={query || repoFilter ? 'No lessons match those filters.' : 'No active lessons.'}
+            />
           ) : (
             <div className="divide-y divide-ink-600">
-              {lessons.slice(0, 20).map((lesson) => (
+              {lessons.map((lesson) => (
                 <div className="flex items-start gap-4 py-3" key={lesson.id}>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -251,8 +290,34 @@ export default function GovernLessonsPage() {
               ))}
             </div>
           )}
+          {lessonsMeta && lessonsMeta.total > PAGE_SIZE && (
+            <div className="mt-4">
+              <Pagination
+                hasNext={offset + PAGE_SIZE < lessonsMeta.total}
+                hasPrev={offset > 0}
+                onNext={() => setOffset(offset + PAGE_SIZE)}
+                onPrev={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+                rangeEnd={Math.min(offset + PAGE_SIZE, lessonsMeta.total)}
+                rangeStart={offset + 1}
+                total={lessonsMeta.total}
+              />
+            </div>
+          )}
         </QueryBoundary>
       </Card>
+
+      <ConfirmModal
+        confirmLabel="Run consolidation"
+        message={
+          consolidating === 'all'
+            ? 'Merge semantically similar lessons across every repository now? Merged lessons are marked consolidated and stop appearing in the active list. This can take a few minutes.'
+            : `Merge semantically similar lessons for ${consolidating?.organizationName}/${consolidating?.repoName} now? Merged lessons are marked consolidated and stop appearing in the active list.`
+        }
+        onClose={() => setConsolidating(null)}
+        onConfirm={runConsolidation}
+        open={consolidating !== null}
+        title="Run consolidation"
+      />
 
       <ConfirmModal
         confirmLabel="Delete"

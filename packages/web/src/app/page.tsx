@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { RequestList } from '@/components/requests/RequestList';
+import { SetupReadiness } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -135,6 +136,7 @@ export default function HomePage() {
         subtitle="See what needs your attention, follow your work, and review the results."
         title="Home"
       />
+      <SetupReadiness />
       <WaitingOnYou />
       <SegmentedControl
         ariaLabel="Home scope"

@@ -42,6 +42,24 @@ vi.mock('@/hooks/useSkills', () => ({
   useUpdateSkill: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useVerifySkill: () => ({ isPending: false, mutateAsync: verify }),
 }));
+vi.mock('@/components/skills/SkillHistory', () => ({
+  SkillHistory: ({ onRestored }: { onRestored?: (s: Skill, w: string[]) => void }) => (
+    <button
+      onClick={() =>
+        onRestored?.(
+          {
+            ...skill({ currentRevision: 6, id: 'imported', name: 'imported' }),
+            scanWarnings: [],
+          },
+          ['restored finding']
+        )
+      }
+      type="button"
+    >
+      do-restore
+    </button>
+  ),
+}));
 vi.mock('@/components/skills/SkillSourcesTab', () => ({
   SkillSourcesTab: () => <div>external-sources-tab</div>,
 }));
@@ -112,6 +130,48 @@ describe('Skills studio page', () => {
     open('imported');
     fireEvent.click(screen.getByText('Verify revision 4'));
     expect(await screen.findByText(/changed since you opened it/)).toBeTruthy();
+  });
+
+  it('never swaps the open text for a newer revision: shows a notice, and Reload reads it', async () => {
+    const { rerender } = render(<StudioSkillsPage />);
+    open('imported');
+    state.skills = [
+      skill({ currentRevision: 5, id: 'imported', name: 'imported', promptText: 'newer text' }),
+    ];
+    rerender(<StudioSkillsPage />);
+    expect(screen.getByText('text')).toBeTruthy();
+    expect(screen.queryByText('newer text')).toBeNull();
+    expect(screen.getByText(/changed since you opened it — reload/)).toBeTruthy();
+    expect(screen.queryByText('Verify revision 4')).toBeNull();
+    fireEvent.click(screen.getByText('Reload'));
+    expect(screen.getByText('newer text')).toBeTruthy();
+    fireEvent.click(screen.getByText('Verify revision 5'));
+    await waitFor(() => expect(verify).toHaveBeenCalledWith({ id: 'imported', revision: 5 }));
+  });
+
+  it('shows the scanner findings of the revision on screen, including after Reload and a restore', () => {
+    state.skills = [skill({ id: 'imported', name: 'imported', scanWarnings: ['old finding'] })];
+    const { rerender } = render(<StudioSkillsPage />);
+    open('imported');
+    expect(screen.getByText('old finding')).toBeTruthy();
+    state.skills = [
+      skill({
+        currentRevision: 5,
+        id: 'imported',
+        name: 'imported',
+        promptText: 'newer text',
+        scanWarnings: ['newer finding'],
+      }),
+    ];
+    rerender(<StudioSkillsPage />);
+    expect(screen.getByText('old finding')).toBeTruthy();
+    fireEvent.click(screen.getByText('Reload'));
+    expect(screen.queryByText('old finding')).toBeNull();
+    expect(screen.getByText('newer finding')).toBeTruthy();
+    fireEvent.click(screen.getByText('History'));
+    fireEvent.click(screen.getByText('do-restore'));
+    expect(screen.queryByText('newer finding')).toBeNull();
+    expect(screen.getByText('restored finding')).toBeTruthy();
   });
 
   it('shows hidden characters in skill names and descriptions', () => {

@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetNavigation } from '@/test/mockNavigation';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
+
+vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
+
 import GovernSecurityPage from './page';
 
+beforeEach(() => resetNavigation('', '/govern/security'));
 afterEach(() => vi.unstubAllGlobals());
 
 function event(i: number) {
@@ -42,6 +47,15 @@ function mock() {
         LLM_SUSPICIOUS: 0,
         SHELL_BLOCK: 117,
       },
+      previous: {
+        CHANNEL_SUSPICIOUS: 0,
+        CODE_SECURITY: 0,
+        CONTENT_SECURITY_BLOCK: 0,
+        CONTENT_SECURITY_WARN: 0,
+        FILE_BLOCK: 3,
+        LLM_SUSPICIOUS: 0,
+        SHELL_BLOCK: 100,
+      },
     }),
   });
 }
@@ -54,8 +68,25 @@ describe('GovernSecurityPage', () => {
     render(withQuery(<GovernSecurityPage />));
 
     expect(await screen.findByText('117')).toBeTruthy();
-    expect(screen.getByText('3')).toBeTruthy();
     expect(screen.getByText('· 120')).toBeTruthy();
+    // Blocked and advisory are separate groups; the blocked group shows its trend.
+    expect(screen.getByText('Blocked events')).toBeTruthy();
+    expect(screen.getByText('Advisory events')).toBeTruthy();
+    expect(screen.getByText(/\+17% vs previous 30 days/)).toBeTruthy();
+  });
+
+  it('asks the server for the chosen window, kept in the URL', async () => {
+    const spy = mock();
+    render(withQuery(<GovernSecurityPage />));
+    await screen.findByText('1–50 of 120');
+
+    fireEvent.click(screen.getByRole('button', { name: '7d' }));
+
+    await waitFor(() => {
+      const summaryCalls = urls(spy).filter((u) => u.includes('/summary?'));
+      expect(summaryCalls.some((u) => u.includes('since=') && u.includes('until='))).toBe(true);
+      expect(summaryCalls.length).toBeGreaterThan(1);
+    });
   });
 
   it('pages through events with the shared pagination control', async () => {

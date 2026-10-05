@@ -8,6 +8,8 @@ import {
   isStartWorkPath,
   NAV_ITEMS,
   navLabel,
+  navSections,
+  pageSection,
   pageTitle,
   visibleNavGroups,
 } from './navigation';
@@ -143,5 +145,38 @@ describe('pageTitle', () => {
 
   it('throws for an href with no nav entry', () => {
     expect(() => navLabel('/nope')).toThrow();
+  });
+});
+
+describe('navSections', () => {
+  it('groups the Govern items into the five decided sections, in order', () => {
+    const govern = visibleNavGroups('ADMIN', true).find((g) => g.label === 'Govern');
+    expect(govern).toBeDefined();
+    expect(navSections(govern?.items ?? []).map((s) => s.label)).toEqual([
+      'Access',
+      'Security',
+      'Spend & insights',
+      'Configuration',
+      'Knowledge',
+    ]);
+  });
+
+  it('gives every Govern item its own icon within a section', () => {
+    const govern = visibleNavGroups('ADMIN', true).find((g) => g.label === 'Govern');
+    for (const section of navSections(govern?.items ?? [])) {
+      const icons = section.items.map((i) => i.icon);
+      expect(new Set(icons).size).toBe(icons.length);
+    }
+  });
+
+  it('no longer offers Budget alerts, but its URL still belongs to Organizations', () => {
+    expect(NAV_ITEMS.some((i) => i.href === '/govern/budget-alerts')).toBe(false);
+    expect(pageTitle('/govern/budget-alerts')).toBe('Organizations');
+    expect(pageSection('/govern/budget-alerts')).toBe('Govern');
+  });
+
+  it('titles a Slack channel detail page and keeps it in Govern', () => {
+    expect(pageTitle('/govern/slack-channels/abc')).toBe('Slack channels');
+    expect(pageSection('/govern/slack-channels/abc')).toBe('Govern');
   });
 });

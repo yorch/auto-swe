@@ -5,6 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { redactConnection } from '../lib/connectionRedaction.js';
+import { probeMcpServer } from '../lib/mcpProbe.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -65,8 +66,99 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         where: { isActive: true, type: 'mcp' },
       })
     );
-    return { data: rows.map(redactConnection) };
+    const usedBy = await agentsUsing(rows.map((r) => r.id));
+    return { data: rows.map((r) => ({ ...redactConnection(r), usedBy: usedBy.get(r.id) ?? [] })) };
   });
+
+  /**
+   * The agents whose CURRENT version binds each connection. Older versions of an agent that
+   * dropped the connection are history, not use, so only the highest version of a lineage counts.
+   */
+  async function agentsUsing(connectionIds: string[]) {
+    const out = new Map<string, { key: string; name: string; scope: string }[]>();
+    if (connectionIds.length === 0) {
+      return out;
+    }
+    const candidates = await runUnscoped(
+      'admin sees which agents bind an mcp connection',
+      ['Agent'],
+      () =>
+        fastify.prisma.agent.findMany({
+          select: {
+            channelId: true,
+            key: true,
+            mcpConnectionId: true,
+            name: true,
+            orgId: true,
+            scope: true,
+            teamId: true,
+            version: true,
+            workflowTemplateId: true,
+          },
+          where: { isActive: true, mcpConnectionId: { in: connectionIds } },
+        })
+    );
+    if (candidates.length === 0) {
+      return out;
+    }
+    const latest = await runUnscoped(
+      'admin sees which agents bind an mcp connection',
+      ['Agent'],
+      () =>
+        fastify.prisma.agent.groupBy({
+          _max: { version: true },
+          by: ['key', 'scope', 'teamId', 'orgId', 'channelId', 'workflowTemplateId'],
+          where: { isActive: true, key: { in: [...new Set(candidates.map((c) => c.key))] } },
+        })
+    );
+    const lineage = (a: {
+      key: string;
+      scope: string;
+      teamId: string | null;
+      orgId: string | null;
+      channelId: string | null;
+      workflowTemplateId: string | null;
+    }) =>
+      [a.key, a.scope, a.teamId, a.orgId, a.channelId, a.workflowTemplateId].map(String).join('|');
+    const top = new Map(latest.map((l) => [lineage(l), l._max.version]));
+    for (const c of candidates) {
+      if (c.mcpConnectionId && top.get(lineage(c)) === c.version) {
+        const list = out.get(c.mcpConnectionId) ?? [];
+        list.push({ key: c.key, name: c.name, scope: c.scope });
+        out.set(c.mcpConnectionId, list);
+      }
+    }
+    return out;
+  }
+
+  // POST /mcp-connections/:id/test — connect, initialize and list tools, within the connection's
+  // own list timeout. Always 200 with `ok` so the page can show the reason; 404 only for no row.
+  app.post(
+    '/mcp-connections/:id/test',
+    { onRequest: adminOnly, schema: { params: IdParams } },
+    async (request, reply) => {
+      const conn = await fastify.prisma.connection.findFirst({
+        where: { id: request.params.id, isActive: true, type: 'mcp' },
+      });
+      if (!conn) {
+        return reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'MCP connection not found' } });
+      }
+      const config = (conn.config ?? {}) as { url?: unknown; listTimeoutMs?: unknown };
+      const safety = typeof config.url === 'string' ? isSafeProbeUrl(config.url) : null;
+      if (!(safety?.ok && typeof config.url === 'string')) {
+        return {
+          data: { durationMs: 0, error: 'The saved server URL is not allowed.', ok: false },
+        };
+      }
+      const timeoutMs =
+        typeof config.listTimeoutMs === 'number' && config.listTimeoutMs > 0
+          ? config.listTimeoutMs
+          : 15_000;
+      return { data: await probeMcpServer(config.url, timeoutMs) };
+    }
+  );
 
   app.post(
     '/mcp-connections',

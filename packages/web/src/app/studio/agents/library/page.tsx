@@ -7,12 +7,13 @@ import {
   AgentFormFields,
   type AgentFormValue,
 } from '@/components/agents/AgentFormFields';
+import { AgentHistoryModal } from '@/components/agents/AgentHistoryModal';
+import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
 import { broaderFallbacks } from '@/components/agents/agentFallback';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -20,7 +21,8 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import {
   type AgentRow,
   type AgentScope,
@@ -38,7 +40,7 @@ import { useSkills } from '@/hooks/useSkills';
 import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
-import { modelLabel } from '@/lib/agentDisplay';
+import { modelLabel, SCOPE_ORDER, scopeLabel, toolKeysLabel } from '@/lib/agentDisplay';
 import { buildAgentUpdate } from '@/lib/agentEditPatch';
 import { errMsg } from '@/lib/errors';
 
@@ -56,16 +58,6 @@ const EMPTY_CREATE: CreateAgentBody = {
   toolKeys: null,
 };
 
-function toolKeysLabel(toolKeys: string[] | null): string {
-  if (toolKeys === null) {
-    return 'all';
-  }
-  if (toolKeys.length === 0) {
-    return 'none';
-  }
-  return toolKeys.join(', ');
-}
-
 const SKILLS_HINT = 'Ordered list of skills injected into the system prompt';
 
 const CREATE_COPY: AgentFormCopy = {
@@ -74,10 +66,10 @@ const CREATE_COPY: AgentFormCopy = {
     hint: 'Short summary shown in the agent table',
     placeholder: 'Reviews pull-request diffs for correctness',
   },
-  inheritsModelFrom: { hint: 'Parent agent key for sub-roles', placeholder: 'reviewer' },
+  inheritsModelFrom: { hint: 'The agent whose model this one uses', placeholder: 'reviewer' },
   key: { placeholder: 'codeReviewer' },
   mcpConnection: {
-    hint: "Bind this MCP server's tools at run time (also enable the 'mcp' tool key above)",
+    hint: "The agent can call this server's tools when it runs. The 'mcp' tool is ticked for you if the tool list is custom.",
   },
   modelSpec: {
     hint: '<provider>/<model>, or leave blank to inherit',
@@ -92,21 +84,15 @@ const CREATE_COPY: AgentFormCopy = {
 };
 
 const EDIT_COPY: AgentFormCopy = {
-  mcpConnection: { hint: "Bind this MCP server's tools (also enable the 'mcp' tool key)" },
+  mcpConnection: {
+    hint: "The agent can call this server's tools. The 'mcp' tool is ticked for you if the tool list is custom.",
+  },
   modelSpec: { hint: 'Leave blank to inherit from the role default' },
   skills: { hint: SKILLS_HINT },
   systemPrompt: { hint: 'A change here resets verification and triggers a content scan.' },
 };
 
 // ── Page ──────────────────────────────────────────────────────────────────────
-
-const SCOPES: readonly AgentScope[] = [
-  'GLOBAL',
-  'ORGANIZATION',
-  'TEAM',
-  'CHANNEL',
-  'WORKFLOW_TEMPLATE',
-];
 
 const SCOPE_NOUN: Record<AgentScope, string> = {
   CHANNEL: 'Slack channel',
@@ -124,21 +110,37 @@ function scopeTarget(
     teams: Map<string, string>;
     templates: Map<string, string>;
     channels: Map<string, string>;
+    orgs: Map<string, string>;
   }
 ): string | null {
   if (a.teamId) {
-    return names.teams.get(a.teamId) ?? a.teamId.slice(0, 8);
+    return names.teams.get(a.teamId) ?? 'A team';
   }
   if (a.workflowTemplateId) {
-    return names.templates.get(a.workflowTemplateId) ?? a.workflowTemplateId.slice(0, 8);
+    return names.templates.get(a.workflowTemplateId) ?? 'A workflow';
   }
   if (a.channelId) {
-    return names.channels.get(a.channelId) ?? a.channelId.slice(0, 8);
+    return names.channels.get(a.channelId) ?? 'A channel';
   }
   if (a.orgId) {
-    return a.orgId.slice(0, 8);
+    return names.orgs.get(a.orgId) ?? 'An organization';
   }
   return null;
+}
+
+/** Plain-language provenance for the origin column. */
+function originLabel(origin: string | null): string {
+  if (!origin) {
+    return 'Custom';
+  }
+  return origin === 'swe-starter' ? 'Engineering starter' : origin;
+}
+
+/** What a save leaves to read: the saved agent is live; the scanner and catalog only advise. */
+interface SavedNotice {
+  title: string;
+  scanWarnings: string[];
+  catalogWarnings: string[];
 }
 
 export default function AgentLibraryPage() {
@@ -154,7 +156,9 @@ export default function AgentLibraryPage() {
   } = useAgentLibrary();
   const { data: teams } = useTeams();
   const { data: templates } = useWorkflowTemplates();
+  const { data: orgs } = useOrganizationDirectory();
   const [scopeFilter, setScopeFilter] = useState<'' | AgentScope>('');
+  const [textFilter, setTextFilter] = useState('');
   const { data: mcpConnections } = useMcpConnections();
   const { data: skills } = useSkills();
   const { data: credentials } = useAdminCredentials();
@@ -169,21 +173,30 @@ export default function AgentLibraryPage() {
   // The row as loaded, so a save sends only what changed.
   const [editingOriginal, setEditingOriginal] = useState<AgentRow | null>(null);
   const [deleting, setDeleting] = useState<AgentRow | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [catalogWarnings, setCatalogWarnings] = useState<string[]>([]);
+  const [history, setHistory] = useState<AgentRow | null>(null);
+  // Set after a save the scanner or catalog commented on: the agent exists, and the dialog stays
+  // open only so the findings are read rather than vanishing with the form.
+  const [saved, setSaved] = useState<SavedNotice | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
 
+  function finishSave(title: string, res: { scanWarnings?: string[]; catalogWarnings?: string[] }) {
+    const scanWarnings = res.scanWarnings ?? [];
+    const catalogWarnings = res.catalogWarnings ?? [];
+    setSaved(
+      scanWarnings.length > 0 || catalogWarnings.length > 0
+        ? { catalogWarnings, scanWarnings, title }
+        : null
+    );
+  }
+
   async function submitCreate() {
     setCreateError(null);
-    setWarnings([]);
-    setCatalogWarnings([]);
     try {
       const res = await createAgent.mutateAsync(
         cleanAgentPayload({ ...createForm }) as CreateAgentBody
       );
-      setWarnings(res.scanWarnings ?? []);
-      setCatalogWarnings(res.catalogWarnings ?? []);
+      finishSave('Agent created', res);
       setCreateOpen(false);
       setCreateForm(EMPTY_CREATE);
     } catch (e) {
@@ -196,8 +209,6 @@ export default function AgentLibraryPage() {
       return;
     }
     setEditError(null);
-    setWarnings([]);
-    setCatalogWarnings([]);
     if (!editing.name.trim()) {
       setEditError('Name is required');
       return;
@@ -209,8 +220,7 @@ export default function AgentLibraryPage() {
     }
     try {
       const res = await updateAgent.mutateAsync({ body, id: editing.id });
-      setWarnings(res.scanWarnings ?? []);
-      setCatalogWarnings(res.catalogWarnings ?? []);
+      finishSave('New version saved', res);
       closeEdit();
     } catch (e) {
       setEditError(errMsg(e, 'Update failed'));
@@ -231,10 +241,30 @@ export default function AgentLibraryPage() {
 
   const names = {
     channels: new Map((slackChannels ?? []).map((c) => [c.id, c.name ?? c.slackChannelId])),
+    orgs: new Map((orgs ?? []).map((o) => [o.id, o.name])),
     teams: new Map((teams ?? []).map((t) => [t.id, t.name])),
     templates: new Map((templates ?? []).map((t) => [t.id, t.name])),
   };
-  const visibleAgents = (agents ?? []).filter((a) => !scopeFilter || a.scope === scopeFilter);
+  const mcpNames = new Map((mcpConnections ?? []).map((c) => [c.id, c.name ?? 'Unnamed server']));
+  const credentialNames = new Map(
+    (credentials ?? []).map((c) => [c.id, `${c.provider} ···${c.lastFour}`])
+  );
+  const query = textFilter.trim().toLowerCase();
+  // Sorted by key so an agent and its narrower-scope overrides sit together.
+  const visibleAgents = (agents ?? [])
+    .filter((a) => !scopeFilter || a.scope === scopeFilter)
+    .filter(
+      (a) => !query || `${a.key} ${a.name} ${a.description ?? ''}`.toLowerCase().includes(query)
+    )
+    .sort(
+      (a, b) =>
+        a.key.localeCompare(b.key) || SCOPE_ORDER.indexOf(a.scope) - SCOPE_ORDER.indexOf(b.scope)
+    );
+  const filtering = Boolean(scopeFilter || query);
+  // Agents a sub-role can borrow a model from: those with a model of their own.
+  const parentAgents = (agents ?? [])
+    .filter((a) => a.scope === 'GLOBAL' && a.isActive && a.modelSpec)
+    .map((a) => ({ key: a.key, modelSpec: a.modelSpec, name: a.name }));
   const createScopeIncomplete =
     (createForm.scope === 'ORGANIZATION' && !createForm.orgId) ||
     (createForm.scope === 'TEAM' && !createForm.teamId) ||
@@ -266,6 +296,30 @@ export default function AgentLibraryPage() {
     setEditing({ ...editing, ...rest });
   }
 
+  const rowActions = (a: AgentRow) => (
+    <div className="flex flex-wrap items-center justify-end gap-1">
+      <Button
+        aria-label={`History of ${a.key}`}
+        onClick={() => setHistory(a)}
+        size="sm"
+        variant="ghost"
+      >
+        History
+      </Button>
+      <Button aria-label={`Edit ${a.key}`} onClick={() => openEdit(a)} size="sm" variant="ghost">
+        Edit
+      </Button>
+      <Button
+        aria-label={`Deactivate ${a.key}`}
+        onClick={() => setDeleting(a)}
+        size="sm"
+        variant="danger"
+      >
+        Deactivate
+      </Button>
+    </div>
+  );
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -281,32 +335,35 @@ export default function AgentLibraryPage() {
           </Button>
         }
         chapter="§ Studio"
-        subtitle="First-class, versioned Agents. Editing cuts a new version; running workflows stay pinned to the version they started with."
+        subtitle="Versioned agents. Saving an edit creates a new version; runs already in progress keep the version they started with, and History lets you compare or restore any version."
         title="Agent library"
       />
 
-      {warnings.length > 0 ? (
-        <Alert variant="warning">Content scan warnings: {warnings.join('; ')}</Alert>
-      ) : null}
-      {catalogWarnings.length > 0 ? (
-        <Alert variant="warning">Model catalog: {catalogWarnings.join(' ')}</Alert>
-      ) : null}
-
       <Card>
         <CardHeader>
-          <CardTitle eyebrow={scopeFilter ? `${scopeFilter} scope` : 'All scopes'}>
+          <CardTitle eyebrow={scopeFilter ? scopeLabel(scopeFilter) : 'All scopes'}>
             Agents
           </CardTitle>
-          <Select
-            aria-label="Filter by scope"
-            className="h-9 w-auto px-2 font-mono text-xs"
-            onChange={(v) => setScopeFilter(v as '' | AgentScope)}
-            options={[
-              { label: 'All scopes', value: '' },
-              ...SCOPES.map((sc) => ({ label: sc, value: sc })),
-            ]}
-            value={scopeFilter}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              aria-label="Search agents"
+              className="h-9 w-48"
+              onChange={(e) => setTextFilter(e.target.value)}
+              placeholder="Search agents…"
+              type="search"
+              value={textFilter}
+            />
+            <Select
+              aria-label="Filter by scope"
+              className="h-9 w-auto px-2 text-xs"
+              onChange={(v) => setScopeFilter(v as '' | AgentScope)}
+              options={[
+                { label: 'All scopes', value: '' },
+                ...SCOPE_ORDER.map((sc) => ({ label: scopeLabel(sc), value: sc })),
+              ]}
+              value={scopeFilter}
+            />
+          </div>
         </CardHeader>
         <QueryBoundary
           error={loadError}
@@ -316,103 +373,86 @@ export default function AgentLibraryPage() {
           label="agents"
           onRetry={() => void refetch()}
         >
-          <Table>
-            <THead>
-              <Th className="pr-3" variant="compact">
-                Key
-              </Th>
-              <Th className="pr-3" variant="compact">
-                Name
-              </Th>
-              <Th className="pr-3" variant="compact">
-                Model
-              </Th>
-              <Th className="pr-3" variant="compact">
-                Skills
-              </Th>
-              <Th className="pr-3" variant="compact">
-                Tools
-              </Th>
-              <Th className="pr-3" variant="compact">
-                Scope
-              </Th>
-              <Th className="pr-3" variant="compact">
-                Ver
-              </Th>
-              <Th className="pr-3" variant="compact">
-                Verified
-              </Th>
-              <Th className="pr-3" variant="compact">
-                Origin
-              </Th>
-              <Th variant="compact" />
-            </THead>
-            <tbody>
-              {visibleAgents.length === 0 ? (
-                <TableStatusRow colSpan={10}>
-                  <EmptyState title="No agents in this scope." />
-                </TableStatusRow>
-              ) : (
-                visibleAgents.map((a) => (
-                  <TRow key={a.id}>
-                    <Td className="py-3 pr-3 font-mono text-[11px] text-paper-200">{a.key}</Td>
-                    <Td className="py-3 pr-3">
-                      <span className="text-paper-100">{a.name}</span>
-                      {a.description && (
-                        <div className="mt-0.5 max-w-[180px] truncate text-[11px] text-paper-500">
-                          {a.description}
+          {visibleAgents.length === 0 ? (
+            <EmptyState
+              hint={
+                filtering
+                  ? 'Try a different search or scope.'
+                  : 'Create one with the New agent button.'
+              }
+              title={filtering ? 'No agents match these filters.' : 'No agents yet.'}
+            />
+          ) : (
+            <Table stacked>
+              <THead>
+                <Th className="pr-3" variant="compact">
+                  Agent
+                </Th>
+                <Th className="pr-3" variant="compact">
+                  Model
+                </Th>
+                <Th className="pr-3" variant="compact">
+                  Applies to
+                </Th>
+                <Th className="pr-3" variant="compact">
+                  Skills and tools
+                </Th>
+                <Th className="pr-3" variant="compact">
+                  Version
+                </Th>
+                <Th variant="compact" />
+              </THead>
+              <tbody>
+                {visibleAgents.map((a, i) => {
+                  const sameKeyAsAbove = i > 0 && visibleAgents[i - 1].key === a.key;
+                  return (
+                    <TRow key={a.id}>
+                      <Td className="py-3 pr-3" primary>
+                        <span className="text-paper-100">{a.name}</span>
+                        <div className="mt-0.5 font-mono text-[11px] text-paper-500">
+                          {sameKeyAsAbove ? `↳ override of ${a.key}` : a.key}
                         </div>
-                      )}
-                    </Td>
-                    <Td className="py-3 pr-3 font-mono text-[11px] text-paper-400">
-                      {modelLabel(a)}
-                    </Td>
-                    <Td className="py-3 pr-3 text-paper-400">
-                      {a.skillRefs.length > 0 ? (
-                        <span className="font-mono text-[11px]">{a.skillRefs.length}</span>
-                      ) : (
-                        <span className="text-paper-600">—</span>
-                      )}
-                    </Td>
-                    <Td className="py-3 pr-3 font-mono text-[11px] text-paper-400">
-                      {toolKeysLabel(a.toolKeys)}
-                    </Td>
-                    <Td className="py-3 pr-3">
-                      <Badge tone="muted" uppercase variant="text">
-                        {a.scope}
-                      </Badge>
-                      {scopeTarget(a, names) && (
-                        <div className="mt-0.5 text-[11px] text-paper-400">
-                          {scopeTarget(a, names)}
+                        {a.description && (
+                          <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-paper-500">
+                            {a.description}
+                          </div>
+                        )}
+                      </Td>
+                      <Td className="py-3 pr-3 font-mono text-[11px] text-paper-400" label="Model">
+                        {modelLabel(a)}
+                      </Td>
+                      <Td className="py-3 pr-3" label="Applies to">
+                        <Badge tone="muted" variant="text">
+                          {scopeLabel(a.scope)}
+                        </Badge>
+                        {scopeTarget(a, names) && (
+                          <div className="mt-0.5 text-[11px] text-paper-400">
+                            {scopeTarget(a, names)}
+                          </div>
+                        )}
+                      </Td>
+                      <Td className="py-3 pr-3 text-xs text-paper-400" label="Skills and tools">
+                        {a.skillRefs.length > 0
+                          ? `${a.skillRefs.length} ${a.skillRefs.length === 1 ? 'skill' : 'skills'}`
+                          : 'No skills'}
+                        <div className="text-paper-500">{toolKeysLabel(a.toolKeys)}</div>
+                      </Td>
+                      <Td className="py-3 pr-3 text-xs text-paper-400" label="Version">
+                        <span className="tabular-nums">v{a.version}</span>
+                        <div>
+                          <Badge tone={a.isVerified ? 'moss' : 'muted'} variant="text">
+                            {a.isVerified ? 'Verified' : 'Unverified'}
+                          </Badge>
                         </div>
-                      )}
-                    </Td>
-                    <Td className="py-3 pr-3 tabular-nums text-paper-400">v{a.version}</Td>
-                    <Td className="py-3 pr-3">
-                      <Badge tone={a.isVerified ? 'moss' : 'muted'} variant="text">
-                        {a.isVerified ? '✓' : '—'}
-                      </Badge>
-                    </Td>
-                    <Td className="py-3 pr-3">
-                      <Badge tone="muted" uppercase variant="text">
-                        {a.origin ?? 'custom'}
-                      </Badge>
-                    </Td>
-                    <Td className="py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button onClick={() => openEdit(a)} size="sm" variant="ghost">
-                          Edit
-                        </Button>
-                        <Button onClick={() => setDeleting(a)} size="sm" variant="danger">
-                          Deactivate
-                        </Button>
-                      </div>
-                    </Td>
-                  </TRow>
-                ))
-              )}
-            </tbody>
-          </Table>
+                        <div className="text-paper-500">{originLabel(a.origin)}</div>
+                      </Td>
+                      <Td className="py-3">{rowActions(a)}</Td>
+                    </TRow>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
         </QueryBoundary>
       </Card>
 
@@ -424,80 +464,19 @@ export default function AgentLibraryPage() {
           mcpConnections={mcpConnections ?? []}
           mode="create"
           onChange={(patch) => setCreateForm({ ...createForm, ...patch })}
+          parentAgents={parentAgents}
           scopeFields={
-            <div className="grid grid-cols-2 gap-4">
-              <Select
-                hint="GLOBAL is visible system-wide; the other scopes pin the override to one organization, team, Slack channel or workflow template"
-                label="Scope"
-                onChange={(v) => {
-                  const scope = v as CreateAgentBody['scope'];
-                  setCreateForm({
-                    ...createForm,
-                    channelId: scope !== 'CHANNEL' ? undefined : createForm.channelId,
-                    orgId: scope !== 'ORGANIZATION' ? undefined : createForm.orgId,
-                    scope,
-                    teamId: scope !== 'TEAM' ? undefined : createForm.teamId,
-                    workflowTemplateId:
-                      scope !== 'WORKFLOW_TEMPLATE' ? undefined : createForm.workflowTemplateId,
-                  });
-                }}
-                options={[
-                  { label: 'GLOBAL', value: 'GLOBAL' },
-                  { label: 'ORGANIZATION', value: 'ORGANIZATION' },
-                  { label: 'TEAM', value: 'TEAM' },
-                  { label: 'CHANNEL', value: 'CHANNEL' },
-                  { label: 'WORKFLOW_TEMPLATE', value: 'WORKFLOW_TEMPLATE' },
-                ]}
-                value={createForm.scope}
-              />
-              {createForm.scope === 'ORGANIZATION' && (
-                <Input
-                  hint="UUID of the owning organization"
-                  label="Organization ID"
-                  onChange={(e) =>
-                    setCreateForm({ ...createForm, orgId: e.target.value || undefined })
-                  }
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  value={createForm.orgId ?? ''}
-                />
-              )}
-              {createForm.scope === 'TEAM' && (
-                <Combobox
-                  label="Team"
-                  onChange={(v) => setCreateForm({ ...createForm, teamId: v || undefined })}
-                  options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
-                  placeholder="Select a team…"
-                  value={createForm.teamId ?? ''}
-                />
-              )}
-              {createForm.scope === 'WORKFLOW_TEMPLATE' && (
-                <Combobox
-                  label="Workflow template"
-                  onChange={(v) =>
-                    setCreateForm({
-                      ...createForm,
-                      workflowTemplateId: v || undefined,
-                    })
-                  }
-                  options={(templates ?? []).map((t) => ({ label: t.name, value: t.id }))}
-                  placeholder="Select a template…"
-                  value={createForm.workflowTemplateId ?? ''}
-                />
-              )}
-              {createForm.scope === 'CHANNEL' && (
-                <Combobox
-                  hint="Slack channel this agent override applies to"
-                  label="Channel"
-                  onChange={(v) => setCreateForm({ ...createForm, channelId: v || undefined })}
-                  options={(slackChannels ?? []).map((c) => ({
-                    label: c.name ?? c.slackChannelId,
-                    value: c.id,
-                  }))}
-                  placeholder="Select a channel…"
-                  value={createForm.channelId ?? ''}
-                />
-              )}
-            </div>
+            <AgentScopeFields
+              channels={(slackChannels ?? []).map((c) => ({
+                id: c.id,
+                name: c.name ?? c.slackChannelId,
+              }))}
+              form={createForm}
+              onChange={setCreateForm}
+              orgs={orgs ?? []}
+              teams={teams ?? []}
+              templates={templates ?? []}
+            />
           }
           skillEditorLabel="Skills"
           skillEmptyHint="No skills available."
@@ -532,6 +511,7 @@ export default function AgentLibraryPage() {
               mcpConnections={mcpConnections ?? []}
               mode="edit"
               onChange={patchEditing}
+              parentAgents={parentAgents}
               skillEditorLabel="Skills"
               skillEmptyHint="No skills available."
               skills={skills ?? []}
@@ -555,6 +535,42 @@ export default function AgentLibraryPage() {
           </>
         ) : null}
       </Modal>
+
+      {/* ── Saved, with the scanner's and catalog's findings ── */}
+      <Modal onClose={() => setSaved(null)} open={saved !== null} title={saved?.title ?? 'Saved'}>
+        {saved && (
+          <div className="space-y-4">
+            {saved.scanWarnings.length > 0 && (
+              <Alert variant="warning">
+                Saved, but the content scanner flagged the prompt. Review it before relying on the
+                agent:
+                <ul className="mt-1 list-disc pl-5">
+                  {saved.scanWarnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
+            {saved.catalogWarnings.length > 0 && (
+              <Alert variant="warning">Model catalog: {saved.catalogWarnings.join(' ')}</Alert>
+            )}
+            <div className="flex justify-end">
+              <Button onClick={() => setSaved(null)} variant="primary">
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {history && (
+        <AgentHistoryModal
+          agent={history}
+          credentialNames={credentialNames}
+          mcpNames={mcpNames}
+          onClose={() => setHistory(null)}
+        />
+      )}
 
       <ConfirmModal
         confirmLabel="Deactivate"

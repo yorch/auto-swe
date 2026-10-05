@@ -4,23 +4,16 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
+import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEvalRun } from '@/hooks/useAdmin';
+import { formatPoints, type PairedDelta, significance, verdictSentence } from '@/lib/evalVerdict';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatDate } from '@/lib/utils';
 
-/** The harness's paired-stats verdict (`regressionVerdict` in the worker). */
-interface PairedDelta {
-  n: number;
-  delta: number;
-  baselineRate: number;
-  candidateRate: number;
-  se: number;
-  ci95: [number, number];
-}
 interface Verdict {
   regression: boolean;
   overall: PairedDelta;
@@ -41,7 +34,13 @@ function isVerdict(v: unknown): v is Verdict {
 }
 
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
-const pp = (x: number) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}pp`;
+
+/** A difference is coloured only when the whole likely range agrees on its direction. */
+const DELTA_TONE = {
+  better: 'text-moss-400',
+  none: 'text-paper-200',
+  worse: 'text-brick-400',
+} as const;
 
 function DeltaRow({ label, d }: { label: string; d: PairedDelta }) {
   return (
@@ -58,12 +57,12 @@ function DeltaRow({ label, d }: { label: string; d: PairedDelta }) {
       </Td>
       <Td
         align="right"
-        className={`px-4 py-2 font-mono text-[11px] ${d.ci95[1] < 0 ? 'text-brick-400' : 'text-paper-200'}`}
+        className={`px-4 py-2 font-mono text-[11px] ${DELTA_TONE[significance(d)]}`}
       >
-        {pp(d.delta)}
+        {formatPoints(d.delta)}
       </Td>
       <Td align="right" className="px-4 py-2 font-mono text-[11px] text-paper-500">
-        [{pp(d.ci95[0])}, {pp(d.ci95[1])}]
+        {formatPoints(d.ci95[0])} to {formatPoints(d.ci95[1])}
       </Td>
     </TRow>
   );
@@ -91,16 +90,17 @@ function VerdictView({ summary }: { summary: unknown }) {
           {`Partial: ${summary.partial.reason === 'org_budget' ? "the organization's monthly budget" : 'the budget'} stopped this run after ${summary.partial.completedCases} of ${summary.partial.totalCases} cases; the verdict covers only those. ${summary.partial.error}`}
         </p>
       )}
-      <p
-        className={`font-mono text-xs ${summary.regression ? 'text-brick-400' : 'text-paper-300'}`}
-      >
-        {summary.summary}
-      </p>
+      <Alert variant={verdictSentence(summary.overall).tone}>
+        {verdictSentence(summary.overall).text}
+      </Alert>
+      <p className="font-mono text-xs text-paper-500">{summary.summary}</p>
       <Table>
         <THead>
           <Th variant="dense">Slice</Th>
           <Th align="right" variant="dense">
-            Pairs
+            <span title="Cases run on both the baseline and the candidate, so each one is compared like for like">
+              Cases compared
+            </span>
           </Th>
           <Th align="right" variant="dense">
             Baseline
@@ -109,18 +109,22 @@ function VerdictView({ summary }: { summary: unknown }) {
             Candidate
           </Th>
           <Th align="right" variant="dense">
-            Delta
+            <span title="Candidate pass rate minus baseline pass rate, in percentage points">
+              Difference
+            </span>
           </Th>
           <Th align="right" variant="dense">
-            95% CI
+            <span title="The range the true difference very likely lies in (95% confidence). If it crosses zero, the difference may be noise.">
+              Likely range
+            </span>
           </Th>
         </THead>
         <tbody>
-          <DeltaRow d={summary.overall} label="overall" />
+          <DeltaRow d={summary.overall} label="Overall" />
           {Object.entries(summary.byTag ?? {})
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([tag, d]) => (
-              <DeltaRow d={d} key={tag} label={`tag: ${tag}`} />
+              <DeltaRow d={d} key={tag} label={`Tag: ${tag}`} />
             ))}
         </tbody>
       </Table>
@@ -155,7 +159,7 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
               actions={<EvalRunStatusBadge partial={run.partial} status={run.status} />}
               chapter="§ Govern · Evals · Run"
               subtitle={`${run.candidateRef} vs ${run.baselineRef} · started ${formatDate(run.startedAt)}${run.endedAt ? ` · ended ${formatDate(run.endedAt)}` : ''}`}
-              title={`Eval run ${run.id.slice(0, 8)}`}
+              title={run.datasetName ? `${run.datasetName} benchmark run` : 'Benchmark run'}
             />
             <Card>
               <CardHeader>

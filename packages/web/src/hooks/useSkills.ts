@@ -155,3 +155,46 @@ export function useDeleteSkill() {
     },
   });
 }
+
+// ── Revision history ──────────────────────────────────────────────────────────
+
+export interface SkillRevisionRow {
+  id: string;
+  revision: number;
+  promptText: string;
+  description: string | null;
+  createdAt: string;
+  createdByEmail: string | null;
+  isCurrent: boolean;
+}
+
+/** Every saved revision of a skill, newest first. */
+export function useSkillRevisions(id: string | null) {
+  return useQuery({
+    enabled: id !== null,
+    queryFn: () =>
+      api
+        .get<{ data: SkillRevisionRow[] }>(`/api/v1/platform/skills/${id}/revisions`)
+        .then((r) => r.data),
+    queryKey: ['skills', 'revisions', id],
+  });
+}
+
+/** Save an older revision's text as a new revision. */
+export function useRestoreSkillRevision() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, revision }: { id: string; revision: number }) =>
+      api
+        .post<{
+          data: Skill;
+          scanWarnings?: string[];
+        }>(`/api/v1/platform/skills/${id}/revisions/${revision}/restore`, {})
+        .then(toSaveResult),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['skills'] });
+      // A restored skill changes what agents bound to it inject, and the library lists those.
+      qc.invalidateQueries({ queryKey: ['admin-agent-library'] });
+    },
+  });
+}

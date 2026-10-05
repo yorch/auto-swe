@@ -49,3 +49,22 @@ export function parseConnectionConfig(text: string): ConfigParse {
   }
   return { config: parsed as Record<string, unknown>, ok: true };
 }
+
+const SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|authorization|bearer|credential)/i;
+
+/**
+ * Dotted paths of config keys whose names look like credentials. Config is stored as plain JSON
+ * and shown to the connection's team, so a match is worth a warning before it is saved.
+ */
+export function secretLikeConfigKeys(config: unknown, prefix = ''): string[] {
+  if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+    return [];
+  }
+  return Object.entries(config as Record<string, unknown>).flatMap(([key, value]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const nested = secretLikeConfigKeys(value, path);
+    return SECRET_KEY.test(key) && typeof value === 'string' && value !== ''
+      ? [path, ...nested]
+      : nested;
+  });
+}

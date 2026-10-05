@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Badge } from '@/components/ui/Badge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { orgRoleLabel } from '@/lib/govLabels';
 import { formatCents, formatPercent } from '@/lib/utils';
 
 /** The budget fields both the organizations list and the budget-alerts list carry. */
@@ -49,7 +50,11 @@ const COLUMNS: Record<
     cell: (org) => (org.alert.percent == null ? '—' : formatPercent(org.alert.percent / 100)),
     label: '% used',
   },
-  role: { alignRight: false, cell: (org) => org.role ?? '—', label: 'Role' },
+  role: {
+    alignRight: false,
+    cell: (org) => (org.role ? orgRoleLabel(org.role) : '—'),
+    label: 'Role',
+  },
   slug: {
     alignRight: false,
     cell: (org) => <span className="font-mono text-[11px] text-paper-400">{org.slug}</span>,
@@ -101,7 +106,7 @@ export function OrgBudgetTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <Table>
+      <Table stacked>
         <THead className="text-left text-xs text-paper-400">
           {columns.map((col) => (
             <Th align={COLUMNS[col].alignRight ? 'right' : 'left'} key={col} variant="dense">
@@ -117,6 +122,8 @@ export function OrgBudgetTable({
                   align={COLUMNS[col].alignRight ? 'right' : undefined}
                   className={COLUMNS[col].alignRight ? 'px-4 py-2 tabular-nums' : 'px-4 py-2'}
                   key={col}
+                  label={col === 'name' ? undefined : COLUMNS[col].label}
+                  primary={col === 'name'}
                 >
                   {COLUMNS[col].cell(org)}
                 </Td>

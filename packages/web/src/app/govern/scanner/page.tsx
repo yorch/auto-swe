@@ -298,7 +298,7 @@ function PatternRow({
 
   return (
     <TRow>
-      <Td className="py-2 pr-4">
+      <Td className="py-2 pr-4" primary>
         <button
           className="text-left font-mono text-xs text-paper-100 hover:underline"
           onClick={() => onView(pattern)}
@@ -312,19 +312,19 @@ function PatternRow({
           </Badge>
         )}
       </Td>
-      <Td className="max-w-xs py-2 pr-4">
+      <Td className="max-w-xs py-2 pr-4" label="Pattern / Flags">
         <code className="block truncate font-mono text-[11px] text-paper-300">
           /{pattern.pattern}/{pattern.flags}
         </code>
       </Td>
-      <Td className="py-2 pr-4">
+      <Td className="py-2 pr-4" label="Built-in">
         {pattern.isBuiltIn && (
           <Badge tone="muted" uppercase variant="text">
             built-in
           </Badge>
         )}
       </Td>
-      <Td className="py-2 pr-4">
+      <Td className="py-2 pr-4" label="Active">
         <ToggleSwitch
           ariaLabel={`Active: ${pattern.label}`}
           checked={pattern.isActive}
@@ -387,7 +387,7 @@ function PatternSection({
       {patterns.length === 0 ? (
         <EmptyState className="py-4" title="No patterns in this category." />
       ) : (
-        <Table>
+        <Table stacked>
           <THead>
             <Th variant="compact">Label</Th>
             <Th variant="compact">Pattern / Flags</Th>

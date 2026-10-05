@@ -16,6 +16,7 @@ import { connectionLabel } from '@/lib/connectionDisplay';
 import {
   initialConnectionType,
   parseConnectionConfig,
+  secretLikeConfigKeys,
   selectableConnectionTypes,
 } from '@/lib/connectionForm';
 import { errMsg } from '@/lib/errors';
@@ -183,6 +184,14 @@ export function ConnectionFormModal({
     }
   }
 
+  const secretKeys = useMemo(() => {
+    if (connType === 'git_repo') {
+      return [];
+    }
+    const parsed = parseConnectionConfig(configJson);
+    return parsed.ok ? secretLikeConfigKeys(parsed.config) : [];
+  }, [connType, configJson]);
+
   const configJsonError = useMemo(() => {
     if (connType === 'git_repo' || !configJson.trim() || configJson.trim() === '{}') {
       return null;
@@ -234,7 +243,7 @@ export function ConnectionFormModal({
 
         {isGit ? (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Input
                 disabled={isEdit}
                 label="Organization"
@@ -252,7 +261,7 @@ export function ConnectionFormModal({
                 value={repoName}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Input
                 label="Default branch"
                 onChange={(e) => setDefaultBranch(e.target.value)}
@@ -270,10 +279,10 @@ export function ConnectionFormModal({
               />
             </div>
             <Input
-              hint="Docker image the worker spins up per run. Defaults to node:24-alpine if left blank."
+              hint="The image each run starts from. Blank uses the deployment's default workspace image."
               label="Executor image"
               onChange={(e) => setExecutorImage(e.target.value)}
-              placeholder="node:24-alpine"
+              placeholder="Deployment default"
               value={executorImage}
             />
             <Input
@@ -316,6 +325,11 @@ export function ConnectionFormModal({
               rows={5}
               value={configJson}
             />
+            <Alert variant={secretKeys.length > 0 ? 'warning' : 'info'}>
+              {secretKeys.length > 0 ? `${secretKeys.join(', ')} looks like a credential. ` : ''}
+              Config is stored as plain text and visible to this connection's team. Don't put
+              tokens, passwords or API keys here.
+            </Alert>
           </>
         )}
 

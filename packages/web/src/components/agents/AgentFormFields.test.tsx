@@ -2,6 +2,7 @@
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import type { McpConnectionRow } from '@/hooks/useMcpConnections';
 import type { ProviderCredentialRow } from '@/hooks/useModelConfig';
 import { AgentFormFields } from './AgentFormFields';
 
@@ -94,5 +95,84 @@ describe('AgentFormFields', () => {
     fireEvent.change(credential, { target: { value: 'None' } });
     fireEvent.click(screen.getByRole('option', { name: 'None (system default)' }));
     expect(onChange).toHaveBeenLastCalledWith({ credentialId: null });
+  });
+
+  it('offers own model or inheritance as alternatives and clears the other binding', () => {
+    const onChange = vi.fn();
+    render(
+      <AgentFormFields
+        mcpConnections={[]}
+        mode="edit"
+        onChange={onChange}
+        parentAgents={[{ key: 'reviewer', modelSpec: 'anthropic/x', name: 'Reviewer' }]}
+        skills={[]}
+        value={{ ...VALUE, modelSpec: 'anthropic/x' }}
+      />
+    );
+    expect((screen.getByRole('radio', { name: /Own model/ }) as HTMLInputElement).checked).toBe(
+      true
+    );
+    fireEvent.click(screen.getByRole('radio', { name: /Inherit from another agent/ }));
+    expect(onChange).toHaveBeenLastCalledWith({ credentialId: null, modelSpec: '' });
+    expect(screen.getByRole('combobox', { name: 'Inherit model from' })).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Model spec' })).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: /Own model/ }));
+    expect(onChange).toHaveBeenLastCalledWith({ inheritsModelFrom: '' });
+  });
+
+  it('starts on inheritance for an agent that only inherits', () => {
+    render(
+      <AgentFormFields
+        mcpConnections={[]}
+        mode="edit"
+        onChange={vi.fn()}
+        parentAgents={[{ key: 'reviewer', modelSpec: 'anthropic/x', name: 'Reviewer' }]}
+        skills={[]}
+        value={{ ...VALUE, inheritsModelFrom: 'reviewer', modelSpec: null }}
+      />
+    );
+    expect(
+      (screen.getByRole('radio', { name: /Inherit from another agent/ }) as HTMLInputElement)
+        .checked
+    ).toBe(true);
+  });
+
+  it('lists only credentials for the chosen model provider', () => {
+    const openai = { id: 'c2', lastFour: 'wxyz', provider: 'openai' } as ProviderCredentialRow;
+    render(
+      <AgentFormFields
+        credentials={[CREDENTIAL, openai]}
+        mcpConnections={[]}
+        mode="edit"
+        onChange={vi.fn()}
+        skills={[]}
+        value={{ ...VALUE, modelSpec: 'openai/gpt-6.1-sol' }}
+      />
+    );
+    const credential = screen.getByRole('combobox', { name: /credential override/i });
+    act(() => credential.focus());
+    fireEvent.change(credential, { target: { value: '' } });
+    expect(screen.queryByRole('option', { name: 'anthropic ···abcd' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'openai ···wxyz' })).toBeTruthy();
+  });
+
+  it('ticks the mcp tool when a connection is chosen with a custom tool list', () => {
+    const onChange = vi.fn();
+    render(
+      <AgentFormFields
+        mcpConnections={[
+          { config: { url: 'https://m.test' }, id: 'm1', name: 'Docs' } as McpConnectionRow,
+        ]}
+        mode="edit"
+        onChange={onChange}
+        skills={[]}
+        value={{ ...VALUE, toolKeys: ['bash'] }}
+      />
+    );
+    const mcp = screen.getByRole('combobox', { name: /mcp connection/i });
+    act(() => mcp.focus());
+    fireEvent.change(mcp, { target: { value: 'Docs' } });
+    fireEvent.click(screen.getByRole('option', { name: /Docs/ }));
+    expect(onChange).toHaveBeenLastCalledWith({ mcpConnectionId: 'm1', toolKeys: ['bash', 'mcp'] });
   });
 });

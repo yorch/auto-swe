@@ -75,5 +75,7 @@ describe('TabBar', () => {
     const panel = screen.getByRole('tabpanel');
     expect(tab.getAttribute('aria-controls')).toBe(panel.id);
     expect(panel.getAttribute('aria-labelledby')).toBe(tab.id);
+    // The inactive panel is not rendered, so its tab must not point at it.
+    expect(screen.getByRole('tab', { name: 'A' }).hasAttribute('aria-controls')).toBe(false);
   });
 });

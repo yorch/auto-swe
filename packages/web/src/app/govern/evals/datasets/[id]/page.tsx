@@ -14,10 +14,12 @@ import { validateRouteParam } from '@/lib/routeParams';
 import { formatDate } from '@/lib/utils';
 
 const RUNS_LIMIT = 20;
+const CASES_PAGE_SIZE = 25;
 
 export default function EvalDatasetPage({ params }: { params: Promise<{ id: string }> }) {
   const id = validateRouteParam(use(params).id);
   const [runsOffset, setRunsOffset] = useState(0);
+  const [casesPage, setCasesPage] = useState(0);
   const dataset = useEvalDataset(id);
   const runs = useEvalRuns(id, RUNS_LIMIT, runsOffset);
   const ds = dataset.data;
@@ -88,7 +90,18 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                     ))}
                     {runRows.length === 0 && (
                       <TableStatusRow colSpan={4}>
-                        <EmptyState hint="Start one with the CLI." title="No runs yet." />
+                        <EmptyState
+                          hint={
+                            <>
+                              Start one with{' '}
+                              <code>
+                                auto-swe evals run {ds.slug} --candidate=&lt;ref&gt;
+                                --against=&lt;ref&gt;
+                              </code>
+                            </>
+                          }
+                          title="No runs yet."
+                        />
                       </TableStatusRow>
                     )}
                   </tbody>
@@ -119,35 +132,57 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                   <Th variant="dense">Baseline</Th>
                   <Th variant="dense">Golden test</Th>
                   <Th variant="dense">Tags</Th>
-                  <Th variant="dense">Flake screen</Th>
+                  <Th variant="dense">
+                    <span title="Each case is re-run several times on the baseline; cases that pass only some of the time are flaky and get quarantined so they cannot skew a verdict.">
+                      Stability check
+                    </span>
+                  </Th>
                 </THead>
                 <tbody>
-                  {ds.cases.map((c) => (
-                    <TRow key={c.id}>
-                      <Td className="px-4 py-2 font-mono text-[11px] text-paper-300">
-                        <span title={c.id}>{c.repoUrl}</span>
-                      </Td>
-                      <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
-                        <span title={c.baselineSha}>{c.baselineSha.slice(0, 10)}</span>
-                      </Td>
-                      <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
-                        <span className="line-clamp-2">{c.goldenTest}</span>
-                      </Td>
-                      <Td className="px-4 py-2 font-mono text-[11px] text-paper-500">
-                        {c.tags.length ? c.tags.join(', ') : '—'}
-                      </Td>
-                      <Td className="px-4 py-2 font-mono text-[11px] text-paper-500">
-                        {c.flakeScreened ? `screened (${c.flakeRuns} runs)` : 'not screened'}
-                      </Td>
-                    </TRow>
-                  ))}
+                  {ds.cases
+                    .slice(casesPage * CASES_PAGE_SIZE, (casesPage + 1) * CASES_PAGE_SIZE)
+                    .map((c) => (
+                      <TRow key={c.id}>
+                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-300">
+                          <span title={c.id}>{c.repoUrl}</span>
+                        </Td>
+                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
+                          <span title={c.baselineSha}>{c.baselineSha.slice(0, 10)}</span>
+                        </Td>
+                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
+                          <span className="line-clamp-2">{c.goldenTest}</span>
+                        </Td>
+                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-500">
+                          {c.tags.length ? c.tags.join(', ') : '—'}
+                        </Td>
+                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-500">
+                          {c.flakeScreened ? `Checked (${c.flakeRuns} runs)` : 'Not checked yet'}
+                        </Td>
+                      </TRow>
+                    ))}
                   {ds.cases.length === 0 && (
                     <TableStatusRow colSpan={5}>
-                      <EmptyState title="This dataset has no cases." />
+                      <EmptyState
+                        hint="Cases are added through the platform API when the dataset is created."
+                        title="This dataset has no cases."
+                      />
                     </TableStatusRow>
                   )}
                 </tbody>
               </Table>
+              {ds.cases.length > CASES_PAGE_SIZE && (
+                <div className="mt-3">
+                  <Pagination
+                    hasNext={(casesPage + 1) * CASES_PAGE_SIZE < ds.cases.length}
+                    hasPrev={casesPage > 0}
+                    onNext={() => setCasesPage((p) => p + 1)}
+                    onPrev={() => setCasesPage((p) => Math.max(0, p - 1))}
+                    rangeEnd={Math.min((casesPage + 1) * CASES_PAGE_SIZE, ds.cases.length)}
+                    rangeStart={casesPage * CASES_PAGE_SIZE + 1}
+                    total={ds.cases.length}
+                  />
+                </div>
+              )}
             </Card>
           </>
         )}

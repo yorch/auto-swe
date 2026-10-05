@@ -1,16 +1,17 @@
 'use client';
 
-import { useSearchParams } from 'next/navigation';
-import { Suspense, useState } from 'react';
-import { AuditLogTab } from '@/components/integrations/AuditLogTab';
+import { Suspense } from 'react';
+import { ConfigAuditLogTab } from '@/components/audit/ConfigAuditLogTab';
 import { FigmaTab } from '@/components/integrations/FigmaTab';
 import { GitHubTab } from '@/components/integrations/GitHubTab';
 import { IssueTrackerTab } from '@/components/integrations/IssueTrackerTab';
 import { KnowledgeBaseTab } from '@/components/integrations/KnowledgeBaseTab';
 import { SlackTab } from '@/components/integrations/SlackTab';
 import { SourceBadge } from '@/components/integrations/SourceBadge';
+import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 
 type Tab = 'github' | 'slack' | 'tracker' | 'knowledge-base' | 'figma' | 'audit-log';
 
@@ -38,12 +39,12 @@ export default function StudioIntegrationsPage() {
 }
 
 function StudioIntegrationsPageInner() {
-  const searchParams = useSearchParams();
-  // `?tab=` picks the initial tab (the Slack install callback lands on
-  // `?tab=slack&slack_installed=<teamId>`); switching afterwards is local state.
-  const requestedTab = searchParams.get('tab');
-  const [active, setActive] = useState<Tab>(isTab(requestedTab) ? requestedTab : 'github');
-  const installedSlackTeamId = searchParams.get('slack_installed');
+  // `?tab=` is the active tab (the Slack install callback lands on
+  // `?tab=slack&slack_installed=<teamId>`), so every tab is linkable.
+  const { params, update } = useUrlFilters();
+  const requestedTab = params.get('tab');
+  const active: Tab = isTab(requestedTab) ? requestedTab : 'github';
+  const installedSlackTeamId = params.get('slack_installed');
 
   return (
     <div className="space-y-8">
@@ -55,19 +56,25 @@ function StudioIntegrationsPageInner() {
             fields show only the last four characters — enter a new value to rotate. An{' '}
             <SourceBadge source="env" /> badge means the value is currently read from an environment
             variable. Sign-in providers (Google, Okta, GitHub OAuth) and artifact storage are set
-            through environment variables only; see docs/configuration.md.
+            through environment variables only, not here.
           </>
         }
         title="Integrations"
       />
-      <TabBar active={active} idPrefix="integrations" onChange={setActive} tabs={TABS} />
+      <SetupBanner items={['github']} />
+      <TabBar
+        active={active}
+        idPrefix="integrations"
+        onChange={(tab) => update({ slack_installed: null, tab: tab === 'github' ? null : tab })}
+        tabs={TABS}
+      />
       <div {...tabPanelProps('integrations', active)}>
         {active === 'github' && <GitHubTab />}
         {active === 'slack' && <SlackTab installedTeamId={installedSlackTeamId} />}
         {active === 'tracker' && <IssueTrackerTab />}
         {active === 'knowledge-base' && <KnowledgeBaseTab />}
         {active === 'figma' && <FigmaTab />}
-        {active === 'audit-log' && <AuditLogTab />}
+        {active === 'audit-log' && <ConfigAuditLogTab initialGroup="integrations" />}
       </div>
     </div>
   );

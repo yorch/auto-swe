@@ -3,6 +3,7 @@
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
+import { READINESS_KEY } from '@/hooks/useReadiness';
 import { api } from '@/lib/api';
 
 export interface GitHubRepoInfo {
@@ -56,11 +57,18 @@ export interface UpdateRepoBody {
   config?: unknown;
 }
 
-export function useRepositories(opts: ListOptions & { includeInactive?: boolean } = {}) {
-  const { includeInactive, ...page } = opts;
-  const path = includeInactive
-    ? '/api/v1/repositories?includeInactive=true'
-    : '/api/v1/repositories';
+export function useRepositories(
+  opts: ListOptions & { includeInactive?: boolean; q?: string } = {}
+) {
+  const { includeInactive, q, ...page } = opts;
+  const filters = new URLSearchParams();
+  if (includeInactive) {
+    filters.set('includeInactive', 'true');
+  }
+  if (q) {
+    filters.set('q', q);
+  }
+  const path = `/api/v1/repositories${filters.size ? `?${filters.toString()}` : ''}`;
   return useListQuery<RepositorySummary>({
     queryFn: () => api.get(listUrl(path, page)),
     queryKey: ['repositories', opts],
@@ -72,7 +80,11 @@ export function useCreateRepository() {
   return useMutation({
     mutationFn: (body: CreateRepoBody | CreateConnectionBody) =>
       api.post<{ data: RepositorySummary }>('/api/v1/repositories', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repositories'] });
+      // Setup readiness counts active repository connections.
+      qc.invalidateQueries({ queryKey: READINESS_KEY });
+    },
   });
 }
 
@@ -81,7 +93,11 @@ export function useUpdateRepository(id: string) {
   return useMutation({
     mutationFn: (body: UpdateRepoBody) =>
       api.patch<{ data: RepositorySummary }>(`/api/v1/repositories/${id}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repositories'] });
+      // Setup readiness counts active repository connections.
+      qc.invalidateQueries({ queryKey: READINESS_KEY });
+    },
   });
 }
 

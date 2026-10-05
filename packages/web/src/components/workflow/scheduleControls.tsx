@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
+import { SaveBar } from '@/components/ui/SaveBar';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
@@ -69,16 +70,20 @@ export function useRunNow(trigger: () => Promise<unknown>, failureMessage: strin
 
 export function ScheduleFormFooter({
   canRun,
+  dirtyCount,
   error,
   isSaving,
+  onDiscard,
   runNow,
   saved,
   savedMessage,
   triggeredMessage,
 }: {
   canRun: boolean;
+  dirtyCount: number;
   error: string | null;
   isSaving: boolean;
+  onDiscard: () => void;
   runNow: ReturnType<typeof useRunNow>;
   saved: boolean;
   savedMessage: string;
@@ -86,12 +91,17 @@ export function ScheduleFormFooter({
 }) {
   return (
     <>
-      {saved && <Alert variant="success">{savedMessage}</Alert>}
-      {error && <Alert variant="error">{error}</Alert>}
       {runNow.triggered && <Alert variant="success">{triggeredMessage}</Alert>}
       {runNow.triggerError && <Alert variant="error">{runNow.triggerError}</Alert>}
 
-      <div className="flex items-center justify-end gap-3">
+      <SaveBar
+        dirtyCount={dirtyCount}
+        error={error}
+        onDiscard={onDiscard}
+        pending={isSaving}
+        saved={saved}
+        savedMessage={savedMessage}
+      >
         <Button
           disabled={runNow.triggering || !canRun}
           onClick={runNow.run}
@@ -100,10 +110,7 @@ export function ScheduleFormFooter({
         >
           {runNow.triggering ? 'Triggering…' : 'Run now'}
         </Button>
-        <Button disabled={isSaving} type="submit" variant="primary">
-          {isSaving ? 'Saving…' : 'Save changes'}
-        </Button>
-      </div>
+      </SaveBar>
     </>
   );
 }

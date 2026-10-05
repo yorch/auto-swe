@@ -80,7 +80,12 @@ export class ApiClient {
     }
   }
 
-  async fetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  /** `inspect` sees the successful response (its headers) before the body is parsed. */
+  async fetch<T>(
+    path: string,
+    options: RequestInit = {},
+    inspect?: (res: Response) => void
+  ): Promise<T> {
     const token = this.getToken();
     const headers: Record<string, string> = {
       // Only label a body that exists. Fastify rejects a JSON content-type
@@ -134,6 +139,7 @@ export class ApiClient {
           if (!retryResponse.ok) {
             throw await this.toApiError(retryResponse);
           }
+          inspect?.(retryResponse);
           return this.parseBody<T>(retryResponse);
         }
       }
@@ -145,6 +151,7 @@ export class ApiClient {
       throw await this.toApiError(response);
     }
 
+    inspect?.(response);
     return this.parseBody<T>(response);
   }
 
@@ -157,6 +164,10 @@ export class ApiClient {
   private async parseBody<T>(res: Response): Promise<T> {
     if (res.status === 204 || res.headers.get('content-length') === '0') {
       return undefined as T;
+    }
+    // A file route (the audit CSV) answers text, which `json()` would reject.
+    if ((res.headers.get('content-type') ?? '').startsWith('text/csv')) {
+      return res.text() as Promise<T>;
     }
     return res.json() as Promise<T>;
   }
@@ -232,8 +243,8 @@ export class ApiClient {
     }
   }
 
-  get<T>(path: string) {
-    return this.fetch<T>(path);
+  get<T>(path: string, inspect?: (res: Response) => void) {
+    return this.fetch<T>(path, {}, inspect);
   }
 
   post<T>(path: string, body: unknown) {

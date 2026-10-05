@@ -1,5 +1,10 @@
 'use client';
 
+import {
+  getWorkspaceProviderMetadata,
+  isWorkspaceProviderType,
+  listWorkspaceProviderTypes,
+} from '@auto-swe/shared/lib/workspaceProviders';
 import { useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -11,6 +16,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   useCreateHumanErrorBaseline,
@@ -19,7 +25,16 @@ import {
   useUserOrgs,
 } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
+import { navLabel } from '@/lib/navigation';
 import { formatDate, formatPercent } from '@/lib/utils';
+
+// Analytics groups a run by the workspace type of its template, so a baseline's domain must be one
+// of those to be compared against anything.
+const DOMAIN_OPTIONS = listWorkspaceProviderTypes().map((p) => ({ label: p.label, value: p.key }));
+
+function domainLabel(domain: string): string {
+  return isWorkspaceProviderType(domain) ? getWorkspaceProviderMetadata(domain).label : domain;
+}
 
 type BaselineForm = {
   domain: string;
@@ -55,6 +70,10 @@ function CreateBaselineModal({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!form.domain) {
+      setError('Choose a domain');
+      return;
+    }
     const sampleSize = Number(form.sampleSize);
     const errorCount = Number(form.errorCount);
     if (!Number.isInteger(sampleSize) || sampleSize < 1) {
@@ -106,11 +125,13 @@ function CreateBaselineModal({
           options={orgs.map((o) => ({ label: o.name, value: o.id }))}
           value={orgId}
         />
-        <Input
+        <Select
+          hint="The kind of work this baseline measures. Analytics compares agent runs of the same kind."
           id="baseline-domain"
           label="Domain"
-          onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))}
-          placeholder="e.g. git_repo"
+          onChange={(v) => setForm((f) => ({ ...f, domain: v }))}
+          options={DOMAIN_OPTIONS}
+          placeholder="Choose a domain"
           required
           value={form.domain}
         />
@@ -189,7 +210,7 @@ export default function GovernBaselinesPage() {
         }
         chapter="§ Govern"
         subtitle="Manually-recorded human error rates that the analytics dashboard compares agent error rates against (the “vs human” column). Baselines are scoped to an organization and domain."
-        title="Human error baselines"
+        title={navLabel('/govern/baselines')}
       />
 
       <div className="max-w-xs">
@@ -240,7 +261,7 @@ export default function GovernBaselinesPage() {
                 <tbody>
                   {(baselines ?? []).map((b) => (
                     <TRow key={b.id}>
-                      <Td className="px-4 py-2">{b.domain}</Td>
+                      <Td className="px-4 py-2">{domainLabel(b.domain)}</Td>
                       <Td className="px-4 py-2 text-paper-400">{b.outcomeType ?? '—'}</Td>
                       <Td className="px-4 py-2 text-right tabular-nums">{b.sampleSize}</Td>
                       <Td className="px-4 py-2 text-right tabular-nums">{b.errorCount}</Td>
@@ -281,7 +302,7 @@ export default function GovernBaselinesPage() {
         }}
         open={deleteTarget !== null}
         pendingLabel="Deleting…"
-        title={`Delete "${deleteTarget?.domain ?? ''}" baseline?`}
+        title={`Delete "${domainLabel(deleteTarget?.domain ?? '')}" baseline?`}
       />
     </div>
   );

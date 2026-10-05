@@ -192,6 +192,23 @@ describe('ToolKeysEditor', () => {
   });
 });
 
+describe('ToolKeysEditor warnings', () => {
+  it('warns when a custom selection has nothing ticked', () => {
+    render(<ToolKeysEditor onChange={vi.fn()} value={[]} />);
+    expect(screen.getByText(/No tools are ticked/)).toBeTruthy();
+  });
+
+  it('does not warn once a tool is ticked', () => {
+    render(<ToolKeysEditor onChange={vi.fn()} value={['bash']} />);
+    expect(screen.queryByText(/No tools are ticked/)).toBeNull();
+  });
+
+  it('warns when an MCP connection is bound but the mcp tool is not ticked', () => {
+    render(<ToolKeysEditor mcpSelected onChange={vi.fn()} value={['bash']} />);
+    expect(screen.getByText(/mcp tool is not ticked/)).toBeTruthy();
+  });
+});
+
 describe('cleanAgentPayload', () => {
   it('drops empty strings and undefined but keeps null, 0 and false', () => {
     expect(

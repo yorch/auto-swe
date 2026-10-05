@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { adminRoutes } from './admin.js';
+import { adminRoutes, csvCell } from './admin.js';
 
 async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   const app = Fastify();
@@ -22,6 +22,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     },
     session: {
       delete: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
     },
     user: {
@@ -234,6 +235,73 @@ describe('adminRoutes', () => {
     });
   });
 
+  describe('session listing and bulk revoke', () => {
+    const row = (id: string, token: string, userId = 'user-1') => ({
+      createdAt: new Date('2026-01-01'),
+      expiresAt: new Date('2026-02-01'),
+      id,
+      ipAddress: null,
+      token,
+      updatedAt: new Date('2026-01-01'),
+      user: { email: 'a@example.com', id: userId },
+      userAgent: null,
+      userId,
+    });
+    const S1 = '44444444-4444-4444-8444-444444444444';
+    const S2 = '55555555-5555-4555-8555-555555555555';
+    const USER = '66666666-6666-4666-8666-666666666666';
+
+    it('marks the session whose cookie the caller sent as current', async () => {
+      const { app, mockPrisma } = await buildApp('ADMIN');
+      mockPrisma.session.findMany.mockResolvedValueOnce([
+        row(S1, 'mine-token-1234567890'),
+        row(S2, 'other-token-1234567890'),
+      ]);
+      const res = await app.inject({
+        headers: { ...AUTH, cookie: 'better-auth.session_token=mine-token-1234567890.sig' },
+        method: 'GET',
+        url: '/api/v1/platform/sessions',
+      });
+      const data = JSON.parse(res.payload).data;
+      expect(data.map((r: { current: boolean }) => r.current)).toEqual([true, false]);
+      expect(data[0].token).toBe('mine-tok…');
+      await app.close();
+    });
+
+    it("revokes every session of a user except the caller's own", async () => {
+      const { app, mockPrisma } = await buildApp('ADMIN');
+      mockPrisma.session.findMany.mockResolvedValueOnce([
+        row(S1, 'mine-token-1234567890', USER),
+        row(S2, 'other-token-1234567890', USER),
+      ]);
+      mockPrisma.session.delete.mockResolvedValue({});
+      const res = await app.inject({
+        headers: { ...AUTH, cookie: 'better-auth.session_token=mine-token-1234567890.sig' },
+        method: 'POST',
+        payload: { userId: USER },
+        url: '/api/v1/platform/sessions/revoke-user',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data.revoked).toBe(1);
+      expect(mockPrisma.session.delete).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.session.delete).toHaveBeenCalledWith({ where: { id: S2 } });
+      expect(mockPrisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+      await app.close();
+    });
+
+    it('refuses a non-admin caller', async () => {
+      const { app } = await buildApp('ENGINEER');
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { userId: USER },
+        url: '/api/v1/platform/sessions/revoke-user',
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+  });
+
   describe('audit logging', () => {
     let ctx: Awaited<ReturnType<typeof buildApp>>;
     beforeAll(async () => {
@@ -382,6 +450,25 @@ describe('adminRoutes', () => {
       expect(ctx.mockPrisma.user.findMany).not.toHaveBeenCalled();
     });
 
+    it('matches free text against the actor, the entity type and the entity id', async () => {
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([{ id: 'u-1' }]);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log?search=alice',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.configAuditLog.count).toHaveBeenCalledWith({
+        where: {
+          OR: [
+            { entityId: { contains: 'alice', mode: 'insensitive' } },
+            { entityType: { contains: 'alice', mode: 'insensitive' } },
+            { actorId: { in: ['u-1'] } },
+          ],
+        },
+      });
+    });
+
     it('rejects a malformed date and an over-cap limit', async () => {
       for (const qs of ['since=yesterday', 'limit=500', 'action=PATCH']) {
         const res = await ctx.app.inject({
@@ -402,6 +489,93 @@ describe('adminRoutes', () => {
       });
       expect(res.statusCode).toBe(403);
       await app.close();
+    });
+  });
+
+  describe('GET /audit-log/export', () => {
+    let ctx: Awaited<ReturnType<typeof buildApp>>;
+    beforeAll(async () => {
+      ctx = await buildApp('ADMIN');
+    });
+    beforeEach(() => {
+      ctx.mockPrisma.configAuditLog.findMany.mockReset().mockResolvedValue([]);
+      ctx.mockPrisma.user.findMany.mockReset().mockResolvedValue([]);
+    });
+    afterAll(() => ctx.app.close());
+
+    it('streams the filtered rows as CSV, defusing spreadsheet formulas', async () => {
+      ctx.mockPrisma.configAuditLog.findMany.mockResolvedValueOnce([
+        {
+          action: 'UPDATE',
+          actorId: '11111111-1111-4111-8111-111111111111',
+          afterJson: { name: '=HYPERLINK("x")', role: 'ADMIN' },
+          beforeJson: { role: 'ENGINEER' },
+          createdAt: new Date('2026-09-02T10:00:00.000Z'),
+          entityId: 'e1',
+          entityType: 'User',
+          id: 'a1',
+        },
+      ]);
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
+        { email: 'alice@example.com', id: '11111111-1111-4111-8111-111111111111' },
+      ]);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log/export?action=UPDATE&since=2026-09-01',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(res.headers['content-disposition']).toContain('audit-log.csv');
+      const lines = res.payload.trim().split('\n');
+      expect(lines[0]).toBe('time,action,actor,entity_type,entity_id,before,after');
+      expect(lines[1]).toContain('2026-09-02T10:00:00.000Z,UPDATE,alice@example.com,User,e1');
+      // The JSON cell is quoted; a formula inside it is data, not a leading `=`.
+      expect(lines[1]).toContain('"{""role"":""ENGINEER""}"');
+      expect(ctx.mockPrisma.configAuditLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            action: 'UPDATE',
+            createdAt: { gte: new Date('2026-09-01T00:00:00.000Z') },
+          },
+        })
+      );
+    });
+
+    it('says when more rows matched than the export carries', async () => {
+      ctx.mockPrisma.configAuditLog.count.mockResolvedValueOnce(50_001);
+      const capped = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log/export',
+      });
+      expect(capped.headers['x-export-truncated']).toBe('true');
+      ctx.mockPrisma.configAuditLog.count.mockResolvedValueOnce(10);
+      const whole = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log/export',
+      });
+      expect(whole.headers['x-export-truncated']).toBe('false');
+    });
+
+    it('is ADMIN-only', async () => {
+      const { app } = await buildApp('ENGINEER');
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/audit-log/export',
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+  });
+
+  describe('csvCell', () => {
+    it('quotes separators and neutralises a leading formula character', () => {
+      expect(csvCell('a,b')).toBe('"a,b"');
+      expect(csvCell('=SUM(A1)')).toBe("'=SUM(A1)");
+      expect(csvCell(null)).toBe('');
     });
   });
 });

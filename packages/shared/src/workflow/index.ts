@@ -5,12 +5,14 @@ export type {
   AnalyticsResult,
   AnalyticsRunRow,
   AnalyticsStepRow,
+  DailyRunCount,
   GlobalAnalyticsResult,
   GlobalAnalyticsTemplateRow,
   SignificanceHint,
 } from './analytics.js';
 export {
   computeAnalytics,
+  computeDailyRunSeries,
   computeGlobalAnalytics,
   MIN_SAMPLES_FOR_SIGNIFICANCE,
 } from './analytics.js';

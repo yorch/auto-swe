@@ -149,6 +149,25 @@ describe('repositoryRoutes', () => {
       expect(findManyArgs).toMatchObject({ skip: 20, take: 10 });
     });
 
+    it('narrows the list with q, keeping the access filter', async () => {
+      ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([]);
+      ctx.mockPrisma.connection.count.mockResolvedValueOnce(0);
+
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories?q=pay',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const where = ctx.mockPrisma.connection.findMany.mock.calls.at(-1)?.[0].where;
+      expect(where.AND[0]).toEqual({ isActive: true });
+      expect(where.AND[1].OR).toContainEqual({
+        repoName: { contains: 'pay', mode: 'insensitive' },
+      });
+      expect(ctx.mockPrisma.connection.count.mock.calls.at(-1)?.[0].where).toEqual(where);
+    });
+
     it('does not scope the where clause to a team for an ADMIN', async () => {
       ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([]);
       ctx.mockPrisma.connection.count.mockResolvedValueOnce(0);
