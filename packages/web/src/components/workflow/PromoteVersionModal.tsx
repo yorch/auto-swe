@@ -5,6 +5,16 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { usePromoteWorkflowVersion, useWorkflowSpecDiff } from '@/hooks/useTemplates';
 
 /**
+ * The diff page reads lower -> higher by default. Promoting an older version changes the
+ * template from the active (higher) one to the older one, so the link opens reversed to
+ * match the counts above it.
+ */
+export function diffHref(templateId: string, activeVersion: number, version: number): string {
+  const base = `/workflows/library/${templateId}/diff?a=${activeVersion}&b=${version}`;
+  return version < activeVersion ? `${base}&reversed=1` : base;
+}
+
+/**
  * Confirms making a version the one new runs use. Shows what changes against the
  * current active version (+ added / − removed / ~ changed nodes) with a link to the full
  * diff. When the version is already the active one (a draft being activated for the
@@ -60,7 +70,7 @@ export function PromoteVersionModal({
           {comparing && !hideDiffLink && (
             <Link
               className="text-sm text-ember-400 hover:underline"
-              href={`/workflows/library/${templateId}/diff?a=${activeVersion}&b=${version}`}
+              href={diffHref(templateId, activeVersion, version)}
             >
               View diff
             </Link>

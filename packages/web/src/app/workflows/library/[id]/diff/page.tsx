@@ -156,7 +156,8 @@ function TemplateDiffContent({ params }: PageProps) {
       y: Number.isInteger(qb) && qb > 0 ? qb : null,
     };
   });
-  const [reversed, setReversed] = useState(false);
+  // `?reversed=1` opens active -> older, the direction promoting an older version would apply.
+  const [reversed, setReversed] = useState(() => search.get('reversed') === '1');
   const [promoteOpen, setPromoteOpen] = useState(false);
 
   const defaultX = template?.activeVersion ?? sortedVersions[0]?.version ?? null;
