@@ -488,105 +488,107 @@ export default function StudioSkillsPage() {
 
       {tab === 'skills' && (
         <div {...(isAdmin ? tabPanelProps('skills', 'skills') : {})}>
-        <Card>
-          <CardHeader>
-            <CardTitle>All skills</CardTitle>
-          </CardHeader>
-          {toggleError && <Alert variant="error">{toggleError}</Alert>}
-          <QueryBoundary
-            error={loadError}
-            isError={isError}
-            isFetching={isFetching}
-            isLoading={isLoading}
-            label="skills"
-            onRetry={() => void refetch()}
-          >
-            {!skills?.length ? (
-              <EmptyState title="No skills yet. Create one with the button above." />
-            ) : (
-              <Table>
-                <THead>
-                  <Th variant="compact">Name</Th>
-                  <Th variant="compact">Description</Th>
-                  <Th variant="compact">Used by</Th>
-                  <Th variant="compact">Active</Th>
-                  <Th variant="compact" />
-                </THead>
-                <tbody>
-                  {skills.map((skill) => (
-                    <TRow key={skill.id}>
-                      <Td className="py-2 pr-4">
-                        <button
-                          className="text-left hover:underline"
-                          onClick={() => setViewTarget(skill)}
-                          type="button"
-                        >
-                          <span className="font-medium text-paper-100">
-                            {visibleText(skill.name)}
+          <Card>
+            <CardHeader>
+              <CardTitle>All skills</CardTitle>
+            </CardHeader>
+            {toggleError && <Alert variant="error">{toggleError}</Alert>}
+            <QueryBoundary
+              error={loadError}
+              isError={isError}
+              isFetching={isFetching}
+              isLoading={isLoading}
+              label="skills"
+              onRetry={() => void refetch()}
+            >
+              {!skills?.length ? (
+                <EmptyState title="No skills yet. Create one with the button above." />
+              ) : (
+                <Table>
+                  <THead>
+                    <Th variant="compact">Name</Th>
+                    <Th variant="compact">Description</Th>
+                    <Th variant="compact">Used by</Th>
+                    <Th variant="compact">Active</Th>
+                    <Th variant="compact" />
+                  </THead>
+                  <tbody>
+                    {skills.map((skill) => (
+                      <TRow key={skill.id}>
+                        <Td className="py-2 pr-4">
+                          <button
+                            className="text-left hover:underline"
+                            onClick={() => setViewTarget(skill)}
+                            type="button"
+                          >
+                            <span className="font-medium text-paper-100">
+                              {visibleText(skill.name)}
+                            </span>
+                          </button>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                            {skill.isBuiltIn && (
+                              <Badge tone="muted" uppercase variant="text">
+                                built-in
+                              </Badge>
+                            )}
+                            {skill.origin && <OriginBadge origin={skill.origin} />}
+                            <ExternalBadge source={skill.externalSource} />
+                            {skill.isVerified && (
+                              <Badge tone="moss" variant="text">
+                                verified
+                              </Badge>
+                            )}
+                            {!skill.isVerified && !skill.isBuiltIn && (
+                              <Badge tone="amber" variant="text">
+                                unverified
+                              </Badge>
+                            )}
+                            {!skill.isBuiltIn && (
+                              <Badge tone="muted" variant="text">
+                                rev {skill.currentRevision}
+                              </Badge>
+                            )}
+                          </div>
+                        </Td>
+                        <Td className="max-w-xs py-2 pr-4">
+                          <span className="line-clamp-1 text-paper-400">
+                            {visibleOrNull(skill.description) ?? '—'}
                           </span>
-                        </button>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                          {skill.isBuiltIn && (
-                            <Badge tone="muted" uppercase variant="text">
-                              built-in
-                            </Badge>
-                          )}
-                          {skill.origin && <OriginBadge origin={skill.origin} />}
-                          <ExternalBadge source={skill.externalSource} />
-                          {skill.isVerified && (
-                            <Badge tone="moss" variant="text">
-                              verified
-                            </Badge>
-                          )}
-                          {!skill.isVerified && !skill.isBuiltIn && (
-                            <Badge tone="amber" variant="text">
-                              unverified
-                            </Badge>
-                          )}
-                          {!skill.isBuiltIn && (
-                            <Badge tone="muted" variant="text">
-                              rev {skill.currentRevision}
-                            </Badge>
-                          )}
-                        </div>
-                      </Td>
-                      <Td className="max-w-xs py-2 pr-4">
-                        <span className="line-clamp-1 text-paper-400">
-                          {visibleOrNull(skill.description) ?? '—'}
-                        </span>
-                      </Td>
-                      <Td className="py-2 pr-4 tabular-nums text-paper-400">{skill.usedByCount}</Td>
-                      <Td className="py-2 pr-4">
-                        <ToggleSwitch
-                          ariaLabel={`Active: ${visibleText(skill.name)}`}
-                          checked={skill.isActive}
-                          disabled={togglingId === skill.id}
-                          onChange={() => handleToggleActive(skill)}
-                        />
-                      </Td>
-                      <Td className="py-2 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
-                            View / Edit
-                          </Button>
-                          {!skill.isBuiltIn && (
-                            <Button
-                              onClick={() => setDeleteTarget(skill)}
-                              size="sm"
-                              variant="danger"
-                            >
-                              Delete
+                        </Td>
+                        <Td className="py-2 pr-4 tabular-nums text-paper-400">
+                          {skill.usedByCount}
+                        </Td>
+                        <Td className="py-2 pr-4">
+                          <ToggleSwitch
+                            ariaLabel={`Active: ${visibleText(skill.name)}`}
+                            checked={skill.isActive}
+                            disabled={togglingId === skill.id}
+                            onChange={() => handleToggleActive(skill)}
+                          />
+                        </Td>
+                        <Td className="py-2 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
+                              View / Edit
                             </Button>
-                          )}
-                        </div>
-                      </Td>
-                    </TRow>
-                  ))}
-                </tbody>
-              </Table>
-            )}
-          </QueryBoundary>
-        </Card>
+                            {!skill.isBuiltIn && (
+                              <Button
+                                onClick={() => setDeleteTarget(skill)}
+                                size="sm"
+                                variant="danger"
+                              >
+                                Delete
+                              </Button>
+                            )}
+                          </div>
+                        </Td>
+                      </TRow>
+                    ))}
+                  </tbody>
+                </Table>
+              )}
+            </QueryBoundary>
+          </Card>
         </div>
       )}
 
