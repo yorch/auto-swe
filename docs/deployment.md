@@ -402,7 +402,7 @@ open https://app.example.com
 #  1. Settings → API tokens → "+ New token"  → save the PAT to your secret manager
 #  2. Connections → "+ Add connection"       → connect a real git repo (use a test one first)
 #  3. Dashboard "+ New request" → select the default-engineering template → smallest possible task; verify the run starts
-#  4. Watch the run in /workflows/<id> and the Temporal UI
+#  4. Watch the request in /workflows (open it from the list) and the run in the Temporal UI
 
 # Then verify webhooks both directions
 #  - GitHub merge of the test PR fires POST /api/v1/webhooks/git → workflow completes

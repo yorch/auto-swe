@@ -29,13 +29,20 @@ export interface BreakdownSeries {
   daily: { date: string; mean: number | null; n: number }[];
 }
 
-/** One row per day with a column per series label, so Recharts can draw them together. */
+/**
+ * The row column for the series at `index`. Labels are data (a real group can be
+ * called "date" or "Other"), so columns are keyed by position under a prefix no
+ * label can collide with, and the label travels as the line's `name`.
+ */
+export const seriesKey = (index: number) => `series:${index}`;
+
+/** One row per day with a column per series, so Recharts can draw them together. */
 export function pivotSeries(series: BreakdownSeries[]): Record<string, string | number | null>[] {
   const rows = new Map<string, Record<string, string | number | null>>();
-  for (const s of series) {
+  for (const [index, s] of series.entries()) {
     for (const d of s.daily) {
       const row = rows.get(d.date) ?? { date: d.date };
-      row[s.label] = d.mean;
+      row[seriesKey(index)] = d.mean;
       rows.set(d.date, row);
     }
   }
@@ -101,8 +108,8 @@ export function ScorerBreakdownChart({
         columns: ['Date (UTC)', ...series.map((s) => `${s.label} (mean 0–1)`)],
         rows: rows.map((r) => [
           formatDateLabel(r.date),
-          ...series.map((s) => {
-            const v = r[s.label];
+          ...series.map((_, i) => {
+            const v = r[seriesKey(i)];
             return typeof v === 'number' ? v.toFixed(2) : '—';
           }),
         ]),
@@ -132,10 +139,11 @@ export function ScorerBreakdownChart({
           {series.map((s, i) => (
             <Line
               connectNulls={false}
-              dataKey={s.label}
+              dataKey={seriesKey(i)}
               dot={{ r: 2.5 }}
               isAnimationActive={false}
-              key={s.label}
+              key={seriesKey(i)}
+              name={s.label}
               stroke={seriesColor(i, s.label)}
               strokeDasharray={seriesDash(i, s.label)}
               strokeWidth={1.5}

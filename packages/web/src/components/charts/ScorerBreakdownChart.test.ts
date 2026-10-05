@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collapseSeries, pivotSeries } from './ScorerBreakdownChart';
+import { collapseSeries, pivotSeries, seriesKey } from './ScorerBreakdownChart';
 
 describe('pivotSeries', () => {
   it('puts every series on one row per day, keeping a gap as null', () => {
@@ -15,8 +15,24 @@ describe('pivotSeries', () => {
     ]);
 
     expect(rows).toEqual([
-      { 'a/x': 1, date: '2026-09-01' },
-      { '(none)': 0.5, 'a/x': null, date: '2026-09-02' },
+      { date: '2026-09-01', [seriesKey(0)]: 1 },
+      { date: '2026-09-02', [seriesKey(0)]: null, [seriesKey(1)]: 0.5 },
+    ]);
+  });
+
+  it('keeps a series labelled like a reserved column apart from it', () => {
+    const rows = pivotSeries([
+      { daily: [{ date: '2026-09-01', mean: 0.2, n: 1 }], label: 'date' },
+      { daily: [{ date: '2026-09-01', mean: 0.8, n: 1 }], label: 'Other' },
+      { daily: [{ date: '2026-09-01', mean: 0.4, n: 1 }], label: 'Other' },
+    ]);
+    expect(rows).toEqual([
+      {
+        date: '2026-09-01',
+        [seriesKey(0)]: 0.2,
+        [seriesKey(1)]: 0.8,
+        [seriesKey(2)]: 0.4,
+      },
     ]);
   });
 });
