@@ -2,6 +2,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { customRangeFields, refineCustomRange, resolveCustomRange } from '../lib/dateWindow.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -31,8 +32,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DAILY_CONCURRENCY = 3;
 const TOP_RUNS = 10;
 
-const UsageQuery = z
+const UsageQueryBase = z
   .object({
+    ...customRangeFields,
     orgId: z.string().uuid().optional(),
     teamId: z.string().uuid().optional(),
     window: z.coerce
@@ -44,6 +46,7 @@ const UsageQuery = z
       .default(30),
   })
   .refine((q) => !(q.teamId && q.orgId), { message: 'pass teamId or orgId, not both' });
+const UsageQuery = refineCustomRange(UsageQueryBase);
 
 type UsageScope = { teamId?: string; orgId?: string };
 
@@ -205,7 +208,9 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { orgId, teamId, window: windowDays } = request.query;
+      const { orgId, teamId } = request.query;
+      const custom = resolveCustomRange(request.query);
+      const windowDays = custom?.days ?? request.query.window;
       const scope: UsageScope = teamId ? { teamId } : orgId ? { orgId } : {};
       if (!(await mayReadUsage(prisma, user, scope))) {
         return reply.status(403).send({
@@ -219,8 +224,8 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
       // Whole UTC days, closed at the end of today, so every query covers
       // exactly the rows the daily bars do — including a request that runs
       // across midnight.
-      const until = new Date(utcDayStart(Date.now()) + DAY_MS);
-      const since = new Date(until.getTime() - windowDays * DAY_MS);
+      const until = custom?.end ?? new Date(utcDayStart(Date.now()) + DAY_MS);
+      const since = custom?.start ?? new Date(until.getTime() - windowDays * DAY_MS);
       const llm = { ...scope, createdAt: { gte: since, lt: until }, type: 'llm_response' };
 
       // One grouping by (model, agent, activity) serves the totals and all

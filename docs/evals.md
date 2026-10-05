@@ -153,7 +153,7 @@ verdicts into trends per template, model, and prompt version.
 
 | Surface | Where |
 |---|---|
-| Dashboard | `/govern/evals` — each scorer's daily mean over a 7, 30, or 90-day UTC window; every captured result, paginated and filterable by scorer and source, linked to the run or harness run it scored; the datasets |
+| Dashboard | `/govern/evals` — each scorer's daily mean over a 7, 30, or 90-day UTC window or a custom span of up to 366 days (`since` / `until` on `GET /api/v1/platform/evals/trends`); every captured result, paginated and filterable by scorer and source, linked to the run or harness run it scored; the datasets |
 | Dataset detail | `/govern/evals/datasets/[id]` — the cases and the dataset's harness runs |
 | Harness run detail | `/govern/evals/runs/[id]` — the paired verdict, overall and per tag, and that run's results |
 | Run detail | The eval panel on `/runs/[id]` |

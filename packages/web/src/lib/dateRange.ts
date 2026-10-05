@@ -70,6 +70,11 @@ export function describeRange(range: DateRange): string {
   return range.kind === 'preset' ? `Last ${range.days} days` : `${range.from} to ${range.to} (UTC)`;
 }
 
+/** The range inside a sentence: "the last 30 days" or "2026-09-01 to 2026-09-14 (UTC)". */
+export function rangePhrase(range: DateRange): string {
+  return range.kind === 'preset' ? `the last ${range.days} days` : describeRange(range);
+}
+
 /**
  * The inclusive first and last UTC calendar day of a range. A preset of N days is the N whole
  * days ending with today, so "7 days" is seven calendar days wherever it is used.
@@ -93,6 +98,29 @@ export function dayBounds(range: DateRange, now = new Date()): { since: string; 
     since: `${from}T00:00:00.000Z`,
     until: new Date(Date.parse(`${to}T00:00:00.000Z`) + DAY_MS).toISOString(),
   };
+}
+
+/** Calendar days a range covers: a preset's N, or a custom span counted inclusively. */
+export function rangeDays(range: DateRange): number {
+  if (range.kind === 'preset') {
+    return range.days;
+  }
+  return Math.round((Date.parse(range.to) - Date.parse(range.from)) / DAY_MS) + 1;
+}
+
+/**
+ * The query string fields a gateway endpoint takes for a range: `window` for a preset,
+ * `since` / `until` (inclusive UTC days) for a custom span.
+ */
+export function rangeQuery(range: DateRange): Record<string, string> {
+  return range.kind === 'preset'
+    ? { window: String(range.days) }
+    : { since: range.from, until: range.to };
+}
+
+/** A stable cache-key part for a range. */
+export function rangeKey(range: DateRange): string {
+  return range.kind === 'preset' ? `${range.days}d` : `${range.from}..${range.to}`;
 }
 
 /** True when the URL asked for a custom range that a presets-only page cannot serve. */

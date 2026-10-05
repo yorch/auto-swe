@@ -215,6 +215,41 @@ describe('usageRoutes GET /usage', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('serves a custom range of whole UTC days, with an equal-length previous period', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/usage?since=2026-01-10&until=2026-01-16',
+    });
+    expect(res.statusCode).toBe(200);
+    const { daily, since, until, windowDays } = res.json().data;
+    expect(windowDays).toBe(7);
+    expect(since).toBe('2026-01-10T00:00:00.000Z');
+    expect(until).toBe('2026-01-17T00:00:00.000Z');
+    expect(daily).toHaveLength(7);
+    const previous = prisma.agentTrace.aggregate.mock.calls
+      .map(([a]) => a.where.createdAt)
+      .find((c) => c?.lt?.toISOString() === '2026-01-10T00:00:00.000Z');
+    expect(previous.gte.toISOString()).toBe('2026-01-03T00:00:00.000Z');
+  });
+
+  it.each([
+    ['only since', 'since=2026-01-10'],
+    ['until before since', 'since=2026-01-10&until=2026-01-09'],
+    ['not a date', 'since=2026-13-40&until=2026-13-41'],
+    ['a future end', 'since=2026-01-10&until=2999-01-01'],
+    ['more than 366 days', 'since=2024-01-01&until=2025-06-01'],
+  ])('rejects a custom range with %s', async (_label, qs) => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/usage?${qs}`,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('bounds every query by the same whole-UTC-day window the bars cover', async () => {
     const { app, prisma } = await buildApp();
     const res = await app.inject({

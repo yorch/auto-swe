@@ -881,7 +881,7 @@ mandatory `finally` — is in [AGENTS.md §6](../AGENTS.md#agent-observability-a
 carrying its model, tokens, cost, and the team and organization whose spend it is
 ([agents.md §8.5](./agents.md#85-spend-attribution)) — including calls from workflows that keep no
 `WorkflowRun` — so those rows are the one complete record of spend.
-`GET /api/v1/platform/usage?window=7|30|90[&teamId=…|&orgId=…]` aggregates them into totals, a
+`GET /api/v1/platform/usage?window=7|30|90[&teamId=…|&orgId=…]` (or `since=YYYY-MM-DD&until=YYYY-MM-DD`, inclusive UTC days, at most 366, in place of `window`) aggregates them into totals, a
 per-UTC-day series, breakdowns by team, organization, model, agent, and activity (calls, tokens,
 average latency of the calls that succeeded, error rate, cost), the spend from workflows without a
 run, and the ten runs that spent most inside the window. With no filter the report is

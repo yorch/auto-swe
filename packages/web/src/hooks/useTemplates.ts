@@ -14,6 +14,7 @@ import type {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { api } from '@/lib/api';
+import { type DateRange, rangeKey, rangeQuery } from '@/lib/dateRange';
 
 export function useWorkflowTemplates(teamId?: string | null) {
   return useQuery({
@@ -259,15 +260,15 @@ export function useWorkflowTemplateAnalytics(templateId: string, windowDays = 30
   });
 }
 
-export function useGlobalAnalytics(windowDays = 30) {
+export function useGlobalAnalytics(range: DateRange = { days: 30, kind: 'preset' }) {
   return useQuery({
     queryFn: () =>
       api
         .get<{ data: GlobalAnalyticsResponse }>(
-          `/api/v1/workflow-templates/analytics?window=${windowDays}`
+          `/api/v1/workflow-templates/analytics?${new URLSearchParams(rangeQuery(range))}`
         )
         .then((r) => r.data),
-    queryKey: ['global-analytics', windowDays],
+    queryKey: ['global-analytics', rangeKey(range)],
     refetchInterval: 30_000,
   });
 }

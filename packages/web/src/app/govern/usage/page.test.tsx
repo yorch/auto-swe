@@ -69,6 +69,8 @@ const usage: PlatformUsage = {
   windowDays: 30,
 };
 
+const P30 = { days: 30, kind: 'preset' };
+
 const ADMIN_SCOPES: Scopes = {
   orgs: [{ id: 'org-1', name: 'Acme' }],
   platform: true,
@@ -123,25 +125,25 @@ describe('UsagePage', () => {
 
   it('shows an ADMIN the whole platform by default', () => {
     render(<UsagePage />);
-    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, {}, true);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(P30, {}, true);
   });
 
   it("shows a team LEAD their first team's report, never the whole platform", () => {
     auth.scopes = { orgs: [], platform: false, teams: [{ id: 'team-b', name: 'Platform' }] };
     render(<UsagePage />);
-    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, { teamId: 'team-b' }, true);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(P30, { teamId: 'team-b' }, true);
   });
 
   it('offers an ORG_ADMIN with no led team their organization', () => {
     auth.scopes = { orgs: [{ id: 'org-1', name: 'Acme' }], platform: false, teams: [] };
     render(<UsagePage />);
-    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, { orgId: 'org-1' }, true);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(P30, { orgId: 'org-1' }, true);
   });
 
   it('asks for nothing until the scopes are known', () => {
     auth.scopes = undefined;
     render(<UsagePage />);
-    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, {}, false);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(P30, {}, false);
   });
 
   it('says so when the caller holds no scope', () => {
@@ -152,14 +154,27 @@ describe('UsagePage', () => {
 
   it('refetches for the chosen window', () => {
     render(<UsagePage />);
-    expect(usePlatformUsage).toHaveBeenLastCalledWith(30, {}, true);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(P30, {}, true);
 
     fireEvent.click(screen.getByRole('button', { name: '7d' }));
     expect(nav.replace).toHaveBeenCalledWith('/govern/usage?range=7', { scroll: false });
 
     nav.params = 'range=90';
     render(<UsagePage />);
-    expect(usePlatformUsage).toHaveBeenLastCalledWith(90, {}, true);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith({ days: 90, kind: 'preset' }, {}, true);
+  });
+
+  it('serves a custom range from the link, with no notice that it was ignored', () => {
+    nav.params = 'range=custom&from=2026-09-01&to=2026-09-14';
+    render(<UsagePage />);
+    expect(usePlatformUsage).toHaveBeenLastCalledWith(
+      { from: '2026-09-01', kind: 'custom', to: '2026-09-14' },
+      {},
+      true
+    );
+    expect(screen.queryByText(/only offers 7, 30 and 90/)).toBeNull();
+    expect(screen.getByLabelText('From date (UTC)')).toBeTruthy();
+    expect(screen.getByText(/for 2026-09-01 to 2026-09-14 \(UTC\)/)).toBeTruthy();
   });
 
   it('shows the error when the report fails to load, not a spinner', () => {

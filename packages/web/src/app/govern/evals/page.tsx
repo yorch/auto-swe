@@ -7,7 +7,6 @@ import { ScorerTrendChart } from '@/components/charts/ScorerTrendChart';
 import { SuiteHealthChart } from '@/components/charts/SuiteHealthChart';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
-import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -24,7 +23,7 @@ import {
 } from '@/hooks/useAdmin';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
-import { customRangeIgnored, dateRangePatch, describeRange, parseDateRange } from '@/lib/dateRange';
+import { dateRangePatch, describeRange, parseDateRange } from '@/lib/dateRange';
 import { latestMean, scorerChange, worstMovingScorer } from '@/lib/evalTrend';
 import { cn, formatDate, scoreColor } from '@/lib/utils';
 
@@ -66,8 +65,7 @@ function ScoreCell({ value }: { value: number | null }) {
 
 function EvalsWorkspace() {
   const { params, update } = useUrlFilters();
-  const range = parseDateRange(params, { allowCustom: false });
-  const windowDays = range.kind === 'preset' ? range.days : 30;
+  const range = parseDateRange(params);
   const rawBy = params.get('by');
   const by: Breakdown = rawBy === 'judgeModel' || rawBy === 'agentKey' ? rawBy : '';
   const templateId = params.get('template') ?? '';
@@ -75,7 +73,7 @@ function EvalsWorkspace() {
   // looking at one scorer's trend never empties the list of every other result.
   const chosenScorer = params.get('scorer') ?? '';
   const [resultScorer, setResultScorer] = useState('');
-  const trendsQuery = useEvalTrends(windowDays, {
+  const trendsQuery = useEvalTrends(range, {
     by: by || undefined,
     templateId: templateId || undefined,
   });
@@ -116,24 +114,13 @@ function EvalsWorkspace() {
               options={BREAKDOWN_OPTIONS}
               value={by}
             />
-            <DateRangeControl
-              allowCustom={false}
-              onChange={(r) => r && update(dateRangePatch(r))}
-              value={range}
-            />
+            <DateRangeControl onChange={(r) => r && update(dateRangePatch(r))} value={range} />
           </div>
         }
         chapter="§ Govern"
         subtitle="Per-scorer quality signals over time, every captured result with a link to the run it scored, and the datasets offline runs score against. Days are UTC."
         title="Evals"
       />
-
-      {customRangeIgnored(params) && (
-        <Alert variant="info">
-          This page only offers 7, 30 and 90 day ranges, so the custom range in the link was
-          replaced by the last {windowDays} days.
-        </Alert>
-      )}
 
       <Card>
         <CardHeader>

@@ -398,6 +398,34 @@ describe('evalRoutes', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    it('serves a custom range of whole UTC days', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalResult.groupBy.mockResolvedValue([]);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/trends?since=2026-01-10&until=2026-01-12',
+      });
+      expect(res.statusCode).toBe(200);
+      const { data } = JSON.parse(res.payload);
+      expect(data.windowDays).toBe(3);
+      expect(data.since).toBe('2026-01-10T00:00:00.000Z');
+      expect(data.until).toBe('2026-01-13T00:00:00.000Z');
+      expect(prisma.evalResult.groupBy).toHaveBeenCalledTimes(3);
+    });
+
+    it('rejects a half-given or backwards custom range', async () => {
+      const { app } = await buildApp();
+      for (const qs of ['since=2026-01-10', 'since=2026-01-10&until=2026-01-01']) {
+        const res = await app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: `/api/v1/platform/evals/trends?${qs}`,
+        });
+        expect(res.statusCode).toBe(400);
+      }
+    });
+
     it('is ADMIN-only', async () => {
       const { app } = await buildApp('ENGINEER');
       const res = await app.inject({
