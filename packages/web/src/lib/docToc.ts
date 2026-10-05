@@ -3,6 +3,10 @@
  * source and the renderer gives each the same id, using the same de-duplication,
  * so a contents link lands on the heading it names.
  */
+import remarkGfm from 'remark-gfm';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
+
 export interface TocEntry {
   id: string;
   level: 2 | 3;
@@ -38,25 +42,51 @@ export function headingIdFactory(): (text: string) => string {
   };
 }
 
-export function extractToc(markdown: string): TocEntry[] {
-  const nextId = headingIdFactory();
-  const entries: TocEntry[] = [];
-  let fence: string | null = null;
-  for (const line of markdown.split('\n')) {
-    const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(line);
-    if (fenceMatch) {
-      fence = fence === null ? fenceMatch[1][0] : fence === fenceMatch[1][0] ? null : fence;
-      continue;
-    }
-    if (fence) {
-      continue;
-    }
-    const m = /^(#{2,3})\s+(.+?)\s*#*\s*$/.exec(line);
-    if (m) {
-      const text = headingText(m[2]);
-      // Every h2/h3 consumes an id, listed or not, to stay in step with the renderer.
-      entries.push({ id: nextId(text), level: m[1].length as 2 | 3, text });
-    }
+/** The slice of an mdast node the heading walk reads. */
+interface MdNode {
+  type: string;
+  depth?: number;
+  value?: string;
+  children?: MdNode[];
+}
+
+/**
+ * The text the renderer sees inside a node. Mirrors what React gets as a
+ * heading's children: text and code spans count, images and raw HTML (which
+ * `react-markdown` does not render) do not.
+ */
+function mdText(node: MdNode): string {
+  if (node.type === 'text' || node.type === 'inlineCode') {
+    return node.value ?? '';
   }
-  return entries;
+  if (node.type === 'image' || node.type === 'html') {
+    return '';
+  }
+  return (node.children ?? []).map(mdText).join('');
+}
+
+function collectHeadings(node: MdNode, out: MdNode[]) {
+  if (node.type === 'heading' && (node.depth === 2 || node.depth === 3)) {
+    out.push(node);
+  }
+  for (const child of node.children ?? []) {
+    collectHeadings(child, out);
+  }
+}
+
+/**
+ * The contents list, taken from the same parse the renderer uses (remark with GFM),
+ * so setext headings count and headings inside blockquotes or HTML blocks are
+ * treated exactly as they are rendered. Document order matches render order.
+ */
+export function extractToc(markdown: string): TocEntry[] {
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown) as unknown as MdNode;
+  const headings: MdNode[] = [];
+  collectHeadings(tree, headings);
+  const nextId = headingIdFactory();
+  // Every h2/h3 consumes an id, listed or not, to stay in step with the renderer.
+  return headings.map((heading) => {
+    const text = headingText(mdText(heading));
+    return { id: nextId(text), level: heading.depth as 2 | 3, text };
+  });
 }
