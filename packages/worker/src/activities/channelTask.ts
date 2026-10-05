@@ -174,6 +174,8 @@ async function buildChannelTaskRun(
       slackMessageTs: input.threadTs,
       templateId,
       templateVersion,
+      // `slack-<channel>-<thread>` is generated here, not a tracker ticket.
+      ticketIsSynthetic: true,
     },
   });
 

@@ -139,6 +139,7 @@ describe('createChannelTaskRun', () => {
       slackMessageTs: '111.222',
       templateId: 'tmpl-channel-task',
       templateVersion: 1,
+      ticketIsSynthetic: true,
     });
     // payload carries the channel context used by finalize to accrue + report.
     expect(data.payload).toMatchObject({

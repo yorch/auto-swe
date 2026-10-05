@@ -129,12 +129,13 @@ runs, cost and pull requests leave them out too:
 - requests with a Channel Assistant or Channel Task run, or any run in a Slack channel;
 - requests whose ticket id the platform generated (`RunInput.ticketIsSynthetic`): a template launch
   that named no ticket and filed the request's own id, a PRD run (`PRD-<id>`), a scheduled work
-  request (`<prefix>-SCHED-<id>`), and a PRD story given a generated id because the tracker did not
-  assign one. A tracker- or user-supplied id is never flagged. Agent runs are flagged as well as
-  recognised by their template.
+  request (`<prefix>-SCHED-<id>`), a channel task (`slack-<channel>-<thread>`), and a PRD story given a generated id because the tracker did not
+  assign one. A tracker- or user-supplied id is never flagged. Agent runs and channel tasks are
+  flagged as well as recognised by their template or channel.
 
-An id the platform generated names no tracker issue, so none of the tracker syncs (PR opened,
-workflow started, CI verdict, merge, workflow finished) is attempted for it. The Slack merge note and
+A request flagged `ticketIsSynthetic` names no tracker issue, so none of the tracker syncs (PR opened,
+workflow started, CI verdict, merge, workflow finished) is attempted for it. A Channel Assistant
+turn files no request of its own, so there is nothing to flag. The Slack merge note and
 the merge evaluation row do not depend on the tracker and still run.
 
 **Visibility is per row.** A request is in scope when the caller requested it, when the caller can
