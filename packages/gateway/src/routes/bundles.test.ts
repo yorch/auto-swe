@@ -482,6 +482,81 @@ describe('bundle preview', () => {
     await app.close();
   });
 
+  describe('install from an uploaded file', () => {
+    const post = (app: Awaited<ReturnType<typeof buildApp>>, body: unknown) =>
+      app.inject({
+        body: body as Record<string, unknown>,
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/platform/bundles/install',
+      });
+
+    it('installs when the previewed content hash matches', async () => {
+      const app = await buildApp();
+      const prisma = (app as unknown as { prisma: Record<string, Record<string, unknown>> }).prisma;
+      prisma.agent.create = vi.fn().mockResolvedValue({ id: 'new' });
+      prisma.agentSkillRef = { deleteMany: vi.fn() };
+      const bundle = bundleWithAgent();
+      const res = await post(app, { bundle, expectedContentHash: bundle.metadata.contentHash });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data.counts.agents).toBe(1);
+      await app.close();
+    });
+
+    it('409s and installs nothing when the bundle differs from the previewed one', async () => {
+      const app = await buildApp();
+      const prisma = (app as unknown as { prisma: Record<string, Record<string, unknown>> }).prisma;
+      const res = await post(app, {
+        bundle: bundleWithAgent(),
+        expectedContentHash: 'sha256:something-else',
+      });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('BUNDLE_CHANGED');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('refuses an unverified bundle when the deployment disallows them', async () => {
+      vi.stubEnv('BUNDLE_ALLOW_UNVERIFIED', '0');
+      const app = await buildApp();
+      const bundle = bundleWithAgent();
+      const res = await post(app, { bundle, expectedContentHash: bundle.metadata.contentHash });
+      vi.stubEnv('BUNDLE_ALLOW_UNVERIFIED', '1');
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('INVALID_BUNDLE');
+      await app.close();
+    });
+
+    it('409s on replacing protected content without the confirmation flag', async () => {
+      const app = await buildApp();
+      const prisma = (app as unknown as { prisma: Record<string, Record<string, unknown>> }).prisma;
+      prisma.agent.findFirst = vi.fn().mockResolvedValue({ id: 'builtin', origin: 'swe-starter' });
+      prisma.agent.update = vi.fn().mockResolvedValue({ id: 'builtin' });
+      prisma.agentSkillRef = { deleteMany: vi.fn() };
+      const bundle = bundleWithAgent();
+      const refused = await post(app, { bundle, expectedContentHash: bundle.metadata.contentHash });
+      expect(refused.statusCode).toBe(409);
+      expect(JSON.parse(refused.payload).error.code).toBe('PROTECTED_CONTENT_OVERWRITE');
+      const forced = await post(app, {
+        bundle,
+        expectedContentHash: bundle.metadata.contentHash,
+        overwriteProtected: true,
+      });
+      expect(forced.statusCode).toBe(200);
+      await app.close();
+    });
+
+    it('rejects a body over the bundle size cap', async () => {
+      vi.stubEnv('BUNDLE_MAX_BYTES', '1000');
+      const app = await buildApp();
+      const res = await post(app, { bundle: { filler: 'x'.repeat(100_000) } });
+      vi.unstubAllEnvs();
+      vi.stubEnv('BUNDLE_ALLOW_UNVERIFIED', '1');
+      expect(res.statusCode).toBe(413);
+      await app.close();
+    });
+  });
+
   it('is admin only', async () => {
     const app = await buildApp('ENGINEER');
     const res = await app.inject({

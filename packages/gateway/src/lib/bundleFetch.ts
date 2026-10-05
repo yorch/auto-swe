@@ -1,4 +1,5 @@
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { resolveMaxBundleBytes } from './bundleLimits.js';
 
 /**
  * Safe fetch for install-from-URL (P4/WS3). The endpoint is admin-only, but a
@@ -17,12 +18,6 @@ import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
  * ADMIN-gated route; tighten if this is ever exposed more broadly.
  */
 const MAX_REDIRECTS = 5;
-
-/** Bundle install-from-URL size cap. Env-overridable (deploy-time knob). */
-function resolveMaxBundleBytes(): number {
-  const fromEnv = Number(process.env.BUNDLE_MAX_BYTES);
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 5_000_000;
-}
 
 /** Throws if the URL isn't http(s) or targets a private/loopback/link-local/
  *  metadata host. */
