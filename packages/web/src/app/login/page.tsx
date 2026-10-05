@@ -13,6 +13,7 @@ import { isOkResponse, probeGateway } from '@/hooks/useGatewayStatus';
 import { api } from '@/lib/api';
 import { API_BASE, APP_VERSION, IS_DEV } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
+import { resolveLoginTab } from '@/lib/loginTab';
 import { signedOAuthQuery } from '@/lib/oauthQuery';
 import { safeRedirectPath } from '@/lib/safeRedirect';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
@@ -333,10 +334,7 @@ function LoginPageInner() {
   // Magic link is offered only when the gateway reports it enabled. A pending
   // MCP sign-in cannot continue through a link, so it defaults to Password.
   const magicAvailable = providers.magicLink;
-  const tab: Tab =
-    magicAvailable && (pickedTab ?? (oauthQuery ? 'password' : 'magic')) === 'magic'
-      ? 'magic'
-      : 'password';
+  const tab: Tab = resolveLoginTab(pickedTab, magicAvailable, !!oauthQuery);
 
   // Pending-approval short-circuit: the user authenticated successfully via
   // better-auth but their User row is isActive=false. Show an explanatory
