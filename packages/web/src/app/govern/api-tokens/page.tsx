@@ -207,6 +207,11 @@ export default function GovernAccessTokensPage() {
               {rows.length === 0 && (
                 <TableStatusRow colSpan={8}>
                   <EmptyState
+                    hint={
+                      all.length === 0
+                        ? 'People create personal tokens under Settings → API tokens.'
+                        : undefined
+                    }
                     title={
                       all.length === 0 ? 'No tokens issued yet' : 'No tokens match these filters.'
                     }

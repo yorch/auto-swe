@@ -31,7 +31,7 @@ interface Props {
 
 export function WorkflowsOverTimeChart({ data, title }: Props) {
   if (data.every((d) => d.completed === 0 && d.failed === 0 && d.active === 0)) {
-    return <EmptyChart label="no workflow data" />;
+    return <EmptyChart hint="Start work to see trends." label="No runs yet." />;
   }
 
   const sum = (k: 'completed' | 'failed' | 'active') => data.reduce((n, d) => n + d[k], 0);

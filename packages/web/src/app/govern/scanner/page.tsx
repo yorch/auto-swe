@@ -306,6 +306,11 @@ function PatternRow({
         >
           {pattern.label}
         </button>
+        {pattern.isBuiltIn && (
+          <Badge className="ml-1.5" tone="muted" uppercase variant="text">
+            built-in
+          </Badge>
+        )}
         {pattern.origin && (
           <Badge className="ml-1.5" tone="neutral">
             {pattern.origin}
@@ -317,19 +322,11 @@ function PatternRow({
           /{pattern.pattern}/{pattern.flags}
         </code>
       </Td>
-      <Td className="py-2 pr-4" label="Built-in">
-        {pattern.isBuiltIn && (
-          <Badge tone="muted" uppercase variant="text">
-            built-in
-          </Badge>
-        )}
-      </Td>
       <Td className="py-2 pr-4" label="Active">
         <ToggleSwitch
           ariaLabel={`Active: ${pattern.label}`}
           checked={pattern.isActive}
           disabled={update.isPending}
-          label={`${pattern.isActive ? 'Disable' : 'Enable'} ${pattern.label}`}
           onChange={requestToggle}
           title={`${pattern.isActive ? 'Disable' : 'Enable'} ${pattern.label}`}
         />
@@ -391,7 +388,6 @@ function PatternSection({
           <THead>
             <Th variant="compact">Label</Th>
             <Th variant="compact">Pattern / Flags</Th>
-            <Th variant="compact">Built-in</Th>
             <Th variant="compact">Active</Th>
             <Th variant="compact" />
           </THead>

@@ -78,7 +78,7 @@ function SummaryGroups({
                 noun: windowDays ? `vs previous ${windowDays} days` : 'vs the window before',
               })}
               hint={hint}
-              label={`${title} events`}
+              label="Total"
               tone={now > 0 ? tone : 'default'}
               value={now}
             />

@@ -17,6 +17,7 @@ import {
   useAdminSessions,
 } from '@/hooks/useAdmin';
 import { navLabel } from '@/lib/navigation';
+import { describeUserAgent } from '@/lib/userAgent';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 export default function GovernSessionsPage() {
@@ -112,7 +113,7 @@ export default function GovernSessionsPage() {
               <Th>Last active</Th>
               <Th>Expires</Th>
               <Th>Device</Th>
-              <Th>Session</Th>
+              <Th>Session ID</Th>
               <Th align="right">Actions</Th>
             </THead>
             <tbody>
@@ -138,15 +139,15 @@ export default function GovernSessionsPage() {
                   <Td className="px-4 py-3 font-mono text-[11px] text-paper-400" label="Expires">
                     {formatRelativeTime(s.expiresAt)}
                   </Td>
-                  <Td className="px-4 py-3 font-mono text-[10px] text-paper-500" label="Device">
-                    {s.ipAddress ?? '—'}
-                    {s.userAgent && (
-                      <span className="block max-w-[220px] truncate text-paper-600">
-                        {s.userAgent}
-                      </span>
-                    )}
+                  <Td className="px-4 py-3 text-xs text-paper-400" label="Device">
+                    <span title={s.userAgent ?? undefined}>
+                      {s.userAgent ? describeUserAgent(s.userAgent) : 'Unknown device'}
+                    </span>
+                    <span className="block font-mono text-[11px] text-paper-500">
+                      {s.ipAddress ?? '—'}
+                    </span>
                   </Td>
-                  <Td className="px-4 py-3 font-mono text-[10px] text-paper-500" label="Session">
+                  <Td className="px-4 py-3 font-mono text-[11px] text-paper-500" label="Session ID">
                     {s.token}
                   </Td>
                   <Td align="right" className="px-4 py-3">

@@ -32,7 +32,7 @@ export function Stat({
   className?: string;
 }) {
   return (
-    <div className={cn('border-l border-ink-400 pl-5 py-1', className)}>
+    <div className={cn('min-w-0 break-words border-l border-ink-400 pl-5 py-1', className)}>
       <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-paper-400">{label}</div>
       <div className="mt-3 flex items-baseline gap-1.5">
         <span

@@ -137,7 +137,7 @@ export default function GovernLessonsPage() {
       />
 
       {/* Summary stats */}
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3">
         <Stat label="Active" value={totalActive} />
         <Stat label="Consolidated" tone="muted" value={totalConsolidated} />
         <Stat

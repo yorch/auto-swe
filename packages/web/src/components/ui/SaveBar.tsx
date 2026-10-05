@@ -29,7 +29,7 @@ export function SaveBar({
   return (
     <div
       className={cn(
-        'sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-ink-800/95 px-4 py-3 backdrop-blur',
+        'sticky bottom-0 z-10 flex flex-nowrap items-center justify-between gap-3 rounded-lg border bg-ink-800/95 px-4 py-3 backdrop-blur',
         dirty ? 'border-amber-400/50' : 'border-ink-400'
       )}
     >
@@ -43,10 +43,10 @@ export function SaveBar({
         ) : saved ? (
           <span className="text-moss-400">✓ {savedMessage}</span>
         ) : (
-          <span className="text-paper-500">No unsaved changes</span>
+          <span className="hidden text-paper-500 sm:inline">No unsaved changes</span>
         )}
       </p>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="ml-auto flex items-center gap-2">
         {children}
         <Button disabled={!dirty || pending} onClick={onDiscard} type="button" variant="ghost">
           Discard

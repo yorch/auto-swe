@@ -22,9 +22,10 @@ describe('ChartFrame', () => {
 });
 
 describe('EmptyChart', () => {
-  it('is as tall as a drawn chart', () => {
-    const { container } = render(<EmptyChart />);
-    expect((container.firstChild as HTMLElement).style.height).toBe('280px');
+  it('is a compact sentence, not a chart-sized void', () => {
+    render(<EmptyChart hint="Start work to see trends." label="No runs yet." />);
+    expect(screen.getByText('No runs yet.')).toBeTruthy();
+    expect(screen.getByText('Start work to see trends.')).toBeTruthy();
   });
 });
 

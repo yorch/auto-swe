@@ -93,7 +93,7 @@ export function ScorerBreakdownChart({
 }) {
   const series = collapseSeries(allSeries);
   if (series.every((s) => s.daily.every((d) => d.n === 0))) {
-    return <EmptyChart label="no signals in this window" />;
+    return <EmptyChart label="No signals in this window." />;
   }
 
   const rows = pivotSeries(series);

@@ -166,7 +166,7 @@ export default function GovernSettingsPage() {
   return (
     <div className="space-y-8">
       <PageHeader
-        subtitle="Operator policy that used to be compiled into the worker. Values shown are what this scope resolves to; each row says where its value came from."
+        subtitle="Operator policy for agents, channels and workflows. Values shown are what this scope resolves to; each row says where its value came from."
         title={navLabel('/govern/platform-settings')}
       />
 

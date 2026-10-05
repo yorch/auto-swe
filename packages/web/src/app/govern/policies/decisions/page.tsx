@@ -119,7 +119,7 @@ export default function AutonomyDecisionsPage() {
           onChange={(e) => setFilter('runId', e.target.value.trim())}
           value={filters.runId}
         />
-        <div className="flex items-end">
+        <div className="flex items-start sm:pt-6">
           <Button
             disabled={!anyFilter}
             onClick={() => navigate({ ...EMPTY, offset: 0 })}

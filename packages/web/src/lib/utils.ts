@@ -85,6 +85,11 @@ export function formatRelativeTime(date: string | Date): string {
 // is fixed and only its presentation follows the locale.
 const usd = lazy(() => new Intl.NumberFormat(undefined, { currency: 'USD', style: 'currency' }));
 
+/** "1 member", "2 members" — regular plurals only. */
+export function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
 export function formatCost(usdAmount: number | null): string {
   if (usdAmount === null || usdAmount === 0) {
     return '—';
@@ -93,6 +98,12 @@ export function formatCost(usdAmount: number | null): string {
     return `<${usd().format(0.01)}`;
   }
   return usd().format(usdAmount);
+}
+
+/** A computed total that is known: zero is a real `$0.00` here, where `formatCost`
+ *  reads zero as "no cost recorded". */
+export function formatTotalCost(usdAmount: number): string {
+  return usdAmount === 0 ? usd().format(0) : formatCost(usdAmount);
 }
 
 /** An exact amount stored in USD cents — budget caps and spend, where `$0.00`

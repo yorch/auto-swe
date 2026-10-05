@@ -50,7 +50,7 @@ function truncateLabel(label: unknown): string {
  */
 export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
   if (datasets.length === 0) {
-    return <EmptyChart label="no datasets" />;
+    return <EmptyChart label="No eval datasets yet." />;
   }
   const max = Math.max(maxStaleRate, ...datasets.map((d) => d.staleRate), 0.1);
 

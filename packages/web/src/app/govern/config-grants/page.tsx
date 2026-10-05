@@ -257,10 +257,16 @@ export default function GovernConfigGrantsPage() {
       </section>
 
       <section className="fade-up stagger-2">
-        <SectionHeader hint="quick picks" number="02" title="Valid patterns" />
+        <SectionHeader hint="Click to fill Key pattern" number="02" title="Valid patterns" />
         <div className="flex flex-wrap gap-2">
           {examplePatterns.map((p) => (
-            <Button key={p} onClick={() => setPattern(p)} size="sm" variant="ghost">
+            <Button
+              className="font-mono"
+              key={p}
+              onClick={() => setPattern(p)}
+              size="sm"
+              variant="secondary"
+            >
               {p}
             </Button>
           ))}
