@@ -2684,7 +2684,7 @@
       "WorkflowShellAudit"
     ]
   },
-  "reviewedCommit": "d563bb6a8fd30cd650e92b4bfd5f52d3a220b087",
+  "reviewedCommit": "89221db216a193cbb7e8e549a3be7cde030160cf",
   "sourceHashes": {
     "docker-compose.app.yml": "96d57e466289e17048648c7e852e21c0ac24085526fae63c21e8c0ffe8b22cf6",
     "packages/cli/src/commands/skills.ts": "bdfa28470df98565ec676d471ffc23a7e7719aea79b6be638d0e2aedee7acbda",
