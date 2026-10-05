@@ -6,7 +6,7 @@ import { type ReactNode, useId, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { SecurityEvent, SecurityEventType } from '@/hooks/useAdmin';
-import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 
 // ── Labels ───────────────────────────────────────────────────────────────────
 
@@ -216,7 +216,10 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
         <button
           aria-controls={detailId}
           aria-expanded={expanded}
-          className="w-full text-left rounded hover:bg-ink-800 px-2 py-1.5 transition-colors"
+          className={cn(
+            'w-full text-left rounded hover:bg-ink-800 px-2 py-1.5 transition-colors',
+            FOCUS_RING
+          )}
           onClick={() => setExpanded((e) => !e)}
           type="button"
         >

@@ -23,11 +23,11 @@ import {
   useAdminPruneShellAudit,
   useAuditLog,
 } from '@/hooks/useAdmin';
-import { useUrlFilters } from '@/hooks/useUrlFilters';
+import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { entityHref, entityTypeLabel } from '@/lib/auditEntity';
 import { type DateRange, dateRangePatch, dayRange, parseDateRange } from '@/lib/dateRange';
 import { errMsg } from '@/lib/errors';
-import { formatDate } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate } from '@/lib/utils';
 
 const LIMIT = 50;
 
@@ -65,8 +65,7 @@ function AuditWorkspace() {
   const search = (params.get('search') ?? '').slice(0, 100);
   const [searchDraft, setSearchDraft] = useState(search);
   useEffect(() => setSearchDraft(search), [search]);
-  const rawOffset = Number(params.get('offset') ?? 0);
-  const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+  const offset = parseOffset(params.get('offset'));
   const rawAction = params.get('action');
   const filters: AuditLogFilters = {
     action: ACTION_OPTIONS.some((o) => o.value === rawAction)
@@ -355,7 +354,10 @@ function AuditActor({ row, onFilter }: { row: AuditLogRow; onFilter: (id: string
   const actorId = row.actorId;
   return (
     <button
-      className="font-mono text-[11px] text-paper-300 hover:text-ember-400 hover:underline"
+      className={cn(
+        'font-mono text-[11px] text-paper-300 hover:text-ember-400 hover:underline',
+        FOCUS_RING
+      )}
       onClick={() => onFilter(actorId)}
       title={`${actorId} — show only this actor`}
       type="button"
@@ -490,7 +492,7 @@ function AuditRow({
         <Td className="px-4 py-3 font-mono text-[10px] text-paper-400" label="Change">
           <button
             aria-expanded={open}
-            className="w-full text-left hover:text-paper-200"
+            className={cn('w-full text-left hover:text-paper-200', FOCUS_RING)}
             onClick={() => setOpen((v) => !v)}
             type="button"
           >
@@ -503,8 +505,9 @@ function AuditRow({
           </button>
         </Td>
       </TRow>
+      {/* Below sm the stacked table makes every row a card; pull this one up against its row. */}
       {open && (
-        <tr>
+        <tr className="max-sm:-mt-3! max-sm:rounded-t-none! max-sm:border-t-0!">
           <td className="border-t border-ink-500 bg-ink-900/40 p-0" colSpan={5}>
             <AuditExpanded row={row} />
           </td>

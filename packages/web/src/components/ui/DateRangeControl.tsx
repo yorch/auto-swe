@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { type DateRange, isIsoDay, utcDay } from '@/lib/dateRange';
-import { cn } from '@/lib/utils';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import { SegmentedControl } from './SegmentedControl';
 
 /**
@@ -95,7 +95,10 @@ export function DateRangeControl({
             value={to}
           />
           <button
-            className="h-8 rounded-md border border-ink-400 px-3 font-mono text-[11px] uppercase tracking-[0.14em] text-paper-200 hover:bg-ink-600/50 disabled:opacity-40"
+            className={cn(
+              'h-8 rounded-md border border-ink-400 px-3 font-mono text-[11px] uppercase tracking-[0.14em] text-paper-200 hover:bg-ink-600/50 disabled:opacity-40',
+              FOCUS_RING
+            )}
             disabled={invalid}
             onClick={() => onChange({ from, kind: 'custom', to })}
             type="button"

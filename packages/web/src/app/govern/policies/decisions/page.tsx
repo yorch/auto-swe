@@ -13,7 +13,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAutonomyDecisions, useAutonomyPolicies } from '@/hooks/useAutonomyPolicies';
-import { useUrlFilters } from '@/hooks/useUrlFilters';
+import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { useUsers } from '@/hooks/useUsers';
 import { eventLabel, KNOWN_AUTONOMY_EVENTS, riskClassLabel } from '@/lib/autonomyEvents';
 import { formatDate } from '@/lib/utils';
@@ -42,7 +42,7 @@ export default function AutonomyDecisionsPage() {
     riskClass: params.get('riskClass') ?? '',
     runId: params.get('runId') ?? '',
   };
-  const offset = Math.max(0, Number(params.get('offset')) || 0);
+  const offset = parseOffset(params.get('offset'));
 
   const { data, isLoading, isError, isFetching, refetch, error } = useAutonomyDecisions({
     ...filters,
