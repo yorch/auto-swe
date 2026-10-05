@@ -23,6 +23,7 @@ import {
   describeLaunchError,
   type IdempotencyState,
   idempotencyFor,
+  type LaunchErrorView,
   validateAgentRunForm,
 } from '@/lib/agentRun';
 import { connectionLabel } from '@/lib/connectionDisplay';
@@ -39,6 +40,25 @@ const EMPTY: AgentRunFormValues = {
   prompt: '',
   repoId: '',
 };
+
+/**
+ * A refused launch. One component for both places it shows (the details form and the
+ * review screen, which is where the launch actually happens), so the next step the
+ * error names, and the link to a run that already started, is never dropped.
+ */
+function LaunchErrorAlert({ view }: { view: LaunchErrorView }) {
+  return (
+    <Alert title={view.title}>
+      <div>{view.message}</div>
+      {view.hint && <div className="mt-1 opacity-80">{view.hint}</div>}
+      {view.duplicate && (
+        <Link className="mt-1 inline-block underline" href="/runs">
+          View runs
+        </Link>
+      )}
+    </Alert>
+  );
+}
 
 export function AgentRunForm({
   reviewBeforeLaunch = false,
@@ -211,7 +231,7 @@ export function AgentRunForm({
               : 'A new branch and draft pull request may be published after checks pass.'}{' '}
           Nothing is merged automatically.
         </Alert>
-        {failure && <Alert title={failure.title}>{failure.message}</Alert>}
+        {failure && <LaunchErrorAlert view={failure} />}
         <div className="flex justify-end gap-3">
           <Button disabled={launch.isPending} onClick={() => setReviewing(false)} variant="ghost">
             Back to details
@@ -236,17 +256,7 @@ export function AgentRunForm({
           {repoId ? ' for this repository’s team or the platform' : ''}.
         </Alert>
       )}
-      {launchError && (
-        <Alert title={launchError.title}>
-          <div>{launchError.message}</div>
-          {launchError.hint && <div className="mt-1 opacity-80">{launchError.hint}</div>}
-          {launchError.duplicate && (
-            <Link className="mt-1 inline-block underline" href="/runs">
-              View runs
-            </Link>
-          )}
-        </Alert>
-      )}
+      {launchError && <LaunchErrorAlert view={launchError} />}
 
       <Combobox
         emptyMessage="No repositories match"
