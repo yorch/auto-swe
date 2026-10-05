@@ -1,36 +1,40 @@
 'use client';
 
-import Link from 'next/link';
-import { use } from 'react';
+import { useRouter } from 'next/navigation';
+import { use, useEffect } from 'react';
 import { ButtonLink } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { KeyValueRow } from '@/components/workflow/KeyValueRow';
-import { useRunsForWorkRequest, useWorkflow } from '@/hooks/useRuns';
+import { useWorkflow } from '@/hooks/useRuns';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
-import { githubWebBase } from '@/lib/githubHost';
+import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
-import { formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
+import { formatCost } from '@/lib/utils';
 
+/**
+ * A workflow's detail now lives in the request panel. This address is kept for
+ * old links: it resolves the workflow's request and forwards to it.
+ */
 export default function WorkflowDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const { data: workflow, error, isError, isLoading } = useWorkflow(id ?? '');
+  const router = useRouter();
+  const { data: workflow, error, isError, isFetching, isLoading, refetch } = useWorkflow(id ?? '');
+  const requestId = workflow?.workRequest?.id;
   const temporalUrl = useTemporalWorkflowUrl(workflow?.temporalWorkflowId ?? '');
-  const {
-    data: runs,
-    error: runsError,
-    isError: isRunsError,
-    isLoading: isRunsLoading,
-  } = useRunsForWorkRequest(workflow?.workRequest?.id);
+
+  useEffect(() => {
+    if (requestId) {
+      router.replace(requestHref(requestId));
+    }
+  }, [requestId, router]);
 
   const notFound = (
     <EmptyState
-      action={<ButtonLink href="/workflows">Back to request queue</ButtonLink>}
-      title="Workflow not found"
+      action={<ButtonLink href="/workflows">Back to requests</ButtonLink>}
+      title="Request not found"
     />
   );
 
@@ -39,150 +43,81 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   }
   // Before the not-found branch, so a 403 or 500 is not reported as "not found".
   if (isLoading || isError) {
-    return <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="workflow" />;
+    return (
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="request"
+        onRetry={() => void refetch()}
+      />
+    );
+  }
+  if (requestId) {
+    return null;
   }
   if (!workflow) {
     return notFound;
   }
-
-  // githubUrl is the host base (null for github.com, a GHE web base otherwise).
+  // The workflow exists but its work request was removed: say what is left rather
+  // than reporting a record that exists as missing.
   const repo = workflow.repository;
-  const prHref = (prNumber: number | null) =>
-    repo && prNumber != null
-      ? `${githubWebBase(repo.githubUrl, repo.organizationName, repo.repoName)}/${repo.organizationName}/${repo.repoName}/pull/${prNumber}`
+  const pr = workflow.pullRequests.find((candidate) => candidate.prNumber !== null);
+  const prUrl =
+    repo && pr
+      ? `${(repo.githubUrl ?? 'https://github.com').replace(/\/$/, '')}/${repo.organizationName}/${repo.repoName}/pull/${pr.prNumber}`
       : null;
-
   return (
-    <div className="space-y-8">
-      <Link className="label-mono hover:text-paper-200" href="/workflows">
-        ← Request queue
-      </Link>
-      <PageHeader
-        actions={<StatusBadge status={workflow.currentStatus} />}
-        chapter="§ Requests"
-        subtitle="Branch, pull requests, cost and runs for one workflow."
-        title={workflow.repository?.repoName ?? 'Workflow'}
-      />
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Details</CardTitle>
-          </CardHeader>
-          <dl className="space-y-2">
-            <KeyValueRow label="Workflow ID">
-              {temporalUrl ? (
-                <a
-                  className="text-ember-400 hover:underline"
-                  href={temporalUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                  title="Open in Temporal"
-                >
-                  {workflow.temporalWorkflowId}
-                </a>
-              ) : (
-                workflow.temporalWorkflowId
-              )}
-            </KeyValueRow>
-            <KeyValueRow label="Branch">{workflow.assignedBranch}</KeyValueRow>
-            <KeyValueRow label="Status">
-              <StatusBadge status={workflow.currentStatus} />
-            </KeyValueRow>
-            <KeyValueRow label="Updated">{formatDate(workflow.updatedAt)}</KeyValueRow>
-          </dl>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Pull Requests</CardTitle>
-          </CardHeader>
-          {(workflow.pullRequests ?? []).length === 0 ? (
-            <EmptyState className="py-4 text-left" title="No PRs yet" />
-          ) : (
-            <div className="space-y-2">
-              {workflow.pullRequests.map((pr) => {
-                const href = prHref(pr.prNumber);
-                return (
-                  <div className="flex items-center justify-between text-sm" key={pr.id}>
-                    {href ? (
-                      <a
-                        className="font-medium text-ember-400 hover:underline"
-                        href={href}
-                        rel="noopener noreferrer"
-                        target="_blank"
-                      >
-                        PR #{pr.prNumber} ↗
-                      </a>
-                    ) : (
-                      <span className="font-medium">PR #{pr.prNumber}</span>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={pr.ciStatus ?? 'PENDING'} />
-                      <span className="text-xs text-paper-400">{pr.status}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </Card>
-      </div>
-
+    <div className="space-y-4">
+      <ButtonLink href="/workflows">Back to requests</ButtonLink>
       <Card>
-        <CardHeader>
-          <CardTitle>Cost &amp; Token Usage</CardTitle>
-        </CardHeader>
-        <dl className="space-y-2">
-          <KeyValueRow label="Budget Tier">{workflow.budgetTier}</KeyValueRow>
-          <KeyValueRow label="Cost Accrued">{formatCost(workflow.costUsdAccrued)}</KeyValueRow>
-          <KeyValueRow label="Input Tokens">{formatTokens(workflow.tokensInputUsed)}</KeyValueRow>
-          <KeyValueRow label="Output Tokens">{formatTokens(workflow.tokensOutputUsed)}</KeyValueRow>
+        <h1 className="text-lg font-semibold text-paper-100">
+          {repo ? `${repo.organizationName}/${repo.repoName}` : 'Workflow'}
+        </h1>
+        <p className="mt-1 text-sm text-paper-400">
+          The request this workflow came from is no longer available, so only its own details are
+          shown.
+        </p>
+        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="label-mono">Status</dt>
+            <dd>
+              <StatusBadge status={workflow.currentStatus} />
+            </dd>
+          </div>
+          <div>
+            <dt className="label-mono">Branch</dt>
+            <dd className="break-all text-paper-200">{workflow.assignedBranch}</dd>
+          </div>
+          <div>
+            <dt className="label-mono">Cost so far</dt>
+            <dd className="text-paper-200">{formatCost(workflow.costUsdAccrued)}</dd>
+          </div>
         </dl>
+        <div className="mt-4 flex flex-wrap gap-4 text-sm">
+          {prUrl && (
+            <a
+              className="text-ember-400 hover:underline"
+              href={prUrl}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              View pull request ↗
+            </a>
+          )}
+          {temporalUrl && (
+            <a
+              className="text-ember-400 hover:underline"
+              href={temporalUrl}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              Open in Temporal ↗
+            </a>
+          )}
+        </div>
       </Card>
-
-      {workflow.workRequest && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Work Request</CardTitle>
-          </CardHeader>
-          <p className="text-sm">
-            {workflow.workRequest.description || workflow.workRequest.externalTicketId}
-          </p>
-        </Card>
-      )}
-
-      {/* A failed runs query used to hide the card as if there were no runs. */}
-      {(isRunsError || (runs ?? []).length > 0) && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Runs</CardTitle>
-          </CardHeader>
-          <QueryBoundary
-            compact
-            error={runsError}
-            isError={isRunsError}
-            isLoading={isRunsLoading}
-            label="runs"
-          >
-            <div className="space-y-2">
-              {(runs ?? []).map((run) => (
-                <div className="flex items-center justify-between text-sm" key={run.id}>
-                  <Link className="text-ember-400 hover:underline" href={`/runs/${run.id}`}>
-                    Run {run.id.slice(0, 8)} (v{run.templateVersion})
-                  </Link>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={run.status} />
-                    <span className="text-xs text-paper-400">
-                      {formatRelativeTime(run.startedAt)}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </QueryBoundary>
-        </Card>
-      )}
     </div>
   );
 }

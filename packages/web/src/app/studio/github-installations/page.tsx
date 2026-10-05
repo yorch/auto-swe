@@ -156,7 +156,14 @@ export default function StudioGithubInstallationsPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<GithubInstallationRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GithubInstallationRow | null>(null);
-  const { data: installations, isLoading, isError, error: loadError } = useGithubInstallations();
+  const {
+    data: installations,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    error: loadError,
+  } = useGithubInstallations();
   const remove = useDeleteGithubInstallation();
 
   return (
@@ -182,8 +189,10 @@ export default function StudioGithubInstallationsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="GitHub installations"
+        onRetry={() => void refetch()}
       >
         <Card>
           <CardHeader>

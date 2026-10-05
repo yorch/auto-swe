@@ -45,7 +45,14 @@ const PROVIDER_HINTS: Record<
 };
 
 export function IssueTrackerTab() {
-  const { data: resp, error: loadError, isError, isLoading } = useIssueTrackerConfig();
+  const {
+    data: resp,
+    error: loadError,
+    isError,
+    isFetching,
+    refetch,
+    isLoading,
+  } = useIssueTrackerConfig();
   const data = resp?.data;
   const sources = resp?.sources ?? {};
   const update = useUpdateIssueTrackerConfig();
@@ -123,8 +130,10 @@ export function IssueTrackerTab() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="issue tracker config"
+        onRetry={() => void refetch()}
       />
     );
   }

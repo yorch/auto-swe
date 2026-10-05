@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useRerunAgentRun } from '@/hooks/useAgentRuns';
 import { useApprovals } from '@/hooks/useApprovals';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useRequestAttempts, useRequests } from '@/hooks/useRequests';
 import { useRetriedRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useRuns';
 import { agentRunDeliver, describeLaunchError, rerunConsequence } from '@/lib/agentRun';
@@ -81,14 +82,22 @@ function RequestDetail({ requestId }: { requestId: string }) {
   const isCrossRepo = summary.data?.data[0]?.isCrossRepo === true;
   const query = useWorkflowRun(runId, false);
   const run = query.data;
+  const requestTitle =
+    run?.workRequest?.title ||
+    run?.workRequest?.description.split('\n')[0].slice(0, 80) ||
+    run?.workRequest?.externalTicketId ||
+    run?.templateName;
+  useDocumentTitle(requestTitle ? `Request · ${requestTitle}` : null);
   const total = attempts.data?.meta.total ?? 0;
   return (
     <div className="space-y-6">
       <QueryBoundary
         error={latest.error}
         isError={latest.isError}
+        isFetching={latest.isFetching}
         isLoading={latest.isLoading}
         label="request attempts"
+        onRetry={() => void latest.refetch()}
       >
         {!latestId && (
           <Alert variant="info">
@@ -100,8 +109,10 @@ function RequestDetail({ requestId }: { requestId: string }) {
           <QueryBoundary
             error={query.error}
             isError={query.isError}
+            isFetching={query.isFetching}
             isLoading={query.isLoading}
             label="request details"
+            onRetry={() => void query.refetch()}
           >
             {run && (
               <>
@@ -124,7 +135,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
                     </span>
                   </div>
                   <ButtonLink href={`/runs/${run.id}`} size="sm">
-                    Open full page ↗
+                    Open full diagnostics ↗
                   </ButtonLink>
                 </div>
                 {run.id === (summary.data?.data[0]?.id ?? latestId) &&
@@ -166,8 +177,10 @@ function RequestDetail({ requestId }: { requestId: string }) {
           <QueryBoundary
             error={attempts.error}
             isError={attempts.isError}
+            isFetching={attempts.isFetching}
             isLoading={attempts.isLoading}
             label="attempt history"
+            onRetry={() => void attempts.refetch()}
           >
             <ul className="space-y-2">
               {attempts.data?.data.map((attempt) => (
@@ -270,8 +283,10 @@ function AttemptContent({
       <QueryBoundary
         error={approvalQuery.error}
         isError={approvalQuery.isError}
+        isFetching={approvalQuery.isFetching}
         isLoading={approvalQuery.isLoading}
         label="pending responses"
+        onRetry={() => void approvalQuery.refetch()}
       />
       {pending.length > 0 && (
         <section className="space-y-3">
@@ -424,8 +439,10 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
           <QueryBoundary
             error={traces.error}
             isError={traces.isError}
+            isFetching={traces.isFetching}
             isLoading={traces.isLoading}
             label="traces"
+            onRetry={() => void traces.refetch()}
           >
             <p className="text-sm text-paper-400">
               {traces.data?.traces.length ?? 0} events. Open the full page for complete trace

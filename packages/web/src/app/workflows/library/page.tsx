@@ -1,6 +1,5 @@
 'use client';
 
-import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -20,7 +19,6 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
-import { RunTemplateModal } from '@/components/workflow/RunTemplateModal';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { useHasRole } from '@/hooks/useHasRole';
@@ -33,6 +31,7 @@ import {
   useWorkflowTemplates,
 } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { requestHref } from '@/lib/requestDisplay';
 import { requiresRoleTitle } from '@/lib/roles';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -44,7 +43,7 @@ const SPEC_SCHEMA_VERSION = 1;
 const BLANK_SPEC: WorkflowSpec = {
   description: 'Replace this step with your first action.',
   entry: 'start',
-  name: 'new-template',
+  name: 'new-workflow',
   nodes: {
     done: { status: 'SUCCESS', type: 'terminate' },
     start: { next: 'done', step: 'noop', type: 'step' },
@@ -96,7 +95,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
 
   return (
     <Modal
-      eyebrow="§ Templates"
+      eyebrow="§ Workflows"
       onClose={() => {
         onClose();
         setName('');
@@ -104,7 +103,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
         setError(null);
       }}
       open={open}
-      title="New template"
+      title="New workflow"
     >
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
@@ -118,7 +117,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
           hint="Optional"
           label="Description"
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="What does this template do?"
+          placeholder="What does this workflow do?"
           rows={3}
           value={description}
         />
@@ -132,7 +131,7 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
           }}
           onSubmit={handleCreate}
           pendingLabel="Creating…"
-          submitLabel="Create blank template"
+          submitLabel="Create blank workflow"
         />
       </div>
     </Modal>
@@ -254,7 +253,7 @@ function NewTemplateModal({
 
   return (
     <Modal
-      eyebrow="§ Templates"
+      eyebrow="§ Workflows"
       onClose={() => {
         onClose();
         reset();
@@ -366,7 +365,7 @@ function NewTemplateModal({
             size="sm"
             variant="ghost"
           >
-            Or start from a blank template
+            Or start from a blank workflow
           </Button>
         </div>
       </div>
@@ -381,6 +380,8 @@ export default function TemplatesPage() {
     data: templates,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     error: loadError,
   } = useWorkflowTemplates(selectedTeamId);
   const createTemplate = useCreateWorkflowTemplate();
@@ -398,14 +399,13 @@ export default function TemplatesPage() {
   const manageTitle = canManage
     ? undefined
     : isLead
-      ? 'Select a team you lead to author templates for it'
+      ? 'Select a team you lead to author workflows for it'
       : requiresRoleTitle('LEAD');
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
-  const [runTarget, setRunTarget] = useState<WorkflowTemplateSummary | null>(null);
 
   const handleFork = async (starter: StarterTemplate) => {
     setForkingId(starter.id);
@@ -444,10 +444,6 @@ export default function TemplatesPage() {
 
       <ArchiveConfirmModal onClose={() => setArchiveTarget(null)} target={archiveTarget} />
 
-      {runTarget && (
-        <RunTemplateModal onClose={() => setRunTarget(null)} open template={runTarget} />
-      )}
-
       <PageHeader
         actions={
           <span title={manageTitle}>
@@ -463,58 +459,28 @@ export default function TemplatesPage() {
           </span>
         }
         chapter="§ Workflows"
-        subtitle="Agentic workflow library. Pick a template, run it with your inputs, watch it execute."
+        subtitle="Your reusable workflows. Pick one, run it with your inputs, and follow the request."
         title="Workflow library"
       />
 
-      {/* Starter gallery */}
-      <section>
-        <SectionHeader hint="fork to edit" number="01" title="Start from a template" />
-        {forkError && <Alert className="mb-4">{forkError}</Alert>}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {STARTER_TEMPLATES.map((s) => {
-            const isForking = forkingId === s.id;
-            return (
-              <Card
-                className={cn(
-                  'group flex flex-col p-5 hover:border-ember-400',
-                  'border-l-[3px]',
-                  TONE_CLASS[s.tone]
-                )}
-                key={s.id}
-              >
-                <div className="label-mono mb-2">{s.tagline}</div>
-                <h3 className="mb-2 font-display text-xl font-medium text-paper-100">{s.name}</h3>
-                <p className="mb-5 flex-1 text-sm leading-relaxed text-paper-400">
-                  {s.description}
-                </p>
-                <span className="self-start" title={manageTitle}>
-                  <Button
-                    disabled={!canManage || isForking || createTemplate.isPending}
-                    onClick={() => handleFork(s)}
-                    size="sm"
-                    variant="primary"
-                  >
-                    {isForking ? 'Forking…' : 'Fork starter'}
-                  </Button>
-                </span>
-              </Card>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Existing templates table */}
+      {/* Workflows table */}
       <section>
         <SectionHeader
           hint={`${(templates ?? []).length} total`}
-          number="02"
-          title="Existing templates"
+          number="01"
+          title="Your workflows"
         />
-        <QueryBoundary error={loadError} isError={isError} isLoading={isLoading} label="templates">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="workflows"
+          onRetry={() => void refetch()}
+        >
           {
             <Card className="overflow-hidden p-0" variant="inset">
-              <Table>
+              <Table stacked>
                 <THead>
                   <Th>Name</Th>
                   <Th>Team</Th>
@@ -527,7 +493,7 @@ export default function TemplatesPage() {
                 <tbody>
                   {(templates ?? []).map((t) => (
                     <TRow className="hover:bg-ink-700/40" hover key={t.id}>
-                      <Td className="px-4 py-3">
+                      <Td className="px-4 py-3" primary>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Link
                             className="font-medium text-paper-100 hover:text-ember-400"
@@ -551,20 +517,27 @@ export default function TemplatesPage() {
                           <div className="text-xs text-paper-500">{t.description}</div>
                         )}
                       </Td>
-                      <Td className="px-4 py-3 text-paper-400">
+                      <Td className="px-4 py-3 text-paper-400" label="Team">
                         {t.team?.name ?? <em className="text-paper-500">global</em>}
                       </Td>
-                      <Td className="px-4 py-3">
+                      <Td className="px-4 py-3" label="Status">
                         <StatusBadge status={t.status} />
                       </Td>
-                      <Td className="px-4 py-3 font-mono text-xs text-paper-300">
+                      <Td
+                        className="px-4 py-3 font-mono text-xs text-paper-300"
+                        label="Active version"
+                      >
                         {t.activeVersion !== null ? `v${t.activeVersion}` : '—'}
                       </Td>
-                      <Td className="px-4 py-3">
+                      <Td className="px-4 py-3" label="Last run">
                         {t.lastRun ? (
                           <Link
                             className="inline-flex items-center gap-2"
-                            href={`/runs/${t.lastRun.id}`}
+                            href={
+                              t.lastRun.workRequestId
+                                ? requestHref(t.lastRun.workRequestId)
+                                : `/runs/${t.lastRun.id}`
+                            }
                           >
                             <StatusBadge status={t.lastRun.status} />
                             <span className="font-mono text-[11px] text-paper-500">
@@ -577,27 +550,30 @@ export default function TemplatesPage() {
                           </span>
                         )}
                       </Td>
-                      <Td className="px-4 py-3 font-mono text-[11px] text-paper-500">
+                      <Td
+                        className="px-4 py-3 font-mono text-[11px] text-paper-500"
+                        label="Updated"
+                      >
                         {formatRelativeTime(t.updatedAt)}
                       </Td>
                       <Td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">
                           {t.status === 'ARCHIVED' ? null : t.status === 'ACTIVE' &&
                             t.activeVersion !== null ? (
-                            <Button
+                            <ButtonLink
                               className="whitespace-nowrap"
-                              onClick={() => setRunTarget(t)}
+                              href={`/start?template=${encodeURIComponent(t.id)}`}
                               size="sm"
                               variant="primary"
                             >
                               Run →
-                            </Button>
+                            </ButtonLink>
                           ) : (
                             <span
                               className="cursor-not-allowed"
                               title={
                                 t.status === 'DRAFT'
-                                  ? 'Activate this template before running'
+                                  ? 'Activate this workflow before running'
                                   : 'No active version — promote a version first'
                               }
                             >
@@ -629,8 +605,8 @@ export default function TemplatesPage() {
                   {(templates ?? []).length === 0 && (
                     <TableStatusRow colSpan={7}>
                       <EmptyState
-                        hint="Fork a starter above or create a blank template."
-                        title="No templates yet."
+                        hint="Start from a starter below or create a blank workflow."
+                        title="No workflows yet"
                       />
                     </TableStatusRow>
                   )}
@@ -640,6 +616,47 @@ export default function TemplatesPage() {
           }
         </QueryBoundary>
       </section>
+      {/* Starter gallery */}
+      <details className="rounded-lg border border-ink-600 p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-paper-100">
+          New workflow from a starter
+          <span className="ml-2 text-xs font-normal text-paper-400">
+            Fork one to edit it as your own
+          </span>
+        </summary>
+        {forkError && <Alert className="mb-4 mt-4">{forkError}</Alert>}
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {STARTER_TEMPLATES.map((s) => {
+            const isForking = forkingId === s.id;
+            return (
+              <Card
+                className={cn(
+                  'group flex flex-col p-5 hover:border-ember-400',
+                  'border-l-[3px]',
+                  TONE_CLASS[s.tone]
+                )}
+                key={s.id}
+              >
+                <div className="label-mono mb-2">{s.tagline}</div>
+                <h3 className="mb-2 font-display text-xl font-medium text-paper-100">{s.name}</h3>
+                <p className="mb-5 flex-1 text-sm leading-relaxed text-paper-400">
+                  {s.description}
+                </p>
+                <span className="self-start" title={manageTitle}>
+                  <Button
+                    disabled={!canManage || isForking || createTemplate.isPending}
+                    onClick={() => handleFork(s)}
+                    size="sm"
+                    variant="primary"
+                  >
+                    {isForking ? 'Forking…' : 'Fork starter'}
+                  </Button>
+                </span>
+              </Card>
+            );
+          })}
+        </div>
+      </details>
     </div>
   );
 }
@@ -669,7 +686,7 @@ function ArchiveConfirmModal({
       onClose={onClose}
       onConfirm={handleArchive}
       open={target !== null}
-      title="Archive template?"
+      title="Archive workflow?"
     />
   );
 }

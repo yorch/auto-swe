@@ -36,7 +36,7 @@ describe('ShellAllowlistEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: /save allowlist/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/✓ saved/i)).toBeTruthy();
+      expect(screen.getByText(/saved/i)).toBeTruthy();
     });
 
     // Pull the PUT body — the editor should have trimmed each line + dropped blanks

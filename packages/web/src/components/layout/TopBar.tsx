@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import type { RefObject } from 'react';
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -9,8 +9,8 @@ import { Select } from '@/components/ui/Select';
 import { useApprovalsCount } from '@/hooks/useApprovals';
 import { type GatewayStatus, useGatewayStatus } from '@/hooks/useGatewayStatus';
 import { useTeams } from '@/hooks/useTeams';
-import { pageTitle } from '@/lib/navigation';
-import { useAuthStore } from '@/stores/authStore';
+import { pageSection, pageTitle } from '@/lib/navigation';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import { useTeamStore } from '@/stores/teamStore';
 
 const GATEWAY_TONE: Record<GatewayStatus, BadgeTone> = {
@@ -35,21 +35,13 @@ interface TopBarProps {
 
 export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
   const pathname = usePathname();
-  const router = useRouter();
-  const logout = useAuthStore((s) => s.logout);
   const { selectedTeamId, setSelectedTeamId } = useTeamStore();
   const { data: teams } = useTeams();
-
-  const handleLogout = async () => {
-    // logout() clears the gateway session and local cookies; navigating before
-    // it settles can land on /login with the old session still valid.
-    await logout();
-    router.push('/login');
-  };
 
   const inboxCount = useApprovalsCount();
   const gatewayStatus = useGatewayStatus();
   const title = pageTitle(pathname);
+  const section = pageSection(pathname);
 
   return (
     <header className="sticky top-0 z-20 flex h-[60px] min-w-0 items-center gap-2 border-b border-ink-400 bg-ink-950/70 px-3 backdrop-blur-md sm:gap-[14px] md:px-[26px]">
@@ -58,7 +50,10 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
         aria-controls={SIDEBAR_ID}
         aria-expanded={navOpen}
         aria-label="Open navigation"
-        className="-ml-1 shrink-0 rounded-md p-2 text-paper-300 hover:text-paper-100 md:hidden"
+        className={cn(
+          '-ml-1 shrink-0 rounded-md p-2 text-paper-300 hover:text-paper-100 md:hidden',
+          FOCUS_RING
+        )}
         onClick={onOpenNav}
         ref={menuButtonRef}
         type="button"
@@ -77,10 +72,21 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
         </svg>
       </button>
 
-      {/* Page title */}
-      <h2 className="m-0 min-w-0 truncate text-[17px] font-[650] tracking-[-0.02em] text-paper-100">
-        {title}
-      </h2>
+      {/* Where you are. A breadcrumb, not a heading: the page's own <h1> carries the
+          title, so repeating it as a heading made two identical headings per page. */}
+      <nav aria-label="Breadcrumb" className="min-w-0 truncate text-[13px] text-paper-400">
+        {section && section !== title && (
+          <>
+            <span>{section}</span>
+            <span aria-hidden="true" className="px-1.5 text-paper-600">
+              ›
+            </span>
+          </>
+        )}
+        <span aria-current="page" className="font-semibold text-paper-100">
+          {title}
+        </span>
+      </nav>
 
       {/* Team context selector */}
       <Select
@@ -99,7 +105,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
       {/* Inbox badge */}
       {inboxCount > 0 && (
         <Link
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-2.5 py-[5px] text-[12.5px] font-semibold text-amber-400 no-underline max-sm:hidden"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-400/10 px-2.5 py-[5px] text-[12.5px] font-semibold text-amber-400 no-underline max-sm:hidden"
           href="/govern/approvals"
         >
           <span className="inline-block h-[7px] w-[7px] rounded-full bg-amber-400" />
@@ -122,16 +128,6 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
         >
           {GATEWAY_LABEL[gatewayStatus]}
         </Badge>
-
-        <span className="inline-block h-3.5 w-px bg-ink-400 max-sm:hidden" />
-
-        <button
-          className="cursor-pointer border-none bg-transparent p-0 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500 hover:text-paper-200"
-          onClick={handleLogout}
-          type="button"
-        >
-          Sign out
-        </button>
       </div>
     </header>
   );

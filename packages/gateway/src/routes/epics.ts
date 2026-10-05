@@ -26,7 +26,12 @@ const CreateEpicSchema = z.object({
   repoIds: z.array(z.string().uuid()).min(1),
 });
 
-const ListEpicsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 });
+const ListEpicsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
+  // MINE narrows to epics the caller requested; TEAM is everything visible to them.
+  scope: z.enum(['MINE', 'TEAM']).default('TEAM'),
+  // Only epics with a child on a repository this team owns or has shared with it.
+  teamId: z.string().uuid().optional(),
+});
 
 const EpicParams = z.object({
   workflowId: z.string().min(1),
@@ -236,7 +241,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { limit, offset } = request.query;
+      const { limit, offset, scope, teamId } = request.query;
 
       // An epic is a cross-repo RunInput with no template. PRD runs are
       // cross-repo too but always record the prd-decomposition template, so
@@ -250,6 +255,17 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       const where: Prisma.RunInputWhereInput = {
         isCrossRepo: true,
         templateId: null,
+        ...(scope === 'MINE' && { requestedById: user.sub }),
+        // A planning epic has no child rows, so it has no team until its first child starts.
+        ...(teamId && {
+          AND: [
+            {
+              activeWorkflows: {
+                some: { repository: { OR: [{ teamId }, { shares: { some: { teamId } } }] } },
+              },
+            },
+          ],
+        }),
         ...(user.role !== 'ADMIN' && {
           OR: [
             { requestedById: user.sub },

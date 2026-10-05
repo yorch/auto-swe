@@ -3,6 +3,7 @@ import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { isSafeExternalUrl, resolveDocLink } from '@/lib/docLinks';
+import { headingIdFactory, headingText } from '@/lib/docToc';
 import { cn } from '@/lib/utils';
 
 /**
@@ -47,6 +48,37 @@ function docAnchor(servedSlugs: ReadonlySet<string>): Components['a'] {
   };
 }
 
+/** Plain text of rendered heading children, for the id the contents list links to. */
+function nodeText(node: React.ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(nodeText).join('');
+  }
+  if (node && typeof node === 'object' && 'props' in node) {
+    return nodeText((node as React.ReactElement<{ children?: React.ReactNode }>).props.children);
+  }
+  return '';
+}
+
+/** h2/h3 with anchor ids matching `extractToc`, in render order. */
+function headingComponents(): Pick<Components, 'h2' | 'h3'> {
+  const nextId = headingIdFactory();
+  return {
+    h2: ({ children, node: _node, ...rest }) => (
+      <h2 id={nextId(headingText(nodeText(children)))} {...rest}>
+        {children}
+      </h2>
+    ),
+    h3: ({ children, node: _node, ...rest }) => (
+      <h3 id={nextId(headingText(nodeText(children)))} {...rest}>
+        {children}
+      </h3>
+    ),
+  };
+}
+
 /**
  * Fenced-code renderer.
  *
@@ -88,7 +120,7 @@ export function Markdown({
       className={cn(
         'max-w-none text-sm leading-relaxed text-paper-100',
         '[&_h1]:text-3xl [&_h1]:font-bold [&_h1]:mt-0 [&_h1]:mb-6',
-        '[&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-ink-600 [&_h2]:pb-2',
+        '[&_h2]:scroll-mt-4 [&_h3]:scroll-mt-4 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-ink-600 [&_h2]:pb-2',
         '[&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-3',
         '[&_h4]:text-base [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2',
         '[&_p]:my-3',
@@ -110,7 +142,11 @@ export function Markdown({
       )}
     >
       <ReactMarkdown
-        components={servedSlugs ? { a: docAnchor(servedSlugs), code: docCode } : undefined}
+        components={
+          servedSlugs
+            ? { a: docAnchor(servedSlugs), code: docCode, ...headingComponents() }
+            : undefined
+        }
         remarkPlugins={[remarkGfm]}
       >
         {children}

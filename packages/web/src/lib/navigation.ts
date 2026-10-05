@@ -27,6 +27,8 @@ export interface NavItem {
    * whatever their platform role: a team LEAD or ORG_ADMIN by membership qualifies.
    */
   needsUsageScope?: true;
+  /** Other path prefixes this entry owns (a sub-area with no sidebar entry of its own). */
+  alsoActiveFor?: string[];
 }
 
 export interface NavGroup {
@@ -38,7 +40,14 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { href: '/', icon: 'dashboard', label: 'Home', minRole: 'ENGINEER' },
-      { href: '/workflows', icon: 'canvas', label: 'Requests', minRole: 'ENGINEER' },
+      {
+        alsoActiveFor: ['/epics'],
+        href: '/workflows',
+        icon: 'canvas',
+        label: 'Requests',
+        minRole: 'ENGINEER',
+      },
+      { href: '/runs', icon: 'runs', label: 'All runs', minRole: 'ENGINEER' },
       { href: '/govern/approvals', icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       {
         href: '/workflows/library',
@@ -130,7 +139,10 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Govern',
   },
   {
-    items: [{ href: '/settings', icon: 'settings', label: 'Settings', minRole: 'ENGINEER' }],
+    items: [
+      { href: '/settings', icon: 'settings', label: 'Settings', minRole: 'ENGINEER' },
+      { href: '/docs', icon: 'docs', label: 'Docs', minRole: 'ENGINEER' },
+    ],
     label: 'Account',
   },
 ];
@@ -160,13 +172,22 @@ export function activeNavHref(pathname: string, items: NavItem[]): string {
   if (pathname === '/') {
     return '/';
   }
+  const owns = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
   const match = items
-    .filter(
-      (item) =>
-        item.href !== '/' && (pathname === item.href || pathname.startsWith(`${item.href}/`))
+    .flatMap((item) =>
+      item.href === '/'
+        ? []
+        : [item.href, ...(item.alsoActiveFor ?? [])]
+            .filter(owns)
+            .map((prefix) => ({ href: item.href, length: prefix.length }))
     )
-    .sort((a, b) => b.href.length - a.href.length)[0];
+    .sort((a, b) => b.length - a.length)[0];
   return match?.href ?? '';
+}
+
+/** True on the Start work page, which the sidebar's persistent button owns. */
+export function isStartWorkPath(pathname: string): boolean {
+  return pathname === '/start' || pathname.startsWith('/start/');
 }
 
 /**
@@ -175,9 +196,7 @@ export function activeNavHref(pathname: string, items: NavItem[]): string {
  */
 const EXTRA_PAGE_TITLES: [string, string][] = [
   ['/runs/', 'Run'],
-  ['/agent-runs', 'Start work'],
   ['/start', 'Start work'],
-  ['/runs', 'Runs'],
   ['/govern/policies/decisions', 'Autonomy decisions'],
   ['/epics', 'Epics'],
   ['/docs', 'Docs'],
@@ -212,4 +231,37 @@ export function navLabel(href: string): string {
     throw new Error(`No nav entry for ${href}`);
   }
   return item.label;
+}
+
+/** Sections for the pages that have no sidebar entry of their own. */
+const EXTRA_PAGE_SECTIONS: [string, string][] = [
+  ['/start', 'Work'],
+  ['/epics', 'Work'],
+  ['/docs', 'Account'],
+  ['/lessons', 'Govern'],
+];
+
+/**
+ * The sidebar group a page belongs to — the first half of the TopBar breadcrumb.
+ * Null when the page is its own top level (Home) or belongs to no group.
+ */
+export function pageSection(pathname: string): string | null {
+  const href = activeNavHref(pathname, NAV_ITEMS);
+  const group = NAV_GROUPS.find((g) => g.items.some((i) => i.href === href));
+  if (group && pageTitle(pathname) !== 'Home') {
+    // A sub-page with its own title (autonomy decisions) still sits in its parent's group.
+    return group.label;
+  }
+  for (const [prefix, section] of EXTRA_PAGE_SECTIONS) {
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
+      return section;
+    }
+  }
+  if (pathname.startsWith('/govern')) {
+    return 'Govern';
+  }
+  if (pathname.startsWith('/studio')) {
+    return 'Studio';
+  }
+  return null;
 }

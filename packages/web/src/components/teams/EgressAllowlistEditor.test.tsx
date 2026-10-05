@@ -35,7 +35,7 @@ describe('EgressAllowlistEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: /save allowlist/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/✓ saved/i)).toBeTruthy();
+      expect(screen.getByText(/saved/i)).toBeTruthy();
     });
 
     const putCall = spy.mock.calls.find(

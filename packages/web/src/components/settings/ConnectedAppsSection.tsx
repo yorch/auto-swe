@@ -23,7 +23,7 @@ function hostsOf(grant: McpGrant): string {
  * connected, since there is then nothing to show or to do.
  */
 export function ConnectedAppsSection({ number }: { number?: string }) {
-  const { data, error, isError, isLoading } = useMcpGrants();
+  const { data, error, isError, isFetching, refetch, isLoading } = useMcpGrants();
   const revoke = useRevokeMcpGrant();
   const [target, setTarget] = useState<McpGrant | null>(null);
 
@@ -40,7 +40,15 @@ export function ConnectedAppsSection({ number }: { number?: string }) {
         title="Connected apps"
       />
       <Card variant="inset">
-        <QueryBoundary compact error={error} isError={isError} isLoading={isLoading} label="apps">
+        <QueryBoundary
+          compact
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="apps"
+          onRetry={() => void refetch()}
+        >
           {grants.length === 0 ? (
             <EmptyState
               hint="An MCP client you connect to auto-swe, such as a coding agent, appears here."

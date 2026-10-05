@@ -10,7 +10,7 @@ import { useUserOrgs } from '@/hooks/useAdmin';
 import { navLabel } from '@/lib/navigation';
 
 export default function GovernOrganizationsPage() {
-  const { data: orgs, isLoading, isError, error: loadError } = useUserOrgs();
+  const { data: orgs, isLoading, isError, isFetching, refetch, error: loadError } = useUserOrgs();
 
   const alertCount = (orgs ?? []).filter((o) => o.alert.triggered).length;
 
@@ -32,8 +32,10 @@ export default function GovernOrganizationsPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="organizations"
+        onRetry={() => void refetch()}
       >
         {
           <Card>

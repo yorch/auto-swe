@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import { IBM_Plex_Mono, Inter } from 'next/font/google';
 import './globals.css';
 import { AppConfigScript } from '@/components/AppConfigScript';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppShell } from '@/components/layout/AppShell';
 import { Providers } from '@/components/Providers';
 import { publicApiUrl, temporalUiUrl } from '@/lib/env';
@@ -23,7 +22,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   description: 'Durable agent workflow platform',
-  title: 'auto·swe',
+  title: { default: 'auto·swe', template: '%s · auto·swe' },
 };
 
 // Render per request. The layout injects NEXT_PUBLIC_API_URL / NEXT_PUBLIC_TEMPORAL_UI_URL into
@@ -56,11 +55,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }
         `}</style>
       </head>
-      <body className="min-h-screen">
+      <body className="min-h-dvh">
         <Providers>
-          <ErrorBoundary>
-            <AppShell>{children}</AppShell>
-          </ErrorBoundary>
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>

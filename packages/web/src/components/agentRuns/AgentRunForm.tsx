@@ -26,6 +26,7 @@ import {
   validateAgentRunForm,
 } from '@/lib/agentRun';
 import { connectionLabel } from '@/lib/connectionDisplay';
+import { requestHref } from '@/lib/requestDisplay';
 
 const LATEST = 'latest';
 
@@ -132,13 +133,19 @@ export function AgentRunForm({
           <dd className="font-mono text-paper-300">{launched.effective.maxWallClockSeconds} s</dd>
         </dl>
         <div className="flex items-center gap-3">
+          <Link
+            className="text-ember-400 hover:underline"
+            href={requestHref(launched.workRequestId)}
+          >
+            View the request →
+          </Link>
           {started.runId ? (
-            <Link className="text-ember-400 hover:underline" href={`/runs/${started.runId}`}>
-              View the run →
+            <Link className="text-paper-400 hover:underline" href={`/runs/${started.runId}`}>
+              Diagnostics
             </Link>
           ) : started.timedOut ? (
-            <Link className="text-ember-400 hover:underline" href="/runs">
-              View runs →
+            <Link className="text-paper-400 hover:underline" href="/runs">
+              All runs
             </Link>
           ) : (
             <span className="text-paper-500 text-[13px]">Locating the run…</span>

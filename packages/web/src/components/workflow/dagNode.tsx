@@ -173,7 +173,7 @@ const HANDLE_LABEL: Record<HandleKind, string> = {
 function GroupBadge({ group }: { group: string }) {
   return (
     <div className="flex">
-      <span className="max-w-full truncate rounded-sm border border-ink-500 px-1 font-mono text-[9px] uppercase leading-[14px] tracking-[0.12em] text-paper-400">
+      <span className="max-w-full truncate rounded-sm border border-ink-500 px-1 font-mono text-[10px] uppercase leading-[14px] tracking-[0.12em] text-paper-400">
         {group}
       </span>
     </div>
@@ -238,7 +238,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
           <span className="truncate font-display text-[15px] font-medium leading-none text-paper-50">
             {name}
           </span>
-          <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.16em] text-paper-500">
+          <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-paper-500">
             {folded ? 'group' : CATEGORY_LABEL[d.node.type]}
           </span>
         </div>
@@ -301,7 +301,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
         <div className="pointer-events-none absolute -right-1 top-0 bottom-0 flex flex-col justify-evenly pr-3 text-right">
           {handles.map((h) => (
             <span
-              className="translate-x-full pl-2 font-mono text-[9px] uppercase tracking-[0.14em] text-paper-500"
+              className="translate-x-full pl-2 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
               key={h.id}
             >
               {h.label}

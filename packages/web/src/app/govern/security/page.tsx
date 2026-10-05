@@ -50,6 +50,8 @@ export default function GovernSecurityPage() {
     data: page,
     isLoading,
     isError,
+    isFetching,
+    refetch,
     error: loadError,
   } = useSecurityEvents({ limit: LIMIT, offset, type: typeFilter || undefined });
   const { data: counts } = useSecurityEventSummary();
@@ -89,8 +91,10 @@ export default function GovernSecurityPage() {
       <QueryBoundary
         error={loadError}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
         label="security events"
+        onRetry={() => void refetch()}
       >
         <Card>
           <CardHeader>

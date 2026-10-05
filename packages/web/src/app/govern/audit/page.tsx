@@ -31,7 +31,11 @@ const ACTION_OPTIONS = [
 export default function GovernAuditPage() {
   const [filters, setFilters] = useState<AuditLogFilters>({});
   const [offset, setOffset] = useState(0);
-  const { data, isLoading, isError, error } = useAuditLog({ ...filters, limit: LIMIT, offset });
+  const { data, isLoading, isError, isFetching, refetch, error } = useAuditLog({
+    ...filters,
+    limit: LIMIT,
+    offset,
+  });
   const rows = data?.data ?? [];
   const total = data?.meta.total ?? 0;
   // Keep the filter offering a type the current filter selected, even once the
@@ -124,9 +128,11 @@ export default function GovernAuditPage() {
           <QueryBoundary
             error={error}
             isError={isError}
+            isFetching={isFetching}
             isLoading={isLoading}
             label="audit log"
             loadingMessage="loading audit log…"
+            onRetry={() => void refetch()}
           >
             {rows.length === 0 && (
               <EmptyState

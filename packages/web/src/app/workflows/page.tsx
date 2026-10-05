@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useState } from 'react';
+import { EpicList } from '@/components/epics/EpicList';
 import { RequestList } from '@/components/requests/RequestList';
 import { RequestPanel } from '@/components/requests/RequestPanel';
 import { ButtonLink } from '@/components/ui/Button';
@@ -12,7 +13,9 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
+import { useEpics } from '@/hooks/useEpics';
 import { type RequestState, useRequests } from '@/hooks/useRequests';
+import { parseOffset } from '@/hooks/useUrlFilters';
 
 const PAGE_SIZE = 30;
 const STATES: { label: string; value: RequestState }[] = [
@@ -21,6 +24,11 @@ const STATES: { label: string; value: RequestState }[] = [
   { label: 'Needs attention', value: 'attention' },
   { label: 'Finished', value: 'finished' },
   { label: 'Failed', value: 'failed' },
+];
+
+const TYPES = [
+  { label: 'All requests', value: 'all' },
+  { label: 'Epics (multi-repo)', value: 'epics' },
 ];
 
 function RequestsWorkspace() {
@@ -32,11 +40,18 @@ function RequestsWorkspace() {
   const search = (params.get('search') ?? '').slice(0, 200);
   const [searchDraft, setSearchDraft] = useState(search);
   useEffect(() => setSearchDraft(search), [search]);
-  const rawOffset = Number(params.get('offset') ?? 0);
-  const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
-  const query = useRequests({ limit: PAGE_SIZE, offset, scope, search, state });
+  const offset = parseOffset(params.get('offset'));
+  const type = params.get('type') === 'epics' ? 'epics' : 'all';
+  const showEpics = type === 'epics';
+  const query = useRequests(
+    { limit: PAGE_SIZE, offset, scope, search, state },
+    { enabled: !showEpics }
+  );
+  const epicsQuery = useEpics({ limit: PAGE_SIZE, offset, scope }, { enabled: showEpics });
+  const active = showEpics ? epicsQuery : query;
   const requests = query.data?.data ?? [];
-  const total = query.data?.meta.total ?? 0;
+  const epics = epicsQuery.data?.data ?? [];
+  const total = active.data?.meta.total ?? 0;
   const requestId = params.get('request');
   const urlFor = useCallback(
     (patch: Record<string, string | null>) => {
@@ -69,14 +84,25 @@ function RequestsWorkspace() {
     <div className="space-y-6">
       <PageHeader
         actions={
-          <ButtonLink href="/start" variant="primary">
-            Start work
-          </ButtonLink>
+          <>
+            <ButtonLink href="/epics" variant="secondary">
+              Multi-repo epics
+            </ButtonLink>
+            <ButtonLink href="/start" variant="primary">
+              Start work
+            </ButtonLink>
+          </>
         }
         subtitle="Everything you asked for, with retries kept together."
         title="Requests"
       />
       <div className="flex flex-wrap items-end gap-4">
+        <Select
+          label="Type"
+          onChange={(value) => update({ offset: null, type: value === 'epics' ? 'epics' : null })}
+          options={TYPES}
+          value={type}
+        />
         <SegmentedControl
           ariaLabel="Request scope"
           onChange={(value) => update({ offset: null, scope: value })}
@@ -86,29 +112,44 @@ function RequestsWorkspace() {
           ]}
           value={scope}
         />
-        <div className="min-w-48 flex-1">
-          <Input
-            label="Search requests"
-            maxLength={200}
-            onChange={(event) => setSearchDraft(event.target.value)}
-            placeholder="Task or ticket…"
-            value={searchDraft}
-          />
-        </div>
-        <Select
-          label="Status"
-          onChange={(value) => update({ offset: null, state: value })}
-          options={STATES}
-          value={state}
-        />
+        {!showEpics && (
+          <>
+            <div className="min-w-48 flex-1">
+              <Input
+                label="Search requests"
+                maxLength={200}
+                onChange={(event) => setSearchDraft(event.target.value)}
+                placeholder="Task or ticket…"
+                value={searchDraft}
+              />
+            </div>
+            <Select
+              label="Status"
+              onChange={(value) => update({ offset: null, state: value })}
+              options={STATES}
+              value={state}
+            />
+          </>
+        )}
       </div>
       <QueryBoundary
-        error={query.error}
-        isError={query.isError}
-        isLoading={query.isLoading}
-        label="requests"
+        error={active.error}
+        isError={active.isError}
+        isFetching={active.isFetching}
+        isLoading={active.isLoading}
+        label={showEpics ? 'epics' : 'requests'}
+        onRetry={() => void active.refetch()}
       >
-        {requests.length ? (
+        {showEpics ? (
+          epics.length ? (
+            <EpicList epics={epics} />
+          ) : (
+            <EmptyState
+              hint="An epic fans one brief out across several repositories."
+              title="No epics yet"
+            />
+          )
+        ) : requests.length ? (
           <RequestList hrefFor={(id) => urlFor({ request: id })} requests={requests} />
         ) : (
           <EmptyState

@@ -69,7 +69,7 @@ export function ImportFromGitHubModal({
             )}
             {filtered.map((r) => (
               <button
-                className="w-full text-left px-3 py-2.5 rounded-[9px] border border-transparent hover:border-ink-400 hover:bg-ink-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full text-left px-3 py-2.5 rounded-md border border-transparent hover:border-ink-400 hover:bg-ink-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 disabled={r.alreadyImported}
                 key={`${r.org}/${r.name}`}
                 onClick={() => onSelect(r)}

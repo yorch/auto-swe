@@ -16,7 +16,11 @@ const REPO_B = '00000000-0000-4000-8000-00000000000b'; // team-2 (user-1 is NOT 
 const REPO_C = '00000000-0000-4000-8000-00000000000c'; // team-3 (user-1 IS a member), org-3 (not an org member)
 const REPO_D = '00000000-0000-4000-8000-00000000000d'; // team-4 (user-1 is a member), org-4 (over budget)
 
+const TEAM_1 = '00000000-0000-4000-8000-0000000000a1';
+const TEAM_2 = '00000000-0000-4000-8000-0000000000a2';
+
 interface RepoFixture {
+  teamId?: string;
   id: string;
   organizationName: string;
   repoName: string;
@@ -47,6 +51,7 @@ const repoFixtures: RepoFixture[] = [
     organizationName: 'org',
     orgId: 'org-1',
     repoName: 'alpha',
+    teamId: TEAM_1,
   },
   {
     id: REPO_B,
@@ -56,6 +61,7 @@ const repoFixtures: RepoFixture[] = [
     organizationName: 'org',
     orgId: 'org-1',
     repoName: 'beta',
+    teamId: TEAM_2,
   },
   {
     id: REPO_C,
@@ -87,6 +93,8 @@ const orgMembershipFixtures: Record<string, string[]> = {
 let orgMonthlyUsageFixtures: Record<string, { costUsdAccrued: number }> = {};
 
 type RunInputWhere = {
+  requestedById?: string;
+  AND?: Array<Record<string, unknown>>;
   isCrossRepo?: boolean;
   templateId?: string | null;
   OR?: Array<Record<string, unknown>>;
@@ -121,7 +129,7 @@ function matchesRunInputWhere(
   where: RunInputWhere,
   ctx: { sub: string; ledger: ActiveWorkflowFixture[] }
 ): boolean {
-  const { isCrossRepo, templateId, OR, ...rest } = where;
+  const { isCrossRepo, templateId, OR, requestedById, AND, ...rest } = where;
   if (Object.keys(rest).length > 0) {
     throw new Error(`unrecognised RunInput where: ${JSON.stringify(rest)}`);
   }
@@ -130,6 +138,24 @@ function matchesRunInputWhere(
   }
   if (templateId !== undefined && (wr.templateId ?? null) !== templateId) {
     return false;
+  }
+  if (requestedById !== undefined && wr.requestedById !== requestedById) {
+    return false;
+  }
+  // The only AND term is the team filter: a child on a repository of that team.
+  for (const term of AND ?? []) {
+    const some = (term.activeWorkflows as { some: { repository: { OR: [{ teamId: string }] } } })
+      .some;
+    const teamId = some.repository.OR[0].teamId;
+    const hit = ctx.ledger.some(
+      (row) =>
+        row.workRequestId === wr.id &&
+        row.repoId !== null &&
+        repoFixtures.some((r) => r.id === row.repoId && r.teamId === teamId)
+    );
+    if (!hit) {
+      return false;
+    }
   }
   if (!OR) {
     return true;
@@ -592,6 +618,38 @@ describe('epic routes', () => {
       expect(body.meta.total).toBe(1);
       expect(body.data).toHaveLength(1);
       expect(body.data[0].externalTicketId).toBe('EPIC-1');
+    });
+
+    it('scopes the list to one team through its children’s repositories', async () => {
+      currentRole = 'ADMIN';
+      const list = async (qs: string) =>
+        JSON.parse(
+          (await app.inject({ headers: auth, method: 'GET', url: `/api/v1/epics${qs}` })).payload
+        );
+      const t1 = await list(`?teamId=${TEAM_1}`);
+      expect(t1.data.map((e: { externalTicketId: string }) => e.externalTicketId)).toEqual([
+        'EPIC-1',
+      ]);
+      expect(t1.meta.total).toBe(1);
+      const t2 = await list(`?teamId=${TEAM_2}`);
+      expect(t2.data.map((e: { externalTicketId: string }) => e.externalTicketId)).toEqual([
+        'EPIC-2',
+      ]);
+    });
+
+    it('MINE keeps only epics the caller requested', async () => {
+      currentRole = 'ADMIN';
+      workRequestFixtures[0].requestedById = 'user-1';
+      workRequestFixtures[1].requestedById = 'user-other';
+      const res = await app.inject({
+        headers: auth,
+        method: 'GET',
+        url: '/api/v1/epics?scope=MINE',
+      });
+      const body = JSON.parse(res.payload);
+      expect(body.data.map((e: { externalTicketId: string }) => e.externalTicketId)).toEqual([
+        'EPIC-1',
+      ]);
     });
 
     it('does not match a repo id that merely appears inside another epic’s payload', async () => {

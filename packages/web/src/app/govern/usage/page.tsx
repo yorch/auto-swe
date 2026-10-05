@@ -126,7 +126,7 @@ export default function UsagePage() {
   // Until the caller picks one, the first scope they may read: the whole
   // platform for an ADMIN, their first team (or organization) otherwise.
   const scopeValue = chosenScope ?? scopeOptions?.[0]?.value ?? null;
-  const { data, error, isError, isLoading } = usePlatformUsage(
+  const { data, error, isError, isFetching, refetch, isLoading } = usePlatformUsage(
     windowDays,
     scopeOf(scopeValue ?? ''),
     scopeValue !== null
@@ -164,7 +164,14 @@ export default function UsagePage() {
       )}
 
       {/* A failed request has no data and is not loading: show the error, not a spinner. */}
-      <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="LLM usage">
+      <QueryBoundary
+        error={error}
+        isError={isError}
+        isFetching={isFetching}
+        isLoading={isLoading}
+        label="LLM usage"
+        onRetry={() => void refetch()}
+      >
         {data && (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">

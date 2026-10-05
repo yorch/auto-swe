@@ -64,7 +64,9 @@ export function AuditLogTable<T extends AuditLogEntry>({
   entries,
   error,
   isError,
+  isFetching,
   isLoading,
+  onRetry,
   showEntityId = false,
   summary,
   summaryHeader,
@@ -74,14 +76,24 @@ export function AuditLogTable<T extends AuditLogEntry>({
   entries: T[] | undefined;
   error?: unknown;
   isError?: boolean;
+  isFetching?: boolean;
   isLoading: boolean;
+  /** Re-runs the failed query; shows a Retry button on the error alert. */
+  onRetry?: () => void;
   /** Append a short entity id after the entity label. */
   showEntityId?: boolean;
   summary: (entry: T) => ReactNode;
   summaryHeader: string;
 }) {
   return (
-    <QueryBoundary error={error} isError={isError} isLoading={isLoading} label="audit log">
+    <QueryBoundary
+      error={error}
+      isError={isError}
+      isFetching={isFetching}
+      isLoading={isLoading}
+      label="audit log"
+      onRetry={onRetry}
+    >
       {!entries || entries.length === 0 ? (
         <EmptyState className="py-0 text-left text-paper-500" title={emptyMessage} />
       ) : (

@@ -15,8 +15,11 @@ type CardProps = React.HTMLAttributes<HTMLDivElement> & {
 export function Card({ className, children, variant = 'panel', ...props }: CardProps) {
   return (
     <div
-      className={cn('relative p-6 transition-colors', VARIANT_CLASSES[variant], className)}
-      style={{ borderRadius: '14px' }}
+      className={cn(
+        'relative rounded-xl p-6 transition-colors',
+        VARIANT_CLASSES[variant],
+        className
+      )}
       {...props}
     >
       {children}

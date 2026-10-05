@@ -33,8 +33,10 @@ export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
     <QueryBoundary
       error={query.error}
       isError={query.isError}
+      isFetching={query.isFetching}
       isLoading={query.isLoading}
       label="workflow process"
+      onRetry={() => void query.refetch()}
     >
       {summary ? (
         <dl className="space-y-3 text-sm">

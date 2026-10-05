@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useGatewayStatus } from './useGatewayStatus';
+import { probeGateway, useGatewayStatus } from './useGatewayStatus';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -55,5 +55,24 @@ describe('useGatewayStatus', () => {
     const { fetchSpy } = run(async () => new Response(null, { status: 200 }));
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     expect(String(fetchSpy.mock.calls[0]?.[0])).toMatch(/\/health$/);
+  });
+});
+
+describe('probeGateway timeout', () => {
+  it('treats a probe that outlives its deadline as unreachable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new DOMException('timed out', 'TimeoutError');
+      })
+    );
+    expect(await probeGateway('/x', () => true, 5000)).toBeNull();
+  });
+
+  it('passes a deadline signal to fetch', async () => {
+    const spy = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', spy);
+    await probeGateway('/x', () => true, 5000);
+    expect((spy.mock.calls[0] as unknown[])[1]).toHaveProperty('signal');
   });
 });

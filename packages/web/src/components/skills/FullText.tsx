@@ -7,7 +7,7 @@ export const FullText = memo(function FullText({ label, text }: { label: string;
   return (
     <section
       aria-label={label}
-      className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-[9px] border border-ink-600 bg-ink-900 p-3 font-mono text-xs text-paper-200"
+      className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-ink-600 bg-ink-900 p-3 font-mono text-xs text-paper-200"
     >
       {shown}
     </section>

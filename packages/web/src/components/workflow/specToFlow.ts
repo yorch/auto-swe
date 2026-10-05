@@ -179,7 +179,7 @@ export function specToFlow(
         labelStyle: {
           fill: color,
           fontFamily: 'monospace',
-          fontSize: 9,
+          fontSize: 10,
           fontWeight: 500,
           letterSpacing: '0.06em',
           textTransform: 'uppercase',

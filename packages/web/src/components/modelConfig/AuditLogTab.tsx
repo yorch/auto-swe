@@ -5,7 +5,14 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { useAdminConfigAuditLog } from '@/hooks/useModelConfig';
 
 export function AuditLogTab() {
-  const { data: rows, isLoading, isError, error } = useAdminConfigAuditLog({ limit: 100 });
+  const {
+    data: rows,
+    isLoading,
+    isError,
+    isFetching,
+    error,
+    refetch,
+  } = useAdminConfigAuditLog({ limit: 100 });
 
   return (
     <Card>
@@ -17,7 +24,9 @@ export function AuditLogTab() {
         entries={rows}
         error={error}
         isError={isError}
+        isFetching={isFetching}
         isLoading={isLoading}
+        onRetry={() => void refetch()}
         showEntityId
         summary={(r) => summarize(r.beforeJson, r.afterJson)}
         summaryHeader="Summary"

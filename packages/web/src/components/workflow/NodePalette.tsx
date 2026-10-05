@@ -160,12 +160,12 @@ function PrimitiveGroup({
     <div className="mb-1">
       <button
         aria-expanded={open}
-        className="flex w-full items-center justify-between px-1 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-paper-600 hover:text-paper-400"
+        className="flex w-full items-center justify-between px-1 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600 hover:text-paper-400"
         onClick={() => setOpen((v) => !v)}
         type="button"
       >
         <span>{group.label}</span>
-        <span className="text-[8px]">{open ? '▾' : '▸'}</span>
+        <span className="text-[10px]">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
         <ul className="space-y-1">
@@ -248,7 +248,7 @@ export function NodePalette({ steps, onAdd }: Props) {
           {groupedSteps.length === 0 && <EmptyState className="py-3 text-xs" title="No matches." />}
           {groupedSteps.map(([category, items]) => (
             <div className="mb-4" key={category}>
-              <div className="mb-1 px-1 font-mono text-[9px] uppercase tracking-[0.18em] text-paper-600">
+              <div className="mb-1 px-1 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
                 {category}
               </div>
               <ul className="space-y-px">
@@ -320,7 +320,7 @@ function PaletteItem({
           {hint && <div className="truncate text-[10px] text-paper-500">{hint}</div>}
         </div>
         {elevated && (
-          <span className="text-[9px] text-brick-400" title="Requires team-admin authoring">
+          <span className="text-[10px] text-brick-400" title="Requires team-admin authoring">
             ⚠
           </span>
         )}
