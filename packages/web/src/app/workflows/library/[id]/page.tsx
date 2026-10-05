@@ -3,7 +3,12 @@
 import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
-import { estimateSpecCost, parseWorkflowSpec, validateSpec } from '@auto-swe/shared/workflow';
+import {
+  estimateSpecCost,
+  formatValidationIssue,
+  parseWorkflowSpec,
+  validateSpec,
+} from '@auto-swe/shared/workflow';
 import { use, useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -557,6 +562,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingShellSpec, setPendingShellSpec] = useState<WorkflowSpec | null>(null);
+  const [pendingErrorSpec, setPendingErrorSpec] = useState<WorkflowSpec | null>(null);
   const [editMetaOpen, setEditMetaOpen] = useState(false);
   const [editSchemaOpen, setEditSchemaOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
@@ -604,10 +610,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
   const visualSpec: WorkflowSpec | null =
     mode === 'json' ? (jsonParsed?.ok ? jsonParsed.spec : null) : editorSpec;
 
-  const lintErrorCount = useMemo(
-    () => (visualSpec && isDirty ? validateSpec(visualSpec).errors.length : 0),
-    [visualSpec, isDirty]
+  // The selected version's own lint, dirty or not: a draft saved with errors keeps them, and
+  // promoting or activating it stays blocked until they are fixed.
+  const lintErrors = useMemo(
+    () => (visualSpec ? validateSpec(visualSpec).errors : []),
+    [visualSpec]
   );
+  const lintErrorCount = lintErrors.length;
 
   const stepRegistryByName = useMemo(
     () => (stepRegistry ? new Map(stepRegistry.map((s) => [s.name, s as StepMetadata])) : null),
@@ -662,6 +671,16 @@ export default function TemplateDetailPage({ params }: PageProps) {
       setSaveError(jsonParsed?.ok === false ? jsonParsed.error : 'no spec to save');
       return;
     }
+    // Errors do not stop a save, which keeps work in progress; they ask first, and the version
+    // is saved inactive. Promote and Activate stay blocked until the errors are gone.
+    if (lintErrorCount > 0) {
+      setPendingErrorSpec(specToSave);
+      return;
+    }
+    await continueSave(specToSave);
+  };
+
+  const continueSave = async (specToSave: WorkflowSpec) => {
     const shellCount = Object.values(specToSave.nodes).filter((n) => n.type === 'shell').length;
     if (shellCount > 0) {
       setPendingShellSpec(specToSave);
@@ -735,6 +754,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
     }
   };
 
+  const jsonInvalid = mode === 'json' && jsonParsed?.ok === false;
+  const promoteBlocked = lintErrorCount > 0;
+  const promoteReason = promoteBlocked
+    ? `Fix ${lintErrorCount} error${lintErrorCount === 1 ? '' : 's'} before promoting`
+    : null;
+
   const editorActions = (
     <>
       {mode === 'view' && canManage && (
@@ -756,11 +781,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
       )}
       {isDirty && (
         <Button
-          disabled={
-            createVersion.isPending ||
-            lintErrorCount > 0 ||
-            (mode === 'json' && jsonParsed?.ok === false)
-          }
+          aria-describedby={jsonInvalid ? 'save-blocked-reason' : undefined}
+          disabled={createVersion.isPending || jsonInvalid}
           onClick={handleSave}
           size="sm"
           variant="primary"
@@ -768,9 +790,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
           {createVersion.isPending ? 'Saving…' : 'Save new version'}
         </Button>
       )}
-      {isDirty && lintErrorCount > 0 && (
+      {isDirty && jsonInvalid && (
         <span className="font-mono text-[11px] text-brick-400" id="save-blocked-reason">
-          Fix {lintErrorCount} error{lintErrorCount === 1 ? '' : 's'} to save
+          Fix the JSON to save
         </span>
       )}
       {!isDirty &&
@@ -779,7 +801,15 @@ export default function TemplateDetailPage({ params }: PageProps) {
         (effectiveVersion !== template.activeVersion || template.status === 'DRAFT') &&
         (selectedNeedsReview ? (
           <Button
-            disabled={reviewVersion.isPending}
+            aria-describedby={
+              promoteBlocked && effectiveVersion === template.activeVersion
+                ? 'promote-blocked-reason'
+                : undefined
+            }
+            disabled={
+              reviewVersion.isPending ||
+              (promoteBlocked && effectiveVersion === template.activeVersion)
+            }
             onClick={handleReview}
             size="sm"
             variant="primary"
@@ -791,10 +821,21 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 : 'Review & approve'}
           </Button>
         ) : (
-          <Button onClick={() => setPromoteOpen(true)} size="sm" variant="primary">
+          <Button
+            aria-describedby={promoteBlocked ? 'promote-blocked-reason' : undefined}
+            disabled={promoteBlocked}
+            onClick={() => setPromoteOpen(true)}
+            size="sm"
+            variant="primary"
+          >
             {effectiveVersion === template.activeVersion ? 'Activate' : 'Promote to active'}
           </Button>
         ))}
+      {!isDirty && promoteReason && canManage && (
+        <span className="font-mono text-[11px] text-brick-400" id="promote-blocked-reason">
+          {promoteReason}
+        </span>
+      )}
     </>
   );
 
@@ -870,6 +911,22 @@ export default function TemplateDetailPage({ params }: PageProps) {
       <TemplateSubNav active="editor" templateId={id} />
 
       {saveError && mode !== 'edit' && <Alert className="whitespace-pre-line">{saveError}</Alert>}
+
+      {/* The visual editor lists its own lint; every other mode shows it here. */}
+      {mode !== 'edit' && lintErrors.length > 0 && (
+        <Alert className="space-y-1">
+          <p className="font-medium">
+            {lintErrors.length} error{lintErrors.length === 1 ? '' : 's'} in this workflow
+          </p>
+          <ul className="list-disc space-y-0.5 pl-5 text-xs" data-testid="spec-errors">
+            {lintErrors.map((issue) => (
+              <li key={`${issue.code}:${issue.nodeId ?? ''}:${issue.field ?? ''}:${issue.message}`}>
+                {formatValidationIssue(issue)}
+              </li>
+            ))}
+          </ul>
+        </Alert>
+      )}
 
       {/* Edit mode: full-bleed canvas */}
       {mode === 'edit' && editorSpec && stepRegistry && (
@@ -1146,6 +1203,21 @@ export default function TemplateDetailPage({ params }: PageProps) {
         }}
         open={pendingVersion !== null}
         title="Discard unsaved changes?"
+      />
+
+      <ConfirmModal
+        confirmLabel="Save draft"
+        message={`This workflow has ${lintErrorCount} error${lintErrorCount === 1 ? '' : 's'}. It is saved as an inactive draft: nothing runs it, and it cannot be promoted or activated until the errors are fixed.`}
+        onClose={() => setPendingErrorSpec(null)}
+        onConfirm={() => {
+          if (pendingErrorSpec) {
+            const spec = pendingErrorSpec;
+            setPendingErrorSpec(null);
+            void continueSave(spec);
+          }
+        }}
+        open={pendingErrorSpec !== null}
+        title={`Save draft with ${lintErrorCount} error${lintErrorCount === 1 ? '' : 's'}?`}
       />
 
       <ConfirmModal
