@@ -14,11 +14,13 @@ import {
   axisLabel,
   CHART_HEIGHT,
   ChartFrame,
+  type ChartGranularity,
   ChartTooltip,
   chartAriaLabel,
   EmptyChart,
   formatDateLabel,
   GRID_STROKE,
+  granularityWords,
   LEGEND_STYLE,
 } from './chartChrome';
 import { CHART_PALETTE, OTHER_LABEL, seriesColor, seriesDash, topNWithOther } from './colors';
@@ -85,19 +87,23 @@ export function collapseSeries(
  */
 export function ScorerBreakdownChart({
   series: allSeries,
+  granularity = 'day',
   title,
 }: {
   series: BreakdownSeries[];
+  /** One point per `day` (default) or per `week` when the gateway buckets a long window. */
+  granularity?: ChartGranularity;
   /** Names the chart for assistive tech, e.g. the scorer's name. */
   title?: string;
 }) {
+  const words = granularityWords(granularity);
   const series = collapseSeries(allSeries);
   if (series.every((s) => s.daily.every((d) => d.n === 0))) {
     return <EmptyChart label="No signals in this window." />;
   }
 
   const rows = pivotSeries(series);
-  const summary = `Daily mean score from 0 to 1 over ${rows.length} days for ${series.length} groups: ${series
+  const summary = `${words.adjective} mean score from 0 to 1 over ${rows.length} ${words.plural} for ${series.length} groups: ${series
     .map((s) => s.label)
     .join(', ')}.`;
 
@@ -105,7 +111,7 @@ export function ScorerBreakdownChart({
     <ChartFrame
       ariaLabel={chartAriaLabel(title, 'Scorer breakdown', summary)}
       table={{
-        columns: ['Date (UTC)', ...series.map((s) => `${s.label} (mean 0–1)`)],
+        columns: [words.dateColumn, ...series.map((s) => `${s.label} (mean 0–1)`)],
         rows: rows.map((r) => [
           formatDateLabel(r.date),
           ...series.map((_, i) => {
@@ -133,7 +139,9 @@ export function ScorerBreakdownChart({
           />
           <ChartTooltip
             formatter={(value) => Number(value).toFixed(2)}
-            labelFormatter={(label) => `${formatDateLabel(label)} (UTC)`}
+            labelFormatter={(label) =>
+              `${granularity === 'week' ? 'Week of ' : ''}${formatDateLabel(label)} (UTC)`
+            }
           />
           <Legend wrapperStyle={LEGEND_STYLE} />
           {series.map((s, i) => (

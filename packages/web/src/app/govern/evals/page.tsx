@@ -200,6 +200,7 @@ function EvalsWorkspace() {
             <div className="space-y-6">
               {charted.length > 1 ? (
                 <ScorerBreakdownChart
+                  granularity={weekly ? 'week' : 'day'}
                   series={charted.map((t) => ({
                     daily: t.daily,
                     label: t.breakdown ?? '(none)',
@@ -209,6 +210,7 @@ function EvalsWorkspace() {
               ) : charted.length === 1 && charted[0] ? (
                 <ScorerTrendChart
                   data={charted[0].daily}
+                  granularity={weekly ? 'week' : 'day'}
                   title={`${scorer || 'Scorer'} ${weekly ? 'weekly' : 'daily'} mean`}
                 />
               ) : (

@@ -7,32 +7,37 @@ import {
   axisLabel,
   CHART_HEIGHT,
   ChartFrame,
+  type ChartGranularity,
   ChartTooltip,
   chartAriaLabel,
   EmptyChart,
   formatDateLabel,
   GRID_STROKE,
+  granularityWords,
 } from './chartChrome';
 
 interface Props {
-  /** One row per UTC day, oldest first; `mean` is null on a day with no signal. */
+  /** One row per UTC day (or week, see `granularity`), oldest first; `mean` is null on a day with no signal. */
   data: { date: string; mean: number | null; n: number }[];
   /** Names the chart for assistive tech, e.g. the scorer's name. */
   title?: string;
+  /** One point per `day` (default) or per `week` when the gateway buckets a long window. */
+  granularity?: ChartGranularity;
 }
 
 /**
  * One scorer's daily mean score (0..1). One series, so the card names the
  * scorer and there is no legend. A day without signals is a gap, not a zero.
  */
-export function ScorerTrendChart({ data, title }: Props) {
+export function ScorerTrendChart({ data, granularity = 'day', title }: Props) {
+  const words = granularityWords(granularity);
   if (data.every((d) => d.n === 0)) {
     return <EmptyChart label="No signals in this window." />;
   }
 
   const scored = data.filter((d) => d.mean !== null);
   const latest = scored[scored.length - 1];
-  const summary = `Daily mean score from 0 to 1 over ${data.length} days; ${scored.length} days have signals${
+  const summary = `${words.adjective} mean score from 0 to 1 over ${data.length} ${words.plural}; ${scored.length} ${words.plural} have signals${
     latest ? `, the latest ${latest.mean?.toFixed(2)} on ${formatDateLabel(latest.date)}` : ''
   }.`;
 
@@ -40,7 +45,7 @@ export function ScorerTrendChart({ data, title }: Props) {
     <ChartFrame
       ariaLabel={chartAriaLabel(title, 'Scorer trend', summary)}
       table={{
-        columns: ['Date (UTC)', 'Mean score (0–1)', 'Signals'],
+        columns: [words.dateColumn, 'Mean score (0–1)', 'Signals'],
         rows: data.map((d) => [
           formatDateLabel(d.date),
           d.mean === null ? '—' : d.mean.toFixed(2),
@@ -69,7 +74,9 @@ export function ScorerTrendChart({ data, title }: Props) {
               `${Number(value).toFixed(2)} · n=${item.payload.n}`,
               'Mean score',
             ]}
-            labelFormatter={(label) => `${formatDateLabel(label)} (UTC)`}
+            labelFormatter={(label) =>
+              `${granularity === 'week' ? 'Week of ' : ''}${formatDateLabel(label)} (UTC)`
+            }
           />
           <Line
             connectNulls={false}

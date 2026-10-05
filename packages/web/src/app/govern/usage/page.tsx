@@ -364,6 +364,7 @@ function UsageWorkspace() {
                     </CardHeader>
                     <DailyCostChart
                       data={data.daily}
+                      granularity={data.bucketDays === 7 ? 'week' : 'day'}
                       title={data.bucketDays === 7 ? 'LLM spend per week' : 'LLM spend per day'}
                     />
                   </Card>
