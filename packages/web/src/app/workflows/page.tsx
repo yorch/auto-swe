@@ -47,7 +47,7 @@ function RequestsWorkspace() {
     { limit: PAGE_SIZE, offset, scope, search, state },
     { enabled: !showEpics }
   );
-  const epicsQuery = useEpics({ limit: PAGE_SIZE, offset }, { enabled: showEpics });
+  const epicsQuery = useEpics({ limit: PAGE_SIZE, offset, scope }, { enabled: showEpics });
   const active = showEpics ? epicsQuery : query;
   const requests = query.data?.data ?? [];
   const epics = epicsQuery.data?.data ?? [];
@@ -103,17 +103,17 @@ function RequestsWorkspace() {
           options={TYPES}
           value={type}
         />
+        <SegmentedControl
+          ariaLabel="Request scope"
+          onChange={(value) => update({ offset: null, scope: value })}
+          options={[
+            { label: 'My requests', value: 'MINE' },
+            { label: 'Team requests', value: 'TEAM' },
+          ]}
+          value={scope}
+        />
         {!showEpics && (
           <>
-            <SegmentedControl
-              ariaLabel="Request scope"
-              onChange={(value) => update({ offset: null, scope: value })}
-              options={[
-                { label: 'My requests', value: 'MINE' },
-                { label: 'Team requests', value: 'TEAM' },
-              ]}
-              value={scope}
-            />
             <div className="min-w-48 flex-1">
               <Input
                 label="Search requests"
