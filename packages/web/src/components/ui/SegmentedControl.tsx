@@ -18,12 +18,15 @@ export function SegmentedControl<T extends string>({
   ariaLabel,
   className,
   onChange,
+  optionClassName,
   options,
   value,
 }: {
   ariaLabel: string;
   className?: string;
   onChange: (value: T) => void;
+  /** Extra classes for every option button, e.g. a taller touch target. */
+  optionClassName?: string;
   options: SegmentedOption<T>[];
   value: T;
 }) {
@@ -45,7 +48,8 @@ export function SegmentedControl<T extends string>({
               FOCUS_RING,
               selected
                 ? 'bg-ember-400/15 text-ember-400'
-                : 'text-paper-500 hover:bg-ink-600/50 hover:text-paper-200'
+                : 'text-paper-500 hover:bg-ink-600/50 hover:text-paper-200',
+              optionClassName
             )}
             key={opt.value}
             onClick={() => onChange(opt.value)}

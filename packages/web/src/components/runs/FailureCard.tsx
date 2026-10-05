@@ -58,7 +58,7 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
       )}
     >
       {/* Header row */}
-      <div className="flex items-center gap-2 mb-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <StatusBadge status="FAILED" />
         <span className="font-mono text-[10px] tracking-[0.1em] text-brick-400">{errorCode}</span>
       </div>
@@ -74,13 +74,13 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
       </h4>
 
       {/* Mono locator */}
-      <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-brick-400">
+      <div className="mb-2 break-all font-mono text-[10px] tracking-[0.08em] text-brick-400">
         at {step.nodeId}
       </div>
 
       {/* Error summary */}
       {step.error && (
-        <p className="text-paper-400 text-[12px] leading-relaxed mb-3">
+        <p className="mb-3 break-words text-paper-400 text-[12px] leading-relaxed">
           {step.error.length > 200 ? `${step.error.slice(0, 200)}…` : step.error}
         </p>
       )}
@@ -94,14 +94,14 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
 
       {/* Actions */}
       {(onJumpToFailure || onReRun) && (
-        <div className="flex items-center gap-2 mt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           {onJumpToFailure && (
-            <Button onClick={onJumpToFailure} size="sm" variant="ghost">
+            <Button className="h-[40px] lg:h-7" onClick={onJumpToFailure} size="sm" variant="ghost">
               ↳ Jump to failure
             </Button>
           )}
           {onReRun && (
-            <Button onClick={onReRun} size="sm" variant="primary">
+            <Button className="h-[40px] lg:h-7" onClick={onReRun} size="sm" variant="primary">
               Re-run
             </Button>
           )}

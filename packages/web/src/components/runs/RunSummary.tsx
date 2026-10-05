@@ -88,7 +88,7 @@ export function RunSummary({
       {full && (hasResult || failedStep) && (
         <Button
           aria-expanded={!folded}
-          className="md:hidden"
+          className="h-[40px] md:hidden"
           onClick={() => setFolded((value) => !value)}
           size="sm"
           variant="ghost"

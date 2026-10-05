@@ -89,7 +89,7 @@ const VIEW_OPTIONS = [
 ] as const;
 
 const TOOLBAR_BUTTON =
-  'rounded-sm border border-ink-600 bg-ink-800/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-400 hover:text-paper-100';
+  'min-h-[40px] shrink-0 whitespace-nowrap rounded-sm border border-ink-600 bg-ink-800/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-400 hover:text-paper-100 lg:min-h-0';
 
 function InnerDag({
   spec: fullSpec,
@@ -335,6 +335,7 @@ function InnerDag({
   // How many cards are actually on the canvas: a collapsed group holding something the
   // viewer is looking for stays open, so this can be fewer than `collapsed.size`.
   const foldedCount = Object.keys(groupFold.folded).length;
+  // On a phone the toolbar is one row that scrolls sideways, so the canvas keeps its height.
   const showToolbar =
     outline || fold.hidden.length > 0 || collapsibleCount > 0 || collapsed.size > 0;
 
@@ -344,11 +345,13 @@ function InnerDag({
       style={{ height: height ?? 480 }}
     >
       {showToolbar && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-600/60 bg-ink-900 px-2 py-1.5">
+        <div className="flex flex-nowrap items-center gap-2 overflow-x-auto border-b border-ink-600/60 bg-ink-900 px-2 py-1.5 lg:flex-wrap lg:overflow-visible">
           {outline && (
             <SegmentedControl
               ariaLabel="Workflow view"
+              className="shrink-0"
               onChange={setView}
+              optionClassName="min-h-[40px] lg:min-h-0"
               options={[...VIEW_OPTIONS]}
               value={view}
             />
