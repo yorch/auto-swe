@@ -448,6 +448,68 @@ describe('skills sources', () => {
       expect(text).not.toMatch(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/);
     });
 
+    it.each([
+      ['tag character', 0xe0041, '<U+E0041>'],
+      ['soft hyphen', 0xad, '<U+00AD>'],
+      ['variation selector', 0xfe0f, '<U+FE0F>'],
+      ['Hangul filler', 0x3164, '<U+3164>'],
+      ['deprecated format character', 0x206a, '<U+206A>'],
+      ['interlinear annotation', 0xfff9, '<U+FFF9>'],
+      ['combining grapheme joiner', 0x34f, '<U+034F>'],
+    ])('shows a %s in a diff line and cleans it from a name', async (_n, cp, shown) => {
+      const ch = String.fromCodePoint(cp);
+      reply(() => ({
+        body: {
+          data: { ...DIFF, changed: [changed(`al${ch}pha`, { textDiff: `+x${ch}y` })] },
+        },
+      }));
+      await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
+      const text = out.join('');
+      expect(text).toContain(`x${shown}y`);
+      expect(text).toContain('al?pha');
+      expect(text).not.toContain(ch);
+    });
+
+    it('leaves emoji sequences intact in names and diff lines, and still marks stray selectors and joiners', async () => {
+      reply(() => ({
+        body: {
+          data: {
+            ...DIFF,
+            changed: [
+              changed('warn\u26a0\ufe0f', {
+                textDiff: '+ok \u{1f469}\u200d\u{1f469} 1\ufe0f\u20e3\n+bad a\ufe0f b\u200dc',
+              }),
+            ],
+          },
+        },
+      }));
+      await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
+      const text = out.join('');
+      expect(text).toContain('warn\u26a0\ufe0f');
+      expect(text).toContain('ok \u{1f469}\u200d\u{1f469} 1\ufe0f\u20e3');
+      expect(text).toContain('bad a<U+FE0F> b<U+200D>c');
+    });
+
+    it('keeps keycaps and skin-toned ZWJ emoji, and marks selectors threaded through digits or after (c)', async () => {
+      reply(() => ({
+        body: {
+          data: {
+            ...DIFF,
+            changed: [
+              changed('alpha', {
+                textDiff:
+                  '+ok 1\ufe0f\u20e3 \u{1f469}\u{1f3fd}\u200d\u{1f4bb}\\n+bad 2\ufe0f0\ufe0e2\ufe0f6 \u00a9\ufe0f',
+              }),
+            ],
+          },
+        },
+      }));
+      await runSkillsCommand(['sources', 'diff', 'src-1'], ENV);
+      const text = out.join('');
+      expect(text).toContain('ok 1\ufe0f\u20e3 \u{1f469}\u{1f3fd}\u200d\u{1f4bb}');
+      expect(text).toContain('bad 2<U+FE0F>0<U+FE0E>2<U+FE0F>6 \u00a9<U+FE0F>');
+    });
+
     it('names are cleaned of bidi controls, and a rename is shown and reported', async () => {
       reply((_url, method) =>
         method === 'POST'

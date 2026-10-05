@@ -11,8 +11,10 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import {
+  installIntoSource,
   installSkillSource,
   previewSkillSource,
+  readPreviewSkill,
   SkillImportRefusal,
 } from '../lib/skillSourceService.js';
 import {
@@ -28,7 +30,7 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  * repository. ADMIN-only: imported text becomes agent prompt text, so who may
  * bring it in is a platform decision.
  *
- *   POST   /api/v1/platform/skill-sources/preview   Read a source; writes nothing
+ *   POST   /api/v1/platform/skill-sources/preview   Read a source; writes nothing (with `skill`: one skill's complete text)
  *   POST   /api/v1/platform/skill-sources           Install the chosen skills (one transaction)
  *   GET    /api/v1/platform/skill-sources           List sources
  *   GET    /api/v1/platform/skill-sources/:id       One source, with its skills
@@ -37,6 +39,7 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  *   POST   /api/v1/platform/skill-sources/:id/check   Ask the host for the ref's commit now (what the sweep does)
  *   GET    /api/v1/platform/skill-sources/:id/diff    Per-skill diff against a newer commit; writes nothing
  *   POST   /api/v1/platform/skill-sources/:id/accept  Cut new revisions from the diffed commit
+ *   POST   /api/v1/platform/skill-sources/:id/install Install more skills of the pinned commit
  */
 
 const SourceIdParams = z.object({ id: z.string().uuid() });
@@ -63,7 +66,15 @@ const scopeIsConsistent = (b: z.infer<typeof SourceFields>) =>
 const SCOPE_MESSAGE =
   'scope GLOBAL takes no teamId/orgId; TEAM needs teamId; ORGANIZATION needs orgId';
 
-const PreviewBody = SourceFields.refine(scopeIsConsistent, SCOPE_MESSAGE);
+const PreviewBody = SourceFields.extend({
+  /** With `skill`: the commit the preview showed; the ref must still resolve to it (else 409 SHA_MOVED). */
+  sha: z
+    .string()
+    .regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/)
+    .optional(),
+  /** With a name: return that one skill's complete incoming text instead of the preview. */
+  skill: z.string().min(1).max(200).optional(),
+}).refine(scopeIsConsistent, SCOPE_MESSAGE);
 
 const CreateBody = SourceFields.extend({
   /** The commit the preview showed; the ref must still resolve to it. */
@@ -95,6 +106,12 @@ const AcceptBody = z.object({
     .min(1)
     .max(100)
     .optional(),
+});
+
+const InstallBody = z.object({
+  /** The source's pinnedSha: skills are installed at the commit the source is pinned to. */
+  sha: Sha,
+  skills: z.array(z.string().min(1).max(200)).min(1).max(100),
 });
 
 const PatchBody = z
@@ -187,8 +204,11 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
     '/skill-sources/preview',
     { onRequest: adminOnly, schema: { body: PreviewBody } },
     async (request, reply) => {
-      const body = request.body;
+      const { skill, sha, ...body } = request.body;
       try {
+        if (skill !== undefined) {
+          return { data: await readPreviewSkill(body, skill, sha) };
+        }
         const result = await previewSkillSource(fastify.prisma, {
           ...body,
           orgId: body.orgId ?? null,
@@ -196,6 +216,15 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
         });
         return { data: { location: result.location, sha: result.sha, skills: result.skills } };
       } catch (err) {
+        if (err instanceof SkillImportRefusal) {
+          return reply.status(IMPORT_STATUS[err.code]).send({
+            error: {
+              code: `SKILL_IMPORT_${err.code}`,
+              details: err.details,
+              message: IMPORT_MESSAGES[err.code],
+            },
+          });
+        }
         return sourceError(err, reply);
       }
     }
@@ -246,9 +275,7 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(201).send({ data: { skills: installed, source } });
       } catch (err) {
         if (err instanceof SkillImportRefusal) {
-          const status =
-            err.code === 'UNKNOWN_SKILLS' ? 400 : err.code === 'NAME_CONFLICT' ? 409 : 422;
-          return reply.status(status).send({
+          return reply.status(IMPORT_STATUS[err.code]).send({
             error: {
               code: `SKILL_IMPORT_${err.code}`,
               details: err.details,
@@ -447,6 +474,50 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // POST /skill-sources/:id/install — more skills from the pinned commit, one transaction.
+  app.post(
+    '/skill-sources/:id/install',
+    { onRequest: adminOnly, schema: { body: InstallBody, params: SourceIdParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const existing = await fastify.prisma.skillSource.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!existing) {
+        return notFound(reply);
+      }
+      try {
+        const { installed } = await installIntoSource(
+          fastify.prisma,
+          existing,
+          { createdById: actor.sub, sha: request.body.sha, skills: request.body.skills },
+          (tx, source, skills) =>
+            writeAuditLog(fastify, {
+              action: 'UPDATE',
+              actor,
+              after: { installed: skills.map((s) => s.name), pinnedSha: source.pinnedSha },
+              before: { pinnedSha: existing.pinnedSha },
+              client: tx,
+              entityId: source.id,
+              entityType: 'SkillSource',
+            })
+        );
+        return reply.status(201).send({ data: { skills: installed } });
+      } catch (err) {
+        if (err instanceof SkillImportRefusal) {
+          return reply.status(IMPORT_STATUS[err.code]).send({
+            error: {
+              code: `SKILL_IMPORT_${err.code}`,
+              details: err.details,
+              message: IMPORT_MESSAGES[err.code],
+            },
+          });
+        }
+        return sourceError(err, reply);
+      }
+    }
+  );
+
   // PATCH /skill-sources/:id
   app.patch(
     '/skill-sources/:id',
@@ -523,12 +594,29 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
   );
 };
 
+const IMPORT_STATUS = {
+  ALREADY_INSTALLED: 409,
+  DISABLED: 409,
+  NAME_CONFLICT: 409,
+  NOT_INSTALLABLE: 422,
+  SCAN_WARNINGS: 422,
+  SOURCE_CHANGED: 409,
+  STALE_SHA: 409,
+  UNKNOWN_SKILLS: 400,
+} as const;
+
 const IMPORT_MESSAGES = {
+  ALREADY_INSTALLED:
+    'Some chosen skills are already installed from this source; nothing was imported.',
+  DISABLED: 'This source is disabled; re-enable it first.',
   NAME_CONFLICT:
     'A skill with the same name already exists; nothing was imported. Rename or remove it, or leave the skill out.',
   NOT_INSTALLABLE: 'Some chosen skills have errors and cannot be installed; nothing was imported.',
   SCAN_WARNINGS:
     'Some chosen skills drew scanner warnings and skills.import.blockOnScanWarnings is on; nothing was imported.',
+  SOURCE_CHANGED:
+    'The source changed while the skills were being installed (disabled, deleted, or a newer commit accepted); nothing was imported. Review it again.',
+  STALE_SHA: 'The source is pinned to a different commit than the one named; nothing was imported.',
   UNKNOWN_SKILLS: 'Some chosen skills are not in the source at that commit; nothing was imported.',
 } as const;
 

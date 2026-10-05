@@ -1,4 +1,4 @@
-import { checkProbeUrl } from '../ssrfGuard.js';
+import { checkConnectorBaseUrl } from '../ssrfGuard.js';
 import { AtlassianClient } from './atlassianClient.js';
 import type { FigmaDesignProvider } from './figmaDesign.js';
 import type { IssueTrackerProvider } from './issueTracker.js';
@@ -64,16 +64,14 @@ function checkBaseUrlSafety(
   allowPrivate: boolean,
   opts?: { log?: { warn: (obj: unknown, msg?: string) => void } }
 ): boolean {
-  const strict = checkProbeUrl(baseUrl);
-  if (strict.ok) {
-    return true;
-  }
-  const safety = checkProbeUrl(baseUrl, { allowPrivate });
+  const safety = checkConnectorBaseUrl(baseUrl, allowPrivate);
   if (safety.ok) {
-    opts?.log?.warn(
-      { baseUrl, reason: strict.reason },
-      `${label} baseUrl is on a private network but permitted by explicit allowPrivateNetwork opt-in`
-    );
+    if (safety.waivedReason !== null) {
+      opts?.log?.warn(
+        { baseUrl, reason: safety.waivedReason },
+        `${label} baseUrl is on a private network but permitted by explicit allowPrivateNetwork opt-in`
+      );
+    }
     return true;
   }
   opts?.log?.warn({ baseUrl, reason: safety.reason }, `${label} baseUrl rejected by SSRF guard`);

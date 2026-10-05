@@ -225,6 +225,70 @@ describe('access', () => {
   });
 });
 
+describe('POST /preview with skill (full text)', () => {
+  it('returns the complete text of that skill at the resolved sha, writing and scanning nothing', async () => {
+    fetchSkillSource.mockResolvedValue(
+      fetched([sourceSkill('alpha', { promptText: 'ALPHA \u202e FULL' }), sourceSkill('beta')])
+    );
+    const { call, prisma, state } = await buildApp();
+    const res = await call('POST', '/preview', { ...SOURCE, skill: 'alpha' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toMatchObject({
+      folder: 'skills/alpha',
+      name: 'alpha',
+      promptText: 'ALPHA \u202e FULL',
+      referenceFiles: [{ length: 8, path: 'notes.md' }],
+      sha: SHA,
+    });
+    expect(fetchSkillSource).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: 'acme' }),
+      { scriptMode: 'TEXT_ONLY' },
+      undefined
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(state.sources).toHaveLength(0);
+    expect(scanSkillContent).not.toHaveBeenCalled();
+  });
+
+  it('400s a skill the source does not hold, and maps a fetch failure to its fixed string', async () => {
+    const { call } = await buildApp();
+    const unknown = await call('POST', '/preview', { ...SOURCE, skill: 'nope' });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json().error).toMatchObject({
+      code: 'SKILL_IMPORT_UNKNOWN_SKILLS',
+      details: ['nope'],
+    });
+    fetchSkillSource.mockRejectedValueOnce(new SkillSourceError('NOT_FOUND'));
+    const failed = await call('POST', '/preview', { ...SOURCE, skill: 'alpha' });
+    expect(failed.statusCode).toBe(404);
+    expect(failed.json().error.code).toBe('SKILL_SOURCE_NOT_FOUND');
+  });
+
+  it('with a sha, reads the source expecting that commit; a moved ref is 409 SHA_MOVED', async () => {
+    const { call } = await buildApp();
+    const ok = await call('POST', '/preview', { ...SOURCE, sha: SHA, skill: 'alpha' });
+    expect(ok.statusCode).toBe(200);
+    expect(fetchSkillSource).toHaveBeenCalledWith(
+      expect.anything(),
+      { expectSha: SHA, scriptMode: 'TEXT_ONLY' },
+      undefined
+    );
+    fetchSkillSource.mockRejectedValueOnce(new SkillSourceError('SHA_MOVED'));
+    const moved = await call('POST', '/preview', { ...SOURCE, sha: OTHER_SHA, skill: 'alpha' });
+    expect(moved.statusCode).toBe(409);
+    expect(moved.json().error.code).toBe('SKILL_SOURCE_SHA_MOVED');
+    expect(
+      (await call('POST', '/preview', { ...SOURCE, sha: 'nothex', skill: 'alpha' })).statusCode
+    ).toBe(400);
+  });
+
+  it('is ADMIN-only', async () => {
+    const { call } = await buildApp('ENGINEER');
+    expect((await call('POST', '/preview', { ...SOURCE, skill: 'alpha' })).statusCode).toBe(403);
+    expect(fetchSkillSource).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /preview', () => {
   it('reports each skill and writes nothing', async () => {
     scanSkillContent.mockResolvedValueOnce({

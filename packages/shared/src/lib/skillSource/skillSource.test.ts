@@ -1045,6 +1045,50 @@ describe('repository-derived text', () => {
   });
 });
 
+describe('safeDisplayPath hidden-character classes', () => {
+  it.each([
+    0x1b, 0x85, 0xad, 0x34f, 0x61c, 0x115f, 0x17b4, 0x180b, 0x180e, 0x200b, 0x2028, 0x2029, 0x202e,
+    0x2060, 0x206a, 0x206f, 0x3164, 0xfe0f, 0xfeff, 0xffa0, 0xfff9, 0xfffb, 0xe0020, 0xe0041,
+    0xe007f, 0xe0100,
+  ])('replaces U+%s with one ?', (cp) => {
+    expect(safeDisplayPath(`a${String.fromCodePoint(cp)}b`)).toBe('a?b');
+  });
+
+  it('keeps ordinary text', () => {
+    expect(safeDisplayPath('café/日本 😀.md')).toBe('café/日本 😀.md');
+  });
+});
+
+describe('safeDisplayPath variation selectors, tightened', () => {
+  it('keeps a keycap and a skin-toned ZWJ sequence, and marks selectors in a year or after (c)', () => {
+    for (const ok of ['1\ufe0f\u20e3', '\u{1f469}\u{1f3fd}\u200d\u{1f4bb}']) {
+      expect(safeDisplayPath(ok)).toBe(ok);
+    }
+    expect(safeDisplayPath('2\ufe0f0\ufe0e2\ufe0f6\ufe0e')).toBe('2?0?2?6?');
+    expect(safeDisplayPath('\u00a9\ufe0f\u2122\ufe0f5\ufe0f')).toBe('\u00a9?\u2122?5?');
+  });
+});
+
+describe('safeDisplayPath emoji sequences', () => {
+  it('leaves an emoji presentation selector and a ZWJ between pictographs alone', () => {
+    for (const ok of [
+      '\u26a0\ufe0f.md',
+      '1\ufe0f\u20e3',
+      '\u{1f469}\u200d\u{1f469}',
+      '\u{1f469}\u200d\u2764\ufe0f\u200d\u{1f469}',
+    ]) {
+      expect(safeDisplayPath(ok)).toBe(ok);
+    }
+  });
+  it('still replaces them anywhere else, and tag characters always', () => {
+    expect(safeDisplayPath('a\ufe0f')).toBe('a?');
+    expect(safeDisplayPath('a\u200db')).toBe('a?b');
+    expect(safeDisplayPath('\u{1f469}\u200db')).toBe('\u{1f469}?b');
+    expect(safeDisplayPath('\u26a0\ufe0f\ufe0f')).toBe('\u26a0\ufe0f?');
+    expect(safeDisplayPath('\u{1f3f4}\u{e0067}')).toBe('\u{1f3f4}?');
+  });
+});
+
 describe('safeDisplayPath', () => {
   it('replaces bidirectional overrides and zero-width characters, not just control characters', () => {
     expect(safeDisplayPath('a\u202eb\u2066c\u2069d\u200be\u200ff\ufeffg\u2060h')).toBe(

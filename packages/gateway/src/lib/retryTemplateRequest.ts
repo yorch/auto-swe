@@ -12,6 +12,11 @@ import { authorizeLaunch, sendLaunchRefusal } from './launchAuthorization.js';
 import { validateRunConnection } from './runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from './runVisibility.js';
 import { isSystemTemplate } from './systemTemplate.js';
+import {
+  inputsSatisfySchema,
+  launchableTemplateWhere,
+  sendTemplateNotLaunchable,
+} from './templateLaunch.js';
 import { launchTrackedWorkflow } from './workflowLaunch.js';
 
 /** Re-run a connection-free or non-git workflow with its recorded input/version. */
@@ -46,14 +51,18 @@ export async function retryTemplateRequest(
   const template = await app.prisma.workflowTemplate.findFirst({
     select: {
       id: true,
+      inputSchema: true,
       origin: true,
       team: { select: { organization: { select: { id: true, monthlyBudgetUsdCents: true } } } },
       teamId: true,
       workspaceProvider: true,
     },
-    where: { id: input.templateId },
+    where: launchableTemplateWhere(user, input.templateId),
   });
-  if (!template || isSystemTemplate(template)) {
+  if (!template) {
+    return sendTemplateNotLaunchable(reply);
+  }
+  if (isSystemTemplate(template)) {
     return reply.status(409).send({
       error: {
         code: 'NO_TEMPLATE_SNAPSHOT',
@@ -102,6 +111,9 @@ export async function retryTemplateRequest(
     ...stored,
     ...(instructions && typeof stored.description === 'string' ? { description } : {}),
   };
+  if (!inputsSatisfySchema(reply, template.inputSchema, payload)) {
+    return;
+  }
   const budgetTier: BudgetTier =
     stored.budget === 'LARGE' || stored.budget === 'EPIC' ? stored.budget : 'STANDARD';
   const temporalWorkflowId = `wf-${template.id.replace(/-/g, '').slice(0, 8)}-${crypto.randomUUID().replace(/-/g, '')}`;

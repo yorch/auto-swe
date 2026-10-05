@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
-import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -43,7 +42,13 @@ import {
   isReservedTemplateName,
   isSystemTemplate,
 } from '../lib/systemTemplate.js';
-import { ledTeams, memberOrgs, memberTeams } from '../lib/tenantScope.js';
+import {
+  inputsSatisfySchema,
+  launchableTemplateWhere,
+  sendTemplateNotLaunchable,
+  teamMembershipFilter,
+} from '../lib/templateLaunch.js';
+import { ledTeams, memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -444,21 +449,6 @@ async function createTemplateVersion(
     }
   }
   return null;
-}
-
-function teamMembershipFilter(user: {
-  sub: string;
-  role: string;
-}): Prisma.WorkflowTemplateWhereInput {
-  if (user.role === 'ADMIN') {
-    return {};
-  }
-  return {
-    OR: [
-      { teamId: null }, // Global templates visible to everyone
-      { team: memberTeams(user) },
-    ],
-  };
 }
 
 /**
@@ -1749,12 +1739,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           teamId: true,
           workspaceProvider: true,
         },
-        where: { id: request.params.id, status: 'ACTIVE', ...teamMembershipFilter(user) },
+        where: launchableTemplateWhere(user, request.params.id),
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found or not active' },
-        });
+        return sendTemplateNotLaunchable(reply);
       }
       if (!tpl.activeVersion) {
         return reply.status(400).send({
@@ -1767,17 +1755,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
       const payload = request.body.payload ?? {};
 
-      if (tpl.inputSchema && isInputSchema(tpl.inputSchema)) {
-        const result = validateInputPayload(tpl.inputSchema, payload);
-        if (!result.ok) {
-          return reply.status(400).send({
-            error: {
-              code: 'INVALID_INPUT',
-              details: result.errors,
-              message: `Run input does not satisfy the template's input schema: ${result.errors.join('; ')}`,
-            },
-          });
-        }
+      if (!inputsSatisfySchema(reply, tpl.inputSchema, payload)) {
+        return;
       }
 
       // Extract well-known fields from the generic payload so they map onto the

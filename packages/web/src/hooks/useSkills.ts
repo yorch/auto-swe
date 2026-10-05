@@ -16,6 +16,8 @@ export interface Skill {
   /** The revision this row's text is; send it back as `expectedRevision` on edit. */
   currentRevision: number;
   usedByCount: number;
+  /** Set for a skill imported from an external repository; `sha` is the commit its current text came from. */
+  externalSource: { host: string; owner: string; repo: string; sha: string | null } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -121,6 +123,19 @@ export function useUpdateSkill() {
       api
         .put<{ data: Skill; scanWarnings?: string[] }>(`/api/v1/platform/skills/${id}`, body)
         .then(toSaveResult),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
+  });
+}
+
+/**
+ * An admin attests to the text of the revision they read; a skill that moved on
+ * since answers 409 `SKILL_CHANGED`. The only way a skill becomes verified.
+ */
+export function useVerifySkill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, revision }: { id: string; revision: number }) =>
+      api.post<{ data: Skill }>(`/api/v1/platform/skills/${id}/verify`, { revision }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
   });
 }

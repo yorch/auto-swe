@@ -411,11 +411,111 @@ function checkConnectorFetchesSetRedirect() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// INVARIANT 6 — every database-backed test suite runs in CI, with its opt-in flag set.
+//
+// A `*.pg.test.ts` suite gates itself on an environment flag (`describe.skipIf(!enabled)`), because
+// it writes to a real database and the unit-test job has none. The `migrations` job runs each one
+// in a named step of `ci.yml` that sets that flag. Two mistakes would be invisible: a new suite that
+// no step lists is never run anywhere, and a suite listed under the wrong flag has every test
+// skipped by its own gate. Both leave CI green — a skipped suite and an absent suite report the
+// same thing. A step with `if:` or `continue-on-error:` can skip or swallow a suite the same way.
+//
+// Like the MCP rule, this is a standing constraint, not a past incident: no unlisted suite has
+// reached main, the gap was caught twice in review.
+//
+// A tripwire over text, not a YAML parser: `ci.yml` is regular enough for a line scan. A flag set
+// on a job or workflow `env:` instead of the step is not seen, and a suite whose gate is not the
+// `process.env.X === '1'` form is refused rather than guessed at. A renamed suite needs no rule of
+// its own: its old path stops matching a file, so it is reported as not run by any step.
+// ---------------------------------------------------------------------------
+
+const CI_WORKFLOW = '.github/workflows/ci.yml';
+
+/** Each workflow step as `{ line, text }`, the slice from its `- key:` line to the next one. */
+function workflowSteps(yml) {
+  const steps = [];
+  yml.split('\n').forEach((text, i) => {
+    if (/^\s*- [A-Za-z]\w*:/.test(text)) {
+      steps.push({ line: i + 1, text: '' });
+    }
+    if (steps.length > 0) {
+      steps[steps.length - 1].text += `${text}\n`;
+    }
+  });
+  return steps;
+}
+
+function checkPgSuitesRunInCi() {
+  const suites = walk('packages', (f) => f.endsWith('.pg.test.ts'));
+  const named = new Map(); // suite path -> the steps whose `yarn test` line names it
+  for (const step of workflowSteps(read(CI_WORKFLOW))) {
+    const lines = step.text.split('\n');
+    const runs = lines.filter((l) => !l.trim().startsWith('#') && l.includes('yarn test'));
+    for (const path of runs.join('\n').match(/packages\/[^\s'"]+\.pg\.test\.ts/g) ?? []) {
+      named.set(path, [...(named.get(path) ?? []), { ...step, lines }]);
+    }
+  }
+
+  for (const file of suites) {
+    const runners = named.get(file);
+    if (!runners) {
+      fail(
+        file,
+        1,
+        'pg-suites-run-in-ci',
+        `${file} is not run by any \`yarn test\` step in ${CI_WORKFLOW}`,
+        'Database-backed suites are opt-in and the unit-test job skips them, so a suite no ' +
+          'migrations-job step names never runs anywhere while CI stays green. Add a step that sets its flag.'
+      );
+      continue;
+    }
+    // The gates: every `process.env.X === '1'` in the code, not in its doc comment.
+    const gates = [...stripComments(read(file)).matchAll(/process\.env\.(\w+)\s*===\s*'1'/g)];
+    if (gates.length === 0) {
+      fail(
+        file,
+        1,
+        'pg-suites-run-in-ci',
+        "cannot find the suite's opt-in gate (`process.env.X === '1'`)",
+        'Without knowing which flag it gates on, the check cannot tell whether CI sets it, and a ' +
+          'step with the wrong flag is green with every test skipped. Gate it in that form, or teach this rule the new one.'
+      );
+      continue;
+    }
+    for (const step of runners) {
+      for (const [, flag] of gates) {
+        if (
+          !step.lines.some((l) => new RegExp(`^\\s+${flag}:\\s*['"]?1['"]?\\s*(#.*)?$`).test(l))
+        ) {
+          fail(
+            CI_WORKFLOW,
+            step.line,
+            'pg-suites-run-in-ci',
+            `the step running ${file} does not set ${flag}: '1'`,
+            `The suite skips every test unless ${flag}=1, and a skipped suite is a passing step.`
+          );
+        }
+      }
+      if (step.lines.some((l) => /^\s+(?:- )?(?:if|continue-on-error):/.test(l))) {
+        fail(
+          CI_WORKFLOW,
+          step.line,
+          'pg-suites-run-in-ci',
+          `the step running ${file} has \`if:\` or \`continue-on-error:\``,
+          'A condition can skip the suite and continue-on-error swallows its failure; either way the step stays green.'
+        );
+      }
+    }
+  }
+}
+
 checkWorkspaceImageLiterals();
 checkDockerfileYarnProvisioning();
 checkLayoutRendersPerRequest();
 checkMcpCodeHasNoDatabaseAccess();
 checkConnectorFetchesSetRedirect();
+checkPgSuitesRunInCi();
 
 if (failures.length > 0) {
   console.error(`Invariant check failed — ${failures.length} violation(s).\n`);
@@ -430,9 +530,10 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('Invariant check passed — 5 invariants, no violations.');
+console.log('Invariant check passed — 6 invariants, no violations.');
 console.log('  workspace image is inherited, never written inline at a call site');
 console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
 console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
 console.log('  MCP code takes no database access: it reaches data only through a REST route');
 console.log('  connector fetches state a redirect policy');
+console.log('  every database-backed test suite runs in CI with its opt-in flag set');
