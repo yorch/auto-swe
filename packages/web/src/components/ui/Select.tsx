@@ -13,6 +13,7 @@ import {
   fromKey,
   toKey,
   validationProps,
+  withIds,
 } from './dropdown';
 
 export type SelectOption = DropdownOption;
@@ -124,7 +125,7 @@ export function Select({
       )}
       {!pill && <FieldHelp error={error} hint={hint} />}
       <DropdownPopover>
-        <ListBox className="outline-none" items={options}>
+        <ListBox className="outline-none" items={withIds(options)}>
           {(option) => <DropdownItem compact={compact} option={option} />}
         </ListBox>
       </DropdownPopover>

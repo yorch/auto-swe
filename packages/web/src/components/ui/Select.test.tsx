@@ -16,6 +16,30 @@ function openAndPick(trigger: HTMLElement, optionName: string) {
 }
 
 describe('Select', () => {
+  it('keeps working when options reorder after mount', () => {
+    // A picker seeded with its current value, then filled when its list loads: the seeded
+    // option moves position. Unkeyed items would change id and React Aria would throw.
+    const { rerender } = render(
+      <Select label="Agent" onChange={() => {}} options={[{ label: 'b', value: 'b' }]} value="b" />
+    );
+    rerender(
+      <Select
+        label="Agent"
+        onChange={() => {}}
+        options={[
+          { label: 'a', value: 'a' },
+          { label: 'b', value: 'b' },
+        ]}
+        value="b"
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /agent/i }));
+    expect(screen.getAllByRole('option').map((o) => o.textContent?.replace('✓', ''))).toEqual([
+      'a',
+      'b',
+    ]);
+  });
+
   it('is named by its label and shows the selected option', () => {
     render(<Select label="Status" onChange={() => {}} options={OPTIONS} value="FAILED" />);
     const trigger = screen.getByRole('button', { name: /status/i });
