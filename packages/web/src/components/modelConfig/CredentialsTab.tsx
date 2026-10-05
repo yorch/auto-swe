@@ -36,10 +36,21 @@ const BUILTIN_PROVIDER_HINTS: Record<BuiltinProvider, string> = {
   openai: 'Built-in — no API base needed. Key format: sk-…',
 };
 
+/** Only a GLOBAL credential is a platform-wide one; a scoped credential falls back to it. */
+export function isLastPlatformCredential(
+  target: ProviderCredentialRow,
+  all: ProviderCredentialRow[]
+): boolean {
+  return (
+    target.scope === 'GLOBAL' &&
+    !all.some((c) => c.id !== target.id && c.provider === target.provider && c.scope === 'GLOBAL')
+  );
+}
+
 function deleteMessage(target: ProviderCredentialRow, all: ProviderCredentialRow[]) {
   const usedBy = target.usage?.agents ?? [];
   const embedding = target.usage?.embedding ?? false;
-  const isLast = !all.some((c) => c.id !== target.id && c.provider === target.provider);
+  const isLast = isLastPlatformCredential(target, all);
   return (
     <div className="space-y-2">
       <p>
@@ -60,8 +71,8 @@ function deleteMessage(target: ProviderCredentialRow, all: ProviderCredentialRow
       )}
       {isLast && (
         <p className="font-medium text-brick-400">
-          This is the last {target.provider} credential. Every agent using {target.provider} models
-          will fail.
+          This is the last platform-wide {target.provider} credential. Every agent using{' '}
+          {target.provider} models will fail.
         </p>
       )}
     </div>
