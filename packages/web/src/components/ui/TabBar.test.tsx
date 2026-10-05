@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { TabBar } from './TabBar';
+import { TabBar, tabPanelProps } from './TabBar';
 
 describe('TabBar', () => {
   it('renders href tabs as links and marks the active one as the current page', () => {
@@ -54,5 +54,26 @@ describe('TabBar', () => {
     expect(screen.getByRole('tab', { name: 'A' }).getAttribute('aria-selected')).toBe('true');
     fireEvent.keyDown(screen.getByRole('tab', { name: 'A' }), { key: 'ArrowRight' });
     expect(onChange).toHaveBeenCalledWith('b');
+  });
+
+  it('links each in-page tab to its panel with aria-controls and labelledby', () => {
+    render(
+      <>
+        <TabBar
+          active="b"
+          idPrefix="demo"
+          onChange={() => {}}
+          tabs={[
+            { id: 'a', label: 'A' },
+            { id: 'b', label: 'B' },
+          ]}
+        />
+        <div {...tabPanelProps('demo', 'b')}>panel</div>
+      </>
+    );
+    const tab = screen.getByRole('tab', { name: 'B' });
+    const panel = screen.getByRole('tabpanel');
+    expect(tab.getAttribute('aria-controls')).toBe(panel.id);
+    expect(panel.getAttribute('aria-labelledby')).toBe(tab.id);
   });
 });

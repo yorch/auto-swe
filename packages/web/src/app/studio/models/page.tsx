@@ -8,7 +8,7 @@ import { CredentialsTab } from '@/components/modelConfig/CredentialsTab';
 import { EmbeddingsTab } from '@/components/modelConfig/EmbeddingsTab';
 import { MidRunWarning } from '@/components/modelConfig/MidRunWarning';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { TabBar } from '@/components/ui/TabBar';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 
 type Tab = 'credentials' | 'catalog' | 'embeddings' | 'audit';
 
@@ -39,11 +39,13 @@ export default function StudioModelConfigPage() {
         title="Model configuration"
       />
       <MidRunWarning />
-      <TabBar active={active} onChange={setActive} tabs={TABS} />
-      {active === 'credentials' && <CredentialsTab />}
-      {active === 'catalog' && <CatalogTab />}
-      {active === 'embeddings' && <EmbeddingsTab />}
-      {active === 'audit' && <AuditLogTab />}
+      <TabBar active={active} idPrefix="models" onChange={setActive} tabs={TABS} />
+      <div {...tabPanelProps('models', active)}>
+        {active === 'credentials' && <CredentialsTab />}
+        {active === 'catalog' && <CatalogTab />}
+        {active === 'embeddings' && <EmbeddingsTab />}
+        {active === 'audit' && <AuditLogTab />}
+      </div>
     </div>
   );
 }

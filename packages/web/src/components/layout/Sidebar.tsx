@@ -109,8 +109,8 @@ function UserMenu() {
   return (
     <div className="relative mx-[14px] mb-[10px]" ref={root}>
       <button
+        aria-controls={MENU_ID}
         aria-expanded={open}
-        aria-haspopup="menu"
         className={cn(
           'flex w-full items-center gap-[9px] rounded-[10px] border border-ink-400 bg-ink-700 px-[11px] py-[9px] text-left text-[12.5px] hover:border-ink-300',
           FOCUS_RING
@@ -138,7 +138,7 @@ function UserMenu() {
       {open && (
         <div
           className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded-[10px] border border-ink-400 bg-ink-900 shadow-xl"
-          role="menu"
+          id={MENU_ID}
         >
           <div className="truncate border-b border-ink-400 px-3 py-2 text-xs text-paper-400">
             {user?.email ?? 'guest'}
@@ -150,7 +150,6 @@ function UserMenu() {
             )}
             href="/settings"
             onClick={() => setOpen(false)}
-            role="menuitem"
           >
             Settings
           </Link>
@@ -160,7 +159,6 @@ function UserMenu() {
               FOCUS_RING
             )}
             onClick={handleLogout}
-            role="menuitem"
             type="button"
           >
             Sign out
@@ -170,6 +168,9 @@ function UserMenu() {
     </div>
   );
 }
+
+/** The user menu is a plain disclosure (links and a button), not an ARIA menu. */
+const MENU_ID = 'user-menu';
 
 /** DOM id of the sidebar, referenced by the TopBar menu button's `aria-controls`. */
 export const SIDEBAR_ID = 'app-sidebar';

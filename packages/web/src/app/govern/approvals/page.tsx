@@ -8,7 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { TabBar } from '@/components/ui/TabBar';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { type ApprovalFilter, type ApprovalSort, useApprovals } from '@/hooks/useApprovals';
 import { navLabel } from '@/lib/navigation';
 
@@ -61,43 +61,45 @@ export default function GovernApprovalsPage() {
         title={navLabel('/govern/approvals')}
       />
 
-      <TabBar active={filter} onChange={setFilter} tabs={TABS} />
+      <TabBar active={filter} idPrefix="approvals" onChange={setFilter} tabs={TABS} />
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Select
-          aria-label="Sort"
-          className="w-40"
-          onChange={(v) => setSort(v as ApprovalSort)}
-          options={SORT_OPTIONS}
-          value={sort}
-        />
+      <div {...tabPanelProps('approvals', filter)} className="space-y-8">
+        <div className="flex flex-wrap items-center gap-3">
+          <Select
+            aria-label="Sort"
+            className="w-40"
+            onChange={(v) => setSort(v as ApprovalSort)}
+            options={SORT_OPTIONS}
+            value={sort}
+          />
 
-        <Checkbox
-          checked={overdueOnly}
-          label="Overdue only"
-          onChange={(e) => setOverdueOnly(e.target.checked)}
-        />
+          <Checkbox
+            checked={overdueOnly}
+            label="Overdue only"
+            onChange={(e) => setOverdueOnly(e.target.checked)}
+          />
+        </div>
+
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isLoading={isLoading}
+          label="inbox"
+          onRetry={() => void refetch()}
+        >
+          {count > 0 && (
+            <div className="space-y-3">
+              {steps?.map((step) => (
+                <HumanStepCard key={step.id} step={step} />
+              ))}
+            </div>
+          )}
+
+          {count === 0 && (
+            <EmptyState title={filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'} />
+          )}
+        </QueryBoundary>
       </div>
-
-      <QueryBoundary
-        error={error}
-        isError={isError}
-        isLoading={isLoading}
-        label="inbox"
-        onRetry={() => void refetch()}
-      >
-        {count > 0 && (
-          <div className="space-y-3">
-            {steps?.map((step) => (
-              <HumanStepCard key={step.id} step={step} />
-            ))}
-          </div>
-        )}
-
-        {count === 0 && (
-          <EmptyState title={filter === 'PENDING' ? 'No pending actions.' : 'No steps found.'} />
-        )}
-      </QueryBoundary>
     </div>
   );
 }
