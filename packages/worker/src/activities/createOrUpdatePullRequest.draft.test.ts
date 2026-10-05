@@ -8,6 +8,7 @@ const m = vi.hoisted(() => ({
     activeWorkflow: { findFirst: vi.fn() },
     connection: { findUniqueOrThrow: vi.fn() },
     pullRequest: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    runInput: { findUnique: vi.fn() },
   },
 }));
 
@@ -42,6 +43,7 @@ vi.mock('../lib/scm/index.js', () => ({
 }));
 vi.mock('../lib/slackNotify.js', () => ({ notifySlackPrReady: vi.fn() }));
 
+import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import {
   DraftPullRequestUnsupportedError,
   ExistingPullRequestNotDraftError,
@@ -109,6 +111,17 @@ describe('createOrUpdatePullRequest draft option', () => {
     await expect(createOrUpdatePullRequest(request, codeResult, { draft: true })).rejects.toBe(
       boom
     );
+  });
+});
+
+describe('the tracker sync when a PR is opened', () => {
+  it.each([
+    [true, 0],
+    [false, 1],
+  ])('with ticketIsSynthetic=%s syncs %i time(s)', async (ticketIsSynthetic, calls) => {
+    m.prisma.runInput.findUnique.mockResolvedValue({ ticketIsSynthetic });
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(syncTrackerOnEvent).toHaveBeenCalledTimes(calls);
   });
 });
 
