@@ -7,6 +7,7 @@ vi.mock('./agentResolver.js', () => ({ fetchActiveAgent: vi.fn() }));
 
 import { prisma } from '@auto-swe/shared/db';
 import { _resetKeyCacheForTests, encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { sealMcpHeaders } from '@auto-swe/shared/lib/mcpHeaders';
 import { fetchActiveAgent } from './agentResolver.js';
 import { mcpUrlForConnection, resolveAgentMcpUrl } from './mcpConnection.js';
 
@@ -183,6 +184,51 @@ describe('mcpUrlForConnection bearer token', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(await mcpUrlForConnection('c1')).toBeNull();
     expect(JSON.stringify(warn.mock.calls)).not.toContain('sk-secret-123');
+    warn.mockRestore();
+  });
+});
+
+describe('mcpUrlForConnection private-network opt-in and headers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONFIG_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+    _resetKeyCacheForTests();
+  });
+
+  it('carries the allowPrivateNetwork flag only when it is exactly true', async () => {
+    findUnique.mockResolvedValue(
+      mcpConn({ config: { allowPrivateNetwork: true, url: 'http://10.0.0.5/mcp' } }) as never
+    );
+    expect((await mcpUrlForConnection('c1'))?.allowPrivateNetwork).toBe(true);
+    for (const flag of ['true', 1, false, null]) {
+      findUnique.mockResolvedValue(
+        mcpConn({ config: { allowPrivateNetwork: flag, url: 'http://10.0.0.5/mcp' } }) as never
+      );
+      expect((await mcpUrlForConnection('c1'))?.allowPrivateNetwork).toBeUndefined();
+    }
+  });
+
+  it('decrypts stored headers for the caller and keeps them out of anything serialised', async () => {
+    findUnique.mockResolvedValue(
+      mcpConn(sealMcpHeaders([{ name: 'X-Api-Key', value: 'hdr-secret-1' }])) as never
+    );
+    const target = await mcpUrlForConnection('c1');
+    expect(target?.headers).toEqual([{ name: 'X-Api-Key', value: 'hdr-secret-1' }]);
+    expect(JSON.stringify(target)).not.toContain('hdr-secret-1');
+    expect(JSON.stringify({ ...target })).not.toContain('hdr-secret-1');
+    expect(Object.keys(target ?? {})).not.toContain('headers');
+  });
+
+  it('yields no connection, and logs no secret, when the stored headers cannot be read', async () => {
+    const sealed = sealMcpHeaders([{ name: 'X-Api-Key', value: 'hdr-secret-1' }]);
+    const row = mcpConn({
+      ...sealed,
+      headersCiphertext: new Uint8Array(sealed.headersCiphertext.length),
+    });
+    findUnique.mockResolvedValue(row as never);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await mcpUrlForConnection('c1')).toBeNull();
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('hdr-secret-1');
     warn.mockRestore();
   });
 });

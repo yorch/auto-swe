@@ -7,12 +7,21 @@ import { api } from '@/lib/api';
 export interface McpConnectionRow {
   id: string;
   name: string | null;
-  config: { url?: string; listTimeoutMs?: number; callTimeoutMs?: number } | null;
+  config: {
+    url?: string;
+    listTimeoutMs?: number;
+    callTimeoutMs?: number;
+    allowPrivateNetwork?: boolean;
+  } | null;
   teamId: string;
   team?: { id: string; name: string; slug: string } | null;
   createdAt?: string;
   /** Whether a bearer token is stored. The token itself is never returned. */
   hasToken?: boolean;
+  /** Names of the stored custom headers. Their values are never returned. */
+  headerNames?: string[];
+  /** True when stored headers exist but can no longer be read (they must be re-entered). */
+  headersUnreadable?: boolean;
   /** Agents whose current version binds this server. */
   usedBy?: { key: string; name: string; scope: string }[];
 }
@@ -25,7 +34,17 @@ export interface McpTestResult {
   durationMs: number;
 }
 
+/** A custom header to send. On an edit, omitting `value` keeps the stored value of that name. */
+export interface McpHeaderInput {
+  name: string;
+  value?: string;
+}
+
 export interface CreateMcpConnectionBody {
+  /** Waives the private-network refusal for this server (never loopback or metadata addresses). */
+  allowPrivateNetwork?: boolean;
+  /** Custom request headers; values are write-only. */
+  headers?: { name: string; value: string }[];
   /** Optional bearer token the server requires. Write-only. */
   bearerToken?: string;
   name: string;
@@ -63,6 +82,9 @@ export function useCreateMcpConnection() {
 }
 
 export interface UpdateMcpConnectionBody {
+  allowPrivateNetwork?: boolean;
+  /** The complete header set after the edit; omit to keep every stored header. */
+  headers?: McpHeaderInput[];
   /** Replaces the stored token. Omit to keep it. */
   bearerToken?: string;
   /** Removes the stored token. */

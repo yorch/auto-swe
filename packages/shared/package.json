@@ -46,6 +46,7 @@
     "./lib/repoDependencyResolver": "./dist/lib/repoDependencyResolver.js",
     "./lib/guardedFetch": "./dist/lib/guardedFetch.js",
     "./lib/ssrfGuard": "./dist/lib/ssrfGuard.js",
+    "./lib/mcpHeaders": "./dist/lib/mcpHeaders.js",
     "./lib/modelDiscovery": "./dist/lib/modelDiscovery.js",
     "./lib/modelSuggestions": "./dist/lib/modelSuggestions.js",
     "./lib/inputSchema": "./dist/lib/inputSchema.js",

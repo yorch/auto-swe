@@ -5,6 +5,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -16,6 +17,7 @@ import { SecretStatusRow } from '@/components/ui/SecretStatusRow';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type McpConnectionRow,
+  type McpHeaderInput,
   type McpTestResult,
   useCreateMcpConnection,
   useDeleteMcpConnection,
@@ -143,10 +145,135 @@ function McpBearerTokenField({
   );
 }
 
+/** One row of the custom-header editor. `stored` rows keep their name; their value is write-only. */
+interface HeaderRow {
+  key: number;
+  name: string;
+  value: string;
+  stored: boolean;
+}
+
+const MAX_HEADERS = 5;
+
+/**
+ * The headers to send, or an error. A new row needs both halves; a stored row with a blank value
+ * keeps what is stored (`value` omitted), so a stored secret is never echoed back to the page.
+ */
+function headersFromRows(rows: HeaderRow[]): { error: string } | { headers: McpHeaderInput[] } {
+  const headers: McpHeaderInput[] = [];
+  for (const r of rows) {
+    const name = r.name.trim();
+    const value = r.value.trim();
+    if (!name) {
+      return { error: 'Give every header a name, or remove the empty row.' };
+    }
+    if (!(value || r.stored)) {
+      return { error: `Enter a value for the ${name} header, or remove it.` };
+    }
+    headers.push(value ? { name, value } : { name });
+  }
+  return { headers };
+}
+
+/**
+ * Write-only custom headers. A stored header shows its name and "Stored"; typing a value replaces
+ * it, leaving it blank keeps it, Remove drops it on save. Values are masked while typed.
+ */
+function McpHeaderFields({
+  idPrefix,
+  onChange,
+  rows,
+}: {
+  idPrefix: string;
+  rows: HeaderRow[];
+  onChange: (rows: HeaderRow[]) => void;
+}) {
+  const nextKey = rows.reduce((m, r) => Math.max(m, r.key + 1), 0);
+  const patch = (key: number, p: Partial<HeaderRow>) =>
+    onChange(rows.map((r) => (r.key === key ? { ...r, ...p } : r)));
+  return (
+    <fieldset className="space-y-2">
+      <legend className="text-sm text-paper-300">Custom headers (optional)</legend>
+      <p className="text-xs text-paper-500">
+        For servers behind a gateway that needs an API key or tenant header. Values are stored
+        encrypted, never shown again, and sent to this server only. Use the bearer token field for
+        an Authorization header.
+      </p>
+      {rows.map((r, i) => (
+        <div className="flex flex-wrap items-end gap-2" key={r.key}>
+          <div className="min-w-32 flex-1">
+            <Input
+              autoComplete="off"
+              id={`${idPrefix}-header-name-${r.key}`}
+              label={`Header ${i + 1} name`}
+              onChange={(e) => patch(r.key, { name: e.target.value })}
+              placeholder="X-Api-Key"
+              readOnly={r.stored}
+              value={r.name}
+            />
+          </div>
+          <div className="min-w-32 flex-1">
+            <Input
+              autoComplete="off"
+              id={`${idPrefix}-header-value-${r.key}`}
+              label={`Header ${i + 1} value`}
+              onChange={(e) => patch(r.key, { value: e.target.value })}
+              placeholder={r.stored ? 'Stored — leave blank to keep' : 'Value'}
+              type="password"
+              value={r.value}
+            />
+          </div>
+          <Button
+            aria-label={`Remove header ${i + 1}${r.name ? ` (${r.name})` : ''}`}
+            onClick={() => onChange(rows.filter((x) => x.key !== r.key))}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            Remove
+          </Button>
+        </div>
+      ))}
+      {rows.length < MAX_HEADERS && (
+        <Button
+          onClick={() => onChange([...rows, { key: nextKey, name: '', stored: false, value: '' }])}
+          size="sm"
+          type="button"
+          variant="secondary"
+        >
+          Add header
+        </Button>
+      )}
+    </fieldset>
+  );
+}
+
+/** The admin's opt-in for a server on an internal address. */
+function McpPrivateNetworkField({
+  checked,
+  id,
+  onChange,
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <Checkbox
+      checked={checked}
+      hint="Tick this for a server on an internal network address (for example 10.x or 192.168.x). The platform's own addresses, link-local addresses and cloud metadata endpoints are always refused."
+      id={id}
+      label="This server is on a private network"
+      onChange={(e) => onChange(e.target.checked)}
+    />
+  );
+}
+
 function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const { data: teams } = useTeams();
   const create = useCreateMcpConnection();
   const initialForm = {
+    allowPrivateNetwork: false,
     bearerToken: '',
     callTimeoutMs: '',
     listTimeoutMs: '',
@@ -155,6 +282,7 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
     url: '',
   };
   const [form, setForm] = useState(initialForm);
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -166,8 +294,17 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
       setError(parsed.error);
       return;
     }
+    const headers = headersFromRows(headerRows);
+    if ('error' in headers) {
+      setError(headers.error);
+      return;
+    }
     try {
       await create.mutateAsync({
+        ...(form.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
+        ...(headers.headers.length
+          ? { headers: headers.headers.map((h) => ({ name: h.name, value: h.value ?? '' })) }
+          : {}),
         ...(form.bearerToken.trim() ? { bearerToken: form.bearerToken.trim() } : {}),
         name: form.name,
         teamId: form.teamId,
@@ -177,6 +314,7 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
       });
       onClose();
       setForm(initialForm);
+      setHeaderRows([]);
     } catch (err) {
       setError(errMsg(err, 'Failed to create connection'));
     }
@@ -202,12 +340,18 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
           type="url"
           value={form.url}
         />
+        <McpPrivateNetworkField
+          checked={form.allowPrivateNetwork}
+          id="mcp-new-private-network"
+          onChange={(v) => setForm((f) => ({ ...f, allowPrivateNetwork: v }))}
+        />
         <McpBearerTokenField
           hasToken={false}
           id="mcp-new-bearer-token"
           onChange={(v) => setForm((f) => ({ ...f, bearerToken: v }))}
           value={form.bearerToken}
         />
+        <McpHeaderFields idPrefix="mcp-new" onChange={setHeaderRows} rows={headerRows} />
         <Combobox
           hint="The team owns the connection and manages it. Platform-wide agents can use any connection; a team's own agents can only use that team's."
           id="mcp-new-team"
@@ -249,6 +393,7 @@ function EditMcpConnectionModal({
   // Pre-fill from the row; keyed by connection id below so the form resets when a
   // different row is opened. Timeouts render as their number or blank (= default).
   const [form, setForm] = useState({
+    allowPrivateNetwork: connection?.config?.allowPrivateNetwork === true,
     bearerToken: '',
     callTimeoutMs: connection?.config?.callTimeoutMs?.toString() ?? '',
     listTimeoutMs: connection?.config?.listTimeoutMs?.toString() ?? '',
@@ -256,6 +401,9 @@ function EditMcpConnectionModal({
     url: connection?.config?.url ?? '',
   });
   const [clearToken, setClearToken] = useState(false);
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() =>
+    (connection?.headerNames ?? []).map((name, key) => ({ key, name, stored: true, value: '' }))
+  );
 
   if (!connection) {
     return null;
@@ -274,9 +422,18 @@ function EditMcpConnectionModal({
       setError(parsed.error);
       return;
     }
+    const headers = headersFromRows(headerRows);
+    if ('error' in headers) {
+      setError(headers.error);
+      return;
+    }
+    // Omitted keeps every stored header; a list (even empty) is the complete set after the save.
+    const touchedHeaders = headerRows.length > 0 || (connection.headerNames ?? []).length > 0;
     try {
       await update.mutateAsync({
         body: {
+          ...(form.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
+          ...(touchedHeaders ? { headers: headers.headers } : {}),
           ...(form.bearerToken.trim() ? { bearerToken: form.bearerToken.trim() } : {}),
           ...(clearToken ? { clearBearerToken: true } : {}),
           name: form.name,
@@ -310,6 +467,11 @@ function EditMcpConnectionModal({
           type="url"
           value={form.url}
         />
+        <McpPrivateNetworkField
+          checked={form.allowPrivateNetwork}
+          id="mcp-edit-private-network"
+          onChange={(v) => setForm((f) => ({ ...f, allowPrivateNetwork: v }))}
+        />
         <McpBearerTokenField
           clear={clearToken}
           hasToken={!!connection.hasToken}
@@ -318,6 +480,13 @@ function EditMcpConnectionModal({
           onClearChange={setClearToken}
           value={form.bearerToken}
         />
+        {connection.headersUnreadable && (
+          <Alert>
+            The stored headers can no longer be read. Remove them and enter them again, or they will
+            not be sent.
+          </Alert>
+        )}
+        <McpHeaderFields idPrefix="mcp-edit" onChange={setHeaderRows} rows={headerRows} />
         <McpTimeoutFields
           callTimeoutMs={form.callTimeoutMs}
           idPrefix="mcp-edit"
@@ -382,8 +551,8 @@ export default function StudioMcpConnectionsPage() {
         subtitle={
           <>
             MCP servers whose tools an agent can call. Choose one in an agent&apos;s MCP connection
-            field in the Agent library. A bearer token, if the server needs one, is stored encrypted
-            and never shown again.
+            field in the Agent library. A bearer token and custom headers, if the server needs them,
+            are stored encrypted and never shown again.
           </>
         }
         title="MCP connections"
@@ -435,6 +604,9 @@ export default function StudioMcpConnectionsPage() {
                         </code>
                         <span className="text-[11px] text-paper-500">
                           {c.hasToken ? 'Bearer token stored' : 'No authentication'}
+                          {(c.headerNames ?? []).length > 0 &&
+                            ` · Headers: ${(c.headerNames ?? []).join(', ')}`}
+                          {c.config?.allowPrivateNetwork && ' · Private network'}
                         </span>
                       </Td>
                       <Td
