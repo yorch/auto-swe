@@ -105,6 +105,8 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       // GET /platform/organizations and the organizations layout both require LEAD.
       {
+        // Budget alerts is the "Alerting only" filter here now; the old URL redirects.
+        alsoActiveFor: ['/govern/budget-alerts'],
         href: '/govern/organizations',
         icon: 'building',
         label: 'Organizations',

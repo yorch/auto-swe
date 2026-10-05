@@ -9,6 +9,7 @@ import {
   NAV_ITEMS,
   navLabel,
   navSections,
+  pageSection,
   pageTitle,
   visibleNavGroups,
 } from './navigation';
@@ -168,7 +169,14 @@ describe('navSections', () => {
     }
   });
 
-  it('no longer offers Budget alerts', () => {
+  it('no longer offers Budget alerts, but its URL still belongs to Organizations', () => {
     expect(NAV_ITEMS.some((i) => i.href === '/govern/budget-alerts')).toBe(false);
+    expect(pageTitle('/govern/budget-alerts')).toBe('Organizations');
+    expect(pageSection('/govern/budget-alerts')).toBe('Govern');
+  });
+
+  it('titles a Slack channel detail page and keeps it in Govern', () => {
+    expect(pageTitle('/govern/slack-channels/abc')).toBe('Slack channels');
+    expect(pageSection('/govern/slack-channels/abc')).toBe('Govern');
   });
 });
