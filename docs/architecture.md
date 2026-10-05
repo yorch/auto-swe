@@ -90,7 +90,7 @@ packages/
 | `src/lib/connectionTypes.ts` | Typed registry of supported `Connection.type` values and their metadata |
 | `src/lib/outcomePublishers.ts` | Typed registry of outcome publishers (`openPullRequest`, `updateRecord`, `sendMessage`, etc.) |
 | `src/lib/workspaceProviders.ts` | Typed registry of workspace provider types (`git_repo`, `document`, `record`, `api_only`) |
-| `src/lib/integrations/` | Read-only issue-tracker (Jira / Linear / GitHub Issues), knowledge-base (Confluence / Notion) and Figma connectors, fetched at work-request submit time; best-effort, never block a submission |
+| `src/lib/integrations/` | Read-only issue-tracker (Jira / Linear / GitHub Issues), knowledge-base (Confluence / Notion) and Figma connectors, fetched at work-request submit time; best-effort, never block a submission. The platform tracker and knowledge-base clients (Jira, Confluence, GitHub Issues) and the admin Jira field detection first pass `checkConnectorBaseUrl`: strict first, with the connector's private-network opt-in waiving only private-address refusals. The worker's per-connection Jira URL uses a narrower same-origin opt-in |
 | `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — the node-type union |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects go through `Dispatcher` |
 | `src/workflow/expr.ts` | Expression evaluator for `cond` predicates (jsonpath + comparison, no JS sandbox) |

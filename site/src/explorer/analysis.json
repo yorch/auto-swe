@@ -121,8 +121,8 @@
     "packages/gateway/src/lib/repositoryHost.ts": "7b5c3dac63332462b076bf01b9d24cb352375f6976b672451a46841356adeb4d",
     "packages/gateway/src/lib/requestExecutions.test.ts": "43dd8327da6be1eb38bc0843a74f26e2b609fa57d0eed895f5e0e50006d65150",
     "packages/gateway/src/lib/requestExecutions.ts": "832772bf35abc669e255d7cff2fdb9709ce973129423fd80cb79107a2ba4e192",
-    "packages/gateway/src/lib/retryTemplateRequest.test.ts": "56875be14c738b2859342f7664e33f4507f1b74a1c283368f4d4411a73adb746",
-    "packages/gateway/src/lib/retryTemplateRequest.ts": "297c1feb2058c32eceb07484d07cb0c6a27a2f2d08f057d82c14c9afe374f5c9",
+    "packages/gateway/src/lib/retryTemplateRequest.test.ts": "2c5a1b8581d8ed2fa0d261c0c1d75f08b08f700b570138767950da60eb9cd996",
+    "packages/gateway/src/lib/retryTemplateRequest.ts": "aea53bab419f89b9eef50df8ea3d26dec609f493a51101739f2f989e63e8a1dd",
     "packages/gateway/src/lib/runConnection.ts": "54853ed0e9cfa77c71d4299f742c1569f080ca6a701387a9b682e461ef19105c",
     "packages/gateway/src/lib/runVisibility.test.ts": "9a0e76d6cfdd56fd12e59fb4eba41ba14c12ab4cb33525ed3625157ca0f1f66e",
     "packages/gateway/src/lib/runVisibility.ts": "dd1aac579efb570cbf02722910311a9e4e0e94ee228ac692919bb31b2c5fc3d0",
@@ -139,10 +139,11 @@
     "packages/gateway/src/lib/slack.ts": "88a3919ea90ff8557f6de8654f843968ab23490cff58badfdf515a18e3b0d0ac",
     "packages/gateway/src/lib/specRefValidation.test.ts": "a18dd33be87e5aebfef8c0c4a1a72c3271ee6babf2d34ce4e4660480ab8232b7",
     "packages/gateway/src/lib/specRefValidation.ts": "14dedbdb0aef2bb841c330cc9da1285fdf30d3a753d1a0d88e3b388cdc42befa",
-    "packages/gateway/src/lib/systemConfigService.test.ts": "f2282653f72b983260c4e736403988428f7b34078c241746c338082238f1598f",
-    "packages/gateway/src/lib/systemConfigService.ts": "339cf441958202a577bcf4154c52961c02474bf7f8346637e3dc19b748fbf32d",
+    "packages/gateway/src/lib/systemConfigService.test.ts": "9e6c25699fe36825cd40a34989916a6bc5200f899bd155d2cd9900cfe790c986",
+    "packages/gateway/src/lib/systemConfigService.ts": "fb8b728bb6b5813cdd9502ec66454ff47b38c00ac1bdbc8f2de6d5d5015c132a",
     "packages/gateway/src/lib/systemTemplate.ts": "513dc2230c6a176194134902b79a3e52a210612d8983179c37f1e2ee972d6b86",
     "packages/gateway/src/lib/telemetry.ts": "1e16475c4f267980dd981c91d4209bda694003bbca1e72b06956977cdc7bf967",
+    "packages/gateway/src/lib/templateLaunch.ts": "fe9e78aec2333f472824e2f77e86faa5dd7fd3ccb4a1bdef97c0c569cc5a6ad6",
     "packages/gateway/src/lib/temporalErrors.ts": "a2139836a19d30903eaa95f255ee4ea36f2a69099e693564dea61c6667f08ac1",
     "packages/gateway/src/lib/tenantScope.test.ts": "2ea88ab67f22e76a947cc7891f5b1a551c32b3f6d2749c6b7b01df4eb6c34cb7",
     "packages/gateway/src/lib/tenantScope.ts": "bcea250b4a78da420336d241e3c874a9dfa3c34e264a44b4c531e83025b37ae5",
@@ -236,8 +237,8 @@
     "packages/gateway/src/routes/slack.ts": "3982b69049a5b726a93fdc7d785943563b3b8153b7cda0d08b2009f6ad83a2eb",
     "packages/gateway/src/routes/slackChannels.test.ts": "37442a4f37d18b19a91917ddeba613e1c27c0d90448f5a48cba83b754ff2a872",
     "packages/gateway/src/routes/slackChannels.ts": "e5a06f143364768b58af166cc8389187e60ab3cbb9ea40e17e270cb894c01c94",
-    "packages/gateway/src/routes/systemConfig.test.ts": "b984562c4235d11c11697833c9a84674b2814411df4f88e296ad80ef5ea495ed",
-    "packages/gateway/src/routes/systemConfig.ts": "0989d39b6b68ea1cec53089c83aaef662e8899666182e97ac5e5235497a6161a",
+    "packages/gateway/src/routes/systemConfig.test.ts": "84f731dd7f53b58257829299e31d72b7e814ad126754189c35148e080e51fc1d",
+    "packages/gateway/src/routes/systemConfig.ts": "6a78601de25d67516d3c4e5a90f83239b0e11208dacc8907ed6d82e4bf6d3b53",
     "packages/gateway/src/routes/teams.test.ts": "60485d3497e2661e7efbdfa10a42426c90c8a5f95a738161692ff9458ac4dcbf",
     "packages/gateway/src/routes/teams.ts": "5c9a6c556a47d570036fb4e74cbb913dc7cf64203c32945b0b5300e38197534e",
     "packages/gateway/src/routes/tokens.test.ts": "b58c34f10a092d36c227f2a76e2887afe450a94713f693370d2d3995705e75ea",
@@ -256,11 +257,11 @@
     "packages/gateway/src/routes/workflowTemplateRuns.test.ts": "1bd7fc281beb0355031cfa19e4b43fdc72ccc807527e28d50c4f364511f8ec30",
     "packages/gateway/src/routes/workflowTemplates.runs.test.ts": "106bd3570ac0836eb69db22708243e584a2e181a78bcf1602d984b7fc5565d31",
     "packages/gateway/src/routes/workflowTemplates.test.ts": "006c73ea58033f9c9c4ec4bb92f274035ef4ec0052e1c1324de1eb3ecb76ffe8",
-    "packages/gateway/src/routes/workflowTemplates.ts": "5bcbd648627b7d6a9997bcbbf848b4fbf3b83158ee60fc74c36a2177520a725b",
+    "packages/gateway/src/routes/workflowTemplates.ts": "5a04dfe5e04b02f283240e38983c013cec83072425182f1c75d10e79f0b0ce7d",
     "packages/gateway/src/routes/workRequests.idempotency.pg.test.ts": "844870b37a00d4001032edb504c7a5ccd89490cb1619da9e85e35efb10c8d24a",
-    "packages/gateway/src/routes/workRequests.retry.test.ts": "c31334437e72d176b5b873d9e248bb743af3634989301775e6bc2d3b5c4a5e55",
+    "packages/gateway/src/routes/workRequests.retry.test.ts": "876b6bb383488bab47897a02af9caab68612041e92cf33728f23bb7822a88f4b",
     "packages/gateway/src/routes/workRequests.test.ts": "a14d4847d60806ee23d64c0f6e354851e37dac90748750b5c7fdadf0836fc39a",
-    "packages/gateway/src/routes/workRequests.ts": "32f33fa26a972e6384a13951ec07781cd5e7673c7a613428ec9c797e8f1019b3",
+    "packages/gateway/src/routes/workRequests.ts": "f9df500f1ab18814ad42fa23e1df5078f4ac78c5f5a59531daaa6ee5ac41901d",
     "packages/gateway/src/scripts/backfillGithubLogins.ts": "d8ccace3c40ac4ed5aceeafe98c3900d988905a6dd3341b10acfb9819171c4d4",
     "packages/gateway/src/scripts/provisionAuthAdmin.ts": "2c6e4ea49177341eb5c8ee06dab065128d8b765ca0973860474bdba657f5f615",
     "packages/gateway/src/test/authedApp.ts": "1bc4425f2bd1d6015af1ca8e0202297bef7eabcca9e0507c8bfc5a01a8b9a44f",
@@ -352,7 +353,7 @@
     "packages/shared/src/lib/integrations/providers/notion.ts": "41c9e080c9a7c0528c0db434d91be69c77d029e50bf90a6dabaa51737a748b11",
     "packages/shared/src/lib/integrations/redirects.test.ts": "a7008c63b31d13645626abefd89dd99b4d381cabf6550b5257aff9bd753993bc",
     "packages/shared/src/lib/integrations/registry.test.ts": "b654a9c2847907ad41398c9d4203234eb8e401af77dfebeb71a2b8604fc4037d",
-    "packages/shared/src/lib/integrations/registry.ts": "99143cc357d80ad25609587bffbcd9830f47d8495014228336985063db835f73",
+    "packages/shared/src/lib/integrations/registry.ts": "89d48e6a1540da6382440ba41b203e56107710c7a26dfe32726815667141ce98",
     "packages/shared/src/lib/integrations/types.ts": "ca04075deee0465e45f19584d94e78175312a38f3453a700c02ae27d2df25cc8",
     "packages/shared/src/lib/keyRotation.coverage.test.ts": "7cfd9fb0a1bf6ade15e88d421b9232bb575bdb0332aee74bef91b3af85ba22f3",
     "packages/shared/src/lib/keyRotation.test.ts": "1ccbaa1874639833377fc9adaa1b860fd8b83c29dad590aaf921709272923db8",
@@ -406,7 +407,7 @@
     "packages/shared/src/lib/skillSourceSync.ts": "afb11de0efe1385d57d0495be0570e61fbeedd3474d2a30f3e0b272864902f32",
     "packages/shared/src/lib/slackRepoAccess.ts": "279d9a5a068a77c68f1dd5d9ca65e8d328fbbb4a57250927fa53698958d87310",
     "packages/shared/src/lib/ssrfGuard.test.ts": "0a327cfe2bed42c3faf6d4afa8085587eb5f285a3c5b5381d05244fd489703c1",
-    "packages/shared/src/lib/ssrfGuard.ts": "8d00900815d9384095c44dcfe7e107702464609dbee86054f0366feb4aedcadb",
+    "packages/shared/src/lib/ssrfGuard.ts": "d69a05fe8f0d16f810c3b46d7dbb60f106b5d938645ddb55f896a53c2a4b497c",
     "packages/shared/src/lib/syncAgentsModelMigration.test.ts": "9601c008e4090ab7b3380fddf326122ca8970384c195cbae45070195fc579547",
     "packages/shared/src/lib/syncBuiltins.test.ts": "365d8f98099694df9aba0a5de08d793445ebcbd8ad61b2f01e3e7bc86da2e9c8",
     "packages/shared/src/lib/syncBuiltins.ts": "c0b8b188782fe05f570eb09196f7eb9edecaa6ab6b1f88193c3fab52f3c15af8",
@@ -1726,7 +1727,7 @@
     {
       "body": "The dashboard lists work by request, with the latest visible attempt standing for each, and retries a request without losing its identity.",
       "category": "Operations",
-      "detail": "Run visibility is applied first, then executions are grouped by request. A single-repository request is represented by its newest visible execution; a cross-repository request summarizes every visible child and keeps failed children visible while others run. Filtering and paging happen after grouping, so an old failure cannot resurface behind a successful retry. A retry of a git request starts a new execution of the same request; a connection-free or non-git request starts again from its recorded template version, re-checking only that an earlier run is still visible, the connection and the organization budget (not the template’s status, the caller’s team membership or the input schema), and an agent re-run reuses the request id with a fresh delivery branch. Optional instructions are appended to the new attempt’s description only. A cross-repository request is not retried as a whole.",
+      "detail": "Run visibility is applied first, then executions are grouped by request. A single-repository request is represented by its newest visible execution; a cross-repository request summarizes every visible child and keeps failed children visible while others run. Filtering and paging happen after grouping, so an old failure cannot resurface behind a successful retry. A retry starts a new execution of the same request from its recorded template version. Whether the request targeted a repository or not, it applies the template checks a fresh launch applies (the template must be ACTIVE and visible through the caller’s team membership, a recorded input is validated against its input schema); a repository request additionally re-checks repository access, and a connection-free or non-repository one re-checks the connection and the organization budget. An agent re-run reuses the request id with a fresh delivery branch. Optional instructions are appended to the new attempt’s description only. A cross-repository request is not retried as a whole.",
       "id": "requestWorkspace",
       "refs": [
         "requestGroup",
@@ -1751,9 +1752,9 @@
       "title": "Non-engineering API handlers"
     },
     {
-      "body": "Connector requests to tracker and knowledge-base base URLs pass an SSRF guard whose private-network opt-in is narrow (Jira field detection is the exception), and connector requests refuse or re-check every redirect.",
+      "body": "Connector requests to tracker and knowledge-base base URLs pass an SSRF guard whose private-network opt-in is narrow, and connector requests refuse or re-check every redirect.",
       "category": "Integrations",
-      "detail": "Jira, GitHub Issues and Confluence base URLs are checked strictly first when those connectors run; Jira field detection, an ADMIN call, does not run the check (see the boundary below). Only when that check refuses a private address and the connector’s allowPrivateNetwork opt-in is on is the refusal waived, and the waiver is logged. The opt-in never reaches loopback, link-local (IPv4 and IPv6), cloud-metadata or unspecified addresses, nor a malformed URL or a scheme other than http(s). The worker’s Jira path honours the opt-in only for the exact origin an ADMIN configured. The tracker and knowledge-base save routes apply the same check and answer 400 BASE_URL_REFUSED for a stored target the connector would refuse, but only when the write touches the provider or URL or turns the opt-in on, so a save that only turns it off is never blocked. Redirects are never followed unchecked. Linear, Notion, Slack, Zendesk and Figma requests set redirect: error, and the Atlassian client treats any 3xx as a failure it does not retry. GitHub Issues and the CI-log download, which GitHub answers with redirects, go through a guarded fetch: redirects are followed by hand for at most three hops, the guard runs on every hop, the credential is sent only to the configured origin, only a short allowlist of benign headers crosses to another origin, a write cannot cross origins, and a 307 or 308 keeps the method and body. Figma has no opt-in: its host is a constant that is still run through the guard.",
+      "detail": "Jira, GitHub Issues and Confluence base URLs are checked strictly first when those connectors run, and Jira field detection, an ADMIN call, runs the same check before it builds its client and answers 400 BASE_URL_REFUSED for a refused URL, whether it came from the stored row or the environment fallback. Only when that check refuses a private address and the connector’s allowPrivateNetwork opt-in is on is the refusal waived, and the waiver is logged. The opt-in never reaches loopback, link-local (IPv4 and IPv6), cloud-metadata or unspecified addresses, nor a malformed URL or a scheme other than http(s). The worker’s Jira path honours the opt-in only for the exact origin an ADMIN configured. The tracker and knowledge-base save routes apply the same check and answer 400 BASE_URL_REFUSED for a stored target the connector would refuse, but only when the write touches the provider or URL or turns the opt-in on, so a save that only turns it off is never blocked. Redirects are never followed unchecked. Linear, Notion, Slack, Zendesk and Figma requests set redirect: error, and the Atlassian client treats any 3xx as a failure it does not retry. GitHub Issues and the CI-log download, which GitHub answers with redirects, go through a guarded fetch: redirects are followed by hand for at most three hops, the guard runs on every hop, the credential is sent only to the configured origin, only a short allowlist of benign headers crosses to another origin, a write cannot cross origins, and a 307 or 308 keeps the method and body. Figma has no opt-in: its host is a constant that is still run through the guard.",
       "id": "connectorGuard",
       "refs": [
         "connectorProbe",
@@ -2161,7 +2162,7 @@
     {
       "body": "The guard reads URL text, so it blocks the obvious private targets and not every route to one.",
       "category": "Integrations",
-      "detail": "The check never resolves a name: a public hostname that points at an internal address passes, which only network policy outside the platform can stop. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs, so a refused one surfaces at run time. Jira field detection builds its Atlassian client from the resolved tracker config without the guard, so a stored or environment base URL (including a row saved before the save check existed) is fetched there with the credential unchecked; only the client’s refusal of redirects still applies. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code.",
+      "detail": "The check never resolves a name: a public hostname that points at an internal address passes, which only network policy outside the platform can stop. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs or Jira field detection is called, so a refused one surfaces at that point. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code.",
       "id": "connectorGuardBounds",
       "refs": [
         "connectorGuardText",
@@ -2185,15 +2186,6 @@
       "refs": ["teamMembers", "tenant"],
       "status": "Confirmed boundary",
       "title": "Deactivating a team does not remove repository access"
-    },
-    {
-      "body": "Retrying a connection-free template request re-checks less than launching it fresh does.",
-      "category": "Access",
-      "detail": "The retry re-checks only that an earlier run of the request is still visible to the caller, the connection and the organization budget. The fresh launch also requires the template to be ACTIVE and visible through the caller’s team membership and validates the input against the template’s input schema; the retry skips all three. A user removed from the template’s team can therefore still retry their earlier request, including on an archived template, and the recorded input is not re-validated against the schema.",
-      "id": "templateRetryChecks",
-      "refs": ["retryTemplateChecks", "launchTemplateChecks", "retryTemplate"],
-      "status": "Confirmed boundary",
-      "title": "A template-request retry skips the fresh launch’s template checks"
     }
   ],
   "modelDescriptions": {
@@ -2366,7 +2358,7 @@
       "WorkflowShellAudit"
     ]
   },
-  "reviewedCommit": "8af95841222d459a51f38121092002a4ac39107c",
+  "reviewedCommit": "85678bd465a5790d4e10c233f7b318aa01fc063a",
   "sourceHashes": {
     "docker-compose.app.yml": "96d57e466289e17048648c7e852e21c0ac24085526fae63c21e8c0ffe8b22cf6",
     "packages/cli/src/commands/skills.ts": "1801193183356f18f977ca94b1a4737f24fb14cd8dff48b2ee41ad461093a6f1",
@@ -2379,13 +2371,14 @@
     "packages/gateway/src/lib/mcpWriteGuard.ts": "5d9ab4020076fedbe5f9346a7724efd535db4317e021f10dcd5cb4a91403af16",
     "packages/gateway/src/lib/orgAccess.ts": "8b3f2044d59b788d0e35f5d80e1a340f45a0f9cf739fe0245fbbd7e200f68074",
     "packages/gateway/src/lib/requestExecutions.ts": "832772bf35abc669e255d7cff2fdb9709ce973129423fd80cb79107a2ba4e192",
-    "packages/gateway/src/lib/retryTemplateRequest.ts": "297c1feb2058c32eceb07484d07cb0c6a27a2f2d08f057d82c14c9afe374f5c9",
+    "packages/gateway/src/lib/retryTemplateRequest.ts": "aea53bab419f89b9eef50df8ea3d26dec609f493a51101739f2f989e63e8a1dd",
     "packages/gateway/src/lib/skillLibraryService.ts": "006f5b7aef585de43514cd7ffe39821f17dff5c25c712cfdc9ad3ca1f9de7dd9",
     "packages/gateway/src/lib/skillScan.ts": "589132633f6391d867d2839d04f3961bb3b0d39d58a082c98463a4f9cad95743",
     "packages/gateway/src/lib/skillSourceService.ts": "a4cadaa8af0cb230a6fb53154eea8fe32e540d2b58b9e1d199bff996347cea4d",
     "packages/gateway/src/lib/skillSourceUpdateService.ts": "5e19616c1c8a1efc6670d47cb86b7067723644a46212c12c6d02c52d478eacc3",
-    "packages/gateway/src/lib/systemConfigService.ts": "339cf441958202a577bcf4154c52961c02474bf7f8346637e3dc19b748fbf32d",
+    "packages/gateway/src/lib/systemConfigService.ts": "fb8b728bb6b5813cdd9502ec66454ff47b38c00ac1bdbc8f2de6d5d5015c132a",
     "packages/gateway/src/lib/telemetry.ts": "1e16475c4f267980dd981c91d4209bda694003bbca1e72b06956977cdc7bf967",
+    "packages/gateway/src/lib/templateLaunch.ts": "fe9e78aec2333f472824e2f77e86faa5dd7fd3ccb4a1bdef97c0c569cc5a6ad6",
     "packages/gateway/src/lib/tenantScope.ts": "bcea250b4a78da420336d241e3c874a9dfa3c34e264a44b4c531e83025b37ae5",
     "packages/gateway/src/lib/textDiff.ts": "ab05c5996b0cda65848e4c392bdb95be3cb86505f2bf319470133212a83340ec",
     "packages/gateway/src/plugins/auth.ts": "fe1ae53b66762f511d45869c7daf32c56154f90d7fed97bb813f0548f0a2eecf",
@@ -2402,12 +2395,11 @@
     "packages/gateway/src/routes/securityEvents.ts": "c80beb1dfee296b54c5e3a3ea92dc82ae869ffd62c73e38799df9f5081c576ca",
     "packages/gateway/src/routes/skillSources.ts": "90fd57f595ce8104fc52724caf42ae53e6e37645c2311ea4172c970302479b60",
     "packages/gateway/src/routes/skills.ts": "87ee651acdfcc1fb485dd59886a1b9d86caec0a84b85077bf90c8b68e6ef1abf",
-    "packages/gateway/src/routes/systemConfig.ts": "0989d39b6b68ea1cec53089c83aaef662e8899666182e97ac5e5235497a6161a",
+    "packages/gateway/src/routes/systemConfig.ts": "6a78601de25d67516d3c4e5a90f83239b0e11208dacc8907ed6d82e4bf6d3b53",
     "packages/gateway/src/routes/teams.ts": "5c9a6c556a47d570036fb4e74cbb913dc7cf64203c32945b0b5300e38197534e",
     "packages/gateway/src/routes/usage.ts": "0f16547b97e849da311813626a25f262e61db8c8415c239e4bbb03485bbc96cb",
     "packages/gateway/src/routes/workflowRuns.ts": "94f7899f8466f823e5f2690ede89b4bee8195cff9f9b42bd4a0bcfe441b01bce",
-    "packages/gateway/src/routes/workflowTemplates.ts": "5bcbd648627b7d6a9997bcbbf848b4fbf3b83158ee60fc74c36a2177520a725b",
-    "packages/gateway/src/routes/workRequests.ts": "32f33fa26a972e6384a13951ec07781cd5e7673c7a613428ec9c797e8f1019b3",
+    "packages/gateway/src/routes/workRequests.ts": "f9df500f1ab18814ad42fa23e1df5078f4ac78c5f5a59531daaa6ee5ac41901d",
     "packages/sdk/src/index.ts": "45cd8af737ff4582e87b1f456a9ba5c77aa14479532b9a684c3151ba76954553",
     "packages/shared/src/config/registry.ts": "0a64056135974806aebce1062ff211f37cebe8208ca8ed9b40dcc97ad4dc2595",
     "packages/shared/src/lib/autonomyPolicy.ts": "20053fc008a89ea8beb6b37e4e418bc45d3a716c0171c94e447fa7d8684f0367",
@@ -2420,7 +2412,6 @@
     "packages/shared/src/lib/guardedFetch.ts": "4ecca4927dbb614b2dd88976b6728c1e97ebf897a4b4a1003bc39c6edca593db",
     "packages/shared/src/lib/integrations/atlassianClient.ts": "f2e299e1371890725d5ba921c2e28a79b2fbeb8fccc56dc6dc4273d1a146b126",
     "packages/shared/src/lib/integrations/providers/githubIssues.ts": "481111c1ef4c583b858b4cec5b2b3dfcca68fcecaef55758ba44c8cf5e1e58b3",
-    "packages/shared/src/lib/integrations/registry.ts": "99143cc357d80ad25609587bffbcd9830f47d8495014228336985063db835f73",
     "packages/shared/src/lib/modelDiscovery.ts": "eb05c03f0c24bcf5ae8d97c90561bbdc8700e9c7f25d4d6ebf350585e0e18b0c",
     "packages/shared/src/lib/modelSuggestions.ts": "6cf0996bae0237161a80674058cf5214aae7fe5f99f1878708e54a615a80601d",
     "packages/shared/src/lib/regexExec.ts": "587dcf99776f1c23dde16209510f117c9b81d14ddeccd35eef2c25734ba59603",
@@ -2430,7 +2421,7 @@
     "packages/shared/src/lib/skillSource/github.ts": "842969887bdcf06b28cbfd36fde16abc58510d88cd08104b0e9552208c5b9b62",
     "packages/shared/src/lib/skillSource/index.ts": "a472ed956c22b6536f2bdc639194a2ff2e7dc9e353d72a9ffe61ef78c41339db",
     "packages/shared/src/lib/skillSourceSync.ts": "afb11de0efe1385d57d0495be0570e61fbeedd3474d2a30f3e0b272864902f32",
-    "packages/shared/src/lib/ssrfGuard.ts": "8d00900815d9384095c44dcfe7e107702464609dbee86054f0366feb4aedcadb",
+    "packages/shared/src/lib/ssrfGuard.ts": "d69a05fe8f0d16f810c3b46d7dbb60f106b5d938645ddb55f896a53c2a4b497c",
     "packages/shared/src/lib/syncBuiltins.ts": "c0b8b188782fe05f570eb09196f7eb9edecaa6ab6b1f88193c3fab52f3c15af8",
     "packages/shared/src/lib/systemConfig.ts": "5a960ca2fa7a57dbbd7853e31d00c9047e1c1dc7b813e23eb14dcc98571c9020",
     "packages/shared/src/lib/telemetry.ts": "73645f24be07dfef98073cc6765a449255746b8299e2414b6b91ee695e890400",
@@ -3864,20 +3855,20 @@
       "title": "The run page holds the spec snapshot instead of refetching it"
     },
     {
-      "anchor": "const template = await app.prisma.workflowTemplate.findFirst({",
-      "before": 0,
+      "anchor": "where: launchableTemplateWhere(user, input.templateId),",
+      "before": 12,
       "id": "retryTemplateChecks",
-      "lines": 52,
+      "lines": 40,
       "path": "packages/gateway/src/lib/retryTemplateRequest.ts",
-      "title": "Template-request retry re-checks only run visibility, connection and org budget"
+      "title": "Template-request retry looks the template up with the launch scope, then checks the inputs"
     },
     {
-      "anchor": "where: { id: request.params.id, status: 'ACTIVE', ...teamMembershipFilter(user) },",
-      "before": 18,
+      "anchor": "export function launchableTemplateWhere(",
+      "before": 5,
       "id": "launchTemplateChecks",
       "lines": 50,
-      "path": "packages/gateway/src/routes/workflowTemplates.ts",
-      "title": "A fresh template launch also requires an ACTIVE template, team membership and a valid input"
+      "path": "packages/gateway/src/lib/templateLaunch.ts",
+      "title": "One shared helper scopes a template launch and a retry to ACTIVE, team-visible templates and validates inputs"
     },
     {
       "anchor": "lastCheckedAt: new Date(),",
@@ -4080,12 +4071,12 @@
       "title": "Addresses no opt-in reaches"
     },
     {
-      "anchor": "const strict = checkProbeUrl(baseUrl);",
-      "before": 6,
+      "anchor": "export function checkConnectorBaseUrl(",
+      "before": 8,
       "id": "connectorBaseUrl",
-      "lines": 20,
-      "path": "packages/shared/src/lib/integrations/registry.ts",
-      "title": "A connector base URL is checked strictly, then with the connector opt-in, and the waiver is logged"
+      "lines": 22,
+      "path": "packages/shared/src/lib/ssrfGuard.ts",
+      "title": "A connector base URL is checked strictly, then with the connector opt-in that waives only private addresses"
     },
     {
       "anchor": "async function assertSafeJiraBaseUrl(baseUrl: string): Promise<void> {",
@@ -4171,9 +4162,9 @@
       "anchor": "export async function detectJiraFields(",
       "before": 3,
       "id": "connectorJiraDetect",
-      "lines": 20,
+      "lines": 26,
       "path": "packages/gateway/src/lib/systemConfigService.ts",
-      "title": "Jira field detection builds its client without the guard"
+      "title": "Jira field detection runs the connector guard before it builds its client"
     },
     {
       "anchor": "We resolve at hostname-text level only (no DNS lookup)",

@@ -10,6 +10,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
   auditConfigWrite,
+  BaseUrlRefusedError,
   detectJiraFields,
   getFigmaConfig,
   getGitHubConfig,
@@ -349,12 +350,24 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
             fields: z.array(z.object({ id: z.string(), name: z.string() })),
             storyPointsFieldId: z.string().nullable(),
           }),
+          400: z.any(),
         },
       },
     },
     async (_req, reply) => {
-      const result = await detectJiraFields();
-      return reply.send(result);
+      try {
+        return reply.send(await detectJiraFields());
+      } catch (err) {
+        if (err instanceof BaseUrlRefusedError) {
+          return reply.status(400).send({
+            error: {
+              code: 'BASE_URL_REFUSED',
+              message: `Base URL refused: ${err.reason}. The private-network option permits private addresses only, never loopback, link-local or metadata addresses.`,
+            },
+          });
+        }
+        throw err;
+      }
     }
   );
 
