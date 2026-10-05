@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   activeNavHref,
   isStartWorkPath,
+  knownPageTitle,
   NAV_ITEMS,
   navLabel,
   navSections,
@@ -136,7 +137,9 @@ describe('pageTitle', () => {
 
   it('titles detail and extra pages', () => {
     expect(pageTitle('/runs/abc')).toBe('Run');
-    expect(pageTitle('/no/such/page')).toBe('Not found');
+    expect(pageTitle('/no/such/page')).toBe('Page');
+    expect(knownPageTitle('/no/such/page')).toBeNull();
+    expect(pageTitle('/oauth/consent')).toBe('Authorize app');
     expect(pageSection('/docs')).toBe('Help');
     expect(pageTitle('/runs')).toBe('All runs');
     expect(pageTitle('/govern/teams/abc')).toBe('Teams');

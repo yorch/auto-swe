@@ -32,4 +32,8 @@ describe('access denied notice', () => {
   it('says nothing when the denied page is Home', () => {
     expect(deniedMessage('/', 'ADMIN')).toBeNull();
   });
+
+  it('falls back to "this page" for a path no page claims', () => {
+    expect(deniedMessage('/no/such/page', 'ADMIN')).toContain('to open this page.');
+  });
 });

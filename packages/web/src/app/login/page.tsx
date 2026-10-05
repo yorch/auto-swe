@@ -211,7 +211,9 @@ function LoginPageInner() {
   // Someone who is already signed in has no use for the form: send them on. Requires the bearer
   // cookie so a guard that bounced them here for lacking it cannot loop.
   useEffect(() => {
-    if (searchParams.get('bridge') === '1') {
+    // An app's authorization request resumes through the sign-in form below; redirecting
+    // to the dashboard here would drop it.
+    if (searchParams.get('bridge') === '1' || oauthQuery) {
       return;
     }
     let cancelled = false;
@@ -228,7 +230,7 @@ function LoginPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [searchParams, hydrate, router, destination]);
+  }, [searchParams, hydrate, router, destination, oauthQuery]);
 
   // Which social providers are configured in the backend? Also doubles as
   // the gateway-reachability check (see gatewayDown above). "Gateway is up"

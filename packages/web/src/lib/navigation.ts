@@ -321,10 +321,14 @@ const EXTRA_PAGE_TITLES: [string, string][] = [
   ['/epics', 'Epics'],
   ['/docs', 'Docs'],
   ['/lessons', 'Lessons'],
+  ['/oauth/consent', 'Authorize app'],
 ];
 
-/** The TopBar title for `pathname` — the owning nav label, per the convention above. */
-export function pageTitle(pathname: string): string {
+/**
+ * The TopBar title for `pathname` — the owning nav label, per the convention above — or
+ * null when no page claims the path (a real not-found, or a page missing from the tables).
+ */
+export function knownPageTitle(pathname: string): string | null {
   for (const [prefix, title] of EXTRA_PAGE_TITLES) {
     if (pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`)) {
       return title;
@@ -341,7 +345,16 @@ export function pageTitle(pathname: string): string {
   if (pathname.startsWith('/studio')) {
     return 'Studio';
   }
-  return 'Not found';
+  return null;
+}
+
+/**
+ * A title that always renders. A path no page claims gets the generic `fallback`: it
+ * may be a chromed page missing from the tables as easily as a missing page, so it is
+ * never labelled "Not found" here.
+ */
+export function pageTitle(pathname: string, fallback = 'Page'): string {
+  return knownPageTitle(pathname) ?? fallback;
 }
 
 /** The label a page must use as its H1. Throws on an href with no nav entry. */
