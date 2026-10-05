@@ -808,7 +808,13 @@ export async function main(argv, io = {}) {
   }
 
   const verb = opts['dry-run'] ? 'would be' : 'was';
-  out(`${opts.file} ${verb} ${command === 'init' ? 'created' : 'updated'} (${profile} profile)`);
+  const outcome =
+    command === 'init'
+      ? `${verb} created`
+      : text === existing
+        ? 'is up to date'
+        : `${verb} updated`;
+  out(`${opts.file} ${outcome} (${profile} profile)`);
   const list = (label, items) => {
     if (items.length > 0) {
       out(`${label}: ${items.join(', ')}`);

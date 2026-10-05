@@ -250,8 +250,11 @@ describe('sync', () => {
     writeFileSync(join(dir, '.env'), `${withKey()}MY_THING=1\nDEFAULT_TEAM_SLUG=x # why\n`);
     await run(['sync', '--yes']);
     const once = read();
+    out = [];
     await run(['sync', '--yes']);
     expect(read()).toBe(once);
+    expect(out.join('\n')).toMatch(/is up to date/);
+    expect(out.join('\n')).not.toMatch(/was updated/);
     expect(readdirSync(dir).filter((f) => f.startsWith('.env.bak-'))).toHaveLength(1);
   });
 
