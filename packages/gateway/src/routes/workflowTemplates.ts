@@ -2147,6 +2147,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         data: { webhookToken: token },
         where: { id: existing.id },
       });
+      // Only whether a webhook exists is recorded — never the token, which is a credential.
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { webhookEnabled: true },
+        before: { webhookEnabled: existing.webhookToken != null },
+        entityId: existing.id,
+        entityType: 'WorkflowTemplate',
+      });
       return reply.status(200).send({ data: { webhookToken: token } });
     }
   );
@@ -2172,6 +2181,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       await fastify.prisma.workflowTemplate.update({
         data: { webhookToken: null },
         where: { id: existing.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { webhookEnabled: false },
+        before: { webhookEnabled: existing.webhookToken != null },
+        entityId: existing.id,
+        entityType: 'WorkflowTemplate',
       });
       return reply.status(204).send();
     }

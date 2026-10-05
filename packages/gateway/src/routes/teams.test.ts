@@ -419,6 +419,20 @@ describe('PUT /api/v1/teams/:id/shell-image-allowlist', () => {
       'ghcr.io/acme/ci-tools:latest',
       'docker.io/library/python:3.13-slim',
     ]);
+    expect(state.audits).toMatchObject([
+      {
+        action: 'UPDATE',
+        afterJson: {
+          shellImageAllowlist: [
+            'ghcr.io/acme/ci-tools:latest',
+            'docker.io/library/python:3.13-slim',
+          ],
+        },
+        beforeJson: { shellImageAllowlist: expect.any(Array) },
+        entityId: TEAM_ID,
+        entityType: 'Team',
+      },
+    ]);
   });
 
   it('rejects images with shell metacharacters (the Zod regex guard)', async () => {
@@ -514,6 +528,15 @@ describe('PUT /api/v1/teams/:id/egress-allowlist', () => {
       data: { egressAllowlist: ['registry.npmjs.org', 'api.github.com'] },
     });
     expect(state.teams[0].egressAllowlist).toEqual(['registry.npmjs.org', 'api.github.com']);
+    expect(state.audits).toMatchObject([
+      {
+        action: 'UPDATE',
+        afterJson: { egressAllowlist: ['registry.npmjs.org', 'api.github.com'] },
+        beforeJson: { egressAllowlist: expect.any(Array) },
+        entityId: TEAM_ID,
+        entityType: 'Team',
+      },
+    ]);
   });
 
   it('rejects invalid hostnames (shell metacharacters)', async () => {

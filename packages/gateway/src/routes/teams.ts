@@ -399,7 +399,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const exists = await fastify.prisma.team.findUnique({
-        select: { id: true },
+        select: { id: true, shellImageAllowlist: true },
         where: { id: request.params.id },
       });
       if (!exists) {
@@ -411,6 +411,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         data: { shellImageAllowlist: request.body.shellImageAllowlist },
         select: { shellImageAllowlist: true },
         where: { id: request.params.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: requireUser(request),
+        after: { shellImageAllowlist: updated.shellImageAllowlist },
+        before: { shellImageAllowlist: exists.shellImageAllowlist },
+        entityId: exists.id,
+        entityType: 'Team',
       });
       return { data: { shellImageAllowlist: updated.shellImageAllowlist } };
     }
@@ -470,7 +478,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const exists = await fastify.prisma.team.findUnique({
-        select: { id: true },
+        select: { egressAllowlist: true, id: true },
         where: { id: request.params.id },
       });
       if (!exists) {
@@ -482,6 +490,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         data: { egressAllowlist: request.body.egressAllowlist },
         select: { egressAllowlist: true },
         where: { id: request.params.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: requireUser(request),
+        after: { egressAllowlist: updated.egressAllowlist },
+        before: { egressAllowlist: exists.egressAllowlist },
+        entityId: exists.id,
+        entityType: 'Team',
       });
       return { data: { egressAllowlist: updated.egressAllowlist } };
     }

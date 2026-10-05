@@ -462,6 +462,50 @@ describe('workflow-templates routes', () => {
     expect(audits[0]).toMatchObject({ action: 'CREATE', entityType: 'WorkflowTemplate' });
   });
 
+  it('audits webhook regenerate and revoke without recording the token', async () => {
+    const created = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        name: 'webhook-audit',
+        spec: VALID_SPEC,
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates',
+    });
+    const id = created.json().data.id as string;
+    const audits = (state as unknown as { configAudits: Array<Record<string, unknown>> })
+      .configAudits;
+    audits.length = 0;
+
+    const regen = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      url: `/api/v1/workflow-templates/${id}/webhook/regenerate`,
+    });
+    expect(regen.statusCode).toBe(200);
+    const token = regen.json().data.webhookToken as string;
+    expect(audits[0]).toMatchObject({
+      action: 'UPDATE',
+      afterJson: { webhookEnabled: true },
+      beforeJson: { webhookEnabled: false },
+      entityId: id,
+      entityType: 'WorkflowTemplate',
+    });
+
+    const revoke = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'DELETE',
+      url: `/api/v1/workflow-templates/${id}/webhook`,
+    });
+    expect(revoke.statusCode).toBe(204);
+    expect(audits[1]).toMatchObject({
+      afterJson: { webhookEnabled: false },
+      beforeJson: { webhookEnabled: true },
+    });
+    expect(JSON.stringify(audits)).not.toContain(token);
+  });
+
   it('saves an unparseable cond expression but surfaces it as a warning (non-blocking)', async () => {
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
