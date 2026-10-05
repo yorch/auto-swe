@@ -75,11 +75,11 @@ export const MODEL_CATALOG_REFRESH_ALLOWED_PATHS = [BUILTIN_MODELS_PATH];
  */
 export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
   description:
-    "Keep the built-in model catalog current: list each provider's live model ids through the " +
-    'platform, read the official pricing pages, update BUILTIN_MODELS with a cited source for every ' +
-    'changed price, and open a DRAFT pull request for a person to review. Uncertain figures are ' +
-    'left unchanged and called out. A run with nothing to change, or whose previous pull request is ' +
-    'still open, opens none. Point it at your auto-swe fork and schedule it.',
+    "Keep the built-in model catalog current: list each provider's live models, read the " +
+    'official pricing pages, update the catalog with a cited source for every changed ' +
+    'price, and open a draft pull request for a person to review. Uncertain figures are ' +
+    'left unchanged and called out. A run with nothing to change, or whose previous pull ' +
+    'request is still open, opens none. Point it at your auto-swe fork and schedule it.',
   entry: 'setCriteria',
   name: 'model-catalog-refresh',
   nodes: mergeNodes(

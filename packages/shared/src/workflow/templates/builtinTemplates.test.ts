@@ -62,3 +62,16 @@ describe.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
     });
   }
 );
+
+describe('built-in template descriptions', () => {
+  // Shown to people choosing a workflow, so they read as plain language: no node types, step
+  // names or `key=value` settings from the spec.
+  it.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.description] as const))(
+    '%s names no internal identifiers',
+    (_name, description) => {
+      expect(description).not.toMatch(/\b[a-z]+[A-Z]\w*\b/);
+      expect(description).not.toMatch(/\w=\d|\b[A-Z]+_[A-Z_]+\b/);
+      expect(description).not.toMatch(/\b(fanOut|pluck|HITL)\b/);
+    }
+  );
+});

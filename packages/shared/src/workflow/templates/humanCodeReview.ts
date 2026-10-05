@@ -15,8 +15,9 @@ import {
  */
 export const HUMAN_CODE_REVIEW_SPEC: WorkflowSpec = {
   description:
-    'Implement, lint, typecheck, then show the diff to a human reviewer before opening the PR. ' +
-    'The reviewer can leave notes and the agent will address them, or approve the diff as-is.',
+    'Implement, run lint and type checks, then show the diff to a human reviewer before the ' +
+    'pull request is opened. The reviewer can leave notes for the agent to address, or ' +
+    'approve the diff as it is.',
   entry: 'setValidating',
   name: 'human-code-review',
   nodes: mergeNodes(

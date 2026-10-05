@@ -31,12 +31,10 @@ import {
  */
 export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
   description:
-    'Validate context, split the work into three parallel branches ' +
-    '(feature implementation, tests, documentation), merge them into one ' +
-    'integration branch (resolving conflicts with the merge-conflict agent if ' +
-    'needed), then open a single PR. Each branch runs an isolated ' +
-    'executeImplementation agent. Demonstrates the fanOut node with ' +
-    'concurrency=3, pluck, and merge.',
+    'Validate the context, then split the work into three branches that run at the same ' +
+    'time (feature, tests and documentation). Each branch is implemented in isolation. The ' +
+    'branches are merged into one integration branch, with the merge-conflict agent ' +
+    'resolving any conflicts, and a single pull request is opened.',
   entry: 'setValidating',
   name: 'parallel-fan-out',
   nodes: mergeNodes(

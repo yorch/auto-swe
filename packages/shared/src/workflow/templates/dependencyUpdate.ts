@@ -19,9 +19,9 @@ import {
  */
 export const DEPENDENCY_UPDATE_SPEC: WorkflowSpec = {
   description:
-    'Implement the dependency update, run the full test suite, open a PR, then loop ' +
-    'on CI failures (fetch logs → fix → push) up to 3 times. ' +
-    'Skips the review network — tests and CI are the quality gate for mechanical dep bumps.',
+    'Implement the dependency update, run the full test suite, open a pull request, then ' +
+    'fix CI failures from the logs and push, up to 3 times. Skips the agent review: tests ' +
+    'and CI are the quality gate for mechanical dependency bumps.',
   entry: 'setValidating',
   name: 'dependency-update',
   nodes: mergeNodes(

@@ -898,12 +898,59 @@ export const SUPERSEDED_TEMPLATE_DESCRIPTIONS: Readonly<Record<string, readonly 
       'agent traces (LLM calls) are visible in the run viewer.',
   ],
   'agent-reviewed-pr': [
+    'Implement, run the automated review network (up to 3 attempts), open a PR, then wait for CI. No human approval steps, and it never merges: the run ends when CI is green and the pull request waits for a person. Use this when the agent review loop is a sufficient quality gate before a PR.',
     'Implement, run the automated review network (up to 3 attempts), open a PR, then wait ' +
       'for CI. Fully automated — no human approval steps. Use this when the agent review ' +
       'loop is sufficient quality gate before a PR.',
   ],
+  'canary-rollout': [
+    'Implement, review (up to 3 agent attempts), open PR, wait for CI, then pause for a staging-deploy signal and finally a production-monitoring signal. Models a canary/release-train pipeline where each promotion stage must be explicitly confirmed by an external system before proceeding.',
+  ],
+  'code-and-ci': [
+    'Fully automated: implement, run lint + typecheck + tests locally, open a PR, then loop on CI failures (fetch logs → fix → push) up to 3 times. No review network, no human approval. Use for low-risk, well-tested codebases.',
+  ],
+  'consensus-review': [
+    'Implement, open the PR and wait for CI (a failing CI is fixed by the agent: 2 fix attempts, and a third failure fails the run), then run two independent agent review-network calls in parallel (fanOut with concurrency=2) on the code that passed CI. Both reviewers must approve; if either rejects the agent addresses the combined feedback, CI runs again, and both reviewers run again (up to 3 rounds). Demonstrates fanOut for parallel quality gates rather than parallel work.',
+    'Run two independent agent review-network calls in parallel (fanOut with concurrency=2). Both reviewers must approve before the PR opens; if either rejects the agent addresses the combined feedback and tries again (up to 3 rounds). Demonstrates fanOut for parallel quality gates rather than parallel work.',
+  ],
   'default-engineering': [
     'Default engineering workflow (parity with hardcoded EngineeringWorkflow).',
+  ],
+  'dependency-update': [
+    'Implement the dependency update, run the full test suite, open a PR, then loop on CI failures (fetch logs → fix → push) up to 3 times. Skips the review network — tests and CI are the quality gate for mechanical dep bumps.',
+  ],
+  'full-supervised': [
+    'The kitchen-sink supervised workflow: collect requirements upfront, implement, show the diff for review, let the reviewer decide whether to apply their notes, then require final approval before the PR is opened. Demonstrates all four HITL node types in sequence.',
+  ],
+  hotfix: [
+    'Fastest possible path from ticket to open PR. Implement, run lint + typecheck (in warn mode so they never block), then open the PR immediately — no review network, no CI wait, no human approval. Intended for P0 production incidents only.',
+  ],
+  'human-code-review': [
+    'Implement, lint, typecheck, then show the diff to a human reviewer before opening the PR. The reviewer can leave notes and the agent will address them, or approve the diff as-is.',
+  ],
+  migration: [
+    'Implement the migration code, execute a dry-run inside an ephemeral container to preview the SQL, then require a human to review and approve the plan before the PR is opened. Demonstrates the shell node paired with humanApproval contextFrom.',
+  ],
+  'model-catalog-refresh': [
+    "Keep the built-in model catalog current: list each provider's live model ids through the platform, read the official pricing pages, update BUILTIN_MODELS with a cited source for every changed price, and open a DRAFT pull request for a person to review. Uncertain figures are left unchanged and called out. A run with nothing to change, or whose previous pull request is still open, opens none. Point it at your auto-swe fork and schedule it.",
+  ],
+  'parallel-fan-out': [
+    'Validate context, split the work into three parallel branches (feature implementation, tests, documentation), merge them into one integration branch (resolving conflicts with the merge-conflict agent if needed), then open a single PR. Each branch runs an isolated executeImplementation agent. Demonstrates the fanOut node with concurrency=3, pluck, and merge.',
+  ],
+  'pr-approval-gate': [
+    'Implement, run tests, then require explicit human approval before opening the PR. Useful when a human must sign off on every change before it becomes visible to reviewers.',
+  ],
+  'scope-clarification': [
+    'Ask a human for additional context before the agent starts implementing. Useful for tickets whose descriptions are intentionally vague or too high-level for the agent to act on without guidance.',
+  ],
+  'security-triage': [
+    'Implement, run a vulnerability scan, then ask a human how to proceed. Three paths: fix the issues immediately, accept the risk and open the PR anyway, or abandon the change entirely.',
+  ],
+  'signal-gated-rollout': [
+    'Implement, run the agent review loop, open a PR, wait for CI, then pause for a deployment-gate signal from an external system (CD pipeline, change-management board). The gate signal carries an approval flag; rejection or timeout terminates the run.',
+  ],
+  'tiered-escalation': [
+    'After implementation, a human categorises the change risk (low / medium / high). Low-risk changes go straight to PR; medium require senior sign-off; high-risk changes require team-lead approval with a 48-hour window.',
   ],
 };
 

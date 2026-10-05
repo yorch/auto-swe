@@ -15,8 +15,8 @@ import {
  */
 export const SCOPE_CLARIFICATION_SPEC: WorkflowSpec = {
   description:
-    'Ask a human for additional context before the agent starts implementing. ' +
-    'Useful for tickets whose descriptions are intentionally vague or too high-level for the agent to act on without guidance.',
+    'Ask a person for more context before the agent starts implementing. Useful for tickets ' +
+    'that are vague or too high-level for the agent to act on without guidance.',
   entry: 'clarify',
   name: 'scope-clarification',
   nodes: mergeNodes(

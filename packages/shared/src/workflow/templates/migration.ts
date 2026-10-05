@@ -21,9 +21,9 @@ import {
  */
 export const MIGRATION_SPEC: WorkflowSpec = {
   description:
-    'Implement the migration code, execute a dry-run inside an ephemeral container ' +
-    'to preview the SQL, then require a human to review and approve the plan before ' +
-    'the PR is opened. Demonstrates the shell node paired with humanApproval contextFrom.',
+    'Implement the migration code, run it as a dry run in a throwaway container to preview ' +
+    'the SQL, then require a person to review the plan and approve it before the pull ' +
+    'request is opened.',
   entry: 'setValidating',
   name: 'migration',
   nodes: mergeNodes(

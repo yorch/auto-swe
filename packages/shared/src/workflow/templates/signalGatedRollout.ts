@@ -20,9 +20,9 @@ import {
  */
 export const SIGNAL_GATED_ROLLOUT_SPEC: WorkflowSpec = {
   description:
-    'Implement, run the agent review loop, open a PR, wait for CI, then pause for a ' +
-    'deployment-gate signal from an external system (CD pipeline, change-management board). ' +
-    'The gate signal carries an approval flag; rejection or timeout terminates the run.',
+    'Implement, have the review agents check it, open a pull request and wait for CI. Then ' +
+    'pause until an external system (a deploy pipeline or change-management board) sends ' +
+    'its decision. An approval lets the run finish; a rejection or a timeout ends it.',
   entry: 'setValidating',
   name: 'signal-gated-rollout',
   nodes: mergeNodes(
