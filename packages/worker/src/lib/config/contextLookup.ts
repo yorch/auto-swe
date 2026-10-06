@@ -1,6 +1,9 @@
+import { RUN_PINNED_SETTING_KEYS, snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { activityInfo } from '@temporalio/activity';
+import { logWarn } from '../activityLog.js';
+import { asPinnedSettings, backfillPinnedSettings, hasEveryPin } from './pinnedSettings.js';
 import type { ResolveCtx } from './types.js';
 
 /// Look up `{ teamId, workflowTemplateId }` for the currently-executing
@@ -47,6 +50,8 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
         prisma.workflowRun.findUnique({
           select: {
             agentVersions: true,
+            channelId: true,
+            id: true,
             pinnedSettings: true,
             skillRevisions: true,
             templateId: true,
@@ -58,27 +63,23 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
         run?.agentVersions && typeof run.agentVersions === 'object'
           ? (run.agentVersions as Record<string, number>)
           : undefined;
-      // Run-start snapshot of the registry settings marked `runPinned`. Carried
-      // on the ctx so any activity that resolves a setting gets the run's frozen
-      // value without knowing that pinning exists.
-      const pinnedSettings =
-        run?.pinnedSettings && typeof run.pinnedSettings === 'object'
-          ? (run.pinnedSettings as Record<string, unknown>)
-          : undefined;
       const skillRevisions =
         run?.skillRevisions && typeof run.skillRevisions === 'object'
           ? (run.skillRevisions as Record<string, number>)
           : undefined;
-      return {
-        agentVersions,
+      const scope = {
         // Org is derived transitively (team → org); the ORGANIZATION cascade
         // tier sits between TEAM and GLOBAL.
         orgId: active?.repository?.team?.orgId,
-        pinnedSettings,
-        skillRevisions,
         teamId: active?.repository?.teamId,
         workflowTemplateId: run?.templateId,
       };
+      // Run-start snapshot of the registry settings marked `runPinned`, completed
+      // here for any key it lacks. Carried on the ctx so any activity that
+      // resolves a setting gets the run's frozen value without knowing that
+      // pinning exists.
+      const pinnedSettings = run ? await pinOnFirstRead(run, scope) : undefined;
+      return { agentVersions, pinnedSettings, skillRevisions, ...scope };
     },
     (ctx) =>
       ctx.teamId !== undefined ||
@@ -88,4 +89,47 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
       ctx.skillRevisions !== undefined ||
       ctx.pinnedSettings !== undefined
   );
+}
+
+/// The run's pinned settings, with any `runPinned` key the snapshot lacks pinned
+/// now — at the value this context resolves it to, which is the value the read
+/// that asked would have seen live. The snapshot is taken in `createWorkflowRun`,
+/// so a key is missing only when the row pre-dates the setting being declared
+/// `runPinned` (or pre-dates the column); without this the run would resolve that
+/// key live for the rest of its life and an edit could reach it between two
+/// activities.
+///
+/// The write is `backfillPinnedSettings`' compare-and-set, so concurrent
+/// activities of one run converge on a single pin and a value already pinned is
+/// never changed. It never throws: a failed write logs and returns the snapshot
+/// as stored, so the missing key resolves live exactly as it did before, and the
+/// next lookup after the cache window tries again.
+///
+/// A channel turn's row is left alone. Its tenant comes from the Slack channel
+/// the caller adds on top of this context, not from `ActiveWorkflow`, so a pin
+/// taken here would freeze a value the turn's own reads never resolve to.
+async function pinOnFirstRead(
+  run: { channelId: string | null; id: string; pinnedSettings: unknown },
+  scope: ResolveCtx
+): Promise<Record<string, unknown> | undefined> {
+  const stored = asPinnedSettings(run.pinnedSettings) ?? undefined;
+  if (run.channelId || hasEveryPin(stored, RUN_PINNED_SETTING_KEYS)) {
+    return stored;
+  }
+  try {
+    const fresh = await snapshotPinnedSettings(scope);
+    const persisted = await backfillPinnedSettings(run.id, run.pinnedSettings, fresh);
+    if (persisted) {
+      return persisted;
+    }
+    logWarn('pinned settings backfill lost every compare-and-set; resolving live', {
+      runId: run.id,
+    });
+  } catch (err) {
+    logWarn('pinned settings backfill failed; resolving live', {
+      error: err instanceof Error ? err.message : String(err),
+      runId: run.id,
+    });
+  }
+  return stored;
 }

@@ -182,10 +182,15 @@ Everything else re-resolves on every call. That is what lets a model or credenti
 an already-running workflow rather than waiting for a fresh run.
 
 A snapshot that lacks a key — the row was created before the column existed, or before the setting
-was marked `runPinned` — is completed when `createWorkflowRun` runs against that row again (a retry,
-or a reused workflow id): each missing key is added at its current value, and a value already
-pinned is never changed. The write is a compare-and-set on the stored snapshot, so two attempts
-racing cannot overwrite each other's pins.
+was marked `runPinned` — is completed on the run's first read of its context. `currentRequestContext()`
+in the worker, which activities resolve their settings through, adds each missing key at the value
+that context resolves it to now, so the read that triggered it and every later one see the same
+value. `createWorkflowRun` does the same when it runs against an existing row (a retry, or a reused
+workflow id). A value already pinned is never changed, and the write is a compare-and-set on the
+stored snapshot, so concurrent activities of one run converge on a single pin rather than
+overwriting each other. A pin that cannot be written — the database errors, or the row keeps
+changing for three attempts — is logged, and the read falls back to the live value; the next
+context lookup, after the ~30 s cache window, tries again.
 
 ---
 
@@ -300,9 +305,10 @@ from the definition.
   immediately; the other service picks the change up when its ~30 s TTL expires. Gateway and worker
   are separate processes and there is no cross-process invalidation, the same limitation the scanner
   pattern cache carries.
-- **A run's missing pin is completed only at run start.** A run whose snapshot lacks a key and
-  that never re-enters `createWorkflowRun` resolves that key from the live cascade for the rest of
-  its life, so an edit to it can reach the run between two activities.
+- **A channel turn pins no settings.** A channel assistant turn's `WorkflowRun` row carries no
+  `pinnedSettings`, and the first-read backfill skips it: the turn's tenant comes from its Slack
+  channel, which the worker's context lookup does not see, so a pin taken there could freeze a value
+  the turn's own reads never resolve to. Its run-pinned keys resolve from the live cascade.
 - **`restartRequired` is advisory.** The UI says a restart is needed; nothing enforces or performs
   it.
 - **Grants are not scoped below a team.** Authority is expressed at GLOBAL, ORGANIZATION, or TEAM.
