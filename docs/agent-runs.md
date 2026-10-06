@@ -124,6 +124,14 @@ persona and skill fallbacks that `buildImplementerForActivity` applies to sub-ro
 `mcpConnectionId`), exactly as on an `agent` node. See Limitations: next to a workspace this is an
 exfiltration channel.
 
+**The loop.** The agent runs on the platform's Mastra loop unless the Agent version sets
+`runtime: claude-code`; the run-wide `workspace.implementerRuntime` setting does not apply to agent
+runs. On the Claude Code harness the agent runs as one harness turn inside its container, granted the
+harness tools that stand in for exactly the workspace tools above (`null` → `Read`, `Glob`, `Grep`;
+`[]` → none), behind the same worker-side tool policy as the implementer, and with no MCP server bound.
+The choice is pinned on the run at first use and recorded as an `agent.runtime` trace event. See
+[agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness).
+
 ---
 
 ## 4. Delivery and the trust boundary
@@ -225,6 +233,9 @@ steps, so a long loop cannot overshoot its tier by an unbounded amount and a ste
 budget stops the loop with `BUDGET_EXCEEDED`. A run that hits its wall-clock deadline, is cancelled, or
 fails mid-loop has already recorded every step that completed. (The generic `runAgent` call keeps its
 single record at the end unless it is asked for per-step accounting, which agent runs are.)
+
+An agent on the Claude Code harness is the exception: the harness reports usage when its run ends, so
+the budget is checked once before the turn and the turn is debited after it (see Limitations).
 
 ---
 
@@ -382,6 +393,11 @@ hidden template's own link is not shown.
 - **Usage of the step in flight at a deadline abort is unrecorded.** Each completed model step is
   debited as it lands, but when the wall-clock deadline or a cancellation aborts a step mid-flight,
   that step's tokens are not recorded, so spend can exceed the ledger by at most one step.
+- **An agent on the Claude Code harness is debited per turn, not per step.** Its run is one harness
+  turn, checked against the budget before and debited after, so it can overshoot its tier by up to the
+  step ceiling. A turn stopped at the deadline is metered from the messages the harness streamed,
+  which miss any call it made without streaming one. The harness also holds the model credential inside
+  the agent's container ([agents.md, Limitations](./agents.md#11-limitations)).
 - **MCP next to a workspace is an exfiltration channel.** An agent with an MCP connection and a
   readable repository can send source anywhere that connection reaches, steered by text in the
   repository. MCP binds per the agent's own configuration; it is not switched off for agent runs. The

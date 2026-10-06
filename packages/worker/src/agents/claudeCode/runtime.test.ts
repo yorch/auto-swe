@@ -88,6 +88,22 @@ const assistantToolUses = (n: number) => ({
   message: { content: Array.from({ length: n }, () => ({ type: 'tool_use' })) },
   type: 'assistant',
 });
+/** One streamed assistant message, as the SDK yields it, with its API call's usage. */
+const assistantReply = (id: string, model: string, u: object, toolUses = 0) => ({
+  message: {
+    content: Array.from({ length: toolUses }, () => ({ type: 'tool_use' })),
+    id,
+    model,
+    usage: u,
+  },
+  type: 'assistant',
+});
+const streamed = (input: number, output: number, cacheRead = 0, cacheWrite = 0) => ({
+  cache_creation_input_tokens: cacheWrite,
+  cache_read_input_tokens: cacheRead,
+  input_tokens: input,
+  output_tokens: output,
+});
 const usage = (inputTokens: number, outputTokens: number, cache = 0, cacheWrite = 0) => ({
   cacheCreationInputTokens: cacheWrite,
   cacheReadInputTokens: cache,
@@ -704,6 +720,15 @@ describe('the outcome of a turn', () => {
 
     expect(outcome.text).toBeUndefined();
     expect(outcome.usageByModel).toHaveLength(1);
+    expect(outcome.stoppedReason).toBe('max_steps');
+  });
+
+  it('reports how many model calls the run made, and no stop when it finished', async () => {
+    const { runtime } = setup();
+    h.script.push([[init('s'), { ...success('done'), num_turns: 7 }]]);
+    const outcome = await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(outcome.steps).toBe(7);
+    expect(outcome.stoppedReason).toBeUndefined();
   });
 
   it('fails without retrying when the model API refuses the credential', async () => {
@@ -783,6 +808,104 @@ describe('the outcome of a turn', () => {
     const { runtime } = setup();
     h.script.push([[init('s')], new Error('Claude Code process terminated by signal SIGKILL')]);
     await expect(runtime.runTurn({ system: 'S', user: 'U' })).rejects.toThrow(/SIGKILL/);
+  });
+
+  it('hands what a run that died had streamed to the caller on the error', async () => {
+    const { runtime } = setup();
+    h.script.push([
+      [init('s'), assistantReply('msg_1', 'claude-opus-5-5', streamed(100, 20, 50))],
+      new Error('Claude Code process terminated by signal SIGKILL'),
+    ]);
+    const failure = await runtime.runTurn({ system: 'S', user: 'U' }).catch((e) => e);
+    expect(spentUsageOf(failure)).toEqual([
+      {
+        modelSpec: 'anthropic/claude-opus-5-5',
+        usage: {
+          cacheCreationInputTokens: 0,
+          cachedInputTokens: 50,
+          inputTokens: 150,
+          outputTokens: 20,
+        },
+      },
+    ]);
+  });
+});
+
+describe('a deadline', () => {
+  it('stops the turn without failing it, with what the streamed calls spent', async () => {
+    const deadline = new AbortController();
+    const { runtime } = setup({ deadline: deadline.signal });
+    h.script.push([
+      [
+        init('s'),
+        // One API call streams a message per content block; its last report counts.
+        assistantReply('msg_1', 'claude-opus-5-5', streamed(100, 5), 1),
+        assistantReply('msg_1', 'claude-opus-5-5', streamed(100, 30)),
+        assistantReply('msg_2', 'claude-opus-5-5', streamed(200, 10, 0, 40)),
+      ],
+      new Error('Claude Code process terminated by signal SIGTERM'),
+      new Promise((resolve) => deadline.signal.addEventListener('abort', resolve)),
+    ]);
+
+    const turn = runtime.runTurn({ system: 'S', user: 'U' });
+    await vi.waitFor(() => expect(h.queryCalls).toHaveLength(1));
+    deadline.abort();
+
+    await expect(turn).resolves.toEqual({
+      stoppedReason: 'wall_clock',
+      toolCallCount: 1,
+      usageByModel: [
+        {
+          modelSpec: 'anthropic/claude-opus-5-5',
+          usage: {
+            cacheCreationInputTokens: 40,
+            cachedInputTokens: 0,
+            inputTokens: 340,
+            outputTokens: 40,
+          },
+        },
+      ],
+    });
+    expect(h.queryCalls[0]?.options.abortController.signal.aborted).toBe(true);
+  });
+
+  it('starts aborted when the deadline has already passed', async () => {
+    const { runtime } = setup({ deadline: AbortSignal.abort() });
+    h.script.push([[init('s')], new Error('aborted')]);
+    await expect(runtime.runTurn({ system: 'S', user: 'U' })).resolves.toMatchObject({
+      stoppedReason: 'wall_clock',
+      usageByModel: [],
+    });
+    expect(h.queryCalls[0]?.options.abortController.signal.aborted).toBe(true);
+  });
+
+  it('is not a stop when the turn finishes first', async () => {
+    const deadline = new AbortController();
+    const { runtime } = setup({ deadline: deadline.signal });
+    h.script.push([[init('s'), success('done')]]);
+    const outcome = await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(outcome).toMatchObject({ stoppedReason: undefined, text: 'done' });
+  });
+});
+
+describe('an exact tool grant', () => {
+  it('offers and allows only the tools it names, in place of the toolKeys rule', async () => {
+    const { runtime } = setup({ toolKeys: null, tools: ['Read', 'Glob', 'Grep'] });
+    h.script.push([[init('s'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(h.queryCalls[0]?.options.tools).toEqual(['Read', 'Glob', 'Grep']);
+    await h.queryCalls[0]?.options.hooks.PreToolUse[0]?.hooks[0]?.(
+      { cwd: '/workspace/target-repo', tool_input: { command: 'ls' }, tool_name: 'Bash' },
+      'tu-1'
+    );
+    expect(h.decideToolCall.mock.calls[0]?.[2]).toMatchObject({ tools: ['Read', 'Glob', 'Grep'] });
+  });
+
+  it('grants nothing for an empty list, never everything', async () => {
+    const { runtime } = setup({ tools: [] });
+    h.script.push([[init('s'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(h.queryCalls[0]?.options.tools).toEqual([]);
   });
 });
 

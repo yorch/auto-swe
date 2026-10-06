@@ -48,6 +48,31 @@ const LAYOUTS: Record<RunDetailLayout, (props: RunLayoutProps) => React.ReactNod
   C: FlightRecorder,
 };
 
+/**
+ * The header's runtime badge. What each agent actually ran on (`agentRuntimes`,
+ * pinned at first use) wins, since an agent's own runtime overrides the run-wide
+ * default; before any agent has run, the default the run pinned at start.
+ */
+function runtimeBadge(run: {
+  agentRuntimes?: Record<string, string>;
+  implementerRuntime?: string | null;
+}): { label: string; title: string } | null {
+  const label = (r: string) => IMPLEMENTER_RUNTIME_LABELS[r] ?? r;
+  const perAgent = Object.entries(run.agentRuntimes ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  if (perAgent.length > 0) {
+    return {
+      label: [...new Set(perAgent.map(([, r]) => r))].sort().map(label).join(' + '),
+      title: `Runtime each agent ran on: ${perAgent.map(([k, r]) => `${k} — ${label(r)}`).join(', ')}`,
+    };
+  }
+  return run.implementerRuntime
+    ? {
+        label: label(run.implementerRuntime),
+        title: 'Implementer runtime pinned at run start (workspace.implementerRuntime)',
+      }
+    : null;
+}
+
 /** `sm` buttons are 28px tall: on a phone the header actions get a 40px target instead. */
 const TOUCH_SM = 'h-[40px] lg:h-7';
 
@@ -77,6 +102,7 @@ export default function RunDetailPage({ params }: PageProps) {
     run?.templateName ||
     'Run';
   useDocumentTitle(run ? `Run · ${runTitle}` : null);
+  const badge = run ? runtimeBadge(run) : null;
   const cancelRun = useCancelWorkflowRun(id ?? '');
   // An agent run is re-run through its own endpoint, after a confirmation when it
   // delivers; see `useRunReRun`.
@@ -229,13 +255,9 @@ export default function RunDetailPage({ params }: PageProps) {
 
         <StatusBadge status={run.status} />
 
-        {run.implementerRuntime && (
-          <Badge
-            title="Implementer runtime pinned at run start (workspace.implementerRuntime)"
-            tone="muted"
-            variant="outline"
-          >
-            {IMPLEMENTER_RUNTIME_LABELS[run.implementerRuntime] ?? run.implementerRuntime}
+        {badge && (
+          <Badge title={badge.title} tone="muted" variant="outline">
+            {badge.label}
           </Badge>
         )}
 

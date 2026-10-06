@@ -102,7 +102,8 @@ const StartRunBody = z.object({
   baselineRef: z.string().min(1).max(200),
   /**
    * Per-side implementer runtime override. Omitted or null, that side runs on
-   * whatever `workspace.implementerRuntime` resolves to in the dataset's scope.
+   * what its agent resolves to in the dataset's scope: the Agent's own
+   * `runtime`, else `workspace.implementerRuntime`.
    */
   baselineRuntime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   candidateRef: z.string().min(1).max(200),

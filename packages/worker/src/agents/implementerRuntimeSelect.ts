@@ -1,9 +1,9 @@
-import { resolveSetting } from '@auto-swe/shared/config';
 import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../activities/workspace.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
+import { type AgentRuntimeSource, resolveAgentRuntime } from '../lib/config/agentRuntime.js';
 import { type ResolvedSkill, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { claudeCodeRuntime } from './claudeCode/runtime.js';
@@ -20,11 +20,11 @@ const ANTHROPIC_PREFIX = 'anthropic/';
  * Anthropic one. Pointing the credential's `apiBase` at a gateway that routes to
  * Anthropic is how a deployment sends the harness through its own gateway.
  */
-async function resolveClaudeCodeAccess(agentKey: string, ctx?: ResolveCtx) {
+export async function resolveClaudeCodeAccess(agentKey: string, ctx?: ResolveCtx) {
   const { model } = await resolveAgent(agentKey, ctx);
   if (!model.spec.startsWith(ANTHROPIC_PREFIX)) {
     throw ApplicationFailure.nonRetryable(
-      `The claude-code runtime needs an Anthropic model, but agent '${agentKey}' resolves to '${model.spec}'. Set the agent's model to anthropic/<model>, or switch workspace.implementerRuntime back to mastra.`,
+      `The claude-code runtime needs an Anthropic model, but agent '${agentKey}' resolves to '${model.spec}'. Set the agent's model to anthropic/<model>, or set its runtime (or workspace.implementerRuntime) back to mastra.`,
       'HARNESS_UNSUPPORTED_MODEL'
     );
   }
@@ -35,12 +35,14 @@ async function resolveClaudeCodeAccess(agentKey: string, ctx?: ResolveCtx) {
   };
 }
 
-/** One implementer session's loop, built for the runtime the setting chose. */
+/** One implementer session's loop, built for the runtime the agent resolved to. */
 export interface ImplementerTurnRunner {
-  /** Which runtime `workspace.implementerRuntime` chose — what the session actually ran on. */
-  kind: ImplementerRuntimeKind;
   /** Drives each turn; pass it to `runImplementerTurn`. */
   runtime: ImplementerRuntime;
+  /** Which loop `runtime` is — what the session actually ran on. */
+  kind: ImplementerRuntimeKind;
+  /** What chose it: the run's pin, the Agent version, or the setting. */
+  kindSource: AgentRuntimeSource;
   /**
    * What this runtime needs appended to the system prompt: the Mastra loop's
    * skill menu (it discloses skills through a `loadSkill` tool), or each
@@ -63,8 +65,10 @@ export interface ImplementerTurnRunner {
 }
 
 /**
- * Builds the loop that drives an implementer session. `workspace.implementerRuntime`
- * (run-pinned) is resolved FIRST and only what that runtime uses is built: the
+ * Builds the loop that drives an implementer session. The agent's runtime is
+ * resolved FIRST (`resolveAgentRuntime`: the Agent version's own `runtime`, else
+ * the run-pinned `workspace.implementerRuntime`; pinned on the run at first use)
+ * and only what that runtime uses is built: the
  * Mastra agent, its model binding and its MCP connection for `mastra`; the
  * Anthropic credential for `claude-code`, which brings its own tools and so
  * never opens the MCP client or binds a Mastra model.
@@ -72,10 +76,11 @@ export interface ImplementerTurnRunner {
  * Both runtimes run on the same Agent row's config (`resolveImplementerConfig`):
  * its tool keys — narrowed for a persona — skills, and step budget.
  *
- * The choice goes through `resolveSetting` and nothing else, so the only way to
- * steer it is the run-pin tier: a run's `ctx.pinnedSettings` snapshot, or the pin
- * an eval case builds from its run's per-side runtime override. There is no
- * parameter that skips the setting.
+ * The choice is steered only through pins, never a parameter: a run's own
+ * `WorkflowRun.agentRuntimes` pin, or the per-agent pin an eval case builds from
+ * its run's per-side runtime override (`ctx.agentRuntimes`), which wins over the
+ * Agent's own runtime; else the Agent version, else the setting (itself pinned
+ * through `ctx.pinnedSettings`).
  *
  * Build one per session, not per turn: a runtime that resumes its session across
  * turns (the harness) keeps its context and its prompt cache only while the same
@@ -88,7 +93,16 @@ export async function buildImplementerTurnRunner(input: {
   workspace: Workspace;
 }): Promise<ImplementerTurnRunner> {
   const agentKey = input.agentKey ?? 'implementer';
-  const kind = await resolveSetting('workspace.implementerRuntime', input.ctx);
+  const { runtime: kind, source: kindSource } = await resolveAgentRuntime(
+    agentKey,
+    input.ctx,
+    'implementerSetting'
+  );
+  // Which loop ran, and why, sits on the session's trace beside its turns.
+  input.tracer.addActivityEvent({
+    name: 'agent.runtime',
+    outputJson: { agentKey, runtime: kind, source: kindSource },
+  });
 
   if (kind === 'mastra') {
     const built = await buildImplementerForActivity(
@@ -99,7 +113,8 @@ export async function buildImplementerTurnRunner(input: {
     );
     return runner({
       close: built.closeMcp,
-      kind: 'mastra',
+      kind,
+      kindSource,
       maxSteps: built.maxSteps,
       promptSuffix: built.promptSuffix,
       runtime: mastraRuntime(built.agent, built.maxSteps),
@@ -113,7 +128,8 @@ export async function buildImplementerTurnRunner(input: {
     resolveClaudeCodeAccess(agentKey, input.ctx),
   ]);
   return runner({
-    kind: 'claude-code',
+    kind,
+    kindSource,
     maxSteps: config.maxSteps,
     promptSuffix: skillsToPromptSuffix(config.skills) ?? '',
     runtime: claudeCodeRuntime({
@@ -136,6 +152,7 @@ export async function buildImplementerTurnRunner(input: {
 function runner(parts: {
   close?: () => Promise<void>;
   kind: ImplementerRuntimeKind;
+  kindSource: AgentRuntimeSource;
   maxSteps: number;
   promptSuffix: string;
   runtime: ImplementerRuntime;

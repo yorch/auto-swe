@@ -51,6 +51,12 @@ export interface ResolveCtx extends SettingResolveCtx {
   /// fan-out width, transition ceiling — cannot change underneath it. Undefined
   /// outside a run, and for runs created before the column existed.
   pinnedSettings?: Record<string, unknown>;
+  /// Per-agent runtime pins supplied by the caller (`{ agentKey: runtime }`),
+  /// consulted by `resolveAgentRuntime` before the run's own
+  /// `WorkflowRun.agentRuntimes` pin and the Agent's `runtime`. An eval case sets
+  /// it from its run's per-side override. A production run's pin is read from
+  /// the row, not carried here.
+  agentRuntimes?: Record<string, string>;
 }
 
 /// Resolved model + credential for a single role lookup. Returned by

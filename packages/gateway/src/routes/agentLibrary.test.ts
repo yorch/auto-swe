@@ -581,3 +581,192 @@ describe('GET /api/v1/teams/:id/agent-library/options', () => {
     await app.close();
   });
 });
+
+const AGENT_ID = '33333333-3333-4333-8333-333333333333';
+
+function teamAgentRow(overrides: Record<string, unknown> = {}) {
+  return {
+    channelId: null,
+    credentialId: null,
+    description: null,
+    id: AGENT_ID,
+    inheritsModelFrom: null,
+    isBuiltIn: false,
+    isVerified: false,
+    key: 'teamAgent',
+    mcpConnectionId: null,
+    modelSpec: 'anthropic/claude-opus-5-5',
+    name: 'Team Agent',
+    orgId: null,
+    origin: null,
+    runtime: null,
+    scope: 'TEAM',
+    systemPrompt: null,
+    teamId: TEAM,
+    toolKeys: null,
+    version: 1,
+    workflowTemplateId: null,
+    ...overrides,
+  };
+}
+
+describe('agent runtime', () => {
+  it('lets an admin create an agent that runs on the harness', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    const res = await app.inject({
+      body: {
+        key: 'myAgent',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        name: 'My Agent',
+        runtime: 'claude-code',
+        scope: 'GLOBAL',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.runtime).toBe('claude-code');
+    await app.close();
+  });
+
+  it('stores no opinion when the runtime is left out', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    await app.inject({
+      body: { key: 'myAgent', name: 'My Agent', scope: 'GLOBAL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.runtime).toBeNull();
+    await app.close();
+  });
+
+  it('rejects a runtime it does not know', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    const res = await app.inject({
+      body: { key: 'myAgent', name: 'My Agent', runtime: 'codex', scope: 'GLOBAL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses the harness for an agent whose own model is not Anthropic', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    const res = await app.inject({
+      body: {
+        key: 'myAgent',
+        modelSpec: 'openai/gpt-6.1-sol',
+        name: 'My Agent',
+        runtime: 'claude-code',
+        scope: 'GLOBAL',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('RUNTIME_MODEL_MISMATCH');
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('checks the merged version on update: a new model against the kept runtime', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({ runtime: 'claude-code', scope: 'GLOBAL', teamId: null })
+    );
+    const res = await app.inject({
+      body: { modelSpec: 'google/gemini-3.8-flash' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('RUNTIME_MODEL_MISMATCH');
+    await app.close();
+  });
+
+  it('carries the runtime onto the next version, and audits a change', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({ runtime: 'claude-code', scope: 'GLOBAL', teamId: null })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'v2',
+      modelSpec: 'anthropic/claude-opus-4-8',
+      runtime: 'claude-code',
+      skillRefs: [],
+      version: 2,
+    });
+    const res = await app.inject({
+      body: { description: 'edited' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.runtime).toBe('claude-code');
+    expect(mockPrisma.configAuditLog.create).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses a team admin who sets a runtime on create', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    const res = await app.inject({
+      body: { key: 'teamAgent', name: 'Team Agent', runtime: 'claude-code' },
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/teams/${TEAM}/agent-library`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses a team admin who changes the runtime an admin chose', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ runtime: 'claude-code' }));
+    for (const runtime of ['mastra', null]) {
+      const res = await app.inject({
+        body: { runtime },
+        headers: AUTH,
+        method: 'PUT',
+        url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+      });
+      expect(res.statusCode, String(runtime)).toBe(403);
+    }
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('lets a team admin edit other fields, keeping the runtime an admin chose', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ runtime: 'claude-code' }));
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    for (const body of [{ description: 'edited' }, { description: 'x', runtime: 'claude-code' }]) {
+      mockPrisma.agent.create.mockClear();
+      const res = await app.inject({
+        body,
+        headers: AUTH,
+        method: 'PUT',
+        url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+      });
+      expect(res.statusCode, JSON.stringify(body)).toBe(200);
+      expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.runtime).toBe('claude-code');
+    }
+    await app.close();
+  });
+});

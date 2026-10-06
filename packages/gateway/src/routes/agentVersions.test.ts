@@ -30,6 +30,7 @@ function row(version: number, over: Record<string, unknown> = {}) {
     name: 'Reviewer',
     orgId: null,
     origin: null,
+    runtime: null,
     scope: 'GLOBAL',
     skillRefs: [],
     systemPrompt: `prompt ${version}`,
@@ -145,6 +146,22 @@ describe('POST /agent-library/:id/restore', () => {
     expect(created.isVerified).toBe(false);
     expect(prisma.agentSkillRef.createMany.mock.calls[0][0].data[0].skillId).toBe(SKILL);
     expect(prisma.configAuditLog.create).toHaveBeenCalled();
+  });
+
+  it('restores the runtime the chosen version ran on', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { runtime: 'claude-code' }))
+      .mockResolvedValueOnce(row(2, { runtime: 'mastra' }))
+      .mockResolvedValueOnce({ version: 2 });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(prisma.agent.create.mock.calls[0][0].data.runtime).toBe('claude-code');
   });
 
   it('keeps verification when the prompt is unchanged', async () => {

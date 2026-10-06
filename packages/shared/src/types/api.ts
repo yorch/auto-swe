@@ -618,6 +618,12 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
    * `claude-code`); null when the run's pinned settings do not carry it.
    */
   implementerRuntime?: string | null;
+  /**
+   * The runtime each agent ran on (`{ agentKey: 'mastra' | 'claude-code' }`),
+   * pinned the first time the run resolved it. An agent's own runtime wins over
+   * `implementerRuntime`, so this is what actually ran.
+   */
+  agentRuntimes?: Record<string, string>;
   humanSteps?: HumanStepSummary[];
 }
 
@@ -825,9 +831,9 @@ export interface ScheduledWorkRequestSummary {
 // ── Evaluations (P0: captured quality signals) ──
 
 /**
- * The loops that can drive the implementer — the values of the run-pinned
- * `workspace.implementerRuntime` setting, and of an eval run's per-side
- * runtime override.
+ * The loops that can drive an agent in a workspace — the values of the
+ * run-pinned `workspace.implementerRuntime` setting, an Agent version's own
+ * `runtime` (and its CHECK constraint), and an eval run's per-side override.
  */
 export const IMPLEMENTER_RUNTIMES = ['mastra', 'claude-code'] as const;
 export type ImplementerRuntimeKind = (typeof IMPLEMENTER_RUNTIMES)[number];
@@ -941,8 +947,8 @@ export interface EvalRunDto {
   baselineRef: string;
   /**
    * The implementer runtime each side was asked to run on; null means the side
-   * runs on whatever `workspace.implementerRuntime` resolves to in the dataset's
-   * scope. The runtime each case actually used is on its `EvalResultDto.runtime`
+   * runs on what its agent resolves to in the dataset's scope (the Agent's own
+   * `runtime`, else `workspace.implementerRuntime`). The runtime each case actually used is on its `EvalResultDto.runtime`
    * (candidate) and `metadata.baselineRuntime`, and summarised in `summary.runtimes`.
    */
   candidateRuntime: ImplementerRuntimeKind | null;

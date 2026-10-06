@@ -509,6 +509,7 @@ export default function AgentLibraryPage() {
               templates={templates ?? []}
             />
           }
+          showRuntime
           skillEditorLabel="Skills"
           skillEmptyHint="No skills available."
           skills={skills ?? []}
@@ -543,6 +544,7 @@ export default function AgentLibraryPage() {
               mode="edit"
               onChange={patchEditing}
               parentAgents={parentAgents}
+              showRuntime
               skillEditorLabel="Skills"
               skillEmptyHint="No skills available."
               skills={skills ?? []}

@@ -1726,7 +1726,7 @@
     {
       "body": "Validate context, implement with test feedback, review, fix CI failures, wait for human merge and learn.",
       "category": "Engineering",
-      "detail": "The default spec repeats review after CI fixes. Its CI wait can use webhook signals or active polling; human merge is an external signal, not an automatic merge. A run-pinned setting chooses whether implementer and fixer turns run the platform’s Mastra tool loop or the Claude Code harness inside the workspace; under the harness a worker-side policy decides every tool call, within the tools the agent’s toolKeys grant. A reviewer closing the run’s pull request unmerged makes a later push step fail non-retryably rather than open a replacement.",
+      "detail": "The default spec repeats review after CI fixes. Its CI wait can use webhook signals or active polling; human merge is an external signal, not an automatic merge. Each agent’s own runtime, else a run-pinned default setting, chooses whether implementer, fixer and agent-run turns run the platform’s Mastra tool loop or the Claude Code harness inside the workspace, and the run pins each agent’s choice the first time it resolves it; under the harness a worker-side policy decides every tool call, within the tools the agent’s toolKeys grant. A reviewer closing the run’s pull request unmerged makes a later push step fail non-retryably rather than open a replacement.",
       "id": "engineering",
       "refs": ["default", "tdd", "review", "harness", "harnessPolicy", "prClosedGuard"],
       "status": "Implemented",

@@ -14,8 +14,12 @@ import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { FileChange, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
-import { selectAgentRunTools } from '../agents/agentRunTools.js';
-import { loadMcpTools } from '../agents/mcpTools.js';
+import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRunTools.js';
+import { harnessToolsGranting } from '../agents/claudeCode/policy.js';
+import { claudeCodeRuntime } from '../agents/claudeCode/runtime.js';
+import { runImplementerTurn } from '../agents/implementerRuntime.js';
+import { resolveClaudeCodeAccess } from '../agents/implementerRuntimeSelect.js';
+import { isMcpToolEnabled, loadMcpTools } from '../agents/mcpTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
@@ -23,11 +27,13 @@ import { loadLiveAgentRunSlots } from '../lib/agentRunSlots.js';
 import { AgentTracer, redactString } from '../lib/agentTracer.js';
 import { boundToolKeys } from '../lib/boundToolKeys.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
-import { resolveAgent } from '../lib/config/agentResolver.js';
+import { type ResolvedAgent, resolveAgent } from '../lib/config/agentResolver.js';
+import { resolveAgentRuntime } from '../lib/config/agentRuntime.js';
 import { type AgentTools, resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
+import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -197,6 +203,12 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
   // Before any container exists: an unpriced model under a USD cap is refused
   // here rather than after a clone (runAgent checks again before the call).
   await assertModelPricedForUsdCap(resolved.model.spec);
+  // The loop: Mastra unless the Agent asks for the Claude Code harness. Decided
+  // (and pinned on the run) before the clone, so a model the harness cannot
+  // drive is refused before any container exists.
+  const loop = await resolveAgentRuntime(key, agentCtx, 'mastra');
+  const harnessAccess =
+    loop.runtime === 'claude-code' ? await resolveClaudeCodeAccess(key, agentCtx) : undefined;
 
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { host: true, installationId: true } } },
@@ -225,48 +237,28 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     );
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
 
-    // ── 5. Tools: read tools unless a write tool is NAMED in the agent's toolKeys.
-    const built = buildWorkspaceTools(agentWs, tracer, settings['workspace.maxToolOutputChars']);
-    const spec = await resolveAgentSpec(
-      {
-        agentKey: key as ModelBackedAgentKey,
-        availableTools: selectAgentRunTools(built, resolved.toolKeys) as unknown as AgentTools,
-        basePrompt: '',
-      },
-      agentCtx
-    );
-    spec.systemPrompt = `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim();
-
-    // MCP per the agent's own configuration (a known exfiltration channel next
-    // to a workspace; documented in docs/agent-runs.md).
-    const mcpTarget = await resolveAgentMcpUrl(key, agentCtx);
-    let mcpTools: AgentTools | undefined;
-    if (mcpTarget) {
-      const loaded = await loadMcpTools(mcpTarget.url, tracer, {
-        allowPrivateNetwork: mcpTarget.allowPrivateNetwork,
-        bearerToken: mcpTarget.bearerToken,
-        callTimeoutMs: mcpTarget.callTimeoutMs,
-        headers: mcpTarget.headers,
-        listTimeoutMs: mcpTarget.listTimeoutMs,
-      });
-      closeMcp = loaded.close;
-      mcpTools = loaded.tools as AgentTools;
-      spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;
-    }
-
-    // ── 6. Run the agent, bounded, with every step debited as it lands.
-    throwIfActivityCancelled();
-    const result = await runAgent(spec, request.description, {
-      abortSignal: AbortSignal.timeout(effective.maxWallClockSeconds * 1000),
-      ctx: settingsCtx,
-      maxSteps: effective.maxSteps,
-      perStepAccounting: true,
-      // The workspace and MCP tools record their own calls on this tracer; any
-      // other tool's calls are recorded from the loop's steps.
-      selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools),
-      spanName: 'llm.agent_run',
-      tracer,
+    tracer.addActivityEvent({
+      name: 'agent.runtime',
+      outputJson: { agentKey: key, runtime: loop.runtime, source: loop.source },
     });
+    // ── 5–6. Run the agent, bounded, on the loop it resolved to.
+    const loopInput: AgentLoopInput = {
+      agentCtx,
+      deadline: AbortSignal.timeout(effective.maxWallClockSeconds * 1000),
+      key,
+      maxSteps: effective.maxSteps,
+      maxToolOutputChars: settings['workspace.maxToolOutputChars'],
+      prompt: request.description,
+      resolved,
+      settingsCtx,
+      tracer,
+      workspace: agentWs,
+    };
+    const result = harnessAccess
+      ? await runOnHarness(loopInput, harnessAccess)
+      : await runOnMastra(loopInput, (close) => {
+          closeMcp = close;
+        });
     const text = redactString(result.text ?? '').slice(0, AGENT_RUN_MAX_TEXT_CHARS);
     const base: Omit<
       RunAgentTaskResult,
@@ -282,7 +274,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       costUsd: result.costUsd,
       deliver: payload.deliver,
       effective,
-      steps: result.stepCount,
+      steps: result.steps,
       stoppedReason: result.stoppedReason,
       text,
     };
@@ -400,6 +392,140 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     await agentWs?.destroy();
     await trusted?.destroy();
   }
+}
+
+interface AgentLoopInput {
+  agentCtx: ResolveCtx;
+  /** The run's wall clock: reaching it stops the loop, it does not fail it. */
+  deadline: AbortSignal;
+  key: string;
+  maxSteps: number;
+  maxToolOutputChars: number;
+  prompt: string;
+  resolved: ResolvedAgent;
+  settingsCtx: ResolveCtx;
+  tracer: AgentTracer;
+  workspace: Workspace;
+}
+
+interface AgentLoopResult {
+  costUsd?: number;
+  steps?: number;
+  stoppedReason?: 'max_steps' | 'wall_clock';
+  text?: string;
+}
+
+/**
+ * The Mastra loop: the workspace tools the Agent's `toolKeys` grant (read tools
+ * unless a write tool is NAMED), its MCP server, and every step debited as it
+ * lands. `onMcp` hands the MCP client's close to the caller's `finally`.
+ */
+async function runOnMastra(
+  input: AgentLoopInput,
+  onMcp: (close: () => Promise<void>) => void
+): Promise<AgentLoopResult> {
+  const { agentCtx, key, resolved, tracer } = input;
+  const built = buildWorkspaceTools(input.workspace, tracer, input.maxToolOutputChars);
+  const spec = await resolveAgentSpec(
+    {
+      agentKey: key as ModelBackedAgentKey,
+      availableTools: selectAgentRunTools(built, resolved.toolKeys) as unknown as AgentTools,
+      basePrompt: '',
+    },
+    agentCtx
+  );
+  spec.systemPrompt = `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim();
+
+  // MCP per the agent's own configuration (a known exfiltration channel next
+  // to a workspace; documented in docs/agent-runs.md).
+  const mcpTarget = await resolveAgentMcpUrl(key, agentCtx);
+  let mcpTools: AgentTools | undefined;
+  if (mcpTarget) {
+    const loaded = await loadMcpTools(mcpTarget.url, tracer, {
+      allowPrivateNetwork: mcpTarget.allowPrivateNetwork,
+      bearerToken: mcpTarget.bearerToken,
+      callTimeoutMs: mcpTarget.callTimeoutMs,
+      headers: mcpTarget.headers,
+      listTimeoutMs: mcpTarget.listTimeoutMs,
+    });
+    onMcp(loaded.close);
+    mcpTools = loaded.tools as AgentTools;
+    spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;
+  }
+
+  throwIfActivityCancelled();
+  const result = await runAgent(spec, input.prompt, {
+    abortSignal: input.deadline,
+    ctx: input.settingsCtx,
+    maxSteps: input.maxSteps,
+    perStepAccounting: true,
+    // The workspace and MCP tools record their own calls on this tracer; any
+    // other tool's calls are recorded from the loop's steps.
+    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools),
+    spanName: 'llm.agent_run',
+    tracer,
+  });
+  return {
+    costUsd: result.costUsd,
+    steps: result.stepCount,
+    stoppedReason: result.stoppedReason,
+    text: result.text,
+  };
+}
+
+/**
+ * The Claude Code harness, in the agent's own container, as one turn.
+ *
+ * It is granted exactly the harness tools that stand in for the workspace
+ * tools the Mastra loop would have granted (`grantedWorkspaceToolIds`), never
+ * the implementer's "no opinion means everything", and every call goes through
+ * the same worker-side policy as an implementer's. MCP does not bind: the
+ * harness gets no MCP servers, and the trace says so when the Agent has one.
+ * The harness reports usage when its run ends, so the budget is checked before
+ * the turn and the turn is accrued after it, not per step.
+ */
+async function runOnHarness(
+  input: AgentLoopInput,
+  access: Awaited<ReturnType<typeof resolveClaudeCodeAccess>>
+): Promise<AgentLoopResult> {
+  const { agentCtx, key, resolved, tracer } = input;
+  const spec = await resolveAgentSpec(
+    { agentKey: key as ModelBackedAgentKey, basePrompt: '' },
+    agentCtx
+  );
+  if (resolved.mcpConnectionId && isMcpToolEnabled(resolved.toolKeys)) {
+    tracer.addActivityEvent({
+      name: 'agent.runtime_mcp_skipped',
+      outputJson: { agentKey: key, mcpConnectionId: resolved.mcpConnectionId },
+    });
+  }
+  const runtime = claudeCodeRuntime({
+    access,
+    deadline: input.deadline,
+    loadProjectSettings: true,
+    maxTurns: input.maxSteps,
+    tools: harnessToolsGranting(grantedWorkspaceToolIds(resolved.toolKeys)),
+    tracer,
+    workspace: input.workspace,
+  });
+
+  throwIfActivityCancelled();
+  await assertBudgetAvailable(`agent.${key}`);
+  const turn = await runImplementerTurn({
+    context: { agentRun: true },
+    role: key,
+    runtime,
+    system: `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim(),
+    tracer,
+    usageEvent: 'llm.agent_run',
+    user: input.prompt,
+  });
+  return {
+    costUsd: turn.attribution.costUsd,
+    steps: turn.steps,
+    stoppedReason: turn.stoppedReason,
+    text: turn.text,
+  };
 }
 
 /**

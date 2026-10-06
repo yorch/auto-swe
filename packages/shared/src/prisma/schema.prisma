@@ -1365,6 +1365,10 @@ model WorkflowRun {
   /// a model or credential edit land inside an in-flight workflow. Null for
   /// runs created before this column existed — they resolve live.
   pinnedSettings    Json?             @map("pinned_settings")
+  /// `{ agentKey: 'mastra' | 'claude-code' }`: the runtime each agent ran on,
+  /// pinned the first time the run resolved it, so a later edit of the agent,
+  /// its scoped overrides or the setting cannot switch it mid-run.
+  agentRuntimes     Json?             @map("agent_runtimes")
   /// Snapshot of the skill revisions the run's agents reference, taken when the
   /// run began: a `{ skillId: revision }` map. `resolveAgent` reads the pinned
   /// `SkillRevision` text instead of the live `Skill` row, so editing a skill
@@ -1605,7 +1609,9 @@ model EvalRun {
   candidateRef String      @map("candidate_ref")
   baselineRef  String      @map("baseline_ref")
   /// Implementer runtime override per side (`mastra` | `claude-code`), applied as
-  /// the case's `workspace.implementerRuntime` run pin. Null = the setting decides.
+  /// the case's per-agent runtime pin (over the Agent's own runtime) and its
+  /// `workspace.implementerRuntime` run pin. Null = the agent's own runtime, else
+  /// the setting.
   candidateRuntime String? @map("candidate_runtime")
   baselineRuntime  String? @map("baseline_runtime")
   /// RUNNING | SUCCESS | FAILED | REGRESSION.
@@ -2642,6 +2648,11 @@ model Agent {
   // Nullable JSON array of tool keys. null = no tool override (all workspace
   // tools); [] = explicitly no tools; [...] = exactly these (may include 'mcp').
   toolKeys           Json?       @map("tool_keys")
+  // The loop that drives this agent where it works in a workspace: 'mastra' or
+  // 'claude-code' (CHECK constraint). null = no opinion: the implementer family
+  // follows the run-pinned `workspace.implementerRuntime` setting and agent runs
+  // use Mastra. A persona that inherits its model inherits this too.
+  runtime            String?
   // Provenance: null = core platform; 'swe-starter' = SWE seed content.
   origin             String?
   isBuiltIn          Boolean     @default(false) @map("is_built_in")

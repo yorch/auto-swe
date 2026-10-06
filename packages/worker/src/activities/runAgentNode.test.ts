@@ -11,6 +11,10 @@ vi.mock('../lib/config/agentSpec.js', () => ({
   resolveAgentSpec: vi.fn().mockResolvedValue({ agentKey: 'reviewer' }),
 }));
 
+vi.mock('../lib/config/agentResolver.js', () => ({
+  resolveAgent: vi.fn().mockResolvedValue({ runtime: null }),
+}));
+
 vi.mock('./runAgent.js', () => ({
   runAgent: vi.fn().mockResolvedValue({ object: undefined, text: 'verdict' }),
 }));
@@ -28,6 +32,7 @@ vi.mock('../lib/activityContext.js', () => ({
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { resolveAgent } from '../lib/config/agentResolver.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
@@ -42,6 +47,32 @@ const mockedLoadMcpTools = vi.mocked(loadMcpTools);
 beforeEach(() => vi.clearAllMocks());
 
 describe('runAgentNode', () => {
+  it('runs an agent that asks for the harness on Mastra, and says so on the trace', async () => {
+    vi.mocked(resolveAgent).mockResolvedValueOnce({ runtime: 'claude-code' } as never);
+    const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+
+    await runAgentNode({ agentRef: 'reviewer', userMessage: 'check the diff' });
+
+    expect(mockedRunAgent).toHaveBeenCalledTimes(1);
+    expect(events).toHaveBeenCalledWith({
+      name: 'agent.runtime_not_applicable',
+      outputJson: {
+        agentKey: 'reviewer',
+        ranOn: 'mastra',
+        reason: 'no workspace',
+        runtime: 'claude-code',
+      },
+    });
+    events.mockRestore();
+  });
+
+  it('records no runtime event for an agent with no opinion', async () => {
+    const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+    await runAgentNode({ agentRef: 'reviewer', userMessage: 'check the diff' });
+    expect(events).not.toHaveBeenCalled();
+    events.mockRestore();
+  });
+
   it('resolves a floating agentRef and runs it with the literal user message', async () => {
     const result = await runAgentNode({ agentRef: 'reviewer', userMessage: 'check the diff' });
 

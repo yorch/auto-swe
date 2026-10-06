@@ -123,6 +123,11 @@ vi.mock('../lib/llmOutputScan.js', () => ({
   recordSuspiciousLlmOutput: vi.fn(async () => {}),
 }));
 
+// The loop choice has its own tests (agentRuntime, implementerRuntimeSelect);
+// these drive the Mastra loop, the default.
+vi.mock('../lib/config/agentRuntime.js', () => ({
+  resolveAgentRuntime: vi.fn(async () => ({ runtime: 'mastra', source: 'default' })),
+}));
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({ teamId: 'team-1' })),
 }));

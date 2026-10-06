@@ -80,6 +80,22 @@ export function pinnedImplementerRuntime(pinned: unknown): string | null {
   const value = (pinned as Record<string, unknown>)['workspace.implementerRuntime'];
   return typeof value === 'string' ? value : null;
 }
+
+/**
+ * The runtime each agent ran on in this run (`WorkflowRun.agentRuntimes`, pinned
+ * the first time the run resolved it), keeping only well-formed entries. Empty
+ * for a run where no agent has resolved one yet.
+ */
+export function pinnedAgentRuntimes(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string'
+    )
+  );
+}
 const RunTracesResponseSchema = z.object({
   data: z.array(z.unknown()),
   /**
@@ -546,6 +562,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         : [];
       return {
         data: {
+          agentRuntimes: pinnedAgentRuntimes(run.agentRuntimes),
           contextSnapshot: run.contextSnapshot,
           costUsdAccrued: run.costUsdAccrued,
           endedAt: run.endedAt,

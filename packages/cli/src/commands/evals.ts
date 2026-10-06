@@ -23,7 +23,7 @@ const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regressio
                                       1 on a regression, 2 when the run fails without a verdict
                                       or the budget stopped it before every case ran. A runtime
                                       flag runs that side on the named implementer runtime
-                                      instead of the workspace.implementerRuntime setting
+                                      instead of the one its agent resolves to
 `;
 
 const RUN_USAGE =

@@ -139,6 +139,11 @@ vi.mock('../lib/config/agentSkills.js', () => ({
   loadAgentToolConfig: vi.fn(async () => null),
 }));
 
+// The loop choice has its own tests (agentRuntime, implementerRuntimeSelect);
+// these drive the Mastra loop, the default.
+vi.mock('../lib/config/agentRuntime.js', () => ({
+  resolveAgentRuntime: vi.fn(async () => ({ runtime: 'mastra', source: 'default' })),
+}));
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({})),
 }));

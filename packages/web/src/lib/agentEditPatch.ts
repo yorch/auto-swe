@@ -46,6 +46,11 @@ export function buildAgentUpdate(original: AgentRow, draft: AgentRow): UpdateAge
   if ((draft.credentialId ?? null) !== (original.credentialId ?? null)) {
     body.credentialId = draft.credentialId ?? null;
   }
+  // Sent only when changed: a team admin's edit that restates it is fine, but a
+  // body that never names it is what keeps the runtime an admin chose.
+  if ((draft.runtime ?? null) !== (original.runtime ?? null)) {
+    body.runtime = draft.runtime ?? null;
+  }
   const beforeSkills = original.skillRefs.map((r) => r.skillId);
   const afterSkills = draft.skillRefs.map((r) => r.skillId);
   if (!sameList(beforeSkills, afterSkills)) {

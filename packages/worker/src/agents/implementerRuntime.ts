@@ -19,6 +19,13 @@ export interface ImplementerTurnOutcome {
    * this is set.
    */
   usageByModel?: { modelSpec: string; usage: TokenUsage }[];
+  /** Model calls the turn made, when the runtime counts them. */
+  steps?: number;
+  /**
+   * Set when the turn ended before the model finished: it used its whole step
+   * budget, or a caller's deadline stopped it. Neither is a failure.
+   */
+  stoppedReason?: 'max_steps' | 'wall_clock';
 }
 
 type SpentByModel = NonNullable<ImplementerTurnOutcome['usageByModel']>;
@@ -143,9 +150,12 @@ async function accrue(
  * carries what the turn spent ({@link withSpentUsage}) has that usage accrued
  * first; the original error is what propagates, even if the accrual fails.
  */
-export async function runImplementerTurn(
-  turn: ImplementerTurn
-): Promise<{ attribution: LlmAttribution; text?: string }> {
+export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
+  attribution: LlmAttribution;
+  text?: string;
+  steps?: number;
+  stoppedReason?: ImplementerTurnOutcome['stoppedReason'];
+}> {
   const start = Date.now();
   let outcome: ImplementerTurnOutcome;
   try {
@@ -185,5 +195,10 @@ export async function runImplementerTurn(
     role: turn.role,
   });
 
-  return { attribution, text: outcome.text };
+  return {
+    attribution,
+    steps: outcome.steps,
+    stoppedReason: outcome.stoppedReason,
+    text: outcome.text,
+  };
 }

@@ -1,4 +1,5 @@
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { IMPLEMENTER_RUNTIMES } from '@auto-swe/shared/types/api';
 import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -10,6 +11,8 @@ import {
   createAgent,
   deactivateAgentLineage,
   listAgents,
+  mergedRuntimeAndModel,
+  runtimeModelError,
   updateAgent,
   validateAgentScopeRefs,
   validateMcpConnectionRef,
@@ -37,6 +40,7 @@ const AgentBaseFields = {
   mcpConnectionId: z.string().uuid().nullable().optional(),
   modelSpec: z.string().max(200).nullable().optional(),
   name: z.string().min(1).max(200),
+  runtime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   skillRefs: z
     .array(z.object({ skillId: z.string().uuid(), sortOrder: z.number().int().min(0) }))
     .nullable()
@@ -44,6 +48,31 @@ const AgentBaseFields = {
   systemPrompt: z.string().max(50_000).nullable().optional(),
   toolKeys: z.array(z.enum(AGENT_TOOL_KEYS)).nullable().optional(),
 };
+
+/**
+ * The runtime decides what runs inside the trust boundary and which credential
+ * enters the workspace, so changing it takes a platform ADMIN, the same floor as
+ * the `workspace.implementerRuntime` setting. A team admin's write that leaves
+ * it out (or restates the current value) keeps whatever an ADMIN chose.
+ */
+function runtimeChangeForbidden(
+  actorRole: string,
+  requested: string | null | undefined,
+  current: string | null
+): boolean {
+  return actorRole !== 'ADMIN' && requested !== undefined && requested !== current;
+}
+
+const RUNTIME_ADMIN_ONLY = {
+  error: {
+    code: 'FORBIDDEN',
+    message: "Only a platform admin can change an agent's runtime.",
+  },
+} as const;
+
+function runtimeModelMismatch(message: string) {
+  return { error: { code: 'RUNTIME_MODEL_MISMATCH', message } };
+}
 
 const CreateAgentSchema = z
   .object({
@@ -164,6 +193,10 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
+      const runtimeError = runtimeModelError(body.runtime, body.modelSpec);
+      if (runtimeError) {
+        return reply.status(400).send(runtimeModelMismatch(runtimeError));
+      }
       const key: AgentScopeKey = {
         channelId: body.channelId,
         key: body.key,
@@ -222,6 +255,11 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
+      const merged = mergedRuntimeAndModel(current, request.body);
+      const runtimeError = runtimeModelError(merged.runtime, merged.modelSpec);
+      if (runtimeError) {
+        return reply.status(400).send(runtimeModelMismatch(runtimeError));
+      }
       const { agent, catalogWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
         current,
@@ -231,8 +269,8 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: { version: agent.version },
-        before: { version: current.version },
+        after: { runtime: agent.runtime, version: agent.version },
+        before: { runtime: current.runtime, version: current.version },
         entityId: agent.id,
         entityType: 'Agent',
       });
@@ -353,6 +391,13 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: teamAdmin, schema: { body: TeamCreate, params: TeamParams } },
     async (request, reply) => {
       const actor = requireUser(request);
+      if (runtimeChangeForbidden(actor.role, request.body.runtime, null)) {
+        return reply.status(403).send(RUNTIME_ADMIN_ONLY);
+      }
+      const runtimeError = runtimeModelError(request.body.runtime, request.body.modelSpec);
+      if (runtimeError) {
+        return reply.status(400).send(runtimeModelMismatch(runtimeError));
+      }
       const mcpError = await validateMcpConnectionRef(
         fastify.prisma,
         request.body.mcpConnectionId,
@@ -419,6 +464,14 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!access.ok) {
         return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
+      }
+      if (runtimeChangeForbidden(actor.role, request.body.runtime, current.runtime)) {
+        return reply.status(403).send(RUNTIME_ADMIN_ONLY);
+      }
+      const merged = mergedRuntimeAndModel(current, request.body);
+      const runtimeError = runtimeModelError(merged.runtime, merged.modelSpec);
+      if (runtimeError) {
+        return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
       const mcpError = await validateMcpConnectionRef(
         fastify.prisma,

@@ -94,7 +94,8 @@ scope. It then runs a bounded TDD loop scoring the golden test's exit code.
 Each side of a run can name the implementer runtime it runs on: `candidateRuntime` and
 `baselineRuntime` (`mastra` or `claude-code`) on `POST /api/v1/platform/evals/runs`, or
 `--candidate-runtime` / `--against-runtime` on `auto-swe evals run`. A side that names none runs on
-whatever `workspace.implementerRuntime` resolves to in the dataset's scope. Giving both sides the
+what its agent resolves to in the dataset's scope: the Agent version's own `runtime`, else
+`workspace.implementerRuntime` ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness)). Giving both sides the
 same agent ref and different runtimes grades one runtime against the other on the same prompt,
 model and skills:
 
@@ -110,9 +111,10 @@ grammar everywhere and mean something in only one place. As fields, existing ref
 the gateway validates the value against the runtime list, and the request is stored on the
 `EvalRun` beside the refs.
 
-The override enters `buildImplementerTurnRunner` as the case's run pin of
-`workspace.implementerRuntime` — the tier a production run's start-time snapshot occupies — so the
-runtime is still chosen through the setting, and a production run is unaffected. A case whose
+The override enters `buildImplementerTurnRunner` as pins, in the tiers a production run's own pins
+occupy: the agent's per-run runtime pin (`ctx.agentRuntimes`), which wins over the Agent version's
+own `runtime`, and the run pin of `workspace.implementerRuntime`. The runtime is still chosen by
+`resolveAgentRuntime`, nothing skips it, and a production run is unaffected. A case whose
 runner was built on a different runtime than the one requested fails with
 `EVAL_RUNTIME_MISMATCH` instead of grading the wrong runtime under the requested name.
 
@@ -231,8 +233,8 @@ verdicts into trends per template, model, and prompt version.
   filter keeps results of runs of that template, so offline harness rows, which have no run, drop
   out of it; there is no breakdown by prompt version.
 - **A runtime override is per run, not per schedule.** The nightly regression schedule passes no
-  runtime, so its sides run on what the setting resolves; comparing runtimes is a manual
-  `evals run`.
+  runtime, so its sides run on what their agents resolve (the Agent's own runtime, else the
+  setting); comparing runtimes is a manual `evals run`.
 - **Runtime comparisons share a model constraint.** The `claude-code` runtime needs an Anthropic
   model; a side whose agent resolves to another provider fails the run (`HARNESS_UNSUPPORTED_MODEL`)
   rather than scoring zero.

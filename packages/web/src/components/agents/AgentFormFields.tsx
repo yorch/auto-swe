@@ -1,5 +1,6 @@
 'use client';
 
+import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
 import { type ReactNode, useState } from 'react';
 import { ModelSpecPicker } from '@/components/modelConfig/ModelSpecPicker';
 import { Combobox } from '@/components/ui/Combobox';
@@ -25,7 +26,14 @@ export interface AgentFormValue {
   skillRefs?: SkillRefInput[] | null;
   mcpConnectionId?: string | null;
   credentialId?: string | null;
+  runtime?: ImplementerRuntimeKind | null;
 }
+
+const RUNTIME_OPTIONS: { label: string; value: '' | ImplementerRuntimeKind }[] = [
+  { label: 'Default (the workspace.implementerRuntime setting; Mastra for agent runs)', value: '' },
+  { label: 'Mastra tool loop', value: 'mastra' },
+  { label: 'Claude Code harness (Anthropic models only)', value: 'claude-code' },
+];
 
 type FieldName =
   | 'key'
@@ -36,7 +44,8 @@ type FieldName =
   | 'systemPrompt'
   | 'skills'
   | 'mcpConnection'
-  | 'credential';
+  | 'credential'
+  | 'runtime';
 
 /** Per-field hint and placeholder copy — each caller explains the fields in its own terms. */
 export type AgentFormCopy = Partial<Record<FieldName, { hint?: string; placeholder?: string }>>;
@@ -58,7 +67,8 @@ function providerOf(spec: string | null | undefined): string | null {
  * and the per-team overrides section. `create` adds the key field, the
  * `scopeFields` slot and "(optional)" on the optional labels; `edit` puts name
  * and description side by side. The credential override renders only when
- * `credentials` is passed.
+ * `credentials` is passed, and the runtime only with `showRuntime` (changing it
+ * takes a platform admin).
  */
 export function AgentFormFields({
   copy = {},
@@ -68,6 +78,7 @@ export function AgentFormFields({
   onChange,
   parentAgents,
   scopeFields,
+  showRuntime = false,
   skillEditorLabel,
   skillEmptyHint,
   skills,
@@ -86,6 +97,8 @@ export function AgentFormFields({
   parentAgents?: ParentAgentOption[];
   /** Create only: scope pickers rendered under the key / name row. */
   scopeFields?: ReactNode;
+  /** Render the runtime picker. Only the platform-admin library may change it. */
+  showRuntime?: boolean;
   /** Label on the add-skill Combobox while no skill is attached. */
   skillEditorLabel?: string;
   skillEmptyHint?: string;
@@ -250,6 +263,18 @@ export function AgentFormFields({
         ]}
         value={value.mcpConnectionId ?? ''}
       />
+      {showRuntime && (
+        <Combobox
+          hint={
+            copy.runtime?.hint ??
+            'The loop that drives this agent where it works in a workspace. Pinned per run the first time the run uses the agent.'
+          }
+          label={optional('Runtime')}
+          onChange={(v) => onChange({ runtime: (v || null) as ImplementerRuntimeKind | null })}
+          options={RUNTIME_OPTIONS}
+          value={value.runtime ?? ''}
+        />
+      )}
       {credentials && (
         <Combobox
           hint={copy.credential?.hint}

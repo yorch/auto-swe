@@ -35,6 +35,7 @@ function resolvedAgent(modelOverrides: Record<string, unknown> = {}): ResolvedAg
       ...modelOverrides,
     },
     origin: null,
+    runtime: null,
     skills: [],
     toolKeys: null,
     version: 1,

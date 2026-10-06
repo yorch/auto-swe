@@ -42,6 +42,7 @@ function resolvedAgent(overrides: Partial<ResolvedAgent> = {}): ResolvedAgent {
       systemPrompt: undefined,
     },
     origin: null,
+    runtime: null,
     skills: [],
     toolKeys: null,
     version: 1,

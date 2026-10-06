@@ -80,6 +80,11 @@ vi.mock('../lib/activityContext.js', () => ({
 
 vi.mock('../lib/codeSecurityScanner.js', () => ({ scanDiffForCodeIssues: vi.fn(async () => []) }));
 
+// The loop choice has its own tests (agentRuntime, implementerRuntimeSelect);
+// these drive the Mastra loop, the default.
+vi.mock('../lib/config/agentRuntime.js', () => ({
+  resolveAgentRuntime: vi.fn(async () => ({ runtime: 'mastra', source: 'default' })),
+}));
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({ orgId: 'org-1', teamId: 'team-1' })),
 }));
