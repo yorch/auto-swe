@@ -18,7 +18,7 @@ describe('ConfigField', () => {
         <input id="f" readOnly value="" />
       </ConfigField>
     );
-    const shown = screen.queryByText(/^current:/) !== null;
+    const shown = screen.queryByText(/^Current:/) !== null;
     unmount();
     return shown;
   }
@@ -51,7 +51,7 @@ describe('ConfigField', () => {
         <input id="f" readOnly value="" />
       </ConfigField>
     );
-    expect(screen.getByText('env')).toBeTruthy();
+    expect(screen.getByText('From env')).toBeTruthy();
     unmount();
 
     render(
@@ -59,7 +59,7 @@ describe('ConfigField', () => {
         <input id="f" readOnly value="" />
       </ConfigField>
     );
-    expect(screen.queryByText('env')).toBeNull();
+    expect(screen.queryByText('From env')).toBeNull();
   });
 
   it('renders a note aside instead of an echo', () => {
@@ -70,6 +70,6 @@ describe('ConfigField', () => {
     );
 
     expect(screen.getByText('(optional)')).toBeTruthy();
-    expect(screen.queryByText(/^current:/)).toBeNull();
+    expect(screen.queryByText(/^Current:/)).toBeNull();
   });
 });

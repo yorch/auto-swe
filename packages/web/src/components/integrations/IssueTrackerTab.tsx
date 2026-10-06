@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -18,11 +18,15 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
+import { API_BASE } from '@/lib/config';
 import { clearableField, countChanges } from '@/lib/configFieldPatch';
 import { errMsg } from '@/lib/errors';
 import { ConfigField } from './ConfigField';
+import { ConfigStatusBadge, fieldState, groupState } from './ConfigStatusBadge';
+import { FieldGrid, IntegrationCard } from './IntegrationCard';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
+import { UrlRow } from './UrlRow';
 
 const PROVIDER_HINTS: Record<
   IssueTrackerProvider,
@@ -166,17 +170,26 @@ export function IssueTrackerTab() {
 
   return (
     <form className="space-y-6" onSubmit={handleSubmit}>
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow="Issue tracker">Ticket connector</CardTitle>
-        </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
-          Read-only connector that fetches the external ticket at submit time and attaches its
-          title, description, status, and labels to the work request&apos;s context snapshot — so
-          agents see the real ticket instead of only the pasted description. Fetch failures never
-          block a submission.
-        </p>
-        <div className="space-y-4">
+      <IntegrationCard
+        description="A read-only connector that fetches the external ticket at submit time and attaches its title, description, status and labels to the work request's context snapshot, so agents see the real ticket instead of only the pasted description. Fetch failures never block a submission."
+        eyebrow="Issue tracker"
+        status={
+          data?.provider ? (
+            <ConfigStatusBadge
+              state={groupState([
+                fieldState(data.provider, sources.provider),
+                fieldState(data.apiToken, sources.apiToken),
+              ])}
+            />
+          ) : (
+            <Badge dot tone="muted" variant="outline">
+              Off
+            </Badge>
+          )
+        }
+        title="Ticket connector"
+      >
+        <FieldGrid>
           <ConfigField
             current={data?.provider || undefined}
             id="tracker-provider"
@@ -207,9 +220,7 @@ export function IssueTrackerTab() {
               ]}
               value={provider}
             />
-            {hints && (
-              <p className="text-[11px] text-paper-600">Ticket ID format: {hints.ticket}</p>
-            )}
+            {hints && <p className="text-xs text-paper-500">Ticket ID format: {hints.ticket}</p>}
           </ConfigField>
           <ConfigField
             current={data?.baseUrl || undefined}
@@ -218,6 +229,7 @@ export function IssueTrackerTab() {
             source={sources.baseUrl}
           >
             <Input
+              className="font-mono"
               compact
               id="tracker-base-url"
               onChange={(e) => setBaseUrl(e.target.value)}
@@ -227,6 +239,7 @@ export function IssueTrackerTab() {
           </ConfigField>
           <Checkbox
             checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
+            className="sm:col-span-2"
             hint={
               <>
                 Allows a base URL on a private-network address (internal, <code>.local</code>,
@@ -263,28 +276,26 @@ export function IssueTrackerTab() {
             source={sources.apiToken}
             value={apiToken}
           />
-        </div>
-      </Card>
+        </FieldGrid>
+      </IntegrationCard>
 
       {effectiveProvider === 'jira' && (
-        <Card>
-          <CardHeader>
-            <CardTitle eyebrow="Issue tracker">Jira field mapping</CardTitle>
-          </CardHeader>
-          <p className="mb-4 text-xs text-paper-500">
-            Customize field names for your Jira configuration. Defaults work for most cloud
-            instances.
-          </p>
-          <div className="space-y-4">
+        <IntegrationCard
+          description="Customize field names for your Jira configuration. The defaults work for most cloud instances."
+          eyebrow="Jira"
+          title="Field mapping"
+        >
+          <FieldGrid>
             <ConfigField
               current={data?.storyPointsFieldId || undefined}
               id="tracker-story-points"
-              label="Story Points Field ID"
+              label="Story points field ID"
               source={sources.storyPointsFieldId}
             >
               <div className="flex items-center gap-2">
                 <div className="flex-1">
                   <Input
+                    className="font-mono"
                     compact
                     id="tracker-story-points"
                     onChange={(e) => setStoryPointsFieldId(e.target.value)}
@@ -315,12 +326,12 @@ export function IssueTrackerTab() {
                   {detectFields.isPending ? 'Detecting…' : 'Auto-detect'}
                 </Button>
               </div>
-              {detectResult && <p className="text-[11px] text-paper-400">{detectResult}</p>}
+              {detectResult && <p className="text-xs text-paper-400">{detectResult}</p>}
             </ConfigField>
             <ConfigField
               current={data?.epicIssueType || undefined}
               id="tracker-epic-issue-type"
-              label="Epic Issue Type"
+              label="Epic issue type"
               source={sources.epicIssueType}
             >
               <Input
@@ -334,7 +345,7 @@ export function IssueTrackerTab() {
             <ConfigField
               current={data?.storyIssueType || undefined}
               id="tracker-story-issue-type"
-              label="Story Issue Type"
+              label="Story issue type"
               source={sources.storyIssueType}
             >
               <Input
@@ -348,7 +359,7 @@ export function IssueTrackerTab() {
             <ConfigField
               current={data?.defaultProjectKey || undefined}
               id="tracker-default-project-key"
-              label="Default Project Key"
+              label="Default project key"
               source={sources.defaultProjectKey}
             >
               <Input
@@ -359,21 +370,23 @@ export function IssueTrackerTab() {
                 value={defaultProjectKey}
               />
             </ConfigField>
-          </div>
-        </Card>
+          </FieldGrid>
+        </IntegrationCard>
       )}
 
       {effectiveProvider === 'jira' && (
-        <Card>
-          <CardHeader>
-            <CardTitle eyebrow="Issue tracker">Inbound webhooks</CardTitle>
-          </CardHeader>
-          <p className="mb-4 text-xs text-paper-500">
-            Configure a webhook in Jira pointing to your gateway&apos;s{' '}
-            <span className="font-mono text-paper-300">/api/v1/webhooks/jira</span> endpoint. Enter
-            the shared secret below and set it as the webhook secret in Jira.
-          </p>
-          <div className="space-y-4">
+        <IntegrationCard
+          description="Configure a webhook in Jira pointing at the endpoint below, then enter the shared secret here and set the same value as the webhook secret in Jira."
+          eyebrow="Jira"
+          status={
+            <ConfigStatusBadge state={fieldState(data?.webhookSecret, sources.webhookSecret)} />
+          }
+          title="Inbound webhooks"
+        >
+          <div className="mb-4">
+            <UrlRow label="Jira webhook" url={`${API_BASE}/api/v1/webhooks/jira`} />
+          </div>
+          <FieldGrid>
             <SecretInput
               clear={{ field: 'webhookSecret', integration: 'issue-tracker' }}
               current={data?.webhookSecret ?? null}
@@ -398,21 +411,19 @@ export function IssueTrackerTab() {
                 value={webhookTriggerStatus}
               />
             </ConfigField>
-          </div>
-        </Card>
+          </FieldGrid>
+        </IntegrationCard>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow="Issue tracker">Test connection</CardTitle>
-        </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
-          Fetches a real ticket through the configuration on screen, including values you have not
-          saved yet, and shows its title and status.
-        </p>
-        <div className="flex items-end gap-3">
-          <div className="flex-1">
+      <IntegrationCard
+        description="Fetches a real ticket through the configuration on screen, including values you have not saved yet, and shows its title and status."
+        eyebrow="Issue tracker"
+        title="Test connection"
+      >
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-0 flex-1 sm:max-w-sm">
             <Input
+              className="font-mono"
               compact
               id="tracker-test-ticket"
               label="Ticket ID"
@@ -429,7 +440,6 @@ export function IssueTrackerTab() {
               effectiveProvider === 'disabled'
             }
             onClick={handleTest}
-            size="sm"
             type="button"
             variant="secondary"
           >
@@ -437,7 +447,7 @@ export function IssueTrackerTab() {
           </Button>
         </div>
         <TestResultAlert result={testResult} />
-      </Card>
+      </IntegrationCard>
 
       <IntegrationFormFooter
         dirtyCount={dirtyCount}

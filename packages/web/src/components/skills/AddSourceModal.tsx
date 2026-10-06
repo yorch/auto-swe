@@ -4,6 +4,7 @@ import { Fragment, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { RadioGroup } from '@/components/ui/RadioGroup';
@@ -335,19 +336,17 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
                   <Fragment key={s.folder}>
                     <TRow>
                       <Td className="py-2 pr-2 align-top">
-                        <input
-                          aria-label={`Install ${label}`}
+                        <Checkbox
                           checked={s.name !== null && selected.has(s.name)}
-                          className="h-4 w-4 accent-ember-400"
                           disabled={reason !== null || !full}
+                          label={<span className="sr-only">{`Install ${label}`}</span>}
                           onChange={() => s.name !== null && toggle(s.name)}
                           title={reason ?? (full ? undefined : 'Read the full text first')}
-                          type="checkbox"
                         />
                       </Td>
                       <Td className="py-2 pr-4 align-top">
                         <div className="font-medium text-paper-100">{label}</div>
-                        <div className="font-mono text-[11px] text-paper-500">
+                        <div className="font-mono text-xs text-paper-500">
                           {visibleText(s.folder)}
                         </div>
                         {s.description && (

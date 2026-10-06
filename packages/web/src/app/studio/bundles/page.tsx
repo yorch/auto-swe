@@ -6,7 +6,9 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -22,6 +24,7 @@ import { ApiError } from '@/lib/api';
 import { readBundleFile } from '@/lib/bundleFile';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
+import { cn } from '@/lib/utils';
 import { BundlePreviewModal } from './BundlePreviewModal';
 
 export default function StudioBundlesPage() {
@@ -119,7 +122,7 @@ export default function StudioBundlesPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         subtitle={
           <>
@@ -133,181 +136,213 @@ export default function StudioBundlesPage() {
         title={navLabel('/studio/bundles')}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Export</CardTitle>
-        </CardHeader>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="w-full sm:w-64">
+      <div className="grid gap-6 lg:grid-cols-5">
+        <Card className="p-5 sm:p-6 lg:col-span-3">
+          <CardHeader>
+            <CardTitle eyebrow="Install">Add a bundle</CardTitle>
+          </CardHeader>
+          <p className="-mt-1 mb-5 text-[13px] leading-relaxed text-paper-400">
+            Load a bundle from a URL or a file. You review what it contains and what it replaces
+            before anything is installed.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-0 flex-1 basis-64">
+              <Input
+                className="font-mono"
+                label="Bundle URL (http/https)"
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://example.com/swe.bundle.json"
+                value={url}
+              />
+            </div>
+            <Button
+              disabled={!url.trim() || previewBundle.isPending}
+              onClick={handlePreview}
+              variant="primary"
+            >
+              {previewBundle.isPending ? 'Loading…' : 'Preview'}
+            </Button>
+          </div>
+
+          <div aria-hidden className="my-5 flex items-center gap-3 text-xs text-paper-500">
+            <span className="h-px flex-1 bg-ink-600" />
+            or
+            <span className="h-px flex-1 bg-ink-600" />
+          </div>
+
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: drop target only; the file input inside is the keyboard path */}
+          <div
+            className={cn(
+              'flex flex-col items-center rounded-lg border border-dashed px-4 py-6 text-center transition-colors',
+              dragging ? 'border-ember-400 bg-ember-500/5' : 'border-ink-400 bg-ink-900/30'
+            )}
+            onDragEnter={() => {
+              dragDepth.current += 1;
+              setDragging(true);
+            }}
+            onDragLeave={() => {
+              dragDepth.current = Math.max(0, dragDepth.current - 1);
+              if (dragDepth.current === 0) {
+                setDragging(false);
+              }
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              dragDepth.current = 0;
+              setDragging(false);
+              void handleFile(e.dataTransfer.files[0]);
+            }}
+          >
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-ink-400 bg-ink-700 text-paper-400">
+              <Icon name="package" size={18} />
+            </div>
+            <label className="mb-3 text-sm font-medium text-paper-200" htmlFor="bundle-file">
+              Bundle file (.json)
+            </label>
+            <input
+              accept=".json,application/json"
+              className="block max-w-full text-[13px] text-paper-400 file:mr-3 file:h-8 file:cursor-pointer file:rounded-lg file:border file:border-ink-400 file:bg-ink-600 file:px-4 file:text-[13px] file:text-paper-200 hover:file:bg-ink-500"
+              disabled={previewBundle.isPending}
+              id="bundle-file"
+              onChange={(e) => {
+                void handleFile(e.target.files?.[0]);
+                // Allow picking the same file again after a failed attempt.
+                e.target.value = '';
+              }}
+              type="file"
+            />
+            <p className="mt-3 text-xs text-paper-500">
+              Choose a file or drop it here. Bundles up to 5 MB.
+            </p>
+          </div>
+          {installError && (
+            <Alert className="mt-4" variant="error">
+              {installError}
+            </Alert>
+          )}
+          {installDone && (
+            <Alert className="mt-4" variant="success">
+              {installDone}
+            </Alert>
+          )}
+        </Card>
+
+        <Card className="p-5 sm:p-6 lg:col-span-2">
+          <CardHeader>
+            <CardTitle eyebrow="Export">Download a bundle</CardTitle>
+          </CardHeader>
+          <p className="-mt-1 mb-5 text-[13px] leading-relaxed text-paper-400">
+            Package this deployment&apos;s library content as a bundle file to install elsewhere.
+          </p>
+          <div className="space-y-4">
             <Input
+              hint="A blank name downloads as bundle.bundle.json."
               label="Name"
               onChange={(e) => setExportForm((f) => ({ ...f, name: e.target.value }))}
               placeholder="bundle"
               value={exportForm.name}
             />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                className="font-mono"
+                label="Version"
+                onChange={(e) => setExportForm((f) => ({ ...f, version: e.target.value }))}
+                value={exportForm.version}
+              />
+              <Input
+                className="font-mono"
+                label="Origin"
+                onChange={(e) => setExportForm((f) => ({ ...f, origin: e.target.value }))}
+                placeholder="swe-starter"
+                value={exportForm.origin}
+              />
+            </div>
+            <p className="text-xs text-paper-500">
+              Origin is the tag of the content to export. Leave it blank to export all platform-wide
+              content.
+            </p>
           </div>
-          <div className="w-full sm:w-64">
-            <Input
-              label="Version"
-              onChange={(e) => setExportForm((f) => ({ ...f, version: e.target.value }))}
-              value={exportForm.version}
-            />
+          {exportError && (
+            <Alert className="mt-4" variant="error">
+              {exportError}
+            </Alert>
+          )}
+          {exportDone && (
+            <Alert className="mt-4" variant="success">
+              {exportDone}
+            </Alert>
+          )}
+          <div className="mt-5 flex justify-end border-t border-ink-600 pt-4">
+            <Button disabled={exportBundle.isPending} onClick={handleExport}>
+              <Icon className="rotate-90" name="arrowRight" size={14} />
+              {exportBundle.isPending ? 'Exporting…' : 'Export and download'}
+            </Button>
           </div>
-          <div className="w-full sm:w-64">
-            <Input
-              label="Origin"
-              onChange={(e) => setExportForm((f) => ({ ...f, origin: e.target.value }))}
-              placeholder="swe-starter"
-              value={exportForm.origin}
-            />
-          </div>
-          <Button disabled={exportBundle.isPending} onClick={handleExport} variant="primary">
-            {exportBundle.isPending ? 'Exporting…' : 'Export & download'}
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-paper-500">
-          Origin is the tag of the content to export. Leave it blank to export all platform-wide
-          content. A blank name downloads as bundle.bundle.json.
-        </p>
-        {exportError && (
-          <Alert className="mt-3" variant="error">
-            {exportError}
-          </Alert>
-        )}
-        {exportDone && (
-          <Alert className="mt-3" variant="success">
-            {exportDone}
-          </Alert>
-        )}
-      </Card>
+        </Card>
+      </div>
 
-      <Card>
+      <Card className="p-5 sm:p-6">
         <CardHeader>
-          <CardTitle>Install from URL</CardTitle>
-        </CardHeader>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-0 flex-1 basis-64">
-            <Input
-              hint="You review what it contains and what it replaces before anything is installed."
-              label="Bundle URL (http/https)"
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com/swe.bundle.json"
-              value={url}
-            />
-          </div>
-          <Button
-            disabled={!url.trim() || previewBundle.isPending}
-            onClick={handlePreview}
-            variant="primary"
-          >
-            {previewBundle.isPending ? 'Loading…' : 'Preview'}
-          </Button>
-        </div>
-        {installError && (
-          <Alert className="mt-3" variant="error">
-            {installError}
-          </Alert>
-        )}
-        {installDone && (
-          <Alert className="mt-3" variant="success">
-            {installDone}
-          </Alert>
-        )}
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Install from file</CardTitle>
-        </CardHeader>
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: drop target only; the file input inside is the keyboard path */}
-        <div
-          className={`rounded-md border border-dashed p-4 transition-colors ${
-            dragging ? 'border-ember-400 bg-ember-500/5' : 'border-ink-400'
-          }`}
-          onDragEnter={() => {
-            dragDepth.current += 1;
-            setDragging(true);
-          }}
-          onDragLeave={() => {
-            dragDepth.current = Math.max(0, dragDepth.current - 1);
-            if (dragDepth.current === 0) {
-              setDragging(false);
-            }
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            dragDepth.current = 0;
-            setDragging(false);
-            void handleFile(e.dataTransfer.files[0]);
-          }}
-        >
-          <label className="label-mono mb-2 block" htmlFor="bundle-file">
-            Bundle file (.json)
-          </label>
-          <input
-            accept=".json,application/json"
-            className="block w-full text-sm text-paper-300 file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-ink-400 file:bg-ink-600 file:px-3 file:py-1 file:text-paper-200"
-            disabled={previewBundle.isPending}
-            id="bundle-file"
-            onChange={(e) => {
-              void handleFile(e.target.files?.[0]);
-              // Allow picking the same file again after a failed attempt.
-              e.target.value = '';
-            }}
-            type="file"
-          />
-          <p className="mt-2 text-xs text-paper-500">
-            Choose a file or drop it here. You review what it contains and what it replaces before
-            anything is installed. Bundles up to 5 MB.
-          </p>
-        </div>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Installed bundles</CardTitle>
+          <CardTitle eyebrow="Library">Installed bundles</CardTitle>
+          {bundles && bundles.length > 0 && (
+            <span className="text-xs text-paper-500 tabular-nums">{bundles.length} installed</span>
+          )}
         </CardHeader>
         <QueryBoundary
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={isLoading}
+          isLoading={false}
           label="bundles"
           onRetry={() => void refetch()}
         >
-          {!bundles || bundles.length === 0 ? (
+          {isLoading ? (
+            <SkeletonRows rows={3} />
+          ) : !bundles || bundles.length === 0 ? (
             <EmptyState
-              className="py-4"
+              bordered
               hint="The built-in starter content is seeded with the platform, not installed from a bundle, so it is not listed here."
-              title="No bundles installed yet."
+              icon="package"
+              title="No bundles installed yet"
             />
           ) : (
             <Table stacked>
               <THead>
-                <Th variant="compact">Name</Th>
-                <Th variant="compact">Version</Th>
-                <Th variant="compact">Trust</Th>
-                <Th variant="compact">Source</Th>
+                <Th className="pl-0" variant="plain">
+                  Name
+                </Th>
+                <Th variant="plain">Version</Th>
+                <Th variant="plain">Trust</Th>
+                <Th className="pr-0" variant="plain">
+                  Source
+                </Th>
               </THead>
               <tbody>
                 {bundles.map((b) => (
                   <TRow key={b.name}>
-                    <Td className="py-2 pr-4 font-mono text-xs text-paper-100" primary>
+                    <Td
+                      className="py-2.5 pr-4 font-mono text-[13px] font-medium text-paper-100"
+                      primary
+                    >
                       {b.name}
                     </Td>
-                    <Td className="py-2 pr-4 text-paper-300" label="Version">
+                    <Td className="px-4 py-2.5 font-mono text-xs text-paper-300" label="Version">
                       {b.version}
                     </Td>
-                    <Td className="py-2 pr-4" label="Trust">
-                      <Badge tone={b.trustState === 'VERIFIED' ? 'moss' : 'amber'} variant="text">
+                    <Td className="px-4 py-2.5" label="Trust">
+                      <Badge dot tone={b.trustState === 'VERIFIED' ? 'moss' : 'amber'}>
                         {b.trustState === 'VERIFIED' ? 'Verified' : 'Unverified'}
                         {b.signedBy ? ` · ${b.signedBy}` : ''}
                       </Badge>
                     </Td>
-                    <Td className="py-2 pr-4 text-xs text-paper-400" label="Source">
+                    <Td
+                      className="max-w-xs truncate py-2.5 pl-4 font-mono text-xs text-paper-400"
+                      label="Source"
+                      title={b.source ?? undefined}
+                    >
                       {b.source ?? '—'}
                     </Td>
                   </TRow>

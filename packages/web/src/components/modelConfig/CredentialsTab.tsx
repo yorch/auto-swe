@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -8,11 +9,13 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   type ProviderCredentialRow,
@@ -33,9 +36,9 @@ const BUILTIN_PROVIDERS = ['anthropic', 'openai', 'google'] as const;
 type BuiltinProvider = (typeof BUILTIN_PROVIDERS)[number];
 
 const BUILTIN_PROVIDER_HINTS: Record<BuiltinProvider, string> = {
-  anthropic: 'Built-in — no API base needed. Key format: sk-ant-…',
-  google: 'Built-in — no API base needed. Key is the Gemini API key from Google AI Studio.',
-  openai: 'Built-in — no API base needed. Key format: sk-…',
+  anthropic: 'Built-in, no API base needed. Key format: sk-ant-…',
+  google: 'Built-in, no API base needed. The key is the Gemini API key from Google AI Studio.',
+  openai: 'Built-in, no API base needed. Key format: sk-…',
 };
 
 /** Only a GLOBAL credential is a platform-wide one; a scoped credential falls back to it. */
@@ -148,128 +151,187 @@ export function CredentialsTab() {
     });
   };
 
+  const openCreate = (provider = '') => {
+    setNewProvider(provider);
+    setCreating(true);
+  };
+  const missing = readiness?.providers.filter((p) => !p.present).length ?? 0;
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle eyebrow="Provider credentials">API keys</CardTitle>
-        <Button onClick={() => setCreating(true)} size="sm">
-          New credential
-        </Button>
-      </CardHeader>
+    <div className="space-y-6">
       {readiness && readiness.providers.length > 0 && (
-        <section aria-label="Providers your agents use" className="mb-5">
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-paper-500">
-            Providers your agents use
-          </h3>
-          <ul className="space-y-1.5">
+        <Card className="p-5 sm:p-6">
+          <CardHeader className="items-start">
+            <CardTitle eyebrow="Checklist">Providers your agents use</CardTitle>
+            <Badge dot tone={missing > 0 ? 'brick' : 'moss'} variant="outline">
+              {missing > 0 ? `${missing} missing` : 'All covered'}
+            </Badge>
+          </CardHeader>
+          <ul
+            aria-label="Providers your agents use"
+            className="divide-y divide-ink-600 rounded-lg border border-ink-500/60"
+          >
             {readiness.providers.map((p) => (
-              <li className="flex flex-wrap items-center gap-2 text-sm" key={p.provider}>
-                <span className="font-mono text-xs">{p.provider}</span>
-                <Badge tone={p.present ? 'moss' : 'brick'} variant="text">
-                  {p.present ? 'Credential present' : 'Credential missing'}
-                </Badge>
-                <span className="text-xs text-paper-500">{usedByLabel(p.usedBy)}</span>
+              <li
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3"
+                key={p.provider}
+              >
+                <Icon
+                  className={p.present ? 'text-moss-400' : 'text-brick-400'}
+                  name={p.present ? 'checkCircle' : 'warning'}
+                  size={18}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[13px] font-medium text-paper-100">
+                      {p.provider}
+                    </span>
+                    <Badge tone={p.present ? 'moss' : 'brick'}>
+                      {p.present ? 'Credential present' : 'Credential missing'}
+                    </Badge>
+                  </div>
+                  <div className="mt-0.5 text-xs text-paper-500">{usedByLabel(p.usedBy)}</div>
+                </div>
                 {!p.present && (
-                  <Button
-                    onClick={() => {
-                      setNewProvider(p.provider);
-                      setCreating(true);
-                    }}
-                    size="sm"
-                    variant="secondary"
-                  >
+                  <Button onClick={() => openCreate(p.provider)} size="sm" variant="secondary">
+                    <Icon name="plus" size={14} />
                     Add credential
                   </Button>
                 )}
               </li>
             ))}
           </ul>
-        </section>
+        </Card>
       )}
-      <QueryBoundary
-        error={loadError}
-        isError={isError}
-        isFetching={isFetching}
-        isLoading={isLoading}
-        label="credentials"
-        onRetry={() => void refetch()}
-      >
-        <Table stacked>
-          <THead>
-            <Th variant="compact">Provider</Th>
-            <Th variant="compact">Scope</Th>
-            <Th variant="compact">API base</Th>
-            <Th variant="compact">Key</Th>
-            <Th variant="compact">Test</Th>
-            <Th align="right" variant="compact">
-              Actions
-            </Th>
-          </THead>
-          <tbody>
-            {(credentials ?? []).map((c) => (
-              <TRow key={c.id}>
-                <Td className="py-2 font-mono text-xs" primary>
-                  {c.provider}
-                </Td>
-                <Td className="py-2 text-xs" label="Scope">
-                  {c.scope}
-                  {c.teamId && ` (${teamName(c.teamId)})`}
-                </Td>
-                <Td className="py-2 font-mono text-[11px] text-paper-400" label="API base">
-                  {c.apiBase ?? '—'}
-                </Td>
-                <Td className="py-2 font-mono text-xs" label="Key">
-                  {c.maskedKey}
-                </Td>
-                <Td className="py-2 text-xs" label="Test">
-                  <Button
-                    disabled={!!probePending[c.id]}
-                    onClick={() => handleTest(c.id)}
-                    size="sm"
-                    variant="ghost"
-                  >
-                    {probePending[c.id] ? '…' : 'Test'}
-                  </Button>
-                  {probeResults[c.id] && (
-                    <Badge
-                      className="ml-2"
-                      tone={probeResults[c.id].ok ? 'moss' : 'brick'}
-                      variant="text"
-                    >
-                      {probeResults[c.id].ok
-                        ? `OK (${probeResults[c.id].status})`
-                        : (probeResults[c.id].error ?? `HTTP ${probeResults[c.id].status}`)}
-                    </Badge>
-                  )}
-                </Td>
-                <Td className="py-2 text-right">
-                  <Button
-                    onClick={() => {
-                      clearProbeForRow(c.id);
-                      setEditing(c);
-                    }}
-                    size="sm"
-                    variant="ghost"
-                  >
-                    Edit
-                  </Button>
-                  <Button onClick={() => setDeleting(c)} size="sm" variant="danger">
-                    Delete
-                  </Button>
-                </Td>
-              </TRow>
-            ))}
-            {(credentials ?? []).length === 0 && (
-              <TableStatusRow colSpan={6}>
-                <EmptyState
-                  hint="Add one before any agent can call a model."
-                  title="No provider credentials yet"
-                />
-              </TableStatusRow>
-            )}
-          </tbody>
-        </Table>
-      </QueryBoundary>
+
+      <Card className="p-5 sm:p-6">
+        <CardHeader className="items-start">
+          <CardTitle eyebrow="Provider credentials">API keys</CardTitle>
+          {(credentials ?? []).length > 0 && (
+            <Button onClick={() => openCreate()} size="sm" variant="primary">
+              <Icon name="plus" size={14} />
+              New credential
+            </Button>
+          )}
+        </CardHeader>
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={false}
+          label="credentials"
+          onRetry={() => void refetch()}
+        >
+          {isLoading ? (
+            <SkeletonRows rows={3} />
+          ) : (credentials ?? []).length === 0 ? (
+            <EmptyState
+              action={
+                <Button onClick={() => openCreate()} size="sm" variant="primary">
+                  New credential
+                </Button>
+              }
+              bordered
+              hint="Add one before any agent can call a model. Keys are stored encrypted."
+              icon="key"
+              title="No provider credentials yet"
+            />
+          ) : (
+            <Table stacked>
+              <THead>
+                <Th className="pl-0" variant="plain">
+                  Provider
+                </Th>
+                <Th variant="plain">Scope</Th>
+                <Th variant="plain">Key</Th>
+                <Th variant="plain">Last test</Th>
+                <Th className="pr-0" variant="plain">
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </THead>
+              <tbody>
+                {(credentials ?? []).map((c) => {
+                  const probe = probeResults[c.id];
+                  return (
+                    <TRow key={c.id}>
+                      <Td className="py-2.5 pr-4" primary>
+                        <div className="font-mono text-[13px] font-medium text-paper-100">
+                          {c.provider}
+                        </div>
+                        {c.apiBase && (
+                          <div
+                            className="mt-0.5 max-w-xs truncate font-mono text-xs text-paper-500"
+                            title={c.apiBase}
+                          >
+                            {c.apiBase}
+                          </div>
+                        )}
+                      </Td>
+                      <Td className="px-4 py-2.5" label="Scope">
+                        <Badge tone={c.scope === 'GLOBAL' ? 'neutral' : 'dust'}>
+                          {c.scope === 'GLOBAL' ? 'Platform-wide' : 'Team'}
+                        </Badge>
+                        {c.teamId && (
+                          <span className="ml-1.5 text-xs text-paper-400">
+                            {teamName(c.teamId)}
+                          </span>
+                        )}
+                      </Td>
+                      <Td className="px-4 py-2.5 font-mono text-xs text-paper-300" label="Key">
+                        {c.maskedKey}
+                      </Td>
+                      <Td className="px-4 py-2.5" label="Last test">
+                        {probe ? (
+                          <Badge dot tone={probe.ok ? 'moss' : 'brick'}>
+                            {probe.ok
+                              ? `OK (${probe.status})`
+                              : (probe.error ?? `HTTP ${probe.status}`)}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-paper-500">Not tested</span>
+                        )}
+                      </Td>
+                      <Td className="py-2.5 pl-4 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            aria-label={`Test the ${c.provider} credential`}
+                            disabled={!!probePending[c.id]}
+                            onClick={() => handleTest(c.id)}
+                            size="sm"
+                          >
+                            {probePending[c.id] ? 'Testing…' : 'Test'}
+                          </Button>
+                          <ActionMenu
+                            items={[
+                              {
+                                icon: 'edit',
+                                id: 'edit',
+                                label: 'Edit',
+                                onAction: () => {
+                                  clearProbeForRow(c.id);
+                                  setEditing(c);
+                                },
+                              },
+                              {
+                                icon: 'trash',
+                                id: 'delete',
+                                label: 'Delete',
+                                onAction: () => setDeleting(c),
+                                tone: 'danger',
+                              },
+                            ]}
+                            label={`More actions for the ${c.provider} credential`}
+                          />
+                        </div>
+                      </Td>
+                    </TRow>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
+        </QueryBoundary>
+      </Card>
       {(creating || editing) && (
         <CredentialModal
           existing={editing}
@@ -304,7 +366,7 @@ export function CredentialsTab() {
         open={deleting !== null}
         title="Delete provider credential"
       />
-    </Card>
+    </div>
   );
 }
 
@@ -392,7 +454,7 @@ function CredentialModal({
           <>
             <div>
               <Input
-                className="font-mono text-xs"
+                className="font-mono"
                 hint={
                   BUILTIN_PROVIDERS.includes(provider as BuiltinProvider)
                     ? BUILTIN_PROVIDER_HINTS[provider as BuiltinProvider]
@@ -440,7 +502,7 @@ function CredentialModal({
           </>
         )}
         <Input
-          className="font-mono text-xs"
+          className="font-mono"
           id="apiBase"
           label={needsApiBase ? 'API base URL' : 'API base URL (optional)'}
           onChange={(e) => setApiBase(e.target.value)}
@@ -448,7 +510,7 @@ function CredentialModal({
           value={apiBase}
         />
         <Input
-          className="font-mono text-xs"
+          className="font-mono"
           id="apiKey"
           label={existing ? 'API key (leave blank to keep existing)' : 'API key'}
           onChange={(e) => setApiKey(e.target.value)}
