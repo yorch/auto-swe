@@ -1,4 +1,5 @@
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import {
   MAX_MCP_HEADERS,
   type McpHeader,
@@ -299,7 +300,14 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         };
       }
       return {
-        data: await probeMcpServer(config.url, timeoutMs, undefined, { bearerToken, headers }),
+        // The saved URL passed the text check above; the probe also resolves its host, refuses an
+        // internal answer (private only with the connection's opt-in) and pins the connection.
+        data: await probeMcpServer(
+          config.url,
+          timeoutMs,
+          createGuardedFetch({ allowPrivate: config.allowPrivateNetwork === true }),
+          { bearerToken, headers }
+        ),
       };
     }
   );

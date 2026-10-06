@@ -13,6 +13,7 @@
  * can name the internal address that was tried, so neither is passed through. Redirects are never
  * followed: the SSRF guard approved one URL, not wherever it points.
  */
+import { SSRF_BLOCKED_CODE } from '@auto-swe/shared/lib/guardedDispatcher';
 import type { McpHeader } from '@auto-swe/shared/lib/mcpHeaders';
 
 export interface McpProbeOptions {
@@ -268,7 +269,9 @@ class SseStream {
 export async function probeMcpServer(
   url: string,
   timeoutMs: number,
-  fetchImpl: Fetch = fetch,
+  // Required, with no default: the caller supplies the guarded fetch, so a bare `fetch` can never
+  // stand in for it.
+  fetchImpl: Fetch,
   opts: McpProbeOptions = {}
 ): Promise<McpProbeResult> {
   const started = Date.now();
@@ -306,7 +309,12 @@ export async function probeMcpServer(
       if (signal.aborted) {
         throw timeoutError(timeoutMs);
       }
-      void err;
+      if ((err as { code?: unknown } | null)?.code === SSRF_BLOCKED_CODE) {
+        throw new ProbeError(
+          'The server address resolves to a network this connection may not reach.',
+          true
+        );
+      }
       throw new ProbeError('Could not connect to the server.');
     }
     if (res.status >= 300 && res.status < 400) {

@@ -47,7 +47,8 @@ export interface GuardedFetchOptions {
   /** Credential headers are sent only to this origin; elsewhere only an allowlist of benign headers is. */
   credentialOrigin?: string;
   maxHops?: number;
-  fetchImpl?: typeof fetch;
+  /** Required: there is no bare-`fetch` default, so a caller always names a resolve-and-pin fetch. */
+  fetchImpl: typeof fetch;
 }
 
 export async function fetchGuarded(
@@ -55,7 +56,7 @@ export async function fetchGuarded(
   init: RequestInit,
   opts: GuardedFetchOptions
 ): Promise<Response> {
-  const doFetch = opts.fetchImpl ?? fetch;
+  const doFetch = opts.fetchImpl;
   const maxHops = opts.maxHops ?? MAX_GUARDED_REDIRECTS;
   const baseHeaders = headerRecord(init.headers);
   const method = (init.method ?? 'GET').toUpperCase();

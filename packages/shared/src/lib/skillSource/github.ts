@@ -3,13 +3,15 @@ import { approvedRepositoryHosts } from '../connectionCredential.js';
 import { resolvePlatformCredential } from '../githubHostCredential.js';
 import { defaultApiUrlForHost, hostFamily } from '../githubHostScope.js';
 import { resolveGitHubToken } from '../githubInstallation.js';
+import { createGuardedFetch } from '../guardedDispatcher.js';
 import { checkProbeUrl } from '../ssrfGuard.js';
 import { resolveGitHubConfig } from '../systemConfig.js';
 import { networkError, SkillSourceError } from './errors.js';
 
 /** What a source fetch needs from the outside, injectable for tests. */
 export interface SkillSourceDeps {
-  fetch: typeof fetch;
+  /** Replaces the guarded fetch. Tests only: `defaultDeps` leaves it unset, so production is guarded. */
+  fetch?: typeof fetch;
   approvedHosts: () => Promise<string[]>;
   /** `skills.import.privateNetworkHosts`: hosts an admin allows on a private address. */
   privateNetworkHosts: () => Promise<string[]>;
@@ -23,7 +25,6 @@ export interface SkillSourceDeps {
 
 export const defaultDeps: SkillSourceDeps = {
   approvedHosts: approvedRepositoryHosts,
-  fetch: (...args) => fetch(...args),
   githubConfig: resolveGitHubConfig,
   githubToken: resolveGitHubToken,
   platformCredential: resolvePlatformCredential,
@@ -221,7 +222,13 @@ export async function apiGet(access: SourceAccess, path: string): Promise<unknow
     }
     let res: Response;
     try {
-      res = await access.deps.fetch(url.toString(), {
+      // The text check above vets the URL; the default fetch also resolves the host, refuses an
+      // internal answer (private only for an opted-in host) and pins the connection. A fetch
+      // injected through `deps` (tests) is used as given.
+      const doFetch =
+        access.deps.fetch ??
+        createGuardedFetch({ allowPrivate: access.privateHosts.has(url.host.toLowerCase()) });
+      res = await doFetch(url.toString(), {
         headers,
         redirect: 'manual',
         // Per request, and for the whole fetch: the body read is covered too.

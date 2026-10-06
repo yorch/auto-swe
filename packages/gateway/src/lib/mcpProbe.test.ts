@@ -1,3 +1,4 @@
+import { SsrfBlockedError } from '@auto-swe/shared/lib/guardedDispatcher';
 import { describe, expect, it, vi } from 'vitest';
 import { probeMcpServer } from './mcpProbe.js';
 
@@ -115,6 +116,14 @@ describe('probeMcpServer', () => {
     );
     const res = await probeMcpServer('https://mcp.test/mcp', 5000, server(sse) as never);
     expect(res).toMatchObject({ ok: true, toolCount: 1 });
+  });
+
+  it('says so when the host resolves to a network it may not reach, without the address', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new SsrfBlockedError('host resolves to 10.0.0.9'));
+    const result = await probeMcpServer('https://mcp.example.com/mcp', 1000, fetchImpl);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/resolves to a network/);
+    expect(result.error).not.toContain('10.0.0.9');
   });
 
   it('refuses to follow a redirect', async () => {

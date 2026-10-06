@@ -108,10 +108,15 @@ describe('mcpConnectionRoutes', () => {
       const res = await app.inject({ headers: AUTH, method: 'POST', url });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).data).toMatchObject({ ok: true, toolCount: 3 });
-      expect(probeMcpServer).toHaveBeenCalledWith('https://mcp.example.com/mcp', 4000, undefined, {
-        bearerToken: undefined,
-        headers: [],
-      });
+      expect(probeMcpServer).toHaveBeenCalledWith(
+        'https://mcp.example.com/mcp',
+        4000,
+        expect.any(Function),
+        {
+          bearerToken: undefined,
+          headers: [],
+        }
+      );
     });
 
     it('does not probe an address the SSRF guard refuses', async () => {
@@ -571,7 +576,7 @@ describe('mcpConnectionRoutes', () => {
       expect(probeMcpServer).toHaveBeenCalledWith(
         'https://mcp.example.com/mcp',
         15_000,
-        undefined,
+        expect.any(Function),
         {
           bearerToken: TOKEN,
           headers: [],
@@ -905,7 +910,7 @@ describe('mcpConnectionRoutes', () => {
         rowWithHeaders([{ name: 'X-Api-Key', value: SECRET }])
       );
       const res = await app.inject({ headers: AUTH, method: 'POST', url: `${BASE}/${ID}/test` });
-      expect(probeMcpServer).toHaveBeenCalledWith(URL_OK, 15_000, undefined, {
+      expect(probeMcpServer).toHaveBeenCalledWith(URL_OK, 15_000, expect.any(Function), {
         bearerToken: undefined,
         headers: [{ name: 'X-Api-Key', value: SECRET }],
       });

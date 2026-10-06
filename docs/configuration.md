@@ -222,6 +222,38 @@ guard the connector applies at run time: GitHub needs a public address, and the 
 knowledge base honour the `allowPrivateNetwork` value on the form. Failures report fixed wording
 per status class and never echo the remote response body.
 
+**Outbound URL guard.** Every request to an operator-supplied URL (connector base URLs, MCP
+servers, bundle URLs, provider `apiBase` probes, skill sources, CI log links) is checked twice. The
+text check (`shared/lib/ssrfGuard.ts`) refuses a bad scheme and a host written as a loopback,
+private, link-local or metadata name or address, and is the early error at save time. At
+connection time `createGuardedFetch` (`shared/lib/guardedDispatcher.ts`) resolves the host name
+once, classifies every address it returns with the same rules (plus multicast and reserved ranges),
+and refuses the request if any one is refused, so a public name such as `10.1.1.17.nip.io` or a
+rebinding name does not reach an internal host. The connection is then made to an address from that
+checked answer (the check is the dispatcher's `lookup`), while TLS server name and `Host` stay the
+hostname, so certificate validation is unchanged. A private address is allowed only where the call
+site's opt-in (`allowPrivateNetwork`, or an opted-in skill-source host) allows it; loopback,
+link-local, unspecified, multicast, reserved and cloud-metadata addresses are refused regardless.
+A DNS failure or timeout (5 s) refuses with a fixed message and never echoes resolver detail.
+Redirects are followed by hand or refused, so each hop passes through the same guard.
+Where one call talks to a single trusted host and may be redirected elsewhere (the CI log download,
+an MCP server), the private-network allowance is scoped to that host's origin and every other
+origin is checked strictly. The exception is a CI log download for a repository on a GitHub
+Enterprise host (not github.com): its log storage lives on the same internal network, so every hop
+may resolve to a private address, while loopback, link-local, unspecified, reserved and metadata
+addresses stay refused on every hop. The check classifies one source of truth for addresses: besides
+loopback, link-local and cloud metadata (including GCP's `fd20:ce::254` and OCI's legacy
+`192.0.0.192`), the IETF protocol, documentation, 6to4 relay, Teredo and discard ranges are
+refused. The benchmarking block `198.18.0.0/15` is classed with the private networks, because
+fake-IP proxy tools (Clash, Surge, sing-box) answer every DNS name with an address in it: it is
+refused by default and allowed with the private-network opt-in, so a deployment behind such a tool
+needs the opt-in on every connector it uses. Connections use HTTP/1.1 and try the checked addresses IPv4 first. Production
+always drives the dispatcher with undici's own `fetch`; only tests substitute one.
+`yarn invariants:check` fails a bare `fetch` (a call, a `= fetch` default or `fetch` passed as a
+value) in the modules whose requests are all operator-supplied: the bundle, credential-probe, MCP
+probe, model-discovery, Atlassian, GitHub Issues, skill-source, MCP tool and GitHub SCM modules.
+Octokit and GitHub Enterprise API calls, an aliased `fetch`, and another HTTP client are not seen.
+
 ---
 
 ## 6. Adding a setting
@@ -240,9 +272,19 @@ from the definition.
 
 ## Limitations
 
-- **The draft GitHub test cannot reach a private address.** A GitHub Enterprise host on a private
-  network is refused when its URL is typed but unsaved; the stored configuration is not re-checked
-  by that guard, so save it and test the saved values.
+- **Pinning needs a direct connection.** With a process-wide proxy (`NODE_USE_ENV_PROXY`,
+  `--use-env-proxy` on the command line or in `NODE_OPTIONS`) the proxy resolves the target, so the
+  host is resolved and checked beforehand but the connection cannot be pinned to that answer. The
+  check still needs local DNS: a network that only resolves through its proxy fails closed, with the
+  fixed "could not be resolved" refusal. A literal IP address is classified as written. The guard does not cover the
+  Okta issuer's discovery fetch (made by the sign-in library at start-up), the model providers'
+  own SDK calls from the worker, the GitHub Enterprise and Octokit calls (those hosts are governed
+  by `github.repositoryHosts`, and a private host is legitimate there), or fixed public hosts such
+  as Slack, Linear, Notion and Figma.
+- **The draft GitHub test cannot reach a private address.** A GitHub Enterprise host that is written
+  as a private address, or whose name resolves to one, is refused when its URL is typed but
+  unsaved; the stored configuration is not re-checked by that guard, so save it and test the
+  saved values.
 - **The registry does not yet cover every compiled-in constant.** Temporal retry and timeout
   profiles (`packages/worker/src/workflows/proxyOptions.ts`), the context-spill budgets in
   `runnable.ts`, the model price table in `costTracking.ts`, and several agent loop caps are still

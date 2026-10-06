@@ -80,7 +80,7 @@ describe('bearer token over the real MCP client', () => {
     const client = new MCPClient({
       id: `transport-test-${Math.random()}`,
       servers: {
-        mcp: { allowedHosts: [url.host], fetch: bearerFetch(url, TOKEN) as never, url },
+        mcp: { allowedHosts: [url.host], fetch: bearerFetch(url, TOKEN, fetch) as never, url },
       },
     });
     try {

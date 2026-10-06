@@ -1,3 +1,4 @@
+import { createGuardedFetch } from '../../guardedDispatcher.js';
 import { fetchGuarded } from '../../guardedFetch.js';
 import { isSafeProbeUrl } from '../../ssrfGuard.js';
 import type { IssueTrackerProvider } from '../issueTracker.js';
@@ -12,6 +13,10 @@ import type {
 interface GitHubIssuesConfig {
   apiToken?: string | null;
   baseUrl?: string;
+  /** The connector's opt-in; applies to the configured origin only, never to another hop. */
+  allowPrivateNetwork?: boolean;
+  /** Replaces the guarded fetch. Tests only: the connector registry never sets it. */
+  fetchImpl?: typeof fetch;
   defaultRepo?: { owner: string; repo: string };
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
@@ -47,8 +52,12 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
   private readonly baseUrl: string;
   private readonly defaultRepo: { owner: string; repo: string } | undefined;
   private readonly log: { warn: (obj: unknown, msg?: string) => void } | undefined;
+  private readonly allowPrivate: boolean;
+  private readonly fetchImpl: typeof fetch | undefined;
 
   constructor(config: GitHubIssuesConfig) {
+    this.allowPrivate = config.allowPrivateNetwork === true;
+    this.fetchImpl = config.fetchImpl;
     this.apiToken = config.apiToken ?? null;
     this.baseUrl = (config.baseUrl ?? 'https://api.github.com').replace(/\/+$/, '');
     this.defaultRepo = config.defaultRepo;
@@ -76,9 +85,16 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
    */
   private request(url: string, init: RequestInit): Promise<Response> {
     const origin = new URL(this.baseUrl).origin;
+    // Resolution is checked and pinned on every hop: the opt-in covers the configured
+    // origin, any other origin is strict.
+    const configured = createGuardedFetch({ allowPrivate: this.allowPrivate });
+    const strict = createGuardedFetch();
+    const pinned: typeof fetch = (target, hopInit) =>
+      (new URL(target.toString()).origin === origin ? configured : strict)(target, hopInit);
     return fetchGuarded(url, init, {
       check: (target) => target.origin === origin || isSafeProbeUrl(target.toString()).ok,
       credentialOrigin: origin,
+      fetchImpl: this.fetchImpl ?? pinned,
     });
   }
 
