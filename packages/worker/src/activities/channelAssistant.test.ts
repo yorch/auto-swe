@@ -94,6 +94,7 @@ vi.mock('../lib/channelPersona.js', () => ({
   resolvePersonaPrompt: vi.fn().mockResolvedValue(null),
 }));
 
+import { invalidateSettingsCache } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
@@ -813,14 +814,38 @@ describe('runChannelAssistantTurn', () => {
 
     await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
 
-    expect(retrieveChannelMemoryMock).toHaveBeenCalledWith('how do I deploy?', {
-      channelId: 'chan-1',
-      teamId: 'team-1',
-    });
+    expect(retrieveChannelMemoryMock).toHaveBeenCalledWith(
+      'how do I deploy?',
+      { channelId: 'chan-1', teamId: 'team-1' },
+      5
+    );
     const passedMessage = runAgentMock.mock.calls[0]?.[1] as string;
     expect(passedMessage).toContain("Relevant context from this channel's memory:");
     expect(passedMessage).toContain('- we deploy with yarn release');
     expect(passedMessage).toContain('User: how do I deploy?');
+  });
+
+  it('fetches as many memory items as channel.memoryContextItems allows, not a fixed 5', async () => {
+    // Earlier turns in this file resolved the setting at its default; drop that.
+    invalidateSettingsCache();
+    vi.mocked(prisma.configSetting.findMany).mockResolvedValue([
+      { key: 'channel.memoryContextItems', scope: 'TEAM', value: 12 },
+    ] as never);
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    retrieveChannelMemoryMock.mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => ({ id: `m${i}`, similarity: 0.9, summary: `fact ${i}` }))
+    );
+
+    await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    expect(retrieveChannelMemoryMock.mock.calls[0]?.[2]).toBe(12);
+    const passedMessage = runAgentMock.mock.calls[0]?.[1] as string;
+    expect(passedMessage.match(/- fact \d+/g)?.length).toBe(12);
+    vi.mocked(prisma.configSetting.findMany).mockResolvedValue([]);
+    invalidateSettingsCache();
   });
 
   it('runs the turn at the same channel/team/org scope its agent resolved at', async () => {

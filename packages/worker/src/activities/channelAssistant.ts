@@ -882,12 +882,19 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   // Phase 2: retrieve channel-scoped memory similar to this message and prepend
   // it as context, so the assistant builds knowledge over time. Best-effort —
   // a retrieval failure (e.g. embedding round-trip) must not block the reply.
+  // Resolved before retrieval, so `channel.memoryContextItems` sets how many
+  // items are fetched rather than only truncating a fixed-size result.
+  const contextLimits = await resolveSettings(
+    ['channel.memoryContextItems', 'channel.threadContextMessages'],
+    { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
+  );
   let memory: ChannelMemoryItem[] = [];
   try {
-    memory = await retrieveChannelMemory(input.userText, {
-      channelId: input.channelId,
-      teamId: input.teamId,
-    });
+    memory = await retrieveChannelMemory(
+      input.userText,
+      { channelId: input.channelId, teamId: input.teamId },
+      contextLimits['channel.memoryContextItems']
+    );
   } catch (err) {
     console.error(
       `[channelAssistant] failed to retrieve channel memory for ${input.channelId}:`,
@@ -915,10 +922,6 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
 
   // Compose context: channel memory block first, then the thread transcript, then
   // the user's message at the bottom (closest to the model's attention).
-  const contextLimits = await resolveSettings(
-    ['channel.memoryContextItems', 'channel.threadContextMessages'],
-    { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
-  );
   const withMemory = formatMemoryContext(
     memory,
     input.userText,
