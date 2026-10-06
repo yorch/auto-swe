@@ -6,7 +6,7 @@ type InputProps = InputHTMLAttributes<HTMLInputElement> & {
   label?: string;
   hint?: string;
   error?: string;
-  /** Dense rails and inline editors: `h-8`, mono `text-xs`. */
+  /** Dense rails and inline editors: `h-8`, `13px` text. */
   compact?: boolean;
   /** A fixed unit shown inside the left edge of the field, such as `$`. Decorative: the label names the unit. */
   prefix?: string;
@@ -40,8 +40,8 @@ export function Input({
           aria-invalid={error ? true : undefined}
           className={cn(
             'w-full rounded-md border border-ink-400 bg-ink-900/60 text-paper-100 outline-none transition-colors',
-            compact ? 'h-8 px-2 font-mono text-xs' : 'h-10 px-3 text-sm',
-            'focus:border-ember-400 focus:bg-ink-900/80',
+            compact ? 'h-8 px-2.5 text-[13px]' : 'h-9 px-3 text-sm',
+            'hover:border-ink-300 focus:border-ember-400 focus:bg-ink-900/80 focus:ring-2 focus:ring-ember-400/20',
             'placeholder:text-paper-600',
             error && 'border-brick-400 focus:border-brick-400',
             prefix && 'pl-7',

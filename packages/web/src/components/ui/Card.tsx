@@ -5,7 +5,8 @@ type CardVariant = 'panel' | 'inset' | 'ghost';
 const VARIANT_CLASSES: Record<CardVariant, string> = {
   ghost: 'border border-transparent bg-transparent',
   inset: 'border border-ink-400/40 bg-ink-900/50',
-  panel: 'border border-ink-400/60 bg-gradient-to-b from-ink-700 to-ink-900/80',
+  panel:
+    'border border-ink-400/60 bg-gradient-to-b from-ink-700 to-ink-900/80 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_32px_-20px_rgba(0,0,0,0.6)]',
 };
 
 type CardProps = React.HTMLAttributes<HTMLDivElement> & {
@@ -50,7 +51,7 @@ export function CardTitle({ children, eyebrow }: { children: React.ReactNode; ey
   return (
     <div>
       {eyebrow && <div className="kicker mb-1">{eyebrow}</div>}
-      <h3 className="text-xl font-semibold tracking-tight text-paper-100">{children}</h3>
+      <h3 className="text-[17px] font-semibold tracking-tight text-paper-50">{children}</h3>
     </div>
   );
 }

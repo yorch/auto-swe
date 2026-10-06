@@ -133,6 +133,19 @@
     letter-spacing: -0.01em;
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      /* biome-ignore lint/complexity/noImportantStyles: a user motion preference must beat every component animation class */
+      transition-duration: 0.01ms !important;
+      /* biome-ignore lint/complexity/noImportantStyles: a user motion preference must beat every component animation class */
+      animation-duration: 0.01ms !important;
+      /* biome-ignore lint/complexity/noImportantStyles: a user motion preference must beat every component animation class */
+      animation-iteration-count: 1 !important;
+    }
+  }
+
   /* Selection uses violet-dim */
   ::selection {
     color: var(--color-ink-950);
@@ -181,23 +194,25 @@
    Utilities
    ──────────────────────────────────────────────────────────────────────── */
 @layer utilities {
-  /* Signature label — used constantly for section headers and metadata labels */
+  /* Eyebrow above a card or section title — the ember-coloured section marker. */
   .kicker {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--color-ember-400);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-ember-300);
     text-transform: uppercase;
-    letter-spacing: 0.22em;
+    letter-spacing: 0.08em;
   }
 
-  /* Muted micro-label — field labels, rail keys, column captions. The neutral
-     sibling of .kicker, which is the ember-coloured section marker. */
+  /* Field labels, rail keys, column captions — the neutral sibling of .kicker.
+     Sentence case in the sans face: the name is historical (it was a mono
+     small-caps label), kept so every call site picks up the one treatment. */
   .label-mono {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--color-paper-500);
-    text-transform: uppercase;
-    letter-spacing: 0.18em;
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--color-paper-400);
+    letter-spacing: 0;
   }
 
   /* Tabular numerals — for all numbers in tables/rails */
@@ -338,6 +353,26 @@
   }
   .halo-pulse {
     animation: halo-pulse 1.8s ease-in-out infinite;
+  }
+
+  /* Loading placeholder shimmer — see `Skeleton` */
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--color-ink-600) 25%,
+      var(--color-ink-500) 50%,
+      var(--color-ink-600) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
   }
 
   /* Diagonal hatch fill for failed waterfall bars */

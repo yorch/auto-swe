@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { FieldError, Label, ListBoxItem, Popover, Text } from 'react-aria-components';
 import { cn } from '@/lib/utils';
 import { RequiredMark } from './FieldWrapper';
+import { Icon } from './Icon';
 
 /**
  * Pieces shared by `Select` and `Combobox`, so the two dropdowns cannot drift:
@@ -50,10 +51,10 @@ export function optionText(option: DropdownOption): string {
 export function fieldBoxClass(compact: boolean, invalid: boolean) {
   return cn(
     'w-full rounded-md border border-ink-400 bg-ink-900/60 text-paper-100 outline-none transition-colors',
-    compact ? 'h-8 px-2 font-mono text-xs' : 'h-10 px-3 text-sm',
+    compact ? 'h-8 px-2.5 text-[13px]' : 'h-9 px-3 text-sm',
     // data-focused: a Select's trigger button; data-focus-within: a Combobox's
     // Group around its input. Each primitive gets the attribute that applies.
-    'data-[focused]:border-ember-400 data-[focused]:bg-ink-900/80',
+    'hover:border-ink-300 data-[focused]:border-ember-400 data-[focused]:bg-ink-900/80 data-[focused]:ring-2 data-[focused]:ring-ember-400/20',
     'data-[focus-within]:border-ember-400 data-[focus-within]:bg-ink-900/80',
     'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50',
     invalid &&
@@ -117,18 +118,14 @@ export function FieldHelp({ hint, error }: { hint?: string; error?: string }) {
 }
 
 export function Chevron() {
-  return (
-    <span aria-hidden className="ml-2 shrink-0 font-mono text-[10px] text-paper-500">
-      ▾
-    </span>
-  );
+  return <Icon className="ml-2 text-paper-500" name="chevronDown" size={14} />;
 }
 
 /** The open list's surface. As wide as its trigger, scrolling past ~8 rows. */
 export function DropdownPopover({ children }: { children: ReactNode }) {
   return (
     <Popover
-      className="max-h-72 w-[var(--trigger-width)] overflow-auto rounded-md border border-ink-400 bg-ink-900 p-1 shadow-xl outline-none data-[entering]:animate-none"
+      className="max-h-72 w-[var(--trigger-width)] overflow-auto rounded-lg border border-ink-400 bg-ink-800 p-1 shadow-2xl shadow-black/40 outline-none data-[entering]:animate-none"
       offset={4}
     >
       {children}
@@ -140,8 +137,8 @@ export function DropdownItem({ option, compact }: { option: DropdownOption; comp
   return (
     <ListBoxItem
       className={cn(
-        'flex cursor-pointer items-start gap-2 rounded-sm px-2.5 py-1.5 text-paper-200 outline-none',
-        compact ? 'font-mono text-xs' : 'text-sm',
+        'flex cursor-pointer items-start gap-2 rounded-md px-2.5 py-1.5 text-paper-200 outline-none',
+        compact ? 'text-[13px]' : 'text-sm',
         'data-[focused]:bg-ink-600 data-[selected]:text-ember-400',
         'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40'
       )}

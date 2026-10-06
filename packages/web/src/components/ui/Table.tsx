@@ -1,5 +1,5 @@
 import { createContext, type ReactNode, useContext } from 'react';
-import { cn } from '@/lib/utils';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 type Align = 'left' | 'right' | 'center';
 const ALIGN: Record<Align, string> = {
@@ -76,10 +76,10 @@ export function THead({ children, className }: { children: ReactNode; className?
  */
 export type ThVariant = 'mono' | 'plain' | 'compact' | 'dense';
 const TH_VARIANT: Record<ThVariant, string> = {
-  compact: 'py-2 text-xs text-paper-500',
-  dense: 'px-4 py-2 font-medium',
-  mono: 'px-4 py-3 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-paper-500',
-  plain: 'px-4 py-3 font-medium',
+  compact: 'py-2 text-xs font-medium text-paper-500',
+  dense: 'px-4 py-2 text-xs font-medium text-paper-500',
+  mono: 'px-4 py-2.5 text-xs font-medium whitespace-nowrap text-paper-500',
+  plain: 'px-4 py-2.5 text-xs font-medium whitespace-nowrap text-paper-500',
 };
 
 export type SortDirection = 'ascending' | 'descending' | 'none';
@@ -113,7 +113,11 @@ export function Th({
     >
       {sortable ? (
         <button
-          className={cn('hover:underline', sort === 'none' ? 'text-paper-400' : 'text-paper-200')}
+          className={cn(
+            'inline-flex items-center gap-1 rounded-sm transition-colors hover:text-paper-100',
+            FOCUS_RING,
+            sort === 'none' ? 'text-paper-500' : 'text-paper-200'
+          )}
           onClick={onSort}
           type="button"
         >
@@ -143,7 +147,7 @@ export function TRow({
     <tr
       className={cn(
         'border-b border-ink-600 last:border-0',
-        hover && 'transition-colors hover:bg-ink-800',
+        hover && 'transition-colors hover:bg-ink-600/35',
         className
       )}
     >
