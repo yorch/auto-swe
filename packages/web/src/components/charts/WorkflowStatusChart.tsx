@@ -9,6 +9,8 @@ import {
   chartAriaLabel,
   EmptyChart,
   LEGEND_STYLE,
+  legendLabel,
+  legendText,
 } from './chartChrome';
 import { STATUS_CHART_COLORS } from './colors';
 
@@ -18,7 +20,7 @@ interface Props {
   title?: string;
 }
 
-const statusName = (status: string) => status.replace(/_/g, ' ').toLowerCase();
+const statusName = (status: string) => legendLabel(status.replace(/_/g, ' ').toLowerCase());
 
 export function WorkflowStatusChart({ data, title }: Props) {
   if (data.length === 0) {
@@ -55,7 +57,12 @@ export function WorkflowStatusChart({ data, title }: Props) {
             ))}
           </Pie>
           <ChartTooltip formatter={(value, name) => [value, statusName(String(name))]} />
-          <Legend formatter={(value) => statusName(String(value))} wrapperStyle={LEGEND_STYLE} />
+          <Legend
+            formatter={(value) => legendText(statusName(String(value)))}
+            iconSize={10}
+            iconType="circle"
+            wrapperStyle={LEGEND_STYLE}
+          />
         </PieChart>
       </ResponsiveContainer>
     </ChartFrame>

@@ -6,6 +6,7 @@ import { formatCost } from '@/lib/utils';
 import {
   AXIS_COMMON_PROPS,
   axisLabel,
+  BAR_MAX_SIZE,
   CHART_HEIGHT,
   ChartFrame,
   type ChartGranularity,
@@ -13,7 +14,7 @@ import {
   chartAriaLabel,
   EmptyChart,
   formatDateLabel,
-  GRID_STROKE,
+  GRID_PROPS,
   granularityWords,
   TOOLTIP_CURSOR_FILL,
 } from './chartChrome';
@@ -59,8 +60,8 @@ export function DailyCostChart({ data, granularity = 'day', title }: Props) {
       }}
     >
       <ResponsiveContainer height={CHART_HEIGHT} width="100%">
-        <BarChart accessibilityLayer={false} data={data}>
-          <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
+        <BarChart accessibilityLayer={false} barCategoryGap={2} data={data}>
+          <CartesianGrid {...GRID_PROPS} vertical={false} />
           <XAxis
             dataKey="date"
             interval="preserveStartEnd"
@@ -83,7 +84,12 @@ export function DailyCostChart({ data, granularity = 'day', title }: Props) {
               `${granularity === 'week' ? 'Week of ' : ''}${formatDateLabel(label)} (UTC)`
             }
           />
-          <Bar dataKey="costUsd" fill={TOKEN.ember400} maxBarSize={28} radius={[4, 4, 0, 0]} />
+          <Bar
+            dataKey="costUsd"
+            fill={TOKEN.ember400}
+            maxBarSize={BAR_MAX_SIZE}
+            radius={[4, 4, 0, 0]}
+          />
         </BarChart>
       </ResponsiveContainer>
     </ChartFrame>

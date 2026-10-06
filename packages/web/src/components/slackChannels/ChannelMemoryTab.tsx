@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -10,6 +11,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Textarea } from '@/components/ui/Textarea';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import {
   type MemoryItemDto,
   type SlackChannel,
@@ -104,14 +106,30 @@ export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
   const deleteMemory = useDeleteChannelMemory();
   const [confirmItem, setConfirmItem] = useState<MemoryItemDto | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const shown = (items ?? []).filter(
+    (item) => !needle || `${item.lessonSummary}\n${item.rationale}`.toLowerCase().includes(needle)
+  );
 
   return (
     <div className="space-y-4">
-      <Checkbox
-        checked={showConsolidated}
-        label="Show merged (archived) memories"
-        onChange={(e) => setShowConsolidated(e.target.checked)}
-      />
+      <Toolbar
+        end={
+          <Checkbox
+            checked={showConsolidated}
+            label="Show merged (archived) memories"
+            onChange={(e) => setShowConsolidated(e.target.checked)}
+          />
+        }
+      >
+        <SearchInput
+          label="Search channel memory"
+          onChange={setQuery}
+          placeholder="Search what it remembers…"
+          value={query}
+        />
+      </Toolbar>
       <QueryBoundary
         error={loadError}
         isError={isError}
@@ -121,14 +139,29 @@ export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
         onRetry={() => void refetch()}
       >
         {!items || items.length === 0 ? (
-          <EmptyState className="py-6" title="No memory yet for this channel." />
+          <EmptyState
+            bordered
+            hint="The assistant saves what it learns from conversations here, and uses it to ground later replies."
+            icon="memory"
+            title="No memory yet for this channel"
+          />
+        ) : shown.length === 0 ? (
+          <EmptyState
+            action={
+              <Button onClick={() => setQuery('')} size="sm">
+                Clear search
+              </Button>
+            }
+            icon="search"
+            title="No memories match your search"
+          />
         ) : (
           <ul className="divide-y divide-ink-600">
-            {items.map((item) => {
+            {shown.map((item) => {
               const consolidatedAt = item.consolidatedAt;
               const isConsolidated = !!consolidatedAt;
               return (
-                <li className={`py-3 ${isConsolidated ? 'opacity-50' : ''}`} key={item.id}>
+                <li className={`py-4 ${isConsolidated ? 'opacity-60' : ''}`} key={item.id}>
                   {!isConsolidated && editingId === item.id ? (
                     <MemoryItemEditForm
                       channelId={channel.id}
@@ -142,12 +175,14 @@ export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
                         <p className="whitespace-pre-wrap text-sm leading-snug text-paper-100">
                           {item.lessonSummary}
                         </p>
-                        <p className="whitespace-pre-wrap text-xs leading-snug text-paper-500">
+                        <p className="whitespace-pre-wrap text-[13px] leading-snug text-paper-400">
                           {item.rationale}
                         </p>
-                        <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-3 pt-1">
                           {consolidatedAt && (
-                            <Badge tone="muted">Merged {formatDate(consolidatedAt)}</Badge>
+                            <Badge tone="muted" variant="outline">
+                              Merged {formatDate(consolidatedAt)}
+                            </Badge>
                           )}
                           <span className="text-xs text-paper-500">
                             Added {formatDate(item.createdAt)}
@@ -155,18 +190,24 @@ export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
                         </div>
                       </div>
                       {!isConsolidated && (
-                        <div className="flex items-center gap-2">
-                          <Button
-                            onClick={() => setEditingId(item.id)}
-                            size="sm"
-                            variant="secondary"
-                          >
-                            Edit
-                          </Button>
-                          <Button onClick={() => setConfirmItem(item)} size="sm" variant="danger">
-                            Delete
-                          </Button>
-                        </div>
+                        <ActionMenu
+                          items={[
+                            {
+                              icon: 'edit',
+                              id: 'edit',
+                              label: 'Edit',
+                              onAction: () => setEditingId(item.id),
+                            },
+                            {
+                              icon: 'trash',
+                              id: 'delete',
+                              label: 'Delete',
+                              onAction: () => setConfirmItem(item),
+                              tone: 'danger',
+                            },
+                          ]}
+                          label="Actions for this memory"
+                        />
                       )}
                     </div>
                   )}

@@ -3,11 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { SettingRow, type SettingRowStatus } from '@/components/settings/SettingRow';
 import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import {
   type ScopeSelection,
@@ -23,6 +27,7 @@ import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
 import { GROUP_BLURBS, GROUP_TITLES } from '@/lib/settingGroups';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 /**
  * Every configurable knob, rendered from the registry definitions rather than
@@ -61,6 +66,8 @@ export default function GovernSettingsPage() {
       : 'GLOBAL';
   const scopeId = scope === 'GLOBAL' ? '' : (params.get(SCOPE_ID_PARAM[scope]) ?? '');
   const [rowStatus, setRowStatus] = useState<Record<string, SettingRowStatus>>({});
+  const [query, setQuery] = useState('');
+  const [show, setShow] = useState<'all' | 'customised'>('all');
 
   const teams = useTeams();
   const orgs = useOrganizationDirectory();
@@ -144,108 +151,236 @@ export default function GovernSettingsPage() {
     return undefined;
   };
 
+  const needle = query.trim().toLowerCase();
+  const visibleGroups = grouped
+    .map(([group, items]) => {
+      const matches = items.filter((setting) => {
+        if (show === 'customised' && setting.source === 'DEFAULT') {
+          return false;
+        }
+        if (!needle) {
+          return true;
+        }
+        return [setting.label, setting.key, setting.description, GROUP_TITLES[group] ?? group]
+          .filter(Boolean)
+          .some((text) => String(text).toLowerCase().includes(needle));
+      });
+      return [group, matches] as const;
+    })
+    .filter(([, items]) => items.length > 0);
+  const totalCount = settings.data?.length ?? 0;
+  const shownCount = visibleGroups.reduce((n, [, items]) => n + items.length, 0);
+  const filtering = needle !== '' || show !== 'all';
+
   return (
-    <div className="space-y-8">
+    <div>
       <PageHeader
         subtitle="Operator policy for agents, channels and workflows. Values shown are what this scope resolves to; each row says where its value came from."
         title={navLabel('/govern/platform-settings')}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Scope</CardTitle>
-        </CardHeader>
-        <div className="flex flex-wrap gap-4">
-          <Select
-            label="View settings for"
-            onChange={(v) => showScope(v as ViewScope)}
-            options={SCOPE_OPTIONS}
-            value={scope}
-          />
-          {scope === 'TEAM' && (
-            <Combobox
-              label="Team"
-              onChange={(id) => showScope('TEAM', id)}
-              options={(teams.data ?? []).map((team) => ({ label: team.name, value: team.id }))}
-              placeholder="Choose a team…"
-              value={scopeId}
-            />
-          )}
-          {scope === 'ORGANIZATION' && (
-            <Combobox
-              label="Organization"
-              onChange={(id) => showScope('ORGANIZATION', id)}
-              options={(orgs.data ?? []).map((org) => ({ label: org.name, value: org.id }))}
-              placeholder="Choose an organization…"
-              value={scopeId}
-            />
-          )}
-          {scope === 'CHANNEL' && (
-            <Combobox
-              label="Slack channel"
-              onChange={(id) => showScope('CHANNEL', id)}
-              options={(channels.data ?? []).map((c) => ({
-                label: c.name ? `#${c.name}` : 'Unnamed channel',
-                value: c.id,
-              }))}
-              placeholder="Choose a channel…"
-              value={scopeId}
-            />
-          )}
-        </div>
-        {awaitingChoice && (
-          <p className="mt-3 text-xs text-paper-500">
-            Showing platform-wide values until you choose one.
-          </p>
+      <div
+        className={cn(
+          'grid gap-8',
+          visibleGroups.length > 1 && 'xl:grid-cols-[minmax(0,1fr)_220px]'
         )}
-      </Card>
+      >
+        <div className="min-w-0 space-y-6">
+          <Card className="p-5">
+            <div className="flex flex-wrap items-end gap-4">
+              <Select
+                label="View settings for"
+                onChange={(v) => showScope(v as ViewScope)}
+                options={SCOPE_OPTIONS}
+                value={scope}
+              />
+              {scope === 'TEAM' && (
+                <Combobox
+                  label="Team"
+                  onChange={(id) => showScope('TEAM', id)}
+                  options={(teams.data ?? []).map((team) => ({ label: team.name, value: team.id }))}
+                  placeholder="Choose a team…"
+                  value={scopeId}
+                />
+              )}
+              {scope === 'ORGANIZATION' && (
+                <Combobox
+                  label="Organization"
+                  onChange={(id) => showScope('ORGANIZATION', id)}
+                  options={(orgs.data ?? []).map((org) => ({ label: org.name, value: org.id }))}
+                  placeholder="Choose an organization…"
+                  value={scopeId}
+                />
+              )}
+              {scope === 'CHANNEL' && (
+                <Combobox
+                  label="Slack channel"
+                  onChange={(id) => showScope('CHANNEL', id)}
+                  options={(channels.data ?? []).map((c) => ({
+                    label: c.name ? `#${c.name}` : 'Unnamed channel',
+                    value: c.id,
+                  }))}
+                  placeholder="Choose a channel…"
+                  value={scopeId}
+                />
+              )}
+            </div>
+            {awaitingChoice && (
+              <p className="mt-3 text-xs text-paper-500">
+                Showing platform-wide values until you choose one.
+              </p>
+            )}
+          </Card>
 
-      {settings.isLoading && <LoadingState />}
-      {settings.isError && (
-        <Alert variant="error">Settings could not be loaded. Refresh to try again.</Alert>
-      )}
-
-      {grouped.map(([group, items]) => (
-        <Card key={group}>
-          <CardHeader>
-            <CardTitle>{GROUP_TITLES[group] ?? group}</CardTitle>
-          </CardHeader>
-          {GROUP_BLURBS[group] && (
-            <p className="-mt-2 mb-4 max-w-prose text-xs leading-relaxed text-paper-400">
-              {GROUP_BLURBS[group]}
-            </p>
-          )}
-          {items.map((setting) => (
-            <SettingRow
-              // Decided by the server, which is the only side that knows the
-              // grants. Re-deriving it from the role here could only ever see
-              // the floor, so a lead holding a grant would be shown a disabled
-              // control for a key they are entitled to change.
-              canWriteHere={setting.canWrite}
-              grantsHref={isAdmin ? '/govern/config-grants' : undefined}
-              key={setting.key}
-              onClear={() => track(setting.key, () => clearSetting.mutateAsync(setting.key))}
-              onEdit={() =>
-                setRowStatus((prev) => {
-                  if (!prev[setting.key] || prev[setting.key].phase === 'saving') {
-                    return prev;
-                  }
-                  const { [setting.key]: _cleared, ...rest } = prev;
-                  return rest;
-                })
-              }
-              onSave={(value) =>
-                track(setting.key, () => setSetting.mutateAsync({ key: setting.key, value }))
-              }
-              scope={selection.scope}
-              scopeKey={viewKey}
-              setting={setting}
-              sourceHref={sourceHrefFor(setting.source)}
-              status={rowStatus[setting.key]}
+          <Toolbar
+            end={
+              totalCount > 0 && (
+                <span className="text-xs text-paper-500 tabular-nums">
+                  {filtering ? `${shownCount} of ${totalCount}` : totalCount} settings
+                </span>
+              )
+            }
+          >
+            <SearchInput
+              className="sm:w-72"
+              label="Search settings"
+              onChange={setQuery}
+              placeholder="Search by name, key or description…"
+              value={query}
             />
+            <SegmentedControl
+              ariaLabel="Which settings to show"
+              onChange={setShow}
+              options={[
+                { label: 'All', value: 'all' },
+                {
+                  label: 'Customised',
+                  title: 'Only settings whose value differs from the built-in default',
+                  value: 'customised',
+                },
+              ]}
+              value={show}
+            />
+          </Toolbar>
+
+          {settings.isLoading && (
+            <Card>
+              <SkeletonRows rows={6} />
+            </Card>
+          )}
+          {settings.isError && (
+            <Alert
+              action={
+                <Button onClick={() => void settings.refetch()} size="sm">
+                  Retry
+                </Button>
+              }
+              variant="error"
+            >
+              Settings could not be loaded. {errMsg(settings.error, '')}
+            </Alert>
+          )}
+
+          {!settings.isLoading && !settings.isError && visibleGroups.length === 0 && (
+            <EmptyState
+              action={
+                filtering ? (
+                  <Button
+                    onClick={() => {
+                      setQuery('');
+                      setShow('all');
+                    }}
+                    size="sm"
+                  >
+                    Clear filters
+                  </Button>
+                ) : undefined
+              }
+              bordered
+              hint={
+                filtering
+                  ? show === 'customised' && !needle
+                    ? 'Every setting at this scope still uses its built-in default.'
+                    : 'Try a different word, or search by the setting key.'
+                  : 'No settings are defined for this scope.'
+              }
+              icon={filtering ? 'search' : 'sliders'}
+              title={filtering ? 'No settings match' : 'No settings'}
+            />
+          )}
+
+          {visibleGroups.map(([group, items]) => (
+            <Card className="scroll-mt-6" id={`group-${group}`} key={group}>
+              <CardHeader className="mb-2">
+                <CardTitle>{GROUP_TITLES[group] ?? group}</CardTitle>
+                <span className="text-xs text-paper-500 tabular-nums">
+                  {items.length} setting{items.length === 1 ? '' : 's'}
+                </span>
+              </CardHeader>
+              {GROUP_BLURBS[group] && (
+                <p className="mb-4 max-w-prose text-[13px] leading-relaxed text-paper-400">
+                  {GROUP_BLURBS[group]}
+                </p>
+              )}
+              <div className="border-t border-ink-600 pt-4">
+                {items.map((setting) => (
+                  <SettingRow
+                    // Decided by the server, which is the only side that knows the
+                    // grants. Re-deriving it from the role here could only ever see
+                    // the floor, so a lead holding a grant would be shown a disabled
+                    // control for a key they are entitled to change.
+                    canWriteHere={setting.canWrite}
+                    grantsHref={isAdmin ? '/govern/config-grants' : undefined}
+                    key={setting.key}
+                    onClear={() => track(setting.key, () => clearSetting.mutateAsync(setting.key))}
+                    onEdit={() =>
+                      setRowStatus((prev) => {
+                        if (!prev[setting.key] || prev[setting.key].phase === 'saving') {
+                          return prev;
+                        }
+                        const { [setting.key]: _cleared, ...rest } = prev;
+                        return rest;
+                      })
+                    }
+                    onSave={(value) =>
+                      track(setting.key, () => setSetting.mutateAsync({ key: setting.key, value }))
+                    }
+                    scope={selection.scope}
+                    scopeKey={viewKey}
+                    setting={setting}
+                    sourceHref={sourceHrefFor(setting.source)}
+                    status={rowStatus[setting.key]}
+                  />
+                ))}
+              </div>
+            </Card>
           ))}
-        </Card>
-      ))}
+        </div>
+
+        {visibleGroups.length > 1 && (
+          <nav aria-label="Setting groups" className="hidden xl:block">
+            <div className="sticky top-6">
+              <p className="kicker mb-3">Groups</p>
+              <ul className="space-y-0.5 border-l border-ink-500">
+                {visibleGroups.map(([group, items]) => (
+                  <li key={group}>
+                    <a
+                      className={cn(
+                        '-ml-px flex items-baseline justify-between gap-2 border-l border-transparent py-1.5 pl-3 text-[13px] text-paper-300 hover:border-ember-400 hover:text-paper-100',
+                        FOCUS_RING
+                      )}
+                      href={`#group-${group}`}
+                    >
+                      <span className="truncate">{GROUP_TITLES[group] ?? group}</span>
+                      <span className="text-xs text-paper-500 tabular-nums">{items.length}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </nav>
+        )}
+      </div>
     </div>
   );
 }

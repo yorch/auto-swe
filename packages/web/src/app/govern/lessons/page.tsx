@@ -1,19 +1,21 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
+import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
 import {
   type LessonRepoStats,
@@ -22,9 +24,24 @@ import {
   useDeleteLesson,
   useLessons,
 } from '@/hooks/useLessons';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 const PAGE_SIZE = 20;
+
+/** A timestamp shown relative ("3d ago") with the exact time on hover. */
+function Ago({ iso }: { iso: string }) {
+  return (
+    <time className="whitespace-nowrap" dateTime={iso} title={formatDate(iso)}>
+      {formatRelativeTime(iso)}
+    </time>
+  );
+}
+
+/** `TEST_FAILURE` → "Test failure". */
+function humanizeEnum(value: string): string {
+  const text = value.replace(/_/g, ' ').toLowerCase();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 function RepoStatsRow({
   repo,
@@ -34,29 +51,29 @@ function RepoStatsRow({
   onAsk: (repo: LessonRepoStats) => void;
 }) {
   return (
-    <TRow>
-      <Td className="py-3 pr-4 font-mono text-xs text-paper-300" primary>
+    <TRow hover>
+      <Td className="px-4 py-3 font-mono text-[13px] text-paper-100" primary>
         {repo.organizationName}/{repo.repoName}
       </Td>
-      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-200" label="Active">
+      <Td align="right" className="px-4 py-3 text-paper-200 tabular-nums" label="Active">
         {repo.activeCount}
       </Td>
-      <Td className="py-3 pr-4 text-center font-mono text-xs text-paper-500" label="Consolidated">
+      <Td align="right" className="px-4 py-3 text-paper-400 tabular-nums" label="Consolidated">
         {repo.consolidatedCount}
       </Td>
-      <Td className="py-3 pr-4 font-mono text-xs text-paper-500" label="Last run">
+      <Td className="px-4 py-3 text-[13px] text-paper-400" label="Last consolidated">
         {repo.lastConsolidatedAt ? (
-          formatDate(repo.lastConsolidatedAt)
+          <Ago iso={repo.lastConsolidatedAt} />
         ) : (
-          <span className="text-paper-600">never</span>
+          <span className="text-paper-500">Never</span>
         )}
       </Td>
-      <Td className="py-3 text-right">
+      <Td align="right" className="px-4 py-3">
         <Button
           disabled={repo.activeCount === 0}
           onClick={() => onAsk(repo)}
           size="sm"
-          variant="secondary"
+          title={repo.activeCount === 0 ? 'No active lessons to consolidate' : undefined}
         >
           Run now
         </Button>
@@ -130,54 +147,68 @@ export default function GovernLessonsPage() {
   const totalConsolidated = stats?.reduce((sum, r) => sum + r.consolidatedCount, 0) ?? 0;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
+        actions={
+          <Button
+            disabled={!consolidation?.schedule.exists}
+            onClick={() => setConsolidating('all')}
+            title={
+              consolidation?.schedule.exists
+                ? undefined
+                : 'Set a consolidation schedule in Workflow defaults first'
+            }
+          >
+            <Icon name="refresh" size={14} />
+            Consolidate all now
+          </Button>
+        }
         subtitle="Agent lessons captured from completed workflows. Consolidation merges semantically similar lessons to reduce redundancy."
         title="Lessons"
       />
 
+      {triggerNotice && <Alert variant="success">{triggerNotice}</Alert>}
+
       {/* Summary stats */}
-      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3">
-        <Stat label="Active" value={totalActive} />
-        <Stat label="Consolidated" tone="muted" value={totalConsolidated} />
-        <Stat
-          hint={
-            consolidation?.schedule.nextRunAt && (
-              <>Next: {formatDate(consolidation.schedule.nextRunAt)}</>
-            )
-          }
-          label="Schedule"
-          tone={
-            consolidation?.schedule.exists && !consolidation.schedule.paused ? 'moss' : 'default'
-          }
-          value={
-            consolidation?.schedule.exists
-              ? consolidation.schedule.paused
-                ? 'Paused'
-                : 'Active'
-              : 'Not set'
-          }
-        />
-      </div>
+      <Card className="p-5 sm:p-6">
+        <h2 className="sr-only">Summary</h2>
+        <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-3">
+          <Stat label="Active" value={totalActive} />
+          <Stat label="Consolidated" tone="muted" value={totalConsolidated} />
+          <Stat
+            hint={
+              <>
+                {consolidation?.schedule.nextRunAt && (
+                  <>Next run {formatDate(consolidation.schedule.nextRunAt)} · </>
+                )}
+                <Link
+                  className="text-ember-400 hover:underline"
+                  href="/govern/workflow-defaults#consolidation"
+                >
+                  Configure
+                </Link>
+              </>
+            }
+            label="Schedule"
+            tone={
+              consolidation?.schedule.exists && !consolidation.schedule.paused ? 'moss' : 'default'
+            }
+            value={
+              consolidation?.schedule.exists
+                ? consolidation.schedule.paused
+                  ? 'Paused'
+                  : 'Active'
+                : 'Not set'
+            }
+          />
+        </div>
+      </Card>
 
       {/* Per-repo breakdown */}
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Repositories">Lesson breakdown by repository</CardTitle>
-          <Button
-            disabled={!consolidation?.schedule.exists}
-            onClick={() => setConsolidating('all')}
-            size="sm"
-            variant="secondary"
-          >
-            Run all now
-          </Button>
+          <CardTitle eyebrow="Repositories">Lessons by repository</CardTitle>
         </CardHeader>
-        {triggerNotice && (
-          <Alert className="mb-4" variant="success">
-            {triggerNotice}
-          </Alert>
-        )}
 
         <QueryBoundary
           error={statsError}
@@ -188,26 +219,39 @@ export default function GovernLessonsPage() {
           onRetry={() => void refetchStats()}
         >
           {!stats || stats.length === 0 ? (
-            <EmptyState title="No repositories found." />
+            <EmptyState
+              action={
+                <ButtonLink href="/connections" size="sm">
+                  View connections
+                </ButtonLink>
+              }
+              hint="Lessons are captured per repository once workflows complete against it."
+              icon="repositories"
+              title="No repositories yet"
+            />
           ) : (
-            <Table stacked>
-              <THead>
-                <Th className="py-2 pl-0 pr-4">Repository</Th>
-                <Th align="center" className="py-2 pl-0 pr-4">
-                  Active
-                </Th>
-                <Th align="center" className="py-2 pl-0 pr-4">
-                  Consolidated
-                </Th>
-                <Th className="py-2 pl-0 pr-4">Last run</Th>
-                <Th className="py-2 px-0" />
-              </THead>
-              <tbody>
-                {stats.map((repo) => (
-                  <RepoStatsRow key={repo.id} onAsk={setConsolidating} repo={repo} />
-                ))}
-              </tbody>
-            </Table>
+            <div className="-mx-4">
+              <Table className="max-sm:px-4" stacked>
+                <THead>
+                  <Th variant="plain">Repository</Th>
+                  <Th align="right" variant="plain">
+                    Active
+                  </Th>
+                  <Th align="right" variant="plain">
+                    Consolidated
+                  </Th>
+                  <Th variant="plain">Last consolidated</Th>
+                  <Th variant="plain">
+                    <span className="sr-only">Actions</span>
+                  </Th>
+                </THead>
+                <tbody>
+                  {stats.map((repo) => (
+                    <RepoStatsRow key={repo.id} onAsk={setConsolidating} repo={repo} />
+                  ))}
+                </tbody>
+              </Table>
+            </div>
           )}
         </QueryBoundary>
       </Card>
@@ -217,9 +261,25 @@ export default function GovernLessonsPage() {
         <CardHeader>
           <CardTitle eyebrow="Recent">Active lessons</CardTitle>
         </CardHeader>
-        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+        <Toolbar
+          end={
+            lessonsMeta ? (
+              <span className="text-xs text-paper-500 tabular-nums">
+                {lessonsMeta.total} lesson{lessonsMeta.total === 1 ? '' : 's'}
+              </span>
+            ) : undefined
+          }
+        >
+          <SearchInput
+            className="sm:w-72"
+            label="Search lessons"
+            onChange={setSearch}
+            placeholder="Words in a lesson or its rationale"
+            value={search}
+          />
           <Select
-            label="Repository"
+            appearance="pill"
+            aria-label="Repository"
             onChange={(v) => {
               setRepoFilter(v);
               setOffset(0);
@@ -233,14 +293,7 @@ export default function GovernLessonsPage() {
             ]}
             value={repoFilter}
           />
-          <Input
-            label="Search lessons"
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Words in a lesson or its rationale"
-            type="search"
-            value={search}
-          />
-        </div>
+        </Toolbar>
 
         <QueryBoundary
           error={lessonsError}
@@ -251,45 +304,70 @@ export default function GovernLessonsPage() {
           onRetry={() => void refetchLessons()}
         >
           {!lessons || lessons.length === 0 ? (
-            <EmptyState
-              title={query || repoFilter ? 'No lessons match those filters.' : 'No active lessons.'}
-            />
+            query || repoFilter ? (
+              <EmptyState
+                action={
+                  <Button
+                    onClick={() => {
+                      setSearch('');
+                      setQuery('');
+                      setRepoFilter('');
+                      setOffset(0);
+                    }}
+                    size="sm"
+                  >
+                    Clear filters
+                  </Button>
+                }
+                icon="search"
+                title="No lessons match those filters"
+              />
+            ) : (
+              <EmptyState
+                hint="Agents record a lesson when a workflow completes after a failure or a review round. They are reused as context on later runs."
+                icon="memory"
+                title="No active lessons yet"
+              />
+            )
           ) : (
-            <div className="divide-y divide-ink-600">
+            <ul className="divide-y divide-ink-600">
               {lessons.map((lesson) => (
-                <div className="flex items-start gap-4 py-3" key={lesson.id}>
+                <li className="group flex items-start gap-4 py-4" key={lesson.id}>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-[10px] text-paper-600">
+                    <p className="text-sm leading-relaxed text-paper-100">{lesson.lessonSummary}</p>
+                    {lesson.rationale && (
+                      <p className="mt-1 text-[13px] leading-relaxed text-paper-400">
+                        {lesson.rationale}
+                      </p>
+                    )}
+                    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-500">
+                      <span className="font-mono">
                         {lesson.repository
                           ? `${lesson.repository.organizationName}/${lesson.repository.repoName}`
                           : 'Deleted repository'}
                       </span>
                       {lesson.failureType && (
-                        <Badge className="text-[10px]" tone="muted" uppercase>
-                          {lesson.failureType}
+                        <Badge tone="muted" variant="outline">
+                          {humanizeEnum(lesson.failureType)}
                         </Badge>
                       )}
-                      <span className="ml-auto font-mono text-[10px] text-paper-600">
-                        {formatDate(lesson.createdAt)}
-                      </span>
+                      <span aria-hidden>·</span>
+                      <Ago iso={lesson.createdAt} />
                     </div>
-                    <p className="mt-1 text-sm text-paper-200">{lesson.lessonSummary}</p>
-                    {lesson.rationale && (
-                      <p className="mt-0.5 text-xs text-paper-500">{lesson.rationale}</p>
-                    )}
                   </div>
                   <Button
-                    className="shrink-0"
+                    aria-label="Delete lesson"
+                    className="shrink-0 px-2 text-paper-500 hover:text-brick-400"
                     onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
                     size="sm"
-                    variant="danger"
+                    title="Delete lesson"
+                    variant="ghost"
                   >
-                    Delete
+                    <Icon name="trash" size={14} />
                   </Button>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
           {lessonsMeta && lessonsMeta.total > PAGE_SIZE && (
             <div className="mt-4">

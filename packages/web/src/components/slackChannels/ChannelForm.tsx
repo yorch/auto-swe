@@ -3,6 +3,7 @@
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
@@ -10,6 +11,7 @@ import { useAgentLibrary } from '@/hooks/useAgentLibrary';
 import { useTeams } from '@/hooks/useTeams';
 import { describeCron } from '@/lib/cronPreview';
 import type { ChannelFormErrors, ChannelFormState } from '@/lib/slackChannelForm';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 /** A cron input that reads the expression back as plain language, or says what is wrong with it. */
 function CronField({
@@ -76,6 +78,16 @@ function OverrideField({
       type="number"
       value={value}
     />
+  );
+}
+
+/** The title of a group of related toggles, with a one-line explanation. */
+function GroupHeading({ children, hint }: { children: React.ReactNode; hint: string }) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-paper-100">{children}</h3>
+      <p className="mt-0.5 text-xs text-paper-500">{hint}</p>
+    </div>
   );
 }
 
@@ -170,8 +182,10 @@ export function ChannelForm({
         value={form.agentKey}
       />
 
-      <Card className="space-y-4 p-4" variant="inset">
-        <p className="label-mono">When the assistant speaks up</p>
+      <Card className="space-y-4 p-5" variant="inset">
+        <GroupHeading hint="Mentions are always answered; these add proactive behaviour.">
+          When the assistant speaks up
+        </GroupHeading>
         <Checkbox
           checked={form.ambientEnabled}
           hint="Posts a scheduled summary of the channel."
@@ -212,8 +226,10 @@ export function ChannelForm({
         />
       </Card>
 
-      <Card className="space-y-4 p-4" variant="inset">
-        <p className="label-mono">Memory and privacy</p>
+      <Card className="space-y-4 p-5" variant="inset">
+        <GroupHeading hint="What the assistant learns here, and who else can see it.">
+          Memory and privacy
+        </GroupHeading>
         <Checkbox
           checked={form.passiveIngestEnabled}
           hint="Quietly extracts facts from the channel each time the schedule runs."
@@ -262,9 +278,20 @@ export function ChannelForm({
         value={form.personaPrompt}
       />
 
-      <details className="rounded-lg border border-ink-500 p-4">
-        <summary className="cursor-pointer text-sm font-semibold text-paper-200">
+      <details className="group rounded-lg border border-ink-500 p-4">
+        <summary
+          className={cn(
+            'flex cursor-pointer select-none items-center gap-2 rounded-sm text-sm font-semibold text-paper-200 [&::-webkit-details-marker]:hidden',
+            FOCUS_RING
+          )}
+        >
+          <Icon
+            className="text-paper-500 transition-transform group-open:rotate-90"
+            name="chevronRight"
+            size={14}
+          />
           Timing overrides
+          <span className="font-normal text-xs text-paper-500">optional</span>
         </summary>
         <p className="mt-2 text-xs text-paper-500">
           Leave a field blank to use the built-in value shown inside it.

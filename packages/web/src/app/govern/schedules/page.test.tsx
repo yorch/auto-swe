@@ -6,6 +6,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import GovernSchedulesPage from './page';
 
+// The row's overflow menu (ActionMenu) can navigate, so it reads the router.
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
 const schedule = (over: Record<string, unknown> = {}) => ({
   actsAs: { email: 'me@x.com', id: 'me', name: 'Me' },
   budgetTier: 'STANDARD',
@@ -81,7 +84,9 @@ describe('GovernSchedulesPage', () => {
   it('edits a schedule through PATCH', async () => {
     const spy = mock([schedule()]);
     render(withQuery(<GovernSchedulesPage />));
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    // Edit lives in the row's overflow menu.
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Weekly deps' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'Edit schedule' }));
     const name = dialog.getByLabelText(/^name/i) as HTMLInputElement;
     expect(name.value).toBe('Weekly deps');
