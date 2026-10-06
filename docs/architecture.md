@@ -669,7 +669,7 @@ erDiagram
 | Execution state | `ActiveWorkflow`, `PullRequest` | Temporal ↔ DB state sync |
 | Workflow engine | `WorkflowTemplate`, `WorkflowTemplateVersion`, `WorkflowRun`, `WorkflowStep`, `WorkflowArtifact`, `WorkflowShellAudit` | Versioning, run tracking, artifact storage, shell audit |
 | Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows |
-| Memory | `MemoryItem` | pgvector semantic memory, 1536-dim with an HNSW index; `scope` partitions domains and `entityType`/`entityId` support generic entity scoping beyond repos and channels |
+| Memory | `MemoryItem` | pgvector semantic memory, 1536-dim with an HNSW index; `scope` partitions domains (`swe-lessons`, `channel-memory`); `entityType`/`entityId` are written alongside the repo and channel columns, but every reader filters on `repo_id`, `channel_id`, `team_id` or `org_id` |
 | Agent config | `Agent`, `AgentSkillRef`, `Skill`, `SkillRevision`, `SkillSource` | Versioned agents scoped GLOBAL / ORGANIZATION / TEAM / CHANNEL / WORKFLOW_TEMPLATE, joined to skills via `AgentSkillRef` |
 | Model config | `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | Encrypted keys, embedding singleton, config audit trail |
 | System config | `GitHubConfig`, `SlackConfig`, `WorkflowDefaults`, `IssueTrackerConfig`, `KnowledgeBaseConfig`, `FigmaConfig` | Singletons (`id='default'`) with encrypted secrets and env-var fallback. Sign-in credentials (Google, Okta, GitHub OAuth), artifact storage, and workspace sizing are environment-only — see [configuration.md](./configuration.md) |

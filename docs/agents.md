@@ -1057,7 +1057,7 @@ template override is never badged, because it may use a different model or crede
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |
 | `EmbeddingConfig` | `embedding_configs` | Singleton embedding model + credential |
 | `AgentTrace` | `agent_traces` | Per-activity tool-call / LLM-response / event rows |
-| `MemoryItem` | `memory_items` | pgvector semantic memory (1536-dim HNSW); `skillsActive` column records which skills were active during the run. Steps without their own LLM call — the merge-conflict resolver and shell steps — write lessons through `recordLessonBackground`, which does not block the activity |
+| `MemoryItem` | `memory_items` | pgvector semantic memory (1536-dim HNSW); `skillsActive` records the skills the memory agent itself ran with when it wrote the lesson (empty for lessons written without a model call and for consolidated rows) — not the skills of the run being summarised. Steps without their own LLM call — the merge-conflict resolver and shell steps — write lessons through `recordLessonBackground`, which does not block the activity |
 | `ScannerPattern` | `scanner_patterns` | Regex rules for INJECTION, EXFILTRATION, SHELL_COMMAND, CODE_SECURITY, SENSITIVE_FILE scanners |
 
 **Schema file:** `packages/shared/src/prisma/schema.prisma`
