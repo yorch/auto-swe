@@ -38,7 +38,7 @@ describe('RunnableWorkflow — history replay with every workflow interceptor', 
 
   it.each(fixtures)(
     'replays $name without a determinism violation',
-    async ({ history }) => {
+    async ({ history, name }) => {
       await expect(
         Worker.runReplayHistory(
           {
@@ -52,7 +52,9 @@ describe('RunnableWorkflow — history replay with every workflow interceptor', 
             sinks: createWorkflowSpanSinks(undefined),
             workflowsPath: path.resolve(__dirname, './index.ts'),
           },
-          history
+          history,
+          // The id the recorder started the run with (see runnable.replay.test.ts).
+          `replay-fixture-${name}`
         )
       ).resolves.toBeUndefined();
     },

@@ -42,7 +42,8 @@ const EventType = proto.temporal.api.enums.v1.EventType;
 /**
  * Discovered rather than listed, so a fixture added by the recorder is replayed
  * without also having to be registered here — a fixture nobody replays is worse
- * than no fixture, because it looks like coverage.
+ * than no fixture, because it looks like coverage. The directory also holds the
+ * epic and channel workflows' fixtures; `orchestration.replay.test.ts` owns those.
  */
 const fixtures = readdirSync(FIXTURE_DIR)
   .filter((f) => f.endsWith('.bin'))
@@ -54,7 +55,14 @@ const fixtures = readdirSync(FIXTURE_DIR)
       readFileSync(path.join(FIXTURE_DIR, file))
     ),
     name: path.basename(file, '.bin'),
-  }));
+  }))
+  .filter(
+    ({ history }) =>
+      history.events?.[0]?.workflowExecutionStartedEventAttributes?.workflowType?.name ===
+      'RunnableWorkflow'
+  );
+
+const eventsOf = (name: string) => fixtures.find((f) => f.name === name)?.history.events ?? [];
 
 beforeAll(() => {
   Runtime.install({ logger: new DefaultLogger('WARN') });
@@ -72,6 +80,8 @@ describe('RunnableWorkflow — history replay', () => {
       'context-spill',
       'eval',
       'fan-out-block-cancel',
+      'fan-out-cancel',
+      'fan-out-human-gate',
       'fan-out',
       'human-approval',
       'human-decision',
@@ -83,15 +93,22 @@ describe('RunnableWorkflow — history replay', () => {
       'on-error-continue',
       'on-fail-retry',
       'shell',
+      'signal-timeout',
       'signal',
     ]);
   });
 
   it.each(fixtures)(
     'replays $name without a determinism violation',
-    async ({ history }) => {
+    async ({ history, name }) => {
+      // Under the id the recorder started the run with, not the replayer's
+      // default, so nothing that reads its own workflow id can diverge on it.
       await expect(
-        Worker.runReplayHistory({ workflowsPath: WORKFLOWS_PATH }, history)
+        Worker.runReplayHistory(
+          { workflowsPath: WORKFLOWS_PATH },
+          history,
+          `replay-fixture-${name}`
+        )
       ).resolves.toBeUndefined();
     },
     120_000
@@ -171,5 +188,37 @@ describe('RunnableWorkflow — history replay', () => {
     );
     const names = scheduled.map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name);
     expect(names).toContain('storeContextOverflowBatch');
+  });
+
+  it('the signal-timeout fixture timed out rather than resumed', () => {
+    // A payload arriving before the timer would walk `onReceive` instead,
+    // leaving the timeout branch of the wait unguarded again.
+    const types = eventsOf('signal-timeout').map((e) => e.eventType);
+    expect(types).toContain(EventType.EVENT_TYPE_TIMER_FIRED);
+    expect(types).not.toContain(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED);
+  });
+
+  it('the fan-out-human-gate fixture parked and resumed every branch', () => {
+    // One branch-unique `hitl_fan[i]/gate` signal per branch; with only one
+    // the other branch would have timed out and the lazy registration of the
+    // second name would be unguarded.
+    const signals = eventsOf('fan-out-human-gate')
+      .map((e) => e.workflowExecutionSignaledEventAttributes?.signalName)
+      .filter(Boolean);
+    expect(signals).toEqual(['hitl_fan[0]/gate', 'hitl_fan[1]/gate']);
+  });
+
+  it('the fan-out-cancel fixture was cancelled while its branches were parked', () => {
+    const events = eventsOf('fan-out-cancel');
+    const types = events.map((e) => e.eventType);
+    expect(types).toContain(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED);
+    expect(types.at(-1)).toBe(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED);
+    // Both branches were waiting on their gate when the cancel landed, and
+    // finalization still ran from the non-cancellable scope.
+    expect(types.filter((t) => t === EventType.EVENT_TYPE_TIMER_CANCELED)).toHaveLength(2);
+    const activities = events.map(
+      (e) => e.activityTaskScheduledEventAttributes?.activityType?.name
+    );
+    expect(activities).toContain('finalizeWorkflowRun');
   });
 });
