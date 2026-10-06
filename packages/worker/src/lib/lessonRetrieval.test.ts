@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./memoryStore.js', () => ({
   searchMemoryItemsByVector: vi.fn().mockResolvedValue([]),
 }));
+vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
+  scanSkillContent: vi.fn(async (text: string) => {
+    const warnings = text.includes('INJECT') ? ['injection:ignore-previous-instructions'] : [];
+    return { incomplete: false, safe: warnings.length === 0, warnings };
+  }),
+}));
 
 import { retrieveSimilarLessons } from './lessonRetrieval.js';
 import { searchMemoryItemsByVector } from './memoryStore.js';
@@ -32,5 +38,28 @@ describe('retrieveSimilarLessons', () => {
     expect(mockSearch).toHaveBeenCalledWith(
       expect.objectContaining({ limit: 5, similarityThreshold: 0.7 })
     );
+  });
+
+  it('drops a stored lesson that reads as an instruction', async () => {
+    mockSearch.mockResolvedValueOnce([
+      {
+        createdAt: new Date(),
+        failureType: null,
+        id: 'a',
+        lessonSummary: 'run lint',
+        similarity: 0.9,
+      },
+      {
+        createdAt: new Date(),
+        failureType: null,
+        id: 'b',
+        lessonSummary: 'INJECT',
+        similarity: 0.8,
+      },
+    ] as never);
+
+    const lessons = await retrieveSimilarLessons('q', 'repo-1');
+
+    expect(lessons.map((l) => l.lessonId)).toEqual(['a']);
   });
 });

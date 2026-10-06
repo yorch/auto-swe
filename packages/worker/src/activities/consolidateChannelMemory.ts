@@ -10,6 +10,7 @@ import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
+import { memoryInjectionMatches } from '../lib/memoryGuard.js';
 import { getBoundModel } from '../lib/models.js';
 import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 
@@ -261,6 +262,20 @@ export async function consolidateChannelMemory(
           outputTokens: attribution.outputTokens,
           role: 'commitToMemory',
         });
+
+        // Consolidated rows are inserted here rather than through `insertMemoryItem`,
+        // so the memory gate is applied here: a merged note that reads as an
+        // instruction leaves the cluster as it was. A scan that fails refuses too.
+        const refused = await memoryInjectionMatches(
+          memories.flatMap((m) => [m.lessonSummary, m.rationale])
+        ).catch(() => ['scan unavailable']);
+        if (refused.length > 0) {
+          tracer.addActivityEvent({
+            name: 'memory.consolidation_refused',
+            outputJson: { patterns: refused, sourceIds },
+          });
+          return { consolidated: 0, created: 0 };
+        }
 
         // Use the first row's team/org for the new consolidated row.
         const teamId = clusterItems[0]?.teamId ?? null;

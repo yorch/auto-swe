@@ -14,6 +14,7 @@ import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
+import { memoryInjectionMatches } from '../lib/memoryGuard.js';
 import { getModel } from '../lib/models.js';
 import { ownerOfConnection, withSpendOwner } from '../lib/spendOwner.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -189,6 +190,20 @@ async function consolidateLessonsImpl(
         outputTokens: attribution.outputTokens,
         role: 'commitToMemory',
       });
+
+      // Consolidated rows are inserted here rather than through `insertMemoryItem`,
+      // so the memory gate is applied here: a merged note that reads as an
+      // instruction leaves the cluster as it was. A scan that fails refuses too.
+      const refused = await memoryInjectionMatches(
+        lessons.flatMap((m) => [m.lessonSummary, m.rationale])
+      ).catch(() => ['scan unavailable']);
+      if (refused.length > 0) {
+        tracer.addActivityEvent({
+          name: 'memory.consolidation_refused',
+          outputJson: { patterns: refused, sourceIds },
+        });
+        return { consolidated: 0, created: 0 };
+      }
 
       // Determine dominant failureType across the cluster (null if mixed).
       const types = [...new Set(clusterLessons.map((l) => l.failureType))];

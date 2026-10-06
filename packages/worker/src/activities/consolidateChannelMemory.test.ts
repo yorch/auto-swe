@@ -21,6 +21,9 @@ vi.mock('@auto-swe/shared/db', () => {
   return { prisma: prismaMock };
 });
 
+vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
+  scanSkillContent: vi.fn(async () => ({ incomplete: false, safe: true, warnings: [] })),
+}));
 vi.mock('../lib/memoryStore.js', () => ({
   insertMemoryItem: vi.fn().mockResolvedValue('new-id'),
   searchMemoryItemsByVector: vi.fn().mockResolvedValue([]),

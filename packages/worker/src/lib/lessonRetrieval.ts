@@ -1,4 +1,5 @@
 import type { LessonSummary } from '@auto-swe/shared/types/workflow';
+import { withoutFlaggedMemory } from './memoryGuard.js';
 import { searchMemoryItemsByVector } from './memoryStore.js';
 
 interface RetrievedLesson {
@@ -36,7 +37,10 @@ export async function retrieveSimilarLessons(
     similarityThreshold,
   })) as unknown as RetrievedLesson[];
 
-  return lessons.map((l) => ({
+  // A row stored before the write gate, or edited since, is filtered here too:
+  // these go straight into the implementer's system prompt.
+  const allowed = await withoutFlaggedMemory(lessons, (l) => l.lessonSummary);
+  return allowed.map((l) => ({
     failureType: l.failureType,
     lessonId: l.id,
     similarity: l.similarity,

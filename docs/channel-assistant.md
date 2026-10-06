@@ -172,6 +172,13 @@ by the same pgvector search as everything else.
 - **Consolidation** — `consolidateChannelMemory` clusters and merges related items on each ambient
   fire, honouring the per-channel `consolidationEnabled` toggle and optional cluster-size and
   similarity overrides.
+- **Memory is gated against prompt injection.** Memory is replayed into every later turn that
+  recalls it, so it is held to a stricter rule than the advisory input scan: the memory gate
+  (`lib/memoryGuard.ts`, shared with SWE lessons — see
+  [agents.md §6.4](./agents.md#64-custom-skill-security-scanning)) refuses a write whose text matches
+  an `INJECTION` pattern and drops a matching item on recall. A summary the gate refuses is not
+  retried as the raw exchange. Recalled items reach the model inside a `<recalled_memory>` fence that
+  says they are reference data, not instructions.
 
 Admins can view, edit, and delete channel memory from the admin surface. Editing an item's text
 kicks off `ReembedMemoryWorkflow` so its pgvector embedding catches up to the new text — started
@@ -374,6 +381,10 @@ unproven on real traffic, and turn them on one channel at a time.
   work. The scanner coverage gaps in [agents.md §11](./agents.md#11-limitations) apply here too:
   a `bash` call is checked only against `SHELL_COMMAND` patterns, and the write-path scanners gate
   the `writeFile` tool only.
+- **The memory gate is pattern-based.** It catches the phrasings the `INJECTION` patterns name and
+  nothing else; a reworded instruction passes and is recalled like any other note, with only the
+  `<recalled_memory>` fence between it and the model. A false positive costs the note, silently
+  apart from a worker log line: there is no review queue for refused memory.
 - **`isPrivate` is captured once, at provision.** It is read from `conversations.info` when Slack
   answers, but nothing re-checks it afterwards: a channel converted to private in Slack keeps the
   value it was provisioned with, and its memory stays a cross-channel source until an admin flips

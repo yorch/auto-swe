@@ -28,6 +28,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
+import { fenceRecalledMemory } from '../lib/memoryGuard.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import {
   type CrossRepoStepOptions,
@@ -201,9 +202,10 @@ export async function executeImplementation(
         workflowDefaults.lessonRetrievalThreshold
       );
       if (lessons.length > 0) {
-        lessonsContext =
-          '\n\n## Lessons from Previous Workflows\n' +
-          lessons.map((l) => `- [${l.failureType ?? 'GENERAL'}] ${l.summary}`).join('\n');
+        lessonsContext = `\n\n${fenceRecalledMemory(
+          '## Lessons from Previous Workflows',
+          lessons.map((l) => `- [${l.failureType ?? 'GENERAL'}] ${l.summary}`)
+        )}`;
         tracer.addActivityEvent({
           name: 'lessons.retrieved',
           outputJson: {

@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { generateEmbeddingWithSpec } from './embeddings.js';
+import { assertMemoryContentAllowed } from './memoryGuard.js';
 
 /**
  * Shared pgvector helpers for the `memory_items` table.
@@ -187,6 +188,10 @@ export async function insertMemoryItem(input: {
   entityType?: MemoryEntityType | null;
   entityId?: string | null;
 }): Promise<string> {
+  // Every memory write passes here, so this is where a planted instruction is
+  // stopped before it can be recalled into a later prompt. Before the
+  // embedding, so a refused write costs no provider call.
+  await assertMemoryContentAllowed([input.lessonSummary, input.rationale]);
   const { embedding, spec } = await generateEmbeddingWithSpec(input.lessonSummary);
 
   // For callers that have not yet adopted explicit entity scoping, derive the
