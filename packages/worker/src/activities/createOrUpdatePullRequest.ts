@@ -119,7 +119,8 @@ async function doCreateOrUpdatePullRequest(
     // head suppress the verdict for this one.
     //
     // A PR adopted from another execution moves to this one's row: the CI webhook signals
-    // the workflow its row names, and a finished earlier execution cannot receive it.
+    // the workflow its row names, and an execution that is no longer waiting, or a concurrent
+    // one, cannot use it.
     await prisma.pullRequest.update({
       data: { ciStatus: 'PENDING', headSha: codeResult.headSha, workflowId: ownWorkflow?.id },
       where: { id: existingPR.id },

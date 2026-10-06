@@ -30,9 +30,10 @@ if it was closed without merging, `createOrUpdatePullRequest` fails non-retryabl
 `PR_CLOSED_BY_REVIEWER` instead of opening a replacement, before any other PR is considered. If it
 is merged, or the execution has no PR, the newest `OPEN` PR of the same request and repository is
 adopted: a request can have several ledger rows (re-runs, and scheduled fires, which share one
-standing request and one branch). An adopted PR moves to the executing workflow's own ledger row,
-because the CI webhook signals the workflow a PR's row names and a finished earlier execution cannot
-receive it; the earlier execution's view loses the link. A new run of the request has its own ledger
+standing request and one branch). When the executing workflow has a ledger row of its own, an
+adopted PR moves to it, because the CI webhook signals the workflow a PR's row names and an execution
+that is no longer waiting, or a concurrent one, cannot use that signal; the earlier execution's view
+loses the link. A new run of the request has its own ledger
 row, is not stopped by an earlier run's close, and opens a new PR; the old row stays as history.
 
 An Agent Run is a new workflow each time, so the close guard does not apply to it: it opens one PR
@@ -203,7 +204,14 @@ http(s) address.
   although the PR is open on the host.
 - The close guard finds a PR through the execution's own ledger row linked to its request. An
   execution with no such row (a self-registered ledger row with no request, an unmatched scheduled
-  anchor) is not covered and may open a new PR after a close.
+  anchor) is not covered and may open a new PR after a close, and an open PR it adopts stays linked
+  to its earlier execution, whose workflow receives the CI signal.
+- Two executions of one request can overlap: a retry of a scheduled standing request is not refused
+  while a fire is running, because the workflow id allocator checks only the ticket's own id family
+  and a schedule's overlap policy covers only the schedule's own fires. Both push the same branch,
+  and the second to reach the PR step adopts and re-links the other's open PR, so the other keeps
+  waiting for a CI signal that now goes to the adopter until its wait times out. With two concurrent
+  adoptions the last write wins.
 - Adopting an open PR of the request is by request and repository only; no head branch is stored.
   After a branch prefix change, or a missed close webhook, the adopted PR may have a different head
   branch than the one the run pushed.
