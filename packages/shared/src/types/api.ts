@@ -619,9 +619,11 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
    */
   implementerRuntime?: string | null;
   /**
-   * The runtime each agent ran on (`{ agentKey: 'mastra' | 'claude-code' }`),
-   * pinned the first time the run resolved it. An agent's own runtime wins over
-   * `implementerRuntime`, so this is what actually ran.
+   * The runtime the run pinned for each agent that has its own
+   * (`{ agentKey: 'mastra' | 'claude-code' }`): at run start, or the first time
+   * the run resolved an agent created later. An agent's own runtime wins over
+   * `implementerRuntime`. Agents with no runtime of their own are not listed:
+   * they run on `implementerRuntime` (or Mastra, for an agent run).
    */
   agentRuntimes?: Record<string, string>;
   humanSteps?: HumanStepSummary[];

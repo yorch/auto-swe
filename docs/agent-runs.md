@@ -129,7 +129,8 @@ exfiltration channel.
 runs. On the Claude Code harness the agent runs as one harness turn inside its container, granted the
 harness tools that stand in for exactly the workspace tools above (`null` → `Read`, `Glob`, `Grep`;
 `[]` → none), behind the same worker-side tool policy as the implementer, and with no MCP server bound.
-The choice is pinned on the run at first use and recorded as an `agent.runtime` trace event. See
+The choice is pinned on the run before the clone, when the step first resolves its agent (agent
+runs skip the run-start snapshot other runs take), and recorded as an `agent.runtime` trace event. See
 [agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness).
 
 ---

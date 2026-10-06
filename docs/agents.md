@@ -362,10 +362,14 @@ Two loops can drive an agent that works in a workspace: the platform's own Mastr
 Claude Code harness running inside the workspace container. Which one drives an agent is decided per
 agent, by `resolveAgentRuntime(key, ctx, default)`:
 
-1. **The run's pin.** `WorkflowRun.agentRuntimes` (`{ agentKey: runtime }`) holds the runtime each
-   agent got the first time the run resolved it. Every later resolution in the run — another
-   activity, a retry, a parallel branch — reads it, so a run that started an agent on one loop never
-   finishes it on the other. A caller can supply the pin instead (`ctx.agentRuntimes`, never written
+1. **The run's pin.** `WorkflowRun.agentRuntimes` (`{ agentKey: runtime | null }`) is written at run
+   start by `createWorkflowRun` (`snapshotAgentRuntimes`): every agent the run can resolve, with the
+   runtime its Agent asks for — or `null`, meaning it had no opinion and the caller's default
+   decides — resolved in the scope and under the agent-version pins the run's activities use. Every
+   resolution in the run — another activity, a retry, a parallel branch — reads it, so an edit to an
+   agent or to a scoped override of it after the run starts cannot move the run's agents onto the
+   other loop, and a `null` pin keeps a runtime added later out too. An agent with no entry (created
+   after the run started) is pinned the first time the run resolves it. A caller can supply the pin instead (`ctx.agentRuntimes`, never written
    back): an eval case does, for a side whose eval run names a runtime
    ([evals.md](./evals.md#comparing-runtimes)), so the override wins over the Agent's own runtime.
 2. **The Agent version's own `runtime`.** Resolved through the same cascade and agent-version pin as
@@ -377,13 +381,16 @@ agent, by `resolveAgentRuntime(key, ctx, default)`:
    `workspace.implementerRuntime` setting (`mastra` by default; `claude-code`). An agent run's default
    is `mastra`, whatever that setting says.
 
-The first resolution writes the pin as a compare-and-set on the whole map, so two activities pinning
-different agents at once keep both entries and two pinning the same agent agree on the first. The
-agent-version pin alone could not promise this: it freezes the GLOBAL row only, so a TEAM or template
+A first-use pin is written as a compare-and-set on the whole map, so two activities pinning
+different agents at once keep both entries and two pinning the same agent agree on the first; it
+never overwrites a pin, a `null` one included. An agent run skips the run-start snapshot: its one
+step resolves its agent in a narrower scope (no team or template override) and pins it there,
+before its clone. The agent-version pin alone could not promise this: it freezes the GLOBAL row only, so a TEAM or template
 override edited mid-run would otherwise move a running agent onto the other loop. Outside a run (eval
 replays) nothing is pinned and the value resolves live. Each session records an `agent.runtime`
 activity event naming the runtime and where it came from (`run`, `agent`, `default`), and the run
-viewer's header shows what each agent ran on (`agentRuntimes` on the run detail).
+viewer's header shows the runtime pinned for each agent that has one of its own (`agentRuntimes` on
+the run detail).
 
 Where the runtime applies:
 
@@ -1220,11 +1227,12 @@ template override is never badged, because it may use a different model or crede
   loaded, a repository can ship shell hooks and permission rules. They execute in the untrusted
   container and cannot override the worker-side decision on a tool call (a deny wins), but they
   can run code at session start and shape what the model is told.
-- **An agent's runtime is pinned at its first use in a run, not at the run's start.** An edit made
-  between the run starting and the run first resolving that agent reaches the run; from then on it
-  cannot. An agent that a run resolves for the first time late (a CI fixer after a long TDD loop) takes
-  the runtime current at that moment. The run-wide `workspace.implementerRuntime` default is still
-  pinned at run start.
+- **Some runtimes are still pinned at first use, not at the run's start.** An agent created after a
+  run started, an agent run's agent, and the agents of a channel-assistant run (`startChannelRun`
+  writes its own run row) are pinned the first time the run resolves them, so an edit made before
+  that reaches the run. An agent whose `inheritsModelFrom` chain was broken at run start is left out
+  of the snapshot and fails where it is used, as before. The snapshot costs a lookup per agent key at
+  run start (a cascade walk of scalar columns, no credential).
 - **Generic `agent` nodes never run on the harness.** They have no workspace, so an Agent asking for
   `claude-code` runs on Mastra there, with a trace event saying so; a node that needs the harness has
   to be an implementer-family step or an agent run.

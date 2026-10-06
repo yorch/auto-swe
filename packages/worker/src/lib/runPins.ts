@@ -1,6 +1,9 @@
 import type { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
+import { resolveAgentRuntimeChoice } from './config/agentResolver.js';
+import type { ResolveCtx } from './config/types.js';
 
 /**
  * `{ agentKey: version }` of the latest active GLOBAL Agent per key: the
@@ -55,5 +58,56 @@ export async function snapshotSkillRevisions(scope: {
   for (const skill of skills) {
     pins[skill.id] = skill.currentRevision;
   }
+  return pins;
+}
+
+/**
+ * `{ agentKey: runtime | null }` for every agent the run can resolve: each
+ * key's runtime as `resolveAgentRuntime` would read it from the Agent at this
+ * moment (its own, or inherited along `inheritsModelFrom`), or `null` when the
+ * Agent has no opinion and the caller's default will decide. Taken at run start
+ * with the scope and agent-version pins the run's activities resolve with, and
+ * written to `WorkflowRun.agentRuntimes`, so an edit to an agent — or to a
+ * scoped override of it — after the run starts cannot change the loop the run
+ * drives it with. A `null` pin is a pin too: a runtime added later does not
+ * reach the run.
+ *
+ * A key whose resolution fails here (a broken `inheritsModelFrom` chain) is left
+ * out, so the run fails on it where it is used, as it would have, and an agent
+ * created after this point has no entry; both pin at first use instead.
+ */
+export async function snapshotAgentRuntimes(
+  ctx: ResolveCtx
+): Promise<Record<string, ImplementerRuntimeKind | null>> {
+  const visible: Prisma.AgentWhereInput[] = [{ scope: 'GLOBAL' }];
+  if (ctx.workflowTemplateId) {
+    visible.push({ scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: ctx.workflowTemplateId });
+  }
+  if (ctx.teamId) {
+    visible.push({ scope: 'TEAM', teamId: ctx.teamId });
+  }
+  if (ctx.orgId) {
+    visible.push({ orgId: ctx.orgId, scope: 'ORGANIZATION' });
+  }
+  const rows = await runUnscoped(
+    'GLOBAL agents have no tenant by definition; the team, org and template rows are the run’s own',
+    ['Agent'],
+    () =>
+      prisma.agent.findMany({
+        distinct: ['key'],
+        select: { key: true },
+        where: { isActive: true, OR: visible },
+      })
+  );
+  const pins: Record<string, ImplementerRuntimeKind | null> = {};
+  await Promise.all(
+    rows.map(async ({ key }) => {
+      try {
+        pins[key] = await resolveAgentRuntimeChoice(key, ctx);
+      } catch {
+        // Unresolvable now: it pins (or fails) where the run first uses it.
+      }
+    })
+  );
   return pins;
 }

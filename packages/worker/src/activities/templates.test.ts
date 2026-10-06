@@ -52,6 +52,14 @@ vi.mock('@auto-swe/shared/lib/trackerSync', async (orig) => ({
   syncTrackerOnEvent: vi.fn(),
 }));
 
+// The per-agent runtime lookup has its own suite; here, what the snapshot pins.
+const { resolveAgentRuntimeChoice } = vi.hoisted(() => ({
+  resolveAgentRuntimeChoice: vi.fn(async (key: string) =>
+    key === 'implementer' ? 'claude-code' : key === 'broken' ? Promise.reject(new Error('x')) : null
+  ),
+}));
+vi.mock('../lib/config/agentResolver.js', () => ({ resolveAgentRuntimeChoice }));
+
 // Covered by its own suite; here only the wiring into createWorkflowRun.
 vi.mock('./scheduledFireAuthorization.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./scheduledFireAuthorization.js')>()),
@@ -360,6 +368,59 @@ describe('createWorkflowRun', () => {
       implementer: 1,
       reviewer: 2,
     });
+  });
+
+  /** The `create` data of the last run row upserted. */
+  function lastRunCreate(): Record<string, unknown> {
+    const args = upsertRun.mock.calls.at(-1)?.[0] as
+      | { create: Record<string, unknown> }
+      | undefined;
+    if (!args) {
+      throw new Error('no run row was upserted');
+    }
+    return args.create;
+  }
+
+  it('pins every agent’s runtime at run start, in the run’s scope and under its version pins', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec, template: { origin: null } } as never);
+    // Distinct keys visible to the run: one with a runtime, one with none, one unresolvable.
+    findAgents
+      .mockResolvedValueOnce([
+        { key: 'implementer', version: 1 },
+        { key: 'reviewer', version: 2 },
+      ] as never)
+      .mockResolvedValueOnce([
+        { key: 'implementer' },
+        { key: 'reviewer' },
+        { key: 'broken' },
+      ] as never);
+
+    await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
+
+    const create = lastRunCreate();
+    // `null` pins "no opinion" too; the unresolvable key is left to pin (or fail) at first use.
+    expect(create.agentRuntimes).toEqual({ implementer: 'claude-code', reviewer: null });
+    expect(resolveAgentRuntimeChoice).toHaveBeenCalledWith(
+      'implementer',
+      expect.objectContaining({
+        agentVersions: { implementer: 1, reviewer: 2 },
+        workflowTemplateId: 'tpl-1',
+      })
+    );
+    const keysQuery = findAgents.mock.calls.at(-1)?.[0] as { distinct: string[] };
+    expect(keysQuery.distinct).toEqual(['key']);
+  });
+
+  it('takes no runtime snapshot for an agent run, which pins its one agent itself', async () => {
+    findVersion.mockResolvedValue({
+      spec: validSpec,
+      template: { origin: 'system:agent-run' },
+    } as never);
+    resolveAgentRuntimeChoice.mockClear();
+    await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
+    const create = lastRunCreate();
+    expect(create).not.toHaveProperty('agentRuntimes');
+    expect(resolveAgentRuntimeChoice).not.toHaveBeenCalled();
   });
 
   describe('pinned settings backfill', () => {

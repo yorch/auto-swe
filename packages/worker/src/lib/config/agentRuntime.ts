@@ -35,9 +35,11 @@ export type AgentRuntimeDefault = 'implementerSetting' | 'mastra';
  * along `inheritsModelFrom`), resolved through the same cascade and agent-version
  * pin as its model; otherwise `fallback` does.
  *
- * Inside a run the answer is pinned on `WorkflowRun.agentRuntimes` the first
- * time it is resolved, and every later resolution — another activity, a retry,
- * a parallel branch — reads the pin. The agent-version pin alone cannot promise
+ * Inside a run the answer is pinned on `WorkflowRun.agentRuntimes`: at run
+ * start for every agent the run can resolve (`snapshotAgentRuntimes`, where
+ * `null` records that the Agent had no opinion, so the default decides), and
+ * otherwise the first time the run resolves it. Every later resolution —
+ * another activity, a retry, a parallel branch — reads the pin. The agent-version pin alone cannot promise
  * that: it freezes the GLOBAL row only, so a TEAM or template override edited
  * mid-run would otherwise move a running agent onto the other loop. Outside a
  * run (the eval harness, tests) nothing is pinned and the value resolves live.
@@ -59,6 +61,11 @@ export async function resolveAgentRuntime(
   const workflowId = ambientWorkflowId();
   if (workflowId) {
     const pinned = await readPin(workflowId, agentKey);
+    if (pinned === 'no-opinion') {
+      // The run started with the Agent having no runtime of its own: the default
+      // decides, whatever the Agent says now.
+      return { runtime: await defaultRuntime(fallback, ctx), source: 'default' };
+    }
     if (pinned) {
       return { runtime: pinned, source: 'run' };
     }
@@ -103,16 +110,25 @@ function asRuntimeMap(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/**
+ * The run's pin for `agentKey`: a runtime; `'no-opinion'` when the run-start
+ * snapshot recorded the Agent had none (`null`); undefined when the key is not
+ * pinned yet (an agent created after the run started, a run from before the
+ * snapshot existed) or holds a value this code does not know.
+ */
 async function readPin(
   workflowId: string,
   agentKey: string
-): Promise<ImplementerRuntimeKind | undefined> {
+): Promise<ImplementerRuntimeKind | 'no-opinion' | undefined> {
   const row = await prisma.workflowRun.findUnique({
     select: { agentRuntimes: true },
     where: { workflowId },
   });
-  const value = asRuntimeMap(row?.agentRuntimes)?.[agentKey];
-  return toImplementerRuntime(value) ?? undefined;
+  const map = asRuntimeMap(row?.agentRuntimes);
+  if (map && agentKey in map && map[agentKey] === null) {
+    return 'no-opinion';
+  }
+  return toImplementerRuntime(map?.[agentKey]) ?? undefined;
 }
 
 /**
@@ -139,6 +155,10 @@ export async function pinAgentRuntime(
     const existing = toImplementerRuntime(current?.[agentKey]);
     if (existing) {
       return existing;
+    }
+    if (current && agentKey in current && current[agentKey] === null) {
+      // Pinned at run start as no opinion: the caller's default stands, unwritten.
+      return candidate;
     }
     const { count } = await prisma.workflowRun.updateMany({
       data: { agentRuntimes: { ...current, [agentKey]: candidate } as Prisma.InputJsonObject },

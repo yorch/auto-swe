@@ -50,9 +50,10 @@ const LAYOUTS: Record<RunDetailLayout, (props: RunLayoutProps) => React.ReactNod
 };
 
 /**
- * The header's runtime badge. What each agent actually ran on (`agentRuntimes`,
- * pinned at first use) wins, since an agent's own runtime overrides the run-wide
- * default; before any agent has run, the default the run pinned at start.
+ * The header's runtime badge. The runtimes the run pinned for agents that have
+ * their own (`agentRuntimes`) win, since an agent's own runtime overrides the
+ * run-wide default; with none, the default the run pinned at start. Both are
+ * what the run is set to drive its agents with, not a record of which ran.
  */
 function runtimeBadge(run: {
   agentRuntimes?: Record<string, string>;
@@ -63,7 +64,7 @@ function runtimeBadge(run: {
   if (perAgent.length > 0) {
     return {
       label: [...new Set(perAgent.map(([, r]) => r))].sort().map(label).join(' + '),
-      title: `Runtime each agent ran on: ${perAgent.map(([k, r]) => `${k} — ${label(r)}`).join(', ')}`,
+      title: `Runtime pinned for each agent with its own: ${perAgent.map(([k, r]) => `${k} — ${label(r)}`).join(', ')}`,
     };
   }
   return run.implementerRuntime

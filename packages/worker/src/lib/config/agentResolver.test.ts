@@ -54,7 +54,7 @@ vi.mock('./resolver.js', () => ({
   resolveProviderCredential: vi.fn().mockResolvedValue({ apiBase: undefined, apiKey: 'sk-cred' }),
 }));
 
-import { resolveAgent } from './agentResolver.js';
+import { resolveAgent, resolveAgentRuntimeChoice } from './agentResolver.js';
 import { ConfigMissingError, resolveProviderCredential } from './resolver.js';
 
 const mockedResolveCred = vi.mocked(resolveProviderCredential);
@@ -552,5 +552,45 @@ describe('resolveAgent — runtime', () => {
       'agent has an unknown runtime; ignoring it',
       expect.objectContaining({ runtime: 'something-else' })
     );
+  });
+});
+
+describe('resolveAgentRuntimeChoice', () => {
+  it('reads the runtime through the same cascade and chain, without a credential', async () => {
+    agentFindFirst.mockImplementation(async ({ where }: { where: { key: string } }) =>
+      where.key === 'ciFixer'
+        ? agentRow({ inheritsModelFrom: 'implementer', key: 'ciFixer', modelSpec: null })
+        : agentRow({ key: 'implementer', runtime: 'claude-code' })
+    );
+    expect(await resolveAgentRuntimeChoice('ciFixer', { teamId: 't' })).toBe('claude-code');
+    expect(mockedResolveCred).not.toHaveBeenCalled();
+    // Only the scalars the chain needs are read, not the skills.
+    expect(agentFindFirst.mock.calls[0]?.[0]).toMatchObject({
+      select: { inheritsModelFrom: true, key: true, modelSpec: true, runtime: true, version: true },
+    });
+    expect(agentFindFirst.mock.calls[0]?.[0]).not.toHaveProperty('include');
+  });
+
+  it('walks the tiers as resolveAgent does, honouring the GLOBAL version pin', async () => {
+    agentFindFirst.mockResolvedValue(null);
+    await resolveAgentRuntimeChoice('implementer', {
+      agentVersions: { implementer: 3 },
+      orgId: 'o',
+      teamId: 't',
+      workflowTemplateId: 'tpl',
+    }).catch(() => undefined);
+    expect(agentFindFirst.mock.calls.map((c) => c[0].where)).toEqual([
+      { isActive: true, key: 'implementer', scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: 'tpl' },
+      { isActive: true, key: 'implementer', scope: 'TEAM', teamId: 't' },
+      { isActive: true, key: 'implementer', orgId: 'o', scope: 'ORGANIZATION' },
+      { isActive: true, key: 'implementer', scope: 'GLOBAL', version: 3 },
+    ]);
+  });
+
+  it('returns null for an agent with no opinion, and throws for one that does not exist', async () => {
+    agentFindFirst.mockResolvedValueOnce(agentRow());
+    expect(await resolveAgentRuntimeChoice('reviewer')).toBeNull();
+    agentFindFirst.mockResolvedValue(null);
+    await expect(resolveAgentRuntimeChoice('ghost')).rejects.toBeInstanceOf(ConfigMissingError);
   });
 });

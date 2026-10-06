@@ -2,6 +2,7 @@ import type { Prisma } from '@auto-swe/shared';
 import type { SettingResolveCtx } from '@auto-swe/shared/config';
 import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -14,7 +15,11 @@ import { logError } from '../lib/activityLog.js';
 import { backfillPinnedSettings } from '../lib/config/pinnedSettings.js';
 import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
-import { snapshotAgentVersions, snapshotSkillRevisions } from '../lib/runPins.js';
+import {
+  snapshotAgentRuntimes,
+  snapshotAgentVersions,
+  snapshotSkillRevisions,
+} from '../lib/runPins.js';
 import {
   notifySlackRunComplete,
   notifySlackStepFailure,
@@ -241,7 +246,9 @@ export async function createWorkflowRun(
 
   const version = await prisma.workflowTemplateVersion.findUnique({
     include: {
-      template: { select: { estimatedHumanTimeSavedMinutes: true, workspaceProvider: true } },
+      template: {
+        select: { estimatedHumanTimeSavedMinutes: true, origin: true, workspaceProvider: true },
+      },
     },
     where: { templateId_version: { templateId: input.templateId, version: input.templateVersion } },
   });
@@ -295,6 +302,17 @@ export async function createWorkflowRun(
   // edit between the epic's start and a child's reaches that child.
   const skillRevisions = await snapshotSkillRevisions(await skillTenantContext(input, settingsCtx));
 
+  // Which loop drives each agent, frozen for the run as the agent versions are:
+  // resolved in the same scope and under the same version pins its activities
+  // use, so a later edit of an agent or a scoped override cannot switch it. An
+  // agent run is the exception: `runAgentTask` resolves its one agent in a
+  // narrower scope (no team or template override applies to a shared launch)
+  // and pins it there, before its clone, so it pins at first use instead.
+  const agentRuntimes =
+    version.template?.origin === AGENT_RUN_TEMPLATE_ORIGIN
+      ? undefined
+      : await snapshotAgentRuntimes({ ...settingsCtx, agentVersions });
+
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
   // same workflowId should not create duplicate rows. `update: {}` preserves the
   // original spec, agentVersions and pinnedSettings snapshots across Temporal
@@ -308,6 +326,7 @@ export async function createWorkflowRun(
   const run = await prisma.workflowRun.upsert({
     create: {
       agentVersions,
+      ...(agentRuntimes ? { agentRuntimes: agentRuntimes as Prisma.InputJsonObject } : {}),
       // An epic child's own repository. Its work request is the epic's and
       // spans every repository, so run visibility reads this instead — a member
       // of one of the epic's teams reaches that team's child, not all of them.

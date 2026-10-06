@@ -132,7 +132,7 @@ describe('run page header', () => {
     await renderPage();
     const badge = screen.getByText('Claude Code harness');
     expect(badge.closest('[title]')?.getAttribute('title')).toBe(
-      'Runtime each agent ran on: implementer — Claude Code harness'
+      'Runtime pinned for each agent with its own: implementer — Claude Code harness'
     );
     expect(screen.queryByText('Mastra loop')).toBeNull();
   });

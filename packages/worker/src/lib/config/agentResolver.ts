@@ -64,64 +64,49 @@ export async function fetchActiveAgent(key: string, ctx?: ResolveCtx) {
       orderBy: { sortOrder: 'asc' as const },
     },
   };
+  for (const where of cascadeWheres(key, ctx)) {
+    const row = await prisma.agent.findFirst({ include, orderBy: { version: 'desc' }, where });
+    if (row) {
+      return row;
+    }
+  }
+  return null;
+}
+
+/**
+ * The cascade {@link fetchActiveAgent} walks, as the `where` clause of each tier
+ * it consults, most specific first: the first tier with an active row wins, at
+ * its highest version. The one definition of the cascade, so a lookup that
+ * needs only the row's scalars ({@link resolveAgentRuntimeChoice}) cannot drift
+ * from the full one.
+ */
+function cascadeWheres(key: string, ctx?: ResolveCtx) {
   const pinnedVersion = ctx?.agentVersions?.[key];
-  const versionClause = pinnedVersion !== undefined ? { version: pinnedVersion } : {};
-  const orderBy = { version: 'desc' as const };
-
+  const tiers = [];
   if (ctx?.workflowTemplateId) {
-    const row = await prisma.agent.findFirst({
-      include,
-      orderBy,
-      where: {
-        isActive: true,
-        key,
-        scope: 'WORKFLOW_TEMPLATE',
-        workflowTemplateId: ctx.workflowTemplateId,
-      },
+    tiers.push({
+      isActive: true,
+      key,
+      scope: 'WORKFLOW_TEMPLATE' as const,
+      workflowTemplateId: ctx.workflowTemplateId,
     });
-    if (row) {
-      return row;
-    }
   }
-
   if (ctx?.channelId) {
-    const row = await prisma.agent.findFirst({
-      include,
-      orderBy,
-      where: { channelId: ctx.channelId, isActive: true, key, scope: 'CHANNEL' },
-    });
-    if (row) {
-      return row;
-    }
+    tiers.push({ channelId: ctx.channelId, isActive: true, key, scope: 'CHANNEL' as const });
   }
-
   if (ctx?.teamId) {
-    const row = await prisma.agent.findFirst({
-      include,
-      orderBy,
-      where: { isActive: true, key, scope: 'TEAM', teamId: ctx.teamId },
-    });
-    if (row) {
-      return row;
-    }
+    tiers.push({ isActive: true, key, scope: 'TEAM' as const, teamId: ctx.teamId });
   }
-
   if (ctx?.orgId) {
-    const row = await prisma.agent.findFirst({
-      include,
-      orderBy,
-      where: { isActive: true, key, orgId: ctx.orgId, scope: 'ORGANIZATION' },
-    });
-    if (row) {
-      return row;
-    }
+    tiers.push({ isActive: true, key, orgId: ctx.orgId, scope: 'ORGANIZATION' as const });
   }
-
-  return prisma.agent.findFirst({
-    include,
-    orderBy,
-    where: { isActive: true, key, scope: 'GLOBAL', ...versionClause },
+  tiers.push({
+    isActive: true,
+    key,
+    scope: 'GLOBAL' as const,
+    ...(pinnedVersion !== undefined ? { version: pinnedVersion } : {}),
   });
+  return tiers;
 }
 
 /**
@@ -258,25 +243,7 @@ async function resolveModelForAgent(
   agent: AgentRow,
   ctx?: ResolveCtx
 ): Promise<{ model: ResolvedModelConfig; runtime: ImplementerRuntimeKind | null }> {
-  let source: AgentRow = agent;
-  // The runtime travels with the model: the harness can only drive the model
-  // the chain resolves, so the first row on the chain with an opinion decides.
-  let runtime = runtimeOf(agent);
-  const seen = new Set<string>();
-  while (!source.modelSpec && source.inheritsModelFrom) {
-    if (seen.has(source.key)) {
-      break; // cycle guard
-    }
-    seen.add(source.key);
-    const parent = await fetchActiveAgent(source.inheritsModelFrom, ctx);
-    if (!parent) {
-      throw new ConfigMissingError(
-        `Agent '${source.key}' inherits its model from '${source.inheritsModelFrom}', but no active agent with that key exists.`
-      );
-    }
-    source = parent;
-    runtime ??= runtimeOf(parent);
-  }
+  const { runtime, source } = await walkModelChain(agent, (key) => fetchActiveAgent(key, ctx));
   if (!source.modelSpec) {
     throw new ConfigMissingError(
       `Agent '${agent.key}' has no model: set a modelSpec (or an inheritsModelFrom chain that resolves one) at /studio/agents/library.`
@@ -297,12 +264,87 @@ async function resolveModelForAgent(
   };
 }
 
+/** The scalars the model chain reads off each row it visits. */
+interface ChainRow {
+  inheritsModelFrom: string | null;
+  key: string;
+  modelSpec: string | null;
+  runtime: string | null;
+  version: number;
+}
+
+/**
+ * Follow `inheritsModelFrom` from `agent` to the row that carries the model, and
+ * read the runtime along the same chain. The runtime travels with the model:
+ * the harness can only drive the model the chain resolves, so the first row on
+ * the chain with an opinion decides. Throws `ConfigMissingError` for a parent
+ * key with no active row. The one walk both the full resolution and the
+ * run-start runtime snapshot use.
+ */
+async function walkModelChain<Row extends ChainRow>(
+  agent: Row,
+  fetch: (key: string) => Promise<Row | null>
+): Promise<{ runtime: ImplementerRuntimeKind | null; source: Row }> {
+  let source = agent;
+  let runtime = runtimeOf(agent);
+  const seen = new Set<string>();
+  while (!source.modelSpec && source.inheritsModelFrom) {
+    if (seen.has(source.key)) {
+      break; // cycle guard
+    }
+    seen.add(source.key);
+    const parent = await fetch(source.inheritsModelFrom);
+    if (!parent) {
+      throw new ConfigMissingError(
+        `Agent '${source.key}' inherits its model from '${source.inheritsModelFrom}', but no active agent with that key exists.`
+      );
+    }
+    source = parent;
+    runtime ??= runtimeOf(parent);
+  }
+  return { runtime, source };
+}
+
+/**
+ * The runtime an agent's resolved version asks for (`Agent.runtime`, inherited
+ * along `inheritsModelFrom`), or null for no opinion — the runtime part of
+ * {@link resolveAgent}, through the same cascade, pins and chain, without
+ * binding a model or decrypting a credential. For the run-start snapshot, which
+ * asks it of every agent. Throws `ConfigMissingError` as `resolveAgent` would.
+ */
+export async function resolveAgentRuntimeChoice(
+  key: string,
+  ctx?: ResolveCtx
+): Promise<ImplementerRuntimeKind | null> {
+  const select = {
+    inheritsModelFrom: true,
+    key: true,
+    modelSpec: true,
+    runtime: true,
+    version: true,
+  };
+  const fetch = async (k: string): Promise<ChainRow | null> => {
+    for (const where of cascadeWheres(k, ctx)) {
+      const row = await prisma.agent.findFirst({ orderBy: { version: 'desc' }, select, where });
+      if (row) {
+        return row;
+      }
+    }
+    return null;
+  };
+  const agent = await fetch(key);
+  if (!agent) {
+    throw new ConfigMissingError(`No active Agent found for key '${key}' at any scope.`);
+  }
+  return (await walkModelChain(agent, fetch)).runtime;
+}
+
 /**
  * A row's runtime. The column is CHECK-constrained, so anything else is a row
  * written around the API; it reads as no opinion, loudly, rather than failing
  * every run that resolves the agent.
  */
-function runtimeOf(agent: AgentRow): ImplementerRuntimeKind | null {
+function runtimeOf(agent: ChainRow): ImplementerRuntimeKind | null {
   const known = toImplementerRuntime(agent.runtime);
   if (agent.runtime === null || known) {
     return known;

@@ -242,8 +242,8 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
       { ciFixer: 'mastra', implementer: 'claude-code' },
     ],
     [
-      'a run with a malformed entry',
-      { implementer: 'claude-code', junk: 3 },
+      'a run with a malformed entry and a no-opinion pin',
+      { implementer: 'claude-code', junk: 3, reviewer: null },
       { implementer: 'claude-code' },
     ],
     ['a run where nothing resolved one yet', null, {}],
