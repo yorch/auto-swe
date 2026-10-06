@@ -1684,9 +1684,9 @@
     {
       "body": "Create, version, activate, import, export, compare and run reusable workflow templates.",
       "category": "Authoring",
-      "detail": "A template declares an input contract and workspace provider. The dashboard offers an editor and an outline view; nodes may carry optional group and title labels for display. The API validates node edges and references. Generated versions require review before activation.",
+      "detail": "A template declares an input contract and workspace provider. The dashboard offers an editor and an outline view; nodes may carry optional group and title labels for display. The API validates node edges and references. Generated versions require review before activation. When a template’s workspace provider needs a target connection that its inputs do not declare, the launch form shows a connection picker and will not submit without a choice.",
       "id": "library",
-      "refs": ["web", "spec", "author", "pins", "nodeMeta"],
+      "refs": ["web", "spec", "author", "pins", "nodeMeta", "launchConnection"],
       "status": "Implemented",
       "title": "Workflow library & visual authoring"
     },
@@ -1702,9 +1702,9 @@
     {
       "body": "Agent identity, model, prompt, skills, tool keys and optional MCP connection are data.",
       "category": "Agents",
-      "detail": "Template → channel → team → organization → global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live. Skill text is pinned separately, by revision. A team member can list only the keys, names and models an override may name, without prompts, tools or connections; the full team library stays team-admin or ADMIN.",
+      "detail": "Template → channel → team → organization → global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live. Skill text is pinned separately, by revision. A team member can list only the keys, names and models an override may name, without prompts, tools or connections; the full team library stays team-admin or ADMIN. In the library table an admin sees a No credential badge on a platform-wide agent that is not pinned to its own credential and whose provider has no usable credential (a sub-role persona takes its parent’s status); team, organization and template overrides are never badged.",
       "id": "agentLibrary",
-      "refs": ["agents", "pins", "skillPinRead", "agentOptions"],
+      "refs": ["agents", "pins", "skillPinRead", "agentOptions", "agentBadge"],
       "status": "Implemented",
       "title": "Versioned agent library"
     },
@@ -1756,7 +1756,7 @@
     {
       "body": "Approval, decision, input form and editable review nodes pause a run until response or timeout.",
       "category": "Governance",
-      "detail": "WorkflowHumanStep stores context, deadlines and response data. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the web inbox and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the web inbox, the API and Slack alike (400 REASON_REQUIRED). An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal.",
+      "detail": "WorkflowHumanStep stores context, deadlines and response data. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the web inbox and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the web inbox, the API and Slack alike: the REST route answers 400 REASON_REQUIRED and the Slack modal shows the error in the form. An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal.",
       "id": "hitl",
       "refs": [
         "spec",
@@ -1953,7 +1953,7 @@
     {
       "body": "Filter and page the configuration audit log and runtime security events.",
       "category": "Governance",
-      "detail": "Audit rows name actors by email, and a deleted actor keeps its id. Security events page on the server, with all-time per-type counts from a separate summary route. Both views are ADMIN-only. On the audit route, a WorkflowRun row also carries the id of the request it belongs to. Template, team and organization administration is recorded in the same log: template create (including a generated draft), edit, new version, promote and webhook enable or revoke; team create, update, deactivation, memberships and the shell-image and egress allowlists; organization rename and membership changes. A template entry holds identity, status, version and routing fields, never the spec text, and a webhook entry records only whether one exists, never the token. These entries are written after the change as a separate statement, not in its transaction, so a failed audit insert errors after the change has applied.",
+      "detail": "Audit rows name actors by email, and a deleted actor keeps its id. Security events page on the server, with all-time per-type counts from a separate summary route. Both views are ADMIN-only. On the audit route, a WorkflowRun row also carries the id of the request it belongs to. Template, team and organization administration is recorded in the same log: template create (including a generated draft), edit, new version, promote and webhook enable or revoke; team create, update, deactivation, memberships and the shell-image and egress allowlists; organization rename and membership changes. Refining a template into a new version, a draft saved by an asynchronous generation job, and the review mark that gates promoting an AI-generated version write no audit row. A template entry holds identity, status, version and routing fields, never the spec text, and a webhook entry records only whether one exists, never the token. These entries are written after the change as a separate statement, not in its transaction, so a failed audit insert errors after the change has applied.",
       "id": "reviewViews",
       "refs": [
         "auditLog",
@@ -1961,7 +1961,9 @@
         "auditRunRequest",
         "auditTemplateFields",
         "auditWebhook",
-        "auditTeamFields"
+        "auditTeamFields",
+        "auditTemplateRefine",
+        "auditTemplateReview"
       ],
       "status": "Implemented",
       "title": "Audit and security-event review"
@@ -2470,7 +2472,7 @@
     {
       "body": "The guard checks URL text early and, at connection time, resolves the name and pins the connection to a checked address.",
       "category": "Integrations",
-      "detail": "The text check alone does not resolve a name, so the dispatcher resolves it at connection time, refuses the request if any answer is internal and connects only to a checked address; behind a process-wide proxy the proxy resolves, so the target is checked but not pinned. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs or Jira field detection is called, so a refused one surfaces at that point. A base URL that points at loopback and worked before the opt-in was narrowed is now refused. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code. An MCP connection’s opt-in is per connection and applies only to that connection’s own origin: with it on, its URL may name or resolve to a private-range address, while redirects to other origins stay strict.",
+      "detail": "The text check alone does not resolve a name, so the dispatcher resolves it at connection time, refuses the request if any answer is internal and connects only to a checked address; behind a process-wide proxy the proxy resolves, so the target is checked but not pinned. The opt-in applies to the connector as a whole, so with it on every other private address is reachable from that connector, not just the one service the admin meant. The save-time check covers the stored configuration only; environment-variable fallbacks are checked when a guarded connector runs or Jira field detection is called, so a refused one surfaces at that point. A base URL that points at loopback is refused with or without the opt-in. GitHub Issues follows a redirect to another origin only if that origin passes the strict guard, so a private-network server that redirects to a different private origin is refused. The hop cap and the header allowlist are fixed in code. An MCP connection’s opt-in is per connection and applies only to that connection’s own origin: with it on, its URL may name or resolve to a private-range address, while redirects to other origins stay strict.",
       "id": "connectorGuardBounds",
       "refs": [
         "connectorGuardText",
@@ -2515,6 +2517,21 @@
       ],
       "status": "Confirmed boundary",
       "title": "Pull-request tracking records the host’s state; it does not steer the run"
+    },
+    {
+      "body": "A modal has no private reply channel, so some Slack confirmations are public in the thread.",
+      "category": "Integrations",
+      "detail": "An approve or reject button always opens the modal, so every approval is answered by a modal submission, which carries no response_url. The note that a multi-approver step still needs approvals is therefore always posted publicly in the announcement’s thread, the thread known only from the click that opened the modal, where a one-click answer would have got a private reply. A failed post is dropped silently and not retried; the decision itself is already recorded. The message edit that shows the decision applies only to the message the worker recorded.",
+      "id": "slackApprovalReply",
+      "refs": [
+        "hitlApproveModal",
+        "hitlModalThread",
+        "slackReplyBestEffort",
+        "slackPostNull",
+        "hitlSlackEdit"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Slack modal approvals confirm in the thread, not privately"
     }
   ],
   "modelDescriptions": {
@@ -5015,6 +5032,70 @@
       "lines": 20,
       "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
       "title": "Knowledge-base PR link written only when the ticket id is known not to be generated"
+    },
+    {
+      "anchor": "// A modal submission carries no response_url, so a pending-approval note goes to the thread too.",
+      "before": 0,
+      "id": "hitlModalThread",
+      "lines": 15,
+      "path": "packages/gateway/src/routes/slack.ts",
+      "title": "A pending-approval note from a modal goes to the message’s thread"
+    },
+    {
+      "anchor": "export function missingCredentialProvider(",
+      "before": 8,
+      "id": "agentBadge",
+      "lines": 28,
+      "path": "packages/web/src/lib/agentDisplay.ts",
+      "title": "A platform-wide agent whose provider has no credential is flagged"
+    },
+    {
+      "anchor": "const needsConnection = providerConnectionTypes.length > 0 && !schemaHasConnection;",
+      "before": 6,
+      "id": "launchConnection",
+      "lines": 12,
+      "path": "packages/web/src/components/requests/WorkflowLaunchForm.tsx",
+      "title": "The launch form asks for a target connection the template’s inputs do not declare"
+    },
+    {
+      "anchor": "// Approve and reject collect a note first, as the dashboard does",
+      "before": 0,
+      "id": "hitlApproveModal",
+      "lines": 10,
+      "path": "packages/gateway/src/routes/slack.ts",
+      "title": "Approve and reject always open the modal; only decision options resolve in one click"
+    },
+    {
+      "anchor": "async function respondToInteraction(",
+      "before": 6,
+      "id": "slackReplyBestEffort",
+      "lines": 40,
+      "path": "packages/gateway/src/routes/slack.ts",
+      "title": "Slack replies are best effort: failures are swallowed"
+    },
+    {
+      "anchor": "return data.ok && data.ts ? data.ts : null;",
+      "before": 3,
+      "id": "slackPostNull",
+      "lines": 8,
+      "path": "packages/gateway/src/lib/slack.ts",
+      "title": "A failed thread post returns null and is not retried"
+    },
+    {
+      "anchor": "'/:id/versions/:version/review',",
+      "before": 1,
+      "id": "auditTemplateReview",
+      "lines": 58,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "The review mark that gates promotion of an AI version writes no audit row"
+    },
+    {
+      "anchor": "'/:id/refine',",
+      "before": 1,
+      "id": "auditTemplateRefine",
+      "lines": 140,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "Refine saves a version with no audit row"
     }
   ],
   "usecases": [
