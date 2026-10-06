@@ -1,4 +1,7 @@
-import { createOriginScopedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
+import {
+  createGuardedFetch,
+  createOriginScopedFetch,
+} from '@auto-swe/shared/lib/guardedDispatcher';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
@@ -16,7 +19,11 @@ vi.mock('../githubAuth.js', () => ({
 
 vi.mock('@auto-swe/shared/lib/guardedDispatcher', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@auto-swe/shared/lib/guardedDispatcher')>();
-  return { ...actual, createOriginScopedFetch: vi.fn(actual.createOriginScopedFetch) };
+  return {
+    ...actual,
+    createGuardedFetch: vi.fn(actual.createGuardedFetch),
+    createOriginScopedFetch: vi.fn(actual.createOriginScopedFetch),
+  };
 });
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
@@ -165,6 +172,82 @@ describe('GitHubScmProvider.fetchCiLogs', () => {
     // A log on a foreign origin is not in the waived list, so it resolves strictly.
     await provider.fetchCiLogs('https://ci.example.com/build/42/log');
     expect(calls[calls.length - 1][0]).not.toContain('https://ci.example.com');
+  });
+
+  it("waives the private network for the repository's own hosts when it has no platform set", async () => {
+    const repo = {
+      apiUrl: 'https://api.github.com',
+      baseUrl: 'https://github.com',
+      connectionId: 'conn-1',
+      installationHost: null,
+      organizationName: 'acme',
+      repoName: 'api',
+    };
+    const ghe = { apiUrl: 'https://ghe.corp.example/api/v3', baseUrl: 'https://ghe.corp.example' };
+    // The instance is configured for another host, so the repository's host has no platform set.
+    vi.mocked(resolveGitHubConfig).mockResolvedValue(ghe as never);
+    try {
+      await provider.fetchCiLogs('https://github.com/acme/api/runs/1', repo as never);
+    } finally {
+      vi.mocked(resolveGitHubConfig).mockResolvedValue({
+        apiUrl: 'https://api.github.com',
+        baseUrl: 'https://github.com',
+      } as never);
+    }
+    const calls = vi.mocked(createOriginScopedFetch).mock.calls;
+    expect(calls[calls.length - 1][0]).toContain('https://github.com');
+  });
+
+  describe('GitHub Enterprise repositories', () => {
+    const gheRepo = {
+      apiUrl: 'https://ghe.corp.example/api/v3',
+      baseUrl: 'https://ghe.corp.example',
+      connectionId: 'conn-2',
+      installationHost: null,
+      organizationName: 'acme',
+      repoName: 'api',
+    };
+    const dotcomRepo = {
+      ...gheRepo,
+      apiUrl: 'https://api.github.com',
+      baseUrl: 'https://github.com',
+    };
+
+    it('lets every hop of a GHE repository resolve privately', async () => {
+      vi.mocked(createGuardedFetch).mockClear();
+      await provider.fetchCiLogs('https://ghe.corp.example/acme/api/runs/7', gheRepo as never);
+      const calls = vi.mocked(createGuardedFetch).mock.calls;
+      expect(calls[calls.length - 1][0]).toMatchObject({ allowPrivate: true });
+    });
+
+    it('keeps a github.com repository strict on non-GitHub origins', async () => {
+      vi.mocked(createGuardedFetch).mockClear();
+      vi.mocked(createOriginScopedFetch).mockClear();
+      await provider.fetchCiLogs('https://github.com/acme/api/runs/7', dotcomRepo as never);
+      expect(vi.mocked(createGuardedFetch)).not.toHaveBeenCalled();
+      const origins = vi.mocked(createOriginScopedFetch).mock.calls.at(-1)?.[0] ?? [];
+      expect(origins).not.toContain('https://blob.corp.example');
+    });
+
+    // The real guard, with a resolver standing in for DNS.
+    const resolverFor = (address: string) => async () => [{ address, family: 4 as const }];
+    it('refuses a private blob hop for github.com and allows it for GHE; metadata never', async () => {
+      const actual = await vi.importActual<typeof import('@auto-swe/shared/lib/guardedDispatcher')>(
+        '@auto-swe/shared/lib/guardedDispatcher'
+      );
+      const inner = vi.fn(async () => new Response('ok'));
+      const run = (allowPrivate: boolean, address: string) =>
+        actual.createGuardedFetch({
+          allowPrivate,
+          fetchImpl: inner as never,
+          proxied: true,
+          resolver: resolverFor(address),
+        })('https://blob.corp.example/log');
+      await expect(run(false, '10.2.3.4')).rejects.toThrow(/private network/);
+      await expect(run(true, '10.2.3.4')).resolves.toBeInstanceOf(Response);
+      await expect(run(true, '169.254.169.254')).rejects.toThrow(/never allowed/);
+      await expect(run(false, '169.254.169.254')).rejects.toThrow(/never allowed/);
+    });
   });
 
   it('reports a non-2xx response instead of throwing', async () => {

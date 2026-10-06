@@ -25,9 +25,12 @@ import {
 import { hostKey, installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
 import { PlatformCredentialHostError } from '@auto-swe/shared/lib/githubInstallation';
 import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
-import { createOriginScopedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
+import {
+  createGuardedFetch,
+  createOriginScopedFetch,
+} from '@auto-swe/shared/lib/guardedDispatcher';
 import { fetchGuarded } from '@auto-swe/shared/lib/guardedFetch';
-import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { checkProbeUrl, isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
@@ -257,6 +260,21 @@ function trustedGitHubOrigins(ghConfig: { baseUrl: string; apiUrl: string }): st
   return origins;
 }
 
+/** True when the web or API base is not on github.com, i.e. a GitHub Enterprise host. */
+function isEnterpriseHost(hosts: { baseUrl: string; apiUrl: string }): boolean {
+  for (const raw of [hosts.baseUrl, hosts.apiUrl]) {
+    try {
+      const host = new URL(raw).hostname.toLowerCase();
+      if (host !== 'github.com' && host !== 'api.github.com') {
+        return true;
+      }
+    } catch {
+      // An unparsable base adds nothing.
+    }
+  }
+  return false;
+}
+
 export type CiLogsTarget = { ok: true; url: URL; trusted: boolean } | { ok: false; reason: string };
 
 /**
@@ -456,6 +474,19 @@ export class GitHubScmProvider implements ScmProvider {
         // No token configured at all: proceed unauthenticated for public repos.
       }
     }
+    // The origins that may sit on a private network: the credential's own, and
+    // the repository's own hosts (vetted by `repositoryHostsAllowed` above) —
+    // a repository fetched with the launcher's token may have no platform set.
+    const privateOrigins = [
+      ...(platform ? trustedGitHubOrigins(platform.config) : []),
+      ...(repo ? trustedGitHubOrigins(repoHosts(repo, ghConfig)) : []),
+    ];
+    // A repository on a GitHub Enterprise host (not github.com) keeps its log
+    // storage on the same private network, so every hop of its download may
+    // resolve to a private address. Loopback, link-local, unspecified, reserved
+    // and metadata addresses stay refused on every hop. A github.com repository
+    // resolves strictly everywhere but its own GitHub origins.
+    const enterprise = repo ? isEnterpriseHost(repoHosts(repo, ghConfig)) : false;
     // Log downloads redirect (to blob storage), so redirects are followed by
     // hand: every hop passes the SSRF guard and the token goes only to the
     // origin it was resolved for.
@@ -469,13 +500,15 @@ export class GitHubScmProvider implements ScmProvider {
         signal: AbortSignal.timeout(CI_LOG_FETCH_TIMEOUT_MS),
       },
       {
-        check: (hop) => isSafeProbeUrl(hop.toString()).ok,
+        check: (hop) =>
+          checkProbeUrl(hop.toString(), {
+            allowPrivate: enterprise || privateOrigins.includes(hop.origin),
+          }).ok,
         credentialOrigin: target.url.origin,
-        // The URL is not ours, so each hop is also resolved, checked and pinned. The GitHub
-        // host(s) the credential belongs to may sit on a private network (GitHub Enterprise),
-        // so they resolve with the private waiver; any other origin, such as the blob storage
-        // a log redirects to, resolves strictly.
-        fetchImpl: createOriginScopedFetch(platform ? trustedGitHubOrigins(platform.config) : []),
+        // The URL is not ours, so each hop is also resolved, checked and pinned.
+        fetchImpl: enterprise
+          ? createGuardedFetch({ allowPrivate: true })
+          : createOriginScopedFetch(privateOrigins),
       }
     );
 

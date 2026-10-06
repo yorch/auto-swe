@@ -238,7 +238,10 @@ A DNS failure or timeout (5 s) refuses with a fixed message and never echoes res
 Redirects are followed by hand or refused, so each hop passes through the same guard.
 Where one call talks to a single trusted host and may be redirected elsewhere (the CI log download,
 an MCP server), the private-network allowance is scoped to that host's origin and every other
-origin is checked strictly. The check classifies one source of truth for addresses: besides
+origin is checked strictly. The exception is a CI log download for a repository on a GitHub
+Enterprise host (not github.com): its log storage lives on the same internal network, so every hop
+may resolve to a private address, while loopback, link-local, unspecified, reserved and metadata
+addresses stay refused on every hop. The check classifies one source of truth for addresses: besides
 loopback, link-local and cloud metadata (including GCP's `fd20:ce::254` and OCI's legacy
 `192.0.0.192`), the IETF protocol, documentation, 6to4 relay, Teredo and discard ranges are
 refused. The benchmarking block `198.18.0.0/15` is classed with the private networks, because
