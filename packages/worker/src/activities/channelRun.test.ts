@@ -34,6 +34,11 @@ vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
   runUnscoped: vi.fn((_why: string, _models: string[], fn: () => unknown) => fn()),
 }));
 
+const { snapshotPinnedSettings } = vi.hoisted(() => ({
+  snapshotPinnedSettings: vi.fn(async () => ({ 'workflow.maxTransitions': 500 })),
+}));
+vi.mock('@auto-swe/shared/config', () => ({ snapshotPinnedSettings }));
+
 vi.mock('@auto-swe/shared', () => ({
   Prisma: { PrismaClientKnownRequestError: FakePrismaError },
 }));
@@ -108,6 +113,40 @@ describe('startChannelRun', () => {
         { scope: 'TEAM', teamId: 'team-1' },
         { orgId: 'org-1', scope: 'ORGANIZATION' },
       ],
+    });
+  });
+
+  it('pins the run-pinned settings at the scope the turn reads them with', async () => {
+    await startChannelRun({ channelId: 'chan-1', kind: 'mention', label: 'C1', workflowId: 'w' });
+
+    // The channel template, plus the channel and its tenant (backfilled from the
+    // channel row): the same scope the turn's activities resolve settings at.
+    expect(snapshotPinnedSettings).toHaveBeenCalledWith({
+      channelId: 'chan-1',
+      orgId: 'org-1',
+      teamId: 'team-1',
+      workflowTemplateId: 'tmpl-channel',
+    });
+    const data = p.workflowRun.create.mock.calls[0][0].data;
+    expect(data.pinnedSettings).toEqual({ 'workflow.maxTransitions': 500 });
+  });
+
+  it('pins at the supplied tenant without a channel scope when the channel is gone', async () => {
+    p.slackChannel.findUnique.mockResolvedValueOnce(null);
+    await startChannelRun({
+      channelId: 'chan-gone',
+      kind: 'mention',
+      label: 'C1',
+      orgId: 'org-2',
+      teamId: 'team-2',
+      workflowId: 'w',
+    });
+
+    expect(snapshotPinnedSettings).toHaveBeenCalledWith({
+      channelId: undefined,
+      orgId: 'org-2',
+      teamId: 'team-2',
+      workflowTemplateId: 'tmpl-channel',
     });
   });
 

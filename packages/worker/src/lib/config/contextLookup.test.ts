@@ -46,7 +46,7 @@ const partial = Object.fromEntries(
 function runRow(overrides: Record<string, unknown> = {}) {
   return {
     agentVersions: null,
-    channelId: null,
+    channel: null,
     id: 'run-1',
     pinnedSettings: partial,
     skillRevisions: null,
@@ -122,14 +122,28 @@ describe('currentRequestContext pinned settings', () => {
     expect(ctx.pinnedSettings).toEqual(winner);
   });
 
-  it('leaves a channel turn alone: its tenant is not this context’s', async () => {
-    findRun.mockResolvedValue(runRow({ channelId: 'chan-1', pinnedSettings: null }) as never);
+  it('pins a channel turn at its channel’s scope, the one its own reads use', async () => {
+    findActive.mockResolvedValue(null as never);
+    findRun.mockResolvedValue(
+      runRow({
+        channel: { id: 'chan-1', orgId: 'org-9', teamId: 'team-9' },
+        pinnedSettings: null,
+      }) as never
+    );
 
     const ctx = await currentRequestContext();
 
-    expect(snapshotPinnedSettings).not.toHaveBeenCalled();
-    expect(updateRuns).not.toHaveBeenCalled();
-    expect(ctx.pinnedSettings).toBeUndefined();
+    expect(snapshotPinnedSettings).toHaveBeenCalledWith({
+      channelId: 'chan-1',
+      orgId: 'org-9',
+      teamId: 'team-9',
+      workflowTemplateId: 'tpl-1',
+    });
+    expect(ctx.pinnedSettings).toEqual(live);
+    // The pin's scope is not leaked into the context itself: the caller adds
+    // the channel scope on top, as before.
+    expect(ctx.channelId).toBeUndefined();
+    expect(ctx.teamId).toBeUndefined();
   });
 
   it('falls back to the stored snapshot when the write fails, without throwing', async () => {

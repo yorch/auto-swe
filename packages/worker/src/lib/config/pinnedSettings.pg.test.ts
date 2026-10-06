@@ -44,10 +44,11 @@ describe.skipIf(!enabled)('pinned settings backfill against Postgres', () => {
     RUN_PINNED_SETTING_KEYS.filter((key) => key !== KEY).map((key) => [key, 7])
   );
 
-  async function createRun(pinnedSettings: Prisma.InputJsonObject | null) {
+  async function createRun(pinnedSettings: Prisma.InputJsonObject | null, channelId?: string) {
     const workflowId = `pin-pg-${suffix}-${runIds.length}`;
     const run = await prisma.workflowRun.create({
       data: {
+        ...(channelId ? { channelId } : {}),
         ...(pinnedSettings ? { pinnedSettings } : {}),
         specSnapshot: {},
         templateId,
@@ -162,5 +163,41 @@ describe.skipIf(!enabled)('pinned settings backfill against Postgres', () => {
     _resetConfigCacheForTests();
     expect(await resolveSetting(KEY, { workflowTemplateId: templateId })).toBe('mastra');
     await prisma.configSetting.update({ data: { value: 'claude-code' }, where: { id: settingId } });
+  });
+
+  it('pins a channel turn at its channel’s team, the scope its own reads use', async () => {
+    // A channel turn has no ActiveWorkflow, so the context lookup alone would
+    // resolve at the template and GLOBAL only. The channel's team carries an
+    // override that only a channel-scoped pin sees.
+    const org = await prisma.organization.create({
+      data: { name: `pin-pg-org-${suffix}`, slug: `pin-pg-org-${suffix}` },
+    });
+    const team = await prisma.team.create({
+      data: { name: `pin-pg-team-${suffix}`, orgId: org.id, slug: `pin-pg-team-${suffix}` },
+    });
+    const workspace = await prisma.slackWorkspace.create({
+      data: { orgId: org.id, slackTeamId: `T-pin-pg-${suffix}` },
+    });
+    const channel = await prisma.slackChannel.create({
+      data: { orgId: org.id, slackChannelId: 'C1', teamId: team.id, workspaceId: workspace.id },
+    });
+    try {
+      await prisma.configSetting.create({
+        data: { key: 'workflow.maxTransitions', scope: 'TEAM', teamId: team.id, value: 321 },
+      });
+      const { runId, workflowId } = await createRun(null, channel.id);
+      activityInfo.mockReturnValue({ workflowExecution: { workflowId } });
+
+      const ctx = await currentRequestContext();
+
+      expect(ctx.pinnedSettings?.['workflow.maxTransitions']).toBe(321);
+      expect((await stored(runId))?.['workflow.maxTransitions']).toBe(321);
+    } finally {
+      await prisma.slackChannel.delete({ where: { id: channel.id } });
+      // Cascades the TEAM setting.
+      await prisma.team.delete({ where: { id: team.id } });
+      // Cascades the Slack workspace.
+      await prisma.organization.delete({ where: { id: org.id } });
+    }
   });
 });

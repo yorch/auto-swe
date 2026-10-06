@@ -50,7 +50,7 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
         prisma.workflowRun.findUnique({
           select: {
             agentVersions: true,
-            channelId: true,
+            channel: { select: { id: true, orgId: true, teamId: true } },
             id: true,
             pinnedSettings: true,
             skillRevisions: true,
@@ -105,19 +105,33 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
 /// as stored, so the missing key resolves live exactly as it did before, and the
 /// next lookup after the cache window tries again.
 ///
-/// A channel turn's row is left alone. Its tenant comes from the Slack channel
-/// the caller adds on top of this context, not from `ActiveWorkflow`, so a pin
-/// taken here would freeze a value the turn's own reads never resolve to.
+/// A channel turn's tenant comes from its Slack channel, which the caller adds
+/// on top of this context rather than from `ActiveWorkflow`, so its missing keys
+/// are pinned at the channel's scope — the scope `startChannelRun` snapshots at
+/// and the turn's own reads use. Pinning it at this context's scope would freeze
+/// a value the turn never resolves to.
 async function pinOnFirstRead(
-  run: { channelId: string | null; id: string; pinnedSettings: unknown },
+  run: {
+    channel: { id: string; orgId: string | null; teamId: string | null } | null;
+    id: string;
+    pinnedSettings: unknown;
+  },
   scope: ResolveCtx
 ): Promise<Record<string, unknown> | undefined> {
   const stored = asPinnedSettings(run.pinnedSettings) ?? undefined;
-  if (run.channelId || hasEveryPin(stored, RUN_PINNED_SETTING_KEYS)) {
+  if (hasEveryPin(stored, RUN_PINNED_SETTING_KEYS)) {
     return stored;
   }
+  const pinScope: ResolveCtx = run.channel
+    ? {
+        channelId: run.channel.id,
+        orgId: run.channel.orgId ?? undefined,
+        teamId: run.channel.teamId ?? undefined,
+        workflowTemplateId: scope.workflowTemplateId,
+      }
+    : scope;
   try {
-    const fresh = await snapshotPinnedSettings(scope);
+    const fresh = await snapshotPinnedSettings(pinScope);
     const persisted = await backfillPinnedSettings(run.id, run.pinnedSettings, fresh);
     if (persisted) {
       return persisted;
