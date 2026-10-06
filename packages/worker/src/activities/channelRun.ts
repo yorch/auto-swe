@@ -7,6 +7,7 @@ import {
 import { logError } from '../lib/activityLog.js';
 import { endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
+import { snapshotAgentVersions, snapshotSkillRevisions } from '../lib/runPins.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
 
 /**
@@ -202,10 +203,21 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
     },
   };
 
+  // Pin the agent versions and skill revisions the turn starts with, as
+  // `createWorkflowRun` does for every other run: `currentRequestContext()`
+  // reads them off this row, so a retried turn activity resolves the same
+  // agent and skill text instead of whatever was edited in between.
+  const [agentVersions, skillRevisions] = await Promise.all([
+    snapshotAgentVersions(),
+    snapshotSkillRevisions({ orgId, teamId }),
+  ]);
+
   try {
     await prisma.workflowRun.create({
       data: {
+        agentVersions,
         channelId: channel?.id ?? null,
+        skillRevisions,
         specSnapshot: specSnapshot as unknown as Prisma.InputJsonValue,
         status: 'RUNNING',
         templateId,

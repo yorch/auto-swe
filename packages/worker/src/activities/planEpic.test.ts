@@ -22,7 +22,11 @@ vi.mock('../lib/spendOwner.js', async (importOriginal) => ({
 vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
   runUnscoped: vi.fn(async (_why: string, _models: string[], fn: () => unknown) => fn()),
 }));
-vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
+vi.mock('@temporalio/activity', async (importOriginal) => ({
+  ApplicationFailure: (await importOriginal<typeof import('@temporalio/activity')>())
+    .ApplicationFailure,
+  heartbeat: vi.fn(),
+}));
 
 vi.mock('../agents/plannerAgent.js', () => ({ decomposeEpic: decomposeMock }));
 vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: vi.fn(async () => {}) }));
@@ -211,5 +215,16 @@ describe('planEpic', () => {
       { dependsOn: [], repoId: 'r1' },
       { dependsOn: [], repoId: 'r2' },
     ]);
+  });
+});
+
+describe('planEpic — empty plan', () => {
+  it('refuses non-retryably, before any planner call, when no requested repo is available', async () => {
+    vi.clearAllMocks();
+    prismaMock.connection.findMany.mockResolvedValue([]);
+    await expect(
+      planEpic({ description: 'x', repoIds: ['gone'], requestPayload: '{}', workRequestId: 'w' })
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'EPIC_PLAN_EMPTY' });
+    expect(decomposeMock).not.toHaveBeenCalled();
   });
 });

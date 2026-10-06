@@ -9,6 +9,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
+import { ApplicationFailure } from '@temporalio/activity';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import type { TestContext } from 'vitest';
@@ -79,6 +80,9 @@ let codeRepoResolves = true;
 // instead of a prepared run — a different outcome from "no repo resolved", and
 // the one the workflow must NOT answer by falling through to the general route.
 let codeTaskRefusal: string | null = null;
+// When true, preparing the general task run throws (a launch failure that is
+// not WorkflowExecutionAlreadyStartedError).
+let taskRunThrows = false;
 // Refinement: optional refine intent returned by the turn + the activity verdict.
 let turnRefine: { instruction: string } | undefined;
 let refineResult: {
@@ -123,6 +127,9 @@ const fakeActivities = {
   // doesn't interfere with other tests. The child's own activities are faked below.
   createChannelTaskRun: async (input: { channelId: string; threadTs: string }) => {
     calls.taskRuns.push(input);
+    if (taskRunThrows) {
+      throw ApplicationFailure.nonRetryable('template missing', 'TEST_LAUNCH_FAILURE');
+    }
     return {
       request: {
         description: 'task',
@@ -221,6 +228,7 @@ beforeEach((ctx: TestContext) => {
   overBudget = false;
   codeRepoResolves = true;
   codeTaskRefusal = null;
+  taskRunThrows = false;
 });
 
 afterAll(async () => {
@@ -460,5 +468,19 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     // general route would answer the question and never mention the refusal.
     expect(calls.codeTaskRuns).toHaveLength(1);
     expect(calls.taskRuns).toHaveLength(0);
+  }, 60_000);
+
+  it('tells the user the task could not start, INSTEAD of the ack, when the launch fails', async () => {
+    turnDelegate = { description: 'do the thing', route: 'general', title: 'Thing' };
+    turnReply = 'On it — will follow up here.';
+    taskRunThrows = true;
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-launch-fail'));
+
+    expect(calls.taskRuns).toHaveLength(1);
+    expect(calls.updates[0]?.text).toContain("couldn't start that task");
+    expect(calls.updates[0]?.text).not.toContain('On it');
+    // The turn itself still completes: a launch failure is reported, not raised.
+    expect(calls.finalizeRuns.at(-1)?.status).toBe('SUCCESS');
   }, 60_000);
 });

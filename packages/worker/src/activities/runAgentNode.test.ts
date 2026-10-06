@@ -211,4 +211,29 @@ describe('runAgentNode', () => {
       tracer: expect.any(AgentTracer),
     });
   });
+
+  it('persists the MCP rows and closes the client when the run throws after binding', async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockedResolveMcpUrl.mockResolvedValueOnce({ url: 'https://mcp.example.com/mcp' });
+    mockedLoadMcpTools.mockResolvedValueOnce({ close, tools: {} } as never);
+    mockedRunAgent.mockRejectedValueOnce(new Error('model down'));
+
+    await expect(runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' })).rejects.toThrow(
+      'model down'
+    );
+
+    expect(close).toHaveBeenCalledTimes(1);
+    const mcpTracer = mockedLoadMcpTools.mock.calls[0]?.[1];
+    expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledWith(mcpTracer, 'reviewer');
+  });
+
+  it('still persists the trace when resolving the MCP connection throws', async () => {
+    mockedResolveMcpUrl.mockRejectedValueOnce(new Error('connection row unreadable'));
+
+    await expect(runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' })).rejects.toThrow(
+      'connection row unreadable'
+    );
+
+    expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
+  });
 });

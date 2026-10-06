@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
+    agent: { findMany: vi.fn() },
     agentTrace: { aggregate: vi.fn() },
     channelThreadSession: { deleteMany: vi.fn(), upsert: vi.fn() },
+    skill: { findMany: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
     workflowRun: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     workflowTemplate: { findFirst: vi.fn() },
@@ -28,6 +30,10 @@ const { FakePrismaError } = vi.hoisted(() => {
 const { recordRunFinalized } = vi.hoisted(() => ({ recordRunFinalized: vi.fn() }));
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
 
+vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
+  runUnscoped: vi.fn((_why: string, _models: string[], fn: () => unknown) => fn()),
+}));
+
 vi.mock('@auto-swe/shared', () => ({
   Prisma: { PrismaClientKnownRequestError: FakePrismaError },
 }));
@@ -44,6 +50,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   p.workflowTemplate.findFirst.mockResolvedValue(TEMPLATE);
   p.slackChannel.findUnique.mockResolvedValue({ id: 'chan-1', orgId: 'org-1', teamId: 'team-1' });
+  p.agent.findMany.mockResolvedValue([]);
+  p.skill.findMany.mockResolvedValue([]);
 });
 
 describe('startChannelRun', () => {
@@ -74,6 +82,32 @@ describe('startChannelRun', () => {
       label: 'C12345',
       orgId: 'org-1',
       teamId: 'team-1',
+    });
+  });
+
+  it('pins the active agent versions and the visible skill revisions on the run', async () => {
+    p.agent.findMany.mockResolvedValue([
+      { key: 'channelAssistant', version: 2 },
+      { key: 'channelAssistant', version: 4 },
+      { key: 'reviewer', version: 1 },
+    ]);
+    p.skill.findMany.mockResolvedValue([
+      { currentRevision: 3, id: 'skill-a' },
+      { currentRevision: 1, id: 'skill-b' },
+    ]);
+
+    await startChannelRun({ channelId: 'chan-1', kind: 'mention', label: 'C1', workflowId: 'w' });
+
+    const data = p.workflowRun.create.mock.calls[0][0].data;
+    expect(data.agentVersions).toEqual({ channelAssistant: 4, reviewer: 1 });
+    expect(data.skillRevisions).toEqual({ 'skill-a': 3, 'skill-b': 1 });
+    // Skills visible to the channel's tenant (team/org backfilled from the channel row).
+    expect(p.skill.findMany.mock.calls[0][0].where).toEqual({
+      OR: [
+        { scope: 'GLOBAL' },
+        { scope: 'TEAM', teamId: 'team-1' },
+        { orgId: 'org-1', scope: 'ORGANIZATION' },
+      ],
     });
   });
 

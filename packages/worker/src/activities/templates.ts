@@ -1,4 +1,4 @@
-import type { Prisma } from '@auto-swe/shared';
+import { Prisma } from '@auto-swe/shared';
 import type { SettingResolveCtx } from '@auto-swe/shared/config';
 import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
@@ -13,6 +13,7 @@ import { currentTemporalRunId } from '../lib/activityContext.js';
 import { logError } from '../lib/activityLog.js';
 import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
+import { snapshotAgentVersions, snapshotSkillRevisions } from '../lib/runPins.js';
 import {
   notifySlackRunComplete,
   notifySlackStepFailure,
@@ -269,19 +270,7 @@ export async function createWorkflowRun(
   // P1/WS3: snapshot the active GLOBAL Agent versions so this run resolves a
   // fixed Agent version regardless of later library edits. One row per key
   // today (version 1); kept as a { key: version } map for forward pins.
-  const agents = await runUnscoped(
-    'GLOBAL-scope rows are the deployment-wide defaults; they have no tenant by definition',
-    ['Agent'],
-    () =>
-      prisma.agent.findMany({
-        select: { key: true, version: true },
-        where: { isActive: true, scope: 'GLOBAL' },
-      })
-  );
-  const agentVersions: Record<string, number> = {};
-  for (const a of agents) {
-    agentVersions[a.key] = Math.max(agentVersions[a.key] ?? 0, a.version);
-  }
+  const agentVersions = await snapshotAgentVersions();
 
   // Evals P2 canary: override the candidate agent's pinned version so
   // resolveAgent routes this run to the candidate arm.
@@ -350,23 +339,9 @@ export async function createWorkflowRun(
 
   // Read the pin back off the row rather than trusting the value just computed:
   // on a Temporal retry `update: {}` keeps the *original* snapshot, and the run
-  // must keep using that one.
-  let persisted =
-    run.pinnedSettings && typeof run.pinnedSettings === 'object'
-      ? (run.pinnedSettings as Record<string, unknown>)
-      : null;
-
-  if (!persisted) {
-    // The row pre-dates this column. Returning the fresh snapshot without
-    // storing it would leave the workflow reading pinned limits while
-    // `currentRequestContext()` reported none to its activities — a run that is
-    // neither pinned nor consistently live. Backfill so both sides agree.
-    await prisma.workflowRun.update({
-      data: { pinnedSettings: pinnedSettings as Prisma.InputJsonObject },
-      where: { id: run.id },
-    });
-    persisted = pinnedSettings;
-  }
+  // must keep using that one. A row that pre-dates the column, or a run-pinned
+  // setting, gets the missing keys added at their value now.
+  const persisted = await backfillPinnedSettings(run.id, run.pinnedSettings, pinnedSettings);
 
   // Always return the spec actually stored on the row. On a Temporal retry the
   // row may already exist (update: {}), and returning the freshly-parsed spec
@@ -379,35 +354,55 @@ export async function createWorkflowRun(
   };
 }
 
-/// `{ skillId: currentRevision }` for every active-or-not skill visible to the run's
-/// tenant: GLOBAL, plus the run's team's and organization's own. Keyed by skill
-/// id, so it does not matter which agent later references a skill — an explicit
-/// `key@version` ref, a CHANNEL-scope agent, or a skill attached to an agent
-/// after the run began all find their pin. One query, however many agent
-/// versions have accumulated. A skill created after this point has no entry
-/// and resolves its current revision, which is also its only one.
-async function snapshotSkillRevisions(scope: SettingResolveCtx): Promise<Prisma.InputJsonObject> {
-  const visible: Prisma.SkillWhereInput[] = [{ scope: 'GLOBAL' }];
-  if (scope.teamId) {
-    visible.push({ scope: 'TEAM', teamId: scope.teamId });
+function asPinnedSettings(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/// The row's pinned settings with every key of `fresh` it lacks added at its
+/// fresh value. A value already pinned is never changed: the run may have made a
+/// decision on it. A key the snapshot lacks — the row pre-dates the column, or
+/// the setting was declared `runPinned` after the run started — would otherwise
+/// resolve live for the rest of the run, and could flip between two of its
+/// activities; pinning it now stops that from here on.
+///
+/// Written only when a key is missing, and as a compare-and-set on the stored
+/// value, so two attempts of this activity racing cannot overwrite each other:
+/// the loser re-reads, finds the keys present, and returns what is stored.
+/// Without a missing key this costs no query.
+async function backfillPinnedSettings(
+  runId: string,
+  stored: unknown,
+  fresh: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  let current = asPinnedSettings(stored);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const have = current;
+    if (have && Object.keys(fresh).every((key) => key in have)) {
+      return have;
+    }
+    const merged = { ...fresh, ...current };
+    const { count } = await prisma.workflowRun.updateMany({
+      data: { pinnedSettings: merged as Prisma.InputJsonObject },
+      where: {
+        id: runId,
+        pinnedSettings: current
+          ? { equals: current as Prisma.InputJsonObject }
+          : { equals: Prisma.DbNull },
+      },
+    });
+    if (count > 0) {
+      return merged;
+    }
+    const row = await prisma.workflowRun.findUnique({
+      select: { pinnedSettings: true },
+      where: { id: runId },
+    });
+    current = asPinnedSettings(row?.pinnedSettings);
   }
-  if (scope.orgId) {
-    visible.push({ orgId: scope.orgId, scope: 'ORGANIZATION' });
-  }
-  const skills = await runUnscoped(
-    'GLOBAL skills have no tenant by definition; the team and org rows are the run’s own',
-    ['Skill'],
-    () =>
-      prisma.skill.findMany({
-        select: { currentRevision: true, id: true },
-        where: { OR: visible },
-      })
-  );
-  const pins: Record<string, number> = {};
-  for (const skill of skills) {
-    pins[skill.id] = skill.currentRevision;
-  }
-  return pins;
+  // Retryable: the row kept changing underneath; the next attempt reads it afresh.
+  throw new Error(`createWorkflowRun: could not backfill pinned settings on run ${runId}`);
 }
 
 /// The tenant whose skills a run can see. Normally the settings context's team and
