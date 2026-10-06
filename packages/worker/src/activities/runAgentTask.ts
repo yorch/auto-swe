@@ -15,10 +15,9 @@ import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { FileChange, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRunTools.js';
-import { harnessToolsGranting } from '../agents/claudeCode/policy.js';
-import { claudeCodeRuntime } from '../agents/claudeCode/runtime.js';
+import type { BoundHarness } from '../agents/harness/registry.js';
+import { HARNESSES } from '../agents/harnessRegistry.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
-import { resolveClaudeCodeAccess } from '../agents/implementerRuntimeSelect.js';
 import { isMcpToolEnabled, loadMcpTools } from '../agents/mcpTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
@@ -203,12 +202,14 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
   // Before any container exists: an unpriced model under a USD cap is refused
   // here rather than after a clone (runAgent checks again before the call).
   await assertModelPricedForUsdCap(resolved.model.spec);
-  // The loop: Mastra unless the Agent asks for the Claude Code harness. Decided
-  // (and pinned on the run) before the clone, so a model the harness cannot
-  // drive is refused before any container exists.
+  // The loop: Mastra unless the Agent asks for a harness. Decided (and pinned on
+  // the run) before the clone, and the harness bound to the Agent's model here,
+  // so a model the harness cannot drive is refused before any container exists.
   const loop = await resolveAgentRuntime(key, agentCtx, 'mastra');
-  const harnessAccess =
-    loop.runtime === 'claude-code' ? await resolveClaudeCodeAccess(key, agentCtx) : undefined;
+  const harness =
+    loop.runtime === 'mastra'
+      ? undefined
+      : HARNESSES.select(loop.runtime).bind(key, resolved.model);
 
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { host: true, installationId: true } } },
@@ -254,8 +255,8 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       tracer,
       workspace: agentWs,
     };
-    const result = harnessAccess
-      ? await runOnHarness(loopInput, harnessAccess)
+    const result = harness
+      ? await runOnHarness(loopInput, harness)
       : await runOnMastra(loopInput, (close) => {
           closeMcp = close;
         });
@@ -474,7 +475,7 @@ async function runOnMastra(
 }
 
 /**
- * The Claude Code harness, in the agent's own container, as one turn.
+ * The harness the Agent asked for (Claude Code), in the agent's own container, as one turn.
  *
  * It is granted exactly the harness tools that stand in for the workspace
  * tools the Mastra loop would have granted (`grantedWorkspaceToolIds`), never
@@ -486,7 +487,7 @@ async function runOnMastra(
  */
 async function runOnHarness(
   input: AgentLoopInput,
-  access: Awaited<ReturnType<typeof resolveClaudeCodeAccess>>
+  harness: BoundHarness
 ): Promise<AgentLoopResult> {
   const { agentCtx, key, resolved, tracer } = input;
   const spec = await resolveAgentSpec(
@@ -499,12 +500,11 @@ async function runOnHarness(
       outputJson: { agentKey: key, mcpConnectionId: resolved.mcpConnectionId },
     });
   }
-  const runtime = claudeCodeRuntime({
-    access,
+  const runtime = harness.build({
     deadline: input.deadline,
+    exactToolKeys: grantedWorkspaceToolIds(resolved.toolKeys),
     loadProjectSettings: true,
     maxTurns: input.maxSteps,
-    tools: harnessToolsGranting(grantedWorkspaceToolIds(resolved.toolKeys)),
     tracer,
     workspace: input.workspace,
   });

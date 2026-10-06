@@ -3425,8 +3425,8 @@
       "anchor": "// Named without a value: docker reads it from its own environment below,",
       "before": 14,
       "id": "harnessKey",
-      "lines": 36,
-      "path": "packages/worker/src/agents/claudeCode/runtime.ts",
+      "lines": 30,
+      "path": "packages/worker/src/agents/harness/runtime.ts",
       "title": "Harness credential inside the workspace"
     },
     {
