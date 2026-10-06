@@ -69,7 +69,7 @@ export function ChannelSettingsTab({ channel }: { channel: SlackChannel }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-3xl space-y-6">
       <form className="space-y-4" onSubmit={handleSubmit}>
         <ChannelForm
           errors={errors}

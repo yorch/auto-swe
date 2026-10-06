@@ -18,8 +18,10 @@ import {
   chartAriaLabel,
   EmptyChart,
   formatDateLabel,
-  GRID_STROKE,
+  GRID_PROPS,
   LEGEND_STYLE,
+  LINE_WIDTH,
+  legendText,
 } from './chartChrome';
 import { TREND_COLORS } from './colors';
 
@@ -51,7 +53,7 @@ export function WorkflowsOverTimeChart({ data, title }: Props) {
     >
       <ResponsiveContainer height={CHART_HEIGHT} width="100%">
         <AreaChart accessibilityLayer={false} data={data}>
-          <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
+          <CartesianGrid {...GRID_PROPS} vertical={false} />
           <XAxis
             dataKey="date"
             interval="preserveStartEnd"
@@ -64,33 +66,41 @@ export function WorkflowsOverTimeChart({ data, title }: Props) {
             width={52}
             {...AXIS_COMMON_PROPS}
           />
-          <ChartTooltip labelFormatter={formatDateLabel} />
-          <Legend wrapperStyle={LEGEND_STYLE} />
+          <ChartTooltip labelFormatter={(label) => `${formatDateLabel(label)} (UTC)`} />
+          <Legend
+            formatter={legendText}
+            iconSize={10}
+            iconType="circle"
+            wrapperStyle={LEGEND_STYLE}
+          />
           <Area
             dataKey="completed"
             fill={TREND_COLORS.completed}
-            fillOpacity={0.35}
+            fillOpacity={0.15}
+            name="Completed"
             stackId="1"
             stroke={TREND_COLORS.completed}
-            strokeWidth={1.5}
+            strokeWidth={LINE_WIDTH}
             type="monotone"
           />
           <Area
             dataKey="failed"
             fill={TREND_COLORS.failed}
-            fillOpacity={0.35}
+            fillOpacity={0.15}
+            name="Failed"
             stackId="1"
             stroke={TREND_COLORS.failed}
-            strokeWidth={1.5}
+            strokeWidth={LINE_WIDTH}
             type="monotone"
           />
           <Area
             dataKey="active"
             fill={TREND_COLORS.active}
-            fillOpacity={0.4}
+            fillOpacity={0.18}
+            name="Active"
             stackId="1"
             stroke={TREND_COLORS.active}
-            strokeWidth={1.5}
+            strokeWidth={LINE_WIDTH}
             type="monotone"
           />
         </AreaChart>

@@ -1,12 +1,16 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Toolbar } from '@/components/ui/Toolbar';
 import {
   type ChannelAuditKind,
   type SlackChannel,
@@ -15,7 +19,7 @@ import {
 import { useUsers } from '@/hooks/useUsers';
 import { requestHref } from '@/lib/requestDisplay';
 import { emailsBySlackId, slackUserLabel } from '@/lib/slackUserLabel';
-import { formatCost, formatRelativeTime, formatTokens } from '@/lib/utils';
+import { formatCost, formatDate, formatRelativeTime, formatTokens } from '@/lib/utils';
 
 const KIND_LABELS: Record<ChannelAuditKind | 'all', string> = {
   all: 'All',
@@ -46,21 +50,33 @@ export function ChannelActivityTab({ channel }: { channel: SlackChannel }) {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-paper-400">
+      <Toolbar
+        end={
+          entries && entries.length > 0 ? (
+            <span className="text-xs text-paper-500 tabular-nums">
+              {entries.length} entr{entries.length === 1 ? 'y' : 'ies'}
+            </span>
+          ) : undefined
+        }
+      >
+        <SegmentedControl
+          ariaLabel="Filter activity by trigger"
+          onChange={setKindFilter}
+          options={(['all', 'mention', 'ambient', 'reactive'] as const).map((k) => ({
+            label: KIND_LABELS[k],
+            value: k,
+          }))}
+          value={kindFilter}
+        />
+      </Toolbar>
+      <p className="text-[13px] text-paper-400">
         Who triggered the assistant in this channel, what they asked, and what it did. Each entry
         links to the full run.
       </p>
-      <SegmentedControl
-        ariaLabel="Filter activity by trigger"
-        onChange={setKindFilter}
-        options={(['all', 'mention', 'ambient', 'reactive'] as const).map((k) => ({
-          label: KIND_LABELS[k],
-          value: k,
-        }))}
-        value={kindFilter}
-      />
 
-      {isLoading || isError ? (
+      {isLoading ? (
+        <SkeletonRows rows={3} />
+      ) : isError ? (
         <QueryBoundary
           error={loadError}
           isError={isError}
@@ -71,13 +87,23 @@ export function ChannelActivityTab({ channel }: { channel: SlackChannel }) {
         />
       ) : !entries || entries.length === 0 ? (
         <EmptyState
-          className="py-4"
-          title={`No ${kindFilter !== 'all' ? KIND_LABELS[kindFilter].toLowerCase() : ''} activity recorded for this channel yet.`}
+          bordered
+          hint={
+            kindFilter === 'all'
+              ? 'Mentions, scheduled digests and reactive interjections appear here as they happen.'
+              : 'Try another trigger, or All.'
+          }
+          icon="chat"
+          title={
+            kindFilter === 'all'
+              ? 'No activity recorded for this channel yet'
+              : `No ${KIND_LABELS[kindFilter].toLowerCase()} recorded for this channel yet`
+          }
         />
       ) : (
         <div className="space-y-2">
           {entries.map((e) => (
-            <Card className="p-3 text-sm" key={e.runId} variant="inset">
+            <Card className="p-4 text-sm" key={e.runId} variant="inset">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="whitespace-pre-wrap text-paper-100">
@@ -89,31 +115,39 @@ export function ChannelActivityTab({ channel }: { channel: SlackChannel }) {
                       </span>
                     )}
                   </p>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-500">
-                    <Badge tone={KIND_TONES[e.kind]} variant="text">
+                  <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-500">
+                    <Badge tone={KIND_TONES[e.kind]} variant="outline">
                       {KIND_LABELS[e.kind]}
                     </Badge>
-                    <span>{slackUserLabel(names, e.userSlackId)}</span>
-                    <span>· {formatRelativeTime(e.createdAt)}</span>
-                    <span>· {e.status}</span>
-                    <span>· {formatCost(typeof e.costUsd === 'number' ? e.costUsd : null)}</span>
-                    <span>
-                      · {formatTokens(e.tokensInput)} in / {formatTokens(e.tokensOutput)} out
+                    <StatusBadge status={e.status} />
+                    <span className="text-paper-300">{slackUserLabel(names, e.userSlackId)}</span>
+                    <span aria-hidden>·</span>
+                    <time dateTime={e.createdAt} title={formatDate(e.createdAt)}>
+                      {formatRelativeTime(e.createdAt)}
+                    </time>
+                    <span aria-hidden>·</span>
+                    <span className="tabular-nums">
+                      {formatCost(typeof e.costUsd === 'number' ? e.costUsd : null)}
+                    </span>
+                    <span aria-hidden>·</span>
+                    <span className="tabular-nums">
+                      {formatTokens(e.tokensInput)} in / {formatTokens(e.tokensOutput)} out
                     </span>
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-1 text-xs">
-                  <Link
-                    className="text-ember-400 hover:underline"
-                    href={e.workRequestId ? requestHref(e.workRequestId) : `/runs/${e.runId}`}
-                  >
-                    View run →
-                  </Link>
+                <div className="flex shrink-0 items-center gap-1">
                   {e.workRequestId && (
-                    <Link className="text-paper-400 hover:underline" href={`/runs/${e.runId}`}>
+                    <ButtonLink href={`/runs/${e.runId}`} size="sm" variant="ghost">
                       Diagnostics
-                    </Link>
+                    </ButtonLink>
                   )}
+                  <ButtonLink
+                    href={e.workRequestId ? requestHref(e.workRequestId) : `/runs/${e.runId}`}
+                    size="sm"
+                  >
+                    View run
+                    <Icon name="arrowRight" size={13} />
+                  </ButtonLink>
                 </div>
               </div>
             </Card>

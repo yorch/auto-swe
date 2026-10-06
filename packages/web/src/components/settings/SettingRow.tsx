@@ -2,12 +2,14 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Badge } from '@/components/ui/Badge';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import type { SettingScope, SettingSource, SettingView } from '@/hooks/useConfigSettings';
 import { platformRoleLabel } from '@/lib/govLabels';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 /**
  * One editable setting, rendered from its definition rather than hand-written.
@@ -28,14 +30,14 @@ const SOURCE_LABELS: Record<SettingSource, string> = {
 
 /// Muted for the two "nobody set this" sources, so a scanned list makes the
 /// deliberately-configured values stand out from the inherited ones.
-const SOURCE_TONE: Record<SettingSource, string> = {
-  CHANNEL: 'text-ember-400',
-  DEFAULT: 'text-paper-500',
-  GLOBAL: 'text-paper-400',
-  ORGANIZATION: 'text-ember-400',
-  PINNED: 'text-amber-400',
-  TEAM: 'text-ember-400',
-  WORKFLOW_TEMPLATE: 'text-ember-400',
+const SOURCE_TONE: Record<SettingSource, BadgeTone> = {
+  CHANNEL: 'ember',
+  DEFAULT: 'muted',
+  GLOBAL: 'neutral',
+  ORGANIZATION: 'ember',
+  PINNED: 'amber',
+  TEAM: 'ember',
+  WORKFLOW_TEMPLATE: 'ember',
 };
 
 const SCOPE_NOUN: Record<SettingScope, string> = {
@@ -132,47 +134,75 @@ export function SettingRow({
   const invalidNumber = isNumber && !Number.isFinite(Number(draft));
   const dirty = isBoolean ? boolDraft !== setting.value : formatValue(setting.value) !== draft;
 
+  const unitId = `setting-${setting.key}-unit`;
+  const unit = setting.unit ?? (isList ? 'comma-separated' : undefined);
+  const sourceBadge = (
+    <Badge tone={SOURCE_TONE[setting.source]} variant="outline">
+      {SOURCE_LABELS[setting.source]}
+    </Badge>
+  );
+
   return (
-    <div className="border-t border-ink-600 py-4 first:border-t-0">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+    <div
+      className={cn(
+        'border-t border-ink-600 py-5 first:border-t-0 first:pt-1',
+        dirty && '-mx-3 rounded-lg border-t-transparent bg-amber-400/[0.04] px-3'
+      )}
+      data-dirty={dirty || undefined}
+    >
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_18rem] md:gap-8">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <span className="text-sm font-medium text-paper-100">{setting.label}</span>
-            <code className="break-all font-mono text-[10px] text-paper-500">{setting.key}</code>
             {setting.restartRequired && (
-              <Badge tone="amber" uppercase variant="text">
-                restart required
+              <Badge tone="amber" variant="outline">
+                Restart required
               </Badge>
             )}
             {setting.runPinned && (
-              <Badge tone="neutral" uppercase variant="text">
-                frozen per run
+              <Badge
+                title="Each run keeps the value it started with"
+                tone="neutral"
+                variant="outline"
+              >
+                Frozen per run
               </Badge>
             )}
           </div>
-          <p className="mt-1 max-w-prose text-xs leading-relaxed text-paper-400">
+          <code className="mt-0.5 block break-all font-mono text-[11.5px] text-paper-500">
+            {setting.key}
+          </code>
+          <p className="mt-2 max-w-prose text-[13px] leading-relaxed text-paper-400">
             {setting.description}
           </p>
-          <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wider">
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
             {sourceHref ? (
               <Link
-                className={`${SOURCE_TONE[setting.source]} underline-offset-2 hover:underline`}
+                className={cn('rounded-md hover:brightness-125', FOCUS_RING)}
                 href={sourceHref}
+                title="Open the view where this value was set"
               >
-                {SOURCE_LABELS[setting.source]}
+                {sourceBadge}
               </Link>
             ) : (
-              <span className={SOURCE_TONE[setting.source]}>{SOURCE_LABELS[setting.source]}</span>
+              sourceBadge
             )}
-            <span className="text-paper-600"> · default {formatValue(setting.defaultValue)}</span>
-            <span className="text-paper-600">
-              {' '}
-              · needs {platformRoleLabel(setting.requiredRole).toLowerCase()}
+            <Badge tone="muted" variant="text">
+              Default{' '}
+              <span className="ml-1 font-mono text-paper-300">
+                {formatValue(setting.defaultValue) || '(empty)'}
+              </span>
+            </Badge>
+            <span aria-hidden className="text-paper-600">
+              ·
             </span>
-          </p>
+            <Badge tone="muted" variant="text">
+              Needs {platformRoleLabel(setting.requiredRole).toLowerCase()}
+            </Badge>
+          </div>
         </div>
 
-        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-64">
+        <div className="flex w-full min-w-0 flex-col gap-2">
           {isBoolean ? (
             <ToggleSwitch
               checked={boolDraft}
@@ -191,47 +221,96 @@ export function SettingRow({
               }}
             />
           ) : (
-            <Input
-              aria-label={setting.label}
-              disabled={!canWriteHere || busy || setting.redacted}
-              error={invalidNumber ? 'Must be a number' : undefined}
-              hint={setting.unit ?? (isList ? 'comma-separated' : undefined)}
-              id={`setting-${setting.key}`}
-              inputMode={isNumber ? 'numeric' : undefined}
-              onChange={(e) => {
-                onEdit();
-                setDraft(e.target.value);
-              }}
-              // Withheld by the server for anyone below the setting's role.
-              placeholder={
-                setting.redacted
-                  ? `Hidden — ${platformRoleLabel(setting.requiredRole).toLowerCase()} only`
-                  : undefined
-              }
-              value={setting.redacted ? '' : draft}
-            />
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <Input
+                  aria-describedby={unit ? unitId : undefined}
+                  aria-label={setting.label}
+                  className={cn(isNumber && 'tabular-nums', isList && 'font-mono text-[13px]')}
+                  disabled={!canWriteHere || busy || setting.redacted}
+                  error={invalidNumber ? 'Must be a number' : undefined}
+                  id={`setting-${setting.key}`}
+                  inputMode={isNumber ? 'numeric' : undefined}
+                  onChange={(e) => {
+                    onEdit();
+                    setDraft(e.target.value);
+                  }}
+                  // Withheld by the server for anyone below the setting's role.
+                  placeholder={
+                    setting.redacted
+                      ? `Hidden — ${platformRoleLabel(setting.requiredRole).toLowerCase()} only`
+                      : undefined
+                  }
+                  value={setting.redacted ? '' : draft}
+                />
+              </div>
+              {unit && (
+                <span
+                  className={cn(
+                    'shrink-0 pt-2 text-xs text-paper-500',
+                    isList ? 'sr-only' : 'w-16 truncate'
+                  )}
+                  id={unitId}
+                  title={unit}
+                >
+                  {unit}
+                </span>
+              )}
+            </div>
           )}
-          <div className="flex gap-2">
-            <Button
-              disabled={!canWriteHere || busy || !dirty || invalidNumber}
-              onClick={() => onSave(parsedDraft)}
-              size="sm"
-            >
-              {status?.phase === 'saving' ? 'Saving…' : 'Save'}
-            </Button>
-            <Button
-              disabled={!canWriteHere || busy || !hasOverrideHere}
-              onClick={onClear}
-              size="sm"
-              variant="ghost"
-            >
-              Remove override
-            </Button>
-          </div>
-          {status?.phase === 'saved' && !dirty && (
-            <p className="text-xs text-moss-400" role="status">
-              ✓ Saved
+          {isList && !setting.redacted && (
+            <p aria-hidden className="text-xs text-paper-500">
+              Separate entries with commas
             </p>
+          )}
+          {canWriteHere && (
+            <div
+              className={cn(
+                'flex flex-wrap items-center gap-2',
+                // Nothing to act on: keep the row to the control alone.
+                !dirty && !hasOverrideHere && status?.phase !== 'saved' && 'hidden'
+              )}
+            >
+              {/* Out of the way while the value is clean; it appears, in the primary look, once
+                  there is something to save, so the one edited row on a long page stands out. */}
+              <Button
+                className={cn(!dirty && 'hidden')}
+                disabled={busy || !dirty || invalidNumber}
+                onClick={() => onSave(parsedDraft)}
+                size="sm"
+                variant="primary"
+              >
+                {status?.phase === 'saving' ? 'Saving…' : 'Save'}
+              </Button>
+              {dirty && (
+                <Button
+                  disabled={busy}
+                  onClick={() => {
+                    onEdit();
+                    setDraft(formatValue(setting.value));
+                    setBoolDraft(setting.value === true);
+                  }}
+                  size="sm"
+                  variant="ghost"
+                >
+                  Discard
+                </Button>
+              )}
+              {!dirty && hasOverrideHere && (
+                <Button disabled={busy} onClick={onClear} size="sm" variant="ghost">
+                  {busy ? 'Removing…' : 'Remove override'}
+                </Button>
+              )}
+              {status?.phase === 'saved' && !dirty && (
+                <span
+                  className="inline-flex items-center gap-1 text-xs text-moss-400"
+                  role="status"
+                >
+                  <Icon name="check" size={12} />
+                  Saved
+                </span>
+              )}
+            </div>
           )}
           {status?.phase === 'error' && (
             <p className="text-xs text-brick-400" role="alert">
@@ -239,32 +318,35 @@ export function SettingRow({
             </p>
           )}
           {!canWriteHere && (
-            <p className="text-xs text-paper-500">
-              {!setting.overridableAt.includes(scope) && scope !== 'GLOBAL' ? (
-                setting.overridableAt.length ? (
-                  `Can only be set ${['platform-wide', ...setting.overridableAt.map((o) => SCOPE_NOUN[o])].join(', ')}.`
+            <p className="flex items-start gap-1.5 text-xs leading-relaxed text-paper-500">
+              <Icon className="mt-0.5" name="lock" size={12} />
+              <span>
+                {!setting.overridableAt.includes(scope) && scope !== 'GLOBAL' ? (
+                  setting.overridableAt.length ? (
+                    `Can only be set ${['platform-wide', ...setting.overridableAt.map((o) => SCOPE_NOUN[o])].join(', ')}.`
+                  ) : (
+                    'Can only be set platform-wide.'
+                  )
                 ) : (
-                  'Can only be set platform-wide.'
-                )
-              ) : (
-                <>
-                  Changing this needs the {platformRoleLabel(setting.requiredRole).toLowerCase()}{' '}
-                  role.
-                  {grantsHref && (
-                    <>
-                      {' '}
-                      <Link className="text-ember-400 hover:underline" href={grantsHref}>
-                        Delegate it with a config grant
-                      </Link>
-                      .
-                    </>
-                  )}
-                </>
-              )}
+                  <>
+                    Changing this needs the {platformRoleLabel(setting.requiredRole).toLowerCase()}{' '}
+                    role.
+                    {grantsHref && (
+                      <>
+                        {' '}
+                        <Link className="text-ember-400 hover:underline" href={grantsHref}>
+                          Delegate it with a config grant
+                        </Link>
+                        .
+                      </>
+                    )}
+                  </>
+                )}
+              </span>
             </p>
           )}
-          {canWriteHere && hasOverrideHere && setting.source !== 'DEFAULT' && (
-            <p className="text-xs text-paper-500">Override set here</p>
+          {canWriteHere && hasOverrideHere && setting.source !== 'DEFAULT' && !dirty && (
+            <p className="text-xs text-paper-500">Override set at this scope</p>
           )}
         </div>
       </div>

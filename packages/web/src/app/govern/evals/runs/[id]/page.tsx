@@ -1,11 +1,12 @@
 'use client';
 
-import Link from 'next/link';
 import { use, useState } from 'react';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
+import { BackLink } from '@/components/govern/BackLink';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -52,23 +53,26 @@ const DELTA_TONE = {
 function DeltaRow({ label, d }: { label: string; d: PairedDelta }) {
   return (
     <TRow>
-      <Td className="px-4 py-2 font-mono text-[11px] text-paper-300">{label}</Td>
-      <Td align="right" className="px-4 py-2 font-mono text-[11px] text-paper-400">
+      <Td className="px-4 py-2.5 font-medium text-paper-100" primary>
+        {label}
+      </Td>
+      <Td align="right" className="px-4 py-2.5 text-paper-400 tabular-nums" label="Cases compared">
         {d.n}
       </Td>
-      <Td align="right" className="px-4 py-2 font-mono text-[11px] text-paper-400">
+      <Td align="right" className="px-4 py-2.5 text-paper-300 tabular-nums" label="Baseline">
         {pct(d.baselineRate)}
       </Td>
-      <Td align="right" className="px-4 py-2 font-mono text-[11px] text-paper-400">
+      <Td align="right" className="px-4 py-2.5 text-paper-300 tabular-nums" label="Candidate">
         {pct(d.candidateRate)}
       </Td>
       <Td
         align="right"
-        className={`px-4 py-2 font-mono text-[11px] ${DELTA_TONE[significance(d)]}`}
+        className={`px-4 py-2.5 font-medium tabular-nums ${DELTA_TONE[significance(d)]}`}
+        label="Difference"
       >
         {formatPoints(d.delta)}
       </Td>
-      <Td align="right" className="px-4 py-2 font-mono text-[11px] text-paper-500">
+      <Td align="right" className="px-4 py-2.5 text-paper-500 tabular-nums" label="Likely range">
         {formatPoints(d.ci95[0])} to {formatPoints(d.ci95[1])}
       </Td>
     </TRow>
@@ -77,15 +81,23 @@ function DeltaRow({ label, d }: { label: string; d: PairedDelta }) {
 
 function VerdictView({ summary }: { summary: unknown }) {
   if (summary === null || summary === undefined) {
-    return <p className="text-sm text-paper-500">No verdict yet.</p>;
+    return (
+      <EmptyState
+        hint="The verdict appears once every case has run on both sides."
+        icon="clock"
+        title="No verdict yet"
+      />
+    );
   }
   if (!isVerdict(summary)) {
     // A start failure stores `{ error }`; anything else is shown as stored.
     const error = (summary as { error?: unknown }).error;
     return typeof error === 'string' ? (
-      <p className="font-mono text-xs text-brick-400">{error}</p>
+      <Alert title="The run did not reach a verdict">
+        <span className="font-mono text-xs">{error}</span>
+      </Alert>
     ) : (
-      <pre className="overflow-x-auto font-mono text-[11px] text-paper-400">
+      <pre className="overflow-x-auto rounded-md border border-ink-600 bg-ink-900/60 p-3 font-mono text-xs text-paper-400">
         {JSON.stringify(summary, null, 2)}
       </pre>
     );
@@ -93,53 +105,55 @@ function VerdictView({ summary }: { summary: unknown }) {
   return (
     <div className="space-y-4">
       {summary.partial && (
-        <p className="font-mono text-xs text-amber-400">
+        <Alert variant="warning">
           {`Partial: ${summary.partial.reason === 'org_budget' ? "the organization's monthly budget" : 'the budget'} stopped this run after ${summary.partial.completedCases} of ${summary.partial.totalCases} cases; the verdict covers only those. ${summary.partial.error}`}
-        </p>
+        </Alert>
       )}
       <Alert variant={verdictSentence(summary.overall).tone}>
         {verdictSentence(summary.overall).text}
       </Alert>
-      <p className="font-mono text-xs text-paper-500">{summary.summary}</p>
+      <p className="text-[13px] text-paper-400">{summary.summary}</p>
       {summary.runtimes && (
-        <p className="font-mono text-xs text-paper-400">
+        <p className="text-[13px] text-paper-400">
           {`Ran on: candidate ${describeRuntimes(summary.runtimes.candidate)}, baseline ${describeRuntimes(summary.runtimes.baseline)}`}
         </p>
       )}
-      <Table>
-        <THead>
-          <Th variant="dense">Slice</Th>
-          <Th align="right" variant="dense">
-            <span title="Cases run on both the baseline and the candidate, so each one is compared like for like">
-              Cases compared
-            </span>
-          </Th>
-          <Th align="right" variant="dense">
-            Baseline
-          </Th>
-          <Th align="right" variant="dense">
-            Candidate
-          </Th>
-          <Th align="right" variant="dense">
-            <span title="Candidate pass rate minus baseline pass rate, in percentage points">
-              Difference
-            </span>
-          </Th>
-          <Th align="right" variant="dense">
-            <span title="The range the true difference very likely lies in (95% confidence). If it crosses zero, the difference may be noise.">
-              Likely range
-            </span>
-          </Th>
-        </THead>
-        <tbody>
-          <DeltaRow d={summary.overall} label="Overall" />
-          {Object.entries(summary.byTag ?? {})
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([tag, d]) => (
-              <DeltaRow d={d} key={tag} label={`Tag: ${tag}`} />
-            ))}
-        </tbody>
-      </Table>
+      <div className="-mx-4">
+        <Table className="max-sm:px-4" stacked>
+          <THead>
+            <Th variant="plain">Slice</Th>
+            <Th align="right" variant="plain">
+              <span title="Cases run on both the baseline and the candidate, so each one is compared like for like">
+                Cases compared
+              </span>
+            </Th>
+            <Th align="right" variant="plain">
+              Baseline
+            </Th>
+            <Th align="right" variant="plain">
+              Candidate
+            </Th>
+            <Th align="right" variant="plain">
+              <span title="Candidate pass rate minus baseline pass rate, in percentage points">
+                Difference
+              </span>
+            </Th>
+            <Th align="right" variant="plain">
+              <span title="The range the true difference very likely lies in (95% confidence). If it crosses zero, the difference may be noise.">
+                Likely range
+              </span>
+            </Th>
+          </THead>
+          <tbody>
+            <DeltaRow d={summary.overall} label="Overall" />
+            {Object.entries(summary.byTag ?? {})
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([tag, d]) => (
+                <DeltaRow d={d} key={tag} label={`Tag: ${tag}`} />
+              ))}
+          </tbody>
+        </Table>
+      </div>
     </div>
   );
 }
@@ -150,13 +164,11 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
   const { data: run, error, isError, isFetching, refetch, isLoading } = useEvalRun(id);
 
   return (
-    <div className="space-y-8">
-      <Link
-        className="label-mono hover:text-paper-200"
+    <div className="space-y-6">
+      <BackLink
         href={run ? `/govern/evals/datasets/${run.datasetId}` : '/govern/evals'}
-      >
-        ← Dataset
-      </Link>
+        label={run?.datasetName ?? 'Dataset'}
+      />
       <QueryBoundary
         error={error}
         isError={isError}
@@ -174,13 +186,13 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
             />
             <Card>
               <CardHeader>
-                <CardTitle>Verdict</CardTitle>
+                <CardTitle eyebrow="Candidate vs baseline">Verdict</CardTitle>
               </CardHeader>
               <VerdictView summary={run.summary} />
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>Results</CardTitle>
+                <CardTitle eyebrow="Every signal this run captured">Results</CardTitle>
               </CardHeader>
               <EvalResultsTable
                 evalRunId={id}

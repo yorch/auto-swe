@@ -1,27 +1,47 @@
 /** Shared Recharts styling tokens for the Workshop Telemetry palette. */
 import type { ComponentProps, ReactNode } from 'react';
 import { Tooltip } from 'recharts';
+import { Icon } from '@/components/ui/Icon';
 import { TOKEN } from '@/lib/palette';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
+// Sans, sentence case, tabular figures: axis text is read, not decorated.
 const AXIS_TICK = {
-  fill: TOKEN.paper400,
-  fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  letterSpacing: '0.08em',
-  textTransform: 'uppercase' as const,
+  fill: TOKEN.paper500,
+  fontFamily: 'var(--font-sans)',
+  fontSize: 11,
+  fontVariantNumeric: 'tabular-nums',
 };
 
 export const AXIS_LINE = {
   stroke: TOKEN.ink500,
 };
 
+/** Gridlines are solid hairlines one step off the surface — never dashed. */
 export const GRID_STROKE = TOKEN.ink600;
+
+/** Shared `CartesianGrid` props: solid, recessive, horizontal rules only by default. */
+export const GRID_PROPS = {
+  stroke: GRID_STROKE,
+  strokeWidth: 1,
+} as const;
+
+/** The card surface a mark's ring is drawn in, so dots stay legible where lines cross. */
+export const SURFACE = TOKEN.ink900;
+
+/** Line marks: 2px, round joins; markers r=4 with a 2px surface ring. */
+export const LINE_WIDTH = 2;
+export const DOT_PROPS = { r: 3.5, stroke: SURFACE, strokeWidth: 2 } as const;
+export const ACTIVE_DOT_PROPS = { r: 5, stroke: SURFACE, strokeWidth: 2 } as const;
+
+/** Bars are capped thin, with a 4px rounded data end and a square baseline. */
+export const BAR_MAX_SIZE = 24;
 
 /** Shared axisLine/tick/tickLine props for a value (numeric) axis. */
 export const AXIS_COMMON_PROPS = {
   axisLine: AXIS_LINE,
   tick: AXIS_TICK,
-  tickLine: AXIS_LINE,
+  tickLine: false,
 };
 
 export const TOOLTIP_CURSOR_FILL = TOKEN.ink700;
@@ -42,33 +62,50 @@ export function formatDateLabel(label: unknown) {
 const TOOLTIP_STYLE: React.CSSProperties = {
   background: TOKEN.ink900,
   border: `1px solid ${TOKEN.ink500}`,
-  borderRadius: 2,
+  borderRadius: 8,
+  boxShadow: '0 12px 32px -12px rgba(0,0,0,0.6)',
   color: TOKEN.paper200,
-  fontFamily: 'var(--font-mono)',
-  fontSize: 11,
-  letterSpacing: '0.04em',
-  padding: '8px 10px',
+  fontFamily: 'var(--font-sans)',
+  fontSize: 12,
+  fontVariantNumeric: 'tabular-nums',
+  padding: '8px 12px',
 };
 
 const TOOLTIP_LABEL_STYLE: React.CSSProperties = {
   color: TOKEN.paper400,
-  fontSize: 10,
-  letterSpacing: '0.14em',
+  fontSize: 12,
+  fontWeight: 500,
   marginBottom: 4,
-  textTransform: 'uppercase',
 };
 
+// Values wear text tokens; the swatch Recharts draws beside each row carries identity.
 const TOOLTIP_ITEM_STYLE: React.CSSProperties = {
   color: TOKEN.paper200,
+  padding: '1px 0',
 };
 
 export const LEGEND_STYLE: React.CSSProperties = {
   color: TOKEN.paper400,
-  fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  letterSpacing: '0.12em',
-  textTransform: 'uppercase',
+  fontFamily: 'var(--font-sans)',
+  fontSize: 12,
+  paddingTop: 8,
 };
+
+/** Legend entries in sentence case ("completed" → "Completed"). */
+export function legendLabel(value: unknown): string {
+  const text = String(value);
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * Legend `formatter`: the entry's text in a text token, sentence case. Recharts
+ * paints legend text in the series colour by default; the swatch beside it
+ * already carries identity, and a light series hue is hard to read as text.
+ * The label is shown as given: series names can be data (a model spec).
+ */
+export function legendText(value: unknown) {
+  return <span style={{ color: TOKEN.paper300 }}>{String(value)}</span>;
+}
 
 /** Tooltip with the shared Workshop Telemetry content/item/label styling baked in. */
 export function ChartTooltip(
@@ -88,9 +125,8 @@ export function ChartTooltip(
 export function axisLabel(value: string, vertical = false) {
   return {
     fill: TOKEN.paper500,
-    fontFamily: 'var(--font-mono)',
-    fontSize: 10,
-    letterSpacing: '0.08em',
+    fontFamily: 'var(--font-sans)',
+    fontSize: 11,
     value,
     ...(vertical
       ? { angle: -90, position: 'insideLeft' as const, style: { textAnchor: 'middle' as const } }
@@ -123,15 +159,27 @@ export function ChartFrame({
       <div aria-label={ariaLabel} role="img">
         {children}
       </div>
-      <details className="mt-2 text-xs text-paper-400">
-        <summary className="cursor-pointer select-none hover:text-paper-200">View as table</summary>
-        <div className="mt-2 max-h-64 overflow-auto">
-          <table className="w-full text-left font-mono text-[11px]">
+      <details className="group mt-3 border-t border-ink-600 pt-2 text-xs text-paper-400">
+        <summary
+          className={cn(
+            'inline-flex cursor-pointer select-none items-center gap-1 rounded-sm py-0.5 hover:text-paper-200 [&::-webkit-details-marker]:hidden',
+            FOCUS_RING
+          )}
+        >
+          <Icon
+            className="transition-transform group-open:rotate-90"
+            name="chevronRight"
+            size={12}
+          />
+          View as table
+        </summary>
+        <div className="mt-2 max-h-64 overflow-auto rounded-md border border-ink-600">
+          <table className="w-full text-left text-xs tabular-nums">
             <caption className="sr-only">{ariaLabel}</caption>
-            <thead>
+            <thead className="sticky top-0 bg-ink-800">
               <tr className="border-b border-ink-600 text-paper-500">
                 {table.columns.map((c) => (
-                  <th className="px-2 py-1 font-medium" key={c} scope="col">
+                  <th className="px-3 py-1.5 font-medium" key={c} scope="col">
                     {c}
                   </th>
                 ))}
@@ -143,7 +191,7 @@ export function ChartFrame({
                 <tr className="border-b border-ink-700 last:border-0" key={i}>
                   {row.map((cell, j) => (
                     // biome-ignore lint/suspicious/noArrayIndexKey: static cells
-                    <td className="px-2 py-1 text-paper-300" key={j}>
+                    <td className="px-3 py-1.5 text-paper-300" key={j}>
                       {cell}
                     </td>
                   ))}
@@ -157,7 +205,6 @@ export function ChartFrame({
   );
 }
 
-/** Joins the optional title with a generated summary into an `aria-label`. */
 /** How wide one point on a time-series chart is: the gateway buckets long windows by week. */
 export type ChartGranularity = 'day' | 'week';
 
@@ -168,6 +215,7 @@ export function granularityWords(granularity: ChartGranularity) {
     : { adjective: 'Daily', dateColumn: 'Date (UTC)', plural: 'days', singular: 'day' };
 }
 
+/** Joins the optional title with a generated summary into an `aria-label`. */
 export function chartAriaLabel(title: string | undefined, fallback: string, summary: string) {
   return `${title ?? fallback}. ${summary}`;
 }
@@ -175,8 +223,11 @@ export function chartAriaLabel(title: string | undefined, fallback: string, summ
 /** A settled empty result: a compact sentence, not a chart-sized void. */
 export function EmptyChart({ label = 'No data yet.', hint }: { label?: string; hint?: string }) {
   return (
-    <div className="flex min-h-[120px] flex-col items-center justify-center text-center">
-      <p className="text-sm text-paper-300">{label}</p>
+    <div className="flex min-h-[160px] flex-col items-center justify-center rounded-lg border border-dashed border-ink-500 bg-ink-900/30 px-4 text-center">
+      <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-full border border-ink-400 bg-ink-700 text-paper-500">
+        <Icon name="analytics" size={15} />
+      </span>
+      <p className="text-sm font-medium text-paper-200">{label}</p>
       {hint && <p className="mt-1 text-xs text-paper-500">{hint}</p>}
     </div>
   );

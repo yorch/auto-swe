@@ -2,13 +2,15 @@
 
 import type { ScheduledWorkRequestSummary } from '@auto-swe/shared/types/api';
 import { useId, useState } from 'react';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -16,6 +18,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import {
@@ -29,11 +32,19 @@ import { useLedTeamIds } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 import { BUDGET_TIER_OPTIONS } from '@/lib/govLabels';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
-function fmtTime(iso: string | null | undefined): string {
-  return iso ? formatDate(iso) : '—';
+/** A fire time, relative ("in 3 days") with the exact time on hover; a dash when there is none. */
+function When({ iso }: { iso: string | null | undefined }) {
+  if (!iso) {
+    return <span className="text-paper-600">—</span>;
+  }
+  return (
+    <time className="whitespace-nowrap tabular-nums" dateTime={iso} title={formatDate(iso)}>
+      {formatRelativeTime(iso)}
+    </time>
+  );
 }
 
 type ScheduleForm = {
@@ -180,7 +191,7 @@ function ScheduleFormModal({
             value={teamId}
           />
         )}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           <Input
             hint="Minute hour day month weekday, in UTC. 0 3 * * 1 is Mondays at 03:00."
             id={`${uid}-cron`}
@@ -202,7 +213,7 @@ function ScheduleFormModal({
             />
           )}
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           <Combobox
             id={`${uid}-template`}
             label="Workflow template"
@@ -297,59 +308,67 @@ function ScheduleRow({
 
   return (
     <>
-      <TRow>
-        <Td className="py-2 pr-4">
+      <TRow hover>
+        <Td className="px-4 py-3" primary>
           <div className="font-medium text-paper-100">{schedule.name}</div>
-          <div className="font-mono text-[10px] text-paper-500">{schedule.externalTicketId}</div>
-          {/* Whose GitHub identity fires act as; editing it or firing it by hand makes it yours. */}
-          <div className="text-[11px] text-paper-500">Runs as: {actsAsName}</div>
-        </Td>
-        <Td className="py-2 pr-4 text-paper-400">
-          {schedule.repository.organizationName}/{schedule.repository.repoName}
-          <div className="text-[11px] text-paper-500">
-            Team: {schedule.team?.name ?? 'none (team deleted)'}
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-paper-500">
+            <span className="font-mono">{schedule.externalTicketId}</span>
+            {/* Whose GitHub identity fires act as; editing it or firing it by hand makes it yours. */}
+            <span>Runs as {actsAsName}</span>
           </div>
         </Td>
-        <Td className="py-2 pr-4 font-mono text-xs text-paper-300">{schedule.cronExpression}</Td>
-        <Td className="py-2 pr-4 text-paper-400">
-          {schedule.template
-            ? `${schedule.template.name} v${schedule.templateVersion ?? '?'}`
-            : 'team default'}
+        <Td className="px-4 py-3" label="Repository">
+          <div className="whitespace-nowrap font-mono text-[13px] text-paper-200">
+            {schedule.repository.organizationName}/{schedule.repository.repoName}
+          </div>
+          <div className="mt-0.5 text-xs text-paper-500">
+            {schedule.team ? `Team ${schedule.team.name}` : 'No team (team deleted)'}
+          </div>
         </Td>
-        <Td className="py-2 pr-4">
-          <Badge tone={livePaused ? 'muted' : 'ember'} uppercase variant="text">
-            {livePaused ? 'paused' : 'active'}
-          </Badge>
-          {mismatch && (
-            <Badge
-              className="ml-2"
-              title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but the scheduler has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
-              tone="brick"
-              uppercase
-              variant="text"
-            >
-              out of sync
+        <Td className="px-4 py-3" label="Schedule">
+          <code className="whitespace-nowrap font-mono text-[13px] text-paper-200">
+            {schedule.cronExpression}
+          </code>
+          <div className="mt-0.5 text-xs text-paper-500">
+            {schedule.template
+              ? `${schedule.template.name} v${schedule.templateVersion ?? '?'}`
+              : 'Team default template'}
+          </div>
+        </Td>
+        <Td className="px-4 py-3" label="Status">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge dot tone={livePaused ? 'muted' : 'moss'} variant="outline">
+              {livePaused ? 'Paused' : 'Active'}
             </Badge>
-          )}
-          {!schedule.schedule.exists && (
-            <Badge
-              className="ml-2"
-              title="The scheduler has no trigger for this schedule. Edit and save it to create the trigger again."
-              tone="brick"
-              uppercase
-              variant="text"
-            >
-              Not running — re-save to repair
-            </Badge>
-          )}
+            {mismatch && (
+              <Badge
+                title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but the scheduler has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
+                tone="brick"
+                variant="outline"
+              >
+                Out of sync
+              </Badge>
+            )}
+            {!schedule.schedule.exists && (
+              <Badge
+                title="The scheduler has no trigger for this schedule. Edit and save it to create the trigger again."
+                tone="brick"
+                variant="outline"
+              >
+                Not running — re-save to repair
+              </Badge>
+            )}
+          </div>
         </Td>
-        <Td className="py-2 pr-4 text-xs text-paper-400">{fmtTime(schedule.schedule.nextRunAt)}</Td>
-        <Td className="py-2 pr-4 text-xs text-paper-400">
-          {fmtTime(schedule.schedule.lastRunAt ?? schedule.lastFiredAt)}
+        <Td className="px-4 py-3 text-[13px] text-paper-300" label="Next fire">
+          <When iso={schedule.schedule.nextRunAt} />
         </Td>
-        <Td className="py-2 text-right">
+        <Td className="px-4 py-3 text-[13px] text-paper-400" label="Last fire">
+          <When iso={schedule.schedule.lastRunAt ?? schedule.lastFiredAt} />
+        </Td>
+        <Td align="right" className="px-4 py-3">
           {schedule.canManage ? (
-            <div className="flex justify-end gap-1">
+            <div className="flex items-center justify-end gap-1">
               {/* One source of truth for "is it running": the live state the badge shows. */}
               <Button
                 disabled={fire.isPending || livePaused}
@@ -358,29 +377,35 @@ function ScheduleRow({
                 }
                 size="sm"
                 title={livePaused ? 'Paused: resume the schedule before firing it' : undefined}
-                variant="ghost"
               >
                 {fire.isPending ? 'Firing…' : 'Fire now'}
               </Button>
-              <Button onClick={onEdit} size="sm" variant="ghost">
-                Edit
-              </Button>
-              <Button
-                disabled={update.isPending}
-                onClick={() =>
-                  resume && takesOver && !schedule.isActive ? setConfirmResume(true) : run(toggle)
-                }
-                size="sm"
-                variant="ghost"
-              >
-                {resume ? 'Resume' : 'Pause'}
-              </Button>
-              <Button onClick={onDelete} size="sm" variant="danger">
-                Delete
-              </Button>
+              <ActionMenu
+                items={[
+                  { icon: 'edit', id: 'edit', label: 'Edit', onAction: onEdit },
+                  {
+                    disabled: update.isPending,
+                    icon: resume ? 'refresh' : 'clock',
+                    id: 'toggle',
+                    label: resume ? 'Resume' : 'Pause',
+                    onAction: () =>
+                      resume && takesOver && !schedule.isActive
+                        ? setConfirmResume(true)
+                        : void run(toggle),
+                  },
+                  {
+                    icon: 'trash',
+                    id: 'delete',
+                    label: 'Delete',
+                    onAction: onDelete,
+                    tone: 'danger',
+                  },
+                ]}
+                label={`Actions for ${schedule.name}`}
+              />
             </div>
           ) : (
-            <span className="text-[11px] text-paper-500">Team leads manage this schedule</span>
+            <span className="text-xs text-paper-500">Team leads manage this schedule</span>
           )}
         </Td>
       </TRow>
@@ -403,7 +428,7 @@ function ScheduleRow({
         title={`Fire "${schedule.name}" as yourself?`}
       />
       {error && (
-        <TableStatusRow colSpan={8}>
+        <TableStatusRow colSpan={7}>
           <Alert>{error}</Alert>
         </TableStatusRow>
       )}
@@ -419,6 +444,7 @@ export default function GovernSchedulesPage() {
   // Mirrors the gateway: an ADMIN, or a lead of the owning or a shared team.
   const canCreate = isAdmin || (ledTeamIds?.size ?? 0) > 0;
   const [deleteTarget, setDeleteTarget] = useState<ScheduledWorkRequestSummary | null>(null);
+  const [query, setQuery] = useState('');
   const deleteSchedule = useDeleteSchedule();
   const {
     data: schedules,
@@ -429,18 +455,29 @@ export default function GovernSchedulesPage() {
     error: loadError,
   } = useSchedules();
 
+  const needle = query.trim().toLowerCase();
+  const shown = (schedules ?? []).filter(
+    (s) =>
+      !needle ||
+      [
+        s.name,
+        s.externalTicketId,
+        `${s.repository.organizationName}/${s.repository.repoName}`,
+        s.team?.name ?? '',
+      ].some((text) => text.toLowerCase().includes(needle))
+  );
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         actions={
           <div className="flex flex-col items-end gap-1">
             <Button disabled={!canCreate} onClick={() => setNewOpen(true)} variant="primary">
+              <Icon name="plus" size={14} />
               Create schedule
             </Button>
             {!canCreate && ledTeamIds && (
-              <span className="text-[11px] text-paper-500">
-                Only team leads can create schedules
-              </span>
+              <span className="text-xs text-paper-500">Only team leads can create schedules</span>
             )}
           </div>
         }
@@ -449,9 +486,6 @@ export default function GovernSchedulesPage() {
       />
 
       <Card>
-        <CardHeader>
-          <CardTitle>All schedules</CardTitle>
-        </CardHeader>
         <QueryBoundary
           error={loadError}
           isError={isError}
@@ -461,30 +495,73 @@ export default function GovernSchedulesPage() {
           onRetry={() => void refetch()}
         >
           {!schedules?.length ? (
-            <EmptyState title="No schedules yet. Create one with the button above." />
+            <EmptyState
+              action={
+                canCreate ? (
+                  <Button onClick={() => setNewOpen(true)} size="sm">
+                    Create schedule
+                  </Button>
+                ) : undefined
+              }
+              hint="A schedule starts the same workflow on a timetable — a weekly dependency update, a nightly lint fix. Runs appear in your run history."
+              icon="clock"
+              title="No schedules yet"
+            />
           ) : (
-            <Table>
-              <THead>
-                <Th variant="compact">Name</Th>
-                <Th variant="compact">Repository</Th>
-                <Th variant="compact">Cron</Th>
-                <Th variant="compact">Workflow template</Th>
-                <Th variant="compact">Status</Th>
-                <Th variant="compact">Next fire</Th>
-                <Th variant="compact">Last fire</Th>
-                <Th variant="compact" />
-              </THead>
-              <tbody>
-                {schedules.map((s) => (
-                  <ScheduleRow
-                    key={s.id}
-                    onDelete={() => setDeleteTarget(s)}
-                    onEdit={() => setEditTarget(s)}
-                    schedule={s}
-                  />
-                ))}
-              </tbody>
-            </Table>
+            <>
+              <Toolbar
+                end={
+                  <span className="text-xs text-paper-500 tabular-nums">
+                    {needle ? `${shown.length} of ${schedules.length}` : schedules.length} schedule
+                    {schedules.length === 1 ? '' : 's'} · times in your time zone, cron in UTC
+                  </span>
+                }
+              >
+                <SearchInput
+                  label="Search schedules"
+                  onChange={setQuery}
+                  placeholder="Search schedules…"
+                  value={query}
+                />
+              </Toolbar>
+              {shown.length === 0 ? (
+                <EmptyState
+                  action={
+                    <Button onClick={() => setQuery('')} size="sm">
+                      Clear search
+                    </Button>
+                  }
+                  icon="search"
+                  title="No schedules match your search"
+                />
+              ) : (
+                <div className="-mx-4">
+                  <Table className="max-sm:px-4" stacked>
+                    <THead>
+                      <Th variant="plain">Name</Th>
+                      <Th variant="plain">Repository</Th>
+                      <Th variant="plain">Schedule</Th>
+                      <Th variant="plain">Status</Th>
+                      <Th variant="plain">Next fire</Th>
+                      <Th variant="plain">Last fire</Th>
+                      <Th variant="plain">
+                        <span className="sr-only">Actions</span>
+                      </Th>
+                    </THead>
+                    <tbody>
+                      {shown.map((s) => (
+                        <ScheduleRow
+                          key={s.id}
+                          onDelete={() => setDeleteTarget(s)}
+                          onEdit={() => setEditTarget(s)}
+                          schedule={s}
+                        />
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+              )}
+            </>
           )}
         </QueryBoundary>
       </Card>
