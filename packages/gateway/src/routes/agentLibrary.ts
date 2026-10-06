@@ -492,6 +492,20 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         request.body,
         actor.sub
       );
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: { runtime: agent.runtime, version: agent.version },
+        before: {
+          key: current.key,
+          runtime: current.runtime,
+          scope: 'TEAM',
+          teamId: current.teamId,
+          version: current.version,
+        },
+        entityId: agent.id,
+        entityType: 'Agent',
+      });
       return reply.send({
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),

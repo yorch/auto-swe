@@ -769,4 +769,42 @@ describe('agent runtime', () => {
     }
     await app.close();
   });
+
+  it('audits a team admin edit like the platform route does', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ runtime: 'claude-code' }));
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'v2',
+      runtime: 'claude-code',
+      skillRefs: [],
+      version: 2,
+    });
+    const res = await app.inject({
+      body: { modelSpec: 'anthropic/claude-sonnet-5-5' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockPrisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+    const { data } = mockPrisma.configAuditLog.create.mock.calls[0]?.[0] ?? {};
+    expect(data).toMatchObject({ action: 'UPDATE', entityId: 'v2', entityType: 'Agent' });
+    await app.close();
+  });
+
+  it('writes no audit row when a team admin edit is refused', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ runtime: 'claude-code' }));
+    const res = await app.inject({
+      body: { runtime: 'mastra' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+    await app.close();
+  });
 });
