@@ -1,23 +1,28 @@
 'use client';
 
+import type { UserSummary } from '@auto-swe/shared/types/api';
 import { useMemo, useState } from 'react';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { SkeletonRows } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 import { platformRoleLabel, roleChangeNeedsConfirm } from '@/lib/govLabels';
 import { navLabel } from '@/lib/navigation';
-import { cn } from '@/lib/utils';
+import { cn, plural } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
@@ -27,6 +32,14 @@ const ROLE_OPTIONS: { label: string; value: Role }[] = [
   { label: platformRoleLabel('LEAD'), value: 'LEAD' },
   { label: platformRoleLabel('ADMIN'), value: 'ADMIN' },
 ];
+
+/** A user's team names, comma-separated; empty when they belong to none. */
+function teamNames(u: UserSummary): string {
+  return (u.memberships ?? [])
+    .map((m) => m.team?.name)
+    .filter(Boolean)
+    .join(', ');
+}
 
 const ROLE_CONSEQUENCE: Record<Role, string> = {
   ADMIN: 'full access to every team and all platform settings',
@@ -54,6 +67,8 @@ export default function UsersPage() {
   } | null>(null);
   const [roleError, setRoleError] = useState<string | null>(null);
   const [suspendTarget, setSuspendTarget] = useState<{ email: string; id: string } | null>(null);
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'' | Role>('');
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
   // users get a dedicated top section so admins notice them; the rest go
@@ -73,6 +88,12 @@ export default function UsersPage() {
 
   const header = (
     <PageHeader
+      actions={
+        <Button onClick={() => setCreatingDirect(true)} variant="secondary">
+          <Icon name="plus" size={14} />
+          Create user directly
+        </Button>
+      }
       subtitle="Manage who can sign in to the control plane. People who sign up with GitHub, Google or an email link wait in the pending queue until an admin approves them."
       title={navLabel('/govern/users')}
     />
@@ -80,17 +101,21 @@ export default function UsersPage() {
 
   if (isLoading || isError) {
     return (
-      <div className="space-y-8">
+      <div className="space-y-6">
         {header}
         <QueryBoundary
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={isLoading}
+          isLoading={false}
           label="users"
-          loadingMessage="loading users…"
           onRetry={() => void refetch()}
-        />
+        >
+          <Card>
+            <SkeletonRows rows={5} />
+          </Card>
+        </QueryBoundary>
+        <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
       </div>
     );
   }
@@ -131,210 +156,259 @@ export default function UsersPage() {
     }
   };
 
+  const query = search.trim().toLowerCase();
+  const filtering = query !== '' || roleFilter !== '';
+  const visible = active.filter(
+    (u) =>
+      (!roleFilter || u.role === roleFilter) &&
+      (!query ||
+        u.email.toLowerCase().includes(query) ||
+        (u.slackId ?? '').toLowerCase().includes(query) ||
+        teamNames(u).toLowerCase().includes(query))
+  );
+  const clearFilters = () => {
+    setSearch('');
+    setRoleFilter('');
+  };
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {header}
 
       {/* Invite by email — admin sends a magic-link to the address. The
           invitee lands pre-active + pre-membered to the default team.
           For service accounts (or when SMTP/Resend isn't configured),
-          "+ Create directly" pops the CreateUserModal which posts to
+          "Create directly" pops the CreateUserModal which posts to
           POST /api/v1/users and reveals an auto-generated password once. */}
-      <section className="fade-up stagger-1">
-        <SectionHeader
-          actions={
-            <Button onClick={() => setCreatingDirect(true)} size="sm" variant="secondary">
-              Create directly
-            </Button>
-          }
-          hint="email + magic link"
-          number="01"
-          title="Invite a teammate"
-        />
-        <Card variant="inset">
-          {inviteError && (
-            <Alert className="mb-3" variant="error">
-              {inviteError}
-            </Alert>
-          )}
-          {inviteInfo && (
-            <Alert className="mb-3" variant="success">
-              {inviteInfo}
-            </Alert>
-          )}
-          <form className="flex flex-wrap items-end gap-3" onSubmit={handleInvite}>
-            <div className="flex-1 min-w-[240px]">
-              <Input
-                label="Email"
-                name="invite-email"
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="teammate@workshop.dev"
-                required
-                type="email"
-                value={inviteEmail}
-              />
-            </div>
-            <div>
-              <Select
-                className="w-auto"
-                id="invite-role"
-                label="Role"
-                onChange={(v) => setInviteRole(v as Role)}
-                options={ROLE_OPTIONS}
-                value={inviteRole}
-              />
-            </div>
-            <Button disabled={inviteUser.isPending} size="md" type="submit" variant="primary">
-              {inviteUser.isPending ? 'Sending…' : 'Send invite'}
-            </Button>
-          </form>
-        </Card>
-      </section>
+      <Card className="fade-up stagger-1">
+        <CardHeader className="mb-1">
+          <CardTitle>Invite a teammate</CardTitle>
+        </CardHeader>
+        <p className="mb-4 text-[13px] text-paper-400">
+          They get a magic-link email and join the default team, already approved.
+        </p>
+        {inviteError && (
+          <Alert className="mb-4" variant="error">
+            {inviteError}
+          </Alert>
+        )}
+        {inviteInfo && (
+          <Alert className="mb-4" variant="success">
+            {inviteInfo}
+          </Alert>
+        )}
+        <form
+          className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto]"
+          onSubmit={handleInvite}
+        >
+          <Input
+            label="Email"
+            name="invite-email"
+            onChange={(e) => setInviteEmail(e.target.value)}
+            placeholder="teammate@workshop.dev"
+            required
+            type="email"
+            value={inviteEmail}
+          />
+          <Select
+            id="invite-role"
+            label="Role"
+            onChange={(v) => setInviteRole(v as Role)}
+            options={ROLE_OPTIONS}
+            value={inviteRole}
+          />
+          <Button className="h-9" disabled={inviteUser.isPending} type="submit" variant="primary">
+            {inviteUser.isPending ? 'Sending…' : 'Send invite'}
+          </Button>
+        </form>
+      </Card>
 
       {pending.length > 0 && (
-        <section className="fade-up stagger-2">
-          <SectionHeader
-            hint={`${pending.length} awaiting approval`}
-            number="02"
-            title="Pending sign-ups"
-          />
-          <Card variant="inset">
-            {approveError && (
-              <Alert className="mb-3" variant="error">
-                {approveError}
-              </Alert>
-            )}
-            <ul className="divide-y divide-ink-600">
-              {pending.map((u) => (
-                <li className="flex items-center justify-between py-3" key={u.id}>
-                  <div className="flex items-center gap-3">
-                    <Badge dot tone="amber" uppercase variant="text">
-                      pending
-                    </Badge>
-                    <div>
-                      <div className="text-sm text-paper-100">{u.email}</div>
-                      <div className="font-mono text-[11px] text-paper-500">
-                        Role: {platformRoleLabel(u.role)}
-                        {u.memberships && u.memberships.length > 0 && (
-                          <>
-                            {' · Teams: '}
-                            {u.memberships
-                              .map((m) => m.team?.name)
-                              .filter(Boolean)
-                              .join(', ')}
-                          </>
-                        )}
-                      </div>
-                    </div>
+        <Card className="fade-up stagger-2 border-amber-400/30">
+          <CardHeader className="mb-1">
+            <CardTitle>Pending sign-ups</CardTitle>
+            <Badge dot tone="amber">
+              {pending.length} awaiting approval
+            </Badge>
+          </CardHeader>
+          <p className="mb-2 text-[13px] text-paper-400">
+            These people signed up but cannot sign in until you approve them.
+          </p>
+          {approveError && (
+            <Alert className="mb-3" variant="error">
+              {approveError}
+            </Alert>
+          )}
+          <ul className="divide-y divide-ink-600">
+            {pending.map((u) => (
+              <li className="flex flex-wrap items-center justify-between gap-3 py-3" key={u.id}>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-paper-100">{u.email}</div>
+                  <div className="mt-0.5 text-xs text-paper-500">
+                    {platformRoleLabel(u.role)}
+                    {teamNames(u) && <> · {teamNames(u)}</>}
                   </div>
-                  <Button
-                    disabled={approvingId !== null}
-                    onClick={() => handleApprove(u.id)}
-                    size="sm"
-                    variant="primary"
-                  >
-                    {approvingId === u.id ? 'Approving…' : 'Approve'}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        </section>
+                </div>
+                <Button
+                  disabled={approvingId !== null}
+                  onClick={() => handleApprove(u.id)}
+                  size="sm"
+                  variant="primary"
+                >
+                  <Icon name="check" size={14} />
+                  {approvingId === u.id ? 'Approving…' : 'Approve'}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
 
-      <section className={cn('fade-up', pending.length > 0 ? 'stagger-3' : 'stagger-2')}>
-        <SectionHeader
-          hint={`${active.length} active`}
-          number={pending.length > 0 ? '03' : '02'}
-          title="Active members"
-        />
+      <Card className={cn('fade-up p-4 sm:p-6', pending.length > 0 ? 'stagger-3' : 'stagger-2')}>
+        <CardHeader>
+          <CardTitle>Active members</CardTitle>
+        </CardHeader>
+        <Toolbar
+          end={
+            <span className="text-xs text-paper-500 tabular-nums">
+              {filtering
+                ? `${visible.length} of ${plural(active.length, 'member')}`
+                : plural(active.length, 'member')}
+            </span>
+          }
+        >
+          <SearchInput
+            label="Search members"
+            onChange={setSearch}
+            placeholder="Search members…"
+            value={search}
+          />
+          <Select
+            aria-label="Filter by role"
+            className="h-8 w-full text-[13px] sm:w-40"
+            onChange={(v) => setRoleFilter(v as '' | Role)}
+            options={[{ label: 'All roles', value: '' }, ...ROLE_OPTIONS]}
+            value={roleFilter}
+          />
+          {filtering && (
+            <Button onClick={clearFilters} size="sm" variant="ghost">
+              Clear filters
+            </Button>
+          )}
+        </Toolbar>
         {roleError && (
           <Alert className="mb-3" variant="error">
             {roleError}
           </Alert>
         )}
-        <Card className="overflow-x-auto p-0" variant="inset">
-          <Table stacked>
-            <THead>
-              <Th>Email</Th>
-              <Th>Role</Th>
-              <Th>Slack</Th>
-              <Th>Teams</Th>
-              <Th align="right">Actions</Th>
-            </THead>
-            <tbody>
-              {active.map((u) => (
-                <TRow key={u.id}>
-                  <Td className="px-4 py-3 text-sm text-paper-100" primary>
-                    {u.email}
+        <Table stacked>
+          <THead>
+            <Th className="pl-0" variant="plain">
+              Member
+            </Th>
+            <Th variant="plain">Role</Th>
+            <Th variant="plain">Slack</Th>
+            <Th className="pr-0" variant="plain">
+              <span className="sr-only">Actions</span>
+            </Th>
+          </THead>
+          <tbody>
+            {visible.map((u) => (
+              <TRow hover key={u.id}>
+                <Td className="py-3 pr-4" primary>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-medium text-paper-100">{u.email}</span>
                     {u.id === currentUserId && (
-                      <Badge className="ml-2" tone="ember" variant="outline">
+                      <Badge tone="ember" variant="outline">
                         You
                       </Badge>
                     )}
-                  </Td>
-                  <Td className="px-4 py-3" label="Role">
-                    {/* Changing your own role could lock you out mid-session. */}
-                    {u.id === currentUserId ? (
-                      <Badge tone="ember" uppercase variant="outline">
-                        {platformRoleLabel(u.role)}
-                      </Badge>
-                    ) : (
-                      <Select
-                        aria-label={`Role for ${u.email}`}
-                        className="w-32"
-                        compact
-                        onChange={(v) => {
-                          const to = v as Role;
-                          const from = u.role as Role;
-                          if (to === from) {
-                            return;
-                          }
-                          if (roleChangeNeedsConfirm(from, to)) {
-                            setRoleChange({ email: u.email, from, id: u.id, to });
-                          } else {
-                            void applyRole(u.id, to).catch(() => undefined);
-                          }
-                        }}
-                        options={ROLE_OPTIONS}
-                        value={u.role}
-                      />
-                    )}
-                  </Td>
-                  <Td className="px-4 py-3 font-mono text-xs text-paper-400" label="Slack">
-                    {u.slackId ?? <span className="text-paper-500">—</span>}
-                  </Td>
-                  <Td className="px-4 py-3 font-mono text-xs text-paper-400" label="Teams">
-                    {(u.memberships ?? [])
-                      .map((m) => m.team?.name)
-                      .filter(Boolean)
-                      .join(', ') || <span className="text-paper-500">—</span>}
-                  </Td>
-                  <Td className="px-4 py-3 text-right">
-                    {/* Suspending yourself would lock you out mid-session. */}
-                    {u.id === currentUserId ? (
-                      <span className="sr-only">Your own account cannot be suspended</span>
-                    ) : (
-                      <Button
-                        onClick={() => setSuspendTarget({ email: u.email, id: u.id })}
-                        size="sm"
-                        variant="danger"
-                      >
-                        Suspend
+                  </div>
+                  <div className="mt-0.5 truncate text-xs font-normal text-paper-500">
+                    {teamNames(u) || 'No team'}
+                  </div>
+                </Td>
+                <Td className="px-4 py-3" label="Role">
+                  {/* Changing your own role could lock you out mid-session. */}
+                  {u.id === currentUserId ? (
+                    <Badge title="You cannot change your own role" tone="ember" variant="outline">
+                      {platformRoleLabel(u.role)}
+                    </Badge>
+                  ) : (
+                    <Select
+                      aria-label={`Role for ${u.email}`}
+                      className="w-32"
+                      compact
+                      onChange={(v) => {
+                        const to = v as Role;
+                        const from = u.role as Role;
+                        if (to === from) {
+                          return;
+                        }
+                        if (roleChangeNeedsConfirm(from, to)) {
+                          setRoleChange({ email: u.email, from, id: u.id, to });
+                        } else {
+                          void applyRole(u.id, to).catch(() => undefined);
+                        }
+                      }}
+                      options={ROLE_OPTIONS}
+                      value={u.role}
+                    />
+                  )}
+                </Td>
+                <Td className="px-4 py-3" label="Slack">
+                  {u.slackId ? (
+                    <span className="font-mono text-xs text-paper-300">{u.slackId}</span>
+                  ) : (
+                    <span className="text-xs text-paper-500">Not linked</span>
+                  )}
+                </Td>
+                <Td align="right" className="py-3 pl-4">
+                  {/* Suspending yourself would lock you out mid-session. */}
+                  {u.id === currentUserId ? (
+                    <span className="sr-only">Your own account cannot be suspended</span>
+                  ) : (
+                    <ActionMenu
+                      items={[
+                        {
+                          icon: 'lock',
+                          id: 'suspend',
+                          label: 'Suspend',
+                          onAction: () => setSuspendTarget({ email: u.email, id: u.id }),
+                          tone: 'danger',
+                        },
+                      ]}
+                      label={`More actions for ${u.email}`}
+                    />
+                  )}
+                </Td>
+              </TRow>
+            ))}
+            {visible.length === 0 && (
+              <TableStatusRow colSpan={4}>
+                {filtering ? (
+                  <EmptyState
+                    action={
+                      <Button onClick={clearFilters} size="sm">
+                        Clear filters
                       </Button>
-                    )}
-                  </Td>
-                </TRow>
-              ))}
-              {active.length === 0 && (
-                <TableStatusRow colSpan={5}>
-                  <EmptyState title="No active members" />
-                </TableStatusRow>
-              )}
-            </tbody>
-          </Table>
-        </Card>
-      </section>
+                    }
+                    hint="Try a different search or role."
+                    icon="search"
+                    title="No members match these filters"
+                  />
+                ) : (
+                  <EmptyState
+                    hint="Invite a teammate above, or approve a pending sign-up."
+                    icon="users"
+                    title="No active members"
+                  />
+                )}
+              </TableStatusRow>
+            )}
+          </tbody>
+        </Table>
+      </Card>
 
       <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
       <ConfirmModal

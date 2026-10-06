@@ -104,7 +104,7 @@ export function TeamFormModal({
         />
         {!isEdit && (
           <Input
-            hint="lowercase-kebab-case. Auto-derived from the name if blank."
+            hint="Lowercase letters, numbers and hyphens. Derived from the name when left blank."
             label="Slug"
             onChange={(e) => setSlug(e.target.value)}
             pattern="[a-z0-9-]+"

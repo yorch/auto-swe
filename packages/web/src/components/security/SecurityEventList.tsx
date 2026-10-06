@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { type ReactNode, useId, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import type { SecurityEvent, SecurityEventType } from '@/hooks/useAdmin';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 
@@ -118,7 +119,7 @@ function expandedDetail(event: SecurityEvent): ReactNode {
       <ul className="space-y-1 mt-1.5">
         {findings.map((f) => (
           <li
-            className="flex flex-wrap gap-x-2 font-mono text-[10px] text-paper-300"
+            className="flex flex-wrap gap-x-2 font-mono text-xs text-paper-300"
             key={`${f.file}:${f.line}:${f.label}`}
           >
             <span className="text-dust-400 shrink-0">{f.label}</span>
@@ -140,7 +141,7 @@ function expandedDetail(event: SecurityEvent): ReactNode {
     return (
       <ul className="mt-1.5 space-y-0.5">
         {warnings.map((w) => (
-          <li className="break-words font-mono text-[10px] text-violet-400" key={w}>
+          <li className="break-words font-mono text-xs text-violet-400" key={w}>
             {w}
           </li>
         ))}
@@ -160,7 +161,7 @@ function expandedDetail(event: SecurityEvent): ReactNode {
     return (
       <ul className="mt-1.5 space-y-0.5">
         {relevantLines.map((l) => (
-          <li className="break-words font-mono text-[10px] text-paper-300" key={l}>
+          <li className="break-words font-mono text-xs text-paper-300" key={l}>
             {l.trim()}
           </li>
         ))}
@@ -174,7 +175,7 @@ function expandedDetail(event: SecurityEvent): ReactNode {
       return null;
     }
     return (
-      <pre className="mt-1.5 font-mono text-[10px] text-paper-300 bg-ink-900 px-2 py-1 rounded overflow-x-auto whitespace-pre-wrap break-all">
+      <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-ink-500 bg-ink-900/70 px-3 py-2 font-mono text-xs text-paper-200">
         {cmd}
       </pre>
     );
@@ -191,16 +192,28 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
   const { primary, secondary } = extractDetail(event);
   const detail = expandedDetail(event);
   const summary = (
-    <div className="flex items-center gap-2 text-xs">
+    <div className="flex min-w-0 items-center gap-2.5 text-xs">
+      {detail ? (
+        <Icon
+          className={cn(
+            'shrink-0 text-paper-500 transition-transform',
+            expanded && 'rotate-90 text-paper-300'
+          )}
+          name="chevronRight"
+          size={14}
+        />
+      ) : (
+        <span aria-hidden className="w-3.5 shrink-0" />
+      )}
       <SecurityEventBadge type={event.eventType} />
-      <span className="font-mono text-paper-200 truncate">{primary}</span>
+      <span className="min-w-0 truncate font-mono text-[13px] text-paper-100">{primary}</span>
       {secondary && (
-        <span className="font-mono text-paper-500 text-[10px] truncate hidden sm:block">
+        <span className="hidden min-w-0 truncate font-mono text-paper-500 sm:block">
           {secondary}
         </span>
       )}
       <time
-        className="ml-auto text-[10px] text-paper-500 shrink-0"
+        className="ml-auto shrink-0 whitespace-nowrap text-paper-500 tabular-nums"
         dateTime={event.createdAt}
         title={formatDate(event.createdAt, { showSeconds: true })}
       >
@@ -210,14 +223,14 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
   );
 
   return (
-    <li>
+    <li className="py-1.5">
       {/* Only a row with more to show is a button: the others have nothing to toggle. */}
       {detail ? (
         <button
           aria-controls={detailId}
           aria-expanded={expanded}
           className={cn(
-            'w-full text-left rounded hover:bg-ink-800 px-2 py-1.5 transition-colors',
+            'w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-ink-600/40',
             FOCUS_RING
           )}
           onClick={() => setExpanded((e) => !e)}
@@ -230,25 +243,27 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
       )}
       {/* Outside the button: a link cannot nest inside one. */}
       {showRunLink && (
-        <div className="flex flex-wrap items-center gap-2 px-2 text-[10px] font-mono">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pr-2 pl-8 text-xs">
           {event.runId ? (
             <Link className="text-ember-400 hover:underline" href={`/runs/${event.runId}`}>
               {event.externalTicketId ?? 'view run'}
             </Link>
           ) : (
             // Workflows that keep no run (evals, workflow authoring) have no page to link to.
-            <span className="text-paper-500" title="This workflow keeps no run record">
+            <span className="font-mono text-paper-500" title="This workflow keeps no run record">
               {event.workflowId}
             </span>
           )}
-          <span className="text-paper-600">·</span>
-          <span className="text-paper-500">{event.nodeId}</span>
+          <span aria-hidden className="text-paper-600">
+            ·
+          </span>
+          <span className="font-mono text-paper-500">{event.nodeId}</span>
         </div>
       )}
       {/* A sibling of the toggle, not inside it: content in a <button> is not
           selectable, and block content there is invalid. */}
       {detail && (
-        <div className="px-2" hidden={!expanded} id={detailId}>
+        <div className="pr-2 pb-1 pl-8" hidden={!expanded} id={detailId}>
           {expanded && detail}
         </div>
       )}
@@ -260,18 +275,21 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
 
 export function SecurityEventList({
   events,
-  emptyMessage = 'No security events recorded.',
+  emptyHint,
+  emptyMessage = 'No security events recorded',
   showRunLink = false,
 }: {
+  /** A second line under the empty title: why the list is empty, what to try. */
+  emptyHint?: ReactNode;
   emptyMessage?: string;
   events: SecurityEvent[];
   showRunLink?: boolean;
 }) {
   if (events.length === 0) {
-    return <EmptyState title={emptyMessage} />;
+    return <EmptyState hint={emptyHint} icon="security" title={emptyMessage} />;
   }
   return (
-    <ul className="space-y-0.5">
+    <ul className="divide-y divide-ink-600">
       {events.map((e) => (
         <SecurityEventRow event={e} key={e.id} showRunLink={showRunLink} />
       ))}
