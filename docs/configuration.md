@@ -240,8 +240,11 @@ Where one call talks to a single trusted host and may be redirected elsewhere (t
 an MCP server), the private-network allowance is scoped to that host's origin and every other
 origin is checked strictly. The check classifies one source of truth for addresses: besides
 loopback, link-local and cloud metadata (including GCP's `fd20:ce::254` and OCI's legacy
-`192.0.0.192`), the IETF protocol, benchmarking, documentation, 6to4 relay, Teredo and discard
-ranges are refused. Connections use HTTP/1.1 and try the checked addresses IPv4 first. Production
+`192.0.0.192`), the IETF protocol, documentation, 6to4 relay, Teredo and discard ranges are
+refused. The benchmarking block `198.18.0.0/15` is classed with the private networks, because
+fake-IP proxy tools (Clash, Surge, sing-box) answer every DNS name with an address in it: it is
+refused by default and allowed with the private-network opt-in, so a deployment behind such a tool
+needs the opt-in on every connector it uses. Connections use HTTP/1.1 and try the checked addresses IPv4 first. Production
 always drives the dispatcher with undici's own `fetch`; only tests substitute one.
 `yarn invariants:check` fails a bare `fetch` (a call, a `= fetch` default or `fetch` passed as a
 value) in the modules whose requests are all operator-supplied: the bundle, credential-probe, MCP

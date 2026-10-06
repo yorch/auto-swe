@@ -68,10 +68,23 @@ function extractEmbeddedIpv4(host: string): string | null {
 }
 
 /**
+ * The benchmarking block 198.18.0.0/15. Fake-IP proxy tools (Clash, Surge,
+ * sing-box) answer every DNS name with an address in it, so it is treated like a
+ * private network: refused by default, allowed with the private-network opt-in.
+ * `effective` is a bare host with any embedded IPv4 already unwrapped.
+ */
+export function isFakeIpAddress(effective: string): boolean {
+  if (isIP(effective) !== 4) {
+    return false;
+  }
+  const [a, b] = effective.split('.').map(Number);
+  return a === 198 && (b === 18 || b === 19);
+}
+
+/**
  * Addresses no connector may reach and no opt-in waives: multicast and
  * reserved IPv4 (224.0.0.0/3), the IETF protocol block (192.0.0.0/24, which
- * holds OCI's legacy metadata address 192.0.0.192), benchmarking
- * (198.18.0.0/15), the documentation ranges (192.0.2.0/24, 198.51.100.0/24,
+ * holds OCI's legacy metadata address 192.0.0.192), the documentation ranges (192.0.2.0/24, 198.51.100.0/24,
  * 203.0.113.0/24), the retired 6to4 relay anycast (192.88.99.0/24), and for
  * IPv6 the discard prefix (100::/64), documentation (2001:db8::/32) and Teredo
  * (2001::/32, which embeds an IPv4 address, so the whole block is refused).
@@ -85,7 +98,6 @@ export function isReservedAddress(effective: string): boolean {
     return (
       a >= 224 ||
       (a === 192 && b === 0 && (c === 0 || c === 2)) ||
-      (a === 198 && (b === 18 || b === 19)) ||
       (a === 198 && b === 51 && c === 100) ||
       (a === 203 && b === 0 && c === 113) ||
       (a === 192 && b === 88 && c === 99)
@@ -195,7 +207,8 @@ export function isSafeProbeUrl(apiBase: string): SafeProbeUrlResult {
     // In practice ULAs are fd00::/8 (RFC 4193 sets the L bit for locally
     // assigned prefixes), so matching only `fc` let the common case through.
     /^f[cd][0-9a-f]{2}:/.test(effective) ||
-    /^fe[89ab][0-9a-f]:/.test(effective)
+    /^fe[89ab][0-9a-f]:/.test(effective) ||
+    isFakeIpAddress(effective)
   ) {
     return { ok: false, private: true, reason: `host '${host}' is on a private network` };
   }

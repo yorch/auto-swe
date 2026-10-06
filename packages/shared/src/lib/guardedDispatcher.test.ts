@@ -48,8 +48,11 @@ describe('classifyAddress', () => {
     ['fd20:ce::254', 'never'],
     ['192.0.0.192', 'never'],
     ['192.0.0.5', 'never'],
-    ['198.18.0.1', 'never'],
-    ['198.19.255.255', 'never'],
+    ['198.18.0.1', 'private'],
+    ['198.19.255.255', 'private'],
+    ['::ffff:198.18.0.1', 'private'],
+    ['64:ff9b::c612:1', 'private'],
+    ['2002:c612:1::', 'private'],
     ['192.0.2.7', 'never'],
     ['198.51.100.9', 'never'],
     ['203.0.113.1', 'never'],
@@ -71,6 +74,9 @@ describe('classifyAddress', () => {
     expect(classifyAddress('10.1.1.17', true)).toBe('ok');
     expect(classifyAddress('100.64.0.1', true)).toBe('ok');
     expect(classifyAddress('fd12:3456::1', true)).toBe('ok');
+    // Fake-IP proxy tools answer every name in 198.18.0.0/15.
+    expect(classifyAddress('198.18.0.1', true)).toBe('ok');
+    expect(classifyAddress('::ffff:198.19.0.9', true)).toBe('ok');
     for (const never of [
       '127.0.0.1',
       '::1',

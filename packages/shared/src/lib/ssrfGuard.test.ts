@@ -239,7 +239,6 @@ describe('checkProbeUrl (per-host private-network opt-in)', () => {
     'https://[fd00:ec2::254]/',
     'https://[fd20:ce::254]/',
     'https://192.0.0.192/',
-    'https://198.18.0.1/',
     'https://203.0.113.5/',
     'https://[2001:db8::1]/',
     'https://[2001::1]/',
@@ -257,6 +256,19 @@ describe('checkProbeUrl (per-host private-network opt-in)', () => {
     'https://metadata./',
   ])('never waives %s', (u) => {
     expect(checkProbeUrl(u, { allowPrivate: true }).ok).toBe(false);
+  });
+
+  it('treats 198.18.0.0/15 as waivable, like a private network (fake-IP proxy tools)', () => {
+    for (const u of [
+      'https://198.18.0.1/',
+      'https://198.19.255.255/',
+      'https://[::ffff:198.18.0.1]/',
+    ]) {
+      expect(isSafeProbeUrl(u)).toMatchObject({ ok: false, private: true });
+      expect(checkProbeUrl(u, { allowPrivate: true }).ok).toBe(true);
+    }
+    expect(isSafeProbeUrl('https://198.17.0.1/').ok).toBe(true);
+    expect(isSafeProbeUrl('https://198.20.0.1/').ok).toBe(true);
   });
 
   it('does not mistake a hostname that begins with a reserved prefix for an address', () => {
