@@ -7,7 +7,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveIssueTrackerConfig: vi.fn(async () => adminTracker),
 }));
 
-import { createIssue, fetchIssue } from './issueTracker.js';
+import { assertSafeJiraBaseUrl, createIssue, fetchIssue } from './issueTracker.js';
 
 describe('createIssue', () => {
   it('creates a Linear issue', async () => {
@@ -131,6 +131,24 @@ describe('fetchIssue', () => {
       'PROJ-42'
     );
     expect(result.identifier).toBe('PROJ-42');
+  });
+});
+
+describe('assertSafeJiraBaseUrl', () => {
+  it('carries the opt-in for an opted-in named host the text check passes', async () => {
+    adminTracker.allowPrivateNetwork = true;
+    adminTracker.baseUrl = 'https://jira.corp.example.com';
+    try {
+      await expect(assertSafeJiraBaseUrl('https://jira.corp.example.com')).resolves.toEqual({
+        allowPrivate: true,
+      });
+      await expect(assertSafeJiraBaseUrl('https://other.example.com')).resolves.toEqual({
+        allowPrivate: false,
+      });
+    } finally {
+      adminTracker.allowPrivateNetwork = false;
+      adminTracker.baseUrl = null;
+    }
   });
 });
 

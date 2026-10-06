@@ -64,7 +64,8 @@ refused with `400`. Likewise a bundle that declares a dependency on a connection
 
 `BUNDLE_TRUSTED_KEYS` is env-only (a JSON array of `{ id, publicKeyPem }`) so that DB write access
 does not let an attacker mark arbitrary content as verified. `BUNDLE_MAX_BYTES` caps the size of a
-bundle fetched from a URL (default 5 MB).
+bundle, whether fetched from a URL or sent inline by a file upload (default 5 MB; the inline routes
+accept a request body of that size plus a small envelope).
 
 ## Authoring a bundle
 
@@ -79,15 +80,15 @@ const manifest = defineBundle({
   description: 'Support reply agents and skills for Acme',
   agents: [defineAgent({ key: 'acme.supportResponder', name: 'Support Responder', /* ... */ })],
   skills: [defineSkill({ name: 'support-kb-retrieval', promptText: '...' })],
-  dependencies: [{ connectionType: 'zendesk' }],
+  dependencies: [{ connectionType: 'mcp' }],
 });
 
 const signed = signBundle(manifest, privateKeyPem, 'acme-release-key');
 const { ok, errors } = validateBundle(signed);
 ```
 
-`validateBundle` checks the schema, re-derives the content hash, and runs the same scanner-pattern
-safety gate the server applies. It is intentionally pure and synchronous so it runs in CI.
+`validateBundle` checks the schema, re-derives the content hash, refuses a dependency on a connection
+type other than `git_repo` or `mcp`, and runs the same scanner-pattern safety gate the server applies. It is intentionally pure and synchronous so it runs in CI.
 
 The CLI also scaffolds, validates, and signs:
 
@@ -155,7 +156,19 @@ installs are off). It writes nothing. The Studio bundles page always previews fi
 dialog needs a ticked box to replace protected content, and an unverified bundle needs a second
 "Install unverified bundle" confirmation. `install-from-url` takes the previewed `expectedContentHash`
 and answers `409 BUNDLE_CHANGED` when the URL now serves different content, so what is installed is
-what was reviewed. Skills from a bundle always install unverified, whatever the bundle's trust state.
+what was reviewed. The inline `POST /api/v1/platform/bundles/install` takes the same
+`expectedContentHash` and answers `409 BUNDLE_CHANGED` when the bundle sent differs from the one
+previewed.
+
+### Installing from a file in Studio
+
+Studio's bundles page also installs from a local `.json` file, picked or dropped onto the page. The
+browser reads and parses the file (invalid JSON, a non-object, or a file over 5 MB is reported
+without sending anything), sends the parsed bundle to `preview`, and shows the same dialog as a URL
+install: trust state, what is created or replaced, the protected-content checkbox, and the second
+"Install unverified bundle" confirmation. The install then posts the bundle to `bundles/install`
+with the previewed content hash, under the same validation, trust, scan and protected-replace rules
+as every other install path. Skills from a bundle always install unverified, whatever the bundle's trust state.
 
 Exported templates may embed local connection references (e.g. an `mcp` node's `connectionRef`); the
 installer preserves the spec but those references only resolve if a matching `Connection` is created
@@ -174,9 +187,10 @@ separately.
   "the version the previous install wrote" is the newest authorless version. After a forced install
   over a built-in template, the next built-in sync and the next bundle install each see the other's
   version as the previous one.
-- **Bundles do not export connection instances.** A template that needs Zendesk, Slack, or an MCP
-  server only declares `dependencies[].connectionType`; the installer must map those to local
-  `Connection` rows.
+- **Bundles do not export connection instances.** A template that needs a repository or an MCP
+  server only declares `dependencies[].connectionType` (`git_repo` or `mcp`, the only types a bundle
+  may name); the installer must map those to local `Connection` rows. A bundle cannot declare a
+  dependency on Zendesk, Slack or any other connector type.
 - **No central registry.** There is no auto-swe marketplace or hosted registry; distribution is
   file/URL based and trust is pinned to ed25519 public keys.
 - **MCP connection IDs are not portable.** A template spec referencing an `mcp` connection will

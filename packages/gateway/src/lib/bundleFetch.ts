@@ -1,4 +1,6 @@
+import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { resolveMaxBundleBytes } from './bundleLimits.js';
 
 /**
  * Safe fetch for install-from-URL (P4/WS3). The endpoint is admin-only, but a
@@ -17,12 +19,6 @@ import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
  * ADMIN-gated route; tighten if this is ever exposed more broadly.
  */
 const MAX_REDIRECTS = 5;
-
-/** Bundle install-from-URL size cap. Env-overridable (deploy-time knob). */
-function resolveMaxBundleBytes(): number {
-  const fromEnv = Number(process.env.BUNDLE_MAX_BYTES);
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 5_000_000;
-}
 
 /** Throws if the URL isn't http(s) or targets a private/loopback/link-local/
  *  metadata host. */
@@ -43,6 +39,9 @@ export function assertPublicBundleUrl(rawUrl: string): void {
  * failure; the caller maps that to a 400.
  */
 const FETCH_TIMEOUT_MS = 15_000;
+
+// Resolves the host and refuses any private/loopback/metadata answer; each hop comes back here.
+const guardedFetch = createGuardedFetch();
 
 async function readBodyCapped(res: Response, maxBytes: number): Promise<string> {
   if (!res.body) {
@@ -77,7 +76,7 @@ export async function fetchBundleJson(
   let current = url;
   for (let hop = 0; ; hop++) {
     assertPublicBundleUrl(current);
-    const res = await fetch(current, {
+    const res = await guardedFetch(current, {
       redirect: 'manual',
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });

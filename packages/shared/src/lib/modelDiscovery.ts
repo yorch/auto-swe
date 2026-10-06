@@ -1,5 +1,6 @@
 import type { PrismaClient } from '../index.js';
 import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
+import { createGuardedFetch, SSRF_BLOCKED_CODE } from './guardedDispatcher.js';
 import { isSafeProbeUrl } from './ssrfGuard.js';
 import { runUnscoped } from './tenantGuard.js';
 
@@ -83,6 +84,9 @@ export const DISCOVERY_ERRORS = {
   unrecognised: 'unrecognised response',
 } as const;
 
+// Provider list requests: no private-network opt-in exists here, so the guard is strict.
+const guardedFetch = createGuardedFetch();
+
 const SAFE_TOKEN = /^[A-Za-z0-9_]{1,40}$/;
 
 /** A thrown fetch error as a fixed string: its name and error code, never its message. */
@@ -93,6 +97,9 @@ export function safeFetchError(err: unknown): string {
   }
   const e = err as { cause?: { code?: unknown }; code?: unknown } | null;
   const code = e?.cause?.code ?? e?.code;
+  if (code === SSRF_BLOCKED_CODE) {
+    return DISCOVERY_ERRORS.blocked;
+  }
   const parts = [
     typeof name === 'string' && SAFE_TOKEN.test(name) ? name : 'Error',
     ...(typeof code === 'string' && SAFE_TOKEN.test(code) ? [code] : []),
@@ -307,7 +314,7 @@ export async function listProviderModels(args: {
     }
     let res: Response;
     try {
-      res = await fetch(request.url, {
+      res = await guardedFetch(request.url, {
         ...request.init,
         signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
       });

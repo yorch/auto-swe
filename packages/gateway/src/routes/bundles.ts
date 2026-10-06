@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { fetchBundleJson } from '../lib/bundleFetch.js';
+import { resolveBundleBodyLimit } from '../lib/bundleLimits.js';
 import {
   BundleDependencyError,
   BundleIntegrityError,
@@ -35,7 +36,15 @@ const ExportBody = z.object({
  * GLOBAL agent, skill or scanner pattern with the same key, name or label. Off
  * by default; without it such an install is refused with 409.
  */
-const InstallBody = z.object({ bundle: z.unknown(), overwriteProtected: z.boolean().optional() });
+const InstallBody = z.object({
+  bundle: z.unknown(),
+  /**
+   * The content hash the admin reviewed in a preview (the Studio file upload sends it). The install
+   * refuses when the bundle sent now has a different hash, so what is installed is what was shown.
+   */
+  expectedContentHash: z.string().min(1).max(200).optional(),
+  overwriteProtected: z.boolean().optional(),
+});
 const InstallFromUrlBody = z.object({
   /**
    * The content hash the admin reviewed in a preview. The install refuses when the URL now
@@ -60,6 +69,11 @@ const PreviewBody = z
       .optional(),
   })
   .refine((b) => (b.bundle !== undefined) !== (b.url !== undefined), 'send either bundle or url');
+
+/** The content hash a bundle claims in its metadata; the install re-derives and checks it. */
+function servedContentHash(raw: unknown): unknown {
+  return (raw as { metadata?: { contentHash?: unknown } } | null)?.metadata?.contentHash;
+}
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -175,7 +189,7 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
   // Dry run: the same checks an install makes, and what it would create or replace. Writes nothing.
   app.post(
     '/bundles/preview',
-    { onRequest: adminOnly, schema: { body: PreviewBody } },
+    { bodyLimit: resolveBundleBodyLimit(), onRequest: adminOnly, schema: { body: PreviewBody } },
     async (request, reply) => {
       let raw: unknown = request.body.bundle;
       if (request.body.url !== undefined) {
@@ -214,16 +228,26 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.post(
     '/bundles/install',
-    { onRequest: adminOnly, schema: { body: InstallBody } },
-    async (request, reply) =>
-      runInstall(
+    { bodyLimit: resolveBundleBodyLimit(), onRequest: adminOnly, schema: { body: InstallBody } },
+    async (request, reply) => {
+      const { bundle, expectedContentHash } = request.body;
+      if (expectedContentHash !== undefined && servedContentHash(bundle) !== expectedContentHash) {
+        return reply.status(409).send({
+          error: {
+            code: 'BUNDLE_CHANGED',
+            message: 'This bundle differs from the one you previewed. Preview it again.',
+          },
+        });
+      }
+      return runInstall(
         fastify,
         requireUser(request),
-        request.body.bundle,
+        bundle,
         reply,
         'inline',
         request.body.overwriteProtected ?? false
-      )
+      );
+    }
   );
 
   app.post(
@@ -243,9 +267,7 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const expected = request.body.expectedContentHash;
-      const served = (raw as { metadata?: { contentHash?: unknown } } | null)?.metadata
-        ?.contentHash;
-      if (expected !== undefined && served !== expected) {
+      if (expected !== undefined && servedContentHash(raw) !== expected) {
         return reply.status(409).send({
           error: {
             code: 'BUNDLE_CHANGED',

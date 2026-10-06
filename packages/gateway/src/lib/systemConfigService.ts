@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { decryptSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { AtlassianClient } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import { KnowledgeBaseConnectionError } from '@auto-swe/shared/lib/integrations/knowledgeBase';
 import { createKnowledgeBaseProvider } from '@auto-swe/shared/lib/integrations/registry';
@@ -397,7 +398,10 @@ export async function testGitHubConnection(
     return { detail: 'No GitHub token configured.', ok: false };
   }
   try {
-    const res = await fetch(`${config.apiUrl}/user`, {
+    // A typed URL was held to the strict text check above, so it is also resolved, checked and
+    // pinned; the saved URL (a GitHub Enterprise host is often private) keeps the plain fetch.
+    const probeFetch = config.apiUrl !== stored.apiUrl ? createGuardedFetch() : fetch;
+    const res = await probeFetch(`${config.apiUrl}/user`, {
       headers: {
         Authorization: `Bearer ${config.token}`,
         'User-Agent': 'auto-swe/1.0',
@@ -1449,6 +1453,7 @@ export async function detectJiraFields(): Promise<{
     throw new BaseUrlRefusedError(safety.reason);
   }
   const client = new AtlassianClient({
+    allowPrivateNetwork: config.allowPrivateNetwork === true,
     apiToken: config.apiToken,
     baseUrl: config.baseUrl,
     email: config.email ?? '',

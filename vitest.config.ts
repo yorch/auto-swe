@@ -40,6 +40,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/pullRequest.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/guardedDispatcher',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedDispatcher.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/crypto',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/crypto.ts'),
       },
@@ -394,5 +398,7 @@ export default defineConfig({
     // vitest is invoked) so the correct test files are found when running from
     // the main repo root.
     root: __dirname,
+    // Lets suites that stub `globalThis.fetch` keep working under the pinned dispatcher.
+    setupFiles: ['./vitest.setup.ts'],
   },
 });
