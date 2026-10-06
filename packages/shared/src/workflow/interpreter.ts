@@ -17,6 +17,7 @@ import {
 } from './expr.js';
 import type {
   CondNode,
+  ContainerStepNode,
   FanOutNode,
   HumanApprovalNode,
   HumanDecisionNode,
@@ -30,21 +31,6 @@ import type {
   TerminateNode,
   WorkflowSpec,
 } from './spec.js';
-
-/**
- * Node types that record their own FAILED rows — the walk catch must not
- * double-record. The dispatch-style nodes do it per attempt in runRetryable;
- * fanOut records the aggregate (with every branch's outcome) before it throws.
- */
-const SELF_RECORDING_NODE_TYPES: ReadonlySet<string> = new Set([
-  'step',
-  'shell',
-  'agent',
-  'mcp',
-  'eval',
-  'containerStep',
-  'fanOut',
-]);
 
 /** Distinct approvers a human gate needs; anything that isn't a positive integer means one. */
 export function normalizeApproverCount(raw: unknown): number {
@@ -184,7 +170,7 @@ export interface Dispatcher {
   /**
    * Run a user-authored shell node in an ephemeral container. Returns the
    * activity output (a `{passed, summary, exitCode, ...}` shape compatible
-   * with the gate-failure branch in {@link runStep}) or throws on a runtime
+   * with the gate-failure branch in {@link runRetryable}) or throws on a runtime
    * failure (image-not-allowed, container-spawn-error, etc.).
    *
    * Optional — interpreters that don't support phase-6 shell nodes may throw
@@ -478,52 +464,13 @@ async function walk(
 
     try {
       switch (node.type) {
-        case 'step': {
-          currentNodeId = await runStep(
-            recordingId,
-            nodeId,
-            node,
-            ctx,
-            dispatcher,
-            cancellationSink
-          );
-          break;
-        }
-        case 'agent': {
-          currentNodeId = await runAgentNode(
-            recordingId,
-            nodeId,
-            node,
-            ctx,
-            dispatcher,
-            cancellationSink
-          );
-          break;
-        }
-        case 'mcp': {
-          currentNodeId = await runMcpNode(
-            recordingId,
-            nodeId,
-            node,
-            ctx,
-            dispatcher,
-            cancellationSink
-          );
-          break;
-        }
-        case 'eval': {
-          currentNodeId = await runEvalNode(
-            recordingId,
-            nodeId,
-            node,
-            ctx,
-            dispatcher,
-            cancellationSink
-          );
-          break;
-        }
-        case 'containerStep': {
-          currentNodeId = await runContainerStep(
+        case 'step':
+        case 'agent':
+        case 'mcp':
+        case 'eval':
+        case 'containerStep':
+        case 'shell': {
+          currentNodeId = await runDispatchNode(
             recordingId,
             nodeId,
             node,
@@ -571,17 +518,6 @@ async function walk(
           );
           break;
         }
-        case 'shell': {
-          currentNodeId = await runShell(
-            recordingId,
-            nodeId,
-            node,
-            ctx,
-            dispatcher,
-            cancellationSink
-          );
-          break;
-        }
         case 'humanApproval':
         case 'humanDecision':
         case 'humanInput':
@@ -619,268 +555,205 @@ async function walk(
   };
 }
 
-async function runStep(
-  nodeId: string,
-  specNodeId: string,
-  node: StepNode,
-  ctx: Context,
-  dispatcher: Dispatcher,
-  cancellationSink?: BranchSink
-): Promise<string | undefined> {
-  const config = node.config ?? {};
-  const inputs = resolveInputs(node.inputs, ctx);
-  return runRetryable({
-    ctx,
-    dispatcher,
-    inputs,
-    invoke: (stepAttempt) =>
-      dispatcher.dispatchStep({
-        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
-        config,
-        ctx,
-        inputs,
-        nodeId,
-        specNodeId,
-        step: node.step,
-        stepAttempt,
-      }),
-    next: node.next,
-    nodeId,
-    onError: node.onError,
-    onFail: node.onFail,
-    shouldAbort: cancellationSink?.shouldAbort,
-    specNodeId,
-  });
+/** The node types dispatched to an activity through {@link runDispatchNode}. */
+type DispatchNode = Extract<
+  Node,
+  { type: 'step' | 'agent' | 'eval' | 'mcp' | 'containerStep' | 'shell' }
+>;
+
+/** One attempt's dispatch arguments — everything except what the packer owns. */
+interface AttemptArgs {
+  cancellation?: { token?: CancellationToken };
+  ctx: Context;
+  inputs: Record<string, unknown>;
+  nodeId: string;
+  specNodeId: string;
+  stepAttempt: number;
 }
 
-async function runAgentNode(
-  nodeId: string,
-  specNodeId: string,
-  node: import('./spec.js').AgentNode,
-  ctx: Context,
+/**
+ * How one dispatch-node type becomes an activity call. Everything else — input
+ * resolution, retry, onFail/onError, recording — is the shared
+ * {@link runDispatchNode}, so those behave identically across node types.
+ */
+interface DispatchPacker<N extends DispatchNode> {
+  /** Runs before the inputs resolve; throws when this dispatcher cannot run the node at all. */
+  assertSupported?(nodeId: string, dispatcher: Dispatcher): void;
+  /**
+   * Runs once per node visit, after the inputs resolve and before the first
+   * attempt — so a side effect here (draining steering) happens once, not per
+   * retry. Returns the per-attempt invocation.
+   */
+  pack(
+    node: N,
+    ctx: Context,
+    dispatcher: Dispatcher,
+    nodeId: string
+  ): (args: AttemptArgs) => Promise<unknown>;
+}
+
+/** A packer's invocation for node types that dispatch as a named step with a packed config. */
+function viaDispatchStep(
   dispatcher: Dispatcher,
-  cancellationSink?: BranchSink
-): Promise<string | undefined> {
-  const inputs = resolveInputs(node.inputs, ctx);
-  // Pack the agent-node fields into the step config; the worker's `runAgentNode`
+  step: string,
+  config: Record<string, unknown>
+): (args: AttemptArgs) => Promise<unknown> {
+  return (args) => dispatcher.dispatchStep({ ...args, config, step });
+}
+
+/** Optional containerStep fields copied into the config, in this order, when set. */
+const CONTAINER_STEP_CONFIG_KEYS = [
+  'command',
+  'network',
+  'memory',
+  'cpus',
+  'timeoutMs',
+  'transport',
+  'sidecar',
+] as const satisfies ReadonlyArray<keyof ContainerStepNode>;
+
+const DISPATCH_PACKERS: {
+  [T in DispatchNode['type']]: DispatchPacker<Extract<DispatchNode, { type: T }>>;
+} = {
+  // The agent-node fields go into the step config; the worker's `runAgentNode`
   // executor resolves agentRef → resolveAgentSpec → runAgent. Dispatching
   // through the same step path means retry/onFail/recording behave identically
   // to a step node, and the agent output lands at `nodes.<id>.output`.
-  const config: Record<string, unknown> = { agentRef: node.agentRef };
-  if (node.userMessage !== undefined) {
-    config.userMessage = node.userMessage;
-  }
-  if (node.spanName !== undefined) {
-    config.spanName = node.spanName;
-  }
-  if (node.systemPrompt !== undefined) {
-    config.systemPrompt = node.systemPrompt;
-  }
-  // Soft steering: drain any out-of-band guidance that arrived since the last
-  // agent node and thread it to the activity, which prepends a labeled block to
-  // the user message. This is consumed here (drain), so a subsequent agent node
-  // won't re-see it. No-op when the dispatcher doesn't support steering.
-  const steering = dispatcher.drainSteering?.();
-  if (steering && steering.length > 0) {
-    config.steering = steering;
-  }
-  return runRetryable({
-    ctx,
-    dispatcher,
-    inputs,
-    invoke: (stepAttempt) =>
-      dispatcher.dispatchStep({
-        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
-        config,
-        ctx,
-        inputs,
-        nodeId,
-        specNodeId,
-        step: 'runAgentNode',
-        stepAttempt,
-      }),
-    next: node.next,
-    nodeId,
-    onError: node.onError,
-    onFail: node.onFail,
-    shouldAbort: cancellationSink?.shouldAbort,
-    specNodeId,
-  });
-}
-
-async function runEvalNode(
-  nodeId: string,
-  specNodeId: string,
-  node: import('./spec.js').EvalNode,
-  ctx: Context,
-  dispatcher: Dispatcher,
-  cancellationSink?: BranchSink
-): Promise<string | undefined> {
-  const inputs = resolveInputs(node.inputs, ctx);
-  // Pack the eval-node fields into the step config; the worker's `runEvalNode`
+  agent: {
+    pack: (node, _ctx, dispatcher) => {
+      const config: Record<string, unknown> = { agentRef: node.agentRef };
+      if (node.userMessage !== undefined) {
+        config.userMessage = node.userMessage;
+      }
+      if (node.spanName !== undefined) {
+        config.spanName = node.spanName;
+      }
+      if (node.systemPrompt !== undefined) {
+        config.systemPrompt = node.systemPrompt;
+      }
+      // Soft steering: drain any out-of-band guidance that arrived since the last
+      // agent node and thread it to the activity, which prepends a labeled block to
+      // the user message. This is consumed here (drain), so a subsequent agent node
+      // won't re-see it. No-op when the dispatcher doesn't support steering.
+      const steering = dispatcher.drainSteering?.();
+      if (steering && steering.length > 0) {
+        config.steering = steering;
+      }
+      return viaDispatchStep(dispatcher, 'runAgentNode', config);
+    },
+  },
+  // The container-contract fields go into the step config; the worker's
+  // `runContainerStep` executor runs the image (ephemeral sandbox) with the
+  // inputs as JSON env and binds parsed stdout JSON at `nodes.<id>.output`.
+  containerStep: {
+    pack: (node, _ctx, dispatcher) => {
+      const config: Record<string, unknown> = { image: node.image };
+      for (const key of CONTAINER_STEP_CONFIG_KEYS) {
+        if (node[key] !== undefined) {
+          config[key] = node[key];
+        }
+      }
+      return viaDispatchStep(dispatcher, 'runContainerStep', config);
+    },
+  },
+  // The eval-node fields go into the step config; the worker's `runEvalNode`
   // executor runs each scorer (floor first, judge short-circuited on floor
   // failure), records per-scorer EvalResult rows, and binds an aggregate at
   // `nodes.<id>.output.score`. The target binding is resolved here (the activity
   // has no context); dispatching through the same step path gives identical
   // retry/onFail/recording semantics.
-  const config: Record<string, unknown> = {
-    scorers: node.scorers,
-    targetValue: resolveInputs({ target: node.target }, ctx).target,
-  };
-  if (node.judgeAdvisory !== undefined) {
-    config.judgeAdvisory = node.judgeAdvisory;
-  }
-  if (node.spanName !== undefined) {
-    config.spanName = node.spanName;
-  }
-  return runRetryable({
-    ctx,
-    dispatcher,
-    inputs,
-    invoke: (stepAttempt) =>
-      dispatcher.dispatchStep({
-        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
-        config,
-        ctx,
-        inputs,
-        nodeId,
-        specNodeId,
-        step: 'runEvalNode',
-        stepAttempt,
-      }),
-    next: node.next,
-    nodeId,
-    onError: node.onError,
-    onFail: node.onFail,
-    shouldAbort: cancellationSink?.shouldAbort,
-    specNodeId,
-  });
-}
-
-async function runMcpNode(
-  nodeId: string,
-  specNodeId: string,
-  node: import('./spec.js').McpNode,
-  ctx: Context,
-  dispatcher: Dispatcher,
-  cancellationSink?: BranchSink
-): Promise<string | undefined> {
-  const inputs = resolveInputs(node.inputs, ctx);
-  // Pack the mcp-node fields into the step config; the worker's `mcpCallTool`
+  eval: {
+    pack: (node, ctx, dispatcher) => {
+      const config: Record<string, unknown> = {
+        scorers: node.scorers,
+        targetValue: resolveInputs({ target: node.target }, ctx).target,
+      };
+      if (node.judgeAdvisory !== undefined) {
+        config.judgeAdvisory = node.judgeAdvisory;
+      }
+      if (node.spanName !== undefined) {
+        config.spanName = node.spanName;
+      }
+      return viaDispatchStep(dispatcher, 'runEvalNode', config);
+    },
+  },
+  // The mcp-node fields go into the step config; the worker's `mcpCallTool`
   // executor resolves connectionRef → mcp server URL, loads the named tool, and
   // calls it with the resolved inputs. Dispatching through the same step path
   // gives identical retry/onFail/recording; the result lands at `nodes.<id>.output`.
-  const config: Record<string, unknown> = { connectionRef: node.connectionRef, tool: node.tool };
-  if (node.spanName !== undefined) {
-    config.spanName = node.spanName;
-  }
-  return runRetryable({
-    ctx,
-    dispatcher,
-    inputs,
-    invoke: (stepAttempt) =>
-      dispatcher.dispatchStep({
-        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
-        config,
-        ctx,
-        inputs,
-        nodeId,
-        specNodeId,
-        step: 'mcpCallTool',
-        stepAttempt,
-      }),
-    next: node.next,
-    nodeId,
-    onError: node.onError,
-    onFail: node.onFail,
-    shouldAbort: cancellationSink?.shouldAbort,
-    specNodeId,
-  });
-}
+  mcp: {
+    pack: (node, _ctx, dispatcher) => {
+      const config: Record<string, unknown> = {
+        connectionRef: node.connectionRef,
+        tool: node.tool,
+      };
+      if (node.spanName !== undefined) {
+        config.spanName = node.spanName;
+      }
+      return viaDispatchStep(dispatcher, 'mcpCallTool', config);
+    },
+  },
+  // A shell node is not packed into a config: the dispatcher receives the node
+  // itself through its own `dispatchShell` handler.
+  shell: {
+    assertSupported: (nodeId, dispatcher) => {
+      shellHandler(nodeId, dispatcher);
+    },
+    pack: (node, _ctx, dispatcher, nodeId) => {
+      const dispatchShell = shellHandler(nodeId, dispatcher);
+      return (args) => dispatchShell({ ...args, node });
+    },
+  },
+  step: {
+    pack: (node, _ctx, dispatcher) => viaDispatchStep(dispatcher, node.step, node.config ?? {}),
+  },
+};
 
-async function runContainerStep(
+/** The dispatcher's bound `dispatchShell`, or the error a dispatcher without one raises. */
+function shellHandler(
   nodeId: string,
-  specNodeId: string,
-  node: import('./spec.js').ContainerStepNode,
-  ctx: Context,
-  dispatcher: Dispatcher,
-  cancellationSink?: BranchSink
-): Promise<string | undefined> {
-  const inputs = resolveInputs(node.inputs, ctx);
-  // Pack the container-contract fields into the step config; the worker's
-  // `runContainerStep` executor runs the image (ephemeral sandbox) with the
-  // inputs as JSON env and binds parsed stdout JSON at `nodes.<id>.output`.
-  const config: Record<string, unknown> = { image: node.image };
-  if (node.command !== undefined) {
-    config.command = node.command;
-  }
-  if (node.network !== undefined) {
-    config.network = node.network;
-  }
-  if (node.memory !== undefined) {
-    config.memory = node.memory;
-  }
-  if (node.cpus !== undefined) {
-    config.cpus = node.cpus;
-  }
-  if (node.timeoutMs !== undefined) {
-    config.timeoutMs = node.timeoutMs;
-  }
-  if (node.transport !== undefined) {
-    config.transport = node.transport;
-  }
-  if (node.sidecar !== undefined) {
-    config.sidecar = node.sidecar;
-  }
-  return runRetryable({
-    ctx,
-    dispatcher,
-    inputs,
-    invoke: (stepAttempt) =>
-      dispatcher.dispatchStep({
-        ...(cancellationSink ? { cancellation: cancellationSink } : {}),
-        config,
-        ctx,
-        inputs,
-        nodeId,
-        specNodeId,
-        step: 'runContainerStep',
-        stepAttempt,
-      }),
-    next: node.next,
-    nodeId,
-    onError: node.onError,
-    onFail: node.onFail,
-    shouldAbort: cancellationSink?.shouldAbort,
-    specNodeId,
-  });
-}
-
-async function runShell(
-  nodeId: string,
-  specNodeId: string,
-  node: ShellNode,
-  ctx: Context,
-  dispatcher: Dispatcher,
-  cancellationSink?: BranchSink
-): Promise<string | undefined> {
+  dispatcher: Dispatcher
+): NonNullable<Dispatcher['dispatchShell']> {
   if (!dispatcher.dispatchShell) {
     throw new Error(
       `shell node '${nodeId}' encountered but this dispatcher has no dispatchShell handler`
     );
   }
+  return dispatcher.dispatchShell.bind(dispatcher);
+}
+
+/**
+ * Node types that record their own FAILED rows — the walk catch must not
+ * double-record. The dispatch nodes do it per attempt in runRetryable;
+ * fanOut records the aggregate (with every branch's outcome) before it throws.
+ */
+const SELF_RECORDING_NODE_TYPES: ReadonlySet<string> = new Set([
+  ...Object.keys(DISPATCH_PACKERS),
+  'fanOut',
+]);
+
+/** Run one dispatch node: resolve its inputs, pack it, and dispatch it under the retry policy. */
+async function runDispatchNode(
+  nodeId: string,
+  specNodeId: string,
+  node: DispatchNode,
+  ctx: Context,
+  dispatcher: Dispatcher,
+  cancellationSink?: BranchSink
+): Promise<string | undefined> {
+  const packer = DISPATCH_PACKERS[node.type] as DispatchPacker<DispatchNode>;
+  packer.assertSupported?.(nodeId, dispatcher);
   const inputs = resolveInputs(node.inputs, ctx);
-  const dispatchShell = dispatcher.dispatchShell.bind(dispatcher);
+  const invoke = packer.pack(node, ctx, dispatcher, nodeId);
   return runRetryable({
     ctx,
     dispatcher,
     inputs,
     invoke: (stepAttempt) =>
-      dispatchShell({
+      invoke({
         ...(cancellationSink ? { cancellation: cancellationSink } : {}),
         ctx,
         inputs,
-        node,
         nodeId,
         specNodeId,
         stepAttempt,

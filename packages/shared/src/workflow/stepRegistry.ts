@@ -5,14 +5,14 @@
  * forms without pulling in worker-only code.
  *
  * Activity wiring still lives in the worker package (see
- * packages/worker/src/workflows/runnable.ts) — only the metadata is shared.
+ * packages/worker/src/workflows/runnableSteps.ts) — only the metadata is shared.
  *
  * Adding a new step:
  *   1. Implement the activity in packages/worker/src/activities/.
  *   2. Export it from activities/index.ts.
  *   3. Add the name to `BUILTIN_STEPS` in registry-types.ts.
  *   4. Register a StepMetadata entry here.
- *   5. Add an entry to the `STEP_EXECUTORS` map in workflows/runnable.ts
+ *   5. Add an entry to the `STEP_EXECUTORS` map in workflows/runnableSteps.ts
  *      (and to `STEP_REQUIRED_AGENTS` if the step resolves a model).
  *
  * The worker calls `assertBuiltinStepsRegistered()` at boot, and

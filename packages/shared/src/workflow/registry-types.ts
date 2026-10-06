@@ -3,7 +3,7 @@
  *
  * The metadata registry lives next door in `stepRegistry.ts`; the activity
  * wiring is the worker's `STEP_EXECUTORS` table (packages/worker/src/workflows/
- * runnable.ts). Web + gateway only need the metadata to render the editor UI
+ * runnableSteps.ts). Web + gateway only need the metadata to render the editor UI
  * and validate templates.
  */
 

@@ -1592,7 +1592,7 @@
       "category": "Execution",
       "detail": "cond/set/terminate are interpreter control flow. step dispatches a registered capability. agent/mcp/eval/shell/containerStep have dedicated executors. Human and signal nodes wait durably.",
       "id": "node",
-      "refs": ["spec", "runnable"],
+      "refs": ["spec", "runnable", "stepExecutors"],
       "status": "Implemented",
       "title": "Node ≠ activity"
     },
@@ -2972,6 +2972,14 @@
       "lines": 90,
       "path": "packages/worker/src/workflows/runnable.ts",
       "title": "Temporal workflow boundary"
+    },
+    {
+      "anchor": "const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor>",
+      "before": 0,
+      "id": "stepExecutors",
+      "lines": 90,
+      "path": "packages/worker/src/workflows/runnableSteps.ts",
+      "title": "Step executor table"
     },
     {
       "anchor": "export const DEFAULT_ENGINEERING_SPEC:",

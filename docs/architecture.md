@@ -126,6 +126,9 @@ packages/
 |------|---------|
 | `src/index.ts` | Entry — runs `assertConfigReady()`, then starts the Temporal worker |
 | `src/workflows/runnable.ts` | **`RunnableWorkflow`** — the generic workflow; wires activity proxies to `Dispatcher` and calls `runSpec` |
+| `src/workflows/runnableSteps.ts` | `STEP_EXECUTORS` — one executor per step name, mapping a step node's `config` + `inputs` onto its activity |
+| `src/workflows/runnableActivities.ts` | The activity proxies (timeouts and retry policies) the dispatcher and step executors call |
+| `src/workflows/runnableContext.ts` | Bounds step records before they enter history; spills oversized run-context values to artifacts at finalization |
 | `src/workflows/epicOrchestrator.ts` | **`EpicOrchestratorWorkflow`** — decomposes multi-repo epics, fans out children in dependency order |
 | `src/activities/executeImplementation.ts` | **Core agent loop** — DinD workspace, clone, implementer agent, TDD loop |
 | `src/activities/runReviewNetwork.ts` | Security / domain / performance reviewers in parallel via `Promise.allSettled` |

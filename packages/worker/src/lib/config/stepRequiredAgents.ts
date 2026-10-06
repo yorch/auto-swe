@@ -6,10 +6,10 @@
  * so a missing entry here means an agent a runnable template needs is not
  * checked at boot and the run fails mid-flight instead — exactly what
  * `assertConfigReady` exists to prevent. `stepRequiredAgents.coverage.test.ts`
- * checks the keys against the executors registered in `runnable.ts`.
+ * checks the keys against the executors registered in `runnableSteps.ts`.
  *
  * This is the import-safe companion to the step registry in
- * `workflows/runnable.ts`: `assertConfigReady` runs at Node boot and must not
+ * `workflows/runnableSteps.ts`: `assertConfigReady` runs at Node boot and must not
  * import a workflow-isolate module (which pulls in `@temporalio/workflow`), so
  * the required-agent metadata lives here as plain data. **Keep this in sync
  * with `STEP_EXECUTORS`** — when a new step resolves a model via
