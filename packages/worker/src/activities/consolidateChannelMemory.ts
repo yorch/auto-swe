@@ -287,7 +287,9 @@ export async function consolidateChannelMemory(
           memories.map((m) => generateEmbeddingWithSpec(m.lessonSummary))
         );
 
-        await prisma.$transaction(async (tx) => {
+        // The transaction's own result is the outcome: a cluster another run
+        // consolidated first returns zeros from inside it.
+        return prisma.$transaction(async (tx) => {
           // Serialise consolidation per channel and re-check that the source
           // rows are still unconsolidated before writing. The read + LLM work
           // happens outside the transaction so the lock is held briefly.
@@ -329,14 +331,13 @@ export async function consolidateChannelMemory(
             `UPDATE memory_items SET consolidated_at = now() WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
             sourceIds
           );
+          return { consolidated: cluster.length, created: memories.length };
         });
-
-        return { consolidated: cluster.length, created: memories.length };
       })
     );
 
     const finalResult: ConsolidateChannelMemoryResult = {
-      clustersConsolidated: qualifying.length,
+      clustersConsolidated: clusterOutcomes.filter((o) => o.consolidated > 0).length,
       clustersFound: clusters.length,
       memoriesConsolidated: clusterOutcomes.reduce((s, o) => s + o.consolidated, 0),
       memoriesCreated: clusterOutcomes.reduce((s, o) => s + o.created, 0),

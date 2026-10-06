@@ -15,9 +15,11 @@ import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { memoryInjectionMatches } from '../lib/memoryGuard.js';
-import { getModel } from '../lib/models.js';
+import { getBoundModel, resolveSystemPrompt } from '../lib/models.js';
 import { ownerOfConnection, withSpendOwner } from '../lib/spendOwner.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
+
+const CONSOLIDATOR_AGENT_KEY = 'lessonConsolidator';
 
 export type { ConsolidateLessonsInput, ConsolidateLessonsResult };
 
@@ -124,18 +126,22 @@ async function consolidateLessonsImpl(
     };
   }
 
-  // Load skills for the commitToMemory role (no ctx — consolidateLessons is
-  // a scheduled job unbound from any specific workflow run, so GLOBAL scope only).
-  const consolidatorSkills = await loadAgentSkills('commitToMemory');
+  // The seeded `lessonConsolidator` Agent drives this pass: its prompt, its
+  // skills, and its model (inherited from `commitToMemory` unless an admin
+  // gives it its own). No ctx — consolidation is a scheduled job unbound from
+  // any workflow run, so the GLOBAL row resolves.
+  const consolidatorSkills = await loadAgentSkills(CONSOLIDATOR_AGENT_KEY);
   const consolidatorSkillSuffix = joinSkillPrompts(consolidatorSkills);
+  const basePrompt = await resolveSystemPrompt(CONSOLIDATOR_AGENT_KEY, LESSON_CONSOLIDATOR_PROMPT);
   const consolidatorPrompt = consolidatorSkillSuffix
-    ? `${LESSON_CONSOLIDATOR_PROMPT}\n\n${consolidatorSkillSuffix}`
-    : LESSON_CONSOLIDATOR_PROMPT;
+    ? `${basePrompt}\n\n${consolidatorSkillSuffix}`
+    : basePrompt;
 
+  const bound = await getBoundModel(CONSOLIDATOR_AGENT_KEY);
   const agent = new Agent({
     id: 'lesson-consolidator',
     instructions: consolidatorPrompt,
-    model: await getModel('commitToMemory'),
+    model: bound.model,
     name: 'lesson-consolidator',
   });
 
@@ -159,7 +165,7 @@ async function consolidateLessonsImpl(
         .join('\n\n');
 
       const start = Date.now();
-      await assertRolePricedForUsdCap('commitToMemory');
+      await assertRolePricedForUsdCap(CONSOLIDATOR_AGENT_KEY);
       const result = await agent.generate([{ content: prompt, role: 'user' }], {
         structuredOutput: { schema: ConsolidatorOutputSchema },
       });
@@ -168,9 +174,10 @@ async function consolidateLessonsImpl(
       if (result.usage) {
         attribution = await recordLlmUsage(
           'consolidateLessons',
-          'commitToMemory',
+          CONSOLIDATOR_AGENT_KEY,
           result.usage,
-          'llm.consolidate_lessons'
+          'llm.consolidate_lessons',
+          bound.spec
         );
       }
 
@@ -188,7 +195,7 @@ async function consolidateLessonsImpl(
         model: attribution.modelSpec || undefined,
         outputJson: { lessonsOut: lessons.length, sourceIds },
         outputTokens: attribution.outputTokens,
-        role: 'commitToMemory',
+        role: CONSOLIDATOR_AGENT_KEY,
       });
 
       // Consolidated rows are inserted here rather than through `insertMemoryItem`,
@@ -215,7 +222,9 @@ async function consolidateLessonsImpl(
         lessons.map((l) => generateEmbeddingWithSpec(l.lessonSummary))
       );
 
-      await prisma.$transaction(async (tx) => {
+      // The transaction's own result is the outcome: a cluster another run
+      // consolidated first returns zeros from inside it.
+      return prisma.$transaction(async (tx) => {
         // Serialise consolidation per repo. The read + LLM work happened
         // outside the transaction; re-check that the source rows are still
         // unconsolidated before writing, otherwise an overlapping scheduled
@@ -256,9 +265,8 @@ async function consolidateLessonsImpl(
           `UPDATE memory_items SET consolidated_at = now() WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
           sourceIds
         );
+        return { consolidated: cluster.length, created: lessons.length };
       });
-
-      return { consolidated: cluster.length, created: lessons.length };
     };
     const clusterOutcomes: Array<Awaited<ReturnType<typeof processCluster>>> = new Array(
       qualifying.length
@@ -281,7 +289,7 @@ async function consolidateLessonsImpl(
     const totalCreated = clusterOutcomes.reduce((s, o) => s + o.created, 0);
 
     const finalResult: ConsolidateLessonsResult = {
-      clustersConsolidated: qualifying.length,
+      clustersConsolidated: clusterOutcomes.filter((o) => o.consolidated > 0).length,
       clustersFound: clusters.length,
       lessonsConsolidated: totalConsolidated,
       lessonsCreated: totalCreated,
@@ -291,6 +299,6 @@ async function consolidateLessonsImpl(
 
     return finalResult;
   } finally {
-    await persistActivityTrace(tracer, 'commitToMemory');
+    await persistActivityTrace(tracer, CONSOLIDATOR_AGENT_KEY);
   }
 }
