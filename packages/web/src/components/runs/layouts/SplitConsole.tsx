@@ -4,18 +4,20 @@ import { useState } from 'react';
 import { RunMetaRail } from '@/components/runs/RunMetaRail';
 import { SplitRunPanel } from '@/components/runs/SplitRunPanel';
 import { TracesTab } from '@/components/runs/TracesTab';
+import { Badge } from '@/components/ui/Badge';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
-import { StatusBadge } from '@/components/ui/StatusBadge';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
 import { specNodeIdOfRecording } from '@/lib/traceLinkage';
+import { cn } from '@/lib/utils';
+import { PANEL_BAR, PANEL_META, PANEL_TITLE } from './panel';
 import type { RunLayoutProps } from './types';
 
-// ── Console mode (◧ Split / ≡ Stream) ──────────────────────────────────────────
+// ── Console mode (by step / one stream) ────────────────────────────────────────
 
 const CONSOLE_MODE_OPTIONS: SegmentedOption<'split' | 'stream'>[] = [
-  { label: '◧ Split', value: 'split' },
-  { label: '≡ Stream', value: 'stream' },
+  { label: 'By step', title: 'Steps beside the events of the selected one', value: 'split' },
+  { label: 'Stream', title: 'Every event in one stream', value: 'stream' },
 ];
 
 // ── Direction A — Split Console ────────────────────────────────────────────────
@@ -41,14 +43,14 @@ export function SplitConsole({
       <div className="flex flex-1 flex-col max-lg:min-w-0 lg:overflow-hidden">
         {/* Execution graph panel */}
         <div className="flex h-[clamp(220px,52dvh,440px)] max-lg:landscape:h-[clamp(160px,56dvh,440px)] shrink-0 flex-col border-b border-ink-600/40 lg:h-[46%] lg:max-h-[380px] lg:min-h-[200px] lg:shrink">
-          <div className="flex flex-wrap items-center justify-between max-lg:gap-x-3 max-lg:gap-y-1 lg:flex-nowrap px-4 py-3 border-b border-ink-600/30 lg:px-5">
-            <div className="flex flex-wrap items-center gap-3 max-lg:gap-y-1 lg:flex-nowrap">
-              <span className="kicker">Execution graph</span>
-              <span className="font-mono text-[10px] text-paper-600">
-                {Object.keys(spec.nodes ?? {}).length} nodes · pan + zoom
-              </span>
-            </div>
-            <StatusBadge status={run.status} />
+          <div className={PANEL_BAR}>
+            <h2 className={PANEL_TITLE}>Execution graph</h2>
+            <span className={PANEL_META}>
+              {Object.keys(spec.nodes ?? {}).length} nodes · drag to pan, scroll to zoom
+            </span>
+            <span className="ml-auto text-xs text-paper-500 max-sm:hidden">
+              Select a node to filter the console
+            </span>
           </div>
           <div className="flex-1 min-h-0">
             <WorkflowDag
@@ -67,15 +69,13 @@ export function SplitConsole({
 
         {/* Console panel */}
         <div className="flex flex-1 flex-col lg:overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between max-lg:gap-x-3 max-lg:gap-y-2 lg:flex-nowrap px-4 py-2.5 border-b border-ink-600/30 shrink-0 lg:px-5">
-            <div className="flex flex-wrap items-center gap-3 max-lg:min-w-0 max-lg:gap-y-1 lg:flex-nowrap">
-              <h3 className="font-display text-[15px] font-medium tracking-[-0.01em] text-paper-100">
-                Console
-              </h3>
+          <div className={cn(PANEL_BAR, 'justify-between max-lg:gap-y-2')}>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <h2 className={PANEL_TITLE}>Console</h2>
               {selectedNodeId && (
-                <span className="font-mono text-[11px] text-ember-400 max-lg:break-all">
-                  · {selectedNodeId}
-                </span>
+                <Badge className="font-mono max-lg:whitespace-normal max-lg:break-all" tone="ember">
+                  {selectedNodeId}
+                </Badge>
               )}
             </div>
             <div className="flex items-center gap-3">

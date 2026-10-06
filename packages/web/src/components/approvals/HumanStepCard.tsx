@@ -8,6 +8,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { Icon, type IconName } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
@@ -15,7 +16,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { useRespondToApproval } from '@/hooks/useApprovals';
 import { errMsg } from '@/lib/errors';
 import { requestHref } from '@/lib/requestDisplay';
-import { formatDuration, formatRelativeTime } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
 import { DiffRenderer } from './DiffRenderer';
 
 const KIND_LABEL: Record<string, string> = {
@@ -77,6 +78,12 @@ const STATUS_TONE: Record<string, BadgeTone> = {
   TIMED_OUT: 'muted',
 };
 
+/** `TIMED_OUT` → "Timed out". */
+function sentence(status: string): string {
+  const words = status.replace(/_/g, ' ').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /**
  * What a settled step shows in place of the bare status. A reject also resolves the step, so
  * "resolved" in green would read as success; the decision itself is the useful word.
@@ -84,18 +91,18 @@ const STATUS_TONE: Record<string, BadgeTone> = {
 function settledBadge(step: HumanStepSummary): { label: string; tone: BadgeTone } {
   if (step.status !== 'RESOLVED') {
     return {
-      label: step.status.replace(/_/g, ' ').toLowerCase(),
+      label: sentence(step.status),
       tone: STATUS_TONE[step.status] ?? 'brick',
     };
   }
   const decision = step.responses?.at(-1)?.action;
   if (step.kind === 'APPROVAL' && decision === 'reject') {
-    return { label: 'rejected', tone: 'brick' };
+    return { label: 'Rejected', tone: 'brick' };
   }
   if (step.kind === 'APPROVAL' && decision === 'approve') {
-    return { label: 'approved', tone: 'moss' };
+    return { label: 'Approved', tone: 'moss' };
   }
-  return { label: 'resolved', tone: 'moss' };
+  return { label: 'Resolved', tone: 'moss' };
 }
 
 /** Auto-generated ticket ids (a UUID or an agent-run id) say nothing to a person. */
@@ -164,6 +171,16 @@ const ACTION_LABEL: Record<string, string> = {
   select: 'Chose',
   submit: 'Submitted',
 };
+
+/** How each recorded answer is marked in the response list. */
+const RESPONSE_ICON: Record<string, { icon: IconName; tone: string }> = {
+  approve: { icon: 'checkCircle', tone: 'text-moss-400' },
+  reject: { icon: 'error', tone: 'text-brick-400' },
+  select: { icon: 'check', tone: 'text-dust-400' },
+  submit: { icon: 'chat', tone: 'text-dust-400' },
+};
+
+const LINK = cn('rounded-sm transition-colors hover:text-ember-300 hover:underline', FOCUS_RING);
 
 /** The server caps an approver's note; the counter keeps the limit visible. */
 const MAX_COMMENT_LENGTH = 2000;
@@ -280,120 +297,148 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   const responses = step.responses ?? [];
   const requestId = step.run.workRequestId;
 
+  const settled = step.status !== 'PENDING' ? settledBadge(step) : null;
+  const request = requestLabel(step.run.workRequest);
+  const requestedAt = new Date(step.requestedAt);
+
   return (
     <Card className="space-y-3 p-4" variant="inset">
-      <div className="flex items-start gap-3">
-        <Badge
-          className="shrink-0 px-2 font-sans text-xs font-medium"
-          tone={KIND_TONE[step.kind] ?? 'neutral'}
-        >
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-2 sm:flex-nowrap">
+        <Badge className="mt-px shrink-0" tone={KIND_TONE[step.kind] ?? 'neutral'}>
           {KIND_LABEL[step.kind] ?? step.kind}
         </Badge>
-        <div className="flex-1 min-w-0">
-          <div className="break-words font-medium text-sm">{step.title}</div>
+        <div className="min-w-0 flex-1 basis-[14rem]">
+          <div className="break-words text-sm font-semibold leading-snug text-paper-50">
+            {step.title}
+          </div>
           {step.description && (
-            <div className="mt-0.5 break-words text-xs text-paper-400">{step.description}</div>
+            <div className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-paper-400">
+              {step.description}
+            </div>
           )}
-          <div className="flex flex-wrap items-center gap-x-2 mt-1 text-xs text-paper-500">
-            <span className={getTimestampColor(step.requestedAt)}>
-              {formatRelativeTime(step.requestedAt)}
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-500">
+            <span
+              className={cn('inline-flex items-center gap-1', getTimestampColor(step.requestedAt))}
+              title={`Requested ${formatDate(requestedAt)}`}
+            >
+              <Icon name="clock" size={12} />
+              Requested {formatRelativeTime(step.requestedAt)}
             </span>
             {step.status === 'PENDING' && step.timeoutAt && !expired && (
               <>
-                <span>·</span>
-                <span className={getTimeoutColor(String(step.timeoutAt))}>
+                <span aria-hidden="true">·</span>
+                <span
+                  className={getTimeoutColor(String(step.timeoutAt))}
+                  title={formatDate(String(step.timeoutAt))}
+                >
                   {formatTimeRemaining(String(step.timeoutAt))}
                 </span>
               </>
             )}
             {step.kind === 'APPROVAL' && step.requiredApprovers && step.requiredApprovers > 1 && (
               <>
-                <span>·</span>
-                <span className="text-paper-400">
-                  {step.currentApprovers ?? 0} / {step.requiredApprovers} approvals
+                <span aria-hidden="true">·</span>
+                <span className="tabular text-paper-400">
+                  {step.currentApprovers ?? 0} of {step.requiredApprovers} approvals
                 </span>
               </>
             )}
-            {showRunLink && (
-              <>
-                <span>·</span>
-                {requestLabel(step.run.workRequest) && (
-                  <>
-                    {requestId ? (
-                      <Link
-                        className="underline text-paper-400 hover:text-paper-200"
-                        href={requestHref(requestId)}
-                      >
-                        {requestLabel(step.run.workRequest)}
-                      </Link>
-                    ) : (
-                      <span>{requestLabel(step.run.workRequest)}</span>
-                    )}
-                    <span>·</span>
-                  </>
-                )}
-                <Link
-                  className="underline text-paper-400 hover:text-paper-200"
-                  href={requestId ? requestHref(requestId) : `/runs/${step.run.id}`}
-                >
-                  View request
-                </Link>
-                {requestId && (
-                  <>
-                    <span>·</span>
-                    <Link
-                      className="underline text-paper-500 hover:text-paper-200"
-                      href={`/runs/${step.run.id}`}
-                    >
-                      Full diagnostics
-                    </Link>
-                  </>
-                )}
-              </>
-            )}
           </div>
+          {showRunLink && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              {request && (
+                <>
+                  {requestId ? (
+                    <Link className={cn(LINK, 'text-paper-300')} href={requestHref(requestId)}>
+                      {request}
+                    </Link>
+                  ) : (
+                    <span className="text-paper-400">{request}</span>
+                  )}
+                  <span aria-hidden="true" className="text-paper-600">
+                    ·
+                  </span>
+                </>
+              )}
+              <Link
+                className={cn(LINK, 'text-ember-400')}
+                href={requestId ? requestHref(requestId) : `/runs/${step.run.id}`}
+              >
+                View request
+              </Link>
+              {requestId && (
+                <>
+                  <span aria-hidden="true" className="text-paper-600">
+                    ·
+                  </span>
+                  <Link className={cn(LINK, 'text-paper-400')} href={`/runs/${step.run.id}`}>
+                    Full diagnostics
+                  </Link>
+                </>
+              )}
+            </div>
+          )}
         </div>
-        {canRespond && (
-          <Button className="h-[40px] lg:h-7" onClick={toggleExpanded} size="sm" variant="ghost">
-            {expanded ? 'Collapse' : 'Respond'}
-          </Button>
-        )}
-        {youApproved && (
-          <Badge className="shrink-0" tone="moss" uppercase variant="text">
-            You approved
-          </Badge>
-        )}
-        {expired && (
-          <Badge className="shrink-0" tone="muted" uppercase variant="text">
-            Expired
-          </Badge>
-        )}
-        {step.status !== 'PENDING' && (
-          <Badge className="shrink-0" tone={settledBadge(step).tone} uppercase variant="text">
-            {settledBadge(step).label}
-          </Badge>
-        )}
+        <div className="flex shrink-0 items-center gap-2 max-sm:w-full max-sm:justify-end">
+          {youApproved && (
+            <Badge className="shrink-0" dot tone="moss">
+              You approved
+            </Badge>
+          )}
+          {expired && (
+            <Badge className="shrink-0" tone="muted">
+              Expired
+            </Badge>
+          )}
+          {settled && (
+            <Badge className="shrink-0" dot tone={settled.tone}>
+              {settled.label}
+            </Badge>
+          )}
+          {canRespond && (
+            <Button
+              aria-expanded={expanded}
+              className="h-[40px] lg:h-7"
+              onClick={toggleExpanded}
+              size="sm"
+              variant={expanded ? 'ghost' : 'secondary'}
+            >
+              {expanded ? 'Collapse' : 'Respond'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {responses.length > 0 && (
-        <ul className="space-y-1 border-t border-ink-600 pt-3 text-xs">
+        <ul className="space-y-2 border-t border-ink-600 pt-3 text-[13px]">
           {responses.map((r, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: responses are an ordered, append-only list
-            <li className="text-paper-300" key={i}>
-              <span className="font-medium">
-                {r.byName ?? 'Someone'} · {ACTION_LABEL[r.action] ?? r.action}
-              </span>
-              {r.comment && (
-                <p className="mt-0.5 whitespace-pre-wrap break-words text-paper-400">{r.comment}</p>
-              )}
-              {r.value && <p className="mt-0.5 whitespace-pre-wrap text-paper-400">{r.value}</p>}
+            <li className="flex gap-2.5 text-paper-300" key={i}>
+              <Icon
+                className={cn('mt-0.5', RESPONSE_ICON[r.action]?.tone ?? 'text-paper-500')}
+                name={RESPONSE_ICON[r.action]?.icon ?? 'chat'}
+                size={14}
+              />
+              <div className="min-w-0">
+                <span className="font-medium text-paper-200">
+                  {r.byName ?? 'Someone'} · {ACTION_LABEL[r.action] ?? r.action}
+                </span>
+                {r.comment && (
+                  <p className="mt-0.5 whitespace-pre-wrap break-words text-paper-400">
+                    {r.comment}
+                  </p>
+                )}
+                {r.value && (
+                  <p className="mt-0.5 whitespace-pre-wrap break-words text-paper-400">{r.value}</p>
+                )}
+              </div>
             </li>
           ))}
         </ul>
       )}
 
       {expanded && canRespond && (
-        <div className="border-t border-ink-600 pt-3 space-y-3">
+        <div className="space-y-4 border-t border-ink-600 pt-4">
           {/* A failed approve or reject is already shown inside its dialog. */}
           {respond.isError && !['approve', 'reject'].includes(respond.variables?.action ?? '') && (
             <Alert variant="error">
@@ -403,58 +448,66 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
 
           {/* Context for APPROVAL / DECISION is what the decision rests on, so it is open. */}
           {(step.kind === 'APPROVAL' || step.kind === 'DECISION') && hasContext && (
-            <div className="space-y-1">
-              <span className="label-mono">Context</span>
+            <div className="space-y-1.5">
+              <h4 className="text-xs font-medium text-paper-400">Context</h4>
               <DiffRenderer content={contextStr} />
             </div>
           )}
 
           {step.kind === 'APPROVAL' && (
-            <div className="flex gap-2">
-              <Button
-                className="h-[40px] lg:h-7"
-                disabled={respond.isPending}
-                onClick={() => openDialog('approve')}
-                size="sm"
-                variant="primary"
-              >
-                Approve
-              </Button>
-              <Button
-                className="h-[40px] lg:h-7"
-                disabled={respond.isPending}
-                onClick={() => openDialog('reject')}
-                size="sm"
-                variant="danger"
-              >
-                Reject
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-500/50 bg-ink-900/50 px-3 py-2.5">
+              <p className="min-w-0 flex-1 basis-[14rem] text-xs text-paper-400">
+                {hasContext
+                  ? 'Review the context above, then decide. Either way you can leave a note.'
+                  : 'Decide on this step. Either way you can leave a note.'}
+              </p>
+              <div className="flex gap-2 max-sm:w-full max-sm:*:flex-1">
+                <Button
+                  className="h-[40px] lg:h-7"
+                  disabled={respond.isPending}
+                  onClick={() => openDialog('reject')}
+                  size="sm"
+                  variant="danger"
+                >
+                  <Icon name="close" size={13} />
+                  Reject
+                </Button>
+                <Button
+                  className="h-[40px] lg:h-7"
+                  disabled={respond.isPending}
+                  onClick={() => openDialog('approve')}
+                  size="sm"
+                  variant="primary"
+                >
+                  <Icon name="check" size={13} />
+                  Approve
+                </Button>
+              </div>
             </div>
           )}
 
           {step.kind === 'DECISION' && isDecisionOptions(step.options) && (
-            <div className="flex flex-wrap gap-2">
-              {step.options.map((opt) => (
-                <Button
-                  disabled={respond.isPending}
-                  key={opt.value}
-                  onClick={() => handleRespond('select', opt.value)}
-                  size="sm"
-                  variant="secondary"
-                >
-                  {respond.isPending && pendingAction === opt.value ? 'Submitting…' : opt.label}
-                </Button>
-              ))}
+            <div className="space-y-2">
+              <h4 className="text-xs font-medium text-paper-400">Choose one</h4>
+              <div className="flex flex-wrap gap-2">
+                {step.options.map((opt) => (
+                  <Button
+                    disabled={respond.isPending}
+                    key={opt.value}
+                    onClick={() => handleRespond('select', opt.value)}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    {respond.isPending && pendingAction === opt.value ? 'Submitting…' : opt.label}
+                  </Button>
+                ))}
+              </div>
             </div>
           )}
 
           {step.kind === 'INPUT' && isInputFields(step.fields) && (
-            <div className="space-y-2">
-              {inputError && (
-                <Alert className="text-xs" variant="error">
-                  {inputError}
-                </Alert>
-              )}
+            <div className="max-w-xl space-y-3">
+              {inputError && <Alert variant="error">{inputError}</Alert>}
               {step.fields.map((field) => {
                 const fieldId = `human-step-${step.id}-${field.key}`;
                 return field.type === 'boolean' ? (
@@ -548,7 +601,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             <div className={hasContext ? 'flex flex-col gap-4 min-h-0 md:flex-row' : 'space-y-2'}>
               {hasContext && (
                 <div className="flex-[3] min-w-0 flex flex-col gap-1">
-                  <span className="label-mono">Context</span>
+                  <h4 className="text-xs font-medium text-paper-400">Context</h4>
                   <DiffRenderer content={contextStr} />
                 </div>
               )}

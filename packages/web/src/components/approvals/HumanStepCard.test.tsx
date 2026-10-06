@@ -148,8 +148,8 @@ describe('HumanStepCard approvals', () => {
     );
     expect(screen.getByText('Wrong table')).toBeTruthy();
     // A reject settles the step too; it must not read as a green "resolved".
-    expect(screen.getByText('rejected')).toBeTruthy();
-    expect(screen.queryByText('resolved')).toBeNull();
+    expect(screen.getByText('Rejected')).toBeTruthy();
+    expect(screen.queryByText('Resolved')).toBeNull();
   });
 
   it('names the request by its description when the ticket id is a UUID', () => {

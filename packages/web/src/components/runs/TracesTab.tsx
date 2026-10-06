@@ -4,10 +4,12 @@ import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { attributeTrace, type TraceLinker, traceMatchesSelection } from '@/lib/traceLinkage';
 import { FILTER_BAR_HEIGHT_VAR, groupHeaderTop } from '@/lib/traceSticky';
-import { cn, formatCount, formatDuration, formatTokens } from '@/lib/utils';
+import { cn, FOCUS_RING, formatCount, formatDuration, formatTokens } from '@/lib/utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -28,11 +30,20 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 // Type glyph — colored chip labelling the trace event kind
-const TYPE_GLYPH: Record<string, { label: string; tone: BadgeTone }> = {
-  activity_event: { label: 'event', tone: 'amber' },
-  llm_response: { label: 'llm', tone: 'dust' },
-  tool_call: { label: 'tool', tone: 'muted' },
+const TYPE_GLYPH: Record<string, { label: string; tone: BadgeTone; title: string }> = {
+  activity_event: { label: 'Event', title: 'Activity event', tone: 'amber' },
+  llm_response: { label: 'LLM', title: 'Model response', tone: 'dust' },
+  tool_call: { label: 'Tool', title: 'Tool call', tone: 'muted' },
 };
+
+/** A small inline text action inside a trace: "show all", "show less", "Show all". */
+const TEXT_ACTION = cn(
+  'rounded-sm text-xs text-ember-400 transition-colors hover:text-ember-300',
+  FOCUS_RING
+);
+
+/** The caption above a trace body block ("Input", "System prompt"). */
+const BLOCK_CAPTION = 'mb-1 text-[11px] font-medium text-paper-500';
 
 /** Strip provider prefix from a model spec: `anthropic/claude-opus-5-5` → `claude-opus-5-5` */
 function modelShortName(model: string): string {
@@ -109,7 +120,10 @@ function CollapsibleSection({
     <div>
       <button
         aria-expanded={open}
-        className="mb-1 flex items-center gap-1 font-mono text-[10px] tracking-[0.08em] text-paper-500 transition-colors hover:text-paper-300"
+        className={cn(
+          'mb-1 flex items-center gap-1 rounded-sm text-xs font-medium text-paper-400 transition-colors hover:text-paper-100',
+          FOCUS_RING
+        )}
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
@@ -117,8 +131,12 @@ function CollapsibleSection({
         onKeyDown={(e) => e.stopPropagation()}
         type="button"
       >
-        <span className="text-[10px]">{open ? '▼' : '▶'}</span>
-        {label.toUpperCase()}
+        <Icon
+          className={cn('transition-transform', open && 'rotate-90')}
+          name="chevronRight"
+          size={12}
+        />
+        {label}
       </button>
       {open && children}
     </div>
@@ -132,7 +150,7 @@ const BODY_LIMIT = 3000;
 /** The mono block every trace body renders into. */
 function TracePre({ children }: { children: ReactNode }) {
   return (
-    <pre className="max-h-48 overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-ink-500 bg-ink-900 p-2.5 font-mono text-[10px] leading-normal text-paper-400">
+    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md border border-ink-500/70 bg-ink-900 px-3 py-2.5 font-mono text-[11.5px] leading-relaxed text-paper-300">
       {children}
     </pre>
   );
@@ -169,7 +187,7 @@ function CappedPre({ text }: { text: string }) {
       <TracePre>{expanded ? text : capped(text)}</TracePre>
       {isCapped && (
         <button
-          className="mt-0.5 font-mono text-[10px] text-dust-400 transition-colors hover:text-dust-600"
+          className={cn(TEXT_ACTION, 'mt-1')}
           onClick={() => setExpanded((v) => !v)}
           type="button"
         >
@@ -182,7 +200,11 @@ function CappedPre({ text }: { text: string }) {
 
 /** The red banner carrying `trace.error`. */
 function TraceErrorBanner({ children }: { children: ReactNode }) {
-  return <Alert className="px-2 py-1.5 font-mono text-[10px]">{children}</Alert>;
+  return (
+    <Alert className="break-words px-3 py-2 font-mono text-xs [overflow-wrap:anywhere]">
+      {children}
+    </Alert>
+  );
 }
 
 // ── TruncatedText ─────────────────────────────────────────────────────────────
@@ -202,7 +224,7 @@ function TruncatedText({ text }: { text: string }) {
       </TracePre>
       {isTruncated && (
         <button
-          className="mt-0.5 font-mono text-[10px] text-dust-400 transition-colors hover:text-dust-600"
+          className={cn(TEXT_ACTION, 'mt-1')}
           onClick={(e) => {
             e.stopPropagation();
             setExpanded((v) => !v);
@@ -254,13 +276,13 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
             <div className="space-y-1.5">
               {systemPrompt !== null && (
                 <div>
-                  <div className="mb-0.5 font-mono text-[10px] text-paper-600">system</div>
+                  <div className={BLOCK_CAPTION}>System prompt</div>
                   <TruncatedText text={systemPrompt} />
                 </div>
               )}
               {userMessage !== null && (
                 <div>
-                  <div className="mb-0.5 font-mono text-[10px] text-paper-600">user</div>
+                  <div className={BLOCK_CAPTION}>User message</div>
                   <TruncatedText text={userMessage} />
                 </div>
               )}
@@ -295,11 +317,16 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
         {trace.error && <TraceErrorBanner>{trace.error}</TraceErrorBanner>}
         {inputText && (
           <div>
-            <div className="mb-0.5 font-mono text-[10px] text-paper-600">INPUT</div>
+            <div className={BLOCK_CAPTION}>Input</div>
             <CappedPre text={inputText} />
           </div>
         )}
-        {outputText && <CappedPre text={outputText} />}
+        {outputText && (
+          <div>
+            {inputText && <div className={BLOCK_CAPTION}>Output</div>}
+            <CappedPre text={outputText} />
+          </div>
+        )}
       </div>
     );
   }
@@ -323,11 +350,16 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
       {trace.error && <TraceErrorBanner>{trace.error}</TraceErrorBanner>}
       {toolInputText && (
         <div>
-          <div className="mb-0.5 font-mono text-[10px] text-paper-600">INPUT</div>
+          <div className={BLOCK_CAPTION}>Input</div>
           <CappedPre text={toolInputText} />
         </div>
       )}
-      {text && <CappedPre text={text} />}
+      {text && (
+        <div>
+          {toolInputText && <div className={BLOCK_CAPTION}>Output</div>}
+          <CappedPre text={text} />
+        </div>
+      )}
     </div>
   );
 }
@@ -345,16 +377,23 @@ function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
   }
 
   const tokenLabel = hasTokens
-    ? `↑${formatTokens(trace.inputTokens ?? 0)} ↓${formatTokens(trace.outputTokens ?? 0)}`
+    ? `${formatTokens(trace.inputTokens ?? 0)} in · ${formatTokens(trace.outputTokens ?? 0)} out`
     : null;
   const costLabel = hasCost
     ? `$${(typeof trace.costUsd === 'number' ? trace.costUsd : Number(trace.costUsd ?? 0)).toFixed(4)}`
     : null;
 
   return (
-    <span className="shrink-0 font-mono text-[10px] text-paper-500">
+    <span
+      className="tabular shrink-0 text-[11px] text-paper-500"
+      title={
+        hasTokens
+          ? `${formatCount(trace.inputTokens ?? 0)} input / ${formatCount(trace.outputTokens ?? 0)} output tokens`
+          : undefined
+      }
+    >
       {tokenLabel}
-      {tokenLabel && costLabel ? ' ' : ''}
+      {tokenLabel && costLabel ? ' · ' : ''}
       {costLabel}
     </span>
   );
@@ -378,11 +417,11 @@ function OtelLink({ trace }: { trace: AgentTraceRecord }) {
     ? `${GRAFANA_URL}/explore?left=${encodeURIComponent(JSON.stringify({ queries: [{ datasource: { type: 'tempo' }, query: trace.otelTraceId, queryType: 'traceId', refId: 'A' }] }))}`
     : null;
 
-  const inner = 'shrink-0 font-mono text-[10px] tracking-[0.04em] text-paper-600';
+  const inner = 'shrink-0 rounded-sm font-mono text-[11px] text-paper-500';
 
   return href ? (
     <a
-      className={`${inner} transition-colors hover:text-dust-400`}
+      className={cn(inner, 'transition-colors hover:text-ember-400', FOCUS_RING)}
       href={href}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
@@ -417,7 +456,12 @@ function EventRow({
 
   return (
     <li>
-      <div className="w-full text-left transition-colors hover:bg-ink-600/20 px-3 py-1.5">
+      <div
+        className={cn(
+          'w-full px-3 py-1.5 text-left transition-colors hover:bg-ink-600/25',
+          isExpanded && 'bg-ink-700/40'
+        )}
+      >
         {/* Narrow: the right-hand chips wrap under the summary instead of overlapping it. */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 lg:flex-nowrap">
           {/* The toggle covers the summary only: the OTel link on the right and
@@ -425,20 +469,25 @@ function EventRow({
           <button
             aria-controls={`trace-output-${trace.id}`}
             aria-expanded={isExpanded}
-            className="flex min-h-[40px] min-w-0 flex-1 basis-[12rem] cursor-pointer items-center gap-2 text-left lg:min-h-0 lg:basis-[0%]"
+            className={cn(
+              'flex min-h-[40px] min-w-0 flex-1 basis-[12rem] cursor-pointer items-center gap-2 rounded-sm py-0.5 text-left lg:min-h-0 lg:basis-[0%]',
+              FOCUS_RING
+            )}
             onClick={onToggle}
             type="button"
           >
             {/* Disclosure caret */}
-            <span className="w-3 shrink-0 text-center font-mono text-[10px] text-paper-600">
-              {isExpanded ? '▼' : '▶'}
-            </span>
+            <Icon
+              className={cn('text-paper-500 transition-transform', isExpanded && 'rotate-90')}
+              name="chevronRight"
+              size={12}
+            />
 
-            {/* Type glyph — .tg */}
+            {/* Event kind */}
             <Badge
-              className="shrink-0 px-1 py-px text-[10px] tracking-[0.08em]"
+              className="w-10 shrink-0 justify-center text-[11px]"
+              title={glyph.title}
               tone={glyph.tone}
-              uppercase
             >
               {glyph.label}
             </Badge>
@@ -446,8 +495,8 @@ function EventRow({
             {/* Event name */}
             <span
               className={cn(
-                'font-mono text-[11px] font-medium max-lg:shrink-0',
-                hasError ? 'text-brick-400' : 'text-paper-200'
+                'font-mono text-xs font-medium max-lg:shrink-0',
+                hasError ? 'text-brick-400' : 'text-paper-100'
               )}
             >
               {label}
@@ -455,7 +504,7 @@ function EventRow({
 
             {/* Detail / model */}
             {detail && (
-              <span className="flex-1 truncate font-mono text-[10px] text-paper-500">{detail}</span>
+              <span className="flex-1 truncate font-mono text-[11px] text-paper-500">{detail}</span>
             )}
           </button>
 
@@ -464,11 +513,11 @@ function EventRow({
             <TokenCostChip trace={trace} />
             <OtelLink trace={trace} />
             {durationLabel && (
-              <span className="num text-[10px] text-paper-600">{durationLabel}</span>
+              <span className="tabular text-[11px] text-paper-500">{durationLabel}</span>
             )}
             {hasError && (
-              <Badge className="text-[10px] tracking-[0.1em]" tone="brick" variant="text">
-                ERR
+              <Badge dot tone="brick">
+                Error
               </Badge>
             )}
           </div>
@@ -620,7 +669,14 @@ export function TracesTab({
   const anyAmbiguous = sections.some((sec) => sec.groups.some((g) => g.ambiguous));
 
   if (traces.length === 0) {
-    return <EmptyState className="py-12" title="No trace events recorded for this run." />;
+    return (
+      <EmptyState
+        className="py-12"
+        hint="Tool calls, model responses and activity events appear here as the run records them."
+        icon="list"
+        title="No trace events recorded yet"
+      />
+    );
   }
 
   return (
@@ -636,14 +692,14 @@ export function TracesTab({
           className="sticky top-0 z-10 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-600/50 bg-ink-900 px-4 py-2 lg:flex-nowrap"
           ref={filterBarRef}
         >
-          <span className="text-paper-500 text-[11px]">
+          <span className="text-xs text-paper-500">
             Filtered to{' '}
-            <span className="rounded-sm bg-ink-600 max-lg:break-all px-1.5 py-0.5 font-mono text-[10px] text-paper-300">
+            <span className="rounded-sm bg-ink-600 px-1.5 py-px font-mono text-[11px] text-paper-200 max-lg:break-all">
               {filterNodeId}
             </span>
           </span>
           <button
-            className="min-h-[40px] text-ember-400 hover:text-ember-600 text-[11px] transition-colors lg:min-h-0"
+            className={cn(TEXT_ACTION, 'min-h-[40px] lg:ml-auto lg:min-h-0')}
             onClick={onClearFilter}
             type="button"
           >
@@ -653,7 +709,10 @@ export function TracesTab({
       )}
 
       {anyAmbiguous && (
-        <p className="border-ink-600/40 border-b px-4 py-2 text-[11px] text-amber-400" id={noteId}>
+        <p
+          className="border-ink-600/40 border-b px-4 py-2 text-xs leading-relaxed text-amber-400"
+          id={noteId}
+        >
           Traces marked ambiguous were recorded before traces named their node. They are matched by
           activity name, so they may belong to another node or fan-out branch.
         </p>
@@ -663,17 +722,15 @@ export function TracesTab({
         <EmptyState
           action={
             compact ? undefined : (
-              <button
-                className="text-ember-400 transition-colors hover:text-ember-600"
-                onClick={onClearFilter}
-                type="button"
-              >
+              <Button onClick={onClearFilter} size="sm">
                 Show all traces
-              </button>
+              </Button>
             )
           }
           className="py-12"
-          title="No trace events for this node."
+          hint="The selected step has not recorded any events. Pick another step or show every event."
+          icon="filter"
+          title="No trace events for this node"
         />
       ) : (
         <div className="divide-y divide-ink-600/30">
@@ -681,10 +738,10 @@ export function TracesTab({
             <div key={section.branch ?? 'no-branch'}>
               {showBranchHeaders && section.branch !== null && (
                 <div
-                  className="border-ink-600/40 border-y bg-ink-900 px-4 py-1.5 font-mono text-[10px] text-ember-300 uppercase tracking-wider"
+                  className="border-ink-600/40 border-y bg-ink-900 px-4 py-1.5 text-xs font-medium text-paper-300"
                   data-testid="trace-branch"
                 >
-                  Branch {section.branch}
+                  Branch <span className="font-mono text-ember-300">{section.branch}</span>
                 </div>
               )}
               <div className="divide-y divide-ink-600/30">
@@ -695,38 +752,38 @@ export function TracesTab({
                     {/* Group header */}
                     <div
                       className={cn(
-                        'sticky z-[5] flex flex-wrap items-center gap-x-2 gap-y-0.5 bg-ink-800 px-4 py-2 lg:flex-nowrap',
+                        'sticky z-[5] flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-ink-600/30 bg-ink-800 px-4 py-2 lg:flex-nowrap',
                         groupHeaderTop(filterBarShowing)
                       )}
                     >
-                      <span className="font-mono text-[11px] font-medium text-paper-200 max-lg:min-w-0 max-lg:break-all">
+                      <span className="font-mono text-xs font-semibold text-paper-100 max-lg:min-w-0 max-lg:break-all">
                         {group.nodeLabels.length > 0
                           ? group.nodeLabels.join(' | ')
                           : group.activityName}
                       </span>
                       {group.nodeLabels.length > 0 &&
                         !group.nodeLabels.includes(group.activityName) && (
-                          <span className="font-mono text-[10px] text-paper-600">
+                          <span className="font-mono text-[11px] text-paper-500">
                             ({group.activityName})
                           </span>
                         )}
                       {group.ambiguous && (
                         <span
                           aria-describedby={noteId}
-                          className="rounded-sm bg-amber-400/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-400"
+                          className="rounded-md bg-amber-400/15 px-1.5 py-px text-[11px] font-medium text-amber-400"
                         >
-                          ambiguous
+                          Ambiguous
                         </span>
                       )}
-                      <span className="font-mono text-[10px] text-paper-600">
-                        attempt {group.attempt}
+                      <span className="tabular text-[11px] text-paper-500">
+                        Attempt {group.attempt}
                       </span>
                       {group.stepAttempt !== null && group.stepAttempt > 1 && (
-                        <span className="font-mono text-[10px] text-paper-600">
+                        <span className="tabular text-[11px] text-paper-500">
                           · node attempt {group.stepAttempt}
                         </span>
                       )}
-                      <span className="ml-auto font-mono text-[10px] text-paper-600">
+                      <span className="tabular ml-auto text-[11px] text-paper-500">
                         {group.traces.length} event{group.traces.length !== 1 ? 's' : ''}
                       </span>
                     </div>
