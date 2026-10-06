@@ -824,6 +824,21 @@ export interface ScheduledWorkRequestSummary {
 
 // ── Evaluations (P0: captured quality signals) ──
 
+/**
+ * The loops that can drive the implementer — the values of the run-pinned
+ * `workspace.implementerRuntime` setting, and of an eval run's per-side
+ * runtime override.
+ */
+export const IMPLEMENTER_RUNTIMES = ['mastra', 'claude-code'] as const;
+export type ImplementerRuntimeKind = (typeof IMPLEMENTER_RUNTIMES)[number];
+
+/** Narrows a stored runtime string (an untyped TEXT column) to a known runtime, else null. */
+export function toImplementerRuntime(value: unknown): ImplementerRuntimeKind | null {
+  return (IMPLEMENTER_RUNTIMES as readonly unknown[]).includes(value)
+    ? (value as ImplementerRuntimeKind)
+    : null;
+}
+
 export const EVAL_SIGNAL_SOURCES = [
   'GATE',
   'ASSERT',
@@ -856,6 +871,11 @@ export interface EvalResultDto {
   value: number;
   passed: boolean | null;
   rationale: string | null;
+  /**
+   * The implementer runtime that produced the scored output, for offline harness
+   * rows (the candidate arm's); null for online signals.
+   */
+  runtime: ImplementerRuntimeKind | null;
   metadata: unknown;
   createdAt: string;
 }
@@ -919,6 +939,14 @@ export interface EvalRunDto {
   datasetSlug?: string;
   candidateRef: string;
   baselineRef: string;
+  /**
+   * The implementer runtime each side was asked to run on; null means the side
+   * runs on whatever `workspace.implementerRuntime` resolves to in the dataset's
+   * scope. The runtime each case actually used is on its `EvalResultDto.runtime`
+   * (candidate) and `metadata.baselineRuntime`, and summarised in `summary.runtimes`.
+   */
+  candidateRuntime: ImplementerRuntimeKind | null;
+  baselineRuntime: ImplementerRuntimeKind | null;
   status: string;
   /**
    * The runless budget stopped the run before every case ran, so a SUCCESS or
@@ -945,7 +973,7 @@ export interface EvalScorerTrend {
 
 export interface EvalTrendsDto {
   /** The dimension each scorer's series is split by, when the request set one. */
-  by?: 'judgeModel' | 'agentKey';
+  by?: 'judgeModel' | 'agentKey' | 'runtime';
   /** Days each `daily` entry covers: 1, or 7 for a range over 90 days. */
   bucketDays: 1 | 7;
   windowDays: number;

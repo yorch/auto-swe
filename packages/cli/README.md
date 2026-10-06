@@ -90,9 +90,11 @@ evals show <id>                      Print a dataset's cases
 evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=N]
                                      Query captured eval signals
 evals run <dataset-slug> --candidate=<ref> --against=<ref>
+          [--candidate-runtime=mastra|claude-code] [--against-runtime=mastra|claude-code]
                                      Run the regression gate; exits 1 on a regression,
                                      2 when the eval run fails without a verdict or the
-                                     budget stopped it before every case ran
+                                     budget stopped it before every case ran. A runtime
+                                     flag runs that side on the named implementer runtime
 
 help                                 Show usage
 ```

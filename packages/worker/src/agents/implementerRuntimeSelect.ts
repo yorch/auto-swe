@@ -1,4 +1,5 @@
 import { resolveSetting } from '@auto-swe/shared/config';
+import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../activities/workspace.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
@@ -36,6 +37,8 @@ async function resolveClaudeCodeAccess(agentKey: string, ctx?: ResolveCtx) {
 
 /** One implementer session's loop, built for the runtime the setting chose. */
 export interface ImplementerTurnRunner {
+  /** Which runtime `workspace.implementerRuntime` chose — what the session actually ran on. */
+  kind: ImplementerRuntimeKind;
   /** Drives each turn; pass it to `runImplementerTurn`. */
   runtime: ImplementerRuntime;
   /**
@@ -69,6 +72,11 @@ export interface ImplementerTurnRunner {
  * Both runtimes run on the same Agent row's config (`resolveImplementerConfig`):
  * its tool keys — narrowed for a persona — skills, and step budget.
  *
+ * The choice goes through `resolveSetting` and nothing else, so the only way to
+ * steer it is the run-pin tier: a run's `ctx.pinnedSettings` snapshot, or the pin
+ * an eval case builds from its run's per-side runtime override. There is no
+ * parameter that skips the setting.
+ *
  * Build one per session, not per turn: a runtime that resumes its session across
  * turns (the harness) keeps its context and its prompt cache only while the same
  * runner is reused.
@@ -91,6 +99,7 @@ export async function buildImplementerTurnRunner(input: {
     );
     return runner({
       close: built.closeMcp,
+      kind: 'mastra',
       maxSteps: built.maxSteps,
       promptSuffix: built.promptSuffix,
       runtime: mastraRuntime(built.agent, built.maxSteps),
@@ -104,6 +113,7 @@ export async function buildImplementerTurnRunner(input: {
     resolveClaudeCodeAccess(agentKey, input.ctx),
   ]);
   return runner({
+    kind: 'claude-code',
     maxSteps: config.maxSteps,
     promptSuffix: skillsToPromptSuffix(config.skills) ?? '',
     runtime: claudeCodeRuntime({
@@ -125,6 +135,7 @@ export async function buildImplementerTurnRunner(input: {
 
 function runner(parts: {
   close?: () => Promise<void>;
+  kind: ImplementerRuntimeKind;
   maxSteps: number;
   promptSuffix: string;
   runtime: ImplementerRuntime;

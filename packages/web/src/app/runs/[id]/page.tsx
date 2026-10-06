@@ -35,6 +35,7 @@ import { useCancelWorkflowRun, useRetriedRun, useRunDetail } from '@/hooks/useRu
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
+import { IMPLEMENTER_RUNTIME_LABELS } from '@/lib/evalRuntime';
 import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
@@ -45,12 +46,6 @@ const LAYOUTS: Record<RunDetailLayout, (props: RunLayoutProps) => React.ReactNod
   A: SplitConsole,
   B: Transcript,
   C: FlightRecorder,
-};
-
-/** Header label for the run's pinned `workspace.implementerRuntime`. */
-const IMPLEMENTER_RUNTIME_LABELS: Record<string, string> = {
-  'claude-code': 'Claude Code harness',
-  mastra: 'Mastra loop',
 };
 
 /** `sm` buttons are 28px tall: on a phone the header actions get a 40px target instead. */

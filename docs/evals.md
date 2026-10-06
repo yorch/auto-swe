@@ -89,6 +89,37 @@ uses, so the runtime, tool keys, skills, MCP binding and step budgets a TEAM or 
 override gives that tenant's runs are what the eval grades. A GLOBAL dataset resolves at GLOBAL
 scope. It then runs a bounded TDD loop scoring the golden test's exit code.
 
+### Comparing runtimes
+
+Each side of a run can name the implementer runtime it runs on: `candidateRuntime` and
+`baselineRuntime` (`mastra` or `claude-code`) on `POST /api/v1/platform/evals/runs`, or
+`--candidate-runtime` / `--against-runtime` on `auto-swe evals run`. A side that names none runs on
+whatever `workspace.implementerRuntime` resolves to in the dataset's scope. Giving both sides the
+same agent ref and different runtimes grades one runtime against the other on the same prompt,
+model and skills:
+
+```bash
+auto-swe evals run golden --candidate=implementer@3 --candidate-runtime=claude-code \
+  --against=implementer@3 --against-runtime=mastra
+```
+
+The override is a pair of fields, not part of the agent ref. An agent ref (`key` or `key@version`)
+names an Agent version and means the same thing in a workflow node, a canary and a run pin, none of
+which can honour a runtime; a suffix such as `implementer@3#claude-code` would be accepted by the
+grammar everywhere and mean something in only one place. As fields, existing refs are untouched,
+the gateway validates the value against the runtime list, and the request is stored on the
+`EvalRun` beside the refs.
+
+The override enters `buildImplementerTurnRunner` as the case's run pin of
+`workspace.implementerRuntime` — the tier a production run's start-time snapshot occupies — so the
+runtime is still chosen through the setting, and a production run is unaffected. A case whose
+runner was built on a different runtime than the one requested fails with
+`EVAL_RUNTIME_MISMATCH` instead of grading the wrong runtime under the requested name.
+
+Every harness result records the runtime that actually ran, whether or not the run overrode it: the
+candidate arm's in `EvalResult.runtime`, the baseline arm's in its `metadata.baselineRuntime`. The
+verdict's `summary.runtimes` lists the runtimes each side ran on across the completed cases.
+
 **Infrastructure errors throw rather than scoring zero.** A Docker, model, agent, or MCP failure
 marks the `EvalRun` `FAILED`; it never records a false `0` that would poison the regression verdict
 with infra noise.
@@ -140,10 +171,10 @@ re-validation quarantined as stale and how many are flake-screened, with the thr
 
 | Model | Holds |
 |---|---|
-| `EvalResult` | One row per scorer — normalized `value`, `passed`, `rationale`, and for a judge row the model and cost of its call. Indexed for per-scorer and per-day trend queries |
+| `EvalResult` | One row per scorer — normalized `value`, `passed`, `rationale`, for a judge row the model and cost of its call, and for a harness row the implementer `runtime` the candidate ran on. Indexed for per-scorer and per-day trend queries |
 | `EvalDataset` | A versioned, scope-cascaded benchmark |
 | `EvalCase` | One case — `input`, optional `reference`, `sourceRunId` provenance, tags |
-| `EvalRun` | One execution of a dataset — status, candidate/baseline refs, aggregate statistics |
+| `EvalRun` | One execution of a dataset — status, candidate/baseline refs, each side's optional runtime override, aggregate statistics |
 | `EvalRubric` | A versioned judging rubric; `code-review-quality` ships seeded |
 
 `EvalResult` joins to `WorkflowRun`, `WorkflowStep`, and `AgentTrace`, which is what turns one-off
@@ -156,11 +187,11 @@ verdicts into trends per template, model, and prompt version.
 | Surface | Where |
 |---|---|
 | Dashboard | `/govern/evals` — each scorer's daily mean over a 7, 30, or 90-day UTC window or a custom span of up to 366 days, charted by week above 90 days (`since` / `until` on `GET /api/v1/platform/evals/trends`); every captured result, paginated and filterable by scorer and source, linked to the run or harness run it scored; the datasets |
-| Dataset detail | `/govern/evals/datasets/[id]` — the cases and the dataset's harness runs |
-| Harness run detail | `/govern/evals/runs/[id]` — the paired verdict, overall and per tag, and that run's results |
+| Dataset detail | `/govern/evals/datasets/[id]` — the cases and the dataset's harness runs, each side with its runtime override |
+| Harness run detail | `/govern/evals/runs/[id]` — the paired verdict, overall and per tag, the runtimes each side ran on, and that run's results with the runtime of each |
 | Run detail | The eval panel on `/runs/[id]` |
 | REST | `/api/v1/platform/evals` (datasets, cases, runs, rubrics, `results`, and `trends` — one bounded aggregate per UTC day) |
-| CLI | `auto-swe evals` — list, show, and `run` a dataset |
+| CLI | `auto-swe evals` — list, show, and `run` a dataset, optionally on a runtime per side; `results` prints a harness row's runtime |
 | Schedules | `/govern/workflow-defaults` — nightly regression and re-validation cadence |
 
 ---
@@ -194,10 +225,17 @@ verdicts into trends per template, model, and prompt version.
   kappa thresholds are set at `/govern/workflow-defaults`, but nothing stores a flake rate per run or
   a judge/human agreement figure, so there is nothing to chart for them; the stale rate is the
   quarantined share of cases today, with no history, so it is a bar per dataset and not a trend.
-- **Trend breakdowns cover judge model and agent, and templates only for online signals.**
-  `GET /api/v1/platform/evals/trends` accepts `by=judgeModel|agentKey` and `templateId`. A template
+- **Trend breakdowns cover judge model, agent and runtime, and templates only for online signals.**
+  `GET /api/v1/platform/evals/trends` accepts `by=judgeModel|agentKey|runtime` and `templateId`. A
+  runtime breakdown sees only harness rows, the one place a runtime is recorded. A template
   filter keeps results of runs of that template, so offline harness rows, which have no run, drop
   out of it; there is no breakdown by prompt version.
+- **A runtime override is per run, not per schedule.** The nightly regression schedule passes no
+  runtime, so its sides run on what the setting resolves; comparing runtimes is a manual
+  `evals run`.
+- **Runtime comparisons share a model constraint.** The `claude-code` runtime needs an Anthropic
+  model; a side whose agent resolves to another provider fails the run (`HARNESS_UNSUPPORTED_MODEL`)
+  rather than scoring zero.
 - **A budget-limited verdict covers a prefix of the dataset.** The cap is shared by the whole run,
   so one expensive case can spend another's allowance, and the cases that did not run are the ones
   at the end of the dataset, not a sample. The run's status is still `SUCCESS` or `REGRESSION`, so

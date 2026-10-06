@@ -18,6 +18,7 @@
 
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
 import { ApplicationFailure } from '@temporalio/activity';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import {
@@ -73,13 +74,31 @@ export interface HarnessInput {
   datasetId: string;
   candidateRef: string;
   baselineRef: string;
+  /**
+   * Per-side implementer runtime override. Absent or null, the side runs on
+   * whatever `workspace.implementerRuntime` resolves to in the dataset's scope.
+   */
+  candidateRuntime?: ImplementerRuntimeKind | null;
+  baselineRuntime?: ImplementerRuntimeKind | null;
+}
+
+/** One arm of one case: its floor outcome and the runtime that produced it. */
+export interface CaseOutcome {
+  /** 1 when the golden test passed, 0 when it did not. */
+  score: 0 | 1;
+  /** The implementer runtime the arm actually ran on. */
+  runtime: ImplementerRuntimeKind;
 }
 
 export interface HarnessDeps {
   /** Resolve the dataset's cases. */
   loadCases: (datasetId: string) => Promise<EvalCaseRow[]>;
-  /** Run one case under one arm; returns 1 (floor passed) or 0 (failed). */
-  runCase: (caseRow: EvalCaseRow, ref: string) => Promise<0 | 1>;
+  /** Run one case under one arm (agent ref, optional runtime override). */
+  runCase: (
+    caseRow: EvalCaseRow,
+    ref: string,
+    runtime?: ImplementerRuntimeKind
+  ) => Promise<CaseOutcome>;
   /** Persist one normalized signal (defaults to the real capture writer). */
   record?: typeof recordEvalResult;
   /** Finalize the EvalRun row. */
@@ -117,9 +136,9 @@ async function defaultFinalize(evalRunId: string, status: string, summary: unkno
 
 /**
  * Runs the implementer at the agent version specified by `ref` against the
- * frozen fixture, then checks `goldenTest`. Returns 1 when the golden test
+ * frozen fixture, then checks `goldenTest`. Scores 1 when the golden test
  * passes within the workflow-defaults eval-iteration cap, 0 when it
- * consistently fails.
+ * consistently fails, and reports the implementer runtime the arm ran on.
  *
  * A `0` means a genuine floor failure (the agent's code did not make the golden
  * test pass). Infrastructure/config errors — Docker provisioning, agent/model
@@ -138,17 +157,24 @@ async function defaultFinalize(evalRunId: string, status: string, summary: unkno
  * the step budget, the agent version itself — is what the eval grades, as it
  * is what that tenant's production runs get. Omitted, the case resolves at
  * GLOBAL scope, which is right only for a GLOBAL dataset.
+ *
+ * `runtime` is the eval run's override for this side. It enters as a run pin of
+ * `workspace.implementerRuntime` — the same tier a production run's start-time
+ * snapshot occupies — so `buildImplementerTurnRunner` still chooses through the
+ * setting. Omitted, the arm runs on what the dataset's scope resolves.
  */
 export async function runCaseDefault(
   caseRow: EvalCaseRow,
   ref: string,
-  scope: Pick<ResolveCtx, 'orgId' | 'teamId'> = {}
-): Promise<0 | 1> {
+  scope: Pick<ResolveCtx, 'orgId' | 'teamId'> = {},
+  runtime?: ImplementerRuntimeKind
+): Promise<CaseOutcome> {
   const parsed = parseAgentRef(ref);
   const ctx: ResolveCtx = {
     ...(scope.teamId ? { teamId: scope.teamId } : {}),
     ...(scope.orgId ? { orgId: scope.orgId } : {}),
     ...(parsed.version !== undefined ? { agentVersions: { [parsed.key]: parsed.version } } : {}),
+    ...(runtime ? { pinnedSettings: { 'workspace.implementerRuntime': runtime } } : {}),
   };
 
   // Attempt cap comes from the DB-backed workflow defaults (falls back to 3).
@@ -182,6 +208,14 @@ export async function runCaseDefault(
     // Chosen once for the whole case: a runtime that resumes its session across
     // iterations must not be rebuilt per iteration.
     turns = await buildImplementerTurnRunner({ agentKey: parsed.key, ctx, tracer, workspace });
+    // A pin the resolver did not honour (a value its schema refuses falls through to
+    // the cascade) would grade the wrong runtime under the requested one's name.
+    if (runtime && turns.kind !== runtime) {
+      throw ApplicationFailure.nonRetryable(
+        `Eval asked for the '${runtime}' implementer runtime, but '${turns.kind}' was built.`,
+        'EVAL_RUNTIME_MISMATCH'
+      );
+    }
     // The model spec the turn is priced at and the version's own system prompt.
     const resolved = await resolveAgent(parsed.key, ctx);
 
@@ -202,7 +236,7 @@ export async function runCaseDefault(
       await assertBudgetAvailable(usageEvent);
       await runImplementerTurn({
         boundModelSpec: resolved.model.spec,
-        context: { caseId: caseRow.id, iteration: i, ref },
+        context: { caseId: caseRow.id, iteration: i, ref, runtime: turns.kind },
         role: parsed.key,
         runtime: turns.runtime,
         system: systemPrompt,
@@ -215,7 +249,7 @@ export async function runCaseDefault(
       const gt = await workspace.execCapture(caseRow.goldenTest);
       tracer.addActivityEvent({
         durationMs: Date.now() - testStart,
-        inputJson: { caseId: caseRow.id, iteration: i, ref },
+        inputJson: { caseId: caseRow.id, iteration: i, ref, runtime: turns.kind },
         name: 'eval.golden_test',
         outputJson: { exitCode: gt.exitCode, passed: gt.exitCode === 0 },
       });
@@ -224,10 +258,10 @@ export async function runCaseDefault(
       // gives the next iteration an empty repair signal.
       lastTestOutput = [gt.stdout, gt.stderr].filter(Boolean).join('\n');
       if (gt.exitCode === 0) {
-        return 1;
+        return { runtime: turns.kind, score: 1 };
       }
     }
-    return 0;
+    return { runtime: turns.kind, score: 0 };
   } finally {
     await turns?.close();
     // Always — a case that threw is exactly the one whose trace is needed.
@@ -278,13 +312,16 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
 
   return withRunlessCapScale(cases.length, async () => {
     const pairs: PairedOutcome[] = [];
+    // Every runtime each side actually ran on: one, unless the setting changed
+    // between cases of a side that has no override.
+    const runtimes = { baseline: new Set<string>(), candidate: new Set<string>() };
     let partial: PartialRunSummary | undefined;
     for (const [index, c] of cases.entries()) {
       // Settled, not `all`: an arm that fails must not leave the other running
       // (and spending) unobserved.
       const [baselineArm, candidateArm] = await Promise.allSettled([
-        deps.runCase(c, input.baselineRef),
-        deps.runCase(c, input.candidateRef),
+        deps.runCase(c, input.baselineRef, input.baselineRuntime ?? undefined),
+        deps.runCase(c, input.candidateRef, input.candidateRuntime ?? undefined),
       ]);
       if (baselineArm.status === 'rejected' || candidateArm.status === 'rejected') {
         const reasons = [baselineArm, candidateArm].flatMap((a) =>
@@ -306,18 +343,28 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
       }
       const baseline = baselineArm.value;
       const candidate = candidateArm.value;
-      pairs.push({ baseline, candidate, caseId: c.id, tags: c.tags });
+      pairs.push({
+        baseline: baseline.score,
+        candidate: candidate.score,
+        caseId: c.id,
+        tags: c.tags,
+      });
+      runtimes.baseline.add(baseline.runtime);
+      runtimes.candidate.add(candidate.runtime);
 
-      // Record the candidate's floor outcome as the gate signal for this run.
+      // Record the candidate's floor outcome as the gate signal for this run, with
+      // the runtime each arm ran on: the candidate's in its own column, the
+      // baseline's beside it so a paired case reads whole from one row.
       await record({
         caseId: c.id,
         evalRunId: input.evalRunId,
-        metadata: { tags: c.tags },
-        passed: candidate === 1,
+        metadata: { baselineRuntime: baseline.runtime, tags: c.tags },
+        passed: candidate.score === 1,
+        runtime: candidate.runtime,
         scorer: 'gate:runTests',
         scoreType: 'BOOLEAN',
         source: 'GATE',
-        value: candidate,
+        value: candidate.score,
       });
     }
 
@@ -325,6 +372,7 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
     await finalize(input.evalRunId, verdict.regression ? 'REGRESSION' : 'SUCCESS', {
       byTag: verdict.byTag,
       overall: verdict.overall,
+      runtimes: { baseline: [...runtimes.baseline], candidate: [...runtimes.candidate] },
       summary: verdict.summary,
       ...(partial ? { partial } : {}),
     });
@@ -348,7 +396,7 @@ export async function runEvalHarnessActivity(input: HarnessInput): Promise<void>
       const scope = await owner;
       return runEvalHarness(input, {
         loadCases: defaultLoadCases,
-        runCase: (caseRow, ref) => runCaseDefault(caseRow, ref, scope),
+        runCase: (caseRow, ref, runtime) => runCaseDefault(caseRow, ref, scope, runtime),
       });
     });
   } catch (err) {

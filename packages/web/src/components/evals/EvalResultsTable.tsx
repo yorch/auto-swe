@@ -13,6 +13,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEvalResults } from '@/hooks/useAdmin';
+import { resultRuntimes, runtimeLabel } from '@/lib/evalRuntime';
 import { formatDate, scoreColor } from '@/lib/utils';
 
 const LIMIT = 25;
@@ -30,6 +31,22 @@ export function formatScore(row: Pick<EvalResultDto, 'scoreType' | 'value'>): st
 }
 
 /** Where a result came from: the workflow run it scored, or the harness run and case. */
+/** The candidate arm's runtime, and the baseline's when the pair ran on different ones. */
+function ResultRuntime({ row }: { row: EvalResultDto }) {
+  const { baseline, candidate } = resultRuntimes(row);
+  if (!candidate) {
+    return <span className="text-paper-600">—</span>;
+  }
+  return (
+    <span>
+      {runtimeLabel(candidate)}
+      {baseline && baseline !== candidate && (
+        <span className="text-paper-500"> vs {runtimeLabel(baseline)}</span>
+      )}
+    </span>
+  );
+}
+
 function ResultOrigin({ row, showEvalRun }: { row: EvalResultDto; showEvalRun: boolean }) {
   if (row.runId) {
     return (
@@ -137,6 +154,11 @@ export function EvalResultsTable({
             <Th align="right" variant="dense">
               Score
             </Th>
+            <Th variant="dense">
+              <span title="The implementer runtime the candidate arm ran on (and the baseline arm's, when it differs). Offline benchmark rows only.">
+                Runtime
+              </span>
+            </Th>
             <Th variant="dense">Origin</Th>
           </THead>
           <tbody>
@@ -156,13 +178,16 @@ export function EvalResultsTable({
                     {formatScore(row)}
                   </span>
                 </Td>
+                <Td className="px-4 py-2 font-mono text-[11px] text-paper-400" label="Runtime">
+                  <ResultRuntime row={row} />
+                </Td>
                 <Td className="px-4 py-2 font-mono text-[11px] text-paper-500" label="Origin">
                   <ResultOrigin row={row} showEvalRun={!evalRunId} />
                 </Td>
               </TRow>
             ))}
             {rows.length === 0 && (
-              <TableStatusRow colSpan={5}>
+              <TableStatusRow colSpan={6}>
                 <EmptyState title="No eval results match." />
               </TableStatusRow>
             )}

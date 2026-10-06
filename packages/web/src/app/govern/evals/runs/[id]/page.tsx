@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEvalRun } from '@/hooks/useAdmin';
+import { formatArm, runtimeLabel } from '@/lib/evalRuntime';
 import { formatPoints, type PairedDelta, significance, verdictSentence } from '@/lib/evalVerdict';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatDate } from '@/lib/utils';
@@ -19,6 +20,8 @@ interface Verdict {
   overall: PairedDelta;
   byTag: Record<string, PairedDelta>;
   summary: string;
+  /** The implementer runtimes each side actually ran on, over the cases that completed. */
+  runtimes?: { baseline: string[]; candidate: string[] };
   /** Set when the runless budget stopped the run before every case ran. */
   partial?: {
     completedCases: number;
@@ -34,6 +37,10 @@ function isVerdict(v: unknown): v is Verdict {
 }
 
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
+/** A side's runtimes as text: one, normally; several if the setting moved mid-run. */
+const describeRuntimes = (runtimes: string[]) =>
+  runtimes.length > 0 ? runtimes.map((r) => runtimeLabel(r)).join(' and ') : '—';
 
 /** A difference is coloured only when the whole likely range agrees on its direction. */
 const DELTA_TONE = {
@@ -94,6 +101,11 @@ function VerdictView({ summary }: { summary: unknown }) {
         {verdictSentence(summary.overall).text}
       </Alert>
       <p className="font-mono text-xs text-paper-500">{summary.summary}</p>
+      {summary.runtimes && (
+        <p className="font-mono text-xs text-paper-400">
+          {`Ran on: candidate ${describeRuntimes(summary.runtimes.candidate)}, baseline ${describeRuntimes(summary.runtimes.baseline)}`}
+        </p>
+      )}
       <Table>
         <THead>
           <Th variant="dense">Slice</Th>
@@ -157,7 +169,7 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
           <>
             <PageHeader
               actions={<EvalRunStatusBadge partial={run.partial} status={run.status} />}
-              subtitle={`${run.candidateRef} vs ${run.baselineRef} · started ${formatDate(run.startedAt)}${run.endedAt ? ` · ended ${formatDate(run.endedAt)}` : ''}`}
+              subtitle={`${formatArm(run.candidateRef, run.candidateRuntime)} vs ${formatArm(run.baselineRef, run.baselineRuntime)} · started ${formatDate(run.startedAt)}${run.endedAt ? ` · ended ${formatDate(run.endedAt)}` : ''}`}
               title={run.datasetName ? `${run.datasetName} benchmark run` : 'Benchmark run'}
             />
             <Card>

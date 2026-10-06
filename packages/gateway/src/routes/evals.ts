@@ -22,6 +22,8 @@ import {
   type EvalScorerTrend,
   type EvalSuiteHealthDto,
   type EvalTrendsDto,
+  IMPLEMENTER_RUNTIMES,
+  toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -98,7 +100,13 @@ const CreateDatasetBody = z.object({
 
 const StartRunBody = z.object({
   baselineRef: z.string().min(1).max(200),
+  /**
+   * Per-side implementer runtime override. Omitted or null, that side runs on
+   * whatever `workspace.implementerRuntime` resolves to in the dataset's scope.
+   */
+  baselineRuntime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   candidateRef: z.string().min(1).max(200),
+  candidateRuntime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   datasetId: z.string().uuid(),
 });
 
@@ -121,7 +129,7 @@ const TrendsQuery = refineCustomRange(
   z.object({
     ...customRangeFields,
     /** Split each scorer's series by this column of the result rows. */
-    by: z.enum(['judgeModel', 'agentKey']).optional(),
+    by: z.enum(['judgeModel', 'agentKey', 'runtime']).optional(),
     source: z.enum(EVAL_SIGNAL_SOURCES).optional(),
     /** Only results of runs of this workflow template (offline harness rows have no run). */
     templateId: z.string().uuid().optional(),
@@ -150,6 +158,8 @@ function toRunDto(run: {
   datasetId: string;
   candidateRef: string;
   baselineRef: string;
+  candidateRuntime: string | null;
+  baselineRuntime: string | null;
   status: string;
   summary: unknown;
   startedAt: Date;
@@ -157,7 +167,9 @@ function toRunDto(run: {
 }): EvalRunDto {
   return {
     baselineRef: run.baselineRef,
+    baselineRuntime: toImplementerRuntime(run.baselineRuntime),
     candidateRef: run.candidateRef,
+    candidateRuntime: toImplementerRuntime(run.candidateRuntime),
     datasetId: run.datasetId,
     ...(run.dataset ? { datasetName: run.dataset.name, datasetSlug: run.dataset.slug } : {}),
     endedAt: run.endedAt?.toISOString() ?? null,
@@ -513,6 +525,8 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: StartRunBody } },
     async (request, reply) => {
       const { baselineRef, candidateRef, datasetId } = request.body;
+      const baselineRuntime = request.body.baselineRuntime ?? null;
+      const candidateRuntime = request.body.candidateRuntime ?? null;
       const ds = await fastify.prisma.evalDataset.findUnique({ where: { id: datasetId } });
       if (!ds) {
         return reply
@@ -520,7 +534,14 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'DATASET_NOT_FOUND', message: 'Eval dataset not found' } });
       }
       const run = await fastify.prisma.evalRun.create({
-        data: { baselineRef, candidateRef, datasetId, status: 'RUNNING' },
+        data: {
+          baselineRef,
+          baselineRuntime,
+          candidateRef,
+          candidateRuntime,
+          datasetId,
+          status: 'RUNNING',
+        },
       });
       // Start the durable harness workflow. There is no retry endpoint and the
       // CLI polls this row for a verdict, so a start failure must be visible:
@@ -528,7 +549,9 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         await fastify.temporal.startEvalRunWorkflow(`eval-${run.id}`, {
           baselineRef,
+          baselineRuntime,
           candidateRef,
+          candidateRuntime,
           datasetId,
           evalRunId: run.id,
         });

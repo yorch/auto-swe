@@ -700,6 +700,7 @@ CREATE TABLE "eval_results" (
     "rationale" TEXT,
     "judge_model" TEXT,
     "cost_usd" DOUBLE PRECISION,
+    "runtime" TEXT,
     "metadata" JSONB,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -745,6 +746,8 @@ CREATE TABLE "eval_runs" (
     "dataset_id" UUID NOT NULL,
     "candidate_ref" TEXT NOT NULL,
     "baseline_ref" TEXT NOT NULL,
+    "candidate_runtime" TEXT,
+    "baseline_runtime" TEXT,
     "status" TEXT NOT NULL DEFAULT 'RUNNING',
     "summary" JSONB,
     "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

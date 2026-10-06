@@ -15,12 +15,20 @@ function resolvedParams<T>(value: T): Promise<T> {
   return Object.assign(Promise.resolve(value), { status: 'fulfilled', value });
 }
 
-function renderPage(summary: unknown, status = 'REGRESSION') {
+function renderPage(
+  summary: unknown,
+  status = 'REGRESSION',
+  runtimes: { baselineRuntime?: string | null; candidateRuntime?: string | null } = {},
+  results: unknown[] = []
+) {
   const spy = setupFetchMock({
     [`GET /api/v1/platform/evals/runs/${RUN_ID}`]: () => ({
       data: {
         baselineRef: 'main',
+        baselineRuntime: null,
         candidateRef: 'feat/x',
+        candidateRuntime: null,
+        ...runtimes,
         datasetId: 'ds-1',
         endedAt: '2026-09-02T00:00:00.000Z',
         id: RUN_ID,
@@ -30,8 +38,8 @@ function renderPage(summary: unknown, status = 'REGRESSION') {
       },
     }),
     'GET /api/v1/platform/evals/results': () => ({
-      data: [],
-      meta: { limit: 25, offset: 0, total: 0 },
+      data: results,
+      meta: { limit: 25, offset: 0, total: results.length },
     }),
   });
   render(
@@ -54,6 +62,46 @@ const delta = (d: number, lo: number, hi: number) => ({
 });
 
 describe('EvalRunPage', () => {
+  it('names each side’s runtime override and the runtimes the cases ran on', async () => {
+    renderPage(
+      {
+        byTag: {},
+        overall: delta(0, -0.1, 0.1),
+        regression: false,
+        runtimes: { baseline: ['mastra'], candidate: ['claude-code'] },
+        summary: 'pass-rate 80% → 80%',
+      },
+      'SUCCESS',
+      { baselineRuntime: 'mastra', candidateRuntime: 'claude-code' },
+      [
+        {
+          agentKey: null,
+          caseId: 'c1',
+          createdAt: '2026-09-01T00:10:00.000Z',
+          evalRunId: RUN_ID,
+          id: 'res-1',
+          metadata: { baselineRuntime: 'mastra', tags: [] },
+          nodeId: null,
+          passed: true,
+          rationale: null,
+          runId: null,
+          runtime: 'claude-code',
+          scorer: 'gate:runTests',
+          scoreType: 'BOOLEAN',
+          source: 'GATE',
+          value: 1,
+        },
+      ]
+    );
+    expect(
+      await screen.findByText(/feat\/x on Claude Code harness vs main on Mastra loop/)
+    ).toBeTruthy();
+    expect(
+      screen.getByText('Ran on: candidate Claude Code harness, baseline Mastra loop')
+    ).toBeTruthy();
+    expect(await screen.findByText(/vs Mastra loop$/)).toBeTruthy();
+  });
+
   it('shows the paired verdict overall and per tag, and scopes results to the run', async () => {
     const spy = renderPage({
       byTag: { auth: delta(-0.2, -0.35, -0.05) },

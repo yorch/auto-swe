@@ -1524,6 +1524,9 @@ model EvalResult {
   judgeModel String?          @map("judge_model")
   /// USD cost of that call, as `recordLlmUsage` priced it. Null when no model was called.
   costUsd    Float?           @map("cost_usd")
+  /// Implementer runtime (`mastra` | `claude-code`) that produced the scored
+  /// output, for offline harness rows. Null for online rows.
+  runtime    String?
   metadata   Json?
   createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
@@ -1601,6 +1604,10 @@ model EvalRun {
   /// Agent/model/prompt ref under test, and the baseline it's compared against.
   candidateRef String      @map("candidate_ref")
   baselineRef  String      @map("baseline_ref")
+  /// Implementer runtime override per side (`mastra` | `claude-code`), applied as
+  /// the case's `workspace.implementerRuntime` run pin. Null = the setting decides.
+  candidateRuntime String? @map("candidate_runtime")
+  baselineRuntime  String? @map("baseline_runtime")
   /// RUNNING | SUCCESS | FAILED | REGRESSION.
   status       String      @default("RUNNING")
   /// Paired-stats verdict: { delta, se, ci95, n, byTag, regression }.

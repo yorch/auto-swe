@@ -24,6 +24,7 @@ import {
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { customRangeIgnored, dateRangePatch, describeRange, parseDateRange } from '@/lib/dateRange';
+import { formatArm } from '@/lib/evalRuntime';
 import { latestMean, scorerChange, worstMovingScorer } from '@/lib/evalTrend';
 import { cn, formatDate, scoreColor } from '@/lib/utils';
 
@@ -31,9 +32,22 @@ const BREAKDOWN_OPTIONS = [
   { label: 'Scorer', value: '' },
   { label: 'Judge model', value: 'judgeModel' },
   { label: 'Agent', value: 'agentKey' },
+  { label: 'Runtime', value: 'runtime' },
 ];
 
-type Breakdown = '' | 'judgeModel' | 'agentKey';
+type Breakdown = '' | 'judgeModel' | 'agentKey' | 'runtime';
+
+/** What a breakdown splits by, as a noun for titles and the column header. */
+const BREAKDOWN_NOUN: Record<Exclude<Breakdown, ''>, string> = {
+  agentKey: 'agent',
+  judgeModel: 'judge model',
+  runtime: 'implementer runtime',
+};
+const BREAKDOWN_HEADER: Record<Exclude<Breakdown, ''>, string> = {
+  agentKey: 'Agent',
+  judgeModel: 'Judge model',
+  runtime: 'Runtime',
+};
 
 /** Movement across the window, with an arrow; higher scores are better, so up is green. */
 function ChangeCell({ value }: { value: number | null }) {
@@ -67,7 +81,8 @@ function EvalsWorkspace() {
   const { params, update } = useUrlFilters();
   const range = parseDateRange(params);
   const rawBy = params.get('by');
-  const by: Breakdown = rawBy === 'judgeModel' || rawBy === 'agentKey' ? rawBy : '';
+  const by: Breakdown =
+    rawBy === 'judgeModel' || rawBy === 'agentKey' || rawBy === 'runtime' ? rawBy : '';
   const templateId = params.get('template') ?? '';
   // The scorer the chart shows. The results table below filters on its own, so
   // looking at one scorer's trend never empties the list of every other result.
@@ -151,7 +166,8 @@ function EvalsWorkspace() {
                   >
                     {r.datasetName ?? r.datasetSlug ?? 'Benchmark'}
                     <span className="ml-2 font-mono text-xs text-paper-500">
-                      {r.candidateRef} vs {r.baselineRef}
+                      {formatArm(r.candidateRef, r.candidateRuntime)} vs{' '}
+                      {formatArm(r.baselineRef, r.baselineRuntime)}
                     </span>
                   </Link>
                   <span className="flex items-center gap-3">
@@ -205,7 +221,7 @@ function EvalsWorkspace() {
                     daily: t.daily,
                     label: t.breakdown ?? '(none)',
                   }))}
-                  title={`${scorer || 'Scorer'} by ${by === 'judgeModel' ? 'judge model' : 'agent'}, ${weekly ? 'weekly' : 'daily'} mean`}
+                  title={`${scorer || 'Scorer'} by ${by ? BREAKDOWN_NOUN[by] : 'agent'}, ${weekly ? 'weekly' : 'daily'} mean`}
                 />
               ) : charted.length === 1 && charted[0] ? (
                 <ScorerTrendChart
@@ -219,7 +235,7 @@ function EvalsWorkspace() {
               <Table>
                 <THead>
                   <Th variant="dense">Scorer</Th>
-                  {by && <Th variant="dense">{by === 'judgeModel' ? 'Judge model' : 'Agent'}</Th>}
+                  {by && <Th variant="dense">{BREAKDOWN_HEADER[by]}</Th>}
                   <Th align="right" variant="dense">
                     Signals
                   </Th>

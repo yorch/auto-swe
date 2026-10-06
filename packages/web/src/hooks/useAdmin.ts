@@ -539,7 +539,7 @@ export function useEvalResults(filters: EvalResultFilters & { limit: number; off
 export interface EvalTrendFilters {
   source?: EvalSignalSourceValue;
   /** Split each scorer's series by this column of the result rows. */
-  by?: 'judgeModel' | 'agentKey';
+  by?: 'judgeModel' | 'agentKey' | 'runtime';
   /** Only results of runs of this workflow template. */
   templateId?: string;
 }
