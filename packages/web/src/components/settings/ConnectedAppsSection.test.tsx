@@ -33,8 +33,8 @@ describe('ConnectedAppsSection', () => {
     expect(await screen.findByText('Claude Code')).toBeTruthy();
     expect(screen.getByText('Unnamed app')).toBeTruthy();
     expect(screen.getAllByText('127.0.0.1:33333')).toHaveLength(2);
-    expect(screen.getAllByText('unverified')).toHaveLength(2);
-    expect(screen.getByText('can write')).toBeTruthy();
+    expect(screen.getAllByText('Unverified')).toHaveLength(2);
+    expect(screen.getByText('Can write')).toBeTruthy();
   });
 
   it('disconnects an app after confirmation', async () => {

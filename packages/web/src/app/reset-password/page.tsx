@@ -1,11 +1,11 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { AuthHeading, AuthLayout } from '@/components/layout/AuthLayout';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { errMsg } from '@/lib/errors';
 import { useAuthStore } from '@/stores/authStore';
@@ -68,31 +68,53 @@ function ResetPasswordInner() {
     }
   };
 
+  const backToSignIn = (
+    <ButtonLink href="/login" size="sm" variant="ghost">
+      <Icon name="arrowLeft" size={14} />
+      Back to sign in
+    </ButtonLink>
+  );
+
   if (done) {
     return (
-      <AuthLayout className="text-center">
-        <AuthHeading kicker="Password reset" kickerTone="moss" title="Password updated">
-          <p className="text-sm text-paper-400">Taking you to sign in with your new password…</p>
+      <AuthLayout>
+        <AuthHeading
+          icon="checkCircle"
+          kicker="Password reset"
+          kickerTone="moss"
+          title="Password updated"
+        >
+          Taking you to sign in with your new password…
         </AuthHeading>
+        <ButtonLink className="w-full" href="/login" size="lg" variant="primary">
+          Sign in now
+        </ButtonLink>
       </AuthLayout>
     );
   }
 
   return (
-    <AuthLayout>
-      <AuthHeading kicker="Reset password" title="Choose a new password">
-        <p className="mb-8 text-sm text-paper-400">
-          Enter a new password of 8 to 128 characters. Once it is saved you will sign in with it.
-        </p>
+    <AuthLayout footer={backToSignIn}>
+      <AuthHeading icon="lock" kicker="Reset password" title="Choose a new password">
+        Use 8 to 128 characters. Once it is saved, you will sign in with it.
       </AuthHeading>
 
       {!token && (
-        <Alert className="mb-4" variant="warning">
-          This link has no reset token. Request a fresh link from the sign-in page.
+        <Alert
+          action={
+            <ButtonLink href="/login" size="sm">
+              Request a link
+            </ButtonLink>
+          }
+          className="mb-5"
+          title="This link has no reset token"
+          variant="warning"
+        >
+          Request a fresh link from the sign-in page with Forgot password.
         </Alert>
       )}
       {error && (
-        <Alert className="mb-4" variant="error">
+        <Alert className="mb-5" variant="error">
           {error}
         </Alert>
       )}
@@ -101,6 +123,7 @@ function ResetPasswordInner() {
         <Input
           autoComplete="new-password"
           error={passwordError || undefined}
+          hint="At least 8 characters"
           label="New password"
           maxLength={128}
           minLength={8}
@@ -134,12 +157,6 @@ function ResetPasswordInner() {
           {loading ? 'Saving…' : 'Save new password'}
         </Button>
       </form>
-
-      <div className="mt-6 text-center">
-        <Link className="label-mono transition-colors hover:text-ember-400" href="/login">
-          Back to sign in
-        </Link>
-      </div>
     </AuthLayout>
   );
 }

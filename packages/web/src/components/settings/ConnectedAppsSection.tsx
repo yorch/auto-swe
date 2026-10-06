@@ -3,14 +3,15 @@
 import { useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { SectionHeader } from '@/components/ui/PageHeader';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { type McpGrant, useMcpGrants, useRevokeMcpGrant } from '@/hooks/useMcpGrants';
 import { describeRedirect, MCP_SCOPE_WRITE } from '@/lib/mcpConsent';
-import { formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { SettingsListRow, SettingsSection } from './SettingsSection';
 
 function hostsOf(grant: McpGrant): string {
   return [...new Set(grant.redirectUris.map((uri) => describeRedirect(uri).host))].join(', ');
@@ -22,7 +23,7 @@ function hostsOf(grant: McpGrant): string {
  * app has to be authorised again, with a new consent. Hidden while MCP is off and nothing is
  * connected, since there is then nothing to show or to do.
  */
-export function ConnectedAppsSection({ number }: { number?: string }) {
+export function ConnectedAppsSection() {
   const { data, error, isError, isFetching, refetch, isLoading } = useMcpGrants();
   const revoke = useRevokeMcpGrant();
   const [target, setTarget] = useState<McpGrant | null>(null);
@@ -34,61 +35,81 @@ export function ConnectedAppsSection({ number }: { number?: string }) {
 
   return (
     <>
-      <SectionHeader
-        hint="MCP clients you have authorised"
-        number={number}
+      <SettingsSection
+        description="MCP clients, such as coding agents, you have allowed to act on your behalf."
+        icon="plug"
+        id="connected-apps"
         title="Connected apps"
-      />
-      <Card variant="inset">
-        <QueryBoundary
-          compact
-          error={error}
-          isError={isError}
-          isFetching={isFetching}
-          isLoading={isLoading}
-          label="apps"
-          onRetry={() => void refetch()}
-        >
-          {grants.length === 0 ? (
-            <EmptyState
-              hint="An MCP client you connect to auto-swe, such as a coding agent, appears here."
-              title="No connected apps"
-            />
-          ) : (
-            <ul className="divide-y divide-ink-600">
-              {grants.map((grant) => (
-                <li className="flex items-center justify-between gap-4 py-3" key={grant.clientId}>
-                  <div className="min-w-0">
-                    <div className="flex items-baseline gap-3">
-                      <span className="text-sm text-paper-100">
-                        {grant.clientName ?? 'Unnamed app'}
-                      </span>
-                      <Badge tone="amber" uppercase variant="text">
-                        unverified
-                      </Badge>
-                      {grant.scopes.includes(MCP_SCOPE_WRITE) && (
-                        <Badge tone="ember" uppercase variant="text">
-                          can write
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-3 font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                      <span>{hostsOf(grant)}</span>
-                      <span>
-                        · {grant.scopes.includes(MCP_SCOPE_WRITE) ? 'read + write' : 'read'}
-                      </span>
-                      <span>· connected {formatRelativeTime(grant.grantedAt)}</span>
-                    </div>
-                  </div>
-                  <Button onClick={() => setTarget(grant)} size="sm" variant="danger">
-                    Disconnect
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </QueryBoundary>
-      </Card>
+      >
+        {isLoading ? (
+          <SkeletonRows rows={2} />
+        ) : (
+          <QueryBoundary
+            compact
+            error={error}
+            isError={isError}
+            isFetching={isFetching}
+            isLoading={false}
+            label="apps"
+            onRetry={() => void refetch()}
+          >
+            {grants.length === 0 ? (
+              <EmptyState
+                hint="When you approve an MCP client, such as a coding agent, it appears here so you can disconnect it later."
+                icon="plug"
+                title="No connected apps"
+              />
+            ) : (
+              <ul className="divide-y divide-ink-600">
+                {grants.map((grant) => {
+                  const canWrite = grant.scopes.includes(MCP_SCOPE_WRITE);
+                  return (
+                    <SettingsListRow
+                      action={
+                        <Button onClick={() => setTarget(grant)} size="sm" variant="danger">
+                          Disconnect
+                        </Button>
+                      }
+                      detail={
+                        <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <span className="break-all font-mono text-xs text-paper-400">
+                            {hostsOf(grant)}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>{canWrite ? 'Read and write' : 'Read only'}</span>
+                          <span aria-hidden="true">·</span>
+                          <span title={formatDate(grant.grantedAt)}>
+                            Connected {formatRelativeTime(grant.grantedAt)}
+                          </span>
+                        </span>
+                      }
+                      key={grant.clientId}
+                      leading={<Icon name="plug" size={16} />}
+                      status={
+                        <>
+                          <Badge
+                            title="The app named itself; auto-swe has not checked it"
+                            tone="amber"
+                            variant="outline"
+                          >
+                            Unverified
+                          </Badge>
+                          {canWrite && (
+                            <Badge tone="ember" variant="outline">
+                              Can write
+                            </Badge>
+                          )}
+                        </>
+                      }
+                      title={grant.clientName ?? 'Unnamed app'}
+                    />
+                  );
+                })}
+              </ul>
+            )}
+          </QueryBoundary>
+        )}
+      </SettingsSection>
 
       <ConfirmModal
         confirmLabel="Disconnect"

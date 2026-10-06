@@ -1,17 +1,19 @@
 'use client';
 
 import { useState } from 'react';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
-import { SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type PatCreated,
   useCreatePat,
@@ -19,13 +21,48 @@ import {
   useRevokePat,
 } from '@/hooks/usePats';
 import { errMsg } from '@/lib/errors';
-import { formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { SettingsSection } from './SettingsSection';
+
+function TokenStatus({ revoked, expired }: { revoked: boolean; expired: boolean }) {
+  if (revoked) {
+    return (
+      <Badge dot tone="brick" variant="outline">
+        Revoked
+      </Badge>
+    );
+  }
+  if (expired) {
+    return (
+      <Badge dot tone="amber" variant="outline">
+        Expired
+      </Badge>
+    );
+  }
+  return (
+    <Badge dot tone="moss" variant="outline">
+      Active
+    </Badge>
+  );
+}
+
+/** A relative time with the exact one on hover, or a muted dash. */
+function When({ value, empty = '—' }: { value: string | null | undefined; empty?: string }) {
+  if (!value) {
+    return <span className="text-paper-600">{empty}</span>;
+  }
+  return (
+    <time className="whitespace-nowrap" dateTime={value} title={formatDate(value)}>
+      {formatRelativeTime(value)}
+    </time>
+  );
+}
 
 /**
  * The API tokens section of the settings page, header included: the "New
  * token" action belongs in the section header, so the section owns it.
  */
-export function AccessTokensSection({ number }: { number?: string }) {
+export function AccessTokensSection() {
   const {
     data: tokens,
     error: loadError,
@@ -62,104 +99,138 @@ export function AccessTokensSection({ number }: { number?: string }) {
     }
   }
 
+  const list = tokens ?? [];
+
   return (
     <>
-      <SectionHeader
+      <SettingsSection
         actions={
           <Button onClick={() => setCreating(true)} size="sm" variant="primary">
+            <Icon name="plus" size={14} />
             New token
           </Button>
         }
-        hint="for the auto-swe CLI"
-        number={number}
+        description={
+          <>
+            Personal access tokens for the auto-swe CLI and the REST API, set as{' '}
+            <code className="font-mono text-[12px] text-paper-300">AUTO_SWE_TOKEN</code>.
+          </>
+        }
+        icon="key"
+        id="api-tokens"
         title="API tokens"
-      />
-      <Card variant="inset">
-        <QueryBoundary
-          compact
-          error={loadError}
-          isError={isError}
-          isFetching={isFetching}
-          isLoading={isLoading}
-          label="tokens"
-          onRetry={() => void refetch()}
-        >
-          {(tokens ?? []).length === 0 ? (
-            <EmptyState
-              hint={
-                <>
-                  Create one to authenticate the CLI via
-                  <code className="ml-1 text-paper-300">AUTO_SWE_TOKEN</code>.
-                </>
-              }
-              title="No tokens yet"
-            />
-          ) : (
-            <ul className="divide-y divide-ink-600">
-              {(tokens ?? []).map((t) => {
-                const revoked = !!t.revokedAt;
-                const expired = !!t.expiresAt && new Date(t.expiresAt) < new Date();
-                return (
-                  <li className="flex items-center justify-between gap-4 py-3" key={t.id}>
-                    <div className="min-w-0">
-                      <div className="flex items-baseline gap-3">
-                        <span className="text-sm text-paper-100">{t.name}</span>
-                        <code className="font-mono text-[10px] text-paper-500">{t.prefix}…</code>
-                        {revoked && (
-                          <Badge tone="brick" uppercase variant="text">
-                            revoked
-                          </Badge>
-                        )}
-                        {!revoked && expired && (
-                          <Badge tone="amber" uppercase variant="text">
-                            expired
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-3 font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                        <span>Created {formatRelativeTime(t.createdAt)}</span>
-                        {t.lastUsedAt && (
-                          <span>· last used {formatRelativeTime(t.lastUsedAt)}</span>
-                        )}
-                        {t.expiresAt && <span>· expires {formatRelativeTime(t.expiresAt)}</span>}
-                      </div>
-                    </div>
-                    {!revoked && (
-                      <Button
-                        onClick={() => setRevoking({ id: t.id, name: t.name })}
-                        size="sm"
-                        variant="danger"
-                      >
-                        Revoke
-                      </Button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </QueryBoundary>
-      </Card>
+      >
+        {isLoading ? (
+          <SkeletonRows rows={3} />
+        ) : (
+          <QueryBoundary
+            compact
+            error={loadError}
+            isError={isError}
+            isFetching={isFetching}
+            isLoading={false}
+            label="tokens"
+            onRetry={() => void refetch()}
+          >
+            {list.length === 0 ? (
+              <EmptyState
+                action={
+                  <Button onClick={() => setCreating(true)} size="sm">
+                    <Icon name="plus" size={14} />
+                    Create a token
+                  </Button>
+                }
+                hint="Create one to sign the CLI in, or to call the API from a script or CI job."
+                icon="key"
+                title="No tokens yet"
+              />
+            ) : (
+              <Table className="-mx-1" stacked>
+                <THead>
+                  <Th className="pl-1">Name</Th>
+                  <Th>Created</Th>
+                  <Th>Last used</Th>
+                  <Th>Expires</Th>
+                  <Th>Status</Th>
+                  <Th className="pr-1">
+                    <span className="sr-only">Actions</span>
+                  </Th>
+                </THead>
+                <tbody>
+                  {list.map((t) => {
+                    const revoked = !!t.revokedAt;
+                    const expired = !!t.expiresAt && new Date(t.expiresAt) < new Date();
+                    return (
+                      <TRow key={t.id}>
+                        <Td className="py-3 pr-4 pl-1" primary>
+                          <div
+                            className={
+                              revoked ? 'text-paper-400 line-through' : 'font-medium text-paper-100'
+                            }
+                          >
+                            {t.name}
+                          </div>
+                          <code className="font-mono text-xs text-paper-500">{t.prefix}…</code>
+                        </Td>
+                        <Td className="px-4 py-3 text-[13px] text-paper-400" label="Created">
+                          <When value={t.createdAt} />
+                        </Td>
+                        <Td className="px-4 py-3 text-[13px] text-paper-400" label="Last used">
+                          <When empty="Never" value={t.lastUsedAt} />
+                        </Td>
+                        <Td className="px-4 py-3 text-[13px] text-paper-400" label="Expires">
+                          <When empty="Never" value={t.expiresAt} />
+                        </Td>
+                        <Td className="px-4 py-3" label="Status">
+                          <TokenStatus expired={expired} revoked={revoked} />
+                        </Td>
+                        <Td align="right" className="py-3 pr-1 pl-4">
+                          {!revoked && (
+                            <ActionMenu
+                              items={[
+                                {
+                                  icon: 'trash',
+                                  id: 'revoke',
+                                  label: 'Revoke token',
+                                  onAction: () => setRevoking({ id: t.id, name: t.name }),
+                                  tone: 'danger',
+                                },
+                              ]}
+                              label={`Actions for token ${t.name}`}
+                            />
+                          )}
+                        </Td>
+                      </TRow>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            )}
+          </QueryBoundary>
+        )}
+      </SettingsSection>
 
       <Modal
-        eyebrow="§ New personal access token"
         onClose={() => setCreating(false)}
         open={creating}
-        subtitle="Tokens authenticate the CLI and API. The plaintext value is shown once and never stored — copy it before closing the next dialog."
-        title="Mint a token"
+        subtitle="Tokens authenticate the CLI and the API as you. The value is shown once, right after you create it, and is never stored."
+        title="New API token"
       >
         <form className="space-y-5" onSubmit={handleCreate}>
           <Input
             autoFocus
+            hint="Something that says where it is used, so you know what breaks if you revoke it"
             label="Name"
             onChange={(e) => setName(e.target.value)}
-            placeholder="laptop / CI / curl-scratch"
+            placeholder="e.g. laptop, CI deploy job"
             required
             value={name}
           />
           <Input
-            hint="1–365. Leave blank for non-expiring."
+            hint="1 to 365 days. Leave blank for a token that never expires."
             label="Expires in (days)"
+            max={365}
+            min={1}
             onChange={(e) => setExpiresInDays(e.target.value)}
             placeholder="90"
             type="number"
@@ -177,21 +248,33 @@ export function AccessTokensSection({ number }: { number?: string }) {
 
       <Modal
         closeOnBackdropClick={false}
-        eyebrow="§ Copy now — shown only once"
         onClose={() => setRevealed(null)}
         open={revealed !== null}
-        subtitle="This is the only time the full token will appear. Store it in your secret manager or as AUTO_SWE_TOKEN in your shell."
-        title={revealed ? `Token "${revealed.name}" created` : ''}
+        subtitle={revealed ? `Token "${revealed.name}" is ready to use.` : undefined}
+        title="Copy your new token"
       >
         {revealed && (
-          <div className="space-y-4">
-            <div className="flex items-start gap-3 rounded-sm border border-ember-400/60 bg-ember-400/5 p-4">
-              <code className="block min-w-0 flex-1 break-all font-mono text-sm text-ember-200">
+          <div className="space-y-5">
+            <Alert title="This is the only time you will see it" variant="warning">
+              auto-swe stores only a hash. Copy the token now and keep it in your secret manager; if
+              you lose it, revoke it and create another.
+            </Alert>
+            <div className="rounded-lg border border-ember-400/40 bg-ink-950/70 p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="label-mono">Token</span>
+                <CopyButton value={revealed.token} />
+              </div>
+              <code className="block break-all font-mono text-sm leading-relaxed text-ember-100 select-all">
                 {revealed.token}
               </code>
-              <CopyButton value={revealed.token} />
             </div>
-            <ModalFooter cancelLabel="I have it" onCancel={() => setRevealed(null)} />
+            <div>
+              <div className="label-mono mb-1.5">Use it from your shell</div>
+              <pre className="overflow-x-auto rounded-lg border border-ink-500 bg-ink-950/70 px-3 py-2.5 font-mono text-xs text-paper-300">
+                export AUTO_SWE_TOKEN=&lt;paste the token&gt;
+              </pre>
+            </div>
+            <ModalFooter cancelLabel="Done, I've copied it" onCancel={() => setRevealed(null)} />
           </div>
         )}
       </Modal>
@@ -199,7 +282,7 @@ export function AccessTokensSection({ number }: { number?: string }) {
       <ConfirmModal
         confirmLabel="Revoke"
         dangerous
-        message={`Revoke "${revoking?.name}"? Anything using this token will stop working.`}
+        message={`Anything using "${revoking?.name}" stops working right away. This cannot be undone.`}
         onClose={() => setRevoking(null)}
         onConfirm={async () => {
           // Awaited so ConfirmModal keeps the dialog open and shows a failure.
@@ -208,7 +291,8 @@ export function AccessTokensSection({ number }: { number?: string }) {
           }
         }}
         open={revoking !== null}
-        title="Revoke personal access token"
+        pendingLabel="Revoking…"
+        title="Revoke this token?"
       />
     </>
   );
