@@ -6,11 +6,14 @@ set shell := ["bash", "-cu"]
 
 # The Temporal Web UI is behind a Compose profile so it never starts in a
 # production stack (docker-compose.infra.yml is layered under
-# docker-compose.prod.yml too). The local recipes opt in.
-local := "--profile temporal-ui"
+# docker-compose.prod.yml too). The local recipes opt in through
+# scripts/compose.mjs, which ADDS the profile to COMPOSE_PROFILES: Compose's own
+# `--profile` flag replaces that variable, so `objectstore` from .env would be
+# dropped and Garage would never start.
+local := "node scripts/compose.mjs --add-profile temporal-ui"
 
-infra := "docker compose " + local + " -f docker-compose.infra.yml"
-dev := "docker compose " + local + " -f docker-compose.app.yml -f docker-compose.infra.yml"
+infra := local + " -f docker-compose.infra.yml"
+dev := local + " -f docker-compose.app.yml -f docker-compose.infra.yml"
 prod := "docker compose -f docker-compose.infra.yml -f docker-compose.prod.yml"
 prod_traefik := prod + " -f docker-compose.traefik.yml"
 prod_watchtower := prod + " -f docker-compose.watchtower.yml"
@@ -70,13 +73,14 @@ prod-up: prod-pull
 
 # Built from the base files only so teardown does not need the Traefik
 # domains; --remove-orphans catches overlay-only services (watchtower), and
-# `--profile temporal-ui` catches the Temporal UI — a profile-disabled service
-# is NOT treated as an orphan, so without it a previously-running UI container
-# survives every `down`.
+# `--profile '*'` catches every profiled service (the Temporal UI, Garage) — a
+# profile-disabled service is NOT treated as an orphan, so without it a
+# previously-running container survives every `down`. A named profile here
+# would replace COMPOSE_PROFILES and leave the others running.
 
 # Stop the production stack, whichever overlays started it.
 prod-down:
-    {{ prod }} --profile temporal-ui down --remove-orphans
+    {{ prod }} --profile '*' down --remove-orphans
 
 # Follow production logs. Pass a service name to filter them.
 prod-logs service="":
