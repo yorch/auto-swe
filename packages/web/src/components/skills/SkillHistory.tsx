@@ -103,7 +103,7 @@ export function SkillHistory({
                 <Td className="py-2 pr-3">
                   <span className="tabular-nums text-paper-100">#{r.revision}</span>
                   {r.isCurrent && (
-                    <Badge className="ml-2" tone="moss" variant="text">
+                    <Badge className="ml-2" tone="moss">
                       Current
                     </Badge>
                   )}

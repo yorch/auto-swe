@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -19,6 +19,8 @@ import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { clearableField, clearableIntField, countChanges } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
+import { ConfigStatusBadge, fieldState, groupState } from './ConfigStatusBadge';
+import { FieldGrid, IntegrationCard } from './IntegrationCard';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
 
@@ -184,16 +186,45 @@ export function KnowledgeBaseTab() {
 
   return (
     <form className="space-y-6" onSubmit={handleSubmit}>
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow="Knowledge base">Knowledge base</CardTitle>
-        </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
-          Connect a knowledge base so agents can search internal documentation at run time.
-          Confluence and Notion are supported. The connector is read-only — it never writes to your
-          knowledge base.
-        </p>
-        <div className="space-y-4">
+      <IntegrationCard
+        description="Connect a knowledge base so agents can search internal documentation at run time. Confluence and Notion are supported. The connector is read-only: it never writes to your knowledge base."
+        eyebrow="Knowledge base"
+        footer={
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-xl text-xs text-paper-500">
+                Runs a search through the configuration on screen, including values you have not
+                saved yet, to verify connectivity and access.
+              </p>
+              <Button
+                disabled={testing || !effectiveProvider || effectiveProvider === 'disabled'}
+                onClick={handleTest}
+                type="button"
+                variant="secondary"
+              >
+                {testing ? 'Testing…' : 'Test connection'}
+              </Button>
+            </div>
+            <TestResultAlert result={testResult} />
+          </>
+        }
+        status={
+          data?.provider && data.enabled !== false ? (
+            <ConfigStatusBadge
+              state={groupState([
+                fieldState(data.provider, sources.provider),
+                fieldState(data.apiToken, sources.apiToken),
+              ])}
+            />
+          ) : (
+            <Badge dot tone="muted" variant="outline">
+              Off
+            </Badge>
+          )
+        }
+        title="Documentation search"
+      >
+        <FieldGrid>
           <ConfigField
             current={data?.provider || undefined}
             id="kb-provider"
@@ -241,22 +272,26 @@ export function KnowledgeBaseTab() {
           </ConfigField>
           {!isNotion && (
             <>
-              <ConfigField
-                current={data?.baseUrl || undefined}
-                id="kb-base-url"
-                label="Base URL"
-                source={sources.baseUrl}
-              >
-                <Input
-                  compact
+              <div className="sm:col-span-2">
+                <ConfigField
+                  current={data?.baseUrl || undefined}
                   id="kb-base-url"
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
-                  value={baseUrl}
-                />
-              </ConfigField>
+                  label="Base URL"
+                  source={sources.baseUrl}
+                >
+                  <Input
+                    className="font-mono"
+                    compact
+                    id="kb-base-url"
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder={hints?.baseUrl ?? 'https://acme.atlassian.net'}
+                    value={baseUrl}
+                  />
+                </ConfigField>
+              </div>
               <Checkbox
                 checked={allowPrivateNetwork ?? data?.allowPrivateNetwork ?? false}
+                className="sm:col-span-2"
                 hint={
                   <>
                     Allows a base URL on a private-network address (internal, <code>.local</code>,
@@ -329,28 +364,8 @@ export function KnowledgeBaseTab() {
               value={maxPages}
             />
           </ConfigField>
-        </div>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow="Knowledge base">Test connection</CardTitle>
-        </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
-          Runs a search through the configuration on screen, including values you have not saved
-          yet, to verify connectivity and access.
-        </p>
-        <Button
-          disabled={testing || !effectiveProvider || effectiveProvider === 'disabled'}
-          onClick={handleTest}
-          size="sm"
-          type="button"
-          variant="secondary"
-        >
-          {testing ? 'Testing…' : 'Test connection'}
-        </Button>
-        <TestResultAlert result={testResult} />
-      </Card>
+        </FieldGrid>
+      </IntegrationCard>
 
       <IntegrationFormFooter
         dirtyCount={dirtyCount}

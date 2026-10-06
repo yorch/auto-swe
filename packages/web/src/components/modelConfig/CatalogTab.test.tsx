@@ -162,7 +162,7 @@ function rowFor(spec: string): HTMLElement {
   const row = screen
     .getAllByText(spec)
     .map((el) => el.closest('tr'))
-    .find((tr) => tr && !tr.textContent?.includes('not listed since'));
+    .find((tr) => tr && !/not listed since/i.test(tr.textContent ?? ''));
   if (!row) {
     throw new Error(`no row for ${spec}`);
   }
@@ -172,10 +172,10 @@ function rowFor(spec: string): HTMLElement {
 describe('CatalogTab', () => {
   it('marks each row built-in, customized or custom, and prices a 0/0 model as free', () => {
     render(<CatalogTab />);
-    expect(within(rowFor('anthropic/claude-opus-5-5')).getByText('built-in')).toBeTruthy();
-    expect(within(rowFor('anthropic/claude-sonnet-5-5')).getByText('customized')).toBeTruthy();
+    expect(within(rowFor('anthropic/claude-opus-5-5')).getByText('Built-in')).toBeTruthy();
+    expect(within(rowFor('anthropic/claude-sonnet-5-5')).getByText('Customized')).toBeTruthy();
     const local = rowFor('ollama/llama-4');
-    expect(within(local).getByText('custom')).toBeTruthy();
+    expect(within(local).getByText('Custom')).toBeTruthy();
     expect(within(local).getByText('free')).toBeTruthy();
   });
 
@@ -232,7 +232,7 @@ describe('CatalogTab', () => {
     const flagged = screen
       .getAllByText('anthropic/claude-sonnet-5-5')
       .map((el) => el.closest('tr'))
-      .find((tr) => tr && within(tr).queryByText(/not listed since/));
+      .find((tr) => tr && within(tr).queryByText(/not listed since/i));
     expect(flagged).toBeTruthy();
     expect(within(flagged as HTMLElement).queryByRole('button', { name: /retire/i })).toBeNull();
     fireEvent.click(within(flagged as HTMLElement).getByRole('button', { name: 'Edit' }));

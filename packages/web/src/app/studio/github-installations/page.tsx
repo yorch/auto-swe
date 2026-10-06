@@ -1,13 +1,16 @@
 'use client';
 
 import { useState } from 'react';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -167,10 +170,11 @@ export default function StudioGithubInstallationsPage() {
   const remove = useDeleteGithubInstallation();
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
+            <Icon name="plus" size={14} />
             Add installation
           </Button>
         }
@@ -185,85 +189,111 @@ export default function StudioGithubInstallationsPage() {
         title="GitHub installations"
       />
 
-      <QueryBoundary
-        error={loadError}
-        isError={isError}
-        isFetching={isFetching}
-        isLoading={isLoading}
-        label="GitHub installations"
-        onRetry={() => void refetch()}
-      >
-        <Card>
-          <CardHeader>
-            <CardTitle>Installations</CardTitle>
-          </CardHeader>
-          {!installations || installations.length === 0 ? (
+      <Card className="p-4 sm:p-6">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={false}
+          label="GitHub installations"
+          onRetry={() => void refetch()}
+        >
+          {isLoading ? (
+            <SkeletonRows rows={3} />
+          ) : !installations || installations.length === 0 ? (
             <EmptyState
-              className="py-4"
-              hint="A single-organization deployment does not need one — add these only to reach repositories in more than one GitHub organization."
-              title="No installations recorded."
+              action={
+                <Button onClick={() => setNewOpen(true)} size="sm">
+                  Add installation
+                </Button>
+              }
+              hint="A single-organization deployment does not need one. Add these only to reach repositories in more than one GitHub organization."
+              icon="github"
+              title="No installations recorded"
             />
           ) : (
-            <Table>
+            <Table stacked>
               <THead>
-                <Th variant="compact">Account</Th>
-                <Th variant="compact">Host</Th>
-                <Th variant="compact">Installation ID</Th>
-                <Th variant="compact">Repositories</Th>
-                <Th variant="compact">Status</Th>
-                <Th variant="compact" />
+                <Th className="pl-0" variant="plain">
+                  Account
+                </Th>
+                <Th variant="plain">Host</Th>
+                <Th variant="plain">Installation ID</Th>
+                <Th align="right" variant="plain">
+                  Repositories
+                </Th>
+                <Th variant="plain">Status</Th>
+                <Th className="pr-0" variant="plain">
+                  <span className="sr-only">Actions</span>
+                </Th>
               </THead>
               <tbody>
-                {installations.map((i) => (
-                  <TRow key={i.id}>
-                    <Td className="py-2 pr-4 font-mono text-xs text-paper-100">{i.accountLogin}</Td>
-                    <Td className="py-2 pr-4 font-mono text-[11px] text-paper-300">
-                      {i.host || 'instance'}
-                    </Td>
-                    <Td className="py-2 pr-4 font-mono text-[11px] text-paper-300">
-                      {i.installationId}
-                    </Td>
-                    <Td className="py-2 pr-4 text-xs text-paper-300">
-                      {i._count?.connections ?? 0}
-                    </Td>
-                    <Td className="py-2 pr-4">
-                      <Badge dot tone={i.isActive ? 'moss' : 'muted'} variant="text">
-                        {i.isActive ? 'In use' : 'Retired'}
-                      </Badge>
-                    </Td>
-                    <Td className="py-2 text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button onClick={() => setEditTarget(i)} size="sm" variant="secondary">
-                          Edit
-                        </Button>
-                        <Button
-                          disabled={(i._count?.connections ?? 0) > 0}
-                          onClick={() => setDeleteTarget(i)}
-                          size="sm"
-                          title={
-                            (i._count?.connections ?? 0) > 0
-                              ? `${i._count?.connections} ${i._count?.connections === 1 ? 'repository still uses' : 'repositories still use'} this installation. Repoint ${i._count?.connections === 1 ? 'it' : 'them'} first.`
-                              : undefined
-                          }
-                          variant="danger"
-                        >
-                          Delete
-                        </Button>
-                        {(i._count?.connections ?? 0) > 0 && (
-                          <span className="self-center text-[11px] text-paper-400">
-                            In use by {i._count?.connections}{' '}
-                            {i._count?.connections === 1 ? 'repository' : 'repositories'}
-                          </span>
+                {installations.map((i) => {
+                  const repos = i._count?.connections ?? 0;
+                  return (
+                    <TRow key={i.id}>
+                      <Td
+                        className="py-2.5 pr-4 font-mono text-[13px] font-medium text-paper-100"
+                        primary
+                      >
+                        {i.accountLogin}
+                      </Td>
+                      <Td className="px-4 py-2.5 text-xs text-paper-300" label="Host">
+                        {i.host ? (
+                          <span className="font-mono">{i.host}</span>
+                        ) : (
+                          <span className="text-paper-500">Instance host</span>
                         )}
-                      </div>
-                    </Td>
-                  </TRow>
-                ))}
+                      </Td>
+                      <Td
+                        className="px-4 py-2.5 font-mono text-xs text-paper-300"
+                        label="Installation ID"
+                      >
+                        {i.installationId}
+                      </Td>
+                      <Td
+                        align="right"
+                        className="px-4 py-2.5 text-xs text-paper-300 tabular-nums"
+                        label="Repositories"
+                      >
+                        {repos}
+                      </Td>
+                      <Td className="px-4 py-2.5" label="Status">
+                        <Badge dot tone={i.isActive ? 'moss' : 'muted'}>
+                          {i.isActive ? 'In use' : 'Retired'}
+                        </Badge>
+                      </Td>
+                      <Td className="py-2.5 pl-4 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button onClick={() => setEditTarget(i)} size="sm" variant="secondary">
+                            Edit
+                          </Button>
+                          <ActionMenu
+                            items={[
+                              {
+                                disabled: repos > 0,
+                                icon: 'trash',
+                                id: 'delete',
+                                label:
+                                  repos > 0
+                                    ? `In use by ${repos} ${repos === 1 ? 'repository' : 'repositories'}`
+                                    : 'Delete',
+                                onAction: () => setDeleteTarget(i),
+                                tone: 'danger',
+                              },
+                            ]}
+                            label={`More actions for ${i.accountLogin}`}
+                          />
+                        </div>
+                      </Td>
+                    </TRow>
+                  );
+                })}
               </tbody>
             </Table>
           )}
-        </Card>
-      </QueryBoundary>
+        </QueryBoundary>
+      </Card>
 
       {/*
         The form modals are keyed. Returning null does not unmount a component,

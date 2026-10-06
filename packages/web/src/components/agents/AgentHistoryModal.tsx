@@ -98,7 +98,7 @@ export function AgentHistoryModal({
                     <Td className="py-2 pr-3">
                       <span className="tabular-nums text-paper-100">v{v.version}</span>
                       {v.version === latestVersion && (
-                        <Badge className="ml-2" tone="moss" variant="text">
+                        <Badge className="ml-2" tone="moss">
                           Current
                         </Badge>
                       )}
@@ -112,9 +112,7 @@ export function AgentHistoryModal({
                       {formatDate(v.createdAt)}
                       {v.createdByEmail && <div className="text-paper-500">{v.createdByEmail}</div>}
                     </Td>
-                    <Td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
-                      {modelLabel(v)}
-                    </Td>
+                    <Td className="py-2 pr-3 font-mono text-xs text-paper-400">{modelLabel(v)}</Td>
                     <Td className="py-2 text-right">
                       <div className="flex justify-end gap-1">
                         <Button

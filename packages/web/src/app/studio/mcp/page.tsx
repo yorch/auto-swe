@@ -4,12 +4,14 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -35,6 +37,14 @@ import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
  * `{ error }` on an invalid entry, otherwise `null` (blank → clear/omit) or a
  * positive integer for each — the caller decides what null means for its route.
  */
+/** A per-connection timeout for the list: its value in seconds, or the built-in default. */
+function msLabel(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) {
+    return 'Default';
+  }
+  return ms % 1000 === 0 ? `${ms / 1000} s` : `${ms} ms`;
+}
+
 function parseTimeoutInputs(form: {
   listTimeoutMs: string;
   callTimeoutMs: string;
@@ -112,6 +122,7 @@ function McpBearerTokenField({
     <div className="space-y-1.5">
       <Input
         autoComplete="off"
+        className="font-mono"
         disabled={clear}
         hint={
           clear
@@ -562,12 +573,13 @@ export default function StudioMcpConnectionsPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         actions={
           // While the list is empty its empty state carries the same button.
           connections?.length ? (
             <Button onClick={() => setNewOpen(true)} variant="primary">
+              <Icon name="plus" size={14} />
               Create connection
             </Button>
           ) : undefined
@@ -582,95 +594,112 @@ export default function StudioMcpConnectionsPage() {
         title="MCP connections"
       />
 
-      <QueryBoundary
-        error={loadError}
-        isError={isError}
-        isFetching={isFetching}
-        isLoading={isLoading}
-        label="MCP connections"
-        onRetry={() => void refetch()}
-      >
-        {
-          <Card>
-            <CardHeader>
-              <CardTitle>Connections</CardTitle>
-            </CardHeader>
-            {!connections || connections.length === 0 ? (
-              <EmptyState
-                action={
-                  <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
-                    Create connection
-                  </Button>
-                }
-                className="py-4"
-                hint="Create one to enable MCP tools for an agent."
-                title="No MCP connections yet."
-              />
-            ) : (
-              <Table stacked>
-                <THead>
-                  <Th variant="compact">Name</Th>
-                  <Th variant="compact">URL</Th>
-                  <Th variant="compact">Timeouts (list/call ms)</Th>
-                  <Th variant="compact">Team</Th>
-                  <Th variant="compact">Used by</Th>
-                  <Th variant="compact" />
-                </THead>
-                <tbody>
-                  {connections.map((c) => (
+      <Card className="p-4 sm:p-6">
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={false}
+          label="MCP connections"
+          onRetry={() => void refetch()}
+        >
+          {isLoading ? (
+            <SkeletonRows rows={3} />
+          ) : !connections || connections.length === 0 ? (
+            <EmptyState
+              action={
+                <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
+                  Create connection
+                </Button>
+              }
+              hint="Connect an MCP server, then pick it in an agent's MCP connection field to let that agent call its tools."
+              icon="plug"
+              title="No MCP connections yet"
+            />
+          ) : (
+            <Table stacked>
+              <THead>
+                <Th className="pl-0" variant="plain">
+                  Connection
+                </Th>
+                <Th variant="plain">Authentication</Th>
+                <Th variant="plain">Timeouts (list / call)</Th>
+                <Th variant="plain">Team</Th>
+                <Th variant="plain">Used by</Th>
+                <Th className="pr-0" variant="plain">
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </THead>
+              <tbody>
+                {connections.map((c) => {
+                  const result = results[c.id];
+                  const usedBy = c.usedBy ?? [];
+                  return (
                     <TRow key={c.id}>
-                      <Td className="py-2 pr-4 font-mono text-xs text-paper-100" primary>
-                        {c.name}
-                      </Td>
-                      <Td className="max-w-xs py-2 pr-4" label="URL">
-                        <code className="block truncate font-mono text-[11px] text-paper-300">
+                      <Td className="py-3 pr-4 align-top sm:max-w-xs" primary>
+                        <div className="truncate font-medium text-paper-100">{c.name}</div>
+                        <code
+                          className="mt-0.5 block truncate font-mono text-xs text-paper-500"
+                          title={c.config?.url}
+                        >
                           {c.config?.url}
                         </code>
-                        <span className="text-[11px] text-paper-500">
-                          {c.hasToken ? 'Bearer token stored' : 'No authentication'}
-                          {(c.headerNames ?? []).length > 0 &&
-                            ` · Headers: ${(c.headerNames ?? []).join(', ')}`}
-                          {c.config?.allowPrivateNetwork && ' · Private network'}
-                        </span>
+                        {result && (
+                          <div className="mt-1.5 space-y-1">
+                            <Badge dot tone={result.ok ? 'moss' : 'brick'}>
+                              {result.ok
+                                ? `Reachable · ${result.toolCount} ${
+                                    result.toolCount === 1 ? 'tool' : 'tools'
+                                  }`
+                                : (result.error ?? 'Not reachable')}
+                            </Badge>
+                            {result.ok && (result.toolNames ?? []).length > 0 && (
+                              <div className="font-mono text-xs text-paper-500">
+                                {(result.toolNames ?? []).join(', ')}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </Td>
                       <Td
-                        className="py-2 pr-4 text-xs text-paper-300"
-                        label="Timeouts (list/call ms)"
+                        className="px-4 py-3 align-top text-xs text-paper-300"
+                        label="Authentication"
                       >
-                        {c.config?.listTimeoutMs ?? 'default'} /{' '}
-                        {c.config?.callTimeoutMs ?? 'default'}
-                      </Td>
-                      <Td className="py-2 pr-4 text-xs text-paper-300" label="Team">
-                        {c.team?.name ?? '—'}
-                      </Td>
-                      <Td className="py-2 pr-4 text-xs text-paper-300" label="Used by">
-                        {(c.usedBy ?? []).length === 0
-                          ? 'No agents'
-                          : (c.usedBy ?? []).map((a) => (
-                              <div key={`${a.key}-${a.scope}`}>
-                                {a.name}{' '}
-                                <span className="text-paper-500">({scopeLabel(a.scope)})</span>
-                              </div>
-                            ))}
-                      </Td>
-                      <Td className="py-2 text-right">
-                        {results[c.id] && (
-                          <div className="mb-1 flex justify-end">
-                            <Badge tone={results[c.id].ok ? 'moss' : 'brick'} variant="text">
-                              {results[c.id].ok
-                                ? `Reachable · ${results[c.id].toolCount} ${
-                                    results[c.id].toolCount === 1 ? 'tool' : 'tools'
-                                  }`
-                                : (results[c.id].error ?? 'Not reachable')}
-                            </Badge>
+                        <div>{c.hasToken ? 'Bearer token stored' : 'No authentication'}</div>
+                        {(c.headerNames ?? []).length > 0 && (
+                          <div className="mt-0.5 text-paper-500">
+                            {`Headers: ${(c.headerNames ?? []).join(', ')}`}
                           </div>
                         )}
-                        {results[c.id]?.ok && (results[c.id].toolNames ?? []).length > 0 && (
-                          <div className="mb-1 text-right text-[11px] text-paper-500">
-                            {(results[c.id].toolNames ?? []).join(', ')}
-                          </div>
+                        {c.config?.allowPrivateNetwork && (
+                          <Badge className="mt-1" tone="amber" variant="outline">
+                            Private network
+                          </Badge>
                         )}
-                        <div className="flex justify-end gap-2">
+                      </Td>
+                      <Td
+                        className="px-4 py-3 align-top text-xs text-paper-300 tabular-nums"
+                        label="Timeouts (list / call)"
+                      >
+                        {msLabel(c.config?.listTimeoutMs)} / {msLabel(c.config?.callTimeoutMs)}
+                      </Td>
+                      <Td className="px-4 py-3 align-top text-xs text-paper-300" label="Team">
+                        {c.team?.name ?? <span className="text-paper-500">All teams</span>}
+                      </Td>
+                      <Td className="px-4 py-3 align-top text-xs text-paper-300" label="Used by">
+                        {usedBy.length === 0 ? (
+                          <span className="text-paper-500">No agents</span>
+                        ) : (
+                          usedBy.map((a) => (
+                            <div key={`${a.key}-${a.scope}`}>
+                              {a.name}{' '}
+                              <span className="text-paper-500">({scopeLabel(a.scope)})</span>
+                            </div>
+                          ))
+                        )}
+                      </Td>
+                      <Td className="py-3 pl-4 text-right align-top">
+                        <div className="flex justify-end gap-1">
                           <Button
                             disabled={testing === c.id}
                             onClick={() => runTest(c.id)}
@@ -682,19 +711,24 @@ export default function StudioMcpConnectionsPage() {
                           <Button onClick={() => setEditTarget(c)} size="sm" variant="secondary">
                             Edit
                           </Button>
-                          <Button onClick={() => setDeleteTarget(c)} size="sm" variant="danger">
-                            Delete
+                          <Button
+                            aria-label={`Delete ${c.name}`}
+                            onClick={() => setDeleteTarget(c)}
+                            size="sm"
+                            variant="ghost"
+                          >
+                            <Icon className="text-brick-400" name="trash" size={14} />
                           </Button>
                         </div>
                       </Td>
                     </TRow>
-                  ))}
-                </tbody>
-              </Table>
-            )}
-          </Card>
-        }
-      </QueryBoundary>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
+        </QueryBoundary>
+      </Card>
 
       <CreateMcpConnectionModal onClose={() => setNewOpen(false)} open={newOpen} />
       <EditMcpConnectionModal

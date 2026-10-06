@@ -1,8 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -17,6 +18,8 @@ import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { clearableIntField, countChanges } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
+import { ConfigStatusBadge, fieldState } from './ConfigStatusBadge';
+import { FieldGrid, IntegrationCard } from './IntegrationCard';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
 
@@ -89,18 +92,51 @@ export function FigmaTab() {
 
   return (
     <form className="space-y-6" onSubmit={handleSubmit}>
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow="Figma">Figma design source</CardTitle>
-        </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
-          Connect Figma so a work request that references a Figma file/node is enriched with a
-          compact design summary (frames, text, tokens) that the implementer matches against. The
-          connector is read-only — it never writes to Figma. To give agents live, on-demand design
-          access during a run, add the Figma Dev Mode endpoint as an MCP connection under{' '}
-          <span className="font-mono text-[10px] text-paper-400">/studio/mcp</span> instead.
-        </p>
-        <div className="space-y-4">
+      <IntegrationCard
+        description={
+          <>
+            Connect Figma so a work request that references a Figma file or node is enriched with a
+            compact design summary (frames, text, tokens) that the implementer matches against. The
+            connector is read-only: it never writes to Figma. To give agents live, on-demand design
+            access during a run, add the Figma Dev Mode endpoint as an{' '}
+            <Link className="text-ember-400 hover:underline" href="/studio/mcp">
+              MCP connection
+            </Link>{' '}
+            instead.
+          </>
+        }
+        eyebrow="Figma"
+        footer={
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-xl text-xs text-paper-500">
+                Calls the Figma API with the token on screen, or the saved one if you have not typed
+                a new token, to verify connectivity and access.
+              </p>
+              <Button
+                disabled={testing || !(enabled ?? data?.enabled)}
+                onClick={handleTest}
+                type="button"
+                variant="secondary"
+              >
+                {testing ? 'Testing…' : 'Test connection'}
+              </Button>
+            </div>
+            <TestResultAlert result={testResult} />
+          </>
+        }
+        status={
+          data?.enabled ? (
+            <ConfigStatusBadge state={fieldState(data.apiToken, sources.apiToken)} />
+          ) : (
+            <Badge dot tone="muted" variant="outline">
+              Off
+            </Badge>
+          )
+        }
+        title="Figma design source"
+      >
+        <FieldGrid>
           <ConfigField
             current={data?.enabled === undefined ? undefined : data.enabled ? 'yes' : 'no'}
             id="figma-enabled"
@@ -121,17 +157,12 @@ export function FigmaTab() {
               value={enabled === undefined ? '' : String(enabled)}
             />
           </ConfigField>
-          <SecretInput
-            clear={{ field: 'apiToken', integration: 'figma' }}
-            current={data?.apiToken ?? null}
-            id="figma-api-token"
-            label="API token"
-            onChange={setApiToken}
-            placeholder="Figma personal access token (figd_…)"
-            source={sources.apiToken}
-            value={apiToken}
-          />
-          <ConfigField current={data?.maxNodes ?? undefined} id="figma-max-nodes" label="Max nodes">
+          <ConfigField
+            current={data?.maxNodes ?? undefined}
+            hint="Caps how many design nodes are summarized per request, which bounds context size and cost."
+            id="figma-max-nodes"
+            label="Max nodes"
+          >
             <Input
               compact
               id="figma-max-nodes"
@@ -140,32 +171,21 @@ export function FigmaTab() {
               placeholder="12"
               value={maxNodes}
             />
-            <p className="text-[11px] text-paper-600">
-              Caps how many design nodes are summarized per request — bounds context size and cost.
-            </p>
           </ConfigField>
-        </div>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow="Figma">Test connection</CardTitle>
-        </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
-          Calls the Figma API with the token on screen (or the saved one if you have not typed a new
-          token) to verify connectivity and access.
-        </p>
-        <Button
-          disabled={testing || !(enabled ?? data?.enabled)}
-          onClick={handleTest}
-          size="sm"
-          type="button"
-          variant="secondary"
-        >
-          {testing ? 'Testing…' : 'Test connection'}
-        </Button>
-        <TestResultAlert result={testResult} />
-      </Card>
+          <div className="sm:col-span-2">
+            <SecretInput
+              clear={{ field: 'apiToken', integration: 'figma' }}
+              current={data?.apiToken ?? null}
+              id="figma-api-token"
+              label="API token"
+              onChange={setApiToken}
+              placeholder="Figma personal access token (figd_…)"
+              source={sources.apiToken}
+              value={apiToken}
+            />
+          </div>
+        </FieldGrid>
+      </IntegrationCard>
 
       <IntegrationFormFooter
         dirtyCount={dirtyCount}

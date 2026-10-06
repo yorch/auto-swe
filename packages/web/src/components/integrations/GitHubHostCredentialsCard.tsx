@@ -3,9 +3,10 @@
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -20,6 +21,7 @@ import {
   useUpdateGithubHostCredential,
 } from '@/hooks/useGithubHostCredentials';
 import { errMsg } from '@/lib/errors';
+import { IntegrationCard } from './IntegrationCard';
 
 /**
  * Adds a host's credentials, or — given `edit` — changes the ones it has. When
@@ -90,6 +92,7 @@ function CredentialModal({
       <form className="space-y-4" onSubmit={submit}>
         {!edit && (
           <Input
+            className="font-mono"
             hint="Any approved GitHub host that is not the instance's own: GitHub Enterprise Server (ghe.corp or ghe.corp:8443), a data-residency tenant (acme.ghe.com), or github.com. It must be listed in Additional repository hosts."
             id="gh-host-cred-host"
             label="Host"
@@ -100,6 +103,7 @@ function CredentialModal({
         )}
         <Input
           autoComplete="off"
+          className="font-mono"
           hint={
             edit?.hasToken
               ? `Set (••••${edit.tokenLastFour}). Leave empty to keep it.`
@@ -112,16 +116,14 @@ function CredentialModal({
           value={token}
         />
         {edit?.hasToken && (
-          <label className="flex items-center gap-2 text-xs text-paper-300">
-            <input
-              checked={clearToken}
-              onChange={(e) => setClearToken(e.target.checked)}
-              type="checkbox"
-            />
-            Remove the token
-          </label>
+          <Checkbox
+            checked={clearToken}
+            label="Remove the token"
+            onChange={(e) => setClearToken(e.target.checked)}
+          />
         )}
         <Input
+          className="font-mono"
           hint="The numeric id of a GitHub App registered on this host. Which installation a repository uses is chosen on the GitHub installations page."
           id="gh-host-cred-app-id"
           label="GitHub App ID"
@@ -144,14 +146,11 @@ function CredentialModal({
           value={appPrivateKey}
         />
         {edit?.appId && (
-          <label className="flex items-center gap-2 text-xs text-paper-300">
-            <input
-              checked={clearApp}
-              onChange={(e) => setClearApp(e.target.checked)}
-              type="checkbox"
-            />
-            Remove the GitHub App
-          </label>
+          <Checkbox
+            checked={clearApp}
+            label="Remove the GitHub App"
+            onChange={(e) => setClearApp(e.target.checked)}
+          />
         )}
         {error && <Alert>{error}</Alert>}
         <ModalFooter
@@ -195,17 +194,22 @@ export function GitHubHostCredentialsCard() {
   const [modal, setModal] = useState<GithubHostCredentialRow | null | false>(false);
   const [deleteTarget, setDeleteTarget] = useState<GithubHostCredentialRow | null>(null);
 
+  const addButton = (
+    <Button onClick={() => setModal(null)} size="sm" type="button">
+      <Icon name="plus" size={14} />
+      Add host credentials
+    </Button>
+  );
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle eyebrow="Other GitHub hosts">Per-host credentials</CardTitle>
-      </CardHeader>
-      <p className="mb-4 text-xs text-paper-500">
-        The token and App above belong to the instance&apos;s own host and are never sent anywhere
-        else. A repository on another approved host is reached with that host&apos;s credentials
-        recorded here; a host with none is reachable only with a user&apos;s own saved token.
-      </p>
+    <IntegrationCard
+      description="The token and App above belong to the instance's own host and are never sent anywhere else. A repository on another approved host is reached with that host's credentials recorded here; a host with none is reachable only with a user's own saved token."
+      eyebrow="Other GitHub hosts"
+      headerAction={credentials && credentials.length > 0 ? addButton : undefined}
+      title="Per-host credentials"
+    >
       <QueryBoundary
+        compact
         error={loadError}
         isError={isError}
         isFetching={isFetching}
@@ -214,26 +218,42 @@ export function GitHubHostCredentialsCard() {
         onRetry={() => void refetch()}
       >
         {!credentials || credentials.length === 0 ? (
-          <EmptyState className="py-4" title="No per-host credentials." />
+          <EmptyState
+            action={addButton}
+            bordered
+            className="py-6"
+            hint="Only needed to reach repositories on a second GitHub host."
+            icon="key"
+            title="No per-host credentials"
+          />
         ) : (
           <Table>
             <THead>
-              <Th variant="compact">Host</Th>
-              <Th variant="compact">Credentials</Th>
-              <Th variant="compact" />
+              <Th className="pl-0" variant="plain">
+                Host
+              </Th>
+              <Th variant="plain">Credentials</Th>
+              <Th className="pr-0" variant="plain">
+                <span className="sr-only">Actions</span>
+              </Th>
             </THead>
             <tbody>
               {credentials.map((c) => (
                 <TRow key={c.id}>
-                  <Td className="py-2 pr-4 font-mono text-xs text-paper-100">{c.host}</Td>
-                  <Td className="py-2 pr-4 font-mono text-[11px] text-paper-300">{summary(c)}</Td>
-                  <Td className="py-2 text-right">
-                    <div className="flex justify-end gap-2">
+                  <Td className="py-2.5 pr-4 font-mono text-[13px] text-paper-100">{c.host}</Td>
+                  <Td className="px-4 py-2.5 font-mono text-xs text-paper-300">{summary(c)}</Td>
+                  <Td className="py-2.5 pl-4 text-right">
+                    <div className="flex justify-end gap-1">
                       <Button onClick={() => setModal(c)} size="sm" variant="secondary">
                         Edit
                       </Button>
-                      <Button onClick={() => setDeleteTarget(c)} size="sm" variant="danger">
-                        Delete
+                      <Button
+                        aria-label={`Delete the credentials for ${c.host}`}
+                        onClick={() => setDeleteTarget(c)}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        <Icon className="text-brick-400" name="trash" size={14} />
                       </Button>
                     </div>
                   </Td>
@@ -243,11 +263,6 @@ export function GitHubHostCredentialsCard() {
           </Table>
         )}
       </QueryBoundary>
-      <div className="mt-4 flex justify-end">
-        <Button onClick={() => setModal(null)} size="sm" type="button" variant="secondary">
-          Add host credentials
-        </Button>
-      </div>
 
       {modal !== false && (
         <CredentialModal edit={modal} key={modal?.id ?? 'new'} onClose={() => setModal(false)} />
@@ -266,6 +281,6 @@ export function GitHubHostCredentialsCard() {
         pendingLabel="Deleting…"
         title={`Delete the credentials for ${deleteTarget?.host ?? ''}?`}
       />
-    </Card>
+    </IntegrationCard>
   );
 }

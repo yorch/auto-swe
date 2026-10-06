@@ -5,6 +5,7 @@ import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
 import { SkillHistory } from '@/components/skills/SkillHistory';
 import { SkillSourcesTab } from '@/components/skills/SkillSourcesTab';
 import { shortSha } from '@/components/skills/sourceDisplay';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -12,14 +13,18 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useHasRole } from '@/hooks/useHasRole';
 import {
   type Skill,
@@ -33,18 +38,14 @@ import {
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { originLabel } from '@/lib/originLabel';
-import { formatCost, formatDate, formatPercent } from '@/lib/utils';
+import { cn, FOCUS_RING, formatCost, formatDate, formatPercent } from '@/lib/utils';
 import { visibleOrNull, visibleText } from '@/lib/visibleText';
 
 function OriginBadge({ origin }: { origin: string | null }) {
   if (!origin) {
     return null;
   }
-  return (
-    <Badge className="ml-1.5" tone="neutral">
-      {originLabel(origin)}
-    </Badge>
-  );
+  return <Badge tone="neutral">{originLabel(origin)}</Badge>;
 }
 
 /** `external: owner/repo@abc1234` for a skill imported from a repository. */
@@ -53,7 +54,11 @@ function ExternalBadge({ source }: { source: Skill['externalSource'] }) {
     return null;
   }
   return (
-    <Badge title={`${source.host}/${source.owner}/${source.repo}`} tone="violet" variant="text">
+    <Badge
+      className="font-mono"
+      title={`${source.host}/${source.owner}/${source.repo}`}
+      tone="violet"
+    >
       {visibleText(`external: ${source.owner}/${source.repo}@${shortSha(source.sha)}`)}
     </Badge>
   );
@@ -437,37 +442,50 @@ function EffectivenessCard() {
     refetch,
   } = useSkillEffectiveness();
   return (
-    <Card>
+    <Card className="p-4 sm:p-6">
       <CardHeader>
-        <CardTitle>Skill effectiveness (last {data?.windowDays ?? 30} days)</CardTitle>
+        <CardTitle eyebrow={`Last ${data?.windowDays ?? 30} days`}>Skill effectiveness</CardTitle>
       </CardHeader>
-      <p className="mb-3 text-xs text-paper-500">
-        Run outcomes for runs where each skill was active, vs. the all-runs baseline (
-        {formatPercent(data?.baselineSuccessRate ?? null)} success across {data?.totalRuns ?? 0}{' '}
-        runs). Correlational — skills are assigned per team/template, so differences may reflect the
-        team or workload, not the skill.
+      <p className="-mt-2 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        Run outcomes for runs where each skill was active, against the all-runs baseline of{' '}
+        <span className="text-paper-200 tabular-nums">
+          {formatPercent(data?.baselineSuccessRate ?? null)}
+        </span>{' '}
+        success across <span className="text-paper-200 tabular-nums">{data?.totalRuns ?? 0}</span>{' '}
+        runs. Correlational: skills are assigned per team and template, so a difference may reflect
+        the team or workload rather than the skill.
       </p>
       <QueryBoundary
         error={loadError}
         isError={isError}
         isFetching={isFetching}
-        isLoading={isLoading}
+        isLoading={false}
         label="skill effectiveness"
         onRetry={() => void refetch()}
       >
-        {!data?.perSkill.length ? (
-          <EmptyState className="py-6" title="No runs with active skills in this window yet." />
+        {isLoading ? (
+          <SkeletonRows rows={3} />
+        ) : !data?.perSkill.length ? (
+          <EmptyState
+            bordered
+            className="py-8"
+            hint="Outcomes appear here once runs complete with skills attached to their agents."
+            icon="analytics"
+            title="No runs with active skills in this window yet"
+          />
         ) : (
           <Table>
             <THead>
-              <Th variant="compact">Skill</Th>
-              <Th align="right" variant="compact">
+              <Th className="pl-0" variant="plain">
+                Skill
+              </Th>
+              <Th align="right" variant="plain">
                 Runs
               </Th>
-              <Th align="right" variant="compact">
+              <Th align="right" variant="plain">
                 Success rate
               </Th>
-              <Th align="right" variant="compact">
+              <Th align="right" className="pr-0" variant="plain">
                 Avg cost
               </Th>
             </THead>
@@ -475,11 +493,11 @@ function EffectivenessCard() {
               {data.perSkill.map((s) => (
                 <TRow key={s.name}>
                   <Td className="py-2 pr-4 font-medium text-paper-100">{s.name}</Td>
-                  <Td className="py-2 text-right tabular-nums text-paper-400">{s.runs}</Td>
-                  <Td className="py-2 text-right tabular-nums text-paper-400">
+                  <Td className="px-4 py-2 text-right tabular-nums text-paper-300">{s.runs}</Td>
+                  <Td className="px-4 py-2 text-right tabular-nums text-paper-300">
                     {formatPercent(s.successRate)}
                   </Td>
-                  <Td className="py-2 text-right tabular-nums text-paper-400">
+                  <Td className="py-2 pl-4 text-right tabular-nums text-paper-300">
                     {formatCost(s.avgCostUsd)}
                   </Td>
                 </TRow>
@@ -494,6 +512,34 @@ function EffectivenessCard() {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
+type SkillFilter = 'all' | 'builtIn' | 'custom' | 'external' | 'unverified' | 'inactive';
+
+const SKILL_FILTERS: { label: string; value: SkillFilter }[] = [
+  { label: 'All skills', value: 'all' },
+  { label: 'Built-in', value: 'builtIn' },
+  { label: 'Custom', value: 'custom' },
+  { label: 'Imported', value: 'external' },
+  { label: 'Unverified', value: 'unverified' },
+  { label: 'Inactive', value: 'inactive' },
+];
+
+function matchesFilter(skill: Skill, filter: SkillFilter): boolean {
+  switch (filter) {
+    case 'builtIn':
+      return skill.isBuiltIn;
+    case 'custom':
+      return !(skill.isBuiltIn || skill.externalSource);
+    case 'external':
+      return Boolean(skill.externalSource);
+    case 'unverified':
+      return !(skill.isVerified || skill.isBuiltIn);
+    case 'inactive':
+      return !skill.isActive;
+    default:
+      return true;
+  }
+}
+
 type Tab = 'skills' | 'external';
 
 export default function StudioSkillsPage() {
@@ -507,6 +553,16 @@ export default function StudioSkillsPage() {
   const update = useUpdateSkill();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
+
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<SkillFilter>('all');
+  const q = query.trim().toLowerCase();
+  const visibleSkills = (skills ?? []).filter(
+    (sk) =>
+      matchesFilter(sk, filter) &&
+      (!q || `${sk.name} ${sk.description ?? ''}`.toLowerCase().includes(q))
+  );
+  const filtering = Boolean(q) || filter !== 'all';
 
   // A skill that agents use is not switched off without a confirmation.
   const [deactivateTarget, setDeactivateTarget] = useState<Skill | null>(null);
@@ -532,10 +588,11 @@ export default function StudioSkillsPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
+            <Icon name="plus" size={14} />
             Create skill
           </Button>
         }
@@ -564,77 +621,154 @@ export default function StudioSkillsPage() {
 
       {tab === 'skills' && (
         <div {...(isAdmin ? tabPanelProps('skills', 'skills') : {})}>
-          <Card>
-            <CardHeader>
-              <CardTitle>All skills</CardTitle>
-            </CardHeader>
-            {toggleError && <Alert variant="error">{toggleError}</Alert>}
+          <Card className="p-4 sm:p-6">
+            <Toolbar
+              end={
+                skills && skills.length > 0 ? (
+                  <span className="text-xs text-paper-500 tabular-nums">
+                    {filtering
+                      ? `${visibleSkills.length} of ${skills.length} skills`
+                      : `${skills.length} skills`}
+                  </span>
+                ) : null
+              }
+            >
+              <SearchInput
+                label="Search skills"
+                onChange={setQuery}
+                placeholder="Search skills…"
+                value={query}
+              />
+              <Select
+                aria-label="Filter skills"
+                className="h-8 w-full text-[13px] sm:w-44"
+                onChange={(v) => setFilter(v as SkillFilter)}
+                options={SKILL_FILTERS}
+                value={filter}
+              />
+            </Toolbar>
+            {toggleError && (
+              <Alert className="mb-4" variant="error">
+                {toggleError}
+              </Alert>
+            )}
             <QueryBoundary
               error={loadError}
               isError={isError}
               isFetching={isFetching}
-              isLoading={isLoading}
+              isLoading={false}
               label="skills"
               onRetry={() => void refetch()}
             >
-              {!skills?.length ? (
-                <EmptyState title="No skills yet. Create one with the button above." />
+              {isLoading ? (
+                <SkeletonRows rows={8} />
+              ) : !skills?.length ? (
+                <EmptyState
+                  action={
+                    <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
+                      Create skill
+                    </Button>
+                  }
+                  hint="A skill is a reusable block of instructions. Attach it to an agent to shape how that agent reasons."
+                  icon="skills"
+                  title="No skills yet"
+                />
+              ) : visibleSkills.length === 0 ? (
+                <EmptyState
+                  action={
+                    <Button
+                      onClick={() => {
+                        setQuery('');
+                        setFilter('all');
+                      }}
+                      size="sm"
+                    >
+                      Clear filters
+                    </Button>
+                  }
+                  hint="Try a different search or filter."
+                  icon="search"
+                  title="No skills match"
+                />
               ) : (
                 <Table stacked>
                   <THead>
-                    <Th variant="compact">Name</Th>
-                    <Th variant="compact">Description</Th>
-                    <Th variant="compact">Used by</Th>
-                    <Th variant="compact">Active</Th>
-                    <Th variant="compact" />
+                    <Th className="pl-0" variant="plain">
+                      Skill
+                    </Th>
+                    <Th variant="plain">Source</Th>
+                    <Th variant="plain">Status</Th>
+                    <Th align="right" variant="plain">
+                      Used by
+                    </Th>
+                    <Th variant="plain">Active</Th>
+                    <Th className="pr-0" variant="plain">
+                      <span className="sr-only">Actions</span>
+                    </Th>
                   </THead>
                   <tbody>
-                    {skills.map((skill) => (
-                      <TRow key={skill.id}>
-                        <Td className="py-2 pr-4" primary>
+                    {visibleSkills.map((skill) => (
+                      <TRow hover key={skill.id}>
+                        <Td className="py-2.5 pr-4 sm:max-w-md" primary>
                           <button
-                            className="text-left hover:underline"
+                            className={cn(
+                              'max-w-full truncate rounded-sm text-left font-medium text-paper-100 hover:text-ember-300',
+                              FOCUS_RING
+                            )}
                             onClick={() => setViewTarget(skill)}
                             type="button"
                           >
-                            <span className="font-medium text-paper-100">
-                              {visibleText(skill.name)}
-                            </span>
+                            {visibleText(skill.name)}
                           </button>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                            {skill.isBuiltIn && (
-                              <Badge tone="muted" uppercase variant="text">
-                                built-in
-                              </Badge>
-                            )}
+                          <div className="mt-0.5 line-clamp-2 text-xs text-paper-500 sm:line-clamp-1">
+                            {visibleOrNull(skill.description) ?? 'No description'}
+                          </div>
+                        </Td>
+                        <Td className="px-4 py-2.5" label="Source">
+                          <div className="flex flex-wrap items-center gap-1 max-sm:justify-end">
+                            {skill.isBuiltIn && <Badge tone="neutral">Built-in</Badge>}
                             {skill.origin && <OriginBadge origin={skill.origin} />}
                             <ExternalBadge source={skill.externalSource} />
+                            {!(skill.isBuiltIn || skill.origin || skill.externalSource) && (
+                              <span className="text-xs text-paper-400">Custom</span>
+                            )}
+                          </div>
+                        </Td>
+                        <Td className="px-4 py-2.5" label="Status">
+                          <div className="flex flex-wrap items-center gap-1 max-sm:justify-end">
                             {skill.isVerified && (
-                              <Badge tone="moss" variant="text">
-                                verified
+                              <Badge dot tone="moss">
+                                Verified
                               </Badge>
                             )}
                             {!skill.isVerified && !skill.isBuiltIn && (
-                              <Badge tone="amber" variant="text">
-                                unverified
+                              <Badge dot tone="amber">
+                                Unverified
                               </Badge>
                             )}
                             {!skill.isBuiltIn && (
-                              <Badge tone="muted" variant="text">
-                                rev {skill.currentRevision}
+                              <Badge className="tabular-nums" tone="neutral" variant="outline">
+                                Rev {skill.currentRevision}
                               </Badge>
                             )}
                           </div>
                         </Td>
-                        <Td className="py-2 pr-4 sm:max-w-xs" label="Description">
-                          <span className="line-clamp-2 text-paper-400 sm:line-clamp-1">
-                            {visibleOrNull(skill.description) ?? '—'}
+                        <Td
+                          align="right"
+                          className="px-4 py-2.5 text-paper-300 tabular-nums"
+                          label="Used by"
+                        >
+                          <span
+                            title={skill.usedBy.length > 0 ? skill.usedBy.join(', ') : 'No agents'}
+                          >
+                            {skill.usedByCount}
+                            <span className="text-paper-500">
+                              {' '}
+                              {skill.usedByCount === 1 ? 'agent' : 'agents'}
+                            </span>
                           </span>
                         </Td>
-                        <Td className="py-2 pr-4 tabular-nums text-paper-400" label="Used by">
-                          {skill.usedByCount}
-                        </Td>
-                        <Td className="py-2 pr-4" label="Active">
+                        <Td className="px-4 py-2.5" label="Active">
                           <ToggleSwitch
                             ariaLabel={`Active: ${visibleText(skill.name)}`}
                             checked={skill.isActive}
@@ -642,19 +776,28 @@ export default function StudioSkillsPage() {
                             onChange={() => requestToggle(skill)}
                           />
                         </Td>
-                        <Td className="py-2 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button onClick={() => setViewTarget(skill)} size="sm" variant="ghost">
-                              View / Edit
+                        <Td align="right" className="py-2.5 pl-4">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              aria-label={`Open ${visibleText(skill.name)}`}
+                              onClick={() => setViewTarget(skill)}
+                              size="sm"
+                            >
+                              Open
                             </Button>
                             {!skill.isBuiltIn && (
-                              <Button
-                                onClick={() => setDeleteTarget(skill)}
-                                size="sm"
-                                variant="danger"
-                              >
-                                Delete
-                              </Button>
+                              <ActionMenu
+                                items={[
+                                  {
+                                    icon: 'trash',
+                                    id: 'delete',
+                                    label: 'Delete skill',
+                                    onAction: () => setDeleteTarget(skill),
+                                    tone: 'danger',
+                                  },
+                                ]}
+                                label={`More actions for ${visibleText(skill.name)}`}
+                              />
                             )}
                           </div>
                         </Td>

@@ -1,9 +1,11 @@
 'use client';
 
 import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
+import { Icon } from '@/components/ui/Icon';
 import type { SkillRefInput } from '@/hooks/useAgentLibrary';
 import type { SkillOption } from '@/hooks/useSkills';
 
@@ -73,36 +75,40 @@ export function SkillRefEditor({
         <ul className="space-y-1">
           {refs.map((ref, i) => (
             <li
-              className="flex items-center gap-2 rounded-md border border-ink-400 bg-ink-900/40 px-3 py-2 text-sm"
+              className="flex items-center gap-1 rounded-md border border-ink-400 bg-ink-900/40 py-1 pr-1 pl-3 text-sm"
               key={ref.skillId}
             >
-              <span className="flex-1 text-paper-200">{nameFor(ref.skillId)}</span>
-              <button
+              <span className="w-5 shrink-0 text-xs text-paper-500 tabular-nums">{i + 1}</span>
+              <span className="min-w-0 flex-1 truncate text-paper-200">{nameFor(ref.skillId)}</span>
+              <Button
                 aria-label={`Move ${nameFor(ref.skillId)} up`}
-                className="text-paper-500 hover:text-paper-200 disabled:opacity-30"
+                className="w-7 px-0"
                 disabled={i === 0}
                 onClick={() => move(i, -1)}
-                type="button"
+                size="sm"
+                variant="ghost"
               >
-                ↑
-              </button>
-              <button
+                <Icon className="rotate-180" name="chevronDown" size={14} />
+              </Button>
+              <Button
                 aria-label={`Move ${nameFor(ref.skillId)} down`}
-                className="text-paper-500 hover:text-paper-200 disabled:opacity-30"
+                className="w-7 px-0"
                 disabled={i === refs.length - 1}
                 onClick={() => move(i, 1)}
-                type="button"
+                size="sm"
+                variant="ghost"
               >
-                ↓
-              </button>
-              <button
+                <Icon name="chevronDown" size={14} />
+              </Button>
+              <Button
                 aria-label={`Remove ${nameFor(ref.skillId)}`}
-                className="text-brick-400 hover:text-brick-600"
+                className="w-7 px-0 text-brick-400 hover:text-brick-400"
                 onClick={() => remove(i)}
-                type="button"
+                size="sm"
+                variant="ghost"
               >
-                ×
-              </button>
+                <Icon name="close" size={14} />
+              </Button>
             </li>
           ))}
         </ul>
@@ -119,7 +125,7 @@ export function SkillRefEditor({
             }
           }}
           options={available.map((s) => ({ label: s.name, value: s.id }))}
-          placeholder="+ Add skill…"
+          placeholder="Add a skill…"
           value=""
         />
       )}

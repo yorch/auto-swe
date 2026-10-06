@@ -30,7 +30,7 @@ describe('SkillRefEditor', () => {
 
     expect(screen.getByText('tdd')).toBeTruthy();
     const input = screen.getByRole('combobox', { name: 'Add skill' }) as HTMLInputElement;
-    expect(input.placeholder).toBe('+ Add skill…');
+    expect(input.placeholder).toBe('Add a skill…');
     // Focus alone no longer opens the list; the chevron shows every option.
     fireEvent.click(screen.getByRole('button', { name: /show options/i }));
     const options = screen.getAllByRole('option').map((o) => o.textContent);
