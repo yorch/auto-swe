@@ -8,6 +8,7 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useAddTeamMember } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { platformRoleLabel } from '@/lib/govLabels';
 
 const ALL_ROLES: Role[] = ['ENGINEER', 'LEAD', 'ADMIN'];
 
@@ -61,7 +62,7 @@ export function AddMemberModal({
     <Modal
       onClose={onClose}
       open={open}
-      subtitle="Choose a user and their role within this team."
+      subtitle="Choose a user and their role on this team. A team role never exceeds your own."
       title="Add a member"
     >
       <form className="space-y-5" onSubmit={handleSubmit}>
@@ -75,7 +76,7 @@ export function AddMemberModal({
           id="role"
           label="Team role"
           onChange={(v) => setRole(v as Role)}
-          options={grantableRoles.map((r) => ({ label: r, value: r }))}
+          options={grantableRoles.map((r) => ({ label: platformRoleLabel(r), value: r }))}
           value={role}
         />
         {error && <Alert>{error}</Alert>}

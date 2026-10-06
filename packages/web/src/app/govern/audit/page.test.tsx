@@ -48,7 +48,7 @@ describe('GovernAuditPage', () => {
     await screen.findByText('alice@example.com');
     const actor = screen.getByRole('button', { name: 'alice@example.com' });
     expect(actor.getAttribute('title')).toContain(ACTOR);
-    expect(screen.getByText('system')).toBeTruthy();
+    expect(screen.getByText('System')).toBeTruthy();
   });
 
   it('drops an actor filter that is not an id instead of erroring the page', async () => {

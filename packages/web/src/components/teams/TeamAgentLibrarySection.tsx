@@ -7,11 +7,15 @@ import {
   AgentFormFields,
   type AgentFormValue,
 } from '@/components/agents/AgentFormFields';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -46,14 +50,14 @@ const EMPTY: CreateTeamAgentBody = {
 
 const CREATE_COPY: AgentFormCopy = {
   inheritsModelFrom: { hint: 'Agent whose model this one uses' },
-  key: { hint: 'GLOBAL key to override (e.g. reviewer) or a new custom key' },
+  key: { hint: 'Global agent key to override (e.g. reviewer) or a new custom key' },
   mcpConnection: { hint: "Bind this MCP server's tools at run time" },
   modelSpec: { hint: '<provider>/<model>, or blank to inherit' },
-  systemPrompt: { hint: 'Leave blank to inherit the GLOBAL prompt' },
+  systemPrompt: { hint: 'Leave blank to inherit the global prompt' },
 };
 
 const EDIT_COPY: AgentFormCopy = {
-  systemPrompt: { hint: 'Leave blank to inherit the GLOBAL prompt' },
+  systemPrompt: { hint: 'Leave blank to inherit the global prompt' },
 };
 
 /**
@@ -154,79 +158,116 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
     setEditing({ ...editing, ...rest });
   }
 
+  const openCreate = () => {
+    setCreateError(null);
+    setCreateOpen(true);
+  };
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle eyebrow="TEAM scope">Agent overrides</CardTitle>
-        <Button
-          onClick={() => {
-            setCreateError(null);
-            setCreateOpen(true);
-          }}
-          size="sm"
-          variant="primary"
-        >
-          New override
-        </Button>
+    <Card className="p-4 sm:p-6">
+      <CardHeader className="mb-1">
+        <CardTitle eyebrow="Team scope">Agent overrides</CardTitle>
+        {(agents ?? []).length > 0 && (
+          <Button onClick={openCreate} size="sm" variant="secondary">
+            <Icon name="plus" size={14} />
+            New override
+          </Button>
+        )}
       </CardHeader>
-      <p className="mb-3 text-xs text-paper-400">
-        Per-team Agents override the GLOBAL library for this team's runs. Leave a field blank to
-        inherit from GLOBAL.
+      <p className="mb-4 text-[13px] text-paper-400">
+        Per-team agents override the global library for this team's runs. Leave a field blank to
+        inherit the global value.
       </p>
 
       <QueryBoundary
         error={loadError}
         isError={isError}
         isFetching={isFetching}
-        isLoading={isLoading}
+        isLoading={false}
         label="team agents"
         onRetry={() => void refetch()}
       >
-        {(agents ?? []).length === 0 ? (
-          <EmptyState className="py-3" title="No team overrides yet." />
+        {isLoading ? (
+          <SkeletonRows rows={2} />
+        ) : (agents ?? []).length === 0 ? (
+          <EmptyState
+            action={
+              <Button onClick={openCreate} size="sm" variant="secondary">
+                <Icon name="plus" size={14} />
+                New override
+              </Button>
+            }
+            className="py-6"
+            hint="Override a global agent's model, prompt or skills for this team only."
+            icon="agents"
+            title="No team overrides yet"
+          />
         ) : (
-          <Table>
+          <Table stacked>
             <THead>
-              <Th className="pr-3" variant="compact">
-                Key
+              <Th className="pl-0" variant="plain">
+                Agent
               </Th>
-              <Th className="pr-3" variant="compact">
-                Model
-              </Th>
-              <Th className="pr-3" variant="compact">
+              <Th variant="plain">Model</Th>
+              <Th align="right" variant="plain">
                 Skills
               </Th>
-              <Th className="pr-3" variant="compact">
-                Ver
+              <Th variant="plain">Version</Th>
+              <Th className="pr-0" variant="plain">
+                <span className="sr-only">Actions</span>
               </Th>
-              <Th variant="compact" />
             </THead>
             <tbody>
               {(agents ?? []).map((a) => (
-                <TRow key={a.id}>
-                  <Td className="py-2 pr-3 font-mono text-[11px] text-paper-200">{a.key}</Td>
-                  <Td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
-                    {modelLabel(a)}
+                <TRow hover key={a.id}>
+                  <Td className="py-3 pr-4" primary>
+                    <div className="truncate font-medium text-paper-100">{a.name || a.key}</div>
+                    <div className="truncate font-mono text-xs font-normal text-paper-500">
+                      {a.key}
+                    </div>
                   </Td>
-                  <Td className="py-2 pr-3 font-mono text-[11px] text-paper-400">
-                    {a.skillRefs.length > 0 ? a.skillRefs.length : '—'}
+                  <Td className="px-4 py-3" label="Model">
+                    <span className="font-mono text-xs break-all text-paper-300">
+                      {modelLabel(a)}
+                    </span>
                   </Td>
-                  <Td className="py-2 pr-3 tabular-nums text-paper-400">v{a.version}</Td>
-                  <Td className="py-2">
+                  <Td align="right" className="px-4 py-3 text-xs tabular-nums" label="Skills">
+                    {a.skillRefs.length > 0 ? (
+                      <span className="text-paper-300">{a.skillRefs.length}</span>
+                    ) : (
+                      <span className="text-paper-500">None</span>
+                    )}
+                  </Td>
+                  <Td className="px-4 py-3" label="Version">
+                    <Badge className="tabular-nums" tone="neutral" variant="outline">
+                      v{a.version}
+                    </Badge>
+                  </Td>
+                  <Td align="right" className="py-3 pl-4">
                     <div className="flex items-center justify-end gap-1">
                       <Button
+                        aria-label={`Edit ${a.key}`}
                         onClick={() => {
                           setEditError(null);
                           setEditing({ ...a });
                         }}
                         size="sm"
-                        variant="ghost"
+                        variant="secondary"
                       >
                         Edit
                       </Button>
-                      <Button onClick={() => setDeleteConfirm(a)} size="sm" variant="danger">
-                        Delete
-                      </Button>
+                      <ActionMenu
+                        items={[
+                          {
+                            icon: 'trash',
+                            id: 'delete',
+                            label: 'Delete override',
+                            onAction: () => setDeleteConfirm(a),
+                            tone: 'danger',
+                          },
+                        ]}
+                        label={`More actions for ${a.key}`}
+                      />
                     </div>
                   </Td>
                 </TRow>
@@ -304,7 +345,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message={`Deactivate ${deleteConfirm?.key ?? 'this agent'} for this team? GLOBAL agents are unaffected — runs will fall through to the GLOBAL version.`}
+        message={`Deactivate ${deleteConfirm?.key ?? 'this agent'} for this team? The global agent is unaffected — this team's runs fall back to the global version.`}
         onClose={() => setDeleteConfirm(null)}
         onConfirm={async () => {
           if (deleteConfirm) {
