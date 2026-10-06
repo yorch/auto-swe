@@ -26,7 +26,11 @@ This is useful for:
 
 ## Node types
 
-All four HITL node types share a `timeout` field (ISO 8601 duration, e.g. `"24h"`, `"30m"`, `"7d"`) and an `onTimeout` routing target.
+All four HITL node types share a `timeout` field and an `onTimeout` routing target. `timeout` is a
+positive duration in the form Temporal parses — a number and a unit, such as `"30m"`, `"24h"`,
+`"7d"`, `"1.5h"` or `"2 hours"` (not ISO 8601 `PT24H`). A spec with any other value fails to parse,
+so it is refused on save and at run start rather than at the wait. The same rule applies to a
+`signal` node's `timeout`.
 
 ### `humanApproval`
 
@@ -40,7 +44,7 @@ contextFrom: context.currentCodeResult.summary             # optional; workflow 
 onApprove: setAwaitingCi                                   # required; node to route to on approval
 onReject: terminateRejected                                # required; node to route to on rejection
 onTimeout: terminateTimedOut                               # required; node to route to on timeout
-timeout: "24h"                                             # required; ISO 8601 duration
+timeout: "24h"                                             # required; positive duration
 ```
 
 Valid API actions: `approve`, `reject`.

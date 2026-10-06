@@ -259,3 +259,51 @@ describe('validateSpec', () => {
     expect(r.warnings.some((w) => w.code === 'UNKNOWN_STEP')).toBe(true);
   });
 });
+
+describe('validateSpec reserved write-path segments', () => {
+  const codesFor = (nodes: Record<string, unknown>, entry: string) =>
+    validateSpec(spec(nodes, entry)).errors.filter((e) => e.code === 'RESERVED_PATH_SEGMENT');
+
+  it('flags a set key, a storeAs, a fan-out export and a node id that write through a reserved segment', () => {
+    const errors = codesFor(
+      {
+        constructor: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          exports: ['context.__proto__.x'],
+          join: 'constructor',
+          over: { literal: [1] },
+          subgraph: 'set',
+          type: 'fanOut',
+        },
+        set: { next: 'wait', type: 'set', values: { 'context.prototype.y': { literal: 1 } } },
+        wait: {
+          name: 's',
+          onReceive: 'constructor',
+          onTimeout: 'constructor',
+          storeAs: 'context.__proto__',
+          timeout: '1h',
+          type: 'signal',
+        },
+      },
+      'fan'
+    );
+    expect(errors.map((e) => `${e.nodeId}:${e.field}`).sort()).toEqual([
+      'constructor:id',
+      'fan:exports',
+      'set:values.context.prototype.y',
+      'wait:storeAs',
+    ]);
+  });
+
+  it('is quiet for ordinary paths', () => {
+    expect(
+      codesFor(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          set: { next: 'done', type: 'set', values: { 'context.plan.status': { literal: 1 } } },
+        },
+        'set'
+      )
+    ).toEqual([]);
+  });
+});

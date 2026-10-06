@@ -10,6 +10,10 @@
  *                          expression language (e.g. `===`, method calls, or a
  *                          malformed path like `nodes.foo[`)
  *     - NO_TERMINAL        no `terminate` node is reachable from `entry`
+ *     - RESERVED_PATH_SEGMENT  a context write path (`storeAs`, a `set` key, a fan-out
+ *                          `exports` entry, or a node id — results land at
+ *                          `nodes.<id>.output`) contains `__proto__` / `prototype` /
+ *                          `constructor`, which the interpreter refuses at run time
  *   warnings (advisory):
  *     - UNKNOWN_NODE_REF   a `{ from: "nodes.<id>..." }` binding names a node
  *                          that doesn't exist (may reference a not-yet-added node)
@@ -37,7 +41,7 @@
  * (`validateSpecRefs`, shell gating) and compose on top.
  */
 
-import { checkExprSyntax } from './expr.js';
+import { checkExprSyntax, RESERVED_SEGMENTS } from './expr.js';
 import { type Node, nodeEdges, type WorkflowSpec } from './spec.js';
 import { getStepMetadata, hasStep } from './stepRegistry.js';
 
@@ -112,6 +116,32 @@ function fromPathNamesKnownNode(from: string, nodeIds: Set<string>): boolean {
     }
   }
   return false;
+}
+
+/**
+ * The context paths a node writes, with the field each comes from. Split the way
+ * the interpreter's `setPath` splits them (on `.` only), so the check here
+ * refuses exactly what a run would. Fan-out `exports` are read back with
+ * `lookupPath`, which also understands brackets, so those split on both.
+ */
+function writePathSegments(id: string, node: Node): Array<{ field: string; segments: string[] }> {
+  const out: Array<{ field: string; segments: string[] }> = [
+    { field: 'id', segments: id.split('.') },
+  ];
+  if ('storeAs' in node && typeof node.storeAs === 'string') {
+    out.push({ field: 'storeAs', segments: node.storeAs.split('.') });
+  }
+  if (node.type === 'set') {
+    for (const key of Object.keys(node.values)) {
+      out.push({ field: `values.${key}`, segments: key.split('.') });
+    }
+  }
+  if (node.type === 'fanOut') {
+    for (const p of node.exports ?? []) {
+      out.push({ field: 'exports', segments: p.split(/[.[\]'"]+/) });
+    }
+  }
+  return out;
 }
 
 /** Node fields the schema accepts for stored-spec compatibility but the interpreter never reads. */
@@ -220,6 +250,18 @@ export function validateSpec(
             'proxy groups. Use `onFail: { retry: N }` for workflow-level retry.',
           nodeId: id,
           severity: 'warning',
+        });
+      }
+    }
+    for (const { field, segments } of writePathSegments(id, node)) {
+      const reserved = segments.find((seg) => RESERVED_SEGMENTS.has(seg));
+      if (reserved !== undefined) {
+        errors.push({
+          code: 'RESERVED_PATH_SEGMENT',
+          field,
+          message: `'${reserved}' is a reserved path segment; the run refuses to write through it`,
+          nodeId: id,
+          severity: 'error',
         });
       }
     }

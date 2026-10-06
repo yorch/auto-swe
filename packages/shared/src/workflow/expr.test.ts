@@ -188,3 +188,21 @@ describe('resolveBinding', () => {
     expect(resolveBinding({ expr: 'a.b == 1' }, ctx)).toBe(true);
   });
 });
+
+describe('binary minus without spaces', () => {
+  it('reads a `-` right after an operand as subtraction', () => {
+    expect(evalExpr('a-1', { a: 10 })).toBe(9);
+    expect(evalExpr('5-3', {})).toBe(2);
+    expect(evalExpr('(a)-1', { a: 10 })).toBe(9);
+    expect(evalExpr('nodes.x.count-2', { nodes: { x: { count: 5 } } })).toBe(3);
+    expect(checkExprSyntax('a-1')).toBeNull();
+  });
+
+  it('keeps a `-` where an operand starts as a negative literal', () => {
+    expect(evalExpr('-1', {})).toBe(-1);
+    expect(evalExpr('1--1', {})).toBe(2);
+    expect(evalExpr('2*-1', {})).toBe(-2);
+    expect(evalExpr('a - -1', { a: 10 })).toBe(11);
+    expect(evalExpr('(-1)', {})).toBe(-1);
+  });
+});

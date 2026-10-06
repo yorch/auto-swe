@@ -264,10 +264,14 @@ its first verdict and silently ignores every later one, failing at the wait's ow
 than at the point of the mistake.
 
 **Multi-repo epics.** `POST /api/v1/epics` starts `EpicOrchestratorWorkflow` instead: the planner
-agent decomposes the brief into per-repo subtasks, a dependency graph is built, child
-`RunnableWorkflow`s fan out in dependency order, and the parent reports
-`PLANNING → FANNING_OUT → COMPLETED/FAILED/CANCELLED`. Repos downstream of a failure are marked
-`SKIPPED` with a reason rather than silently omitted. The epic list shows a non-admin the epics
+agent decomposes the brief into per-repo subtasks (every repository the epic names is in the plan;
+the planner only orders them), a dependency graph is built, and each repo's child
+`RunnableWorkflow` starts as soon as the repos it depends on have succeeded — it does not wait for
+unrelated siblings. The parent reports `PLANNING → FANNING_OUT → COMPLETED/FAILED/CANCELLED`; an
+epic with no repos to run is `FAILED`, never vacuously `COMPLETED`. Repos downstream of a failure
+are marked `SKIPPED` with a reason rather than silently omitted. An epic whose history began before
+event-driven scheduling replays under the earlier wave scheduling (`patched`), where a wave of
+ready repos starts together and the next wave waits for all of them. The epic list shows a non-admin the epics
 they requested and those with a started child on a repository they can reach, so an epic still in
 `PLANNING` is listed only for its requester and ADMINs until its first child starts.
 
@@ -455,10 +459,12 @@ event can follow. These two templates never wait for one:
 interface Dispatcher {
   dispatchStep({ nodeId, specNodeId?, stepAttempt?, step, config, inputs, ctx, cancellation? }) → Promise<unknown>
   dispatchShell?({ nodeId, specNodeId?, stepAttempt?, node, inputs, ctx, cancellation? })       → Promise<unknown>
-  waitSignal(name, timeout)                                          → Promise<unknown | undefined>
+  waitSignal(name, timeout, { abandoned? }?)                         → Promise<unknown | undefined>
   recordStep({ nodeId, status, inputs?, outputs?, error?, attempt? }) → Promise<void>
   notifyHumanStep?({ ... })                                          → Promise<void>
   resolveHumanStep?({ nodeId, status })                              → Promise<void>
+  isCancellation?(err)                                               → boolean
+  patched?(id)                                                       → boolean
 }
 ```
 
@@ -469,6 +475,29 @@ nodes call `notifyHumanStep` / `resolveHumanStep` for their bookkeeping. `set`, 
 interpreter's attempt next to the (branch-prefixed) recording id; the dispatcher stamps them on the
 activity so every `AgentTrace` it writes names its node (see [agents.md §8.4](./agents.md)). Because the interpreter has no Temporal imports, it runs in tests against a mock
 dispatcher, and the gateway can import the step catalog without a worker dependency.
+
+**How a run ends when something goes wrong.** A failure the interpreter raises itself — a blocking
+gate's `passed: false`, a fan-out branch that failed under `onBranchFail: 'block'`, the transition
+cap, an `over` that is not an array, an expression or executor error — fails the run once, as a
+non-retryable `WORKFLOW_SPEC_FAILED` carrying the original message, after the run row is finalized
+`FAILED`. An activity failure fails it as itself. A cancellation of the run (`isCancellation`) ends
+it `CANCELLED`: it bypasses `onError: 'continue'`, `onFail` and `onBranchFail`, including when it
+reaches an activity inside a fan-out branch, where only a sibling's block-mode cancel is a branch
+cancellation. `onFail: { retry: N }` does not re-run an attempt whose error is marked non-retryable
+(on itself or its cause, as an activity's non-retryable `ApplicationFailure` is); the node fails at
+once under block semantics. The interpreter asks `patched(id)` before each of these behaviours, so a
+run recorded before them replays as it ran.
+
+A block-mode cancel stops the interpreter waiting on a branch's signal or human wait but leaves the
+Temporal condition itself to run out, so the workflow's commands do not change; the wait is told it
+was `abandoned`, and a payload that arrives afterwards stays for the next wait on that name instead
+of being consumed. Step records carry each string input, output and error cut to 8,000 characters
+(activity inputs are written to the workflow history); the full values remain in the run context,
+which the final snapshot spills to artifacts.
+
+`validateSpec` reports `RESERVED_PATH_SEGMENT` as an error when a path the run writes — a `storeAs`,
+a `set` key, a fan-out `exports` entry, or a node id (outputs land at `nodes.<id>.output`) — contains
+`__proto__`, `prototype` or `constructor`, which the interpreter refuses to write through.
 
 ### Versioning and reproducibility
 
@@ -979,6 +1008,13 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **A run fails permanently on any non-Temporal error from workflow code.** `RunnableWorkflow`
+  turns every such error into a non-retryable `WORKFLOW_SPEC_FAILED`, because the spec failures that
+  produce them are deterministic. A bug in the workflow code itself is therefore not retried by a
+  later deploy either: the run fails, and the work is started again rather than resumed.
+- **Step records are cut, not spilled.** A string over 8,000 characters in a step's recorded inputs,
+  outputs or error is truncated in `workflow_steps`; only the run's final context keeps the full
+  value (as an artifact), so a value a later node overwrote survives only in its truncated record.
 - **`Idempotency-Key` on `POST /work-requests` has an in-progress window and never expires.** The
   ledger rows are written before the Temporal start, so a same-key request that arrives while the
   start is in flight gets `409 IDEMPOTENCY_KEY_IN_PROGRESS` (`Retry-After`), not success: the key only

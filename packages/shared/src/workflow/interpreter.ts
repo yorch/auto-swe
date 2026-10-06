@@ -96,6 +96,47 @@ export class BranchCancelledError extends Error {
  */
 type BranchSink = { token?: CancellationToken; shouldAbort?: () => boolean };
 
+/**
+ * Patch ids the interpreter gates behaviour changes on, through
+ * {@link Dispatcher.patched}. Each is consulted only on the path whose
+ * behaviour changed, so a run that never reaches it records no marker.
+ *
+ * The runnable workflow passes `WORKFLOW_CANCEL_PATCH`'s literal to Temporal's
+ * `patched()` itself as well (its fan-out cancellation bridge), so the string
+ * must not change.
+ */
+export const WORKFLOW_CANCEL_PATCH = 'workflow-cancel-propagates';
+export const NON_RETRYABLE_PATCH = 'interpreter-skips-retry-of-non-retryable';
+
+function isPatched(dispatcher: Dispatcher, id: string): boolean {
+  return dispatcher.patched ? dispatcher.patched(id) : true;
+}
+
+/**
+ * A cancellation of the whole run (not of one fan-out branch), as the runtime
+ * reports it. It ends the run as cancelled: no `onError`, `onFail` or
+ * `onBranchFail` policy may turn it into a success or another attempt.
+ */
+function isRunCancellation(dispatcher: Dispatcher, err: unknown): boolean {
+  return dispatcher.isCancellation?.(err) === true && isPatched(dispatcher, WORKFLOW_CANCEL_PATCH);
+}
+
+/**
+ * Whether the error, or anything in its cause chain, is marked non-retryable —
+ * e.g. an `ActivityFailure` whose cause is a non-retryable `ApplicationFailure`.
+ * Duck-typed: this module has no runtime imports.
+ */
+function isMarkedNonRetryable(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let i = 0; i < 16 && typeof cur === 'object' && cur !== null; i++) {
+    if ((cur as { nonRetryable?: unknown }).nonRetryable === true) {
+      return true;
+    }
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 function isBranchCancelled(err: unknown): boolean {
   return (
     err instanceof BranchCancelledError ||
@@ -170,8 +211,31 @@ export interface Dispatcher {
   /**
    * Wait for a named signal. Returns the payload (any value, including null/0/false)
    * or `undefined` on timeout.
+   *
+   * `opts.abandoned` is passed for a wait inside a fan-out branch. Once it
+   * returns true the interpreter has stopped awaiting this wait (block-mode
+   * cancelled the branch), so a payload that arrives afterwards belongs to a
+   * later wait on the same name and must be left in place, not consumed.
    */
-  waitSignal(name: string, timeout: string): Promise<unknown | undefined>;
+  waitSignal(
+    name: string,
+    timeout: string,
+    opts?: { abandoned?: () => boolean }
+  ): Promise<unknown | undefined>;
+
+  /**
+   * Does this error mean the whole run was cancelled? Such an error bypasses
+   * `onError`, `onFail` and `onBranchFail` and ends the run. Optional — a
+   * dispatcher without a cancellation concept omits it.
+   */
+  isCancellation?(err: unknown): boolean;
+
+  /**
+   * Versioning gate for an interpreter behaviour change (Temporal's
+   * `patched()`): true when this run takes the new path. Called only on the
+   * path that changed. Optional — absent means always the new behaviour.
+   */
+  patched?(id: string): boolean;
 
   /** Record a step's outcome (best-effort; failures here must not throw). */
   recordStep(args: {
@@ -933,8 +997,9 @@ async function runRetryable(args: {
     } catch (err) {
       // Cancellation bypasses onError + onFail entirely — block-mode fan-out
       // raised it on this branch and the worker pool already recorded the
-      // originating failure.
-      if (isBranchCancelled(err)) {
+      // originating failure; or the whole run was cancelled, which no policy
+      // may turn into a success or another attempt.
+      if (isBranchCancelled(err) || isRunCancellation(dispatcher, err)) {
         await safeRecord(dispatcher, {
           attempt,
           error: describeStepError(err),
@@ -966,7 +1031,16 @@ async function runRetryable(args: {
       });
       // Retries happen via the enclosing for-loop: if attempt < maxAttempts,
       // the loop continues to the next iteration; otherwise fall through to
-      // terminal onFail handling.
+      // terminal onFail handling. An error marked non-retryable (a failure the
+      // activity itself declared permanent) is not retried: the next attempt
+      // would fail the same way after spending the same work.
+      if (
+        attempt < maxAttempts &&
+        isMarkedNonRetryable(err) &&
+        isPatched(dispatcher, NON_RETRYABLE_PATCH)
+      ) {
+        break;
+      }
     }
   }
 
@@ -1020,7 +1094,7 @@ async function runSignal(
   cancellationSink?: BranchSink
 ): Promise<string> {
   const payload = await waitCancellable(
-    () => dispatcher.waitSignal(node.name, node.timeout),
+    (opts) => dispatcher.waitSignal(node.name, node.timeout, opts),
     cancellationSink
   );
   if (payload === undefined) {
@@ -1097,7 +1171,7 @@ async function runHumanNode(
   // fan-out join — waiting on a human for the rest of the timeout. The pending
   // human-step row is closed by run finalization (`cancelPendingHumanSteps`).
   const payload = await waitCancellable(
-    () => dispatcher.waitSignal(signalName, node.timeout),
+    (opts) => dispatcher.waitSignal(signalName, node.timeout, opts),
     cancellationSink
   );
 
@@ -1159,23 +1233,35 @@ async function runHumanNode(
  * branch (no sink) this is exactly `wait()`. Inside one, the branch sink's
  * token is pointed at this wait for its duration, and an abort that already
  * happened (during the activities before the wait) is honoured up front.
+ *
+ * Interrupting stops the interpreter awaiting the wait; the runtime's wait
+ * itself is left to end on its own (cancelling it would change the commands
+ * the workflow emits). It is told through `abandoned` instead, so it does not
+ * consume a payload a later wait on the same name is owed.
  */
-async function waitCancellable<T>(wait: () => Promise<T>, sink?: BranchSink): Promise<T> {
+async function waitCancellable<T>(
+  wait: (opts?: { abandoned: () => boolean }) => Promise<T>,
+  sink?: BranchSink
+): Promise<T> {
   if (!sink) {
     return wait();
   }
   if (sink.shouldAbort?.()) {
     throw new BranchCancelledError();
   }
+  let abandoned = false;
   let cancel: (() => void) | undefined;
   const cancelled = new Promise<never>((_resolve, reject) => {
-    cancel = () => reject(new BranchCancelledError());
+    cancel = () => {
+      abandoned = true;
+      reject(new BranchCancelledError());
+    };
   });
   const previous = sink.token;
   const token: CancellationToken = { cancel: () => cancel?.() };
   sink.token = token;
   try {
-    return await Promise.race([wait(), cancelled]);
+    return await Promise.race([wait({ abandoned: () => abandoned }), cancelled]);
   } finally {
     if (sink.token === token) {
       sink.token = previous;
@@ -1260,6 +1346,9 @@ async function runFanOut(
   // `cancelAllExcept` is a no-op (pre-phase-8 drain behavior).
   const branchSinks = new Map<number, { token?: CancellationToken }>();
   let firstError: unknown = null;
+  // A cancellation of the whole run seen in any branch. It is rethrown after
+  // the join whatever `onBranchFail` says: 'continue' must not swallow it.
+  let runCancellation: unknown = null;
   let nextIndex = 0;
   let stop = false;
   // A nested fan-out runs inside an enclosing branch: that branch's abort
@@ -1328,6 +1417,10 @@ async function runFanOut(
         const msg = describeStepError(err);
         slots[i] = { error: msg, result: {}, status: 'FAILED' };
         firstError ??= err;
+        if (isRunCancellation(dispatcher, err)) {
+          runCancellation ??= err;
+          stop = true;
+        }
         if (node.onBranchFail === 'block') {
           stop = true;
           cancelAllExcept(i);
@@ -1389,6 +1482,16 @@ async function runFanOut(
     aggregate.plucked = results.map((r) => lookupPath(r, node.pluck as string) ?? null);
   }
   setPath(ctx, `nodes.${nodeId}.output`, aggregate);
+
+  if (runCancellation !== null) {
+    await safeRecord(dispatcher, {
+      error: describeStepError(runCancellation),
+      nodeId: recordingId,
+      outputs: aggregate,
+      status: 'FAILED',
+    });
+    throw runCancellation;
+  }
 
   if (parentAborted()) {
     // The enclosing branch was cancelled: report that, not this fan-out's own

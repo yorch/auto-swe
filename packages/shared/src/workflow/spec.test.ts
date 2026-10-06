@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Node } from './spec.js';
 import {
+  isValidWaitDuration,
   MAX_EXPR_LENGTH,
   nodeEdges,
   parseWorkflowSpec,
   readNodeEdge,
   SPEC_SCHEMA_VERSION,
   setNodeEdge,
+  waitDurationMs,
 } from './spec.js';
 
 describe('parseWorkflowSpec', () => {
@@ -483,5 +485,63 @@ describe('fan-out concurrency cap', () => {
     });
     expect(NodeSchema.safeParse(node(MAX_FANOUT_CONCURRENCY)).success).toBe(true);
     expect(NodeSchema.safeParse(node(MAX_FANOUT_CONCURRENCY + 1)).success).toBe(false);
+  });
+});
+
+describe('wait timeouts', () => {
+  it('accepts the duration strings Temporal parses', () => {
+    for (const d of ['30m', '24h', '7d', '1h', '10s', '500', '1.5h', '2 hours', '1W', '250ms']) {
+      expect(isValidWaitDuration(d)).toBe(true);
+    }
+  });
+
+  it('rejects anything Temporal would throw on, and non-positive values', () => {
+    for (const d of ['', 'soon', '24 hrs later', '-5m', '0', '0h', '1h30m', `${'1'.repeat(101)}`]) {
+      expect(isValidWaitDuration(d)).toBe(false);
+    }
+  });
+
+  it('converts a duration to milliseconds the way Temporal reads it', () => {
+    expect(waitDurationMs('30m')).toBe(1_800_000);
+    expect(waitDurationMs('2 hours')).toBe(7_200_000);
+    expect(waitDurationMs('1.5h')).toBe(5_400_000);
+    expect(waitDurationMs('1W')).toBe(604_800_000);
+    expect(waitDurationMs('250ms')).toBe(250);
+    expect(waitDurationMs('3 msecs')).toBe(3);
+    expect(waitDurationMs('500')).toBe(500);
+    expect(waitDurationMs('soon')).toBe(0);
+    expect(waitDurationMs('0h')).toBe(0);
+  });
+
+  it('refuses a spec whose signal or HITL timeout is not a duration', () => {
+    const base = (timeout: string) => ({
+      entry: 'wait',
+      name: 'timeouts',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        wait: { name: 's', onReceive: 'done', onTimeout: 'done', timeout, type: 'signal' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    expect(() => parseWorkflowSpec(base('24h'))).not.toThrow();
+    expect(() => parseWorkflowSpec(base('tomorrow'))).toThrow(/positive duration/);
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'gate',
+        name: 'hitl',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          gate: {
+            onApprove: 'done',
+            onReject: 'done',
+            onTimeout: 'done',
+            timeout: '1 fortnight',
+            title: 'ok?',
+            type: 'humanApproval',
+          },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow(/positive duration/);
   });
 });
