@@ -27,7 +27,7 @@ describe('AgentRunOutcomeCard', () => {
     expect(screen.getByText('Added a.md')).toBeTruthy();
     expect(screen.getByText('a.md')).toBeTruthy();
     expect(screen.getByText('auto/agent-abc')).toBeTruthy();
-    expect(screen.getByText('diff verified')).toBeTruthy();
+    expect(screen.getByText('Diff verified')).toBeTruthy();
     expect(screen.getByText('Passed the security gate')).toBeTruthy();
     const link = screen.getByRole('link', { name: /#7/ });
     expect(link.getAttribute('href')).toBe('https://github.com/acme/api/pull/7');
@@ -46,7 +46,7 @@ describe('AgentRunOutcomeCard', () => {
         }}
       />
     );
-    expect(screen.getByText('diff unverified')).toBeTruthy();
+    expect(screen.getByText('Diff unverified')).toBeTruthy();
     expect(screen.getByText(/for reading, not for trust/)).toBeTruthy();
     expect(screen.queryByText('Branch')).toBeNull();
     expect(screen.queryByRole('link')).toBeNull();

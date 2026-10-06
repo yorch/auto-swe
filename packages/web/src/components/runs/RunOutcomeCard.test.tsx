@@ -42,7 +42,7 @@ describe('RunOutcomeCard', () => {
       />
     );
     expect(screen.getByText(/#C123/)).toBeTruthy();
-    expect(screen.getByText(/posted/)).toBeTruthy();
+    expect(screen.getByText('Posted')).toBeTruthy();
     expect(screen.getByText(/Hello channel/)).toBeTruthy();
   });
 

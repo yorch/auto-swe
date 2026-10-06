@@ -25,7 +25,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { Icon } from '@/components/ui/Icon';
+import { Skeleton } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useApprovals } from '@/hooks/useApprovals';
@@ -40,7 +41,7 @@ import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
 import { buildTraceLinker } from '@/lib/traceLinkage';
-import { formatRelativeTime } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 
 const LAYOUTS: Record<RunDetailLayout, (props: RunLayoutProps) => React.ReactNode> = {
   A: SplitConsole,
@@ -50,6 +51,39 @@ const LAYOUTS: Record<RunDetailLayout, (props: RunLayoutProps) => React.ReactNod
 
 /** `sm` buttons are 28px tall: on a phone the header actions get a 40px target instead. */
 const TOUCH_SM = 'h-[40px] lg:h-7';
+
+const CRUMB = cn(
+  'rounded-sm transition-colors hover:text-paper-200 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center',
+  FOCUS_RING
+);
+
+/** The page's shape while the run loads: a header band, then the layout area. */
+function RunDetailSkeleton() {
+  return (
+    <div aria-live="polite" className="flex h-full flex-col bg-ink-800" role="status">
+      <span className="sr-only">Loading run…</span>
+      <div className="shrink-0 space-y-3 border-b border-ink-600/40 bg-ink-900 px-4 py-4 md:px-6">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-6 w-80 max-w-full" />
+        <Skeleton className="h-3 w-48" />
+      </div>
+      <div className="flex flex-1 gap-px max-lg:flex-col">
+        <div className="flex-1 space-y-4 p-5">
+          <Skeleton className="h-48 w-full" />
+          <Skeleton className="h-4 w-1/3" />
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-4 w-1/2" />
+        </div>
+        <div className="hidden w-[270px] space-y-3 border-l border-ink-600/60 bg-ink-900 p-5 lg:block">
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -165,7 +199,15 @@ export default function RunDetailPage({ params }: PageProps) {
   const handleReRun = retryRun.request;
 
   const notFound = (
-    <EmptyState action={<ButtonLink href="/runs">Back to runs</ButtonLink>} title="Run not found" />
+    <div className="p-4 md:p-6">
+      <EmptyState
+        action={<ButtonLink href="/runs">Back to runs</ButtonLink>}
+        bordered
+        hint="It may have been removed, or the link is incomplete."
+        icon="runs"
+        title="Run not found"
+      />
+    </div>
   );
 
   if (!id) {
@@ -173,18 +215,44 @@ export default function RunDetailPage({ params }: PageProps) {
   }
 
   if (isLoading) {
-    return <LoadingState />;
+    return <RunDetailSkeleton />;
   }
   // A failed load, a missing run, or a run without a spec snapshot: render a
   // real state instead of spinning forever.
   if (isError) {
-    return <Alert>{errMsg(error, 'Could not load run')}</Alert>;
+    return (
+      <div className="p-4 md:p-6">
+        <Alert
+          action={
+            <ButtonLink href="/runs" size="sm">
+              Back to runs
+            </ButtonLink>
+          }
+          title="Could not load this run"
+        >
+          {errMsg(error, 'Could not load run')}
+        </Alert>
+      </div>
+    );
   }
   if (!run) {
     return notFound;
   }
   if (!spec) {
-    return <Alert>This run has no readable workflow spec snapshot.</Alert>;
+    return (
+      <div className="p-4 md:p-6">
+        <Alert
+          action={
+            <ButtonLink href="/runs" size="sm">
+              Back to runs
+            </ButtonLink>
+          }
+          title="This run cannot be drawn"
+        >
+          This run has no readable workflow spec snapshot.
+        </Alert>
+      </div>
+    );
   }
 
   const traces = run.traces ?? [];
@@ -194,98 +262,111 @@ export default function RunDetailPage({ params }: PageProps) {
   // Hidden from the failure card once a re-run is in flight or started; the
   // header shows its progress.
   const failureCardReRun = reRunLocked ? undefined : handleReRun;
+  const canReRun =
+    (WORKFLOW_RUN_FAILURE_STATUSES.has(run.status as WorkflowRunStatus) ||
+      (isAgentRun && isTerminalWorkflowRunStatus(run.status))) &&
+    Boolean(run.workRequest);
 
   return (
     <div className="flex h-full flex-col bg-ink-800 max-lg:min-w-0 max-lg:overflow-y-auto max-lg:overflow-x-hidden">
       {/* ── Page header band ──────────────────────────────────────────────── */}
-      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-ink-600/40 bg-ink-900 px-4 py-4 md:px-6">
-        {/* Breadcrumb */}
-        <div className="label-mono flex items-center gap-2">
-          {run.workRequest && (
-            <>
-              <Link
-                className="transition-colors hover:text-paper-200 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center"
-                href={requestHref(run.workRequest.id)}
-              >
-                ← Request
-              </Link>
-              <span>/</span>
-            </>
-          )}
-          <Link
-            className="transition-colors hover:text-paper-200 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center"
-            href="/runs"
-          >
+      <header className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 pt-3 pb-4 md:px-6">
+        <nav
+          aria-label="Breadcrumb"
+          className="mb-1.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-paper-500"
+        >
+          <Link className={CRUMB} href="/runs">
             All runs
           </Link>
-        </div>
-
-        <span className="hidden h-4 w-px bg-ink-500 md:block" />
-
-        {/* Title: the request this run belongs to, not the template's name */}
-        <h1 className="min-w-0 break-words font-display text-[22px] font-medium tracking-[-0.01em] text-paper-100">
-          {runTitle}
-        </h1>
-
-        <StatusBadge status={run.status} />
-
-        {run.implementerRuntime && (
-          <Badge
-            title="Implementer runtime pinned at run start (workspace.implementerRuntime)"
-            tone="muted"
-            variant="outline"
-          >
-            {IMPLEMENTER_RUNTIME_LABELS[run.implementerRuntime] ?? run.implementerRuntime}
-          </Badge>
-        )}
-
-        <span className="font-mono text-[10.5px] text-paper-600">
-          {run.templateName ? `${run.templateName} · ` : ''}v{run.templateVersion} ·{' '}
-          {formatRelativeTime(run.startedAt)}
-        </span>
-
-        {/* Right side: actions + layout switcher */}
-        <div className="flex flex-wrap items-center gap-3 max-lg:min-w-0 max-lg:max-w-full md:ml-auto">
-          {securityEvents.length > 0 && (
-            <Badge tone="amber" uppercase>
-              {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
-            </Badge>
+          {run.workRequest && (
+            <>
+              <Icon className="text-paper-600" name="chevronRight" size={12} />
+              <Link className={CRUMB} href={requestHref(run.workRequest.id)}>
+                Request
+              </Link>
+            </>
           )}
-          {(tracesTrimmed || fullTraces) && (
-            <Button
-              className={TOUCH_SM}
-              disabled={isPlaceholderData}
-              onClick={toggleFullTraces}
-              size="sm"
-              title={
-                fullTraces
-                  ? 'Full payloads are fetched once and not refreshed; trim them to resume live updates'
-                  : 'Trace payloads are trimmed to 4,000 characters per field while the page polls'
-              }
-              variant="secondary"
-            >
-              {isPlaceholderData ? 'Loading…' : fullTraces ? 'Trim payloads' : 'Load full payloads'}
-            </Button>
-          )}
-          {fullTracesFailed && (
-            <Badge tone="brick" variant="text">
-              Full payloads failed to load
-            </Badge>
-          )}
-          {!isTerminalWorkflowRunStatus(run.status) && (
-            <Button
-              className={TOUCH_SM}
-              disabled={cancelRun.isPending}
-              onClick={() => setShowCancelConfirm(true)}
-              size="sm"
-              variant="danger"
-            >
-              {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
-            </Button>
-          )}
-          {(WORKFLOW_RUN_FAILURE_STATUSES.has(run.status as WorkflowRunStatus) ||
-            (isAgentRun && isTerminalWorkflowRunStatus(run.status))) &&
-            run.workRequest && (
+        </nav>
+
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+          {/* Title: the request this run belongs to, not the template's name */}
+          <div className="min-w-0 flex-1 basis-[20rem]">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <h1 className="min-w-0 break-words text-xl font-semibold leading-tight tracking-[-0.01em] text-paper-50">
+                {runTitle}
+              </h1>
+              <StatusBadge status={run.status} />
+              {run.implementerRuntime && (
+                <Badge
+                  title="Implementer runtime pinned at run start (workspace.implementerRuntime)"
+                  tone="muted"
+                  variant="outline"
+                >
+                  {IMPLEMENTER_RUNTIME_LABELS[run.implementerRuntime] ?? run.implementerRuntime}
+                </Badge>
+              )}
+              {securityEvents.length > 0 && (
+                <Badge dot tone="amber" variant="outline">
+                  {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
+                </Badge>
+              )}
+            </div>
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[13px] text-paper-500">
+              {/* The Agent Run template is hidden: its detail route answers 404 for everyone. */}
+              {run.templateName &&
+                (isAgentRun ? (
+                  <span className="text-paper-400">{run.templateName}</span>
+                ) : (
+                  <Link
+                    className="rounded-sm text-paper-300 transition-colors hover:text-ember-400"
+                    href={`/workflows/library/${run.templateId}`}
+                    title="Open the workflow template"
+                  >
+                    {run.templateName}
+                  </Link>
+                ))}
+              <span className="tabular">v{run.templateVersion}</span>
+              <span aria-hidden="true">·</span>
+              <span title={formatDate(run.startedAt)}>
+                Started {formatRelativeTime(run.startedAt)}
+              </span>
+            </p>
+          </div>
+
+          {/* Right side: actions + layout switcher */}
+          <div className="flex flex-wrap items-center gap-2 max-lg:w-full max-lg:min-w-0 lg:justify-end">
+            {(tracesTrimmed || fullTraces) && (
+              <Button
+                className={TOUCH_SM}
+                disabled={isPlaceholderData}
+                onClick={toggleFullTraces}
+                size="sm"
+                title={
+                  fullTraces
+                    ? 'Full payloads are fetched once and not refreshed; trim them to resume live updates'
+                    : 'Trace payloads are trimmed to 4,000 characters per field while the page polls'
+                }
+                variant="ghost"
+              >
+                {isPlaceholderData
+                  ? 'Loading…'
+                  : fullTraces
+                    ? 'Trim payloads'
+                    : 'Load full payloads'}
+              </Button>
+            )}
+            {!isTerminalWorkflowRunStatus(run.status) && (
+              <Button
+                className={TOUCH_SM}
+                disabled={cancelRun.isPending}
+                onClick={() => setShowCancelConfirm(true)}
+                size="sm"
+                variant="danger"
+              >
+                {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
+              </Button>
+            )}
+            {canReRun && (
               <Button
                 className={TOUCH_SM}
                 disabled={reRunLocked}
@@ -293,43 +374,46 @@ export default function RunDetailPage({ params }: PageProps) {
                 size="sm"
                 variant="secondary"
               >
+                <Icon name="refresh" size={13} />
                 {retryRun.isPending ? 'Re-running…' : 'Re-run'}
               </Button>
             )}
-          {retryRun.isSuccess && (
-            <Alert className="px-2 py-1 text-xs" variant="success">
-              New run started —{' '}
-              {retried.runId ? (
-                <Link className="underline hover:text-moss-600" href={`/runs/${retried.runId}`}>
-                  view run
-                </Link>
-              ) : retried.timedOut ? (
-                <Link className="underline hover:text-moss-600" href="/runs">
-                  view runs
-                </Link>
-              ) : (
-                'locating it…'
-              )}
-            </Alert>
-          )}
-          {retryRun.errorView && (
-            <Alert className="px-2 py-1 text-xs">
-              Re-run failed: {retryRun.errorView.title}. {retryRun.errorView.message}
-              {retryRun.errorView.hint ? ` ${retryRun.errorView.hint}` : ''}
-            </Alert>
-          )}
-          {/* The Agent Run template is hidden: its detail route answers 404 for everyone. */}
-          {!isAgentRun && (
-            <Link
-              className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-paper-500 transition-colors hover:text-ember-400 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center"
-              href={`/workflows/library/${run.templateId}`}
-            >
-              View template →
-            </Link>
-          )}
-          <LayoutToggle onChange={setLayout} value={layout} />
+            <LayoutToggle onChange={setLayout} value={layout} />
+          </div>
         </div>
-      </div>
+
+        {(fullTracesFailed || retryRun.isSuccess || retryRun.errorView) && (
+          <div className="mt-3 space-y-2">
+            {fullTracesFailed && (
+              <Alert variant="warning">
+                Full payloads failed to load. The trimmed payloads are still shown.
+              </Alert>
+            )}
+            {retryRun.isSuccess && (
+              <Alert variant="success">
+                New run started —{' '}
+                {retried.runId ? (
+                  <Link className="underline hover:text-moss-600" href={`/runs/${retried.runId}`}>
+                    view run
+                  </Link>
+                ) : retried.timedOut ? (
+                  <Link className="underline hover:text-moss-600" href="/runs">
+                    view runs
+                  </Link>
+                ) : (
+                  'locating it…'
+                )}
+              </Alert>
+            )}
+            {retryRun.errorView && (
+              <Alert title={`Re-run failed: ${retryRun.errorView.title}`}>
+                {retryRun.errorView.message}
+                {retryRun.errorView.hint ? ` ${retryRun.errorView.hint}` : ''}
+              </Alert>
+            )}
+          </div>
+        )}
+      </header>
 
       {/* ── Pending approvals + result or failure, whichever layout is chosen ── */}
       <RunSummaryBand

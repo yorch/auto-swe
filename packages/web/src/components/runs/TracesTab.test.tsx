@@ -198,25 +198,25 @@ describe('TracesTab node linkage', () => {
     const old = makeTrace('runLint', 'old');
     const { unmount } = show('lintA', [old]);
     expect(screen.getAllByText('lintA | lintB').length).toBeGreaterThan(0);
-    expect(screen.getByText('ambiguous')).toBeTruthy();
+    expect(screen.getByText('Ambiguous')).toBeTruthy();
     unmount();
     show('lintB', [old]);
-    expect(screen.getByText('ambiguous')).toBeTruthy();
+    expect(screen.getByText('Ambiguous')).toBeTruthy();
   });
 
   it('does not label an old trace that maps to a single node', () => {
     show('impl', [makeTrace('executeImplementation', 'old-impl')]);
-    expect(screen.queryByText('ambiguous')).toBeNull();
+    expect(screen.queryByText('Ambiguous')).toBeNull();
   });
 
   it('flags an old trace as ambiguous when a branch is selected, since it cannot name one', () => {
     show('fan[0]/impl', [makeTrace('executeImplementation', 'old-impl')]);
-    expect(screen.getByText('ambiguous')).toBeTruthy();
+    expect(screen.getByText('Ambiguous')).toBeTruthy();
   });
 
   it('describes the ambiguity in visible text the badge points at', () => {
     show('lintA', [makeTrace('runLint', 'old')]);
-    const badge = screen.getByText('ambiguous');
+    const badge = screen.getByText('Ambiguous');
     const note = document.getElementById(badge.getAttribute('aria-describedby') ?? '');
     expect(note?.textContent).toMatch(/matched by\s+activity name/);
   });
@@ -232,7 +232,7 @@ describe('TracesTab node linkage', () => {
         untaggedAmbiguous
       />
     );
-    expect(screen.getByText('ambiguous')).toBeTruthy();
+    expect(screen.getByText('Ambiguous')).toBeTruthy();
   });
 
   it('shows no branch headers for traces outside any fan-out', () => {
@@ -302,7 +302,7 @@ describe('TraceOutput', () => {
     });
     expect(document.querySelector('pre')).not.toBeNull();
 
-    fireEvent.click(screen.getAllByRole('button', { name: /REQUEST/ }).at(-1) as HTMLElement);
+    fireEvent.click(screen.getAllByRole('button', { name: /Request/ }).at(-1) as HTMLElement);
 
     // The row should stay expanded; the Request section is inside a container
     // that stops propagation so the row toggle is not affected.
@@ -345,7 +345,7 @@ describe('TraceOutput', () => {
       type: 'activity_event',
     });
 
-    expect(screen.getByText('INPUT')).toBeTruthy();
+    expect(screen.getByText('Input')).toBeTruthy();
     const pres = [...document.querySelectorAll('pre')].map((el) => el.textContent);
     expect(pres).toEqual([JSON.stringify({ attempt: 2 }, null, 2), 'done']);
   });
@@ -376,7 +376,7 @@ describe('TraceOutput', () => {
       type: 'tool_call',
     });
 
-    expect(screen.getByText('INPUT')).toBeTruthy();
+    expect(screen.getByText('Input')).toBeTruthy();
     const pres = [...document.querySelectorAll('pre')].map((el) => el.textContent);
     expect(pres).toEqual([JSON.stringify({ command }, null, 2), 'match']);
   });

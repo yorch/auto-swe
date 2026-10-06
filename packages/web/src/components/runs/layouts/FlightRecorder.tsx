@@ -3,12 +3,15 @@
 import type { WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { TracesTab } from '@/components/runs/TracesTab';
+import { Badge } from '@/components/ui/Badge';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
 import { stepBand } from '@/lib/runTimeline';
 import { specNodeIdOfRecording } from '@/lib/traceLinkage';
-import { cn, formatClock, formatDuration } from '@/lib/utils';
+import { cn, FOCUS_RING, formatClock, formatDuration } from '@/lib/utils';
+import { PANEL_BAR, PANEL_META, PANEL_TITLE } from './panel';
 import type { RunLayoutProps } from './types';
 
 /** Wall-clock seconds a 1× replay takes to scrub the whole run. */
@@ -58,10 +61,13 @@ function WaterfallBar({
 
   return (
     <div className="flex items-center gap-3 py-1.5">
-      <span className="w-[120px] shrink-0 truncate font-mono text-[10px] text-paper-500 max-lg:sticky max-lg:left-0 max-lg:z-[1] max-lg:bg-ink-800 max-lg:shadow-[0.75rem_0_0_0_var(--color-ink-800)]">
+      <span
+        className="w-[132px] shrink-0 truncate font-mono text-[11px] text-paper-300 max-lg:sticky max-lg:left-0 max-lg:z-[1] max-lg:bg-ink-800 max-lg:shadow-[0.75rem_0_0_0_var(--color-ink-800)]"
+        title={step.nodeId}
+      >
         {step.nodeId}
       </span>
-      <div className="relative h-4 flex-1 rounded bg-ink-600">
+      <div className="relative h-3.5 flex-1 rounded bg-ink-600/70">
         <div
           className={cn(
             'absolute h-full rounded',
@@ -77,7 +83,7 @@ function WaterfallBar({
           />
         )}
       </div>
-      <span className="num w-10 shrink-0 text-right text-[10px] text-paper-600">
+      <span className="tabular w-12 shrink-0 text-right text-[11px] text-paper-500">
         {formatDuration(stepDurationMs)}
       </span>
     </div>
@@ -193,8 +199,8 @@ export function FlightRecorder({
   const narrow = useIsNarrow();
 
   const waterfall = totalMs > 0 && (
-    <div className="px-4 py-3 border-b border-ink-600/30 shrink-0 max-lg:order-1 lg:px-5">
-      <div className="kicker mb-2">Step timing</div>
+    <div className="shrink-0 border-b border-ink-600/40 px-4 py-3 max-lg:order-1 lg:px-5">
+      <h2 className={cn(PANEL_TITLE, 'mb-2')}>Step timing</h2>
       {/* Narrow: the bars keep a readable width and scroll sideways inside this box, the
           step name staying pinned at the left edge. */}
       <div className="overflow-x-auto lg:overflow-visible" {...(narrow ? SCROLL_REGION : {})}>
@@ -215,22 +221,33 @@ export function FlightRecorder({
 
   const eventFeed = (
     <div className="flex flex-1 flex-col max-lg:order-3 lg:overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-ink-600/30 shrink-0 lg:px-5">
-        <span className="kicker">Event feed</span>
+      <div className={PANEL_BAR}>
+        <h2 className={PANEL_TITLE}>Event feed</h2>
         {playing && (
-          <span className="recording-pulse inline-block w-1.5 h-1.5 rounded-full bg-moss-400" />
+          <Badge dot="pulse" tone="moss" variant="text">
+            Replaying
+          </Badge>
         )}
-        <span className="ml-auto font-mono text-[10px] text-paper-600">
-          {visibleTraces.length} / {traces.length} events
+        <span className={cn(PANEL_META, 'ml-auto')}>
+          {visibleTraces.length} of {traces.length} events
         </span>
       </div>
       <div className="flex-1 max-lg:min-w-0 lg:overflow-y-auto" ref={feedRef}>
-        <TracesTab
-          filterNodeId={null}
-          linker={linker}
-          onClearFilter={() => {}}
-          traces={visibleTraces}
-        />
+        {visibleTraces.length === 0 && traces.length > 0 ? (
+          <EmptyState
+            className="py-12"
+            hint="Press play, or drag the scrubber, to replay the run's events in the order they were recorded."
+            icon="clock"
+            title="No events yet at this point in the run"
+          />
+        ) : (
+          <TracesTab
+            filterNodeId={null}
+            linker={linker}
+            onClearFilter={() => {}}
+            traces={visibleTraces}
+          />
+        )}
       </div>
     </div>
   );
@@ -256,7 +273,10 @@ export function FlightRecorder({
           {/* Play/Pause */}
           <button
             aria-label={playing ? 'Pause replay' : 'Play replay'}
-            className="flex h-[44px] w-[44px] items-center justify-center rounded-full lg:h-9 lg:w-9 border-2 border-ember-400 bg-ember-400 text-ink-950 transition-colors"
+            className={cn(
+              'flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember-500 to-ember-600 text-white transition hover:brightness-110 lg:h-9 lg:w-9',
+              FOCUS_RING
+            )}
             onClick={() => {
               if (playhead >= 1) {
                 setPlayhead(0);
@@ -265,16 +285,31 @@ export function FlightRecorder({
             }}
             type="button"
           >
-            {playing ? '⏸' : '▶'}
+            {/* Drawn with borders: the icon set has no play or pause glyph. */}
+            {playing ? (
+              <span aria-hidden="true" className="flex gap-[3px]">
+                <span className="h-3 w-[3px] rounded-[1px] bg-current" />
+                <span className="h-3 w-[3px] rounded-[1px] bg-current" />
+              </span>
+            ) : (
+              <span
+                aria-hidden="true"
+                className="ml-0.5 h-0 w-0 border-y-[6px] border-l-[10px] border-y-transparent border-l-current"
+              />
+            )}
           </button>
 
-          <div className="flex flex-col">
-            <span className="kicker">replay</span>
-            <div className="flex items-baseline gap-2">
-              <span className="num font-mono text-xl text-paper-100">{formatClock(currentMs)}</span>
-              <span className="font-mono text-xs text-paper-600">/ {formatClock(totalMs)}</span>
+          <div className="flex min-w-0 flex-col">
+            <span className="text-xs text-paper-500">Replay</span>
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+              <span className="tabular text-xl font-semibold text-paper-50">
+                {formatClock(currentMs)}
+              </span>
+              <span className="tabular text-xs text-paper-500">/ {formatClock(totalMs)}</span>
               {currentStepName && (
-                <span className="font-mono text-[11px] text-ember-400">· {currentStepName}</span>
+                <Badge className="font-mono" tone="ember">
+                  {currentStepName}
+                </Badge>
               )}
             </div>
           </div>

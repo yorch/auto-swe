@@ -8,7 +8,7 @@ import {
   specNodeIdOfRecording,
   type TraceLinker,
 } from '@/lib/traceLinkage';
-import { cn, formatDate } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate } from '@/lib/utils';
 import { TracesTab } from './TracesTab';
 
 interface SplitRunPanelProps {
@@ -34,11 +34,21 @@ export function SplitRunPanel({
     <div className="flex h-full flex-col lg:flex-row">
       {/* Step list column */}
       <div className="max-h-60 w-full shrink-0 overflow-y-auto border-b border-ink-600/40 lg:max-h-none lg:w-[38%] lg:border-b-0 lg:border-r">
-        <div className="kicker sticky top-0 z-10 border-b border-ink-600/40 bg-ink-900 px-4 py-2">
-          Steps · {steps.length}
+        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-ink-600/40 bg-ink-900 px-4 py-2">
+          <h3 className="text-[13px] font-semibold text-paper-100">Steps</h3>
+          <span className="tabular text-xs text-paper-500">{steps.length}</span>
+          {selectedNodeId && (
+            <span className="ml-auto text-xs text-paper-500 max-sm:hidden">
+              Click again to show all
+            </span>
+          )}
         </div>
         {steps.length === 0 ? (
-          <EmptyState className="text-paper-500" title="No steps recorded yet." />
+          <EmptyState
+            hint="Steps appear here as the workflow reaches them."
+            icon="workflows"
+            title="No steps recorded yet"
+          />
         ) : (
           <div className="divide-y divide-ink-600/30">
             {steps.map((s) => {
@@ -50,9 +60,11 @@ export function SplitRunPanel({
               const branchPrefix = s.nodeId.slice(0, s.nodeId.length - specId.length);
               return (
                 <button
+                  aria-pressed={isSelected}
                   className={cn(
-                    'flex w-full items-start gap-2.5 border-l-2 px-4 py-3 text-left transition-colors hover:bg-ink-600/20',
-                    isSelected ? 'border-ember-400 bg-ink-600' : 'border-transparent'
+                    'flex w-full items-start gap-2.5 border-l-2 px-4 py-2.5 text-left transition-colors hover:bg-ink-600/30',
+                    FOCUS_RING,
+                    isSelected ? 'border-ember-400 bg-ink-700' : 'border-transparent'
                   )}
                   key={s.id}
                   onClick={() => handleSelect(s.nodeId)}
@@ -62,29 +74,35 @@ export function SplitRunPanel({
                     <StatusBadge status={s.status} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-baseline gap-1.5">
                       <span
                         className={cn(
-                          'font-mono text-[11px] font-medium',
-                          isSelected ? 'text-ember-300' : 'text-paper-200'
+                          'min-w-0 break-all font-mono text-xs font-medium',
+                          isSelected ? 'text-ember-300' : 'text-paper-100'
                         )}
                       >
-                        {branchPrefix && <span className="text-paper-600">{branchPrefix}</span>}
+                        {branchPrefix && <span className="text-paper-500">{branchPrefix}</span>}
                         {specId}
                       </span>
-                      <span className="shrink-0 font-mono text-[10px] text-paper-600">
+                      <span
+                        className="tabular shrink-0 text-[11px] text-paper-500"
+                        title={`Attempt ${s.attempt}`}
+                      >
                         ×{s.attempt}
                       </span>
                     </div>
                     {s.error && (
-                      <div className="mt-0.5 truncate font-mono text-[10px] text-brick-400">
+                      <div
+                        className="mt-0.5 truncate font-mono text-[11px] text-brick-400"
+                        title={s.error}
+                      >
                         {s.error}
                       </div>
                     )}
                     {(s.startedAt || s.endedAt) && (
-                      <div className="mt-0.5 font-mono text-[10px] text-paper-600">
+                      <div className="tabular mt-0.5 text-[11px] text-paper-500">
                         {s.startedAt ? formatDate(s.startedAt) : '?'}
-                        {s.endedAt ? ` → ${formatDate(s.endedAt)}` : ''}
+                        {s.endedAt ? ` – ${formatDate(s.endedAt)}` : ''}
                       </div>
                     )}
                   </div>
