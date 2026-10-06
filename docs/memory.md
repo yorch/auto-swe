@@ -48,6 +48,12 @@ lessons (`retrieveSimilarLessons`): unconsolidated rows, embedded by the current
 prompt inside a `<recalled_memory>` fence that marks them as reference data. A retrieval failure is
 logged and the run continues without lessons.
 
+Every scoped search — lessons by repository, channel memory by channel, team or organization — runs
+with pgvector's iterative index scan (`SET LOCAL hnsw.iterative_scan = strict_order`, in
+`scopedVectorQuery`). Without it, a plan that reads the HNSW index sees only the table-wide nearest
+`hnsw.ef_search` candidates and filters them by scope afterwards, so a small repository beside a
+crowded one would get nothing back. The setting needs pgvector 0.8 or later.
+
 ## 4. Consolidation
 
 A Temporal Schedule (`consolidationCron`, default weekly) starts one `ConsolidateLessonsWorkflow`
@@ -93,10 +99,11 @@ with the deleted content. Channel memory is edited and deleted per channel
   user's channel memory.
 - **Changing the embedding model hides existing memory.** Rows embedded by the previous model drop
   out of recall and consolidation, and there is no bulk re-embed.
-- **Filtered search can under-return.** Each search combines the HNSW index with a selective
-  `WHERE` on one repository or channel. With pgvector's default `hnsw.ef_search` of 40, the index
-  can return its nearest candidates from other scopes, leaving a small repository in a large table
-  with fewer matches than exist, or none.
+- **Scoped search depends on pgvector 0.8.** On an older pgvector the iterative scan is
+  unavailable: the worker logs a warning once and searches without it, and a small repository or
+  channel in a large table can get fewer matches than exist, or none. Even with it, the scan stops
+  after `hnsw.max_scan_tuples` (pgvector's default, 20,000) index tuples, so a scope whose nearest
+  memories lie beyond that many closer rows from other scopes is still cut short.
 - **Only the implementer recalls lessons**, and only automatically: no agent can search memory or
   ask why a lesson was recalled, and the reviewer and the fixers get none.
 - **A refused channel summary still stores the raw exchange.** When the summariser fails for any

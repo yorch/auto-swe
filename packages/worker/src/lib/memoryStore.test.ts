@@ -8,12 +8,16 @@ const { queryRawUnsafeMock, executeRawUnsafeMock, generateEmbeddingWithSpecMock 
   })
 );
 
-vi.mock('@auto-swe/shared/db', () => ({
-  prisma: {
+vi.mock('@auto-swe/shared/db', () => {
+  const client = {
     $executeRawUnsafe: executeRawUnsafeMock,
     $queryRawUnsafe: queryRawUnsafeMock,
-  },
-}));
+    // Scoped searches run in a transaction with the iterative scan set; the
+    // transaction client is the same mock.
+    $transaction: async (fn: (tx: unknown) => unknown) => fn(client),
+  };
+  return { prisma: client };
+});
 
 // The memory gate scans through the shared scanner, which reads its patterns
 // from the database; a clean scan stands in for it here.
@@ -26,7 +30,13 @@ vi.mock('./embeddings.js', () => ({
 
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { MemoryContentRefusedError } from './memoryGuard.js';
-import { insertMemoryItem, reembedMemoryItem, searchMemoryItemsByEntity } from './memoryStore.js';
+import {
+  _resetIterativeScanSupportForTests,
+  insertMemoryItem,
+  reembedMemoryItem,
+  scopedVectorQuery,
+  searchMemoryItemsByEntity,
+} from './memoryStore.js';
 
 // Flags any text containing INJECT as a prompt injection, as the real scanner would.
 async function flaggingScan(text: string) {
@@ -172,5 +182,44 @@ describe('searchMemoryItemsByEntity', () => {
     expect(sql).toContain('entity_id = $3');
     expect(params[1]).toBe('project');
     expect(params[2]).toBe('ent-1');
+  });
+});
+
+describe('scopedVectorQuery', () => {
+  beforeEach(() => _resetIterativeScanSupportForTests());
+
+  it('sets the iterative index scan for the one query, inside its transaction', async () => {
+    queryRawUnsafeMock.mockResolvedValue([{ id: 'a' }]);
+
+    const rows = await scopedVectorQuery('SELECT id FROM memory_items WHERE repo_id = $1', 'r1');
+
+    expect(rows).toEqual([{ id: 'a' }]);
+    expect(executeRawUnsafeMock).toHaveBeenCalledWith(
+      'SET LOCAL hnsw.iterative_scan = strict_order'
+    );
+    expect(queryRawUnsafeMock).toHaveBeenCalledWith(
+      'SELECT id FROM memory_items WHERE repo_id = $1',
+      'r1'
+    );
+  });
+
+  it('falls back to the plain query, once and for good, on a pgvector without the setting', async () => {
+    executeRawUnsafeMock.mockRejectedValue(
+      new Error('unrecognized configuration parameter "hnsw.iterative_scan"')
+    );
+    queryRawUnsafeMock.mockResolvedValue([]);
+
+    await scopedVectorQuery('SELECT 1');
+    await scopedVectorQuery('SELECT 2');
+
+    expect(executeRawUnsafeMock).toHaveBeenCalledTimes(1);
+    expect(queryRawUnsafeMock).toHaveBeenCalledWith('SELECT 2');
+  });
+
+  it('rethrows any other failure', async () => {
+    executeRawUnsafeMock.mockResolvedValue(0);
+    queryRawUnsafeMock.mockRejectedValue(new Error('connection reset'));
+
+    await expect(scopedVectorQuery('SELECT 1')).rejects.toThrow('connection reset');
   });
 });

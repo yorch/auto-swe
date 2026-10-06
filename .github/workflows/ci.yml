@@ -309,6 +309,15 @@ jobs:
           SKILL_SOURCE_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/skillSource.pg.test.ts packages/gateway/src/lib/skillSourceBudget.pg.test.ts
 
+      # Scoped memory search: a plan that reads the HNSW index applies the
+      # repository filter after the index's first candidates, so a small
+      # repository beside a crowded one gets nothing back without pgvector's
+      # iterative scan. Only real pgvector shows that.
+      - name: Scoped memory search (database-backed tests)
+        env:
+          MEMORY_PG_TEST: '1'
+        run: yarn test packages/worker/src/lib/memoryStore.pg.test.ts
+
       # Run-pinned settings pinned on first read: the compare-and-set on the
       # JSON column (and on SQL NULL) is what keeps concurrent activities of one
       # run from overwriting each other's pin, which a mocked Prisma does not

@@ -388,7 +388,7 @@ The simplest production layout maps the local Docker Compose 1:1 onto the produc
 
 | Host                      | Containers                                  | Notes                                                              |
 | ------------------------- | ------------------------------------------- | ------------------------------------------------------------------ |
-| `db-1`                    | `postgres` (pgvector)                       | Managed Postgres (RDS / Cloud SQL) is fine. Enable `vector` ext.   |
+| `db-1`                    | `postgres` (pgvector)                       | Managed Postgres (RDS / Cloud SQL) is fine. Enable the `vector` extension, version 0.8 or later (scoped memory search uses its iterative index scan).   |
 | `temporal-1..N`           | `postgres-temporal`, `temporal`, `temporal-ui` | Or Temporal Cloud — skip the host entirely.                       |
 | `gateway-1..N`            | `gateway`                                   | Behind your HTTPS reverse proxy. Stateless; scale horizontally.    |
 | `worker-1..N`             | `worker` + Docker daemon                    | **Isolated.** Worker mounts `/var/run/docker.sock`.                |

@@ -1,7 +1,12 @@
 import { prisma } from '@auto-swe/shared/db';
 import { generateEmbeddingWithSpec } from './embeddings.js';
 import { withoutFlaggedMemory } from './memoryGuard.js';
-import { insertMemoryItem, type QueryEmbedding, searchMemoryItemsByVector } from './memoryStore.js';
+import {
+  insertMemoryItem,
+  type QueryEmbedding,
+  scopedVectorQuery,
+  searchMemoryItemsByVector,
+} from './memoryStore.js';
 
 /** One retrieved channel-memory row with its cosine similarity to the query. */
 export interface ChannelMemoryItem {
@@ -174,7 +179,7 @@ function runCrossChannelMemoryQuery<T>(
   }
 ): Promise<T[]> {
   const { embedding: queryEmbedding, spec: embeddingSpec } = opts.precomputed;
-  return prisma.$queryRawUnsafe<T[]>(
+  return scopedVectorQuery<T>(
     sql,
     JSON.stringify(queryEmbedding),
     scopeId,

@@ -49,6 +49,54 @@ function assertScopeColumn(column: string): asserts column is ScopeColumn {
 }
 
 /**
+ * Run one scoped similarity query (`WHERE <scope> = … ORDER BY embedding <=> …
+ * LIMIT n`) with pgvector's iterative index scan on.
+ *
+ * Without it, a plan that answers the `ORDER BY` from the HNSW index reads only
+ * the index's first `hnsw.ef_search` (40) candidates — nearest first, from the
+ * whole table — and applies the scope filter afterwards. A repository or
+ * channel whose memories are not among the table's 40 nearest to the query then
+ * gets fewer than exist, or none. `iterative_scan` keeps reading the index
+ * until the filter has passed enough rows; `strict_order` keeps the results in
+ * distance order. `SET LOCAL` confines the setting to this transaction.
+ *
+ * The setting needs pgvector 0.8. On an older server the first query refuses
+ * the parameter, a warning is logged once, and searches run without it.
+ */
+let iterativeScanUnsupported = false;
+
+export async function scopedVectorQuery<T>(sql: string, ...params: unknown[]): Promise<T[]> {
+  if (!iterativeScanUnsupported) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe('SET LOCAL hnsw.iterative_scan = strict_order');
+        return tx.$queryRawUnsafe<T[]>(sql, ...params);
+      });
+    } catch (err) {
+      if (!isUnknownSettingError(err)) {
+        throw err;
+      }
+      iterativeScanUnsupported = true;
+      console.warn(
+        '[memoryStore] hnsw.iterative_scan is unavailable (pgvector < 0.8); scoped memory ' +
+          'searches can return fewer matches than exist. Upgrade pgvector to fix this.'
+      );
+    }
+  }
+  return prisma.$queryRawUnsafe<T[]>(sql, ...params);
+}
+
+function isUnknownSettingError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /unrecognized configuration parameter|invalid configuration parameter/i.test(message);
+}
+
+/** Test seam: forget a previous "unsupported" verdict. */
+export function _resetIterativeScanSupportForTests(): void {
+  iterativeScanUnsupported = false;
+}
+
+/**
  * Cosine-similarity search over `memory_items`, scoped to a single owning row
  * (`repo_id` or `channel_id`). Embeds `queryText`, then ranks by pgvector cosine
  * distance (`<=>`) — lower distance = higher similarity. Rows are filtered to
@@ -90,7 +138,7 @@ export async function searchMemoryItemsByVector(opts: {
     ',\n      '
   );
 
-  return prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+  return scopedVectorQuery<Record<string, unknown>>(
     `SELECT
       ${projection}
     FROM memory_items
@@ -135,7 +183,7 @@ export async function searchMemoryItemsByEntity(opts: {
     ',\n      '
   );
 
-  return prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+  return scopedVectorQuery<Record<string, unknown>>(
     `SELECT
       ${projection}
     FROM memory_items
