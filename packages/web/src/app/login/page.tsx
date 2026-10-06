@@ -2,12 +2,14 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { AuthHeading, AuthLayout } from '@/components/layout/AuthLayout';
+import { ProviderMark } from '@/components/auth/ProviderMark';
+import { AuthHeading, AuthLayout, BrandMark } from '@/components/layout/AuthLayout';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
+import { Icon, type IconName } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { Skeleton } from '@/components/ui/LoadingState';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { isOkResponse, probeGateway } from '@/hooks/useGatewayStatus';
 import { api } from '@/lib/api';
@@ -67,30 +69,41 @@ const SOCIAL_BUTTONS: { id: SocialProviderId; label: string }[] = [
   { id: 'okta', label: 'Continue with Okta' },
 ];
 
-/** A small recognisable mark per provider, drawn inline so there is no asset to load. */
-function ProviderMark({ id }: { id: SocialProviderId }) {
-  if (id === 'github') {
-    return (
-      <svg aria-hidden="true" fill="currentColor" height={16} viewBox="0 0 16 16" width={16}>
-        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-      </svg>
-    );
-  }
-  if (id === 'okta') {
-    return (
-      <svg aria-hidden="true" fill="none" height={16} viewBox="0 0 16 16" width={16}>
-        <circle cx={8} cy={8} r={5} stroke="currentColor" strokeWidth={3} />
-      </svg>
-    );
-  }
+type GatewayState = 'checking' | 'up' | 'down';
+
+const GATEWAY_STATUS: Record<GatewayState, { label: string; tone: 'moss' | 'brick' | 'muted' }> = {
+  checking: { label: 'Checking gateway', tone: 'muted' },
+  down: { label: 'Gateway offline', tone: 'brick' },
+  up: { label: 'Gateway online', tone: 'moss' },
+};
+
+/** The reachability light: a dot plus words, so the state is not colour alone. */
+function GatewayStatus({ state }: { state: GatewayState }) {
+  const s = GATEWAY_STATUS[state];
   return (
-    <span aria-hidden="true" className="text-[15px] font-bold leading-none">
-      G
-    </span>
+    <Badge dot={state === 'up' ? 'pulse' : true} tone={s.tone} variant="outline">
+      {s.label}
+    </Badge>
   );
 }
 
-type GatewayState = 'checking' | 'up' | 'down';
+const HIGHLIGHTS: { icon: IconName; title: string; detail: string }[] = [
+  {
+    detail: 'Versioned workflow graphs run on Temporal, so a run survives restarts and retries.',
+    icon: 'workflows',
+    title: 'Durable by design',
+  },
+  {
+    detail: 'Agents work in isolated containers, with every write and command scanned.',
+    icon: 'security',
+    title: 'Sandboxed and scanned',
+  },
+  {
+    detail: 'Approval gates pause a run where it matters, and nothing merges without a person.',
+    icon: 'gavel',
+    title: 'Humans stay in charge',
+  },
+];
 
 export default function LoginPage() {
   // useSearchParams() requires a Suspense boundary above it when the page
@@ -362,36 +375,45 @@ function LoginPageInner() {
   const magicAvailable = providers.magicLink;
   const tab: Tab = resolveLoginTab(pickedTab, magicAvailable, !!oauthQuery);
 
+  const statusLine = <GatewayStatus state={gateway} />;
+  const versionLine = <span className="tabular">v{APP_VERSION}</span>;
+
   // Pending-approval short-circuit: the user authenticated successfully via
   // better-auth but their User row is isActive=false. Show an explanatory
   // screen instead of the sign-in form so they understand why nothing else
   // in the app works yet.
   if (pendingEmail) {
     return (
-      <AuthLayout>
-        <AuthHeading kicker="Account pending" kickerTone="amber" title="Awaiting approval">
-          <p className="mb-6 text-sm leading-relaxed text-paper-400">
+      <AuthLayout footer={versionLine}>
+        <AuthHeading
+          icon="clock"
+          kicker="Account pending"
+          kickerTone="amber"
+          title="Awaiting approval"
+        >
+          <p>
             We received your sign-in for{' '}
-            <span className="font-mono text-paper-100">{pendingEmail}</span>. An admin needs to
-            approve your account before you can use auto-swe. Ask an admin to approve it, then sign
-            in again.
+            <span className="break-all font-mono text-[13px] text-paper-100">{pendingEmail}</span>.
+            An admin needs to approve your account before you can use auto-swe. Ask an admin to
+            approve it, then sign in again.
           </p>
         </AuthHeading>
-        <Card
-          className="px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper-500"
-          variant="inset"
-        >
-          Status: pending
-        </Card>
+        <div className="mb-6 flex items-center justify-between gap-3 rounded-lg border border-ink-400/60 bg-ink-900/60 px-3.5 py-3">
+          <span className="text-[13px] text-paper-400">Account status</span>
+          <Badge dot tone="amber" variant="outline">
+            Pending approval
+          </Badge>
+        </div>
         <Button
-          className="mt-6"
+          className="w-full"
           onClick={() => {
             setPendingEmail(null);
             router.replace('/login');
           }}
-          size="sm"
+          size="lg"
           variant="secondary"
         >
+          <Icon name="arrowLeft" size={15} />
           Back to sign in
         </Button>
       </AuthLayout>
@@ -399,88 +421,95 @@ function LoginPageInner() {
   }
 
   return (
-    <div className="relative grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
-      {/* LEFT — editorial panel (unchanged from prior design) */}
+    <div className="relative grid min-h-dvh bg-ink-800 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:grid-cols-[1.1fr_1fr]">
+      {/* LEFT — brand panel, wide screens only */}
       <aside className="relative hidden flex-col justify-between overflow-hidden border-r border-ink-600 bg-ink-950 p-12 lg:flex">
-        <div aria-hidden className="absolute inset-0 opacity-60">
-          <div className="absolute inset-0 bg-radial-[circle_at_30%_20%] from-ember-400/18 to-transparent to-55%" />
-          <div className="absolute inset-0 bg-radial-[circle_at_80%_80%] from-dust-400/10 to-transparent to-55%" />
+        <div aria-hidden className="pointer-events-none absolute inset-0">
+          <div className="absolute inset-0 bg-radial-[circle_at_20%_10%] from-ember-400/20 to-transparent to-55%" />
+          <div className="absolute inset-0 bg-radial-[circle_at_85%_85%] from-dust-400/10 to-transparent to-55%" />
+          <div
+            className="absolute inset-0 opacity-[0.06] [mask-image:linear-gradient(to_bottom,black,transparent_85%)]"
+            style={{
+              backgroundImage:
+                'linear-gradient(to right, var(--color-paper-500) 1px, transparent 1px),' +
+                'linear-gradient(to bottom, var(--color-paper-500) 1px, transparent 1px)',
+              backgroundSize: '56px 56px',
+            }}
+          />
         </div>
-        <div
-          aria-hidden
-          className="absolute inset-0 opacity-[0.07]"
-          style={{
-            backgroundImage:
-              'linear-gradient(to right, var(--color-paper-500) 1px, transparent 1px),' +
-              'linear-gradient(to bottom, var(--color-paper-500) 1px, transparent 1px)',
-            backgroundSize: '64px 64px',
-          }}
-        />
 
-        <header className="relative z-10 flex items-center justify-between">
-          <div>
-            <div className="flex items-baseline gap-1.5">
-              <span className="font-display text-3xl font-medium leading-none tracking-tight text-paper-50">
-                auto
-              </span>
-              <span className="display-italic text-3xl leading-none text-ember-400">·swe</span>
-            </div>
-            <div className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-              autonomous workflows
-            </div>
-          </div>
+        <header className="relative z-10 flex items-center justify-between gap-4">
+          <BrandMark size="lg" />
           {/* Driven by the provider probe, which doubles as the reachability
               check — a status light that always reads "online" is worse than
               no status light. */}
-          <div className="flex items-center gap-2">
-            <span
-              className={`pulse-dot inline-block h-1.5 w-1.5 rounded-full ${
-                gateway === 'down'
-                  ? 'bg-brick-400'
-                  : gateway === 'up'
-                    ? 'bg-moss-400'
-                    : 'bg-paper-500'
-              }`}
-            />
-            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-400">
-              {gateway === 'down'
-                ? 'gateway offline'
-                : gateway === 'up'
-                  ? 'gateway online'
-                  : 'checking gateway'}
-            </span>
-          </div>
+          {statusLine}
         </header>
 
-        <footer className="relative z-10 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
+        <div className="relative z-10 max-w-lg">
+          <p className="kicker mb-4">Autonomous workflows</p>
+          <h2 className="text-4xl font-semibold leading-[1.1] tracking-[-0.03em] text-paper-50 xl:text-[44px]">
+            Ticket in, reviewed pull request out.
+          </h2>
+          <p className="mt-4 text-base leading-relaxed text-paper-400">
+            Durable, governed agent workflows that do the work and leave the decisions to your team.
+          </p>
+          <ul className="mt-10 space-y-5">
+            {HIGHLIGHTS.map((h) => (
+              <li className="flex gap-4" key={h.title}>
+                <span
+                  aria-hidden="true"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400/70 bg-ink-700/70 text-ember-300"
+                >
+                  <Icon name={h.icon} size={17} />
+                </span>
+                <div>
+                  <div className="text-sm font-medium text-paper-100">{h.title}</div>
+                  <div className="mt-0.5 text-[13px] leading-relaxed text-paper-500">
+                    {h.detail}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <footer className="relative z-10 flex items-center justify-between text-xs text-paper-500">
           {/* Prerendered at build time, so the baked-in year can disagree with the
               client's clock across a New Year boundary. */}
-          <span suppressHydrationWarning>© {new Date().getFullYear()} · brnby</span>
-          <span>v{APP_VERSION}</span>
+          <span suppressHydrationWarning>© {new Date().getFullYear()} brnby</span>
+          {versionLine}
         </footer>
       </aside>
 
-      {/* RIGHT — sign-in panel */}
-      <AuthLayout className="relative lg:px-16">
-        <div className="mb-10 flex items-baseline gap-1.5 lg:hidden">
-          <span className="font-display text-2xl font-medium leading-none tracking-tight text-paper-50">
-            auto
+      {/* RIGHT — sign-in card */}
+      <AuthLayout
+        brand="mobile"
+        className="lg:px-12"
+        footer={
+          <span className="flex items-center gap-4 lg:hidden">
+            {statusLine}
+            {versionLine}
           </span>
-          <span className="display-italic text-2xl leading-none text-ember-400">·swe</span>
-        </div>
-
-        <AuthHeading title="Sign in" />
+        }
+      >
+        <AuthHeading title="Sign in">
+          {oauthQuery
+            ? 'Sign in to finish connecting the app that sent you here.'
+            : 'Welcome back. Sign in to continue to auto·swe.'}
+        </AuthHeading>
 
         {gatewayDown && (
           <Alert className="mb-6" title="Service unavailable" variant="error">
             {IS_DEV ? (
               <>
                 Can't reach the gateway at{' '}
-                <code className="text-paper-100" suppressHydrationWarning>
+                <code className="break-all font-mono text-paper-100" suppressHydrationWarning>
                   {API_BASE}
                 </code>
-                . Check that it's running and that CORS_ORIGIN includes{' '}
-                <code className="text-paper-100">
+                . Check that it's running and that <code className="font-mono">CORS_ORIGIN</code>{' '}
+                includes{' '}
+                <code className="break-all font-mono text-paper-100">
                   {typeof window !== 'undefined' ? window.location.origin : ''}
                 </code>
                 .
@@ -493,25 +522,26 @@ function LoginPageInner() {
 
         {/* Social providers — only shown when configured in the backend */}
         {hasSocial && (
-          <div className="mb-6 space-y-2">
-            {SOCIAL_BUTTONS.filter((b) => providers[b.id]).map((b) => (
-              <Button
-                className="w-full"
-                disabled={loading}
-                key={b.id}
-                onClick={() => handleSocialSignIn(b.id)}
-                variant="secondary"
-              >
-                <ProviderMark id={b.id} />
-                <span>{b.label}</span>
-              </Button>
-            ))}
-            <div className="my-6 flex items-center gap-4">
-              <span className="h-px flex-1 bg-ink-600" />
-              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-500">
-                or
-              </span>
-              <span className="h-px flex-1 bg-ink-600" />
+          <div className="mb-6">
+            <div className="space-y-2.5">
+              {SOCIAL_BUTTONS.filter((b) => providers[b.id]).map((b) => (
+                <Button
+                  className="w-full"
+                  disabled={loading}
+                  key={b.id}
+                  onClick={() => handleSocialSignIn(b.id)}
+                  size="lg"
+                  variant="secondary"
+                >
+                  <ProviderMark id={b.id} />
+                  <span>{b.label}</span>
+                </Button>
+              ))}
+            </div>
+            <div className="mt-6 flex items-center gap-3">
+              <span className="h-px flex-1 bg-ink-500" />
+              <span className="text-xs text-paper-500">or continue with email</span>
+              <span className="h-px flex-1 bg-ink-500" />
             </div>
           </div>
         )}
@@ -520,32 +550,36 @@ function LoginPageInner() {
         {magicAvailable && (
           <SegmentedControl
             ariaLabel="Sign-in method"
-            className="mb-5"
+            className="mb-5 flex w-full"
             onChange={(next) => {
               setPickedTab(next);
               setError('');
               setInfo('');
             }}
+            optionClassName="flex-1 py-1.5 text-[13px]"
             options={TAB_OPTIONS}
             value={tab}
           />
         )}
 
         {error && (
-          <Alert className="mb-4">
+          <Alert
+            action={
+              bridgeUnavailable ? (
+                <Button
+                  onClick={() => {
+                    setError('');
+                    setBridgeAttempt((n) => n + 1);
+                  }}
+                  size="sm"
+                >
+                  Retry
+                </Button>
+              ) : undefined
+            }
+            className="mb-4"
+          >
             {error}
-            {bridgeUnavailable && (
-              <button
-                className="ml-2 underline hover:no-underline"
-                onClick={() => {
-                  setError('');
-                  setBridgeAttempt((n) => n + 1);
-                }}
-                type="button"
-              >
-                Retry
-              </button>
-            )}
           </Alert>
         )}
         {info && (
@@ -563,7 +597,12 @@ function LoginPageInner() {
         )}
 
         {gateway === 'checking' ? (
-          <LoadingState compact message="Checking sign-in options…" />
+          <div aria-live="polite" className="space-y-4" role="status">
+            <span className="sr-only">Checking sign-in options…</span>
+            <Skeleton className="h-4 w-16" />
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
         ) : tab === 'magic' ? (
           <form className="space-y-5" onSubmit={handleMagicLinkSubmit}>
             <Input
@@ -579,11 +618,10 @@ function LoginPageInner() {
             <Button className="w-full" disabled={loading} size="lg" type="submit" variant="primary">
               {loading ? 'Sending…' : 'Email me a sign-in link'}
             </Button>
-            {IS_DEV && (
-              <p className="text-xs text-paper-500">
-                In dev, the magic link prints to the gateway stdout.
-              </p>
-            )}
+            <p className="text-center text-xs leading-relaxed text-paper-500">
+              We'll email you a link that signs you in — no password needed.
+              {IS_DEV && ' In dev, the link prints to the gateway stdout.'}
+            </p>
           </form>
         ) : (
           <form className="space-y-5" onSubmit={handlePasswordSubmit}>
@@ -597,29 +635,32 @@ function LoginPageInner() {
               type="email"
               value={email}
             />
-            <Input
-              autoComplete="current-password"
-              label="Password"
-              name="password"
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••••"
-              required
-              type="password"
-              value={password}
-            />
+            <div className="space-y-2">
+              <Input
+                autoComplete="current-password"
+                label="Password"
+                name="password"
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••"
+                required
+                type="password"
+                value={password}
+              />
+              <div className="flex justify-end">
+                <Button
+                  className="h-auto px-1 py-0.5 text-ember-300 hover:bg-transparent hover:text-ember-200"
+                  disabled={loading}
+                  onClick={handleForgotPassword}
+                  size="sm"
+                  variant="ghost"
+                >
+                  Forgot password?
+                </Button>
+              </div>
+            </div>
             <Button className="w-full" disabled={loading} size="lg" type="submit" variant="primary">
               {loading ? 'Signing in…' : 'Sign in'}
             </Button>
-            <div className="flex items-center justify-end">
-              <button
-                className="label-mono transition-colors hover:text-ember-400"
-                disabled={loading}
-                onClick={handleForgotPassword}
-                type="button"
-              >
-                Forgot password?
-              </button>
-            </div>
           </form>
         )}
       </AuthLayout>

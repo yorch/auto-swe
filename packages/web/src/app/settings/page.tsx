@@ -2,77 +2,41 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { type ReactNode, useState } from 'react';
+import { useState } from 'react';
+import { ProviderMark } from '@/components/auth/ProviderMark';
 import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
 import { ConnectedAppsSection } from '@/components/settings/ConnectedAppsSection';
 import { GitHubCredentialsSection } from '@/components/settings/GitHubCredentialsSection';
+import { SettingsListRow, SettingsSection } from '@/components/settings/SettingsSection';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { BUTTON_STYLE, Button, buttonClassName } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useAuthProviders, useLinkedAccounts } from '@/hooks/useAccountSettings';
 import { API_BASE } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
-import { cn } from '@/lib/utils';
+import { platformRoleLabel } from '@/lib/govLabels';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
 
 interface Provider {
   id: SocialProviderId;
   label: string;
   description: string;
-  tone: 'ember' | 'dust';
 }
 
 const SOCIAL_PROVIDERS: Provider[] = [
-  {
-    description: 'Sign in with your GitHub account.',
-    id: 'github',
-    label: 'GitHub',
-    tone: 'ember',
-  },
-  {
-    description: 'Sign in with your Google account.',
-    id: 'google',
-    label: 'Google',
-    tone: 'dust',
-  },
+  { description: 'Sign in with your GitHub account.', id: 'github', label: 'GitHub' },
+  { description: 'Sign in with your Google account.', id: 'google', label: 'Google' },
   {
     description: "Sign in with your organization's Okta account.",
     id: 'okta',
     label: 'Okta',
-    tone: 'ember',
   },
 ];
-
-/** One sign-in method in the linked-accounts list: status dot, name, detail line, action. */
-function LinkedAccountRow({
-  action,
-  detail,
-  dotClass,
-  label,
-}: {
-  action: ReactNode;
-  detail: ReactNode;
-  /** Background class for the status dot; `bg-ink-500` when not linked. */
-  dotClass: string;
-  label: string;
-}) {
-  return (
-    <li className="flex items-center justify-between py-4">
-      <div className="flex items-center gap-3">
-        <span aria-hidden className={cn('inline-block h-2 w-2 rounded-full', dotClass)} />
-        <div>
-          <div className="text-sm text-paper-100">{label}</div>
-          <div className="font-mono text-[11px] text-paper-500">{detail}</div>
-        </div>
-      </div>
-      {action}
-    </li>
-  );
-}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -111,7 +75,7 @@ export default function SettingsPage() {
       // page unloads (the button remains disabled).
       await linkProvider(provider);
     } catch (err) {
-      setError(errMsg(err, 'link failed'));
+      setError(errMsg(err, 'Could not link that account'));
       setBusy(null);
     }
   };
@@ -134,58 +98,73 @@ export default function SettingsPage() {
       throw new Error(errBody?.message ?? `unlink failed (${res.status})`);
     }
     await qc.invalidateQueries({ queryKey: ['linked-accounts'] });
-    setInfo(`${providerId} unlinked from this account.`);
+    setInfo(
+      `${SOCIAL_PROVIDERS.find((p) => p.id === providerId)?.label ?? providerId} unlinked from your account.`
+    );
   };
 
+  const roleLabel = user?.role ? platformRoleLabel(user.role) : 'Guest';
+
   return (
-    <div className="space-y-8">
+    <div className="max-w-4xl space-y-6">
       <PageHeader
-        subtitle="Profile, sign-in methods, and integrations. Changes apply to your account only."
+        subtitle="Your profile, how you sign in, and the tokens and apps that act as you. Changes apply to your account only."
         title="Account settings"
       />
 
-      <section>
-        <SectionHeader hint="who you are" number="01" title="Profile" />
-        <Card variant="inset">
-          <dl className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-4 text-sm">
-            <dt className="label-mono">Email</dt>
-            <dd className="font-mono text-xs text-paper-200">{user?.email ?? '—'}</dd>
-            <dt className="label-mono">Role</dt>
-            <dd>
-              <Badge tone="ember" uppercase variant="outline">
-                {user?.role ?? 'guest'}
-              </Badge>
-            </dd>
+      {error && <Alert variant="error">{error}</Alert>}
+      {info && <Alert variant="success">{info}</Alert>}
+
+      <SettingsSection
+        actions={
+          <Button onClick={handleLogout} size="sm">
+            Sign out
+          </Button>
+        }
+        description="The account you are signed in as."
+        icon="users"
+        id="profile"
+        title="Profile"
+      >
+        <div className="flex flex-wrap items-center gap-4 py-4">
+          <span
+            aria-hidden="true"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember-400 to-violet-400 text-lg font-semibold text-paper-50"
+          >
+            {(user?.email ?? '?').charAt(0).toUpperCase()}
+          </span>
+          <dl className="grid min-w-0 flex-1 grid-cols-1 gap-x-10 gap-y-3 sm:grid-cols-[auto_auto] sm:justify-start">
+            <div className="min-w-0">
+              <dt className="label-mono">Email</dt>
+              <dd className="mt-0.5 break-all text-sm text-paper-100">{user?.email ?? '—'}</dd>
+            </div>
+            <div>
+              <dt className="label-mono">Role</dt>
+              <dd className="mt-1">
+                <Badge tone="ember" variant="outline">
+                  {roleLabel}
+                </Badge>
+              </dd>
+            </div>
           </dl>
-          <div className="mt-6 border-t border-ink-600 pt-4">
-            <Button onClick={handleLogout} size="sm" variant="secondary">
-              Sign out
-            </Button>
-          </div>
-        </Card>
-      </section>
+        </div>
+      </SettingsSection>
 
-      <section>
-        <SectionHeader hint="link / unlink sign-in providers" number="02" title="Linked accounts" />
-
-        {error && (
-          <Alert className="mb-4" variant="error">
-            {error}
-          </Alert>
-        )}
-        {info && (
-          <Alert className="mb-4" variant="success">
-            {info}
-          </Alert>
-        )}
-
-        <Card variant="inset">
+      <SettingsSection
+        description="Providers you can sign in with. Unlinking is blocked if it would leave you without a way to sign in."
+        icon="lock"
+        id="sign-in"
+        title="Sign-in methods"
+      >
+        {providersQuery.isLoading || linkedQuery.isLoading ? (
+          <SkeletonRows rows={4} />
+        ) : (
           <QueryBoundary
             compact
             error={providersQuery.error ?? linkedQuery.error}
             isError={providersQuery.isError || linkedQuery.isError}
             isFetching={providersQuery.isFetching || linkedQuery.isFetching}
-            isLoading={providersQuery.isLoading || linkedQuery.isLoading}
+            isLoading={false}
             label="your sign-in methods"
             onRetry={() => {
               void providersQuery.refetch();
@@ -193,12 +172,17 @@ export default function SettingsPage() {
             }}
           >
             <ul className="divide-y divide-ink-600">
+              <SettingsListRow
+                detail="Change your password with Forgot password on the sign-in page. A magic link needs no setup: request one there whenever you need a fresh session."
+                leading={<Icon name="key" size={16} />}
+                title="Email and password"
+              />
               {SOCIAL_PROVIDERS.map((p) => {
                 const isLinked = linkedIds.has(p.id);
                 const configured = providers?.[p.id] ?? false;
                 const account = linked.find((a) => a.providerId === p.id);
                 return (
-                  <LinkedAccountRow
+                  <SettingsListRow
                     action={
                       isLinked && account ? (
                         <Button
@@ -215,44 +199,51 @@ export default function SettingsPage() {
                           Unlink
                         </Button>
                       ) : configured ? (
-                        <Button
-                          disabled={busy === p.id}
-                          onClick={() => handleLink(p.id)}
-                          size="sm"
-                          variant="secondary"
-                        >
+                        <Button disabled={busy === p.id} onClick={() => handleLink(p.id)} size="sm">
                           {busy === p.id ? 'Linking…' : 'Link'}
                         </Button>
                       ) : null
                     }
                     detail={
-                      isLinked
-                        ? `linked${account?.accountId ? ` · ${account.accountId.slice(0, 12)}…` : ''}`
-                        : configured
-                          ? p.description
-                          : 'Not enabled by your administrator'
-                    }
-                    dotClass={
-                      isLinked
-                        ? p.tone === 'ember'
-                          ? 'bg-ember-400'
-                          : 'bg-dust-400'
-                        : 'bg-ink-500'
+                      isLinked ? (
+                        account?.accountId ? (
+                          <>
+                            Account{' '}
+                            <span className="font-mono text-xs text-paper-400">
+                              {account.accountId.slice(0, 12)}…
+                            </span>
+                          </>
+                        ) : (
+                          p.description
+                        )
+                      ) : configured ? (
+                        p.description
+                      ) : (
+                        'Not enabled by your administrator'
+                      )
                     }
                     key={p.id}
-                    label={p.label}
+                    leading={<ProviderMark id={p.id} />}
+                    status={
+                      isLinked ? (
+                        <Badge dot tone="moss" variant="outline">
+                          Linked
+                        </Badge>
+                      ) : configured ? null : (
+                        <Badge tone="muted" variant="outline">
+                          Unavailable
+                        </Badge>
+                      )
+                    }
+                    title={p.label}
                   />
                 );
               })}
 
               {/* Slack lives outside better-auth — keep its custom OAuth flow. */}
-              <LinkedAccountRow
+              <SettingsListRow
                 action={
-                  user?.slackId ? (
-                    <Badge tone="moss" uppercase variant="text">
-                      Connected
-                    </Badge>
-                  ) : (
+                  user?.slackId ? null : (
                     // A full-page navigation to the gateway's OAuth start, not an
                     // app route, so it stays a plain anchor rather than a ButtonLink.
                     <a
@@ -266,47 +257,35 @@ export default function SettingsPage() {
                 }
                 detail={
                   user?.slackId ? (
-                    `linked · ${user.slackId}`
+                    <>
+                      Slack user{' '}
+                      <span className="font-mono text-xs text-paper-400">{user.slackId}</span>
+                    </>
                   ) : (
                     <>
-                      Required for the <code className="font-mono">/auto-swe</code> slash command
-                      and per-step failure DMs.
+                      Needed for the <code className="font-mono text-xs">/auto-swe</code> slash
+                      command and per-step failure DMs.
                     </>
                   )
                 }
-                dotClass={user?.slackId ? 'bg-moss-400' : 'bg-ink-500'}
-                label="Slack"
+                leading={<ProviderMark id="slack" />}
+                status={
+                  user?.slackId ? (
+                    <Badge dot tone="moss" variant="outline">
+                      Connected
+                    </Badge>
+                  ) : null
+                }
+                title="Slack"
               />
             </ul>
           </QueryBoundary>
-          <p className="mt-4 border-t border-ink-600 pt-3 font-mono text-[10px] uppercase tracking-wider text-paper-500">
-            Unlinking is blocked if it would leave you without a sign-in method.
-          </p>
-        </Card>
-      </section>
+        )}
+      </SettingsSection>
 
-      <section>
-        <SectionHeader hint="email + password / magic link" number="03" title="Credentials" />
-        <Card variant="inset">
-          <p className="text-xs text-paper-400">
-            Use the password reset flow on the login page to change your password. Magic link works
-            with no setup: whenever you need a fresh session, request a sign-in link from the login
-            page.
-          </p>
-        </Card>
-      </section>
-
-      <section>
-        <AccessTokensSection number="04" />
-      </section>
-
-      <section>
-        <GitHubCredentialsSection number="05" />
-      </section>
-
-      <section>
-        <ConnectedAppsSection number="06" />
-      </section>
+      <AccessTokensSection />
+      <GitHubCredentialsSection />
+      <ConnectedAppsSection />
 
       <ConfirmModal
         confirmLabel="Unlink"
