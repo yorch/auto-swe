@@ -98,7 +98,7 @@ Top-level files that matter:
 - `vitest.config.ts` — root test runner; subpath aliases for `@auto-swe/shared/*` use array form (Vite prefix matching is order-sensitive)
 - `biome.json` — single source of truth for lint + format
 - `scripts/check-doc-drift.mjs` — CI doc-drift check (see §5)
-- `.env.example` — environment variable template
+- `.env.example` — environment variable template; `scripts/env-setup.mjs` (`yarn env:setup`) turns it into a `.env`. A new empty required key in it needs an entry in that script's `SECRETS` table (a test enforces this)
 
 ---
 
@@ -230,6 +230,7 @@ yarn lint:fix             # Auto-fix safe lint issues + format (biome check --wr
 yarn format               # Format only (biome format --write)
 yarn docs:check           # Fail on stale countable claims in the living docs
 yarn invariants:check     # Fail on source rules the types and tests cannot reach (§5)
+yarn env:setup <init|sync|check>  # Create / update / validate .env from .env.example (zero-dependency script)
 
 # Docker (infra = postgres + postgres-temporal + temporal + temporal-ui [profile, local only] + garage; app = gateway + worker + web + otel-lgtm)
 yarn docker:infra:up      # Start infra services only
@@ -863,9 +864,11 @@ Dockerfile; it has the specific rules and what has already been tried and does n
 npm install -g corepack && corepack enable && yarn install
 
 # 2. Start infrastructure (postgres + postgres-temporal + temporal + garage)
-cp .env.example .env    # Fill in the required-secrets block: CONFIG_ENCRYPTION_KEY,
-                        # BETTER_AUTH_SECRET, JWT_SECRET, SEED_ADMIN_PASSWORD (each line
-                        # carries its `openssl rand` command); optionally GITHUB_TOKEN /
+yarn env:setup init     # Creates .env from .env.example and generates the required secrets
+                        # (CONFIG_ENCRYPTION_KEY, BETTER_AUTH_SECRET, JWT_SECRET,
+                        # SEED_ADMIN_PASSWORD, GARAGE_RPC_SECRET). After pulling a change to
+                        # .env.example run `yarn env:setup sync` (keeps your values, backs up
+                        # first); `yarn env:setup check` validates. Optionally add GITHUB_TOKEN /
                         # GITHUB_WEBHOOK_SECRET as bootstrap fallbacks
 yarn docker:infra:up
 

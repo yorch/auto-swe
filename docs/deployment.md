@@ -58,7 +58,26 @@ openssl rand -base64 24   # SEED_ADMIN_PASSWORD (or use the IdP)
 
 ## 2. Required environment variables
 
-The full annotated template is [`.env.example`](../.env.example). The minimum-viable production set:
+The full annotated template is [`.env.example`](../.env.example). `yarn env:setup` builds a `.env` from it:
+
+```bash
+yarn env:setup init --profile prod        # prompts for the API and web domains on a TTY
+yarn env:setup init --profile prod --yes --set DOMAIN_API=api.example.com --set DOMAIN_APP=app.example.com
+yarn env:setup check --profile prod       # pre-flight before `just prod-*`
+yarn env:setup sync                       # after pulling a change to .env.example
+```
+
+The `prod` profile generates a strong URL-safe `POSTGRES_PASSWORD` (and rebuilds `DATABASE_URL` from it),
+`ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` and `GARAGE_RPC_SECRET`, sets `NODE_ENV=production`,
+and derives `PUBLIC_URL`, `BETTER_AUTH_URL` and `NEXT_PUBLIC_API_URL` from `DOMAIN_API` and `CORS_ORIGIN`
+and `WEB_URL` from `DOMAIN_APP`. `check --profile prod` exits non-zero while any of those URLs is unset or
+points at `localhost` / `127.0.0.1`, while a dev default (`POSTGRES_PASSWORD=password`, the
+`autoswelocal…` S3 credentials) remains, or while a required secret is empty or malformed. `sync` re-renders
+the file from the current template keeping every value you set, moves keys the template does not know into a
+trailing "Local additions" section, and writes a `.env.bak-<timestamp>` first. `--dry-run` prints the change
+with secret values masked. Secrets that already have a value are never regenerated.
+
+The minimum-viable production set:
 
 ```bash
 # Datastore
