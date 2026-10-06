@@ -575,6 +575,45 @@ function checkPgSuitesRunInCi() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// INVARIANT 8 — a compose wrapper adds a profile; it never names one with `--profile`.
+//
+// Compose's `--profile` flag replaces `COMPOSE_PROFILES` instead of adding to it. The local
+// scripts passed `--profile temporal-ui`, so `COMPOSE_PROFILES=objectstore` from `.env` was
+// ignored and the bundled Garage store never started through `yarn docker:*` or `just`; the
+// rest of the stack came up healthy without it, so nothing reported the missing service. The
+// production teardown had the same flag and left Garage running.
+//
+// Rule: in the root `package.json` scripts and the `Justfile`, `--profile` may only take `'*'`
+// (every profile, for a teardown). A profile a recipe needs goes through
+// `node scripts/compose.mjs --add-profile <name>`, which keeps the configured ones.
+// ---------------------------------------------------------------------------
+
+const COMPOSE_ENTRY_FILES = ['package.json', 'Justfile'];
+
+function checkComposeProfilesAreAdded() {
+  for (const file of COMPOSE_ENTRY_FILES) {
+    const lines = read(file).split('\n');
+    lines.forEach((line, i) => {
+      if (line.trimStart().startsWith('#')) {
+        return;
+      }
+      for (const m of line.matchAll(/--profile(?:\s+|=)(\S+)/g)) {
+        if (!/^['"]?\*['"]?$/.test(m[1].replace(/[",]+$/, ''))) {
+          fail(
+            file,
+            i + 1,
+            'compose-profiles-are-added',
+            `\`--profile ${m[1]}\` names a Compose profile`,
+            '`--profile` replaces COMPOSE_PROFILES, so the profiles .env enables (objectstore) are ' +
+              "silently dropped. Use `node scripts/compose.mjs --add-profile <name>`, or `--profile '*'` for a teardown."
+          );
+        }
+      }
+    });
+  }
+}
+
 checkWorkspaceImageLiterals();
 checkDockerfileYarnProvisioning();
 checkLayoutRendersPerRequest();
@@ -582,6 +621,7 @@ checkMcpCodeHasNoDatabaseAccess();
 checkConnectorFetchesSetRedirect();
 checkOperatorUrlFetchesAreGuarded();
 checkPgSuitesRunInCi();
+checkComposeProfilesAreAdded();
 
 if (failures.length > 0) {
   console.error(`Invariant check failed — ${failures.length} violation(s).\n`);
@@ -596,7 +636,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('Invariant check passed — 7 invariants, no violations.');
+console.log('Invariant check passed — 8 invariants, no violations.');
 console.log('  workspace image is inherited, never written inline at a call site');
 console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
 console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
@@ -604,3 +644,4 @@ console.log('  MCP code takes no database access: it reaches data only through a
 console.log('  connector fetches state a redirect policy');
 console.log('  fetches to operator-supplied URLs resolve and pin their address');
 console.log('  every database-backed test suite runs in CI with its opt-in flag set');
+console.log('  compose entry points add profiles to COMPOSE_PROFILES, never replace them');
