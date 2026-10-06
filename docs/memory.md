@@ -106,6 +106,7 @@ with the deleted content. Channel memory is edited and deleted per channel
   memories lie beyond that many closer rows from other scopes is still cut short.
 - **Only the implementer recalls lessons**, and only automatically: no agent can search memory or
   ask why a lesson was recalled, and the reviewer and the fixers get none.
-- **A refused channel summary still stores the raw exchange.** When the summariser fails for any
-  reason other than the memory gate — a USD-cap refusal included — the turn's text and reply are
-  stored instead, and that embedding is not covered by the channel's budget hold.
+- **A failed channel summary stores the raw exchange.** When the summariser fails for a reason
+  other than the memory gate or a refusal to spend (a malformed answer, a provider error), the
+  turn's text and reply are stored undistilled, and that embedding is not covered by the channel's
+  budget hold.

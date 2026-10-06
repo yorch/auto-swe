@@ -154,3 +154,23 @@ export function findUnpricedModelRefusal(err: unknown): Error | null {
 export function isUnpricedModelRefusal(err: unknown): boolean {
   return findUnpricedModelRefusal(err) !== null;
 }
+
+/**
+ * Failure types that mean "this spend was not allowed", as opposed to "the call
+ * went wrong": an unpriced model under a USD cap, a price that could not be
+ * read, and a run's token tier exhausted (`BUDGET_EXCEEDED`, thrown by
+ * `costTracking`).
+ */
+const SPEND_REFUSAL_TYPES = new Set([MODEL_UNPRICED, MODEL_PRICE_UNAVAILABLE, 'BUDGET_EXCEEDED']);
+
+/** True when `err`, or anything in its cause chain, is a refusal to spend. */
+export function isSpendRefusal(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let i = 0; i < 16 && cur instanceof Error; i++) {
+    if (SPEND_REFUSAL_TYPES.has((cur as { type?: unknown }).type as string)) {
+      return true;
+    }
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
