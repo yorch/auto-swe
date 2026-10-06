@@ -6,6 +6,8 @@ import { use, useEffect } from 'react';
 import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useWorkflow } from '@/hooks/useRuns';
@@ -35,6 +37,9 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   const notFound = (
     <EmptyState
       action={<ButtonLink href="/workflows">Back to requests</ButtonLink>}
+      bordered
+      hint="It may have been removed, or the link may be wrong."
+      icon="inbox"
       title="Request not found"
     />
   );
@@ -67,54 +72,50 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   const pr = workflow.pullRequests.find((candidate) => candidate.prNumber !== null);
   const prUrl = repo && pr ? pullRequestUrl(repo, pr.prNumber) : null;
   return (
-    <div className="space-y-4">
-      <ButtonLink href="/workflows">Back to requests</ButtonLink>
-      <Card>
-        <h1 className="text-lg font-semibold text-paper-100">
-          {repo ? `${repo.organizationName}/${repo.repoName}` : 'Workflow'}
-        </h1>
-        <p className="mt-1 text-sm text-paper-400">
-          The request this workflow came from is no longer available, so only its own details are
-          shown.
-        </p>
-        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+    <div className="space-y-6">
+      <ButtonLink className="-ml-3" href="/workflows" size="sm" variant="ghost">
+        <Icon name="arrowLeft" size={14} />
+        Requests
+      </ButtonLink>
+      <PageHeader
+        actions={
+          <>
+            {temporalUrl && (
+              <ButtonLink href={temporalUrl} rel="noopener noreferrer" target="_blank">
+                Open in Temporal
+                <Icon name="external" size={13} />
+              </ButtonLink>
+            )}
+            {prUrl && (
+              <ButtonLink href={prUrl} rel="noopener noreferrer" target="_blank" variant="primary">
+                View pull request
+                <Icon name="external" size={13} />
+              </ButtonLink>
+            )}
+          </>
+        }
+        subtitle="The request this workflow came from is no longer available, so only its own details are shown."
+        title={repo ? `${repo.organizationName}/${repo.repoName}` : 'Workflow'}
+      />
+      <Card className="max-w-3xl">
+        <dl className="grid gap-5 text-sm sm:grid-cols-3">
           <div>
             <dt className="label-mono">Status</dt>
-            <dd>
+            <dd className="mt-1.5">
               <StatusBadge status={workflow.currentStatus} />
             </dd>
           </div>
-          <div>
+          <div className="min-w-0">
             <dt className="label-mono">Branch</dt>
-            <dd className="break-all text-paper-200">{workflow.assignedBranch}</dd>
+            <dd className="mt-1.5 break-all font-mono text-[13px] text-paper-200">
+              {workflow.assignedBranch}
+            </dd>
           </div>
           <div>
             <dt className="label-mono">Cost so far</dt>
-            <dd className="text-paper-200">{formatCost(workflow.costUsdAccrued)}</dd>
+            <dd className="tabular mt-1.5 text-paper-200">{formatCost(workflow.costUsdAccrued)}</dd>
           </div>
         </dl>
-        <div className="mt-4 flex flex-wrap gap-4 text-sm">
-          {prUrl && (
-            <a
-              className="text-ember-400 hover:underline"
-              href={prUrl}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              View pull request ↗
-            </a>
-          )}
-          {temporalUrl && (
-            <a
-              className="text-ember-400 hover:underline"
-              href={temporalUrl}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              Open in Temporal ↗
-            </a>
-          )}
-        </div>
       </Card>
     </div>
   );

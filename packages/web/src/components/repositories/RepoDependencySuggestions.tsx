@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { repoRefLabel } from '@/lib/connectionDisplay';
@@ -71,14 +72,16 @@ function groupByToRef(suggestions: UnresolvedDependencySuggestion[]): Suggestion
 
 function SuggestionRow({ group }: { group: SuggestionGroup }) {
   return (
-    <li className="border-ink-600 border-b py-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-medium font-mono text-sm">{group.toRef}</span>
-        <span className="shrink-0 font-mono text-[10px] text-paper-500 uppercase tracking-wider">
-          {group.repos.length} {group.repos.length === 1 ? 'repo' : 'repos'}
+    <li className="px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="truncate font-mono text-[13px] font-medium text-paper-100">
+          {group.toRef}
         </span>
+        <Badge className="tabular shrink-0" tone="neutral" variant="outline">
+          {group.repos.length} {group.repos.length === 1 ? 'repo' : 'repos'}
+        </Badge>
       </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-paper-400 text-xs">
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-400">
         <span>{group.repos.map(repoRefLabel).join(', ')}</span>
         <span className="text-paper-500">
           {group.kinds.join(', ')} · {group.sources.join(', ')}
@@ -104,7 +107,7 @@ export function RepoDependencySuggestions({
   const groups = useMemo(() => groupByToRef(suggestions ?? []), [suggestions]);
 
   if (isLoading) {
-    return <LoadingState message="Loading onboarding suggestions…" />;
+    return <LoadingState compact message="Loading onboarding suggestions…" />;
   }
 
   if (isError) {
@@ -112,16 +115,16 @@ export function RepoDependencySuggestions({
   }
 
   if (groups.length === 0) {
-    return <EmptyState title={emptyText} />;
+    return <EmptyState bordered className="py-8" icon="repositories" title={emptyText} />;
   }
 
   return (
-    <section>
-      <p className="mb-2 text-paper-500 text-xs">
+    <section className="space-y-3">
+      <p className="text-paper-400 text-[13px]">
         Dependencies detected in manifests or git signals that don't resolve to an onboarded
         repository yet, grouped by the unresolved reference and ranked by how many repos declare it.
       </p>
-      <ul>
+      <ul className="divide-y divide-ink-600 overflow-hidden rounded-xl border border-ink-400/60 bg-ink-800/40">
         {groups.map((group) => (
           <SuggestionRow group={group} key={group.toRef} />
         ))}

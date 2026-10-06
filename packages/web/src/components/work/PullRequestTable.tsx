@@ -1,13 +1,15 @@
 import type { PullRequestListItem } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { Icon } from '@/components/ui/Icon';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { requestHref } from '@/lib/requestDisplay';
 import { safeHttpUrl } from '@/lib/safeUrl';
-import { formatCost, formatRelativeTime } from '@/lib/utils';
+import { cn, FOCUS_RING, formatCost } from '@/lib/utils';
 import { CiBadge, PullRequestStateBadge } from './PullRequestBadges';
+import { RelativeTime } from './RelativeTime';
 
-const LINK = 'text-ember-400 hover:underline';
+const LINK = cn('rounded-sm text-ember-400 hover:underline', FOCUS_RING);
 
 /** Title and ticket are host and tracker text: rendered as plain text, never as markup. */
 export function PullRequestTable({ pullRequests }: { pullRequests: PullRequestListItem[] }) {
@@ -34,15 +36,15 @@ export function PullRequestTable({ pullRequests }: { pullRequests: PullRequestLi
           return (
             <TRow hover key={pr.id}>
               <Td className="px-4 py-3" primary>
-                <div className="break-words font-medium text-paper-100">
+                <div className="break-words text-sm font-medium text-paper-100">
                   {pr.title ?? 'Untitled pull request'}
                 </div>
-                <div className="text-xs text-paper-400">
+                <div className="mt-0.5 text-xs font-normal text-paper-400">
                   {url ? (
                     <a className={LINK} href={url} rel="noopener noreferrer" target="_blank">
                       {label}
                       <span className="sr-only"> (opens on the host, new tab)</span>
-                      <span aria-hidden="true"> ↗</span>
+                      <Icon className="ml-1 inline align-[-1px]" name="external" size={11} />
                     </a>
                   ) : (
                     label
@@ -83,11 +85,11 @@ export function PullRequestTable({ pullRequests }: { pullRequests: PullRequestLi
                   <span className="text-paper-500">—</span>
                 )}
               </Td>
-              <Td align="right" className="px-4 py-3 tabular-nums" label="Cost">
+              <Td align="right" className="tabular px-4 py-3 text-paper-200" label="Cost">
                 {formatCost(pr.costUsd)}
               </Td>
-              <Td className="px-4 py-3 text-paper-400" label="Opened">
-                {formatRelativeTime(pr.openedAt)}
+              <Td className="whitespace-nowrap px-4 py-3 text-paper-400" label="Opened">
+                <RelativeTime date={pr.openedAt} />
               </Td>
             </TRow>
           );

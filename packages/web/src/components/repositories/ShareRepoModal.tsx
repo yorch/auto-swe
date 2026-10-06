@@ -49,32 +49,45 @@ export function ShareRepoModal({
 
   return (
     <Modal
-      eyebrow="§ Sharing"
+      eyebrow="Share repository"
       onClose={onClose}
       open
       subtitle={`Members of the teams you pick can see this repository and start runs on it. ${repo.team.name} keeps managing it, and runs keep its budget and settings.`}
       title={connectionLabel(repo)}
     >
       <form className="space-y-5" onSubmit={(e) => void handleSave(e).catch(() => {})}>
-        {candidates.isLoading && <LoadingState compact message="loading teams…" />}
+        {candidates.isLoading && <LoadingState compact message="Loading teams…" />}
         {candidates.isError && (
           <Alert>{errMsg(candidates.error, 'Could not load the teams.')}</Alert>
         )}
         {candidates.data && candidates.data.length === 0 && (
-          <EmptyState title="There are no other active teams in this organization." />
+          <EmptyState
+            bordered
+            hint="Create another team in this organization to share the repository with it."
+            icon="teams"
+            title="No other teams to share with"
+          />
         )}
         {candidates.data && candidates.data.length > 0 && (
-          <fieldset className="space-y-2">
-            <legend className="sr-only">Teams to share with</legend>
-            {candidates.data.map((team) => (
-              <Checkbox
-                checked={selected.has(team.id)}
-                disabled={save.isPending}
-                key={team.id}
-                label={team.name}
-                onChange={() => toggle(team.id)}
-              />
-            ))}
+          <fieldset>
+            <legend className="label-mono mb-2">
+              Teams to share with{' '}
+              <span className="tabular font-normal text-paper-500">({selected.size} selected)</span>
+            </legend>
+            <div className="max-h-72 overflow-y-auto rounded-lg border border-ink-500/70 bg-ink-900/40">
+              {candidates.data.map((team) => (
+                <Checkbox
+                  checked={selected.has(team.id)}
+                  className={`border-b border-ink-600 px-3 py-2.5 last:border-b-0 ${
+                    selected.has(team.id) ? 'bg-ember-400/[0.06]' : 'hover:bg-ink-700/40'
+                  }`}
+                  disabled={save.isPending}
+                  key={team.id}
+                  label={<span className="text-paper-100">{team.name}</span>}
+                  onChange={() => toggle(team.id)}
+                />
+              ))}
+            </div>
           </fieldset>
         )}
 

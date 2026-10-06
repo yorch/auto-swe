@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -23,10 +24,15 @@ export default function LessonsRedirect() {
     return null;
   }
   return (
-    <EmptyState
-      action={<ButtonLink href="/">Back to home</ButtonLink>}
-      hint="Lessons the agents have learned are reviewed and consolidated by administrators. Ask one to change or remove a lesson."
-      title="Lessons are managed by administrators"
-    />
+    <div className="space-y-6">
+      <PageHeader title="Lessons" />
+      <EmptyState
+        action={<ButtonLink href="/">Back to home</ButtonLink>}
+        bordered
+        hint="Lessons the agents have learned are reviewed and consolidated by administrators. Ask one to change or remove a lesson."
+        icon="lock"
+        title="Lessons are managed by administrators"
+      />
+    </div>
   );
 }
