@@ -144,11 +144,11 @@ type NumericKey = {
   [K in keyof FormState]: FormState[K] extends number ? K : never;
 }[keyof FormState];
 
-/** A grouped block of Tier-2 fields with an uppercase caption. */
+/** A grouped block of Tier-2 fields under a small heading. */
 function FieldGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <p className="label-mono mb-3">{label}</p>
+      <h3 className="mb-3 text-[13px] font-semibold text-paper-200">{label}</h3>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>
     </div>
   );

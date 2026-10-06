@@ -11,7 +11,6 @@ import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
 import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Combobox } from '@/components/ui/Combobox';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
@@ -19,7 +18,7 @@ import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
 import { isRecord } from '@/lib/utils';
-import { OnFailSection, SchemaAwareForm } from './inspectorFields';
+import { InspectorNote, OnFailSection, SchemaAwareForm } from './inspectorFields';
 
 export function StepConfigSection({
   node,
@@ -42,15 +41,16 @@ export function StepConfigSection({
         ))}
       </datalist>
       <Input
+        className="font-mono text-xs"
         compact
-        hint={stepMeta?.label ?? 'type or pick a step from the registry'}
+        hint={stepMeta?.label ?? 'Type or pick a step from the registry'}
         label="Step"
         list="step-registry-datalist"
         onChange={(e) => onChange({ ...node, step: e.target.value })}
         value={node.step}
       />
       {stepMeta?.description && (
-        <p className="text-[11px] leading-relaxed text-paper-400">{stepMeta.description}</p>
+        <p className="text-xs leading-relaxed text-paper-400">{stepMeta.description}</p>
       )}
       {stepMeta && stepMeta.configFields.length > 0 && (
         <SchemaAwareForm
@@ -69,11 +69,11 @@ export function StepConfigSection({
         />
       )}
       {stepMeta && stepMeta.configFields.length === 0 && (
-        <EmptyState className="py-0 text-left text-xs" title="No configurable fields." />
+        <InspectorNote>This step has no settings.</InspectorNote>
       )}
       {node.step && !stepMeta && (
         <Alert className="text-xs" variant="warning">
-          Step not in registry — config schema unknown
+          This step is not in the registry, so its settings cannot be checked
         </Alert>
       )}
       <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
@@ -84,8 +84,9 @@ export function StepConfigSection({
 export function CondSection({ expr, onChange }: { expr: string; onChange: (v: string) => void }) {
   return (
     <Input
+      className="font-mono text-xs"
       compact
-      hint="JS-like expression evaluated against the workflow context"
+      hint="A JavaScript-like expression evaluated against the workflow context"
       label="Expression"
       onChange={(e) => onChange(e.target.value)}
       placeholder="ctx.foo === 'bar'"
@@ -116,7 +117,7 @@ export function SignalSection({
       />
       <Input
         compact
-        hint="Duration string — fires onTimeout if exceeded"
+        hint="A duration such as 24h; the timeout edge fires when it passes"
         label="Timeout"
         onChange={(e) => onTimeoutChange(e.target.value)}
         placeholder="24h"
@@ -151,9 +152,10 @@ export function FanOutSection({
   return (
     <div className="space-y-3">
       <Input
+        className="font-mono text-xs"
         compact
-        hint="Context path that yields the parallel items (array)"
-        label="Over (from path)"
+        hint="Context path to the array of items to run in parallel"
+        label="Items (context path)"
         onChange={(e) => onChange({ ...node, over: { from: e.target.value } })}
         placeholder="ctx.targets"
         value={overFrom}
@@ -176,8 +178,8 @@ export function FanOutSection({
           }
         }}
         options={[
-          { label: 'Block (default) — stop on first failure', value: 'block' },
-          { label: 'Continue — collect all results', value: 'continue' },
+          { label: 'Stop on the first failure (default)', value: 'block' },
+          { label: 'Continue and collect every result', value: 'continue' },
         ]}
         value={node.onBranchFail ?? 'block'}
       />
@@ -198,16 +200,16 @@ export function FanOutSection({
       />
       <Input
         compact
-        hint="Dot-path projected from each branch result into output.plucked — e.g. result.branch"
+        hint="Dot path copied from each branch result into output.plucked"
         label="Pluck path"
         onChange={(e) => onChange({ ...node, pluck: e.target.value || undefined })}
         placeholder="result.branch"
         value={node.pluck ?? ''}
       />
       <Textarea
-        className="h-20"
+        className="h-20 font-mono text-xs"
         compact
-        hint="Context paths that flow back to the parent scope after the fan-out joins."
+        hint="Context paths that flow back to the parent once the branches join"
         id="fanout-exports"
         label="Exports (one per line)"
         onBlur={() => {
@@ -235,8 +237,8 @@ export function ShellSection({
 }) {
   return (
     <div className="space-y-3">
-      <Alert className="text-xs" variant="warning">
-        Shell — elevated privileges · team-admin authoring only
+      <Alert className="text-xs" title="Elevated node" variant="warning">
+        Runs a command in a container. Only team leads and admins can author it.
       </Alert>
       <Input
         compact
@@ -248,7 +250,7 @@ export function ShellSection({
         value={node.image ?? ''}
       />
       <Textarea
-        className="h-24"
+        className="h-24 font-mono text-xs"
         compact
         id="shell-command"
         label="Command"
@@ -313,8 +315,8 @@ export function ContainerStepSection({
 }) {
   return (
     <div className="space-y-3">
-      <Alert className="text-xs" variant="warning">
-        Container step — coded capability · team-admin authoring only
+      <Alert className="text-xs" title="Elevated node" variant="warning">
+        Runs a coded capability in a container. Only team leads and admins can author it.
       </Alert>
       <Input
         compact
@@ -326,9 +328,9 @@ export function ContainerStepSection({
         value={node.image ?? ''}
       />
       <Textarea
-        className="h-20"
+        className="h-20 font-mono text-xs"
         compact
-        hint="Reads JSON from $CONTAINER_STEP_INPUT, prints a JSON result to stdout"
+        hint="Reads JSON from $CONTAINER_STEP_INPUT and prints a JSON result to stdout"
         id="container-command"
         label="Command"
         onChange={(e) => onChange({ ...node, command: e.target.value || undefined })}
@@ -360,6 +362,13 @@ type TerminateStatus = 'SUCCESS' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED';
 
 const TERMINATE_STATUSES = ['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED'] as const;
 
+const TERMINATE_LABEL: Record<TerminateStatus, string> = {
+  FAILED: 'Failed',
+  SKIPPED: 'Skipped',
+  SUCCESS: 'Success',
+  TIMED_OUT: 'Timed out',
+};
+
 export function TerminateSection({
   status,
   onChange,
@@ -370,14 +379,15 @@ export function TerminateSection({
   return (
     <Select
       compact
+      hint="The status the run ends with when it reaches this node"
       id="terminate-status"
-      label="Status"
+      label="End status"
       onChange={(v) => {
         if ((TERMINATE_STATUSES as readonly string[]).includes(v)) {
           onChange(v as TerminateStatus);
         }
       }}
-      options={TERMINATE_STATUSES.map((s) => ({ label: s, value: s }))}
+      options={TERMINATE_STATUSES.map((s) => ({ label: TERMINATE_LABEL[s], value: s }))}
       value={status}
     />
   );
@@ -407,9 +417,10 @@ export function SetSection({
 
   return (
     <Textarea
-      className="h-40"
+      className="h-40 font-mono text-xs"
       compact
       error={err ?? undefined}
+      hint="A JSON object; applied when you leave the field"
       id="set-values"
       label="Values (JSON)"
       onBlur={() => {
@@ -442,18 +453,19 @@ export function AgentSection({
   return (
     <div className="space-y-4">
       <Input
+        className="font-mono text-xs"
         compact
-        hint="library agent: <key> or <key>@<version>"
-        label="Agent reference"
+        hint="A library agent key, optionally pinned as key@version"
+        label="Agent"
         onChange={(e) => onChange({ ...node, agentRef: e.target.value })}
         value={node.agentRef}
       />
       <Textarea
         className="h-20"
         compact
-        hint="Literal prompt (else node inputs as JSON)"
+        hint="Optional. Without it, the agent receives the node inputs as JSON"
         id="agent-user-message"
-        label="userMessage"
+        label="User message"
         onChange={(e) => onChange({ ...node, userMessage: e.target.value || undefined })}
         spellCheck={false}
         value={node.userMessage ?? ''}
@@ -461,9 +473,9 @@ export function AgentSection({
       <Textarea
         className="h-20"
         compact
-        hint="Per-node prompt override (optional)"
+        hint="Optional. Overrides the agent’s prompt for this node only"
         id="agent-system-prompt"
-        label="systemPrompt"
+        label="System prompt"
         onChange={(e) => onChange({ ...node, systemPrompt: e.target.value || undefined })}
         spellCheck={false}
         value={node.systemPrompt ?? ''}
@@ -494,8 +506,9 @@ export function McpSection({
     <div className="space-y-4">
       {!isPlatformAdmin ? (
         <Input
+          className="font-mono text-xs"
           compact
-          hint="MCP connection id — ask a platform admin for it (connections are managed at /studio/mcp)"
+          hint="The MCP connection ID. Ask a platform admin for it; connections live under Studio → MCP connections"
           label="Connection"
           onChange={(e) => onChange({ ...node, connectionRef: e.target.value })}
           value={node.connectionRef}
@@ -508,7 +521,7 @@ export function McpSection({
           <Combobox
             compact
             emptyMessage="No connections match"
-            hint="Choose an active MCP connection (managed at /studio/mcp)"
+            hint="An active MCP connection, managed under Studio → MCP connections"
             label="Connection"
             onChange={(v) => onChange({ ...node, connectionRef: v })}
             options={(connections ?? []).map((c) => ({
@@ -519,13 +532,14 @@ export function McpSection({
             value={node.connectionRef}
           />
           {!connectionsLoading && !connectionsError && (connections ?? []).length === 0 && (
-            <EmptyState className="py-0 text-left text-xs" title="No MCP connections configured." />
+            <InspectorNote>No MCP connections are configured yet.</InspectorNote>
           )}
         </>
       )}
       <Input
+        className="font-mono text-xs"
         compact
-        hint="tool name exposed by the MCP server; its args come from Inputs below"
+        hint="A tool the server exposes; its arguments come from the input bindings"
         label="Tool"
         onChange={(e) => onChange({ ...node, tool: e.target.value })}
         value={node.tool}

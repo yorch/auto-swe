@@ -15,12 +15,21 @@ import {
   setNodeEdge,
 } from '@auto-swe/shared/workflow';
 import { useEffect, useId, useState } from 'react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import { type HandleKind, handlePortsFor } from './dagNode';
-import { type Binding, InputsBindingsSection } from './inspectorFields';
+import {
+  type Binding,
+  InputsBindingsSection,
+  InspectorNote,
+  InspectorSection,
+} from './inspectorFields';
 import {
   AgentSection,
   CondSection,
@@ -33,6 +42,7 @@ import {
   StepConfigSection,
   TerminateSection,
 } from './inspectorSections';
+import { NODE_TYPE_LABEL, NODE_TYPE_TONE } from './nodeTypeTone';
 import { isEdgeFieldRequired } from './specEdits';
 
 interface InspectorProps {
@@ -108,54 +118,67 @@ export function NodeInspector({
 
   if (!node || !nodeId) {
     return (
-      <aside className="flex w-80 flex-col items-center justify-center border-l border-ink-600 bg-ink-950/40 px-6 text-center">
-        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-          ¶ Inspector
-        </div>
-        <p className="mt-3 text-xs leading-relaxed text-paper-400">
-          Select a node on the canvas to edit its config, or drag a primitive from the palette to
-          add a new one.
-        </p>
+      <aside
+        aria-label="Node inspector"
+        className="flex w-80 flex-col items-center justify-center border-l border-ink-600 bg-ink-950 px-6"
+      >
+        <EmptyState
+          hint="Select a node on the canvas to edit it, or add one from the palette."
+          icon="canvas"
+          title="No node selected"
+        />
       </aside>
     );
   }
 
   return (
-    <aside className="flex w-80 flex-col overflow-hidden border-l border-ink-600 bg-ink-950/40">
-      <header className="border-b border-ink-600 px-4 py-3">
-        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-          ¶ {node.type}
-          {isEntry ? ' · entry' : ''}
-        </div>
-        <div className="mt-1.5 flex items-end gap-2">
-          <div className="flex-1">
-            <Input
-              compact
-              hint="rename — references update automatically"
-              label="Node ID"
-              onBlur={(e) => {
-                const v = e.target.value.trim();
-                if (v && v !== nodeId) {
-                  onRename(nodeId, v);
-                }
-              }}
-              onChange={(e) => setIdDraft(e.target.value)}
-              value={idDraft}
-            />
-          </div>
+    <aside
+      aria-label="Node inspector"
+      className="flex w-80 flex-col overflow-hidden border-l border-ink-600 bg-ink-950"
+    >
+      <header className="space-y-3 border-b border-ink-600 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span
+            aria-hidden
+            className={cn('h-2 w-2 shrink-0 rounded-full', NODE_TYPE_TONE[node.type].swatch)}
+          />
+          <h2 className="text-sm font-semibold text-paper-100">
+            {NODE_TYPE_LABEL[node.type]} node
+          </h2>
+          {isEntry && (
+            <Badge title="The workflow starts here" tone="ember" variant="outline">
+              First step
+            </Badge>
+          )}
           <Button
+            aria-label={`Delete node ${nodeId}`}
+            className="ml-auto px-2 hover:text-brick-400"
             disabled={isEntry}
             onClick={onDelete}
             size="sm"
-            title={isEntry ? 'Cannot delete the entry node' : undefined}
-            variant="danger"
+            title={isEntry ? 'The first step cannot be deleted' : 'Delete node'}
+            variant="ghost"
           >
-            Delete
+            <Icon name="trash" size={14} />
           </Button>
         </div>
+        <Input
+          className="font-mono text-xs"
+          compact
+          hint="Renaming updates every reference to it"
+          label="Node ID"
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v && v !== nodeId) {
+              onRename(nodeId, v);
+            }
+          }}
+          onChange={(e) => setIdDraft(e.target.value)}
+          value={idDraft}
+        />
       </header>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      <div className="flex-1 overflow-y-auto pb-4 [&>section:first-child]:border-t-0">
         <NodeMetaFields
           knownGroups={knownGroups}
           node={node}
@@ -163,32 +186,15 @@ export function NodeInspector({
           onChange={onChangeNode}
         />
 
-        {/* Step-specific schema-aware form */}
-        {node.type === 'step' && (
-          <StepConfigSection
-            node={node}
-            onChange={onChangeNode}
-            stepMeta={stepMeta ?? null}
-            stepRegistry={stepRegistry}
-          />
-        )}
-        {node.type === 'cond' && (
-          <CondSection expr={node.expr} onChange={(expr) => onChangeNode({ ...node, expr })} />
-        )}
-        {node.type === 'signal' && (
-          <SignalSection
-            name={node.name}
-            onNameChange={(name) => onChangeNode({ ...node, name })}
-            onTimeoutChange={(timeout) => onChangeNode({ ...node, timeout })}
-            timeout={node.timeout}
-          />
-        )}
-        {node.type === 'fanOut' && <FanOutSection node={node} onChange={onChangeNode} />}
-        {node.type === 'shell' && <ShellSection node={node} onChange={onChangeNode} />}
-        {node.type === 'agent' && <AgentSection node={node} onChange={onChangeNode} />}
-        {node.type === 'mcp' && <McpSection node={node} onChange={onChangeNode} />}
-        {node.type === 'containerStep' && (
-          <ContainerStepSection node={node} onChange={onChangeNode} />
+        {HAS_CONFIG_SECTION[node.type] && (
+          <InspectorSection title="Configuration">
+            <NodeConfig
+              node={node}
+              onChangeNode={onChangeNode}
+              stepMeta={stepMeta}
+              stepRegistry={stepRegistry}
+            />
+          </InspectorSection>
         )}
         {(node.type === 'step' ||
           node.type === 'shell' ||
@@ -200,28 +206,13 @@ export function NodeInspector({
             onChange={(inputs) => onChangeNode({ ...node, inputs } as SpecNode)}
           />
         )}
-        {node.type === 'terminate' && (
-          <TerminateSection
-            onChange={(status) => onChangeNode({ ...node, status })}
-            status={node.status}
-          />
-        )}
-        {node.type === 'set' && (
-          <SetSection
-            onChange={(values) =>
-              onChangeNode({
-                ...node,
-                values: values as (typeof node)['values'],
-              })
-            }
-            values={node.values ?? {}}
-          />
-        )}
         {!HAS_CONFIG_SECTION[node.type] && (
-          <p className="mb-4 text-xs text-paper-500">
-            No inspector fields for a <span className="font-mono text-paper-300">{node.type}</span>{' '}
-            node yet — edit its configuration in JSON mode. Its outgoing edges are below.
-          </p>
+          <InspectorSection title="Configuration">
+            <InspectorNote>
+              There are no form fields for this node type yet. Edit its settings in JSON mode; its
+              outgoing edges are below.
+            </InspectorNote>
+          </InspectorSection>
         )}
 
         {/* Outgoing-edge connections — explicit dropdowns alongside the
@@ -236,23 +227,97 @@ export function NodeInspector({
           // top-level key. Assigning it directly wrote a literal
           // `"options[0].next"` property onto the node and left the real
           // routing untouched, so the write goes through `setNodeEdge`.
-          // `— none —` is only offered for fields the schema lets us clear
+          // `Not connected` is only offered for fields the schema lets us clear
           // (see EdgeConnectionsSection), so a null here is always safe.
           onSetEdge={(field, target) => onChangeNode(setNodeEdge(node, field, target))}
         />
 
         {/* Raw JSON escape hatch */}
-        <details className="mt-6 border-t border-ink-600 pt-4">
-          <summary className="label-mono cursor-pointer hover:text-paper-200">Raw JSON</summary>
+        <details className="group border-t border-ink-600 px-4 pt-4">
+          <summary
+            className={cn(
+              'flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-[13px] font-semibold text-paper-100 [&::-webkit-details-marker]:hidden',
+              FOCUS_RING
+            )}
+          >
+            <Icon
+              className="text-paper-500 transition-transform group-open:rotate-90"
+              name="chevronRight"
+              size={13}
+            />
+            Raw JSON
+          </summary>
           <div className="mt-2 flex items-center justify-end">
             <CopyButton value={JSON.stringify(node, null, 2)} />
           </div>
-          <pre className="mt-1 max-h-48 overflow-auto rounded-sm border border-ink-600 bg-ink-900 p-2 font-mono text-[10px] text-paper-300">
+          <pre className="mt-1 max-h-60 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-2.5 font-mono text-[11px] leading-relaxed text-paper-300">
             {JSON.stringify(node, null, 2)}
           </pre>
         </details>
       </div>
     </aside>
+  );
+}
+
+/** The type-specific settings of the selected node. */
+function NodeConfig({
+  node,
+  onChangeNode,
+  stepMeta,
+  stepRegistry,
+}: {
+  node: SpecNode;
+  onChangeNode: (next: SpecNode) => void;
+  stepMeta: StepMetadata | null | undefined;
+  stepRegistry: StepMetadata[];
+}) {
+  return (
+    <>
+      {/* Step-specific schema-aware form */}
+      {node.type === 'step' && (
+        <StepConfigSection
+          node={node}
+          onChange={onChangeNode}
+          stepMeta={stepMeta ?? null}
+          stepRegistry={stepRegistry}
+        />
+      )}
+      {node.type === 'cond' && (
+        <CondSection expr={node.expr} onChange={(expr) => onChangeNode({ ...node, expr })} />
+      )}
+      {node.type === 'signal' && (
+        <SignalSection
+          name={node.name}
+          onNameChange={(name) => onChangeNode({ ...node, name })}
+          onTimeoutChange={(timeout) => onChangeNode({ ...node, timeout })}
+          timeout={node.timeout}
+        />
+      )}
+      {node.type === 'fanOut' && <FanOutSection node={node} onChange={onChangeNode} />}
+      {node.type === 'shell' && <ShellSection node={node} onChange={onChangeNode} />}
+      {node.type === 'agent' && <AgentSection node={node} onChange={onChangeNode} />}
+      {node.type === 'mcp' && <McpSection node={node} onChange={onChangeNode} />}
+      {node.type === 'containerStep' && (
+        <ContainerStepSection node={node} onChange={onChangeNode} />
+      )}
+      {node.type === 'terminate' && (
+        <TerminateSection
+          onChange={(status) => onChangeNode({ ...node, status })}
+          status={node.status}
+        />
+      )}
+      {node.type === 'set' && (
+        <SetSection
+          onChange={(values) =>
+            onChangeNode({
+              ...node,
+              values: values as (typeof node)['values'],
+            })
+          }
+          values={node.values ?? {}}
+        />
+      )}
+    </>
   );
 }
 
@@ -311,13 +376,13 @@ function NodeMetaFields({
   };
 
   return (
-    <div className="mb-5 space-y-3">
+    <InspectorSection title="Details">
       <Input
         compact
         hint={
           isHuman
-            ? 'shown to approvers in the inbox, and as this node’s name on the canvas'
-            : 'shown on the canvas and in the outline instead of the id'
+            ? 'Shown to approvers in the inbox, and as this node’s name on the canvas'
+            : 'Shown on the canvas and in the outline instead of the ID'
         }
         label="Title"
         maxLength={isHuman ? 200 : MAX_NODE_TITLE_LENGTH}
@@ -327,7 +392,7 @@ function NodeMetaFields({
       />
       <Input
         compact
-        hint="steps with the same group are listed together and can be collapsed"
+        hint="Nodes in the same group are listed together and can be collapsed"
         label="Group"
         list={listId}
         maxLength={MAX_NODE_GROUP_LENGTH}
@@ -340,7 +405,7 @@ function NodeMetaFields({
           <option key={g} value={g} />
         ))}
       </datalist>
-    </div>
+    </InspectorSection>
   );
 }
 
@@ -362,14 +427,13 @@ function EdgeConnectionsSection({
   const otherIds = allNodeIds.filter((id) => id !== nodeId);
 
   return (
-    <div className="mt-6 space-y-3 border-t border-ink-600 pt-4">
-      <div className="label-mono">Outgoing edges</div>
+    <InspectorSection title="Outgoing edges">
       {handles.map((h) => {
         // An option port has no entry in HANDLE_LABEL_FULL — its label is the
         // option's own text, which says more than "submit" would anyway.
         const label = h.id === h.kind ? HANDLE_LABEL_FULL[h.kind] : h.label;
         // Most edge fields are required by the schema (every `human*` edge, a
-        // decision option's `next`, both `cond` branches, …). Offering `— none —`
+        // decision option's `next`, both `cond` branches, …). Offering `Not connected`
         // for one of those offers a choice the spec cannot represent: it would
         // save a node that no longer parses. Don't render the option rather than
         // let the user pick it and hit a schema error on save.
@@ -382,13 +446,13 @@ function EdgeConnectionsSection({
             label={label}
             onChange={(v) => onSetEdge(h.id, v || null)}
             options={[
-              ...(clearable ? [{ label: '— none —', value: '' }] : []),
+              ...(clearable ? [{ label: 'Not connected', value: '' }] : []),
               ...otherIds.map((id) => ({ label: id, value: id })),
             ]}
             value={readNodeEdge(node, h.id) ?? ''}
           />
         );
       })}
-    </div>
+    </InspectorSection>
   );
 }

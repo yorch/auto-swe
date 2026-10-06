@@ -23,10 +23,11 @@ import {
   useRef,
   useState,
 } from 'react';
-import { cn } from '@/lib/utils';
+import { Icon } from '@/components/ui/Icon';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import type { DiffKind } from '@/lib/workflowLayout';
 import { hasDisplayTitle, nodeDisplayName } from './nodeDisplay';
-import { NODE_TYPE_TONE } from './nodeTypeTone';
+import { NODE_TYPE_LABEL, NODE_TYPE_TONE } from './nodeTypeTone';
 import { buildOutline, nextOutlineId, type OutlineKey } from './outline';
 
 interface Props {
@@ -144,7 +145,7 @@ export function WorkflowOutline({
   if (sections.length === 0) {
     return (
       <div
-        className={cn('p-4 font-mono text-[11px] text-paper-500', className)}
+        className={cn('p-4 text-[13px] text-paper-500', className)}
         style={{ height: height ?? 'auto' }}
       >
         This workflow has no steps.
@@ -171,10 +172,13 @@ export function WorkflowOutline({
             return (
               <li key={key}>
                 {section.group !== null && (
-                  <h4 className="m-0 border-y border-ink-600/40 bg-ink-800/60">
+                  <h4 className="m-0 border-y border-ink-600 bg-ink-800/60">
                     <button
                       aria-expanded={open}
-                      className="flex min-h-[40px] w-full items-center gap-2 px-3 py-1.5 text-left font-mono lg:min-h-0 text-[10px] uppercase tracking-[0.16em] text-paper-400 hover:text-paper-100"
+                      className={cn(
+                        'flex min-h-[40px] w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-medium text-paper-300 hover:text-paper-100 lg:min-h-0',
+                        FOCUS_RING
+                      )}
                       onClick={() => toggle(section.group as string)}
                       title={
                         mustStayOpen(section.nodeIds)
@@ -183,9 +187,13 @@ export function WorkflowOutline({
                       }
                       type="button"
                     >
-                      <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+                      <Icon
+                        className={cn('text-paper-500 transition-transform', open && 'rotate-90')}
+                        name="chevronRight"
+                        size={12}
+                      />
                       <span className="flex-1 truncate">{section.group}</span>
-                      <span className="tabular text-paper-500">
+                      <span className="font-normal text-paper-500 tabular-nums">
                         {ran !== undefined ? `${ran}/` : ''}
                         {section.nodeIds.length}
                       </span>
@@ -209,6 +217,7 @@ export function WorkflowOutline({
                             aria-current={selected ? 'true' : undefined}
                             className={cn(
                               'flex min-h-[44px] w-full items-center gap-2 border-l-[3px] px-3 py-1.5 text-left transition-colors lg:min-h-0',
+                              FOCUS_RING,
                               NODE_TYPE_TONE[node.type].border,
                               selected
                                 ? 'bg-ember-400/10 text-paper-50'
@@ -220,23 +229,25 @@ export function WorkflowOutline({
                             tabIndex={id === tabStopId ? 0 : -1}
                             type="button"
                           >
-                            <span className="tabular w-6 shrink-0 text-right font-mono text-[10px] text-paper-600">
+                            <span className="w-6 shrink-0 text-right text-[11px] text-paper-500 tabular-nums">
                               {numbering.get(id)}
                             </span>
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate font-display text-[13px] leading-tight">
+                              <span className="block truncate text-[13px] font-medium leading-tight">
                                 {nodeDisplayName(node, id)}
                               </span>
-                              <span className="block truncate font-mono text-[10px] text-paper-500">
-                                {node.type}
-                                {node.type === 'step' && ` · ${node.step}`}
-                                {titled && ` · ${id}`}
+                              <span className="mt-0.5 block truncate text-[11px] text-paper-500">
+                                {NODE_TYPE_LABEL[node.type]}
+                                {node.type === 'step' && (
+                                  <span className="font-mono"> · {node.step}</span>
+                                )}
+                                {titled && <span className="font-mono"> · {id}</span>}
                               </span>
                             </span>
                             {diff && (
                               <span
                                 className={cn(
-                                  'font-mono text-[10px] uppercase tracking-[0.12em]',
+                                  'inline-block text-[11px] font-medium first-letter:uppercase',
                                   DIFF_TEXT[diff]
                                 )}
                               >
@@ -244,7 +255,7 @@ export function WorkflowOutline({
                               </span>
                             )}
                             {status && (
-                              <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-paper-300">
+                              <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-paper-300">
                                 <span
                                   aria-hidden="true"
                                   className={cn(
@@ -253,9 +264,13 @@ export function WorkflowOutline({
                                     status.status === 'RUNNING' && 'pulse-dot'
                                   )}
                                 />
-                                {status.status.toLowerCase()}
+                                <span className="inline-block first-letter:uppercase">
+                                  {status.status.toLowerCase()}
+                                </span>
                                 {status.attempt > 1 && (
-                                  <span className="text-paper-500">×{status.attempt}</span>
+                                  <span className="text-paper-500 tabular-nums" title="Attempts">
+                                    ×{status.attempt}
+                                  </span>
                                 )}
                               </span>
                             )}

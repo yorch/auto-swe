@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { selectableConnectionTypes } from '@/lib/connectionForm';
@@ -154,14 +155,43 @@ export function InputSchemaBuilder({
     <div className="space-y-3">
       {fields.length === 0 && (
         <EmptyState
-          className="rounded border border-dashed border-ink-600 py-4 text-xs"
-          title="No fields yet — add one to require structured input at run time."
+          action={
+            <Button onClick={addField} size="sm" variant="primary">
+              <Icon name="plus" size={13} />
+              Add field
+            </Button>
+          }
+          bordered
+          hint="Add a field to ask for structured input, such as a ticket ID, when someone runs this workflow."
+          icon="sliders"
+          title="No launch inputs"
         />
       )}
       {fields.map((f, i) => (
-        <Card className="space-y-3 p-3" key={f.id} variant="inset">
-          <div className="grid grid-cols-[1fr_auto_auto] items-end gap-2">
+        <Card className="space-y-3 p-4" key={f.id} variant="inset">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-[13px] font-semibold text-paper-200">
+              Field {i + 1}
+              {f.key.trim() && (
+                <span className="ml-2 font-mono text-xs font-normal text-paper-500">
+                  {f.key.trim()}
+                </span>
+              )}
+            </h3>
+            <Button
+              aria-label={`Remove field ${f.key.trim() || i + 1}`}
+              className="px-2 hover:text-brick-400"
+              onClick={() => removeField(i)}
+              size="sm"
+              title="Remove field"
+              variant="ghost"
+            >
+              <Icon name="trash" size={14} />
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_10rem_auto]">
             <Input
+              className="font-mono text-[13px]"
               hint={
                 !f.key.trim()
                   ? 'Key required — this field will not be saved'
@@ -187,7 +217,7 @@ export function InputSchemaBuilder({
             />
             <Checkbox
               checked={f.required}
-              className="pb-2.5"
+              className="sm:pb-2.5"
               label="Required"
               onChange={(e) => updateField(i, { required: e.target.checked })}
             />
@@ -200,10 +230,10 @@ export function InputSchemaBuilder({
             value={f.description}
           />
           {f.type === 'string' && (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Input
-                hint="Comma-separated list"
-                label="Enum values (optional)"
+                hint="Optional, comma-separated"
+                label="Allowed values"
                 onChange={(e) => updateField(i, { enumValues: e.target.value })}
                 placeholder="red, green, blue"
                 value={f.enumValues}
@@ -254,16 +284,14 @@ export function InputSchemaBuilder({
               value={f.connectionType}
             />
           )}
-          <div className="flex justify-end">
-            <Button onClick={() => removeField(i)} size="sm" variant="danger">
-              Remove
-            </Button>
-          </div>
         </Card>
       ))}
-      <Button onClick={addField} size="sm" variant="secondary">
-        Add field
-      </Button>
+      {fields.length > 0 && (
+        <Button onClick={addField} size="sm" variant="secondary">
+          <Icon name="plus" size={13} />
+          Add field
+        </Button>
+      )}
     </div>
   );
 }

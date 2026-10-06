@@ -23,14 +23,28 @@ export function EntityMetaBadges({
   return (
     <div className="flex flex-wrap gap-2">
       {isBuiltIn && (
-        <Badge tone="neutral" uppercase>
-          built-in
+        <Badge tone="neutral" variant="outline">
+          Built-in
         </Badge>
       )}
-      {origin && <Badge tone="neutral">origin: {origin}</Badge>}
-      {isVerified === true && <Badge tone="moss">verified</Badge>}
-      {isVerified === false && !isBuiltIn && <Badge tone="amber">unverified</Badge>}
-      <Badge tone={isActive ? 'ember' : 'muted'}>{isActive ? 'active' : 'inactive'}</Badge>
+      {origin && (
+        <Badge tone="neutral" variant="outline">
+          From <span className="ml-1 font-mono">{origin}</span>
+        </Badge>
+      )}
+      {isVerified === true && (
+        <Badge dot tone="moss">
+          Verified
+        </Badge>
+      )}
+      {isVerified === false && !isBuiltIn && (
+        <Badge dot tone="amber">
+          Unverified
+        </Badge>
+      )}
+      <Badge dot tone={isActive ? 'moss' : 'muted'}>
+        {isActive ? 'Active' : 'Inactive'}
+      </Badge>
       {children}
     </div>
   );
