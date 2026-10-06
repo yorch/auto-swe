@@ -845,6 +845,24 @@ export function toImplementerRuntime(value: unknown): ImplementerRuntimeKind | n
     : null;
 }
 
+/**
+ * Why an Agent version cannot carry this runtime, or null. The `claude-code`
+ * harness speaks only the Anthropic Messages API, so a version that names its
+ * own non-Anthropic model cannot ask for it. A version that inherits its model
+ * is checked when a run resolves it (`HARNESS_UNSUPPORTED_MODEL`), since the
+ * parent can change independently. One rule for the agent-library API, bundle
+ * install and the SDK's bundle validation.
+ */
+export function runtimeModelError(
+  runtime: string | null | undefined,
+  modelSpec: string | null | undefined
+): string | null {
+  if (runtime !== 'claude-code' || !modelSpec || modelSpec.startsWith('anthropic/')) {
+    return null;
+  }
+  return `The claude-code runtime needs an Anthropic model, but this agent's model is '${modelSpec}'. Set the model to anthropic/<model>, or the runtime to mastra.`;
+}
+
 export const EVAL_SIGNAL_SOURCES = [
   'GATE',
   'ASSERT',

@@ -5725,10 +5725,10 @@
     },
     {
       "anchor": "export function runtimeModelError(",
-      "before": 4,
+      "before": 8,
       "id": "runtimeModelCheck",
-      "lines": 20,
-      "path": "packages/gateway/src/lib/agentLibraryService.ts",
+      "lines": 19,
+      "path": "packages/shared/src/types/api.ts",
       "title": "The harness runtime is refused with a non-Anthropic model"
     },
     {

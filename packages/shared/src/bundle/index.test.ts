@@ -6,9 +6,11 @@ import {
   type BundleManifest,
   BundleSchemaVersionError,
   buildBundleManifest,
+  bundleAgentRuntimeWarnings,
   computeContentHash,
   parseBundle,
   signContentHash,
+  validateBundleAgents,
   validateBundleScannerPatterns,
   validateBundleTemplates,
   verifyBundleSignature,
@@ -323,6 +325,61 @@ describe('parseBundle', () => {
         metadata: { contentHash: 'x', createdAt: 'now', name: 'n', version: '1' },
       })
     ).toThrow();
+  });
+});
+
+describe('agent runtimes', () => {
+  const withAgents = (agents: BundleEntities['agents']) =>
+    manifest({ entities: { ...emptyEntities, agents } });
+
+  it('parses a known runtime, null, or none, and refuses an unknown one', () => {
+    for (const runtime of ['mastra', 'claude-code', null, undefined]) {
+      expect(() =>
+        parseBundle(withAgents([{ key: 'a', name: 'A', runtime } as never]))
+      ).not.toThrow();
+    }
+    expect(() =>
+      parseBundle(withAgents([{ key: 'a', name: 'A', runtime: 'codex' } as never]))
+    ).toThrow();
+  });
+
+  it('refuses the harness on an agent whose own model is not Anthropic', () => {
+    expect(
+      validateBundleAgents(
+        withAgents([
+          { key: 'bad', modelSpec: 'openai/gpt-6.1-sol', name: 'Bad', runtime: 'claude-code' },
+          {
+            key: 'own',
+            modelSpec: 'anthropic/claude-opus-5-5',
+            name: 'Own',
+            runtime: 'claude-code',
+          },
+          { inheritsModelFrom: 'implementer', key: 'inherits', name: 'I', runtime: 'claude-code' },
+          { key: 'mastra', modelSpec: 'openai/gpt-6.1-sol', name: 'M', runtime: 'mastra' },
+        ])
+      )
+    ).toEqual([
+      expect.stringMatching(/^agent 'bad': The claude-code runtime needs an Anthropic model/),
+    ]);
+  });
+
+  it('warns about each agent it would put on a harness, and only those', () => {
+    const warnings = bundleAgentRuntimeWarnings(
+      withAgents([
+        { key: 'h', name: 'H', runtime: 'claude-code' },
+        { key: 'm', name: 'M', runtime: 'mastra' },
+        { key: 'n', name: 'N' },
+      ])
+    );
+    expect(warnings).toEqual([
+      expect.stringMatching(/^agent 'h': runs on the claude-code runtime/),
+    ]);
+  });
+
+  it('hashes an agent with no runtime exactly as before the field existed', () => {
+    const without = withAgents([{ key: 'a', name: 'A' }]);
+    const withUndefined = withAgents([{ key: 'a', name: 'A', runtime: undefined }]);
+    expect(withUndefined.metadata.contentHash).toBe(without.metadata.contentHash);
   });
 });
 

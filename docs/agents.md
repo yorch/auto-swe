@@ -126,7 +126,8 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
   with a 409 while the agent is deactivated, so it never switches an agent back on by itself.
 - **Runtime:** an optional `runtime` (`mastra` or `claude-code`; null = no opinion) chooses the loop
   that drives the agent where it works in a workspace. It is resolved with the rest of the version
-  and inherited along `inheritsModelFrom`; setting or changing it takes a platform ADMIN. See
+  and inherited along `inheritsModelFrom`; setting or changing it takes a platform ADMIN, in the
+  agent library or by installing a bundle that carries it ([bundles.md](./bundles.md)). See
   [§3.7](#37-runtimes-mastra-and-the-claude-code-harness).
 - **The `agent` node** carries an `agentRef` (`<key>` or `<key>@<version>`) plus optional
   `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
@@ -1225,10 +1226,10 @@ template override is never badged, because it may use a different model or crede
   re-checked after every step. A turn stopped by its deadline, or whose process died, is metered from
   its streamed messages, which do not include calls the harness makes without streaming one (a
   small-model side task), so it can undercount.
-- **A runtime is not carried by bundles or the seeded agents.** Bundle manifests have no `runtime`
-  field: an installed agent starts with none, a re-install leaves an existing one's runtime alone, and
-  an export omits it. Built-in agents seed with none; a seeded default-model move keeps an ADMIN's
-  choice.
+- **The seeded agents carry no runtime.** Built-in agents seed with none, so the implementer family
+  follows `workspace.implementerRuntime` until an ADMIN sets one; a seeded default-model move keeps
+  that choice. A bundle can carry an agent's `runtime` ([bundles.md](./bundles.md)); one that omits
+  it leaves an installed agent's runtime as it is.
 - **A persona inherits a runtime only through `inheritsModelFrom`.** A persona that names its own model
   does not follow its parent's runtime, and the save-time model check covers only a version's own
   model; an inherited non-Anthropic model is refused when a run resolves it.

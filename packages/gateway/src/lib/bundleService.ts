@@ -9,9 +9,11 @@ import {
   type BundleSkill,
   type BundleTemplate,
   buildBundleManifest,
+  bundleAgentRuntimeWarnings,
   parseBundle,
   type TrustedKey,
   unsupportedBundleDependencies,
+  validateBundleAgents,
   validateBundleScannerPatterns,
   validateBundleTemplates,
   verifyBundleSignature,
@@ -25,6 +27,7 @@ import {
   skillContentChanged,
 } from '@auto-swe/shared/lib/skillRevision';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { toImplementerRuntime } from '@auto-swe/shared/types/api';
 
 import { scanSkillAdvisory } from './skillScan.js';
 
@@ -375,6 +378,8 @@ export async function exportBundle(
       modelSpec: a.modelSpec,
       name: a.name,
       origin: a.origin,
+      // Only when set, so a bundle of agents with no opinion hashes as it always has.
+      ...(toImplementerRuntime(a.runtime) ? { runtime: toImplementerRuntime(a.runtime) } : {}),
       skills: a.skillRefs.map((r) => ({ skill: r.skill.name, sortOrder: r.sortOrder })),
       systemPrompt: a.systemPrompt,
       toolKeys: toStringArray(a.toolKeys),
@@ -502,6 +507,15 @@ function validateBundleForInstall(raw: unknown, opts: InstallOptions): Validated
   // `terminate`, an expression that does not parse — must be refused here
   // rather than by the first run that loads it. Same advisory/error split as
   // the template save path: only `errors` block.
+  // An agent version the agent library would refuse (the harness runtime on a
+  // non-Anthropic model) is refused here too, before any write.
+  const agentErrors = validateBundleAgents(manifest);
+  if (agentErrors.length > 0) {
+    throw new BundleIntegrityError(
+      `bundle contains invalid agent(s):\n  - ${agentErrors.join('\n  - ')}`
+    );
+  }
+
   const templateErrors = validateBundleTemplates(manifest);
   if (templateErrors.length > 0) {
     throw new BundleIntegrityError(
@@ -570,6 +584,7 @@ export async function installBundle(
     skillScans.set(s.name, found);
     warnings.push(...found.map((w) => `skill '${s.name}': ${w}`));
   }
+  warnings.push(...bundleAgentRuntimeWarnings(manifest));
   let replacedProtected = emptyConflicts();
   let installedBundleId = '';
 
@@ -658,6 +673,9 @@ export async function installBundle(
           name: a.name,
           origin,
           systemPrompt: a.systemPrompt ?? null,
+          // Absent leaves the installed runtime alone — a bundle authored before the
+          // field existed must not clear an admin's choice — while `null` clears it.
+          ...(a.runtime !== undefined ? { runtime: a.runtime } : {}),
           // DbNull (not undefined) so a re-install clears a stale toolKeys override
           // rather than leaving the prior value on the managed base-layer row.
           toolKeys: a.toolKeys ?? Prisma.DbNull,
@@ -853,6 +871,7 @@ export async function previewBundle(
     const found = await scanSkillAdvisory(s.description, s.promptText);
     warnings.push(...found.map((w) => `skill '${s.name}': ${w}`));
   }
+  warnings.push(...bundleAgentRuntimeWarnings(manifest));
 
   return {
     blockedReason:

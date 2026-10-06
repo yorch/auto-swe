@@ -158,6 +158,23 @@ describe('validateBundle', () => {
     expect(validateBundle({ not: 'a bundle' }).ok).toBe(false);
   });
 
+  it('rejects an agent on the harness runtime with a non-Anthropic model, as install does', () => {
+    const agent = (modelSpec: string) =>
+      defineBundle({
+        agents: [{ key: 'coder', modelSpec, name: 'Coder', runtime: 'claude-code' }],
+        name: 'b',
+        version: '1',
+      });
+    const res = validateBundle(agent('openai/gpt-6.1-sol'));
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors[0]).toMatch(
+        /agent 'coder': The claude-code runtime needs an Anthropic model/
+      );
+    }
+    expect(validateBundle(agent('anthropic/claude-opus-5-5')).ok).toBe(true);
+  });
+
   it('rejects an uncompilable scanner pattern (same gate the server applies)', () => {
     const res = validateBundle(
       defineBundle({
