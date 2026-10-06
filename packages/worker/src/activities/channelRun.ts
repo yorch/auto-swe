@@ -1,4 +1,5 @@
 import { Prisma } from '@auto-swe/shared';
+import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import {
   CHANNEL_ASSISTANT_SPEC,
@@ -203,13 +204,22 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
     },
   };
 
-  // Pin the agent versions and skill revisions the turn starts with, as
-  // `createWorkflowRun` does for every other run: `currentRequestContext()`
-  // reads them off this row, so a retried turn activity resolves the same
-  // agent and skill text instead of whatever was edited in between.
-  const [agentVersions, skillRevisions] = await Promise.all([
+  // Pin the agent versions, skill revisions and run-pinned settings the turn
+  // starts with, as `createWorkflowRun` does for every other run:
+  // `currentRequestContext()` reads them off this row, so a retried turn
+  // activity resolves the same agent, skill text and settings instead of
+  // whatever was edited in between. The settings resolve at the scope the
+  // turn's own reads use — this template, plus the channel and its tenant —
+  // because a pin taken at any other scope is a value the turn never sees.
+  const [agentVersions, skillRevisions, pinnedSettings] = await Promise.all([
     snapshotAgentVersions(),
     snapshotSkillRevisions({ orgId, teamId }),
+    snapshotPinnedSettings({
+      channelId: channel?.id,
+      orgId,
+      teamId,
+      workflowTemplateId: templateId,
+    }),
   ]);
 
   try {
@@ -217,6 +227,7 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
       data: {
         agentVersions,
         channelId: channel?.id ?? null,
+        pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
         skillRevisions,
         specSnapshot: specSnapshot as unknown as Prisma.InputJsonValue,
         status: 'RUNNING',

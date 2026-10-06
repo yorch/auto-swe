@@ -174,7 +174,9 @@ through a run, the second half would disagree with the first, and — because th
 is recorded in Temporal history — a replay could diverge from the code that produced it.
 
 Settings marked `runPinned` are therefore resolved once, when the `WorkflowRun` row is created,
-and stored on `WorkflowRun.pinnedSettings` alongside the existing agent-version pin. For the life of
+and stored on `WorkflowRun.pinnedSettings` alongside the existing agent-version pin. A channel
+assistant turn's row is created by `startChannelRun` and pins at the scope the turn's own reads use:
+the channel template, the channel, and the channel's team and organization. For the life of
 that run, `resolveSetting` reads the snapshot instead of the live cascade, and the effective-config
 view reports the value's source as `PINNED`.
 
@@ -190,7 +192,8 @@ workflow id). A value already pinned is never changed, and the write is a compar
 stored snapshot, so concurrent activities of one run converge on a single pin rather than
 overwriting each other. A pin that cannot be written — the database errors, or the row keeps
 changing for three attempts — is logged, and the read falls back to the live value; the next
-context lookup, after the ~30 s cache window, tries again.
+context lookup, after the ~30 s cache window, tries again. A channel turn's missing keys are pinned
+at its channel's scope, the same one `startChannelRun` uses.
 
 ---
 
@@ -305,10 +308,6 @@ from the definition.
   immediately; the other service picks the change up when its ~30 s TTL expires. Gateway and worker
   are separate processes and there is no cross-process invalidation, the same limitation the scanner
   pattern cache carries.
-- **A channel turn pins no settings.** A channel assistant turn's `WorkflowRun` row carries no
-  `pinnedSettings`, and the first-read backfill skips it: the turn's tenant comes from its Slack
-  channel, which the worker's context lookup does not see, so a pin taken there could freeze a value
-  the turn's own reads never resolve to. Its run-pinned keys resolve from the live cascade.
 - **`restartRequired` is advisory.** The UI says a restart is needed; nothing enforces or performs
   it.
 - **Grants are not scoped below a team.** Authority is expressed at GLOBAL, ORGANIZATION, or TEAM.
