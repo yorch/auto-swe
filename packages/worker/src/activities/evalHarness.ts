@@ -188,8 +188,10 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
       resolved.skills,
       {
         maxToolOutputChars: agentSettings['workspace.maxToolOutputChars'],
+        mcpAllowPrivateNetwork: mcpTarget?.allowPrivateNetwork,
         mcpBearerToken: mcpTarget?.bearerToken,
         mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
+        mcpHeaders: mcpTarget?.headers,
         mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
         mcpServerRef: mcpTarget?.url,
       },

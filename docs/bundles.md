@@ -80,15 +80,15 @@ const manifest = defineBundle({
   description: 'Support reply agents and skills for Acme',
   agents: [defineAgent({ key: 'acme.supportResponder', name: 'Support Responder', /* ... */ })],
   skills: [defineSkill({ name: 'support-kb-retrieval', promptText: '...' })],
-  dependencies: [{ connectionType: 'zendesk' }],
+  dependencies: [{ connectionType: 'mcp' }],
 });
 
 const signed = signBundle(manifest, privateKeyPem, 'acme-release-key');
 const { ok, errors } = validateBundle(signed);
 ```
 
-`validateBundle` checks the schema, re-derives the content hash, and runs the same scanner-pattern
-safety gate the server applies. It is intentionally pure and synchronous so it runs in CI.
+`validateBundle` checks the schema, re-derives the content hash, refuses a dependency on a connection
+type other than `git_repo` or `mcp`, and runs the same scanner-pattern safety gate the server applies. It is intentionally pure and synchronous so it runs in CI.
 
 The CLI also scaffolds, validates, and signs:
 
@@ -187,9 +187,10 @@ separately.
   "the version the previous install wrote" is the newest authorless version. After a forced install
   over a built-in template, the next built-in sync and the next bundle install each see the other's
   version as the previous one.
-- **Bundles do not export connection instances.** A template that needs Zendesk, Slack, or an MCP
-  server only declares `dependencies[].connectionType`; the installer must map those to local
-  `Connection` rows.
+- **Bundles do not export connection instances.** A template that needs a repository or an MCP
+  server only declares `dependencies[].connectionType` (`git_repo` or `mcp`, the only types a bundle
+  may name); the installer must map those to local `Connection` rows. A bundle cannot declare a
+  dependency on Zendesk, Slack or any other connector type.
 - **No central registry.** There is no auto-swe marketplace or hosted registry; distribution is
   file/URL based and trust is pinned to ed25519 public keys.
 - **MCP connection IDs are not portable.** A template spec referencing an `mcp` connection will
