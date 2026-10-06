@@ -21,6 +21,9 @@ import {
  *   start → validate (non-blocking) → implement → review loop → CI loop →
  *   wait-for-human-merge → commit-to-memory → done
  *
+ * A review or CI loop that runs out of attempts stores a lesson about what
+ * blocked it before the run fails.
+ *
  * Written with the authoring helpers, which expand at module load into the same
  * flat nodes (and the same node ids) this template has always had.
  */
@@ -45,17 +48,45 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
       initCounters: initCounters('clearCiResult', { group: 'implement' }),
     },
     // ── Review loop, then CI loop; a CI fix re-enters the review via clearCiResult ──
-    reviewLoop({ afterFix: 'clearCiResult', approved: 'setAwaitingCi' }),
+    reviewLoop({
+      afterFix: 'clearCiResult',
+      approved: 'setAwaitingCi',
+      exhausted: 'lessonReviewFailed',
+    }),
     {
       setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     },
     // CI wait: signal (webhook, default) vs poll (active GitHub query)
     openPullRequest({ next: ciWaitEntry('pollOrSignal') }),
     ciLoop({
+      exhausted: 'lessonCIFailed',
       fix: { handoff: { rereview: 'setReviewing' } },
       passed: 'setAwaitingHumanMerge',
       wait: 'pollOrSignal',
     }),
+    {
+      // A run that fails teaches as much as one that merges, so each loop's
+      // last failure is stored as a lesson before the run ends. Best-effort:
+      // a failed write never changes how the run ends.
+      lessonReviewFailed: {
+        group: 'review loop',
+        inputs: { outcome: { literal: 'REVIEW_FAILED' } },
+        next: 'terminateReviewFailed',
+        onError: 'continue',
+        step: 'commitToMemory',
+        title: 'Store what the review rejected',
+        type: 'step',
+      },
+      lessonCIFailed: {
+        group: 'CI loop',
+        inputs: { outcome: { literal: 'CI_FAILED' } },
+        next: 'terminateCIFailed',
+        onError: 'continue',
+        step: 'commitToMemory',
+        title: 'Store what failed CI',
+        type: 'step',
+      },
+    },
     {
       // ── Wait for human merge, then memory + completion ──
       setAwaitingHumanMerge: statusStamp('AWAITING_HUMAN_MERGE', 'waitForHumanMerge', {
@@ -77,6 +108,7 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
       }),
       commitLesson: {
         group: 'human merge',
+        inputs: { outcome: { literal: 'MERGED' } },
         next: 'done',
         onError: 'continue',
         step: 'commitToMemory',

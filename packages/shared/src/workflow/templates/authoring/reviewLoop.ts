@@ -11,6 +11,12 @@ export interface ReviewLoopOptions {
   afterFix?: string;
   /** Rejected reviews tolerated before the run fails. Default 3. */
   limit?: number;
+  /**
+   * Where the loop goes when it runs out of attempts. Default `terminateReviewFailed`;
+   * a template that records the failure first (a lesson, a notification) routes
+   * through its own node and on to `terminateReviewFailed` itself.
+   */
+  exhausted?: string;
   /** Id of the node that keeps the fix, for a template that already names it differently. */
   keepFixId?: string;
   /**
@@ -53,7 +59,7 @@ export function reviewLoop(opts: ReviewLoopOptions): NodeMap {
       expr: `context.reviewRetries >= ${opts.limit ?? 3}`,
       group,
       onFalse: 'reviewFix',
-      onTrue: 'terminateReviewFailed',
+      onTrue: opts.exhausted ?? 'terminateReviewFailed',
       title: 'Out of attempts?',
       type: 'cond',
     },

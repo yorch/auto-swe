@@ -32,9 +32,17 @@ by the same model, so vectors from different models are never compared.
 
 | Writer | When | Model call |
 |---|---|---|
-| `commitToMemory` step | After the run's pull request is merged (`humanMergeSignal`), in the default engineering template | Yes — the `commitToMemory` agent summarises the run |
+| `commitToMemory` step | In the default engineering template: after the pull request is merged (`MERGED`), and when the review loop or the CI loop runs out of attempts (`REVIEW_FAILED`, `CI_FAILED`) before the run fails | Yes — the `commitToMemory` agent writes the lesson from the run's evidence |
 | Merge-conflict resolver | After it resolves a conflict | No (`recordLessonBackground`) |
 | Shell step | After a step that changed files and pushed them | No; the command is stored with credentials masked |
+
+The step hands the agent the run's evidence, read from the workflow's own context and bounded
+there (`lib/lessonEvidence.ts`): the outcome, the review network's last rejection, the tail of the
+last failing CI run's logs, and the changed files with their line counts, the implementer's notes
+and the test totals — never the diff itself. The user message, built in code rather than in the
+agent's stored prompt, tells the agent to name a root cause only when the evidence shows one and
+fences the evidence as data. The outcome is written into the lesson's `metadata.outcome` by code,
+not by the model. Another template's `commitToMemory` step records `COMPLETED`.
 
 Every write goes through `insertMemoryItem` (`packages/worker/src/lib/memoryStore.ts`), which
 applies the memory gate (§5) before it embeds anything.
@@ -89,9 +97,12 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
-- **A lesson is written only after a merge, from little evidence.** The `commitToMemory` agent sees
-  the ticket description and the pull request's status — not CI failures, review verdicts or the
-  diff — and failed, rejected or timed-out runs write no lesson.
+- **Only the default engineering template writes failure lessons.** Other templates reach
+  `commitToMemory`, if at all, on their success path; a run that times out waiting for a merge
+  writes no lesson, and neither does one that fails outside the review and CI loops (a security
+  gate, an implementation error).
+- **The evidence is the last attempt's.** A loop keeps only its latest rejection and CI log, so a
+  lesson about a run that failed three different ways sees the third.
 - **A lesson cites its run, not its evidence.** There is no quote, pull-request or trace reference,
   and the model-free writers record no run or agent at all. A consolidated row keeps only
   `metadata.consolidatedFrom`; its scope columns, run, agent, model and team are not carried over.

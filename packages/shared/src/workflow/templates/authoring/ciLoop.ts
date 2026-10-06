@@ -110,6 +110,13 @@ export interface CiLoopOptions {
    * tries again until the limit, instead of waiting. Off by default, so the other
    * templates keep the nodes they were seeded with.
    */
+  /**
+   * Where a run goes when CI has failed for good — every fix attempt spent, or
+   * the first failure when there is no fix loop. Default `terminateCIFailed`; a
+   * template that records the failure first routes through its own node and on
+   * to `terminateCIFailed` itself.
+   */
+  exhausted?: string;
   fix: false | { limit?: number; handoff: CiFixHandoff; retryIfUnchanged?: boolean };
 }
 
@@ -138,7 +145,7 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
     checkCI: {
       expr: 'context.ciResultPayload.passed == true',
       group: loop,
-      onFalse: fix ? 'incCIRetries' : 'terminateCIFailed',
+      onFalse: fix ? 'incCIRetries' : (opts.exhausted ?? 'terminateCIFailed'),
       onTrue: opts.passed,
       title: 'CI passed?',
       type: 'cond',
@@ -156,7 +163,7 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
         expr: `context.ciRetries >= ${fix.limit ?? 3}`,
         group: loop,
         onFalse: 'fetchLogs',
-        onTrue: 'terminateCIFailed',
+        onTrue: opts.exhausted ?? 'terminateCIFailed',
         title: 'Out of attempts?',
         type: 'cond',
       },

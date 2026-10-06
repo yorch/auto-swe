@@ -58,7 +58,7 @@ success criteria.
 |---|---|
 | **Throughput amplification** | Automates well-specified implementation work so a given headcount ships more |
 | **Quality by default** | Lint, typecheck, tests, build, a three-agent review network, and security scanning all run on every change — none are opt-in |
-| **Institutional learning** | A merged engineering run writes a semantic lesson (pgvector); later implementation runs on the same repository get the closest lessons in their prompt — the system improves per-repo over time |
+| **Institutional learning** | An engineering run writes a semantic lesson (pgvector) from its evidence when it merges or its review or CI loop gives up; later implementation runs on the same repository get the closest lessons in their prompt — the system improves per-repo over time |
 | **Cost transparency** | Per-call / per-run / per-team USD tracking, budget tiers with hard caps, and per-template A/B analytics |
 | **Operator control** | Models, skills, tool access, workflow shape, and security policy are all DB-driven and overridable per team or per template — most changes need no restart |
 | **Operational safety** | Temporal makes runs durable (survive crashes, wait days for signals, replay deterministically); humans govern the merge |
@@ -157,7 +157,7 @@ On a GitHub `check_run` failure webhook, the worker fetches the actual CI logs, 
 
 ### 5.5 Semantic memory / learning loop
 
-When an engineering run's pull request is merged, the memory agent writes a structured lesson — a `MemoryItem` with a failure type, rationale and 1536-dim embedding. The merge-conflict resolver and a shell step that pushes changes record lessons of their own without a model call. On later runs, `executeImplementation` does a per-repository similarity search and adds the closest lessons to the implementer's system prompt, fenced as reference data. A weekly job merges near-duplicate lessons. Every lesson passes an injection gate on the way in and on the way out (see [agents.md §6.4](./agents.md#64-custom-skill-security-scanning)). Platform admins browse, delete and consolidate lessons at `/govern/lessons`. See [memory.md](./memory.md).
+When an engineering run's pull request is merged — or its review or CI loop runs out of attempts — the memory agent writes a structured lesson from the run's evidence (the reviewers' rejection, the failing CI output, the files changed): a `MemoryItem` with a failure type, rationale and 1536-dim embedding. The merge-conflict resolver and a shell step that pushes changes record lessons of their own without a model call. On later runs, `executeImplementation` does a per-repository similarity search and adds the closest lessons to the implementer's system prompt, fenced as reference data. A weekly job merges near-duplicate lessons. Every lesson passes an injection gate on the way in and on the way out (see [agents.md §6.4](./agents.md#64-custom-skill-security-scanning)). Platform admins browse, delete and consolidate lessons at `/govern/lessons`. See [memory.md](./memory.md).
 
 ### 5.6 Configurable + versioned workflow templates
 
