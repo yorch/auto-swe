@@ -1258,9 +1258,9 @@
     "packages/worker/src/activities/containerStep.test.ts": "0a2890bffc4be00a8d86d5d46d2e14e58d3f17c19c5e3c5779175aef95eb9080",
     "packages/worker/src/activities/containerStep.ts": "e7f311ecf4d4a9ba344750fee2a94fbd96c797eedad2a7d561163c999cf457b2",
     "packages/worker/src/activities/contextOverflow.ts": "423607348dfa15bce10f28f95e91f459f77e34bfefc78df767de6642c5afacb4",
-    "packages/worker/src/activities/createOrUpdatePullRequest.draft.test.ts": "2e943eb851f36fc59eea1c63d446c50c9b923c560598a168730e598f03a87515",
+    "packages/worker/src/activities/createOrUpdatePullRequest.draft.test.ts": "ed416a83451289493d7700c5e1c335c29b568b84845017dce3c73588aea70da5",
     "packages/worker/src/activities/createOrUpdatePullRequest.test.ts": "f2560c5e06ddcc7f8a36c37ad5458780ee6d5e68176f570f39fabebafb8c9921",
-    "packages/worker/src/activities/createOrUpdatePullRequest.ts": "d49718b6fd9af4f41c0c6b8a8fdaea11adef074148194e7e8441ed94ae12d71b",
+    "packages/worker/src/activities/createOrUpdatePullRequest.ts": "3d493b7d745999165f15bed8170ca0d4917c6744334127fbdfd97dca3c0988a1",
     "packages/worker/src/activities/decomposition.test.ts": "148f8146af218bf3a3f11e69e40b6664c633a4dfc347e06ca1b752af700ef1e7",
     "packages/worker/src/activities/decomposition.ts": "645957d050f52c19e932d1aa3b72553f0fda3992fde265f878b90a74679e05b1",
     "packages/worker/src/activities/detectRepoDependencies.test.ts": "f8256eba80c56d8e9819676048c598f120a598919cf5c5a5ca5d5953ace61b1a",
@@ -1514,8 +1514,8 @@
     "packages/worker/src/lib/telemetry.ts": "a222d8c1084beebf0f04e6d0d5e9e843b6385aeb6997a074cd772f4d37d25cb5",
     "packages/worker/src/lib/temporalClient.ts": "ed52a1b303d67f16202e7204fdcd8af0f4467e1c15ee7f802699c6f6fc0c64ab",
     "packages/worker/src/lib/traceTotals.ts": "ffbf1a1a2ab877ead247fc3ef69140f574fdfd12c38262c8af61fecedc60ee7f",
-    "packages/worker/src/lib/trackerTicket.test.ts": "330175a3b98ae8e0c88731c202e0ff03d0a37600baef051ce20a580c74312512",
-    "packages/worker/src/lib/trackerTicket.ts": "2588bf5883924256a728f900ebc72243284ea16cb90babbcd4e47c995333a785",
+    "packages/worker/src/lib/trackerTicket.test.ts": "1749cce9dde3f07cb6b6b324452d65e3bb67d96d25ca05ce9617da4b6cf8f5fe",
+    "packages/worker/src/lib/trackerTicket.ts": "44a807a89375b7b0893f7dc2a8be2c841d4c4a490583923073e6c1e8d3a85901",
     "packages/worker/src/lib/trajectoryScorer.test.ts": "27c6eb54a828419764e59bb01a0073d364ea4609e717618831c7fc902fa8c195",
     "packages/worker/src/lib/trajectoryScorer.ts": "63f6828b137e73b532a5838708e136790356465a1d70a18ded1acc9dde2e1c90",
     "packages/worker/src/lib/usdCapGuard.test.ts": "64f110dfee0e6920aa0c4b522e838d10ab762cb0927299dc6ad1545da0f31718",
@@ -2181,7 +2181,7 @@
     {
       "body": "Track each pull request a workflow’s pull-request step or an Agent Run’s draft delivery opens, with its state, draft flag and title kept current from host webhooks, and list pull requests and tickets with per-row visibility.",
       "category": "Engineering",
-      "detail": "A PullRequest row, linked to the opening execution’s ledger row, records OPEN, MERGED or CLOSED (closed without merging), an isDraft flag, a title capped at 300 characters and opened, merged and closed times. Signed pull_request webhooks update only a row the platform already holds for that repository and number: closed, reopened, ready_for_review, converted_to_draft and edited (with a non-empty title) each update only that row. Close (only from OPEN) and reopen (only from CLOSED) are guarded by status, so a redelivery is a no-op; draft and title updates are not, so an out-of-order delivery can leave an older value. A pull request opened outside the platform is never created. An Agent Run with draft delivery inserts its row, on the run’s own ledger row, after the host accepts the draft. The row is only inserted, never updated, because an existing row with the same repository and number is a different pull request; the unique index refuses the collision. A failed write is logged and recorded on the run as a pr.record_failed event without failing it, since the branch is already pushed and the PR open. A workflow’s pull-request step links its own execution’s ledger row, or any ledger row of the same request when it has none. The webhook lookups can match more than one connection row for a repository and take the newest. An id the platform generated names no tracker issue, so the tracker syncs for PR opened, workflow started, CI verdict, merge and run end are skipped for it; the Slack merge note and merge evaluation row still run. Of the pull_request events only a merge signals the workflow (CI results arrive separately, through check_run webhooks). A merge is accepted from OPEN or CLOSED, so a reopen that was lost or late cannot strand it; a transient signal failure rolls the row back to its previous status, and a terminal one keeps MERGED. When a run’s own pull request was closed unmerged, the pull-request activity fails non-retryably with PR_CLOSED_BY_REVIEWER instead of opening a replacement; a new run of the same request has its own ledger row and is not stopped. GET /api/v1/pull-requests (ENGINEER and above) lists newest first. A non-ADMIN sees a row only when the repository is reachable to them, and the ticket, request, cost and run on it come from its ledger row only while that row is on the same repository, the run only when the caller may see that run. GET /api/v1/tickets groups requests by external ticket id. A request counts for its requester, for anyone who can see one of its runs, and for anyone who reaches a repository it targets or holds a ledger row on; cost and pull-request aggregates count only repositories the caller reaches, so two teams can read one ticket differently. On the server, scope defaults to MINE (requests the caller submitted), pull requests to every state, and tickets exclude agent runs, channel tasks and requests whose ticket id the platform generated (an agent run, a channel task, a template launch that named no ticket, a PRD run, a scheduled work request, a PRD story the tracker gave no id) unless includeAutomated is set. The dashboard’s Pull requests page, by contrast, opens on OPEN.",
+      "detail": "A PullRequest row, linked to the opening execution’s ledger row, records OPEN, MERGED or CLOSED (closed without merging), an isDraft flag, a title capped at 300 characters and opened, merged and closed times. Signed pull_request webhooks update only a row the platform already holds for that repository and number: closed, reopened, ready_for_review, converted_to_draft and edited (with a non-empty title) each update only that row. Close (only from OPEN) and reopen (only from CLOSED) are guarded by status, so a redelivery is a no-op; draft and title updates are not, so an out-of-order delivery can leave an older value. A pull request opened outside the platform is never created. An Agent Run with draft delivery inserts its row, on the run’s own ledger row, after the host accepts the draft. The row is only inserted, never updated, because an existing row with the same repository and number is a different pull request; the unique index refuses the collision. A failed write is logged and recorded on the run as a pr.record_failed event without failing it, since the branch is already pushed and the PR open. A workflow’s pull-request step links its own execution’s ledger row, or any ledger row of the same request when it has none. A re-push looks at the latest pull request on its own ledger row, whatever its status: an open one is updated, and a closed one fails the step before any other pull request is considered. When that one is merged, or there is none, the step adopts the newest open pull request of the same request and repository, and re-links it to the executing workflow’s own ledger row when that workflow has one, because CI webhooks signal the workflow a row names. The webhook lookups can match more than one connection row for a repository and take the newest. An id the platform generated names no tracker issue, so the tracker syncs for PR opened, workflow started, CI verdict, merge and run end are skipped for it, as is the knowledge-base page link write-back when a pull request opens, which also needs the flag to have been read and found false, so an unreadable flag skips it while the tracker sync is still attempted; the Slack merge note and merge evaluation row still run. Of the pull_request events only a merge signals the workflow (CI results arrive separately, through check_run webhooks). A merge is accepted from OPEN or CLOSED, so a reopen that was lost or late cannot strand it; a transient signal failure rolls the row back to its previous status, and a terminal one keeps MERGED. When the latest pull request on the executing workflow’s own ledger row (one it adopted included) was closed unmerged, the pull-request activity fails non-retryably with PR_CLOSED_BY_REVIEWER instead of opening a replacement or adopting another open one; a new run of the same request has its own ledger row and is not stopped. GET /api/v1/pull-requests (ENGINEER and above) lists newest first. A non-ADMIN sees a row only when the repository is reachable to them, and the ticket, request, cost and run on it come from its ledger row only while that row is on the same repository, the run only when the caller may see that run. GET /api/v1/tickets groups requests by external ticket id. A request counts for its requester, for anyone who can see one of its runs, and for anyone who reaches a repository it targets or holds a ledger row on; cost and pull-request aggregates count only repositories the caller reaches, so two teams can read one ticket differently. On the server, scope defaults to MINE (requests the caller submitted), pull requests to every state, and tickets exclude agent runs, channel tasks and requests whose ticket id the platform generated (an agent run, a channel task, a template launch that named no ticket, a PRD run, a scheduled work request, a PRD story the tracker gave no id) unless includeAutomated is set. The dashboard’s Pull requests page, by contrast, opens on OPEN.",
       "id": "workViews",
       "refs": [
         "schema",
@@ -2189,6 +2189,8 @@
         "prRecord",
         "prMergeFromClosed",
         "prClosedGuard",
+        "prAdopt",
+        "kbWriteBack",
         "prList",
         "ticketVisibility",
         "ticketAutomated",
@@ -2497,12 +2499,13 @@
     {
       "body": "A pull-request webhook updates a row; of those events only a merge reaches the workflow, and only a delivered webhook updates anything.",
       "category": "Reliability",
-      "detail": "Only pull requests that a workflow’s pull-request step or an Agent Run’s draft delivery opens get a row. CLOSED and MERGED come only from signed pull_request webhooks, so without delivery (polling-only CI, a lost delivery) the row stays OPEN, and the list and the PR_CLOSED_BY_REVIEWER refusal both depend on delivery. An Agent Run’s own execution has ended by the time its pull request merges, so a merge is recorded without a signal, and its generated ticket id is never synced to the tracker. If an older row still holds the pull request’s number in that repository, the new row is not written. A run waiting on its merge keeps waiting after its pull request is closed unmerged, until a merge arrives or the wait ends; the refusal appears only when a later push step reaches the pull-request activity. A webhook for a pull request the platform did not open finds no row and changes nothing. Reopening restores only CLOSED to OPEN, and event times come from the host’s payload when it parses, else the time of receipt. The ticket list shows the tracker’s title, status and link as captured when a request was submitted, from the newest visible request that holds an answer; they are not refreshed. RunInput.ticketIsSynthetic marks an id the platform generated: the template launch and template webhook fallbacks, PRD runs (PRD-… ids), scheduled work requests (…-SCHED-… ids) and PRD stories the tracker gave no id; it defaults to false, so a user- or tracker-supplied id is never flagged. Agent runs and channel tasks are flagged and also recognised by template origin, template name or channel id; the channel assistant files no request of its own.",
+      "detail": "Only pull requests that a workflow’s pull-request step or an Agent Run’s draft delivery opens get a row. CLOSED and MERGED come only from signed pull_request webhooks, so without delivery (polling-only CI, a lost delivery) the row stays OPEN, and the list and the PR_CLOSED_BY_REVIEWER refusal both depend on delivery. An Agent Run’s own execution has ended by the time its pull request merges, so a merge is recorded without a signal, and its generated ticket id is never synced to the tracker. If an older row still holds the pull request’s number in that repository, the new row is not written. A run waiting on its merge keeps waiting after its pull request is closed unmerged, until a merge arrives or the wait ends; the refusal appears only when a later push step reaches the pull-request activity. A webhook for a pull request the platform did not open finds no row and changes nothing. Reopening restores only CLOSED to OPEN, and event times come from the host’s payload when it parses, else the time of receipt. The ticket list shows the tracker’s title, status and link as captured when a request was submitted, from the newest visible request that holds an answer; they are not refreshed. RunInput.ticketIsSynthetic marks an id the platform generated: the template launch and template webhook fallbacks, PRD runs (PRD-… ids), scheduled work requests (…-SCHED-… ids) and PRD stories the tracker gave no id; it defaults to false, so a user- or tracker-supplied id is never flagged. Agent runs and channel tasks are flagged and also recognised by template origin, template name or channel id; the channel assistant files no request of its own. An adopted pull request is re-linked only when the executing workflow has a ledger row of its own; without one it stays linked to its earlier execution, whose workflow receives the CI signal, and the close check does not cover it. Adoption matches by request and repository only and no head branch is stored, so after a branch prefix change or a missed close webhook the adopted pull request can have a different head branch than the one pushed. A retry of a scheduled standing request is not refused while a fire is running (the workflow id allocator checks only the ticket’s own id family, and the schedule’s overlap policy covers only its own fires); both push the same branch, and the later one to reach the pull-request step adopts and re-links the other’s pull request, so the other waits for a CI signal that now goes to the adopter until its wait ends.",
       "id": "prTrackingBounds",
       "refs": [
         "prEvents",
         "prRecord",
         "prClosedGuard",
+        "prAdopt",
         "ticketSnapshot",
         "ticketSynth",
         "ticketSynthPrd",
@@ -2684,7 +2687,7 @@
       "WorkflowShellAudit"
     ]
   },
-  "reviewedCommit": "89221db216a193cbb7e8e549a3be7cde030160cf",
+  "reviewedCommit": "2a5ff1c7796b9ca26d8450329b2c9aba144ea3a6",
   "sourceHashes": {
     "docker-compose.app.yml": "96d57e466289e17048648c7e852e21c0ac24085526fae63c21e8c0ffe8b22cf6",
     "packages/cli/src/commands/skills.ts": "bdfa28470df98565ec676d471ffc23a7e7719aea79b6be638d0e2aedee7acbda",
@@ -2792,7 +2795,7 @@
     "packages/web/src/lib/visibleText.ts": "73f86853004fb8e346494b22073328a0ced0b6be7cbbeaa856ce55c59fccf4d4",
     "packages/worker/src/activities/allowedPaths.ts": "696c048c5ad325e0d423b041031a08bb89733beaa0aac6d60174f293c13480f8",
     "packages/worker/src/activities/channelRun.ts": "4bc85e178b4c856e0174537ed58741edebcaef5508adeb057514f08467148059",
-    "packages/worker/src/activities/createOrUpdatePullRequest.ts": "d49718b6fd9af4f41c0c6b8a8fdaea11adef074148194e7e8441ed94ae12d71b",
+    "packages/worker/src/activities/createOrUpdatePullRequest.ts": "3d493b7d745999165f15bed8170ca0d4917c6744334127fbdfd97dca3c0988a1",
     "packages/worker/src/activities/evalHarness.ts": "ab4e5f8e81397f6306a4f0fe343e6bbb2bc94bda7c823ec9ca79c59a9035c914",
     "packages/worker/src/activities/executeImplementation.ts": "69b07dc053ff2dc75d46464705fddb9913d1c18217492df9731b0d8c018fb359",
     "packages/worker/src/activities/generateWorkflowSpec.ts": "b0c41f13b742bd8fe9763c8d24daa201a0cfc0c9b5587910cb62c6d7b1c6f019",
@@ -4654,12 +4657,12 @@
       "title": "Merge accepted from OPEN or CLOSED; rollback or keep on signal failure"
     },
     {
-      "anchor": "if (latest?.status === 'CLOSED') {",
-      "before": 14,
+      "anchor": "const latest = await prisma.pullRequest.findFirst({",
+      "before": 5,
       "id": "prClosedGuard",
-      "lines": 22,
+      "lines": 30,
       "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
-      "title": "No replacement PR after a reviewer closed it"
+      "title": "Latest PR on the run’s own row: updated, refused if closed, else the newest open PR adopted"
     },
     {
       "anchor": "onRequest: requireAuth({ requiredRole: 'ENGINEER' }),",
@@ -4996,6 +4999,22 @@
       "lines": 20,
       "path": "packages/gateway/src/routes/mcpConnections.ts",
       "title": "Update re-checks the URL against the flag it carries"
+    },
+    {
+      "anchor": "workflowId: ownWorkflow?.id",
+      "before": 8,
+      "id": "prAdopt",
+      "lines": 12,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "An adopted PR is re-linked to the executing workflow’s own ledger row"
+    },
+    {
+      "anchor": "if (request.externalTicketId && synthetic === false) {",
+      "before": 6,
+      "id": "kbWriteBack",
+      "lines": 20,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "Knowledge-base PR link written only when the ticket id is known not to be generated"
     }
   ],
   "usecases": [

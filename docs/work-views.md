@@ -24,12 +24,17 @@ row (it refuses to run without one) and links that. The row records:
 | `openedAt` / `mergedAt` / `closedAt` | when the PR was opened, merged, and closed (a merge sets both of the last two) |
 | `ciStatus`, `headSha` | the CI verdict for the current head, unchanged by this lifecycle |
 
-Only an `OPEN` row for the same request and repository is updated on a re-push. A close is a
-decision, so it is respected within the workflow that opened the PR: when `createOrUpdatePullRequest`
-runs again in a workflow whose latest PR for the repository was closed without merging, it fails
-non-retryably with `PR_CLOSED_BY_REVIEWER` instead of opening a replacement. A new run of the same
-request has its own ledger row, is not stopped by that close, and opens a new PR; the old row stays as
-history.
+A re-push looks first at the latest PR on the executing workflow's own ledger row, whatever its
+status (`openedAt`, then `id`, descending). If it is `OPEN`, it is updated. A close is a decision, so
+if it was closed without merging, `createOrUpdatePullRequest` fails non-retryably with
+`PR_CLOSED_BY_REVIEWER` instead of opening a replacement, before any other PR is considered. If it
+is merged, or the execution has no PR, the newest `OPEN` PR of the same request and repository is
+adopted: a request can have several ledger rows (re-runs, and scheduled fires, which share one
+standing request and one branch). When the executing workflow has a ledger row of its own, an
+adopted PR moves to it, because the CI webhook signals the workflow a PR's row names and an execution
+that is no longer waiting, or a concurrent one, cannot use that signal; the earlier execution's view
+loses the link. A new run of the request has its own ledger
+row, is not stopped by an earlier run's close, and opens a new PR; the old row stays as history.
 
 An Agent Run is a new workflow each time, so the close guard does not apply to it: it opens one PR
 per run, on its own branch, and inserts one row for it. The row is only ever inserted, never
@@ -134,7 +139,10 @@ runs, cost and pull requests leave them out too:
   flagged as well as recognised by their template or channel.
 
 A request flagged `ticketIsSynthetic` names no tracker issue, so none of the tracker syncs (PR opened,
-workflow started, CI verdict, merge, workflow finished) is attempted for it. A Channel Assistant
+workflow started, CI verdict, merge, workflow finished) is attempted for it, and neither is the
+knowledge-base PR link write-back, which would otherwise search the knowledge base for a page
+matching the generated id. The write-back also requires the flag to have been read and found false,
+so an unreadable flag skips it while the tracker sync is still attempted. A Channel Assistant
 turn files no request of its own, so there is nothing to flag. The Slack merge note and
 the merge evaluation row do not depend on the tracker and still run.
 
@@ -196,7 +204,17 @@ http(s) address.
   although the PR is open on the host.
 - The close guard finds a PR through the execution's own ledger row linked to its request. An
   execution with no such row (a self-registered ledger row with no request, an unmatched scheduled
-  anchor) is not covered and may open a new PR after a close.
+  anchor) is not covered and may open a new PR after a close, and an open PR it adopts stays linked
+  to its earlier execution, whose workflow receives the CI signal.
+- Two executions of one request can overlap: a retry of a scheduled standing request is not refused
+  while a fire is running, because the workflow id allocator checks only the ticket's own id family
+  and a schedule's overlap policy covers only the schedule's own fires. Both push the same branch,
+  and the second to reach the PR step adopts and re-links the other's open PR, so the other keeps
+  waiting for a CI signal that now goes to the adopter until its wait times out. With two concurrent
+  adoptions the last write wins.
+- Adopting an open PR of the request is by request and repository only; no head branch is stored.
+  After a branch prefix change, or a missed close webhook, the adopted PR may have a different head
+  branch than the one the run pushed.
 - A ticket's title, status and link are a snapshot from submit time, and exist only when a tracker
   is configured; they do not follow later edits in the tracker.
 - `meta.total` for tickets is the number of groups, which the database counts by listing them; a
