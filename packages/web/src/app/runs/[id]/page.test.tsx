@@ -7,6 +7,7 @@ import { withQuery } from '@/test/rtl-helpers';
 
 const state = vi.hoisted(() => ({ layout: 'A' as 'A' | 'B' | 'C' }));
 const run = {
+  agentRuntimes: undefined as Record<string, string> | undefined,
   contextSnapshot: {},
   costUsdAccrued: 0,
   endedAt: '2026-10-01T12:05:00Z',
@@ -121,6 +122,26 @@ afterEach(cleanup);
 describe('run page header', () => {
   afterEach(() => {
     run.implementerRuntime = null;
+    run.agentRuntimes = undefined;
+  });
+
+  it('names what each agent ran on over the run-wide default', async () => {
+    state.layout = 'A';
+    run.implementerRuntime = 'mastra';
+    run.agentRuntimes = { implementer: 'claude-code' };
+    await renderPage();
+    const badge = screen.getByText('Claude Code harness');
+    expect(badge.closest('[title]')?.getAttribute('title')).toBe(
+      'Runtime each agent ran on: implementer — Claude Code harness'
+    );
+    expect(screen.queryByText('Mastra loop')).toBeNull();
+  });
+
+  it('names both runtimes when agents ran on different ones', async () => {
+    state.layout = 'A';
+    run.agentRuntimes = { ciFixer: 'mastra', implementer: 'claude-code' };
+    await renderPage();
+    expect(screen.getByText('Claude Code harness + Mastra loop')).toBeTruthy();
   });
 
   it('names the implementer runtime the run pinned', async () => {

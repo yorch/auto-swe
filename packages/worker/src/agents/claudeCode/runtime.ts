@@ -29,6 +29,7 @@ import {
 } from './binary.js';
 import {
   decideToolCall,
+  type HarnessTool,
   harnessToolsFor,
   type PolicyContext,
   type ToolDecision,
@@ -106,6 +107,18 @@ export interface ClaudeCodeRuntimeOptions {
    * offered to the harness nor allowed by the policy.
    */
   toolKeys?: readonly string[] | null;
+  /**
+   * The exact harness tools to grant, in place of reading `toolKeys`. For a
+   * caller whose tool rule is not the implementer's: an agent run grants only
+   * what the Agent names, and an empty list here is no tools, never all of them.
+   */
+  tools?: readonly HarnessTool[];
+  /**
+   * A deadline (an agent run's wall clock). Unlike cancellation it is a stop,
+   * not a failure: the turn ends with `stoppedReason: 'wall_clock'` and what it
+   * spent, as the Mastra loop's deadline does.
+   */
+  deadline?: AbortSignal;
   tracer: AgentTracer;
   workspace: Workspace;
 }
@@ -239,6 +252,25 @@ function harnessFailure(result: SDKResultMessage, stderrTail: string): Error {
   return new Error(`Claude Code ended with ${result.subtype}: ${detail || 'no detail'}`);
 }
 
+/** The usage block of one Messages API response, as an assistant message streams it. */
+interface StreamedUsage {
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+}
+
+/**
+ * The parts of an assistant message read here. The message type comes from the
+ * SDK's `@anthropic-ai/sdk` peer, which is not installed, so it is narrowed here.
+ */
+interface AssistantReply {
+  content: { type: string }[];
+  id?: string;
+  model?: string;
+  usage?: StreamedUsage;
+}
+
 /** A model's running usage totals as the harness reports them. */
 interface Totals {
   cacheRead: number;
@@ -262,7 +294,8 @@ interface Totals {
 export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): ImplementerRuntime {
   const { access, loadProjectSettings, maxTurns, tracer, workspace } = options;
   const baseUrl = normalizeAnthropicBaseUrl(access.apiBase);
-  const tools = harnessToolsFor(options.toolKeys);
+  const tools = options.tools ? [...options.tools] : harnessToolsFor(options.toolKeys);
+  const { deadline } = options;
   const policy: PolicyContext = {
     containerId: workspace.containerId,
     cwd: WORKSPACE_DIR,
@@ -315,7 +348,49 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
     return spent.sort((a, b) => (b.usage.outputTokens ?? 0) - (a.usage.outputTokens ?? 0));
   }
 
-  async function runTurn({ system, user }: { system: string; user: string }) {
+  /**
+   * What a turn that never reached its result spent, read off the assistant
+   * messages it streamed. Each message carries the usage of the API call that
+   * produced it; one call can stream several messages, so the last report per
+   * message id counts. Calls the harness makes without streaming a message (a
+   * small-model side task) are not seen, so this undercounts; it is the
+   * fallback for a turn that was stopped or died, not the meter.
+   */
+  function streamedUsage(
+    streamed: Map<string, { model: string; usage: StreamedUsage }>
+  ): ImplementerTurnOutcome['usageByModel'] {
+    const byModel = new Map<string, Totals>();
+    for (const { model, usage } of streamed.values()) {
+      const t = byModel.get(model) ?? { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 };
+      const cacheRead = usage.cache_read_input_tokens ?? 0;
+      const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+      t.cacheRead += cacheRead;
+      t.cacheWrite += cacheWrite;
+      t.input += (usage.input_tokens ?? 0) + cacheRead + cacheWrite;
+      t.output += usage.output_tokens ?? 0;
+      byModel.set(model, t);
+    }
+    return [...byModel.entries()]
+      .filter(([, t]) => t.input > 0 || t.output > 0)
+      .map(([model, t]) => ({
+        modelSpec: `anthropic/${model}`,
+        usage: {
+          cacheCreationInputTokens: t.cacheWrite,
+          cachedInputTokens: t.cacheRead,
+          inputTokens: t.input,
+          outputTokens: t.output,
+        },
+      }))
+      .sort((a, b) => (b.usage.outputTokens ?? 0) - (a.usage.outputTokens ?? 0));
+  }
+
+  async function runTurn({
+    system,
+    user,
+  }: {
+    system: string;
+    user: string;
+  }): Promise<ImplementerTurnOutcome> {
     if (!prepared) {
       const preparing = prepareContainer(workspace);
       prepared = preparing;
@@ -333,13 +408,21 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
     const cancellation = activityCancellationSignal();
     const onCancel = () => abort.abort();
     cancellation?.addEventListener('abort', onCancel, { once: true });
-    if (cancellation?.aborted) {
+    deadline?.addEventListener('abort', onCancel, { once: true });
+    if (cancellation?.aborted || deadline?.aborted) {
       abort.abort();
     }
 
     let stderrTail = '';
     let result: SDKResultMessage | undefined;
     let toolCalls = 0;
+    const streamed = new Map<string, { model: string; usage: StreamedUsage }>();
+    // The deadline is a stop: end the turn with what it has and what it spent.
+    const stopped = (): ImplementerTurnOutcome => ({
+      stoppedReason: 'wall_clock',
+      toolCallCount: toolCalls,
+      usageByModel: result ? usageSince(result) : streamedUsage(streamed),
+    });
     const startedAt = new Map<string, number>();
     const warnings = new Map<string, { tag?: string; text: string }>();
 
@@ -536,8 +619,11 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
             sessionId = message.session_id;
           } else if (message.type === 'assistant') {
             // The block type comes from the SDK's `@anthropic-ai/sdk` peer, which is not installed.
-            const blocks: { type: string }[] = message.message.content;
-            toolCalls += blocks.filter((b) => b.type === 'tool_use').length;
+            const reply = message.message as AssistantReply;
+            toolCalls += reply.content.filter((b) => b.type === 'tool_use').length;
+            if (reply.id && reply.model && reply.usage) {
+              streamed.set(reply.id, { model: reply.model, usage: reply.usage });
+            }
           } else if (message.type === 'result') {
             result = message;
           }
@@ -545,6 +631,9 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
       } catch (err) {
         // A cancelled activity surfaces as a killed process: report the cancellation.
         throwIfActivityCancelled();
+        if (deadline?.aborted) {
+          return stopped();
+        }
         // Reaching the turn cap ends the run with an error result and then a throw. The
         // Mastra loop stops at its step budget without error, so this does too.
         if (result?.subtype !== 'error_max_turns') {
@@ -552,12 +641,19 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
             throw withSpentUsage(harnessFailure(result, stderrTail), usageSince(result));
           }
           // The process died before it could say why: what it wrote to stderr does.
-          throw err instanceof Error && stderrTail.trim()
-            ? new Error(`${err.message}\n${stderrTail.trim()}`, { cause: err })
-            : err;
+          // Its streamed messages still say what the calls it made were billed.
+          throw withSpentUsage(
+            err instanceof Error && stderrTail.trim()
+              ? new Error(`${err.message}\n${stderrTail.trim()}`, { cause: err })
+              : err,
+            streamedUsage(streamed)
+          );
         }
       }
 
+      if (!result && deadline?.aborted) {
+        return stopped();
+      }
       if (!result) {
         throw new Error(`Claude Code ended without a result. ${stderrTail.trim()}`.trim());
       }
@@ -570,12 +666,16 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
       }
 
       return {
+        steps: result.num_turns,
+        // Reaching the turn cap is the Mastra loop's step budget: a stop, not a failure.
+        stoppedReason: result.subtype === 'error_max_turns' ? 'max_steps' : undefined,
         text: result.subtype === 'success' ? result.result : undefined,
         toolCallCount: toolCalls,
         usageByModel: usageSince(result),
       };
     } finally {
       cancellation?.removeEventListener('abort', onCancel);
+      deadline?.removeEventListener('abort', onCancel);
       // `docker exec` does not stop what it started when its client dies. Every process the
       // harness began carries the tag, so this leaves nothing running between turns.
       await workspace.exec(killTaggedProcessesScript(tag)).catch(() => undefined);

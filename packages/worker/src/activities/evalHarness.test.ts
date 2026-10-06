@@ -31,6 +31,18 @@ const resolveAgent = vi.fn(async (..._args: unknown[]) => ({
 vi.mock('../lib/config/agentResolver.js', () => ({
   resolveAgent: (...args: unknown[]) => resolveAgent(...args),
 }));
+// The real resolver, unless a test makes it disobey a pin (`runtimeChoice.forced`).
+const runtimeChoice: { forced?: { runtime: string; source: string } } = {};
+vi.mock('../lib/config/agentRuntime.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/config/agentRuntime.js')>();
+  return {
+    ...actual,
+    resolveAgentRuntime: (...args: Parameters<typeof actual.resolveAgentRuntime>) =>
+      runtimeChoice.forced
+        ? Promise.resolve(runtimeChoice.forced)
+        : actual.resolveAgentRuntime(...args),
+  };
+});
 const persistActivityTrace = vi.fn(async () => {});
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn(() => 'eval-wf-1'),
@@ -405,24 +417,57 @@ describe('runCaseDefault iteration cap', () => {
     });
   });
 
-  it('applies a runtime override as the setting’s run pin, not around the setting', async () => {
+  it('applies a runtime override as pins, not around the resolution', async () => {
     vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 1 } as never);
     resolveSetting.mockClear();
-    await runCaseDefault(cases[0], 'implementer@2', { teamId: 'team-1' }, 'mastra');
-    expect(resolveSetting).toHaveBeenCalledWith('workspace.implementerRuntime', {
+    buildImplementerForActivity.mockClear();
+    const result = await runCaseDefault(cases[0], 'implementer@2', { teamId: 'team-1' }, 'mastra');
+    expect(result.runtime).toBe('mastra');
+    // The per-agent pin decides; the setting pin rides along for anything that reads it.
+    expect(buildImplementerForActivity.mock.calls[0]?.[2]).toEqual({
+      agentRuntimes: { implementer: 'mastra' },
       agentVersions: { implementer: 2 },
       pinnedSettings: { 'workspace.implementerRuntime': 'mastra' },
       teamId: 'team-1',
     });
+    expect(resolveSetting).not.toHaveBeenCalledWith(
+      'workspace.implementerRuntime',
+      expect.anything()
+    );
+  });
+
+  it('runs an override over the Agent’s own runtime, so a side can still be compared', async () => {
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 1 } as never);
+    resolveAgent.mockResolvedValue({
+      model: { apiBase: undefined, apiKey: 'k', spec: 'anthropic/x', systemPrompt: undefined },
+      runtime: 'claude-code',
+      skills: [],
+      toolKeys: null,
+    } as never);
+    try {
+      const result = await runCaseDefault(cases[0], 'implementer', {}, 'mastra');
+      expect(result.runtime).toBe('mastra');
+    } finally {
+      resolveAgent.mockResolvedValue({
+        model: { apiBase: undefined, apiKey: 'k', spec: 'anthropic/x', systemPrompt: undefined },
+        skills: [],
+        toolKeys: null,
+      });
+    }
   });
 
   it('refuses to score an arm whose override the runner did not honour', async () => {
     vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 1 } as never);
     generate.mockClear();
-    // The resolver returned the cascade value, not the pin.
-    await expect(runCaseDefault(cases[0], 'implementer', {}, 'claude-code')).rejects.toMatchObject({
-      type: 'EVAL_RUNTIME_MISMATCH',
-    });
+    // A resolver that ignored the pin.
+    runtimeChoice.forced = { runtime: 'mastra', source: 'default' };
+    try {
+      await expect(
+        runCaseDefault(cases[0], 'implementer', {}, 'claude-code')
+      ).rejects.toMatchObject({ type: 'EVAL_RUNTIME_MISMATCH' });
+    } finally {
+      runtimeChoice.forced = undefined;
+    }
     expect(generate).not.toHaveBeenCalled();
     expect(destroy).toHaveBeenCalled();
   });
@@ -482,6 +527,7 @@ describe('runEvalHarnessActivity', () => {
   });
 
   it('pins only the side that names a runtime override', async () => {
+    buildImplementerForActivity.mockClear();
     evalCaseFindMany.mockResolvedValueOnce([cases[0]]);
     evalDatasetFindUnique.mockResolvedValueOnce({ orgId: null, teamId: null });
     evalRunUpdateMany.mockResolvedValue({ count: 1 });
@@ -497,9 +543,21 @@ describe('runEvalHarnessActivity', () => {
       evalRunId: 'run-1',
     });
 
-    const pins = resolveSetting.mock.calls
-      .filter((c) => c[0] === 'workspace.implementerRuntime')
-      .map((c) => (c[1] as { pinnedSettings?: unknown }).pinnedSettings);
-    expect(pins).toEqual([undefined, { 'workspace.implementerRuntime': 'mastra' }]);
+    // Only the candidate's ctx carries pins; the two sides may run in either order.
+    const pins = buildImplementerForActivity.mock.calls.map((c) => {
+      const ctx = c[2] as {
+        agentRuntimes?: unknown;
+        agentVersions?: unknown;
+        pinnedSettings?: unknown;
+      };
+      return [ctx.agentVersions, ctx.agentRuntimes, ctx.pinnedSettings];
+    });
+    expect(pins).toHaveLength(2);
+    expect(pins).toContainEqual([{ implementer: 1 }, undefined, undefined]);
+    expect(pins).toContainEqual([
+      { implementer: 2 },
+      { implementer: 'mastra' },
+      { 'workspace.implementerRuntime': 'mastra' },
+    ]);
   });
 });

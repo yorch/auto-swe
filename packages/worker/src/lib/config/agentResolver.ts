@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { configCacheTtlMs, invalidate, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { type ImplementerRuntimeKind, toImplementerRuntime } from '@auto-swe/shared/types/api';
 import { asyncLocalStorage } from '@temporalio/activity';
 import { persistActivityTrace } from '../activityContext.js';
 import { logWarn } from '../activityLog.js';
@@ -27,6 +28,13 @@ export interface ResolvedAgent {
   toolKeys: string[] | null;
   /** P2/WS3: the `mcp` Connection whose tools to bind when `toolKeys` includes 'mcp'. */
   mcpConnectionId: string | null;
+  /**
+   * The loop this version asks to be driven by where it works in a workspace,
+   * read along the same `inheritsModelFrom` chain as the model: a persona with
+   * no runtime of its own takes its parent's. `null` = no opinion (see
+   * `resolveAgentRuntime`).
+   */
+  runtime: ImplementerRuntimeKind | null;
 }
 
 export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
@@ -249,8 +257,11 @@ async function reportMissingPinnedRevisions(
 async function resolveModelForAgent(
   agent: AgentRow,
   ctx?: ResolveCtx
-): Promise<ResolvedModelConfig> {
+): Promise<{ model: ResolvedModelConfig; runtime: ImplementerRuntimeKind | null }> {
   let source: AgentRow = agent;
+  // The runtime travels with the model: the harness can only drive the model
+  // the chain resolves, so the first row on the chain with an opinion decides.
+  let runtime = runtimeOf(agent);
   const seen = new Set<string>();
   while (!source.modelSpec && source.inheritsModelFrom) {
     if (seen.has(source.key)) {
@@ -264,6 +275,7 @@ async function resolveModelForAgent(
       );
     }
     source = parent;
+    runtime ??= runtimeOf(parent);
   }
   if (!source.modelSpec) {
     throw new ConfigMissingError(
@@ -274,12 +286,33 @@ async function resolveModelForAgent(
   const { provider } = parseProviderModelSpec(spec);
   const cred = await resolveProviderCredential(provider, ctx);
   return {
-    apiBase: cred.apiBase,
-    apiKey: cred.apiKey,
-    scope: agent.scope,
-    spec,
-    systemPrompt: agent.systemPrompt ?? undefined,
+    model: {
+      apiBase: cred.apiBase,
+      apiKey: cred.apiKey,
+      scope: agent.scope,
+      spec,
+      systemPrompt: agent.systemPrompt ?? undefined,
+    },
+    runtime,
   };
+}
+
+/**
+ * A row's runtime. The column is CHECK-constrained, so anything else is a row
+ * written around the API; it reads as no opinion, loudly, rather than failing
+ * every run that resolves the agent.
+ */
+function runtimeOf(agent: AgentRow): ImplementerRuntimeKind | null {
+  const known = toImplementerRuntime(agent.runtime);
+  if (agent.runtime === null || known) {
+    return known;
+  }
+  logWarn('agent has an unknown runtime; ignoring it', {
+    agentKey: agent.key,
+    runtime: agent.runtime,
+    version: agent.version,
+  });
+  return null;
 }
 
 /**
@@ -366,7 +399,7 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
     );
   }
 
-  const model = await resolveModelForAgent(agent, ctx);
+  const { model, runtime } = await resolveModelForAgent(agent, ctx);
 
   return {
     isVerified: agent.isVerified,
@@ -374,6 +407,7 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
     mcpConnectionId: agent.mcpConnectionId ?? null,
     model,
     origin: agent.origin ?? null,
+    runtime,
     skills: await skillsFromAgent(agent, ctx),
     toolKeys: parseToolKeys(agent.toolKeys),
     version: agent.version,

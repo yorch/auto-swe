@@ -8,6 +8,7 @@ const base = {
   mcpConnectionId: null,
   modelSpec: 'anthropic/a',
   name: 'Reviewer',
+  runtime: null,
   skillRefs: [],
   systemPrompt: 'one\ntwo',
   toolKeys: null,
@@ -82,5 +83,11 @@ describe('diffAgentVersions', () => {
       { mcp: new Map([['m1', 'Docs server']]) }
     );
     expect(change).toMatchObject({ after: 'Docs server', before: 'None' });
+  });
+
+  it('reports a runtime change, naming no opinion as the default', () => {
+    expect(diffAgentVersions(base, { ...base, runtime: 'claude-code' })).toEqual([
+      { after: 'claude-code', before: 'Default', kind: 'text', label: 'Runtime' },
+    ]);
   });
 });

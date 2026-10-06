@@ -6,12 +6,14 @@ const h = vi.hoisted(() => ({
   closeMcp: vi.fn(async () => {}),
   generate: vi.fn(async (..._args: unknown[]) => ({ text: 'mastra says hi', usage: undefined })),
   resolveAgent: vi.fn(),
+  resolveAgentRuntime: vi.fn(),
   resolveImplementerConfig: vi.fn(),
   resolveSetting: vi.fn(),
 }));
 
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: h.resolveSetting }));
 vi.mock('../lib/config/agentResolver.js', () => ({ resolveAgent: h.resolveAgent }));
+vi.mock('../lib/config/agentRuntime.js', () => ({ resolveAgentRuntime: h.resolveAgentRuntime }));
 vi.mock('./claudeCode/runtime.js', () => ({ claudeCodeRuntime: h.claudeCodeRuntime }));
 vi.mock('./implementer.js', () => ({
   buildImplementerForActivity: h.buildImplementerForActivity,
@@ -33,7 +35,7 @@ function input(
 ): Parameters<typeof buildImplementerTurnRunner>[0] {
   return {
     ctx: { orgId: 'org-1', teamId: 'team-1' },
-    tracer: {} as AgentTracer,
+    tracer: { addActivityEvent: vi.fn() } as unknown as AgentTracer,
     workspace: { containerId: 'workspace-1' } as never,
     ...overrides,
   };
@@ -42,6 +44,12 @@ function input(
 beforeEach(() => {
   vi.clearAllMocks();
   h.resolveSetting.mockResolvedValue('mastra');
+  // The real resolver's default branch, so these tests can drive the choice
+  // through the setting; resolveAgentRuntime has its own tests.
+  h.resolveAgentRuntime.mockImplementation(async (_key: string, ctx: unknown) => ({
+    runtime: await h.resolveSetting('workspace.implementerRuntime', ctx),
+    source: 'default',
+  }));
   h.resolveAgent.mockResolvedValue({
     model: { apiBase: 'https://gw.example/v1', apiKey: 'k', spec: 'anthropic/claude-opus-5-5' },
   });
@@ -73,6 +81,33 @@ describe('buildImplementerTurnRunner', () => {
     expect(h.resolveSetting).toHaveBeenCalledWith('workspace.implementerRuntime', ctx);
   });
 
+  it('asks for the agent’s own runtime, defaulting to the setting', async () => {
+    const given = input({ agentKey: 'ciFixer' });
+    await buildImplementerTurnRunner(given);
+    expect(h.resolveAgentRuntime).toHaveBeenCalledWith('ciFixer', given.ctx, 'implementerSetting');
+  });
+
+  it('runs the harness for an agent that asks for it, whatever the setting says', async () => {
+    h.resolveAgentRuntime.mockResolvedValue({ runtime: 'claude-code', source: 'agent' });
+    const given = input();
+    const turns = await buildImplementerTurnRunner(given);
+    expect(h.claudeCodeRuntime).toHaveBeenCalledTimes(1);
+    expect(h.buildImplementerForActivity).not.toHaveBeenCalled();
+    expect(turns).toMatchObject({ kind: 'claude-code', kindSource: 'agent' });
+    expect(given.tracer.addActivityEvent).toHaveBeenCalledWith({
+      name: 'agent.runtime',
+      outputJson: { agentKey: 'implementer', runtime: 'claude-code', source: 'agent' },
+    });
+  });
+
+  it('keeps an agent on Mastra when it asks for it under a claude-code setting', async () => {
+    h.resolveSetting.mockResolvedValue('claude-code');
+    h.resolveAgentRuntime.mockResolvedValue({ runtime: 'mastra', source: 'agent' });
+    const turns = await buildImplementerTurnRunner(input());
+    expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
+    expect(turns.kind).toBe('mastra');
+  });
+
   it('builds the Mastra agent, with its skill menu, only for the Mastra loop', async () => {
     const given = input({ agentKey: 'ciFixer' });
     const turns = await buildImplementerTurnRunner(given);
@@ -92,6 +127,7 @@ describe('buildImplementerTurnRunner', () => {
     expect(h.generate.mock.calls[0]?.[1]).toMatchObject({ maxSteps: 42 });
     expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
     expect(h.resolveAgent).not.toHaveBeenCalled();
+    expect(turns.kind).toBe('mastra');
   });
 
   it('reports the runtime it built, so a caller can record what actually ran', async () => {

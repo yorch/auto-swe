@@ -27,6 +27,7 @@ interface AgentRecord {
   credentialId: string | null;
   mcpConnectionId: string | null;
   toolKeys: unknown;
+  runtime: string | null;
   origin: string | null;
   isBuiltIn: boolean;
   isVerified: boolean;
@@ -54,6 +55,7 @@ function seededRow(overrides: Partial<AgentRecord> & { key: string }): AgentReco
     name: overrides.key,
     orgId: null,
     origin: 'swe-starter',
+    runtime: null,
     scope: 'GLOBAL',
     systemPrompt: 'existing prompt',
     teamId: null,
@@ -188,6 +190,22 @@ describe('syncAgents — seeded model default upgrade', () => {
     });
     expect(refs.filter((r) => r.agentId === v2.id)).toEqual([
       { agentId: v2.id, skillId: 'skill-tdd', sortOrder: 0 },
+    ]);
+  });
+
+  it('carries an admin-chosen runtime onto the new version', async () => {
+    const v1 = seededRow({
+      key: 'implementer',
+      modelSpec: 'anthropic/claude-opus-4-8',
+      runtime: 'claude-code',
+    });
+    const { agents, prisma } = makeStore([v1]);
+
+    await seedSweStarter(prisma);
+
+    expect(lineage(agents, 'implementer').map((r) => [r.version, r.runtime])).toEqual([
+      [1, 'claude-code'],
+      [2, 'claude-code'],
     ]);
   });
 

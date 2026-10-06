@@ -31,8 +31,18 @@ const HARNESS_TOOLS_BY_KEY: Record<string, readonly HarnessTool[]> = {
  * the named tools are granted.
  */
 export function harnessToolsFor(toolKeys: readonly string[] | null | undefined): HarnessTool[] {
-  const granted = new Set((toolKeys ?? []).flatMap((key) => HARNESS_TOOLS_BY_KEY[key] ?? []));
-  return granted.size === 0 ? [...HARNESS_TOOLS] : HARNESS_TOOLS.filter((t) => granted.has(t));
+  const granted = harnessToolsGranting(toolKeys ?? []);
+  return granted.length === 0 ? [...HARNESS_TOOLS] : granted;
+}
+
+/**
+ * The harness tools that stand in for exactly these workspace tool keys, with
+ * no default: an empty grant is no tools. For a caller that has already decided
+ * which workspace tools an agent gets (an agent run, `grantedWorkspaceToolIds`).
+ */
+export function harnessToolsGranting(keys: readonly string[]): HarnessTool[] {
+  const granted = new Set(keys.flatMap((key) => HARNESS_TOOLS_BY_KEY[key] ?? []));
+  return HARNESS_TOOLS.filter((t) => granted.has(t));
 }
 
 export type ToolDecision =

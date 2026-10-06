@@ -33,6 +33,13 @@ describe('buildAgentUpdate', () => {
     });
   });
 
+  it('sends the runtime only when it changed, and clears it with null', () => {
+    const onHarness: AgentRow = { ...BASE, runtime: 'claude-code' };
+    expect(buildAgentUpdate(onHarness, { ...onHarness, name: 'R2' })).toEqual({ name: 'R2' });
+    expect(buildAgentUpdate(BASE, onHarness)).toEqual({ runtime: 'claude-code' });
+    expect(buildAgentUpdate(onHarness, { ...onHarness, runtime: null })).toEqual({ runtime: null });
+  });
+
   it('sends nothing when nothing changed', () => {
     expect(buildAgentUpdate(BASE, { ...BASE })).toEqual({});
   });

@@ -9,7 +9,13 @@ const { checkSensitiveFilePath, scanShellCommand } = vi.hoisted(() => ({
 vi.mock('../../lib/sensitiveFileScanner.js', () => ({ checkSensitiveFilePath }));
 vi.mock('../../lib/shellCommandScanner.js', () => ({ scanShellCommand }));
 
-import { decideToolCall, HARNESS_TOOLS, harnessToolsFor, type PolicyContext } from './policy.js';
+import {
+  decideToolCall,
+  HARNESS_TOOLS,
+  harnessToolsFor,
+  harnessToolsGranting,
+  type PolicyContext,
+} from './policy.js';
 
 const ctx: PolicyContext = {
   containerId: 'workspace-abc',
@@ -38,6 +44,15 @@ describe('the tool allowlist', () => {
       const verdict = await decideToolCall(tool, {}, ctx);
       expect(verdict).toMatchObject({ allow: false });
     }
+  });
+});
+
+describe('an exact grant (harnessToolsGranting)', () => {
+  it('maps exactly the named workspace tools, and an empty grant to no tools', () => {
+    expect(harnessToolsGranting([])).toEqual([]);
+    expect(harnessToolsGranting(['mcp'])).toEqual([]);
+    expect(harnessToolsGranting(['readFile', 'listDirectory'])).toEqual(['Read', 'Glob', 'Grep']);
+    expect(harnessToolsGranting(['bash'])).toEqual(['Bash']);
   });
 });
 

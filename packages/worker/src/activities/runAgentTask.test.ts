@@ -13,22 +13,29 @@ const m = vi.hoisted(() => ({
     })),
     gitAuthed: vi.fn(async () => ''),
   },
+  assertBudget: vi.fn(async (_label?: string) => {}),
+  claudeCodeRuntime: vi.fn(),
   closeRows: vi.fn(async (_args: unknown) => ({ count: 1 })),
   commit: vi.fn(),
   createPr: vi.fn(),
   gate: vi.fn(),
+  harnessTurn: vi.fn(),
   importTree: vi.fn(async () => 10),
   ledger: { id: 'ledger-1', repoId: 'repo-1' } as unknown,
+  mcpConnectionId: null as string | null,
+  modelSpec: 'anthropic/x',
   persist: vi.fn(async (_tracer: unknown, _key: string) => {}),
   prCreate: vi.fn(async (_args: unknown) => ({})),
   prUpdate: vi.fn(async (_args: unknown) => ({})),
   push: vi.fn(),
+  recordUsage: vi.fn(),
   resolveAgentSpec: vi.fn(),
   run: {
     template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
     templateId: 'tpl-1',
   } as unknown,
   runAgent: vi.fn(),
+  runtime: null as string | null,
   settings: {
     'workspace.agentRunAllowWorkflowChanges': false,
     'workspace.agentRunMaxConcurrentGlobal': 4,
@@ -98,15 +105,26 @@ vi.mock('../lib/config/contextLookup.js', () => ({
     workflowTemplateId: 'tpl-1',
   })),
 }));
-vi.mock('../lib/config/agentResolver.js', () => ({
-  resolveAgent: vi.fn(async (key: string) => ({
+const { defaultResolveAgent } = vi.hoisted(() => ({
+  defaultResolveAgent: async (key: string) => ({
     key,
-    model: { apiBase: undefined, apiKey: 'k', spec: 'anthropic/x', systemPrompt: null },
+    mcpConnectionId: m.mcpConnectionId,
+    model: { apiBase: undefined, apiKey: 'k', spec: m.modelSpec, systemPrompt: null },
+    runtime: m.runtime,
     skills: [],
     toolKeys: m.toolKeys,
     version: 3,
-  })),
+  }),
 }));
+vi.mock('../lib/config/agentResolver.js', () => ({
+  resolveAgent: vi.fn(defaultResolveAgent),
+}));
+vi.mock('../agents/claudeCode/runtime.js', () => ({ claudeCodeRuntime: m.claudeCodeRuntime }));
+vi.mock('../lib/costTracking.js', () => ({
+  assertBudgetAvailable: m.assertBudget,
+  recordLlmUsage: m.recordUsage,
+}));
+vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput: vi.fn(async () => {}) }));
 // The REAL resolveAgentSpec runs (it intersects the offered tools with the
 // agent's toolKeys again), so the tool tests see what the agent is really given.
 vi.mock('../lib/config/agentSpec.js', async (orig) => {
@@ -116,7 +134,10 @@ vi.mock('../lib/config/agentSpec.js', async (orig) => {
 });
 vi.mock('../lib/models.js', () => ({ resolveModel: vi.fn(() => 'model') }));
 vi.mock('../lib/config/mcpConnection.js', () => ({ resolveAgentMcpUrl: vi.fn(async () => null) }));
-vi.mock('../agents/mcpTools.js', () => ({ loadMcpTools: vi.fn() }));
+vi.mock('../agents/mcpTools.js', async (orig) => ({
+  isMcpToolEnabled: (await orig<typeof import('../agents/mcpTools.js')>()).isMcpToolEnabled,
+  loadMcpTools: vi.fn(),
+}));
 vi.mock('../agents/workspaceTools.js', () => ({
   buildWorkspaceTools: vi.fn(() => ({
     bash: 'B',
@@ -206,6 +227,24 @@ beforeEach(() => {
   m.slots = [{ launchedAt: new Date(1), teamId: 'team-1', workflowId: 'wf-1' }];
   m.temporal = {};
   m.toolKeys = null;
+  // A test may replace the implementation; clearAllMocks does not restore it.
+  vi.mocked(resolveAgent).mockImplementation(defaultResolveAgent as never);
+  m.runtime = null;
+  m.mcpConnectionId = null;
+  m.modelSpec = 'anthropic/x';
+  m.claudeCodeRuntime.mockImplementation(() => ({ runTurn: m.harnessTurn }));
+  m.harnessTurn.mockResolvedValue({
+    steps: 6,
+    text: 'harness done',
+    toolCallCount: 3,
+    usageByModel: [{ modelSpec: 'anthropic/x', usage: { inputTokens: 10, outputTokens: 5 } }],
+  });
+  m.recordUsage.mockResolvedValue({
+    costUsd: 0.25,
+    inputTokens: 10,
+    modelSpec: 'anthropic/x',
+    outputTokens: 5,
+  });
   m.settings['workspace.agentRunMaxConcurrentGlobal'] = 4;
   m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 2;
   m.settings['workspace.agentRunMaxSteps'] = 50;
@@ -696,5 +735,124 @@ describe('delivery: trust boundary and gate-before-push', () => {
     expect(m.push).not.toHaveBeenCalled();
     expect(createWorkspace).toHaveBeenCalledTimes(1);
     expect(m.agentWs.destroy).toHaveBeenCalled();
+  });
+});
+
+describe('the Claude Code harness, for an agent that asks for it', () => {
+  beforeEach(() => {
+    m.runtime = 'claude-code';
+  });
+
+  it('stays on Mastra for an agent with no opinion, and says why on the trace', async () => {
+    m.runtime = null;
+    await runAgentTask({ request: request() });
+    expect(m.runAgent).toHaveBeenCalledTimes(1);
+    expect(m.claudeCodeRuntime).not.toHaveBeenCalled();
+    const tracer = m.persist.mock.calls[0]?.[0] as {
+      records: Array<{ toolName: string; outputJson?: unknown }>;
+    };
+    expect(tracer.records).toContainEqual(
+      expect.objectContaining({
+        outputJson: { agentKey: 'contentWriter', runtime: 'mastra', source: 'default' },
+        toolName: 'agent.runtime',
+      })
+    );
+  });
+
+  it('runs one bounded harness turn in the agent container instead of the Mastra loop', async () => {
+    const result = await runAgentTask({ request: request() });
+
+    expect(m.runAgent).not.toHaveBeenCalled();
+    expect(m.claudeCodeRuntime).toHaveBeenCalledTimes(1);
+    const options = m.claudeCodeRuntime.mock.calls[0]?.[0];
+    expect(options).toMatchObject({
+      access: { apiBase: undefined, apiKey: 'k', modelId: 'x' },
+      loadProjectSettings: true,
+      maxTurns: 50,
+      workspace: m.agentWs,
+    });
+    expect(options.deadline).toBeInstanceOf(AbortSignal);
+    expect(m.harnessTurn).toHaveBeenCalledTimes(1);
+    const turn = m.harnessTurn.mock.calls[0]?.[0];
+    expect(turn.user).toBe('fix the typo');
+    expect(turn.system).toContain('Do not run `git commit` or `git push`');
+    expect(m.recordUsage).toHaveBeenCalledWith(
+      'wf-1',
+      'contentWriter',
+      { inputTokens: 10, outputTokens: 5 },
+      'llm.agent_run',
+      'anthropic/x'
+    );
+    expect(result).toMatchObject({ costUsd: 0.25, steps: 6, text: 'harness done' });
+  });
+
+  it('checks the budget before the turn', async () => {
+    m.assertBudget.mockImplementationOnce(async () => {
+      expect(m.harnessTurn).not.toHaveBeenCalled();
+    });
+    await runAgentTask({ request: request() });
+    expect(m.assertBudget).toHaveBeenCalledWith('agent.contentWriter');
+  });
+
+  it.each([
+    [null, ['Read', 'Glob', 'Grep']],
+    [[], []],
+    [['mcp'], []],
+    [['bash'], ['Bash']],
+    [
+      ['readFile', 'writeFile'],
+      ['Read', 'Write', 'Edit', 'Glob', 'Grep'],
+    ],
+  ])(
+    'grants the harness exactly what the agent-run rule grants for toolKeys %j',
+    async (keys, tools) => {
+      m.toolKeys = keys as string[] | null;
+      await runAgentTask({ request: request() });
+      expect(m.claudeCodeRuntime.mock.calls[0]?.[0].tools).toEqual(tools);
+    }
+  );
+
+  it('refuses a model the harness cannot drive before any container exists', async () => {
+    m.modelSpec = 'openai/gpt-6.1-sol';
+    const f = await failureOf(runAgentTask({ request: request() }));
+    expect(f.type).toBe('HARNESS_UNSUPPORTED_MODEL');
+    expect(f.nonRetryable).toBe(true);
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('binds no MCP server, and says so on the trace', async () => {
+    m.mcpConnectionId = 'mcp-1';
+    m.toolKeys = ['readFile', 'mcp'];
+    await runAgentTask({ request: request() });
+    const tracer = m.persist.mock.calls[0]?.[0] as {
+      records: Array<{ toolName: string; outputJson?: unknown }>;
+    };
+    expect(tracer.records).toContainEqual(
+      expect.objectContaining({
+        outputJson: { agentKey: 'contentWriter', mcpConnectionId: 'mcp-1' },
+        toolName: 'agent.runtime_mcp_skipped',
+      })
+    );
+  });
+
+  it('a wall-clocked harness run is still gated and published', async () => {
+    m.harnessTurn.mockResolvedValue({ stoppedReason: 'wall_clock', toolCallCount: 1 });
+    const result = await runAgentTask({
+      request: request({ payload: { agentRef: 'contentWriter', deliver: 'branch' } }),
+    });
+    expect(result).toMatchObject({ gate: 'passed', stoppedReason: 'wall_clock' });
+    expect(m.push).toHaveBeenCalledTimes(1);
+  });
+
+  it('a harness failure publishes nothing and still cleans up', async () => {
+    m.harnessTurn.mockRejectedValue(new Error('Claude Code ended with error_during_execution'));
+    await expect(
+      runAgentTask({
+        request: request({ payload: { agentRef: 'contentWriter', deliver: 'branch' } }),
+      })
+    ).rejects.toThrow('error_during_execution');
+    expect(m.push).not.toHaveBeenCalled();
+    expect(m.agentWs.destroy).toHaveBeenCalled();
+    expect(m.persist).toHaveBeenCalledTimes(1);
   });
 });

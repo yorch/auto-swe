@@ -771,6 +771,8 @@ async function migrateSeededModelDefault(
         name: current.name,
         orgId: current.orgId,
         origin: current.origin,
+        // An admin's runtime choice survives a default-model move like every other field.
+        runtime: current.runtime,
         scope: current.scope,
         systemPrompt: current.systemPrompt,
         teamId: current.teamId,

@@ -1,3 +1,4 @@
+import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -27,6 +28,8 @@ export interface AgentRow {
   toolKeys: string[] | null;
   mcpConnectionId: string | null;
   credentialId: string | null;
+  /** The loop that drives the agent in a workspace; null = no opinion. */
+  runtime?: ImplementerRuntimeKind | null;
   origin: string | null;
   isBuiltIn: boolean;
   isVerified: boolean;
@@ -56,6 +59,8 @@ export interface CreateAgentBody {
   mcpConnectionId?: string | null;
   skillRefs?: SkillRefInput[] | null;
   credentialId?: string | null;
+  /** Platform-admin only. */
+  runtime?: ImplementerRuntimeKind | null;
 }
 
 export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>>;

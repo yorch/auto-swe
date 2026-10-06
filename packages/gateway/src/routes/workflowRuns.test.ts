@@ -235,6 +235,32 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(res.json().data.implementerRuntime).toBe(expected);
   });
 
+  it.each([
+    [
+      'a run whose agents pinned their runtimes',
+      { ciFixer: 'mastra', implementer: 'claude-code' },
+      { ciFixer: 'mastra', implementer: 'claude-code' },
+    ],
+    [
+      'a run with a malformed entry',
+      { implementer: 'claude-code', junk: 3 },
+      { implementer: 'claude-code' },
+    ],
+    ['a run where nothing resolved one yet', null, {}],
+    ['a run whose column holds an array', ['claude-code'], {}],
+  ])('agentRuntimes for %s', async (_label, agentRuntimes, expected) => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    const row = await prisma.workflowRun.findFirst();
+    prisma.workflowRun.findFirst.mockResolvedValue({ ...row, agentRuntimes });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}`,
+    });
+    expect(res.json().data.agentRuntimes).toEqual(expected);
+  });
+
   it('returns the spec snapshot by default and when includeSpec=true', async () => {
     const { app, prisma } = await buildApp();
     mockRun(prisma);

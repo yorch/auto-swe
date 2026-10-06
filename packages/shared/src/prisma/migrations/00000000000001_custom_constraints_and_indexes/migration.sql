@@ -444,3 +444,12 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 -- order matches the reaper's: never-checked first, then oldest.
 CREATE INDEX IF NOT EXISTS "idx_workflow_runs_unfinalized_reap"
     ON "workflow_runs" ("reap_checked_at" NULLS FIRST, "started_at") WHERE "ended_at" IS NULL;
+
+-- An Agent version's runtime is one of `IMPLEMENTER_RUNTIMES` (`types/api.ts`) or null
+-- (no opinion). The worker refuses an unknown value too; this keeps a row the
+-- API never wrote (a hand edit, a future bundle) from reaching it at all.
+DO $$ BEGIN
+  ALTER TABLE "agents"
+    ADD CONSTRAINT "agents_runtime_check"
+    CHECK ("runtime" IS NULL OR "runtime" IN ('mastra', 'claude-code'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

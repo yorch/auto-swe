@@ -3,6 +3,7 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { boundToolKeys } from '../lib/boundToolKeys.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
+import { resolveAgent } from '../lib/config/agentResolver.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { withChannelScope } from '../lib/config/channelContext.js';
@@ -54,6 +55,10 @@ export interface RunAgentNodeResult {
  * No workspace tools are attached to a generic agent node, but MCP tools bind
  * when the resolved Agent enables them (`'mcp'` toolKey + `mcpConnectionId`) —
  * the generic counterpart to the implementer's `buildImplementerForActivity`.
+ *
+ * With no workspace there is nothing for the Claude Code harness to run in, so
+ * a node always runs on Mastra; an Agent that asks for the harness gets an
+ * `agent.runtime_not_applicable` event on the trace saying so.
  */
 export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNodeResult> {
   // Heartbeats while the whole activity runs: its LLM call can outlast the
@@ -92,6 +97,14 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
   const tracer = new AgentTracer();
   let closeMcp: (() => Promise<void>) | undefined;
   try {
+    // Cached: resolveAgentSpec just resolved the same key under the same ctx.
+    const { runtime } = await resolveAgent(key, resolveCtx);
+    if (runtime === 'claude-code') {
+      tracer.addActivityEvent({
+        name: 'agent.runtime_not_applicable',
+        outputJson: { agentKey: key, ranOn: 'mastra', reason: 'no workspace', runtime },
+      });
+    }
     const mcpTarget = await resolveAgentMcpUrl(key, resolveCtx);
     let mcpTools: AgentTools | undefined;
     if (mcpTarget) {

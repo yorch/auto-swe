@@ -87,6 +87,7 @@ function agentRow(overrides: Record<string, any> = {}) {
     key: 'reviewer',
     modelSpec: 'anthropic/claude-opus-4-8',
     origin: 'swe-starter',
+    runtime: null,
     scope: 'GLOBAL',
     skillRefs: [],
     systemPrompt: null,
@@ -502,5 +503,54 @@ describe('resolveAgent — scope cascade', () => {
     const r = await resolveAgent('reviewer', { orgId: 'o1', teamId: 't1' });
     expect(r.model.scope).toBe('GLOBAL');
     expect(r.version).toBe(1);
+  });
+});
+
+describe('resolveAgent — runtime', () => {
+  it('reads the row’s own runtime, and null as no opinion', async () => {
+    agentFindFirst.mockResolvedValueOnce(agentRow({ runtime: 'claude-code' }));
+    expect((await resolveAgent('reviewer')).runtime).toBe('claude-code');
+    agentFindFirst.mockResolvedValueOnce(agentRow());
+    expect((await resolveAgent('reviewer')).runtime).toBeNull();
+  });
+
+  it('inherits the runtime along inheritsModelFrom, as the model is', async () => {
+    agentFindFirst.mockImplementation(async ({ where }: { where: { key: string } }) =>
+      where.key === 'ciFixer'
+        ? agentRow({ inheritsModelFrom: 'implementer', key: 'ciFixer', modelSpec: null })
+        : agentRow({ key: 'implementer', runtime: 'claude-code' })
+    );
+    const r = await resolveAgent('ciFixer');
+    expect(r.runtime).toBe('claude-code');
+    expect(r.model.spec).toBe('anthropic/claude-opus-4-8');
+  });
+
+  it('lets a persona’s own runtime win over its parent’s', async () => {
+    agentFindFirst.mockImplementation(async ({ where }: { where: { key: string } }) =>
+      where.key === 'ciFixer'
+        ? agentRow({
+            inheritsModelFrom: 'implementer',
+            key: 'ciFixer',
+            modelSpec: null,
+            runtime: 'mastra',
+          })
+        : agentRow({ key: 'implementer', runtime: 'claude-code' })
+    );
+    expect((await resolveAgent('ciFixer')).runtime).toBe('mastra');
+  });
+
+  it('does not inherit from a parent when the row carries its own model', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ inheritsModelFrom: 'implementer' }));
+    expect((await resolveAgent('reviewer')).runtime).toBeNull();
+    expect(agentFindFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads an unknown runtime as no opinion, with a warning', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ runtime: 'something-else' }));
+    expect((await resolveAgent('reviewer')).runtime).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      'agent has an unknown runtime; ignoring it',
+      expect.objectContaining({ runtime: 'something-else' })
+    );
   });
 });

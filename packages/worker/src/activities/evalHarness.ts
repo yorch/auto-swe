@@ -76,7 +76,8 @@ export interface HarnessInput {
   baselineRef: string;
   /**
    * Per-side implementer runtime override. Absent or null, the side runs on
-   * whatever `workspace.implementerRuntime` resolves to in the dataset's scope.
+   * what its agent resolves to in the dataset's scope: the Agent's own
+   * `runtime`, else `workspace.implementerRuntime`.
    */
   candidateRuntime?: ImplementerRuntimeKind | null;
   baselineRuntime?: ImplementerRuntimeKind | null;
@@ -158,10 +159,13 @@ async function defaultFinalize(evalRunId: string, status: string, summary: unkno
  * is what that tenant's production runs get. Omitted, the case resolves at
  * GLOBAL scope, which is right only for a GLOBAL dataset.
  *
- * `runtime` is the eval run's override for this side. It enters as a run pin of
- * `workspace.implementerRuntime` — the same tier a production run's start-time
- * snapshot occupies — so `buildImplementerTurnRunner` still chooses through the
- * setting. Omitted, the arm runs on what the dataset's scope resolves.
+ * `runtime` is the eval run's override for this side. It enters as pins, the
+ * tiers a production run's own pins occupy: the agent's per-run runtime pin
+ * (`ctx.agentRuntimes`), which wins over the Agent version's own `runtime`, and
+ * the run pin of `workspace.implementerRuntime`. `buildImplementerTurnRunner`
+ * still chooses through `resolveAgentRuntime`; nothing skips it. Omitted, the arm
+ * runs on what the dataset's scope resolves: the Agent's own runtime, else the
+ * setting.
  */
 export async function runCaseDefault(
   caseRow: EvalCaseRow,
@@ -174,7 +178,12 @@ export async function runCaseDefault(
     ...(scope.teamId ? { teamId: scope.teamId } : {}),
     ...(scope.orgId ? { orgId: scope.orgId } : {}),
     ...(parsed.version !== undefined ? { agentVersions: { [parsed.key]: parsed.version } } : {}),
-    ...(runtime ? { pinnedSettings: { 'workspace.implementerRuntime': runtime } } : {}),
+    ...(runtime
+      ? {
+          agentRuntimes: { [parsed.key]: runtime },
+          pinnedSettings: { 'workspace.implementerRuntime': runtime },
+        }
+      : {}),
   };
 
   // Attempt cap comes from the DB-backed workflow defaults (falls back to 3).
@@ -208,8 +217,8 @@ export async function runCaseDefault(
     // Chosen once for the whole case: a runtime that resumes its session across
     // iterations must not be rebuilt per iteration.
     turns = await buildImplementerTurnRunner({ agentKey: parsed.key, ctx, tracer, workspace });
-    // A pin the resolver did not honour (a value its schema refuses falls through to
-    // the cascade) would grade the wrong runtime under the requested one's name.
+    // A pin the resolver did not honour would grade the wrong runtime under the
+    // requested one's name.
     if (runtime && turns.kind !== runtime) {
       throw ApplicationFailure.nonRetryable(
         `Eval asked for the '${runtime}' implementer runtime, but '${turns.kind}' was built.`,

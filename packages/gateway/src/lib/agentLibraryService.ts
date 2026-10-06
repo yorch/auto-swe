@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
 import { catalogWarnings } from './modelCatalogService.js';
 
 /**
@@ -43,6 +44,39 @@ export interface AgentBaseInput {
   mcpConnectionId?: string | null;
   /** Ordered list of skills to attach. undefined = keep current; null/[] = clear. */
   skillRefs?: SkillRefInput[] | null;
+  /**
+   * The loop that drives this agent where it works in a workspace. null = no
+   * opinion (the run-wide `workspace.implementerRuntime` for the implementer
+   * family, Mastra for agent runs). Platform-ADMIN only: the routes enforce it.
+   */
+  runtime?: ImplementerRuntimeKind | null;
+}
+
+/**
+ * Why a version cannot carry this runtime, or null. The harness speaks only the
+ * Anthropic Messages API, so a version that names its own non-Anthropic model
+ * cannot ask for it; one that inherits its model is checked when a run resolves
+ * it (`HARNESS_UNSUPPORTED_MODEL`), since the parent can change independently.
+ */
+export function runtimeModelError(
+  runtime: string | null | undefined,
+  modelSpec: string | null | undefined
+): string | null {
+  if (runtime !== 'claude-code' || !modelSpec || modelSpec.startsWith('anthropic/')) {
+    return null;
+  }
+  return `The claude-code runtime needs an Anthropic model, but this agent's model is '${modelSpec}'. Set the model to anthropic/<model>, or the runtime to mastra.`;
+}
+
+/** The runtime and model a version would end up with after merging `base` over `current`. */
+export function mergedRuntimeAndModel(
+  current: { modelSpec: string | null; runtime: string | null } | null,
+  base: Pick<AgentBaseInput, 'modelSpec' | 'runtime'>
+): { modelSpec: string | null; runtime: string | null } {
+  return {
+    modelSpec: base.modelSpec === undefined ? (current?.modelSpec ?? null) : base.modelSpec,
+    runtime: base.runtime === undefined ? (current?.runtime ?? null) : base.runtime,
+  };
 }
 
 function scopeWhere(key: AgentScopeKey) {
@@ -224,6 +258,7 @@ export async function createAgent(
         name: base.name,
         orgId: scopeWhere(key).orgId,
         origin: null,
+        runtime: base.runtime ?? null,
         scope: key.scope,
         systemPrompt: base.systemPrompt ?? null,
         teamId: scopeWhere(key).teamId,
@@ -313,6 +348,7 @@ export async function updateAgent(
         name: pick(base.name, current.name),
         orgId: current.orgId,
         origin: current.origin,
+        runtime: pick(base.runtime, current.runtime),
         scope: current.scope,
         systemPrompt: pick(base.systemPrompt, current.systemPrompt),
         teamId: current.teamId,
