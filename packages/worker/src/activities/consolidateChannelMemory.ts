@@ -5,6 +5,7 @@ import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { mapWithConcurrency } from '../lib/boundedMap.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
@@ -52,6 +53,9 @@ interface RawMemoryItem {
   teamId: string | null;
   orgId: string | null;
 }
+
+/** Max clusters consolidated concurrently — each is one LLM call plus embeddings. */
+const CLUSTER_CONCURRENCY = 3;
 
 const EMPTY_RESULT: ConsolidateChannelMemoryResult = {
   clustersConsolidated: 0,
@@ -220,8 +224,12 @@ export async function consolidateChannelMemory(
   }
 
   try {
-    const clusterOutcomes = await Promise.all(
-      qualifying.map(async (cluster) => {
+    // Each cluster is one LLM call plus embeddings; on a busy channel there can
+    // be many, so they run through the same bounded pool as lesson clusters.
+    const clusterOutcomes = await mapWithConcurrency(
+      qualifying,
+      CLUSTER_CONCURRENCY,
+      async (cluster) => {
         const clusterItems = cluster.map((idx) => rows[idx]);
         const sourceIds = clusterItems.map((m) => m.id);
 
@@ -333,7 +341,7 @@ export async function consolidateChannelMemory(
           );
           return { consolidated: cluster.length, created: memories.length };
         });
-      })
+      }
     );
 
     const finalResult: ConsolidateChannelMemoryResult = {

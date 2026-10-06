@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { LESSON_CONSOLIDATOR_PROMPT } from '../agents/prompts.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { mapWithConcurrency } from '../lib/boundedMap.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
@@ -268,21 +269,10 @@ async function consolidateLessonsImpl(
         return { consolidated: cluster.length, created: lessons.length };
       });
     };
-    const clusterOutcomes: Array<Awaited<ReturnType<typeof processCluster>>> = new Array(
-      qualifying.length
-    );
-    let nextCluster = 0;
-    const poolWorker = async (): Promise<void> => {
-      while (true) {
-        const i = nextCluster++;
-        if (i >= qualifying.length) {
-          return;
-        }
-        clusterOutcomes[i] = await processCluster(qualifying[i] as number[]);
-      }
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(CLUSTER_CONCURRENCY, qualifying.length) }, poolWorker)
+    const clusterOutcomes = await mapWithConcurrency(
+      qualifying,
+      CLUSTER_CONCURRENCY,
+      processCluster
     );
 
     const totalConsolidated = clusterOutcomes.reduce((s, o) => s + o.consolidated, 0);
