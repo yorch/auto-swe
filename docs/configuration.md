@@ -290,7 +290,7 @@ from the definition.
   saved values.
 - **The registry does not yet cover every compiled-in constant.** Temporal retry and timeout
   profiles (`packages/worker/src/workflows/proxyOptions.ts`), the context-spill budgets in
-  `runnable.ts`, the model price table in `costTracking.ts`, and several agent loop caps are still
+  `runnableContext.ts`, the model price table in `costTracking.ts`, and several agent loop caps are still
   code. Each is a definition away, but they are not done.
 - **`WorkflowDefaults` is platform-wide.** Branch prefix, PR templates, budget tiers, workspace
   sizing, and the TDD/eval iteration caps resolve from one global row and do not cascade to a team.

@@ -26,7 +26,7 @@ import { STEP_REQUIRED_AGENTS } from './stepRequiredAgents.js';
  */
 
 const WORKER_SRC = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const RUNNABLE = join(WORKER_SRC, 'workflows/runnable.ts');
+const STEP_EXECUTORS_SRC = join(WORKER_SRC, 'workflows/runnableSteps.ts');
 
 /**
  * Step names registered in `STEP_EXECUTORS`.
@@ -38,7 +38,7 @@ const RUNNABLE = join(WORKER_SRC, 'workflows/runnable.ts');
  * `planDecomposition` with it.
  */
 function registeredSteps(): Set<string> {
-  const src = readFileSync(RUNNABLE, 'utf8');
+  const src = readFileSync(STEP_EXECUTORS_SRC, 'utf8');
   const table = src.slice(src.indexOf('const STEP_EXECUTORS'), src.indexOf('\n]);'));
   return new Set(
     [...table.matchAll(/\[\s*(?:\/\/[^\n]*\n\s*)*'([a-zA-Z]\w*)'\s*,/g)].map((m) => m[1])
@@ -67,7 +67,7 @@ describe('STEP_REQUIRED_AGENTS tracks the step executors', () => {
 
   it('names only steps that still exist', () => {
     const stale = Object.keys(STEP_REQUIRED_AGENTS).filter((step) => !steps.has(step));
-    expect(stale, 'keys in STEP_REQUIRED_AGENTS with no executor in runnable.ts').toEqual([]);
+    expect(stale, 'keys in STEP_REQUIRED_AGENTS with no executor in runnableSteps.ts').toEqual([]);
   });
 
   it('marks a dynamic step rather than leaving it undeclared', () => {
