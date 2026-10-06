@@ -2762,7 +2762,7 @@
       "WorkflowShellAudit"
     ]
   },
-  "reviewedCommit": "53f5262aa919f03160ca82cc59d9e023406f38e8",
+  "reviewedCommit": "8db88ee6cdfc16a1ccff08ae134601fddc8f6588",
   "sourceHashes": {
     "docker-compose.app.yml": "96d57e466289e17048648c7e852e21c0ac24085526fae63c21e8c0ffe8b22cf6",
     "packages/cli/src/commands/skills.ts": "bdfa28470df98565ec676d471ffc23a7e7719aea79b6be638d0e2aedee7acbda",
@@ -2787,7 +2787,6 @@
     "packages/gateway/src/lib/skillSourceService.ts": "a30052cc467a41bfe0ca8b6ed25a8d1eac217d922961670f8ed44132a6c57e3e",
     "packages/gateway/src/lib/skillSourceUpdateService.ts": "e3afdef2bb09dac376d50f90d715d0e9da7891f862ce5d50b62081606de35374",
     "packages/gateway/src/lib/slack.ts": "88a3919ea90ff8557f6de8654f843968ab23490cff58badfdf515a18e3b0d0ac",
-    "packages/gateway/src/lib/systemConfigService.ts": "e38f507849039c42b418beebc6aeb2ced3698c973d2a9f16199c18c2e4f478f2",
     "packages/gateway/src/lib/systemConfigService.ts": "83a4875d255ab746b570cbe73ddfb955843d3a2a547d37a07f5e79efe4a97bfe",
     "packages/gateway/src/lib/telemetry.ts": "1e16475c4f267980dd981c91d4209bda694003bbca1e72b06956977cdc7bf967",
     "packages/gateway/src/lib/templateLaunch.ts": "fe9e78aec2333f472824e2f77e86faa5dd7fd3ccb4a1bdef97c0c569cc5a6ad6",
