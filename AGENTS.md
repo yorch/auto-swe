@@ -192,7 +192,7 @@ install, and every rule in it is there because that bug already shipped past a g
 | The root layout renders per request (`dynamic = 'force-dynamic'`) while it reads `NEXT_PUBLIC_*` | Otherwise Next prerenders it at `next build`, where the variable is unset, and bakes the `localhost` fallback into every page; the env var on the running container is never read. The page renders and the gateway is healthy — sign-in just fails in the browser. Invisible locally, because the fallback is the dev gateway's address |
 | Every `fetch(…)` under `shared/lib/integrations/**` and `worker/src/connectors/**` writes a `redirect` option | `fetch` follows redirects by default, so a credentialed request to a checked host can be bounced to an unchecked one and still succeed. A call that says nothing type-checks and returns data; only reading the call shows the policy is missing. A tripwire, not a proof: it matches `fetch(` and `globalThis.fetch(` in source text, so an aliased or injected fetch is not seen |
 | MCP code (`lib/mcp/**`, `routes/mcp.ts`) imports only an allowlist of modules (`node:*`, the MCP SDK, Fastify, Zod, and two pure gateway files) and never names `prisma`; `import()`, `require()` and re-exports count as imports | A tool reaches data only through a REST route, called in-process, so the route's role check, visibility filter, tenant guard and audit apply to it. A tool that queried the database itself would type-check and pass its own tests while ignoring a visibility rule the route enforces. Unlike the rules above this one is a standing constraint on a new surface, not a past incident |
-| Every `*.pg.test.ts` under `packages/` is named on a `yarn test` line of a `ci.yml` step that sets every `process.env.X === '1'` flag the suite gates on, with no `if:` or `continue-on-error:` on that step | These suites are opt-in (`describe.skipIf(!enabled)`) because the unit-test job has no database. A suite no step lists never runs anywhere, one listed under the wrong flag has every test skipped by its own gate, and a conditional or non-failing step can skip or swallow it — CI is green in each case. A suite whose gate is not that form is refused rather than guessed at. Like the MCP rule this is a standing constraint, not a past incident |
+| Every `*.pg.test.ts` and `*.docker.test.ts` under `packages/` is named on a `yarn test` line of a `ci.yml` step that sets every `process.env.X === '1'` flag the suite gates on, with no `if:` or `continue-on-error:` on that step | These suites are opt-in (`describe.skipIf(!enabled)`) because the unit-test job has no database and no Docker daemon. A suite no step lists never runs anywhere, one listed under the wrong flag has every test skipped by its own gate, and a conditional or non-failing step can skip or swallow it — CI is green in each case. A suite whose gate is not that form is refused rather than guessed at. Like the MCP rule this is a standing constraint, not a past incident |
 
 Add a rule only when its violation is **silent** under the existing gates and **decidable** by
 reading the source. A rule the type system can enforce belongs in the type system; a rule a unit
@@ -579,7 +579,12 @@ Full reference: [`docs/agents.md`](./docs/agents.md).
 All multi-agent fan-out in this codebase is **workflow-driven with structured results**: the
 interpreter (not an LLM) decides to run the review network or a channel-assistant composite run,
 and each sub-agent it spawns returns a typed result (`CodeResult`, `ReviewVerdict`, `Subtask[]`)
-that fixed code consumes. No agent dynamically decides at run time to spawn another agent.
+that fixed code consumes. The one place a model's choice starts work is the channel assistant:
+its `delegateTask`, `generateWorkflow` and `refineWorkflow` tools only **record an intent**, and
+after the turn fixed workflow code validates it and applies it — a thread-bound child run started
+with `startChild` under `REJECT_DUPLICATE` (one task per thread), or a draft template. The child's
+transcript never flows back into the assistant's context; the thread sees its outcome, not its
+reasoning. No agent spawns another agent itself, mid-turn.
 
 This is a standing constraint on any mechanism that changes that, not a description of one that
 exists: **if an agent is ever allowed to dynamically delegate to a sub-agent, that sub-agent is
