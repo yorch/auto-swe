@@ -21,7 +21,11 @@ export interface Lesson {
   failureType: string | null;
   consolidatedAt: string | null;
   createdAt: string;
-  repository: { id: string; organizationName: string; repoName: string };
+  /**
+   * Null once the repository is deleted: the lesson's `repoId` is set null with
+   * it, and the lesson stays in the list until an admin deletes it.
+   */
+  repository: { id: string; organizationName: string; repoName: string } | null;
   workflow: { id: string; temporalWorkflowId: string; currentStatus: string } | null;
 }
 
