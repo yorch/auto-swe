@@ -6,7 +6,11 @@
  * the same list-pagination querystring. Keep the projection here so the
  * wire shape stays in lockstep.
  */
-import type { AutonomyDecisionDto, EvalResultDto } from '@auto-swe/shared/types/api';
+import {
+  type AutonomyDecisionDto,
+  type EvalResultDto,
+  toImplementerRuntime,
+} from '@auto-swe/shared/types/api';
 import { z } from 'zod';
 import { paginationQuery } from '../lib/pagination.js';
 
@@ -108,6 +112,7 @@ export function projectEvalResult(r: {
   value: number;
   passed: boolean | null;
   rationale: string | null;
+  runtime?: string | null;
   metadata: unknown;
   createdAt: Date;
 }): EvalResultDto {
@@ -122,6 +127,7 @@ export function projectEvalResult(r: {
     passed: r.passed,
     rationale: r.rationale,
     runId: r.runId,
+    runtime: toImplementerRuntime(r.runtime),
     scorer: r.scorer,
     scoreType: r.scoreType,
     source: r.source,

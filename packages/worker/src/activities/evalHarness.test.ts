@@ -130,10 +130,15 @@ function deps(over: Partial<HarnessDeps> = {}): HarnessDeps & {
       records.push(r);
     }) as HarnessDeps['record'],
     records,
-    runCase: async () => 1,
+    runCase: async () => ({ runtime: 'mastra', score: 1 }),
     ...over,
   };
 }
+
+const outcome = (score: 0 | 1, runtime: 'mastra' | 'claude-code' = 'mastra') => ({
+  runtime,
+  score,
+});
 
 const input = {
   baselineRef: 'main',
@@ -182,7 +187,7 @@ describe('runEvalHarness', () => {
   it('marks REGRESSION when the candidate is consistently worse', async () => {
     // baseline passes everything, candidate fails everything
     const d = deps({
-      runCase: vi.fn(async (_c, ref) => (ref === 'main' ? 1 : 0)) as HarnessDeps['runCase'],
+      runCase: vi.fn(async (_c, ref) => outcome(ref === 'main' ? 1 : 0)) as HarnessDeps['runCase'],
     });
     const verdict = await runEvalHarness(input, d);
     expect(verdict.regression).toBe(true);
@@ -190,7 +195,7 @@ describe('runEvalHarness', () => {
   });
 
   it('does not flag REGRESSION when arms are equal', async () => {
-    const d = deps({ runCase: async () => 1 });
+    const d = deps({ runCase: async () => outcome(1) });
     const verdict = await runEvalHarness(input, d);
     expect(verdict.regression).toBe(false);
     expect(verdict.overall.delta).toBe(0);
@@ -198,7 +203,7 @@ describe('runEvalHarness', () => {
 
   it('persists the candidate floor outcome (value 0 on failure)', async () => {
     const d = deps({
-      runCase: async (_c, ref) => (ref === 'cand' ? 0 : 1),
+      runCase: async (_c, ref) => outcome(ref === 'cand' ? 0 : 1),
     });
     await runEvalHarness(input, d);
     expect((d.records[0] as { value: number }).value).toBe(0);
@@ -215,7 +220,7 @@ describe('runEvalHarness', () => {
         if (c.id !== 'c1' && ref === 'cand') {
           throw budgetStop();
         }
-        return 1 as const;
+        return outcome(1);
       }) as HarnessDeps['runCase'],
     });
 
@@ -251,7 +256,7 @@ describe('runEvalHarness', () => {
             }
           );
         }
-        return 1 as const;
+        return outcome(1);
       }) as HarnessDeps['runCase'],
     });
     await runEvalHarness(input, d);
@@ -276,11 +281,50 @@ describe('runEvalHarness', () => {
         if (c.id === 'c2') {
           throw ref === 'cand' ? budgetStop() : new Error('docker down');
         }
-        return 1 as const;
+        return outcome(1);
       }) as HarnessDeps['runCase'],
     });
     await expect(runEvalHarness(input, d)).rejects.toThrow('docker down');
     expect(d.finals).toHaveLength(0);
+  });
+
+  it('runs each side on its runtime override and records the runtime each arm used', async () => {
+    const d = deps({
+      runCase: vi.fn(async (_c: EvalCaseRow, _ref: string, runtime?: string) =>
+        outcome(1, runtime === 'claude-code' ? 'claude-code' : 'mastra')
+      ) as HarnessDeps['runCase'],
+    });
+    await runEvalHarness(
+      { ...input, baselineRuntime: 'mastra', candidateRuntime: 'claude-code' },
+      d
+    );
+
+    const calls = vi.mocked(d.runCase).mock.calls;
+    expect(calls.slice(0, 2).map(([, ref, runtime]) => [ref, runtime])).toEqual([
+      ['main', 'mastra'],
+      ['cand', 'claude-code'],
+    ]);
+    expect(d.records[0]).toMatchObject({
+      metadata: { baselineRuntime: 'mastra', tags: ['repo:a'] },
+      runtime: 'claude-code',
+    });
+    expect(d.finals[0].summary).toMatchObject({
+      runtimes: { baseline: ['mastra'], candidate: ['claude-code'] },
+    });
+  });
+
+  it('passes no override when the run names none, and still records what ran', async () => {
+    const d = deps({
+      runCase: vi.fn(async () => outcome(1, 'claude-code')) as HarnessDeps['runCase'],
+    });
+    await runEvalHarness({ ...input, baselineRuntime: null }, d);
+    for (const [, , runtime] of vi.mocked(d.runCase).mock.calls) {
+      expect(runtime).toBeUndefined();
+    }
+    expect(d.records[0]).toMatchObject({ runtime: 'claude-code' });
+    expect(d.finals[0].summary).toMatchObject({
+      runtimes: { baseline: ['claude-code'], candidate: ['claude-code'] },
+    });
   });
 
   it('carries no partial marker on a run that completed every case', async () => {
@@ -361,6 +405,28 @@ describe('runCaseDefault iteration cap', () => {
     });
   });
 
+  it('applies a runtime override as the setting’s run pin, not around the setting', async () => {
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 1 } as never);
+    resolveSetting.mockClear();
+    await runCaseDefault(cases[0], 'implementer@2', { teamId: 'team-1' }, 'mastra');
+    expect(resolveSetting).toHaveBeenCalledWith('workspace.implementerRuntime', {
+      agentVersions: { implementer: 2 },
+      pinnedSettings: { 'workspace.implementerRuntime': 'mastra' },
+      teamId: 'team-1',
+    });
+  });
+
+  it('refuses to score an arm whose override the runner did not honour', async () => {
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 1 } as never);
+    generate.mockClear();
+    // The resolver returned the cascade value, not the pin.
+    await expect(runCaseDefault(cases[0], 'implementer', {}, 'claude-code')).rejects.toMatchObject({
+      type: 'EVAL_RUNTIME_MISMATCH',
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalled();
+  });
+
   it('persists the trace even when the agent throws', async () => {
     generate.mockRejectedValueOnce(new Error('LLM exploded'));
     await expect(runCaseDefault(cases[0], 'implementer')).rejects.toThrow('LLM exploded');
@@ -374,7 +440,7 @@ describe('runCaseDefault iteration cap', () => {
     const result = await runCaseDefault(cases[0], 'implementer');
 
     // Golden test never passes → loop is bounded by the resolved cap, not 3.
-    expect(result).toBe(0);
+    expect(result).toEqual({ runtime: 'mastra', score: 0 });
     expect(generate).toHaveBeenCalledTimes(2);
     expect(execCapture).toHaveBeenCalledTimes(2);
   });
@@ -385,7 +451,7 @@ describe('runCaseDefault iteration cap', () => {
 
     const result = await runCaseDefault(cases[0], 'implementer');
 
-    expect(result).toBe(1);
+    expect(result).toEqual({ runtime: 'mastra', score: 1 });
     expect(generate).toHaveBeenCalledTimes(1);
   });
 });
@@ -413,5 +479,27 @@ describe('runEvalHarnessActivity', () => {
       expect(scope).toMatchObject({ orgId: 'org-x' });
       expect(scope).not.toHaveProperty('teamId');
     }
+  });
+
+  it('pins only the side that names a runtime override', async () => {
+    evalCaseFindMany.mockResolvedValueOnce([cases[0]]);
+    evalDatasetFindUnique.mockResolvedValueOnce({ orgId: null, teamId: null });
+    evalRunUpdateMany.mockResolvedValue({ count: 1 });
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValue({ maxEvalIterations: 1 } as never);
+    resolveSetting.mockClear();
+
+    await runEvalHarnessActivity({
+      baselineRef: 'implementer@1',
+      baselineRuntime: null,
+      candidateRef: 'implementer@2',
+      candidateRuntime: 'mastra',
+      datasetId: 'd1',
+      evalRunId: 'run-1',
+    });
+
+    const pins = resolveSetting.mock.calls
+      .filter((c) => c[0] === 'workspace.implementerRuntime')
+      .map((c) => (c[1] as { pinnedSettings?: unknown }).pinnedSettings);
+    expect(pins).toEqual([undefined, { 'workspace.implementerRuntime': 'mastra' }]);
   });
 });

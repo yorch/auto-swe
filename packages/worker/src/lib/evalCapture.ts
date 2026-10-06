@@ -46,6 +46,8 @@ export interface EvalResultInput {
   judgeModel?: string;
   /** USD cost of the LLM call that produced the score, when one did. */
   costUsd?: number;
+  /** Implementer runtime that produced the scored output (offline harness rows). */
+  runtime?: string;
   metadata?: Record<string, unknown>;
 }
 

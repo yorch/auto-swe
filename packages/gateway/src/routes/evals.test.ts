@@ -194,6 +194,90 @@ describe('evalRoutes', () => {
     expect(JSON.parse(res.payload).data.id).toBe('run-9');
   });
 
+  it('carries a per-side runtime override onto the run row and into the workflow', async () => {
+    const started = vi.fn(async (..._args: unknown[]) => {});
+    const { app, prisma } = await buildApp('ADMIN', started);
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'd1' });
+    prisma.evalRun.create.mockImplementation(async ({ data }: { data: object }) => ({
+      ...data,
+      endedAt: null,
+      id: 'run-11',
+      startedAt: new Date('2026-06-24T00:00:00Z'),
+      summary: null,
+    }));
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: {
+        baselineRef: 'implementer@3',
+        baselineRuntime: 'mastra',
+        candidateRef: 'implementer@3',
+        candidateRuntime: 'claude-code',
+        datasetId: '11111111-1111-4111-8111-111111111111',
+      },
+      url: '/api/v1/platform/evals/runs',
+    });
+    expect(res.statusCode).toBe(202);
+    expect(prisma.evalRun.create.mock.calls[0][0].data).toMatchObject({
+      baselineRuntime: 'mastra',
+      candidateRuntime: 'claude-code',
+    });
+    expect(started).toHaveBeenCalledWith('eval-run-11', {
+      baselineRef: 'implementer@3',
+      baselineRuntime: 'mastra',
+      candidateRef: 'implementer@3',
+      candidateRuntime: 'claude-code',
+      datasetId: '11111111-1111-4111-8111-111111111111',
+      evalRunId: 'run-11',
+    });
+    expect(JSON.parse(res.payload).data).toMatchObject({
+      baselineRuntime: 'mastra',
+      candidateRuntime: 'claude-code',
+    });
+  });
+
+  it('leaves both runtimes to the setting when the request names none', async () => {
+    const started = vi.fn(async (..._args: unknown[]) => {});
+    const { app, prisma } = await buildApp('ADMIN', started);
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'd1' });
+    prisma.evalRun.create.mockResolvedValue({ id: 'run-12' });
+    await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: {
+        baselineRef: 'b',
+        candidateRef: 'c',
+        datasetId: '11111111-1111-4111-8111-111111111111',
+      },
+      url: '/api/v1/platform/evals/runs',
+    });
+    expect(prisma.evalRun.create.mock.calls[0][0].data).toMatchObject({
+      baselineRuntime: null,
+      candidateRuntime: null,
+    });
+    expect(started.mock.calls[0][1]).toMatchObject({
+      baselineRuntime: null,
+      candidateRuntime: null,
+    });
+  });
+
+  it('rejects an unknown runtime', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: {
+        baselineRef: 'b',
+        candidateRef: 'c',
+        candidateRuntime: 'codex',
+        datasetId: '11111111-1111-4111-8111-111111111111',
+      },
+      url: '/api/v1/platform/evals/runs',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(prisma.evalRun.create).not.toHaveBeenCalled();
+  });
+
   it('marks a run whose workflow failed to start FAILED, and counts it as finalized', async () => {
     const { app, prisma } = await buildApp('ADMIN', async () => {
       throw new Error('temporal unreachable');
@@ -247,6 +331,7 @@ describe('evalRoutes', () => {
         passed: true,
         rationale: null,
         runId: 'r1',
+        runtime: 'claude-code',
         scorer: 'gate:runTests',
         scoreType: 'BOOLEAN',
         source: 'GATE',
@@ -263,7 +348,12 @@ describe('evalRoutes', () => {
     const body = JSON.parse(res.payload);
     expect(body.meta).toEqual({ limit: 10, offset: 0, total: 1 });
     expect(body.data[0].scorer).toBe('gate:runTests');
-    expect(body.data[0]).toMatchObject({ caseId: null, evalRunId: 'er1', runId: 'r1' });
+    expect(body.data[0]).toMatchObject({
+      caseId: null,
+      evalRunId: 'er1',
+      runId: 'r1',
+      runtime: 'claude-code',
+    });
     // the source filter reaches the where clause
     expect(prisma.evalResult.findMany.mock.calls[0][0].where).toMatchObject({ source: 'GATE' });
   });
@@ -378,6 +468,19 @@ describe('evalRoutes', () => {
       }
     });
 
+    it('splits a scorer by the implementer runtime that produced it', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalResult.groupBy.mockResolvedValue([]);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/trends?window=7&by=runtime',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(prisma.evalResult.groupBy.mock.calls[0][0].by).toEqual(['scorer', 'runtime']);
+      expect(JSON.parse(res.payload).data.by).toBe('runtime');
+    });
+
     it('rejects an unknown breakdown dimension', async () => {
       const { app } = await buildApp();
       const res = await app.inject({
@@ -457,7 +560,9 @@ describe('evalRoutes', () => {
       prisma.evalRun.findMany.mockResolvedValue([
         {
           baselineRef: 'main',
+          baselineRuntime: null,
           candidateRef: 'feat',
+          candidateRuntime: 'claude-code',
           dataset: { name: 'Golden tickets', slug: 'golden' },
           datasetId: '11111111-1111-4111-8111-111111111111',
           endedAt: null,
@@ -477,6 +582,8 @@ describe('evalRoutes', () => {
       const body = JSON.parse(res.payload);
       expect(body.meta).toEqual({ limit: 20, offset: 20, total: 21 });
       expect(body.data[0]).toMatchObject({
+        baselineRuntime: null,
+        candidateRuntime: 'claude-code',
         datasetName: 'Golden tickets',
         datasetSlug: 'golden',
         endedAt: null,

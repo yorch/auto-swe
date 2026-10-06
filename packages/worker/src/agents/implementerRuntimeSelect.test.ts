@@ -94,6 +94,12 @@ describe('buildImplementerTurnRunner', () => {
     expect(h.resolveAgent).not.toHaveBeenCalled();
   });
 
+  it('reports the runtime it built, so a caller can record what actually ran', async () => {
+    expect((await buildImplementerTurnRunner(input())).kind).toBe('mastra');
+    h.resolveSetting.mockResolvedValue('claude-code');
+    expect((await buildImplementerTurnRunner(input())).kind).toBe('claude-code');
+  });
+
   it('defaults to the implementer agent', async () => {
     await buildImplementerTurnRunner(input());
     expect(h.buildImplementerForActivity.mock.calls[0]?.[3]).toBe('implementer');

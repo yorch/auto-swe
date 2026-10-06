@@ -10,6 +10,7 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEvalDataset, useEvalRuns } from '@/hooks/useAdmin';
+import { formatArm } from '@/lib/evalRuntime';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatDate } from '@/lib/utils';
 
@@ -77,10 +78,10 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                           <EvalRunStatusBadge partial={r.partial} status={r.status} />
                         </Td>
                         <Td className="px-4 py-2 font-mono text-[11px] text-paper-300">
-                          {r.candidateRef}
+                          {formatArm(r.candidateRef, r.candidateRuntime)}
                         </Td>
                         <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
-                          {r.baselineRef}
+                          {formatArm(r.baselineRef, r.baselineRuntime)}
                         </Td>
                       </TRow>
                     ))}

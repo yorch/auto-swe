@@ -1,6 +1,7 @@
 import { isWorkflowStatusFinished } from '@auto-swe/shared/lib/agentRunAdmission';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
+import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
 import type {
   ChannelAssistantTurnInput,
   ConsolidateLessonsInput,
@@ -246,6 +247,8 @@ declare module 'fastify' {
           datasetId: string;
           candidateRef: string;
           baselineRef: string;
+          candidateRuntime?: ImplementerRuntimeKind | null;
+          baselineRuntime?: ImplementerRuntimeKind | null;
         }
       ) => Promise<void>;
       startConsolidationWorkflow: (
@@ -829,6 +832,8 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         datasetId: string;
         candidateRef: string;
         baselineRef: string;
+        candidateRuntime?: ImplementerRuntimeKind | null;
+        baselineRuntime?: ImplementerRuntimeKind | null;
       }
     ): Promise<void> {
       await client.workflow.start('EvalRunWorkflow', {

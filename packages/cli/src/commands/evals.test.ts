@@ -120,6 +120,7 @@ describe('runEvalsCommand', () => {
         data: [
           {
             createdAt: '2026-01-01T00:00:00.000Z',
+            runtime: 'claude-code',
             scorer: 'tests-pass',
             scoreType: 'BOOLEAN',
             source: 'GATE',
@@ -148,6 +149,7 @@ describe('runEvalsCommand', () => {
     const out = stdoutWrites.join('');
     expect(out).toContain('pass');
     expect(out).toContain('0.75');
+    expect(out).toContain('pass  claude-code');
     expect(out).toContain('(2 of 42)');
   });
 
@@ -197,6 +199,74 @@ describe('runEvalsCommand', () => {
       return jsonResponse({ data: { id: 'run-9', status: finalStatus, summary } });
     }) as unknown as typeof fetch;
   }
+
+  it('run sends a per-side runtime override and prints the runtimes that ran', async () => {
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/v1/platform/evals')) {
+        return jsonResponse({
+          data: [{ caseCount: 1, id: 'ds-1', name: 'Golden', scope: 'GLOBAL', slug: 'golden' }],
+        });
+      }
+      if (url.endsWith('/api/v1/platform/evals/runs')) {
+        body = JSON.parse(String(init?.body));
+        return jsonResponse({ data: { id: 'run-9', status: 'RUNNING', summary: null } });
+      }
+      return jsonResponse({
+        data: {
+          id: 'run-9',
+          status: 'SUCCESS',
+          summary: {
+            runtimes: { baseline: ['mastra'], candidate: ['claude-code'] },
+            summary: 'no significant regression',
+          },
+        },
+      });
+    }) as unknown as typeof fetch;
+    const code = await runEvalsCommand(
+      [
+        'run',
+        'golden',
+        '--candidate=implementer@3',
+        '--against=implementer@3',
+        '--candidate-runtime=claude-code',
+        '--against-runtime=mastra',
+      ],
+      ENV
+    );
+    expect(code).toBe(0);
+    expect(body).toMatchObject({ baselineRuntime: 'mastra', candidateRuntime: 'claude-code' });
+    const out = stdoutWrites.join('');
+    expect(out).toContain('implementer@3 on claude-code vs implementer@3 on mastra');
+    expect(out).toContain('Runtimes: candidate claude-code, baseline mastra');
+  });
+
+  it('run sends no runtime when no flag names one', async () => {
+    let body: Record<string, unknown> = {};
+    const inner = runFetch('SUCCESS', { summary: 'ok' });
+    globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/v1/platform/evals/runs')) {
+        body = JSON.parse(String(init?.body));
+      }
+      return (inner as unknown as (u: string) => Promise<Response>)(url);
+    }) as unknown as typeof fetch;
+    await runEvalsCommand(['run', 'golden', '--candidate=feat', '--against=main'], ENV);
+    expect(body).not.toHaveProperty('candidateRuntime');
+    expect(body).not.toHaveProperty('baselineRuntime');
+  });
+
+  it('run refuses an unknown runtime before calling the gateway', async () => {
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+    const code = await runEvalsCommand(
+      ['run', 'golden', '--candidate=feat', '--against=main', '--candidate-runtime=codex'],
+      ENV
+    );
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain(
+      '--candidate-runtime must be one of mastra, claude-code'
+    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
 
   it('run exits 0 only on SUCCESS', async () => {
     globalThis.fetch = runFetch('SUCCESS', { summary: 'no significant regression' });

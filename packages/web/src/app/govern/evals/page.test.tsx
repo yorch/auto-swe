@@ -293,6 +293,19 @@ describe('GovernEvalsPage', () => {
     expect(screen.getAllByText('Judge model').length).toBeGreaterThan(1);
   });
 
+  it('splits the trends by implementer runtime', async () => {
+    const spy = mock();
+    render(withQuery(<GovernEvalsPage />));
+    await screen.findByText('Window mean');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Runtime' }));
+
+    await waitFor(() =>
+      expect(urls(spy).some((u) => u.includes('trends?') && u.includes('by=runtime'))).toBe(true)
+    );
+    expect(screen.getAllByText('Runtime').length).toBeGreaterThan(1);
+  });
+
   it('charts a split scorer as one series per breakdown value, with the none bucket named', async () => {
     const series = (breakdown: string | null, mean: number) => ({
       breakdown,

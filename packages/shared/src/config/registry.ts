@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
+import { IMPLEMENTER_RUNTIMES } from '../types/api.js';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { MAX_FANOUT_CONCURRENCY } from '../workflow/spec.js';
 import type { SettingDefinition } from './types.js';
@@ -512,7 +513,7 @@ export const SETTING_DEFINITIONS = {
     requiredRole: 'ADMIN',
     restartRequired: false,
     runPinned: true,
-    schema: z.enum(['mastra', 'claude-code']),
+    schema: z.enum(IMPLEMENTER_RUNTIMES),
   }),
 
   // ── Agent workspace ────────────────────────────────────────────────────────

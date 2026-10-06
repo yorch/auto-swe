@@ -1,3 +1,4 @@
+import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
 import { proxyActivities } from '@temporalio/workflow';
 import type { runEvalHarnessActivity as runEvalHarnessActivityType } from '../activities/evalHarness.js';
 import { T_4_HOURS, T_5_MINUTES } from './proxyOptions.js';
@@ -29,6 +30,9 @@ export interface EvalRunWorkflowInput {
   datasetId: string;
   candidateRef: string;
   baselineRef: string;
+  /** Per-side implementer runtime override; absent = `workspace.implementerRuntime` decides. */
+  candidateRuntime?: ImplementerRuntimeKind | null;
+  baselineRuntime?: ImplementerRuntimeKind | null;
 }
 
 export async function EvalRunWorkflow(input: EvalRunWorkflowInput): Promise<void> {
