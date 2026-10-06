@@ -71,7 +71,7 @@ export function ConnectionPicker({
       label={label}
       onChange={onChange}
       options={visible.map((c) => ({ label: connectionLabel(c), value: c.id }))}
-      placeholder="— select connection —"
+      placeholder="Select a connection…"
       required={required}
       value={value}
     />
@@ -144,7 +144,7 @@ export function SchemaFieldInput({
         label={base}
         onChange={onChange}
         options={[
-          { label: '— select —', value: '' },
+          { label: 'Select…', value: '' },
           ...prop.enum.map((opt) => ({ label: String(opt), value: String(opt) })),
         ]}
         required={required}

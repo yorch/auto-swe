@@ -1,7 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import { Badge } from '@/components/ui/Badge';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { Icon } from '@/components/ui/Icon';
 import { usePromoteWorkflowVersion, useWorkflowSpecDiff } from '@/hooks/useTemplates';
 
 /**
@@ -45,11 +47,24 @@ export function PromoteVersionModal({
   );
 
   const activating = activeVersion === version;
-  let summary: string;
+  let summary: React.ReactNode;
   if (activating) {
     summary = `Version ${version} becomes the version new runs use, and the template becomes available to run.`;
   } else if (diff) {
-    summary = `+${diff.diff.addedNodes.length} added / −${diff.diff.removedNodes.length} removed / ~${diff.diff.changedNodes.length} changed nodes compared with the active version (v${activeVersion}).`;
+    summary = (
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span>Compared with v{activeVersion}:</span>
+        <Badge tone="moss" variant="outline">
+          {diff.diff.addedNodes.length} added
+        </Badge>
+        <Badge tone="brick" variant="outline">
+          {diff.diff.removedNodes.length} removed
+        </Badge>
+        <Badge tone="amber" variant="outline">
+          {diff.diff.changedNodes.length} changed
+        </Badge>
+      </span>
+    );
   } else if (isLoading) {
     summary = 'Comparing with the active version…';
   } else {
@@ -66,13 +81,14 @@ export function PromoteVersionModal({
               ? `Activate version ${version}?`
               : `New runs will use version ${version} instead of version ${activeVersion ?? 'none'}.`}
           </p>
-          <p className="tabular font-mono text-xs text-paper-300">{summary}</p>
+          <div className="text-[13px] text-paper-300">{summary}</div>
           {comparing && !hideDiffLink && (
             <Link
-              className="text-sm text-ember-400 hover:underline"
+              className="inline-flex items-center gap-1 text-[13px] text-ember-400 hover:underline"
               href={diffHref(templateId, activeVersion, version)}
             >
-              View diff
+              View the full diff
+              <Icon name="arrowRight" size={13} />
             </Link>
           )}
         </div>

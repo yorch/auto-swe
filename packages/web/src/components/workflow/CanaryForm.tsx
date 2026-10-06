@@ -74,7 +74,7 @@ export function CanaryForm() {
     <>
       <SectionHeader
         className="mt-8"
-        hint="routes a share of work-requests to a candidate agent version"
+        hint="Routes a share of work requests to a candidate agent version"
         title="Canary routing"
       />
       <p className="mb-5 text-sm text-paper-400">

@@ -72,7 +72,7 @@ export function NewRequestModal({
                   .
                 </>
               }
-              title="No active templates."
+              title="No workflows to run yet"
             />
           ) : (
             <Combobox
@@ -91,7 +91,7 @@ export function NewRequestModal({
           disabled={!canContinue}
           onCancel={onClose}
           onSubmit={handleContinue}
-          submitLabel="Continue →"
+          submitLabel="Continue"
         />
       </div>
     </Modal>

@@ -82,7 +82,7 @@ function renderPage(over: Record<string, unknown> = {}) {
 describe('TemplateAnalyticsPage', () => {
   it('shows an empty state instead of a wall of zero tiles when there are no runs', async () => {
     renderPage({ perStepFailureRates: [], significanceHint: null, totalRuns: 0 });
-    expect(await screen.findByText('No runs in the last 30 days.')).toBeTruthy();
+    expect(await screen.findByText('No runs in the last 30 days')).toBeTruthy();
     expect(screen.queryByText('Avg cost / run')).toBeNull();
   });
 

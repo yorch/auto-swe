@@ -10,6 +10,7 @@ import {
   validateSpec,
 } from '@auto-swe/shared/workflow';
 import { use, useEffect, useMemo, useState } from 'react';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
@@ -17,12 +18,14 @@ import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { SparkleIcon, SparkleTextIcon } from '@/components/ui/icons';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
-import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Slider } from '@/components/ui/Slider';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -60,7 +63,15 @@ import { errMsg } from '@/lib/errors';
 import { estimatorPricing } from '@/lib/modelCatalog';
 import { validateRouteParam } from '@/lib/routeParams';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
-import { formatCost, formatDuration, formatPercent, formatRelativeTime } from '@/lib/utils';
+import {
+  cn,
+  FOCUS_RING,
+  formatCost,
+  formatDate,
+  formatDuration,
+  formatPercent,
+  formatRelativeTime,
+} from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
 interface PageProps {
@@ -242,15 +253,15 @@ function EditSchemaModal({
     >
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
-        <div className="flex items-center justify-end">
-          <Button
-            onClick={() => setPreview((p) => !p)}
-            size="sm"
-            variant={preview ? 'primary' : 'ghost'}
-          >
-            {preview ? 'Back to editor' : 'Preview form'}
-          </Button>
-        </div>
+        <SegmentedControl
+          ariaLabel="Launch inputs view"
+          onChange={(v) => setPreview(v === 'preview')}
+          options={[
+            { label: 'Fields', value: 'edit' },
+            { label: 'Preview form', value: 'preview' },
+          ]}
+          value={preview ? 'preview' : 'edit'}
+        />
         {preview ? (
           <SchemaFormPreview schema={schema} />
         ) : (
@@ -269,15 +280,39 @@ function EditSchemaModal({
   );
 }
 
+/** One card of the right rail: a small heading, an optional hint and action, then the body. */
+function RailCard({
+  action,
+  children,
+  hint,
+  title,
+}: {
+  action?: React.ReactNode;
+  children: React.ReactNode;
+  hint?: string;
+  title: string;
+}) {
+  return (
+    <Card className="p-4" variant="inset">
+      <div className="mb-3 flex min-h-7 items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-paper-100">
+          {title}
+          {hint && <span className="ml-2 font-normal text-paper-500">{hint}</span>}
+        </h2>
+        {action}
+      </div>
+      {children}
+    </Card>
+  );
+}
+
 function ExperimentCard({
-  number,
   templateId,
   versions,
   activeVersion,
   experimentVersion,
   experimentSplit,
 }: {
-  number: string;
   templateId: string;
   versions: { id: string; version: number }[];
   activeVersion: number | null;
@@ -335,16 +370,16 @@ function ExperimentCard({
   }
 
   return (
-    <Card variant="inset">
-      <SectionHeader hint="A/B" number={number} title="Experiment" />
+    <RailCard hint="A/B test" title="Experiment">
       {error && <Alert className="mb-3 text-xs">{error}</Alert>}
       <div className="space-y-3">
         <Select
           compact
+          hint="Send a share of new runs to another version"
           label="Experiment version"
           onChange={(v) => setExpVer(v ? Number(v) : null)}
           options={[
-            { label: '— none —', value: '' },
+            { label: 'None', value: '' },
             ...nonActive.map((v) => ({ label: `v${v.version}`, value: String(v.version) })),
           ]}
           value={expVer == null ? '' : String(expVer)}
@@ -356,19 +391,19 @@ function ExperimentCard({
           </Alert>
         )}
         {expVer && (
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <Slider
               formatValue={(v) => `${v}%`}
               id="exp-split"
-              label="Traffic split (% to experiment)"
+              label="Traffic to the experiment"
               max={50}
               min={1}
               onChange={setSplit}
               value={split}
             />
-            <div className="font-mono text-[10px] text-paper-500">
+            <p className="text-xs text-paper-500 tabular-nums">
               v{activeVersion} gets {100 - split}% · v{expVer} gets {split}%
-            </div>
+            </p>
           </div>
         )}
         <div className="flex gap-2">
@@ -376,18 +411,27 @@ function ExperimentCard({
             disabled={updateTemplate.isPending || armErrorCount > 0}
             onClick={handleSave}
             size="sm"
-            variant="primary"
+            variant="secondary"
           >
-            {saved ? 'Saved ✓' : updateTemplate.isPending ? 'Saving…' : 'Save changes'}
+            {saved ? (
+              <>
+                <Icon name="check" size={13} />
+                Saved
+              </>
+            ) : updateTemplate.isPending ? (
+              'Saving…'
+            ) : (
+              'Save experiment'
+            )}
           </Button>
           {(experimentVersion || expVer) && (
-            <Button onClick={handleClear} size="sm" variant="secondary">
+            <Button onClick={handleClear} size="sm" variant="ghost">
               Clear
             </Button>
           )}
         </div>
       </div>
-    </Card>
+    </RailCard>
   );
 }
 
@@ -465,11 +509,9 @@ function WebhookActions({
 }
 
 function WebhookCard({
-  number,
   template,
   canManage,
 }: {
-  number: string;
   template: WorkflowTemplateSummary;
   canManage: boolean;
 }) {
@@ -509,13 +551,15 @@ function WebhookCard({
   };
 
   return (
-    <Card variant="inset">
-      <SectionHeader hint="HTTP" number={number} title="Webhook trigger" />
+    <RailCard hint="HTTP" title="Webhook trigger">
       {error && <Alert className="mb-3 text-xs">{error}</Alert>}
       {webhookUrl ? (
         <div className="space-y-3">
+          <Alert className="text-xs" variant="warning">
+            Copy this URL now. It is shown only once.
+          </Alert>
           <div className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded bg-ink-900 px-2 py-1 font-mono text-[10px] text-paper-300">
+            <code className="min-w-0 flex-1 truncate rounded-md border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-[11px] text-paper-300">
               {webhookUrl}
             </code>
             <CopyButton value={webhookUrl} />
@@ -526,33 +570,38 @@ function WebhookCard({
         </div>
       ) : template.webhookConfigured ? (
         <div className="space-y-3">
-          <p className="text-xs text-paper-500">
-            A webhook URL is configured. The token is shown only once, when it is generated —
-            regenerate to issue a new one (the previous URL stops working) or revoke it.
+          <p className="flex items-center gap-2 text-[13px] text-paper-200">
+            <Badge dot tone="moss">
+              Configured
+            </Badge>
+          </p>
+          <p className="text-xs leading-relaxed text-paper-500">
+            The URL is shown only once, when it is generated. Regenerate to issue a new one (the
+            current URL stops working) or revoke it.
           </p>
           {canManage && (
             <WebhookActions onRegenerate={confirmRegenerate} onRevoke={confirmRevoke} />
           )}
         </div>
       ) : (
-        <EmptyState
-          action={
-            canManage && (
-              <Button
-                disabled={regenerate.isPending}
-                onClick={handleRegenerate}
-                size="sm"
-                variant="secondary"
-              >
-                {regenerate.isPending ? 'Generating…' : 'Generate webhook URL'}
-              </Button>
-            )
-          }
-          className="py-0 text-left text-xs"
-          title="No webhook configured."
-        />
+        <div className="space-y-3">
+          <p className="text-xs leading-relaxed text-paper-500">
+            No webhook yet. Generate a URL to let another system start this workflow with an HTTP
+            request.
+          </p>
+          {canManage && (
+            <Button
+              disabled={regenerate.isPending}
+              onClick={handleRegenerate}
+              size="sm"
+              variant="secondary"
+            >
+              {regenerate.isPending ? 'Generating…' : 'Generate webhook URL'}
+            </Button>
+          )}
+        </div>
       )}
-    </Card>
+    </RailCard>
   );
 }
 
@@ -747,17 +796,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
     }
   };
 
-  // Right-rail sections, in render order — numbered from this one list so a
-  // conditional section never leaves a gap or a duplicate.
-  const railSections = [
-    template.versions.length > 1 && 'versions',
-    analytics && analytics.totalRuns > 0 && 'observed',
-    'schema',
-    template.versions.length > 1 && 'experiment',
-    'webhook',
-  ].filter(Boolean);
-  const railNumber = (key: string) => String(railSections.indexOf(key) + 1).padStart(2, '0');
-
   const selectedNeedsReview =
     canManage &&
     effectiveVersion !== null &&
@@ -787,24 +825,45 @@ export default function TemplateDetailPage({ params }: PageProps) {
     ? `Fix ${lintErrorCount} error${lintErrorCount === 1 ? '' : 's'} before promoting`
     : null;
 
+  const canPromote =
+    !isDirty &&
+    canManage &&
+    effectiveVersion !== null &&
+    (effectiveVersion !== template.activeVersion || template.status === 'DRAFT');
+  // The header already offers Run on an active workflow, so promotion there is secondary.
+  const promoteVariant = template.status === 'ACTIVE' ? 'secondary' : 'primary';
+  const isActiveVersion = effectiveVersion === template.activeVersion;
+
   const editorActions = (
     <>
+      <SegmentedControl
+        ariaLabel="Editor view"
+        onChange={(next) => {
+          if ((next === 'json') !== (mode === 'json')) {
+            setMode(mode === 'json' ? (canManage ? 'edit' : 'view') : 'json');
+          }
+        }}
+        options={[
+          { label: 'Visual', value: 'visual' },
+          { label: 'JSON', value: 'json' },
+        ]}
+        value={mode === 'json' ? 'json' : 'visual'}
+      />
       {mode === 'view' && canManage && (
         <Button onClick={() => setMode('edit')} size="sm" variant="secondary">
+          <Icon name="edit" size={13} />
           Edit
         </Button>
       )}
-      <Button
-        onClick={() => setMode(mode === 'json' ? (canManage ? 'edit' : 'view') : 'json')}
-        size="sm"
-        variant={mode === 'json' ? 'primary' : 'ghost'}
-      >
-        {mode === 'json' ? 'Visual' : 'JSON'}
-      </Button>
       {isDirty && (
-        <Button onClick={handleCancel} size="sm" variant="secondary">
+        <Button onClick={handleCancel} size="sm" variant="ghost">
           Cancel
         </Button>
+      )}
+      {isDirty && jsonInvalid && (
+        <span className="text-xs text-brick-400" id="save-blocked-reason">
+          Fix the JSON to save
+        </span>
       )}
       {isDirty && (
         <Button
@@ -817,33 +876,25 @@ export default function TemplateDetailPage({ params }: PageProps) {
           {createVersion.isPending ? 'Saving…' : 'Save new version'}
         </Button>
       )}
-      {isDirty && jsonInvalid && (
-        <span className="font-mono text-[11px] text-brick-400" id="save-blocked-reason">
-          Fix the JSON to save
+      {canPromote && promoteReason && (
+        <span className="text-xs text-brick-400" id="promote-blocked-reason">
+          {promoteReason}
         </span>
       )}
-      {!isDirty &&
-        canManage &&
-        effectiveVersion !== null &&
-        (effectiveVersion !== template.activeVersion || template.status === 'DRAFT') &&
+      {canPromote &&
         (selectedNeedsReview ? (
           <Button
             aria-describedby={
-              promoteBlocked && effectiveVersion === template.activeVersion
-                ? 'promote-blocked-reason'
-                : undefined
+              promoteBlocked && isActiveVersion ? 'promote-blocked-reason' : undefined
             }
-            disabled={
-              reviewVersion.isPending ||
-              (promoteBlocked && effectiveVersion === template.activeVersion)
-            }
+            disabled={reviewVersion.isPending || (promoteBlocked && isActiveVersion)}
             onClick={handleReview}
             size="sm"
-            variant="primary"
+            variant={promoteVariant}
           >
             {reviewVersion.isPending
               ? 'Reviewing…'
-              : effectiveVersion === template.activeVersion
+              : isActiveVersion
                 ? 'Review & activate'
                 : 'Review & approve'}
           </Button>
@@ -853,21 +904,19 @@ export default function TemplateDetailPage({ params }: PageProps) {
             disabled={promoteBlocked}
             onClick={() => setPromoteOpen(true)}
             size="sm"
-            variant="primary"
+            variant={promoteVariant}
           >
-            {effectiveVersion === template.activeVersion ? 'Activate' : 'Promote to active'}
+            {isActiveVersion ? 'Activate' : 'Promote to active'}
           </Button>
         ))}
-      {!isDirty && promoteReason && canManage && (
-        <span className="font-mono text-[11px] text-brick-400" id="promote-blocked-reason">
-          {promoteReason}
-        </span>
-      )}
     </>
   );
 
+  const inputSchema = isInputSchema(template.inputSchema) ? template.inputSchema : null;
+  const runnable = template.status === 'ACTIVE' && template.activeVersion !== null;
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <ExplainModal
         activeVersion={template.activeVersion}
         onClose={() => setExplainOpen(false)}
@@ -882,17 +931,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
         <PageHeader
           actions={
             <>
-              {template.status === 'ACTIVE' && template.activeVersion !== null && (
-                <ButtonLink
-                  href={`/start?template=${encodeURIComponent(template.id)}`}
-                  size="sm"
-                  variant="primary"
-                >
-                  Run →
-                </ButtonLink>
-              )}
               {template.activeVersion !== null && (
-                <Button onClick={() => setExplainOpen(true)} size="sm" variant="secondary">
+                <Button onClick={() => setExplainOpen(true)} size="sm" variant="ghost">
                   <SparkleTextIcon />
                   Explain
                 </Button>
@@ -903,34 +943,58 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   Refine with AI
                 </Button>
               )}
+              {runnable && (
+                <ButtonLink
+                  href={`/start?template=${encodeURIComponent(template.id)}`}
+                  size="sm"
+                  variant="primary"
+                >
+                  Run
+                  <Icon name="arrowRight" size={13} />
+                </ButtonLink>
+              )}
               {canManage && (
-                <Button onClick={() => setEditMetaOpen(true)} size="sm" variant="secondary">
-                  Edit metadata
-                </Button>
+                <ActionMenu
+                  items={[
+                    {
+                      icon: 'edit',
+                      id: 'details',
+                      label: 'Edit details',
+                      onAction: () => setEditMetaOpen(true),
+                    },
+                    {
+                      icon: 'sliders',
+                      id: 'inputs',
+                      label: 'Edit launch inputs',
+                      onAction: () => setEditSchemaOpen(true),
+                    },
+                  ]}
+                  label={`More actions for ${template.name}`}
+                />
               )}
             </>
           }
-          className="mb-0 mt-4"
+          className="mt-3 mb-0"
           subtitle={
             template.description ||
             'A workflow: its versions, launch inputs, experiment and triggers.'
           }
           title={template.name}
         />
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="mt-4 flex flex-wrap items-center gap-2">
           <StatusBadge status={template.status} />
-          {effectiveVersion !== null && (
-            <Badge tone="neutral" variant="outline">
-              v{effectiveVersion}
+          <Badge tone="neutral" variant="outline">
+            {template.team?.name ?? 'Platform-wide'}
+          </Badge>
+          <VersionTags isDefault={template.isDefault} />
+          {template.webhookConfigured && (
+            <Badge title="A webhook URL can start this workflow" tone="violet" variant="outline">
+              Webhook
             </Badge>
           )}
-          <VersionTags
-            active={effectiveVersion === template.activeVersion}
-            isDefault={template.isDefault}
-          />
           {template.experimentVersion && (
-            <Badge tone="violet" uppercase variant="outline">
-              A/B: v{template.experimentVersion} ({template.experimentSplit ?? 0}%)
+            <Badge tone="violet" variant="outline">
+              A/B test: v{template.experimentVersion} at {template.experimentSplit ?? 0}%
             </Badge>
           )}
         </div>
@@ -938,15 +1002,18 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       <TemplateSubNav active="editor" templateId={id} />
 
-      {saveError && mode !== 'edit' && <Alert className="whitespace-pre-line">{saveError}</Alert>}
+      {saveError && mode !== 'edit' && (
+        <Alert className="whitespace-pre-line" title="Could not save">
+          {saveError}
+        </Alert>
+      )}
 
       {/* The visual editor lists its own lint; every other mode shows it here. */}
       {mode !== 'edit' && lintErrors.length > 0 && (
-        <Alert className="space-y-1">
-          <p className="font-medium">
-            {lintErrors.length} error{lintErrors.length === 1 ? '' : 's'} in this workflow
-          </p>
-          <ul className="list-disc space-y-0.5 pl-5 text-xs" data-testid="spec-errors">
+        <Alert
+          title={`${lintErrors.length} error${lintErrors.length === 1 ? '' : 's'} in this workflow`}
+        >
+          <ul className="list-disc space-y-0.5 pl-5" data-testid="spec-errors">
             {lintErrors.map((issue) => (
               <li key={`${issue.code}:${issue.nodeId ?? ''}:${issue.field ?? ''}:${issue.message}`}>
                 {formatValidationIssue(issue)}
@@ -976,34 +1043,61 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       {/* View / JSON mode with versions + analytics rail */}
       {mode !== 'edit' && (
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_280px]">
-          <div className="min-w-0 space-y-4">
-            {mode === 'view' && visualSpec && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="label-mono">Definition (read only)</div>
-                  <div className="flex items-center gap-2">{editorActions}</div>
-                </div>
-                <WorkflowDag
-                  height="calc(100vh - 360px)"
-                  onSelect={setSelectedNodeId}
-                  outline
-                  selectedNodeId={selectedNodeId}
-                  spec={visualSpec}
-                />
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <section className="min-w-0 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <div className="flex min-w-0 items-baseline gap-2">
+                {mode === 'json' ? (
+                  <label
+                    className="text-sm font-semibold text-paper-100"
+                    htmlFor="spec-json"
+                    id="definition-heading"
+                  >
+                    Raw JSON
+                  </label>
+                ) : (
+                  <h2 className="text-sm font-semibold text-paper-100" id="definition-heading">
+                    Definition
+                  </h2>
+                )}
+                {effectiveVersion !== null && (
+                  <span className="text-[13px] text-paper-500 tabular-nums">
+                    v{effectiveVersion}
+                    {isActiveVersion ? ' · active' : ' · not active'}
+                    {mode === 'view' || !canManage ? ' · read only' : ''}
+                  </span>
+                )}
               </div>
+              <div className="flex flex-wrap items-center gap-2">{editorActions}</div>
+            </div>
+
+            {mode === 'view' && visualSpec && (
+              <WorkflowDag
+                height="calc(100vh - 360px)"
+                onSelect={setSelectedNodeId}
+                outline
+                selectedNodeId={selectedNodeId}
+                spec={visualSpec}
+              />
+            )}
+            {mode === 'view' && !visualSpec && (
+              <Card variant="inset">
+                {versionDetail ? (
+                  <EmptyState
+                    hint="Switch to JSON to see and fix the stored definition."
+                    icon="warning"
+                    title="This version cannot be drawn"
+                  />
+                ) : (
+                  <LoadingState message="Loading the definition…" />
+                )}
+              </Card>
             )}
 
             {mode === 'json' && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="label-mono" htmlFor="spec-json">
-                    Raw JSON
-                  </label>
-                  <div className="flex items-center gap-2">{editorActions}</div>
-                </div>
+              <>
                 <Textarea
-                  className="h-[520px] p-4"
+                  className="h-[520px] p-4 font-mono text-xs leading-relaxed"
                   compact
                   id="spec-json"
                   onChange={(e) => handleJsonChange(e.target.value)}
@@ -1012,87 +1106,79 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   value={editorJson}
                 />
                 {jsonParsed?.ok === false && (
-                  <Alert className="whitespace-pre-line">
-                    JSON parse error — {jsonParsed.error}
+                  <Alert className="whitespace-pre-line" title="The JSON does not parse">
+                    {jsonParsed.error}
                   </Alert>
                 )}
-              </div>
+              </>
             )}
-          </div>
+          </section>
 
           {/* Right rail */}
-          <aside className="space-y-4">
-            {/* Versions */}
-            {template.versions.length === 1 ? (
-              <Card variant="inset">
-                <div className="label-mono">Version</div>
-                <div className="mt-2 flex items-baseline justify-between gap-2">
-                  <span className="tabular font-mono text-sm text-paper-100">
-                    v{template.versions[0]?.version}
-                  </span>
-                  {template.versions[0] && (
-                    <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-                      {formatRelativeTime(template.versions[0].createdAt)}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  <VersionTags
-                    active={template.versions[0]?.version === template.activeVersion}
-                    needsReview={
-                      !!template.versions[0]?.generatedBy && !template.versions[0]?.reviewedAt
-                    }
-                  />
-                </div>
-                <p className="mt-3 text-[11px] leading-snug text-paper-500">
-                  Save changes to create a second version and unlock A/B testing.
-                </p>
-              </Card>
-            ) : (
-              <Card variant="inset">
-                <SectionHeader
-                  hint={`${template.versions.length}`}
-                  number={railNumber('versions')}
-                  title="Versions"
-                />
-                <ul className="space-y-1">
-                  {template.versions.map((v) => (
+          <aside aria-label="Workflow settings" className="space-y-4">
+            <RailCard
+              hint={template.versions.length > 1 ? String(template.versions.length) : undefined}
+              title={template.versions.length > 1 ? 'Versions' : 'Version'}
+            >
+              <ul className="-mx-1.5 space-y-0.5">
+                {template.versions.map((v) => {
+                  const selected = effectiveVersion === v.version;
+                  return (
                     <li key={v.id}>
                       <button
-                        className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                          effectiveVersion === v.version
-                            ? 'bg-ink-700 text-paper-100'
-                            : 'text-paper-400 hover:bg-ink-700/40 hover:text-paper-100'
-                        }`}
+                        aria-current={selected ? 'true' : undefined}
+                        className={cn(
+                          'w-full rounded-md px-2.5 py-2 text-left transition-colors',
+                          FOCUS_RING,
+                          selected
+                            ? 'bg-ink-600/70 text-paper-50'
+                            : 'text-paper-300 hover:bg-ink-700/60 hover:text-paper-100'
+                        )}
+                        disabled={template.versions.length === 1}
                         onClick={() =>
                           isDirty ? setPendingVersion(v.version) : setSelectedVersion(v.version)
                         }
                         type="button"
                       >
-                        <div className="flex items-baseline justify-between">
-                          <span className="tabular font-mono">v{v.version}</span>
-                          <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-sm font-medium tabular-nums">v{v.version}</span>
+                            <VersionTags
+                              active={v.version === template.activeVersion}
+                              experiment={v.version === template.experimentVersion}
+                              needsReview={!!v.generatedBy && !v.reviewedAt}
+                            />
+                          </span>
+                          <span
+                            className="shrink-0 text-xs text-paper-500"
+                            title={formatDate(v.createdAt)}
+                          >
                             {formatRelativeTime(v.createdAt)}
                           </span>
                         </div>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          <VersionTags
-                            active={v.version === template.activeVersion}
-                            experiment={v.version === template.experimentVersion}
-                            needsReview={!!v.generatedBy && !v.reviewedAt}
-                          />
-                        </div>
                       </button>
                     </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
+                  );
+                })}
+              </ul>
+              {template.versions.length === 1 && (
+                <p className="mt-2 text-xs leading-relaxed text-paper-500">
+                  Saving a change creates a second version and unlocks comparing and A/B testing.
+                </p>
+              )}
+            </RailCard>
 
             {/* Observed analytics summary */}
             {analytics && analytics.totalRuns > 0 && (
-              <Card variant="inset">
-                <SectionHeader hint="30d" number={railNumber('observed')} title="Observed" />
+              <RailCard
+                action={
+                  <ButtonLink href={`/workflows/library/${id}/analytics`} size="sm" variant="ghost">
+                    Details
+                  </ButtonLink>
+                }
+                hint="Last 30 days"
+                title="Observed"
+              >
                 <dl className="space-y-2">
                   <KeyValueRow label="Runs">{analytics.totalRuns}</KeyValueRow>
                   <KeyValueRow label="Success rate">
@@ -1129,49 +1215,52 @@ export default function TemplateDetailPage({ params }: PageProps) {
                     </KeyValueRow>
                   )}
                 </dl>
-              </Card>
+              </RailCard>
             )}
 
             {/* Run schema */}
-            <Card variant="inset">
-              <SectionHeader
-                actions={
-                  canManage ? (
-                    <Button onClick={() => setEditSchemaOpen(true)} size="sm" variant="ghost">
-                      Edit
-                    </Button>
-                  ) : undefined
-                }
-                number={railNumber('schema')}
-                title="Launch inputs"
-              />
-              {(() => {
-                const inputSchema = template.inputSchema;
-                if (!isInputSchema(inputSchema)) {
-                  return (
-                    <EmptyState
-                      className="py-0 text-left text-xs"
-                      title="No launch inputs — runs accept any input"
-                    />
-                  );
-                }
-                return (
-                  <ul className="mt-2 space-y-1">
-                    {Object.entries(inputSchema.properties).map(([key, prop]) => (
-                      <li className="flex items-baseline gap-2 text-xs" key={key}>
-                        <span className="font-mono text-paper-200">{key}</span>
-                        <span className="text-paper-500">{prop.type}</span>
+            <RailCard
+              action={
+                canManage ? (
+                  <Button
+                    aria-label="Edit launch inputs"
+                    onClick={() => setEditSchemaOpen(true)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Edit
+                  </Button>
+                ) : undefined
+              }
+              title="Launch inputs"
+            >
+              {inputSchema ? (
+                <ul className="divide-y divide-ink-600">
+                  {Object.entries(inputSchema.properties).map(([key, prop]) => (
+                    <li
+                      className="flex items-baseline justify-between gap-2 py-1.5 first:pt-0 last:pb-0"
+                      key={key}
+                    >
+                      <span className="min-w-0 truncate font-mono text-xs text-paper-200">
+                        {key}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1.5 text-xs text-paper-500">
+                        {prop.type}
                         {inputSchema.required?.includes(key) && (
-                          <Badge tone="brick" variant="text">
-                            required
+                          <Badge tone="amber" variant="outline">
+                            Required
                           </Badge>
                         )}
-                      </li>
-                    ))}
-                  </ul>
-                );
-              })()}
-            </Card>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs leading-relaxed text-paper-500">
+                  No launch inputs, so a run accepts any input.
+                </p>
+              )}
+            </RailCard>
 
             {/* A/B experiment config */}
             {template.versions.length > 1 && (
@@ -1179,14 +1268,13 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 activeVersion={template.activeVersion}
                 experimentSplit={template.experimentSplit ?? null}
                 experimentVersion={template.experimentVersion ?? null}
-                number={railNumber('experiment')}
                 templateId={id}
                 versions={template.versions}
               />
             )}
 
             {/* Webhook trigger */}
-            <WebhookCard canManage={canManage} number={railNumber('webhook')} template={template} />
+            <WebhookCard canManage={canManage} template={template} />
           </aside>
         </div>
       )}

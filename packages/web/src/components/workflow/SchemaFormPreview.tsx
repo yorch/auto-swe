@@ -15,8 +15,10 @@ export function SchemaFormPreview({ schema }: { schema: InputSchema | null | und
   if (!schema || Object.keys(schema.properties).length === 0) {
     return (
       <EmptyState
-        className="rounded border border-dashed border-ink-600 py-6 text-xs"
-        title="No fields defined — add fields above to see a preview."
+        bordered
+        hint="Go back to the editor and add a field to see how the run form looks."
+        icon="sliders"
+        title="Nothing to preview yet"
       />
     );
   }
@@ -29,7 +31,7 @@ export function SchemaFormPreview({ schema }: { schema: InputSchema | null | und
 
   return (
     <div className="space-y-4">
-      <div className="label-mono">Preview — how this form will look to users</div>
+      <p className="text-[13px] text-paper-400">How the run form looks to the people who run it</p>
       <Card className="space-y-4 p-4" variant="inset">
         {Object.entries(schema.properties).map(([key, prop]) => (
           <SchemaFieldInput
@@ -42,7 +44,7 @@ export function SchemaFormPreview({ schema }: { schema: InputSchema | null | und
           />
         ))}
         {/* The run modal's own footer, inert: this is a preview. */}
-        <ModalFooter disabled onCancel={() => undefined} submitLabel="Run →" />
+        <ModalFooter disabled onCancel={() => undefined} submitLabel="Run" />
       </Card>
     </div>
   );

@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { TabBar } from '@/components/ui/TabBar';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 /**
  * Shared chrome for the template detail page and its sub-pages (analytics,
@@ -32,11 +34,18 @@ export function TemplateSubNav({
   );
 }
 
-/** "← Parent" link rendered above a page header. */
+/** Back link to the parent page, rendered above a page header. */
 export function TemplateBackLink({ href, label }: { href: string; label: string }) {
   return (
-    <Link className="label-mono hover:text-paper-200" href={href}>
-      ← {label}
+    <Link
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-sm text-[13px] text-paper-400 transition-colors hover:text-paper-100',
+        FOCUS_RING
+      )}
+      href={href}
+    >
+      <Icon name="arrowLeft" size={14} />
+      {label}
     </Link>
   );
 }
@@ -45,6 +54,9 @@ export function TemplateNotFound() {
   return (
     <EmptyState
       action={<ButtonLink href="/workflows/library">Back to library</ButtonLink>}
+      bordered
+      hint="It may have been deleted, or the link is wrong."
+      icon="workflows"
       title="Workflow not found"
     />
   );

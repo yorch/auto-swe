@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { SaveBar } from '@/components/ui/SaveBar';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
@@ -34,13 +35,13 @@ export function ScheduleToggleRow({
     <div className="flex items-center gap-3">
       <ToggleSwitch checked={enabled} label="Schedule enabled" onChange={onToggle} />
       {schedule?.exists && (
-        <span className={`ml-auto text-xs ${schedule.paused ? 'text-paper-500' : 'text-moss-400'}`}>
+        <Badge className="ml-auto" dot tone={schedule.paused ? 'muted' : 'moss'}>
           {schedule.paused
             ? 'Paused'
             : schedule.nextRunAt
-              ? `Next run: ${formatDate(schedule.nextRunAt)}`
+              ? `Next run ${formatDate(schedule.nextRunAt)}`
               : 'Scheduled'}
-        </span>
+        </Badge>
       )}
     </div>
   );

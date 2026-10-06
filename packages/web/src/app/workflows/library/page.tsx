@@ -6,21 +6,25 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { SparkleIcon } from '@/components/ui/icons';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
-import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { useHasRole } from '@/hooks/useHasRole';
@@ -36,7 +40,7 @@ import { errMsg } from '@/lib/errors';
 import { requestHref } from '@/lib/requestDisplay';
 import { requiresRoleTitle } from '@/lib/roles';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
-import { cn, formatRelativeTime } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { useTeamStore } from '@/stores/teamStore';
 import { restoreTemplate } from './restoreTemplate';
@@ -54,15 +58,6 @@ const BLANK_SPEC: WorkflowSpec = {
   schemaVersion: SPEC_SCHEMA_VERSION,
 };
 
-const TONE_CLASS: Record<StarterTemplate['tone'], string> = {
-  amber: 'border-l-amber-400',
-  dust: 'border-l-dust-400',
-  ember: 'border-l-ember-400',
-  moss: 'border-l-moss-400',
-  paper: 'border-l-paper-500',
-  violet: 'border-l-violet-400',
-};
-
 type StatusFilter = 'current' | 'active' | 'draft' | 'archived';
 
 function matchesStatusFilter(t: WorkflowTemplateSummary, filter: StatusFilter): boolean {
@@ -76,35 +71,6 @@ function matchesStatusFilter(t: WorkflowTemplateSummary, filter: StatusFilter): 
     default:
       return t.status !== 'ARCHIVED';
   }
-}
-
-/** Brings an archived template back: active when it has an active version, otherwise a draft. */
-function RestoreButton({
-  template,
-  onError,
-}: {
-  template: WorkflowTemplateSummary;
-  onError: (message: string | null) => void;
-}) {
-  const update = useUpdateWorkflowTemplate(template.id);
-  return (
-    <Button
-      aria-label={`Restore ${template.name}`}
-      disabled={update.isPending}
-      onClick={async () => {
-        onError(null);
-        try {
-          await restoreTemplate(template.activeVersion, (status) => update.mutateAsync({ status }));
-        } catch (err) {
-          onError(`Could not restore "${template.name}": ${errMsg(err, 'restore failed')}`);
-        }
-      }}
-      size="sm"
-      variant="secondary"
-    >
-      {update.isPending ? 'Restoring…' : 'Restore'}
-    </Button>
-  );
 }
 
 function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -323,7 +289,7 @@ function NewTemplateModal({
           <p className="text-sm leading-relaxed text-paper-400">
             Describe what you want the workflow to do in plain language. An AI agent assembles a
             workflow from your available steps, agents, and connections, and saves it as a{' '}
-            <span className="font-mono text-paper-300">DRAFT</span> for you to review and edit on
+            <span className="font-medium text-paper-300">draft</span> for you to review and edit on
             the canvas before activating.
           </p>
         ) : (
@@ -399,7 +365,11 @@ function NewTemplateModal({
           pendingLabel="Generating…"
           submitLabel="Generate draft"
         >
-          {phaseLabel && <span className="label-mono">{phaseLabel}</span>}
+          {phaseLabel && (
+            <span aria-live="polite" className="text-xs text-paper-400">
+              {phaseLabel}
+            </span>
+          )}
         </ModalFooter>
         <div className="flex justify-end pt-1">
           <Button
@@ -417,6 +387,192 @@ function NewTemplateModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+const STATUS_FILTER_LABEL: Record<StatusFilter, string> = {
+  active: 'Active',
+  archived: 'Archived',
+  current: 'Active & drafts',
+  draft: 'Drafts',
+};
+
+function matchesSearch(t: WorkflowTemplateSummary, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    return true;
+  }
+  return [t.name, t.description ?? '', t.team?.name ?? 'platform-wide'].some((v) =>
+    v.toLowerCase().includes(q)
+  );
+}
+
+/**
+ * The visible primary action of a row: Run for a runnable workflow, otherwise
+ * a disabled Run that says why (the reason is read out, not only shown on hover).
+ */
+function RunAction({ template }: { template: WorkflowTemplateSummary }) {
+  if (template.status === 'ARCHIVED' || isSystemManagedTemplate(template)) {
+    return null;
+  }
+  if (template.status === 'ACTIVE' && template.activeVersion !== null) {
+    return (
+      <ButtonLink
+        aria-label={`Run ${template.name}`}
+        href={`/start?template=${encodeURIComponent(template.id)}`}
+        size="sm"
+        variant="primary"
+      >
+        Run
+        <Icon name="arrowRight" size={13} />
+      </ButtonLink>
+    );
+  }
+  const reason = template.status === 'DRAFT' ? 'Activate it to run' : 'Promote a version to run';
+  return (
+    <span className="inline-flex cursor-not-allowed" title={reason}>
+      <Button aria-describedby={`run-reason-${template.id}`} disabled size="sm" variant="secondary">
+        Run
+      </Button>
+      <span className="sr-only" id={`run-reason-${template.id}`}>
+        {reason}
+      </span>
+    </span>
+  );
+}
+
+function TemplateRow({
+  canWrite,
+  onArchive,
+  onError,
+  template: t,
+}: {
+  canWrite: boolean;
+  onArchive: (target: { id: string; name: string }) => void;
+  onError: (message: string | null) => void;
+  template: WorkflowTemplateSummary;
+}) {
+  // Restoring brings an archived template back: active when it has an active
+  // version, otherwise a draft.
+  const update = useUpdateWorkflowTemplate(t.id);
+  const systemManaged = isSystemManagedTemplate(t);
+  const href = `/workflows/library/${t.id}`;
+  const restore = async () => {
+    onError(null);
+    try {
+      await restoreTemplate(t.activeVersion, (status) => update.mutateAsync({ status }));
+    } catch (err) {
+      onError(`Could not restore "${t.name}": ${errMsg(err, 'restore failed')}`);
+    }
+  };
+
+  const menuItems: ActionMenuItem[] = [
+    {
+      href,
+      icon: canWrite && !systemManaged ? 'edit' : 'canvas',
+      id: 'open',
+      label: canWrite && !systemManaged ? 'Edit' : 'View',
+    },
+    { href: `${href}/analytics`, icon: 'analytics', id: 'analytics', label: 'Analytics' },
+    { href: `${href}/runs`, icon: 'runs', id: 'runs', label: 'Run history' },
+  ];
+  if (canWrite && t.status === 'ARCHIVED') {
+    menuItems.push({
+      disabled: update.isPending,
+      icon: 'refresh',
+      id: 'restore',
+      label: update.isPending ? 'Restoring…' : 'Restore',
+      onAction: () => void restore(),
+    });
+  }
+  if (canWrite && t.status !== 'ARCHIVED' && !systemManaged) {
+    menuItems.push({
+      icon: 'trash',
+      id: 'archive',
+      label: 'Archive',
+      onAction: () => onArchive({ id: t.id, name: t.name }),
+      tone: 'danger',
+    });
+  }
+
+  return (
+    <TRow hover>
+      <Td className="py-3 pr-4 pl-4 sm:pl-5" primary>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <Link
+            className={cn('rounded-sm font-medium text-paper-100 hover:text-ember-400', FOCUS_RING)}
+            href={href}
+          >
+            {t.name}
+          </Link>
+          <VersionTags isDefault={t.isDefault} />
+          {systemManaged && (
+            <Badge title="Started by the platform; it cannot be run by hand" tone="neutral">
+              Used by channel assistants
+            </Badge>
+          )}
+          {t.webhookConfigured && (
+            <Badge title="A webhook URL can start this workflow" tone="violet" variant="outline">
+              Webhook
+            </Badge>
+          )}
+        </div>
+        {t.description && (
+          <p
+            className="mt-0.5 line-clamp-1 max-w-xl text-[13px] font-normal text-paper-500 max-sm:line-clamp-2"
+            title={t.description}
+          >
+            {t.description}
+          </p>
+        )}
+      </Td>
+      <Td className="px-4 py-3 whitespace-nowrap text-[13px] text-paper-300" label="Team">
+        {t.team?.name ?? <span className="text-paper-500">Platform-wide</span>}
+      </Td>
+      <Td className="px-4 py-3" label="Status">
+        <StatusBadge status={t.status} />
+      </Td>
+      <Td className="px-4 py-3 text-[13px] text-paper-300" label="Version">
+        {t.activeVersion !== null ? (
+          <span className="tabular-nums">v{t.activeVersion}</span>
+        ) : (
+          <span className="text-paper-500">—</span>
+        )}
+      </Td>
+      <Td className="px-4 py-3" label="Last run">
+        {t.lastRun ? (
+          <Link
+            className={cn('inline-flex items-center gap-2 rounded-sm', FOCUS_RING)}
+            href={
+              t.lastRun.workRequestId
+                ? requestHref(t.lastRun.workRequestId)
+                : `/runs/${t.lastRun.id}`
+            }
+            title={formatDate(t.lastRun.startedAt)}
+          >
+            <StatusBadge status={t.lastRun.status} />
+            <span className="text-xs text-paper-500 tabular-nums">
+              {formatRelativeTime(t.lastRun.startedAt)}
+            </span>
+          </Link>
+        ) : (
+          <span className="text-[13px] text-paper-500">Never</span>
+        )}
+      </Td>
+      <Td
+        className="px-4 py-3 whitespace-nowrap text-[13px] text-paper-500 tabular-nums"
+        label="Updated"
+        title={formatDate(t.updatedAt)}
+      >
+        {formatRelativeTime(t.updatedAt)}
+      </Td>
+      <Td align="right" className="py-3 pr-3 pl-4 sm:pr-4">
+        <div className="flex items-center justify-end gap-1.5 max-sm:justify-start">
+          <RunAction template={t} />
+          <ActionMenu items={menuItems} label={`More actions for ${t.name}`} />
+        </div>
+      </Td>
+    </TRow>
   );
 }
 
@@ -454,11 +610,13 @@ export default function TemplatesPage() {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('current');
+  const [search, setSearch] = useState('');
   const [restoreError, setRestoreError] = useState<string | null>(null);
-  // The built-in Channel Assistant template only records channel conversations: the platform
-  // starts it, so it is shown but cannot be run or archived by hand.
-  const isSystemManaged = (t: WorkflowTemplateSummary) => isSystemManagedTemplate(t);
-  const visibleTemplates = (templates ?? []).filter((t) => matchesStatusFilter(t, statusFilter));
+  const all = templates ?? [];
+  const inStatus = all.filter((t) => matchesStatusFilter(t, statusFilter));
+  const visibleTemplates = inStatus.filter((t) => matchesSearch(t, search));
+  const searching = search.trim() !== '';
+  const statusCount = (f: StatusFilter) => all.filter((t) => matchesStatusFilter(t, f)).length;
 
   const handleFork = async (starter: StarterTemplate) => {
     setForkingId(starter.id);
@@ -482,8 +640,22 @@ export default function TemplatesPage() {
     }
   };
 
+  const newWorkflowButton = (
+    <span title={manageTitle}>
+      <Button
+        aria-describedby={manageTitle ? 'manage-reason' : undefined}
+        disabled={!canManage}
+        onClick={() => setGenerateOpen(true)}
+        variant="primary"
+      >
+        <SparkleIcon />
+        New workflow
+      </Button>
+    </span>
+  );
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <CreateTemplateModal onClose={() => setCreateOpen(false)} open={createOpen} />
 
       <NewTemplateModal
@@ -498,265 +670,180 @@ export default function TemplatesPage() {
       <ArchiveConfirmModal onClose={() => setArchiveTarget(null)} target={archiveTarget} />
 
       <PageHeader
-        actions={
-          <span title={manageTitle}>
-            <Button
-              aria-describedby={manageTitle ? 'manage-reason' : undefined}
-              disabled={!canManage}
-              onClick={() => setGenerateOpen(true)}
-              size="sm"
-              variant="primary"
-            >
-              <SparkleIcon />
-              New workflow
-            </Button>
-          </span>
+        actions={newWorkflowButton}
+        subtitle={
+          <>
+            Your reusable workflows. Pick one, run it with your inputs, and follow the request.
+            {manageTitle && (
+              <span className="mt-1 block text-xs text-paper-500" id="manage-reason">
+                {manageTitle}.
+              </span>
+            )}
+          </>
         }
-        subtitle="Your reusable workflows. Pick one, run it with your inputs, and follow the request."
         title="Workflow library"
       />
 
-      {manageTitle && (
-        <p className="-mt-4 text-xs text-paper-500" id="manage-reason">
-          {manageTitle}.
-        </p>
-      )}
+      {restoreError && <Alert>{restoreError}</Alert>}
 
-      {/* Workflows table */}
-      <section>
-        <SectionHeader
-          actions={
-            <SegmentedControl
-              ariaLabel="Filter workflows by status"
-              onChange={setStatusFilter}
-              options={[
-                { label: 'Active & drafts', value: 'current' },
-                { label: 'Active', value: 'active' },
-                { label: 'Drafts', value: 'draft' },
-                { label: 'Archived', value: 'archived' },
-              ]}
-              value={statusFilter}
-            />
+      <Card className="p-0">
+        <Toolbar
+          className="mb-0 border-b border-ink-600 px-4 py-3 sm:px-5"
+          end={
+            all.length > 0 ? (
+              <span className="text-xs text-paper-500 tabular-nums">
+                {visibleTemplates.length === all.length
+                  ? `${all.length} workflows`
+                  : `${visibleTemplates.length} of ${all.length} workflows`}
+              </span>
+            ) : null
           }
-          hint={`${visibleTemplates.length} shown`}
-          number="01"
-          title="Your workflows"
-        />
-        {restoreError && <Alert className="mb-4">{restoreError}</Alert>}
+        >
+          <SearchInput
+            label="Search workflows"
+            onChange={setSearch}
+            placeholder="Search workflows…"
+            value={search}
+          />
+          <SegmentedControl
+            ariaLabel="Filter workflows by status"
+            onChange={setStatusFilter}
+            options={(['current', 'active', 'draft', 'archived'] as const).map((f) => ({
+              label: templates ? (
+                <>
+                  {STATUS_FILTER_LABEL[f]}
+                  <span className="ml-1.5 text-paper-500 tabular-nums">{statusCount(f)}</span>
+                </>
+              ) : (
+                STATUS_FILTER_LABEL[f]
+              ),
+              value: f,
+            }))}
+            value={statusFilter}
+          />
+        </Toolbar>
         <QueryBoundary
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={isLoading}
+          isLoading={false}
           label="workflows"
           onRetry={() => void refetch()}
         >
-          {
-            <Card className="overflow-hidden p-0" variant="inset">
-              <Table stacked>
-                <THead>
-                  <Th>Name</Th>
-                  <Th>Team</Th>
-                  <Th>Status</Th>
-                  <Th>Active version</Th>
-                  <Th>Last run</Th>
-                  <Th>Updated</Th>
-                  <Th align="right">Actions</Th>
-                </THead>
-                <tbody>
-                  {visibleTemplates.map((t) => (
-                    <TRow className="hover:bg-ink-700/40" hover key={t.id}>
-                      <Td className="px-4 py-3" primary>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Link
-                            className="font-medium text-paper-100 hover:text-ember-400"
-                            href={`/workflows/library/${t.id}`}
-                          >
-                            {t.name}
-                          </Link>
-                          <VersionTags isDefault={t.isDefault} />
-                          {isSystemManaged(t) && (
-                            <Badge tone="neutral" variant="outline">
-                              Used by channel assistants
-                            </Badge>
-                          )}
-                          {t.webhookConfigured && (
-                            <Badge
-                              title="Webhook trigger active"
-                              tone="violet"
-                              uppercase
-                              variant="outline"
-                            >
-                              webhook
-                            </Badge>
-                          )}
-                        </div>
-                        {t.description && (
-                          <div
-                            className="line-clamp-2 max-w-md text-xs text-paper-500"
-                            title={t.description}
-                          >
-                            {t.description}
-                          </div>
-                        )}
-                      </Td>
-                      <Td className="px-4 py-3 whitespace-nowrap text-paper-400" label="Team">
-                        {t.team?.name ?? <span className="text-paper-500">Platform-wide</span>}
-                      </Td>
-                      <Td className="px-4 py-3" label="Status">
-                        <StatusBadge status={t.status} />
-                      </Td>
-                      <Td
-                        className="px-4 py-3 font-mono text-xs text-paper-300"
-                        label="Active version"
-                      >
-                        {t.activeVersion !== null ? `v${t.activeVersion}` : '—'}
-                      </Td>
-                      <Td className="px-4 py-3" label="Last run">
-                        {t.lastRun ? (
-                          <Link
-                            className="inline-flex items-center gap-2"
-                            href={
-                              t.lastRun.workRequestId
-                                ? requestHref(t.lastRun.workRequestId)
-                                : `/runs/${t.lastRun.id}`
-                            }
-                          >
-                            <StatusBadge status={t.lastRun.status} />
-                            <span className="font-mono text-[11px] text-paper-500">
-                              {formatRelativeTime(t.lastRun.startedAt)}
-                            </span>
-                          </Link>
-                        ) : (
-                          <span className="text-xs text-paper-500">Never</span>
-                        )}
-                      </Td>
-                      <Td
-                        className="px-4 py-3 font-mono text-[11px] text-paper-500"
-                        label="Updated"
-                      >
-                        {formatRelativeTime(t.updatedAt)}
-                      </Td>
-                      <Td className="px-4 py-3 text-right">
-                        <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">
-                          {t.status === 'ARCHIVED' || isSystemManaged(t) ? null : t.status ===
-                              'ACTIVE' && t.activeVersion !== null ? (
-                            <ButtonLink
-                              className="whitespace-nowrap"
-                              href={`/start?template=${encodeURIComponent(t.id)}`}
-                              size="sm"
-                              variant="primary"
-                            >
-                              Run →
-                            </ButtonLink>
-                          ) : (
-                            <span className="flex cursor-not-allowed items-center gap-2">
-                              <span
-                                className="text-[11px] text-paper-500"
-                                id={`run-reason-${t.id}`}
-                              >
-                                {t.status === 'DRAFT'
-                                  ? 'Activate it to run'
-                                  : 'Promote a version to run'}
-                              </span>
-                              <Button
-                                aria-describedby={`run-reason-${t.id}`}
-                                disabled
-                                size="sm"
-                                variant="ghost"
-                              >
-                                Run
-                              </Button>
-                            </span>
-                          )}
-                          <ButtonLink
-                            href={`/workflows/library/${t.id}`}
-                            size="sm"
-                            variant="secondary"
-                          >
-                            {canWrite(t.team?.id) && !isSystemManaged(t) ? 'Edit' : 'View'}
-                          </ButtonLink>
-                          {canWrite(t.team?.id) && t.status === 'ARCHIVED' && (
-                            <RestoreButton onError={setRestoreError} template={t} />
-                          )}
-                          {canWrite(t.team?.id) &&
-                            t.status !== 'ARCHIVED' &&
-                            !isSystemManaged(t) && (
-                              <Button
-                                className="text-brick-400 hover:text-brick-400"
-                                onClick={() => setArchiveTarget({ id: t.id, name: t.name })}
-                                size="sm"
-                                variant="ghost"
-                              >
-                                Archive
-                              </Button>
-                            )}
-                        </div>
-                      </Td>
-                    </TRow>
-                  ))}
-                  {visibleTemplates.length === 0 && (
-                    <TableStatusRow colSpan={7}>
-                      <EmptyState
-                        hint={
-                          (templates ?? []).length === 0
-                            ? 'Fork a starter below or create a blank workflow.'
-                            : 'Try another status filter.'
-                        }
-                        title={
-                          (templates ?? []).length === 0
-                            ? 'No workflows yet'
-                            : 'No workflows with this status.'
-                        }
-                      />
-                    </TableStatusRow>
-                  )}
-                </tbody>
-              </Table>
-            </Card>
-          }
+          {isLoading ? (
+            <SkeletonRows className="px-5 py-4" rows={8} />
+          ) : visibleTemplates.length === 0 ? (
+            all.length === 0 ? (
+              <EmptyState
+                action={newWorkflowButton}
+                hint="Describe a workflow and let AI draft it, or fork one of the starters below."
+                icon="workflows"
+                title="No workflows yet"
+              />
+            ) : searching ? (
+              <EmptyState
+                action={
+                  <Button onClick={() => setSearch('')} size="sm">
+                    Clear search
+                  </Button>
+                }
+                hint={`Nothing in “${STATUS_FILTER_LABEL[statusFilter]}” matches “${search.trim()}”.`}
+                icon="search"
+                title="No matching workflows"
+              />
+            ) : (
+              <EmptyState
+                action={
+                  statusFilter !== 'current' && (
+                    <Button onClick={() => setStatusFilter('current')} size="sm">
+                      Show active & drafts
+                    </Button>
+                  )
+                }
+                hint="Try another status filter."
+                icon="filter"
+                title={`No ${STATUS_FILTER_LABEL[statusFilter].toLowerCase()} workflows`}
+              />
+            )
+          ) : (
+            <Table className="max-sm:p-3" stacked>
+              <THead>
+                <Th className="pl-4 sm:pl-5" variant="plain">
+                  Name
+                </Th>
+                <Th variant="plain">Team</Th>
+                <Th variant="plain">Status</Th>
+                <Th variant="plain">Version</Th>
+                <Th variant="plain">Last run</Th>
+                <Th variant="plain">Updated</Th>
+                <Th className="pr-4" variant="plain">
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </THead>
+              <tbody>
+                {visibleTemplates.map((t) => (
+                  <TemplateRow
+                    canWrite={canWrite(t.team?.id)}
+                    key={t.id}
+                    onArchive={setArchiveTarget}
+                    onError={setRestoreError}
+                    template={t}
+                  />
+                ))}
+              </tbody>
+            </Table>
+          )}
         </QueryBoundary>
-      </section>
+      </Card>
+
       {/* Starter gallery */}
-      <details className="rounded-lg border border-ink-600 p-4">
-        <summary className="cursor-pointer text-sm font-semibold text-paper-100">
-          New workflow from a starter
-          <span className="ml-2 text-xs font-normal text-paper-400">
-            Fork one to edit it as your own
+      <details className="group rounded-xl border border-ink-500/70 bg-ink-900/30">
+        <summary
+          className={cn(
+            'flex cursor-pointer list-none items-center gap-3 rounded-xl px-5 py-4 [&::-webkit-details-marker]:hidden',
+            FOCUS_RING
+          )}
+        >
+          <Icon
+            className="text-paper-500 transition-transform group-open:rotate-90"
+            name="chevronRight"
+            size={16}
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-paper-100">Start from a starter</span>
+            <span className="block text-[13px] text-paper-500">
+              Fork a ready-made workflow and edit it as your own
+            </span>
           </span>
         </summary>
-        {forkError && <Alert className="mb-4 mt-4">{forkError}</Alert>}
-        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {STARTER_TEMPLATES.map((s) => {
-            const isForking = forkingId === s.id;
-            return (
-              <Card
-                className={cn(
-                  'group flex flex-col p-5 hover:border-ember-400',
-                  'border-l-[3px]',
-                  TONE_CLASS[s.tone]
-                )}
-                key={s.id}
-              >
-                <div className="label-mono mb-2">{s.tagline}</div>
-                <h3 className="mb-2 font-display text-xl font-medium text-paper-100">{s.name}</h3>
-                <p className="mb-5 flex-1 text-sm leading-relaxed text-paper-400">
-                  {s.description}
-                </p>
-                <span className="self-start" title={manageTitle}>
-                  <Button
-                    aria-describedby={manageTitle ? 'manage-reason' : undefined}
-                    disabled={!canManage || isForking || createTemplate.isPending}
-                    onClick={() => handleFork(s)}
-                    size="sm"
-                    variant="primary"
-                  >
-                    {isForking ? 'Forking…' : 'Fork starter'}
-                  </Button>
-                </span>
-              </Card>
-            );
-          })}
+        <div className="border-t border-ink-600 px-5 py-5">
+          {forkError && <Alert className="mb-4">{forkError}</Alert>}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {STARTER_TEMPLATES.map((s) => {
+              const isForking = forkingId === s.id;
+              return (
+                <Card className="flex flex-col p-5 hover:border-ink-300" key={s.id} variant="inset">
+                  <div className="mb-1 text-xs font-medium text-paper-500">{s.tagline}</div>
+                  <h3 className="mb-2 text-base font-semibold text-paper-100">{s.name}</h3>
+                  <p className="mb-5 flex-1 text-[13px] leading-relaxed text-paper-400">
+                    {s.description}
+                  </p>
+                  <span className="self-start" title={manageTitle}>
+                    <Button
+                      aria-describedby={manageTitle ? 'manage-reason' : undefined}
+                      disabled={!canManage || isForking || createTemplate.isPending}
+                      onClick={() => handleFork(s)}
+                      size="sm"
+                      variant="secondary"
+                    >
+                      <Icon name="copy" size={13} />
+                      {isForking ? 'Forking…' : 'Fork starter'}
+                    </Button>
+                  </span>
+                </Card>
+              );
+            })}
+          </div>
         </div>
       </details>
     </div>

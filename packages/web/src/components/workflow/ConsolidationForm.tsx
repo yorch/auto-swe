@@ -69,7 +69,7 @@ export function ConsolidationForm() {
     <>
       <SectionHeader
         className="mt-8"
-        hint="periodically merges similar agent lessons"
+        hint="Periodically merges similar agent lessons"
         title="Lesson consolidation"
       />
 
