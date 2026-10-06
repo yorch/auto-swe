@@ -182,7 +182,9 @@ by the same pgvector search as everything else.
 
 Admins can view, edit, and delete channel memory from the admin surface. Editing an item's text
 kicks off `ReembedMemoryWorkflow` so its pgvector embedding catches up to the new text — started
-best-effort, because a Temporal hiccup must not fail the synchronous edit.
+best-effort, because a Temporal hiccup must not fail the synchronous edit. Deleting an item forgets it
+through every merged copy and restores what only those copies were hiding
+([memory.md §6](./memory.md#6-administration)).
 
 Deleting a channel deletes its memory items in the same transaction as the channel row (the
 relation itself is `SetNull`, which would otherwise leave them orphaned), and the audit entry

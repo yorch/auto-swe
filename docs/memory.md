@@ -103,16 +103,29 @@ pattern is refused, a recalled item that matches is dropped, and a scan that fai
 
 ## 6. Administration
 
-`/govern/lessons` lists, searches and deletes lessons and starts consolidation; deletes are audited
-with the deleted content.
+`/govern/lessons` lists, searches and deletes lessons and starts consolidation. Channel memory is
+edited and deleted per channel ([channel-assistant.md §6](./channel-assistant.md#6-memory)).
+
+**Deleting forgets, through every copy.** Both delete routes run `forgetMemoryItems`
+(`@auto-swe/shared/lib/memoryForget`) in one transaction with the audit row:
+
+- Every row consolidated from the deleted item is deleted too, recursively, because it carries the
+  deleted content.
+- A deleted item that is itself a merged row takes its sources with it, recursively — they hold the
+  same content, and bringing them back would undo the delete.
+- The other sources of a merged row retracted on the way up become active again, unless another
+  surviving merged row still stands for them. Consolidation may merge them again later, without the
+  deleted item.
+- Rows the deleted items had superseded become active again.
+
+The response and the audit row list every id deleted and restored.
 
 After the embedding model changes, the Embeddings tab at `/studio/models` shows how many memory rows
 the configured model did not embed (`GET /api/v1/platform/embedding-config/reembed`) and starts
 `ReembedStaleMemoryWorkflow` (`POST` to the same path, ADMIN, audited). The workflow walks those
 rows in id order, 100 per activity and four embedding calls at a time, and continues as new every
 50 batches. It runs under one fixed workflow id, so a second start while one runs is refused with
-`409 REEMBED_IN_PROGRESS`. Channel memory is edited and deleted per channel
-([channel-assistant.md §6](./channel-assistant.md#6-memory)).
+`409 REEMBED_IN_PROGRESS`.
 
 ---
 
@@ -133,9 +146,9 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
   un-supersedes a lesson, and lessons never expire.
 - **Confidence is the writer's own grade.** It is the model's reading of a fixed rubric, not a
   measurement, and it labels a recalled lesson rather than filtering it.
-- **Deleting does not cascade through consolidation.** Deleting a source leaves its content alive in
-  the consolidated row built from it; deleting a consolidated row leaves its sources marked
-  consolidated, so neither is recalled again.
+- **Forgetting follows provenance links, not content.** A delete reaches the rows
+  `metadata.consolidatedFrom` and `supersededById` connect to it. A separate lesson that happens to
+  restate the deleted one — written by another run, never merged with it — stays.
 - **Deleting a repository orphans its lessons.** `repo_id` is set null; the rows stay in
   `/govern/lessons` as "Deleted repository" until deleted by hand. There is no way to erase one Slack
   user's channel memory.

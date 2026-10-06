@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { forgetMemoryItems } from '@auto-swe/shared/lib/memoryForget';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -311,21 +312,26 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // The delete is irreversible, so the audit row carries the deleted
-      // content, and commits or rolls back with the delete.
-      await fastify.prisma.$transaction(async (tx) => {
-        await tx.memoryItem.delete({ where: { id: lesson.id } });
+      // Forgetting follows the lesson into every row that carries it — merged
+      // copies, and a merged lesson's own sources — and restores what only a
+      // retracted merge was hiding (`forgetMemoryItems`). The delete is
+      // irreversible, so the audit row carries the deleted content and both id
+      // lists, and commits or rolls back with the forget.
+      const result = await fastify.prisma.$transaction(async (tx) => {
+        const forgotten = await forgetMemoryItems(tx, [lesson.id]);
         await writeAuditLog(fastify, {
           action: 'DELETE',
           actor,
+          after: forgotten,
           before: lesson,
           client: tx,
           entityId: lesson.id,
           entityType: 'MemoryItem',
         });
+        return forgotten;
       });
 
-      return { data: { deleted: true } };
+      return { data: { deleted: true, forgotten: result.deleted, restored: result.restored } };
     }
   );
 };

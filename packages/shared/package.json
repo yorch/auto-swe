@@ -28,6 +28,7 @@
     "./lib/agentRunFailure": "./dist/lib/agentRunFailure.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/skillRevision": "./dist/lib/skillRevision.js",
+    "./lib/memoryForget": "./dist/lib/memoryForget.js",
     "./lib/skillSource": "./dist/lib/skillSource/index.js",
     "./lib/skillSourceSync": "./dist/lib/skillSourceSync.js",
     "./lib/seedPlaceholder": "./dist/lib/seedPlaceholder.js",

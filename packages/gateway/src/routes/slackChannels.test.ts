@@ -3,6 +3,13 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { slackChannelRoutes } from './slackChannels.js';
 
+// The forget walk is covered against real Postgres (memoryForget.pg.test.ts);
+// here it is a stand-in that reports what it was asked to forget.
+const { forgetMock } = vi.hoisted(() => ({
+  forgetMock: vi.fn(async (_tx: unknown, ids: string[]) => ({ deleted: ids, restored: ['r-1'] })),
+}));
+vi.mock('@auto-swe/shared/lib/memoryForget', () => ({ forgetMemoryItems: forgetMock }));
+
 function newMockPrisma() {
   const prisma = {
     // Interactive transactions run against the same mock, as elsewhere in the
@@ -761,8 +768,13 @@ describe('slackChannelRoutes', () => {
       url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
     });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.payload).data.deleted).toBe(true);
-    expect(mockPrisma.memoryItem.delete).toHaveBeenCalledWith({ where: { id: 'mem-1' } });
+    expect(JSON.parse(res.payload).data).toEqual({
+      deleted: true,
+      forgotten: ['mem-1'],
+      restored: ['r-1'],
+    });
+    expect(forgetMock).toHaveBeenCalledWith(expect.anything(), ['mem-1']);
+    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
     await app.close();
   });
 
@@ -776,7 +788,7 @@ describe('slackChannelRoutes', () => {
       url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
     });
     expect(res.statusCode).toBe(404);
-    expect(mockPrisma.memoryItem.delete).not.toHaveBeenCalled();
+    expect(forgetMock).not.toHaveBeenCalled();
     await app.close();
   });
 

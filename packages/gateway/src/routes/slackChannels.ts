@@ -1,6 +1,7 @@
 import type { Prisma } from '@auto-swe/shared';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { releaseChannelBudgetHolds } from '@auto-swe/shared/lib/channelBudget';
+import { forgetMemoryItems } from '@auto-swe/shared/lib/memoryForget';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -552,24 +553,34 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Memory item not found' } });
       }
-      await fastify.prisma.memoryItem.delete({ where: { id: item.id } });
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor,
-        // Capture the deleted content — the delete is irreversible (re-embedding
-        // isn't available here), so the audit row is the only record of what was
-        // removed.
-        before: {
-          agentKey: item.agentKey,
-          channelId: item.channelId,
-          createdAt: item.createdAt,
-          lessonSummary: item.lessonSummary,
-          rationale: item.rationale,
-        },
-        entityId: item.id,
-        entityType: 'MemoryItem',
+      // Forgetting follows the item into merged copies of it and restores what
+      // only a retracted merge was hiding (`forgetMemoryItems`), in one
+      // transaction with the audit row.
+      const result = await fastify.prisma.$transaction(async (tx) => {
+        const forgotten = await forgetMemoryItems(tx, [item.id]);
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor,
+          after: forgotten,
+          // Capture the deleted content — the delete is irreversible (re-embedding
+          // isn't available here), so the audit row is the only record of what was
+          // removed.
+          before: {
+            agentKey: item.agentKey,
+            channelId: item.channelId,
+            createdAt: item.createdAt,
+            lessonSummary: item.lessonSummary,
+            rationale: item.rationale,
+          },
+          client: tx,
+          entityId: item.id,
+          entityType: 'MemoryItem',
+        });
+        return forgotten;
       });
-      return reply.send({ data: { deleted: true } });
+      return reply.send({
+        data: { deleted: true, forgotten: result.deleted, restored: result.restored },
+      });
     }
   );
 
