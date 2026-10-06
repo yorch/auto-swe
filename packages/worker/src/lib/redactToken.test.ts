@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { redactExecError, redactSecrets, redactToken } from './redactToken.js';
+import {
+  maskCredentialShapes,
+  redactExecError,
+  redactSecrets,
+  redactToken,
+} from './redactToken.js';
 
 describe('redactToken', () => {
   it('replaces every occurrence of the token', () => {
@@ -42,5 +47,25 @@ describe('redactExecError', () => {
     const err = new Error('tok');
     redactExecError(err, [undefined, null, '']);
     expect(err.message).toBe('tok');
+  });
+});
+
+describe('maskCredentialShapes', () => {
+  it.each([
+    ['NPM_TOKEN=abc123def npm publish', 'NPM_TOKEN=*** npm publish'],
+    ['export DB_PASSWORD="hunter2 two" && run', 'export DB_PASSWORD=*** && run'],
+    ['curl -H "Authorization: Bearer abcdefghijkl" x', 'curl -H "Authorization: Bearer ***" x'],
+    ['git clone https://user:pa55@github.com/a/b', 'git clone https://***@github.com/a/b'],
+    ['tool --api-key=k3y-value run', 'tool --api-key=*** run'],
+    ['tool --password s3cret run', 'tool --password *** run'],
+    ['echo ghp_abcdefghijklmnopqrstuvwxyz0123', 'echo ***'],
+    ['aws AKIAABCDEFGHIJKLMNOP s3 ls', 'aws *** s3 ls'],
+  ])('masks %s', (input, expected) => {
+    expect(maskCredentialShapes(input)).toBe(expected);
+  });
+
+  it('leaves an ordinary command untouched', () => {
+    const cmd = 'npx prettier --write "src/**/*.ts" && git status';
+    expect(maskCredentialShapes(cmd)).toBe(cmd);
   });
 });

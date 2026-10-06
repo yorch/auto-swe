@@ -3,6 +3,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -31,6 +32,15 @@ const LessonSearchQuery = z.object({
 
 const LessonIdParams = z.object({ id: z.string().uuid() });
 
+/**
+ * `memory_items` holds two memories: repository lessons and Slack channel
+ * memory. These routes serve the first only. Without the scope a platform
+ * admin's list (no access filter) showed every channel's memory, private
+ * channels included, as "lessons", and the delete reached channel memory
+ * without the channel route's audit.
+ */
+const LESSON_SCOPE = 'swe-lessons';
+
 export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -52,6 +62,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
       const where: Prisma.MemoryItemWhereInput = {
         ...accessFilter,
+        scope: LESSON_SCOPE,
         ...(!includeConsolidated && { consolidatedAt: null }),
         // Combined with the access filter, never replacing it: a repoId the caller cannot
         // reach matches nothing rather than widening the result.
@@ -150,6 +161,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
               ],
               ...(!includeConsolidated && { consolidatedAt: null }),
               repoId,
+              scope: LESSON_SCOPE,
             },
           })
       );
@@ -218,12 +230,12 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
             _count: { _all: true },
             _max: { consolidatedAt: true },
             by: ['repoId'],
-            where: { repoId: { not: null } },
+            where: { repoId: { not: null }, scope: LESSON_SCOPE },
           }),
           fastify.prisma.memoryItem.groupBy({
             _count: { _all: true },
             by: ['repoId'],
-            where: { consolidatedAt: null, repoId: { not: null } },
+            where: { consolidatedAt: null, repoId: { not: null }, scope: LESSON_SCOPE },
           }),
         ])
     );
@@ -274,8 +286,19 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { params: LessonIdParams },
     },
     async (request, reply) => {
-      const lesson = await fastify.prisma.memoryItem.findUnique({
-        where: { id: request.params.id },
+      const actor = requireUser(request);
+      // Channel memory is deleted through its own audited channel route.
+      const lesson = await fastify.prisma.memoryItem.findFirst({
+        select: {
+          createdAt: true,
+          failureType: true,
+          id: true,
+          lessonSummary: true,
+          rationale: true,
+          repoId: true,
+          workflowRunId: true,
+        },
+        where: { id: request.params.id, scope: LESSON_SCOPE },
       });
       if (!lesson) {
         return reply.status(404).send({
@@ -283,8 +306,18 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      await fastify.prisma.memoryItem.delete({
-        where: { id: request.params.id },
+      // The delete is irreversible, so the audit row carries the deleted
+      // content, and commits or rolls back with the delete.
+      await fastify.prisma.$transaction(async (tx) => {
+        await tx.memoryItem.delete({ where: { id: lesson.id } });
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor,
+          before: lesson,
+          client: tx,
+          entityId: lesson.id,
+          entityType: 'MemoryItem',
+        });
       });
 
       return { data: { deleted: true } };

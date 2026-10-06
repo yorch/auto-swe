@@ -649,6 +649,16 @@ The scan runs:
 
 The warnings of the save-time and install-time scans are stored on the `SkillRevision` that holds the scanned text (`scanWarnings`).
 
+**Memory is gated, not advised.** A lesson or a channel-memory item is replayed into every later run that recalls it — a lesson into the implementer's *system prompt* — so the same scanner is used as a gate there (`packages/worker/src/lib/memoryGuard.ts`):
+
+- Every write through `insertMemoryItem`, and every row the two consolidators insert, is scanned over the whole text (summary and rationale). A match on an `INJECTION` pattern refuses the write: `commitToMemory` records a `memory.lesson_refused` event and returns no lesson id, a consolidator leaves the cluster unconsolidated and records `memory.consolidation_refused`, and the best-effort writers skip the item.
+- Every reader that puts memory in a prompt — `retrieveSimilarLessons`, `retrieveChannelMemory`, `recentChannelMemory`, `searchOrgChannelMemory` — drops a matching item, so a row written before the gate existed, or edited since, never reaches a model.
+- `EXFILTRATION` hits do not gate: those patterns match a URL or a `curl`, which an engineering lesson names as a matter of course.
+- The gate fails closed. A scan that throws refuses the write and recalls nothing.
+- Recalled memory is wrapped in a `<recalled_memory>` fence stating that it is reference data, not instructions.
+
+The shell step masks its command before storing it as a lesson: the run's token by value, then anything shaped like a credential (`maskCredentialShapes` in `packages/worker/src/lib/redactToken.ts` — URL userinfo, auth headers, `*_TOKEN=`-style assignments, `--password`-style flags, well-known token prefixes). The auto-commit message it pushes gets the same masked text.
+
 ### 6.5 Skill revisions and run pinning
 
 `Skill.promptText` and `description` are the live copy. Every change to either also writes an immutable `SkillRevision` (`skill_revisions`, unique on `(skillId, revision)`) and sets `Skill.currentRevision` to its number, in one statement. The paths that do so are: skill create (revision 1), skill edit (when the text or the description changes — a rename or an `isActive` toggle does not), the built-in sync when shipped text changes, and bundle install when a skill's text or description changes. A revision stores the text, the description, a content hash, the scan warnings, the author, and — for content imported from a source — provenance (`sourceSha`, `sourcePath`, `referenceFiles`). Revisions are never updated.
@@ -1002,6 +1012,13 @@ template override is never badged, because it may use a different model or crede
   `.claude` / `CLAUDE.md` / `.mcp.json` refusal applies to `Write` and `Edit`; a shell command is
   checked only by the shell-command scanner, whose write-target extraction is a heuristic over the
   command text and does not know the harness's current directory.
+
+- **The memory gate and the credential masker are pattern-based.** The memory gate (§6.4) refuses
+  only the phrasings the `INJECTION` patterns name; a reworded instruction is stored and recalled,
+  with only the `<recalled_memory>` fence between it and the model. A refused write is visible only
+  as a trace event or a worker log line — there is no review queue. `maskCredentialShapes` masks
+  credential *shapes*; a secret with no recognisable name or prefix in a shell step's command is
+  stored as written.
 
 - **MCP authentication is a static bearer token plus up to five static custom headers.** OAuth flows
   and per-user tokens are not supported. The SSRF guard checks the URL's host text and then resolves the name at connection time and

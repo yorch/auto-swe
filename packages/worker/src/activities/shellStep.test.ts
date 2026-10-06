@@ -65,6 +65,7 @@ import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
 import { getScmProvider } from '../lib/scm/index.js';
+import { recordLessonBackground } from './commitToMemory.js';
 import { finalizeScript, runShellStep } from './shellStep.js';
 import { shellQuote } from './workspace.js';
 
@@ -264,6 +265,37 @@ describe('runShellStep — token redaction', () => {
  * (exact-substring) is defeated by `base64`/`rev`/`tr`. The credential must
  * therefore never be persisted in the volume at all.
  */
+describe('runShellStep — the command text it persists is masked', () => {
+  const COMMAND = `NPM_TOKEN=npm_abcdef123456 npx codemod --token ${TOKEN} && echo done`;
+
+  beforeEach(() => {
+    // The finalize script commits, pushes, then prints the sha and changed files.
+    mockedExec.mockImplementation(async (command: string) =>
+      command.includes('push --no-verify') ? 'abc1234\nsrc/a.ts\n' : ''
+    );
+  });
+
+  it('masks credentials in the stored lesson and the auto-commit message', async () => {
+    const result = await runShellStep({
+      command: COMMAND,
+      image: 'alpine/git:latest',
+      request: REQUEST,
+    });
+
+    expect(result.persisted).toBe(true);
+    const lesson = vi.mocked(recordLessonBackground).mock.calls[0]?.[0];
+    expect(lesson?.lessonSummary).toContain('npx codemod');
+    expect(lesson?.lessonSummary).not.toContain(TOKEN);
+    expect(lesson?.lessonSummary).not.toContain('npm_abcdef123456');
+
+    const finalize = mockedExec.mock.calls
+      .map(([command]) => command as string)
+      .find((command) => command.includes('push --no-verify'));
+    expect(finalize).toContain('auto: shell step NPM_TOKEN=***');
+    expect(finalize?.split('commit -m')[1]?.split('\n')[0]).not.toContain('npm_abcdef123456');
+  });
+});
+
 describe('runShellStep — clone credential is never persisted in the workspace volume', () => {
   const CLEAN_CLONE_URL = 'https://github.com/acme/widgets.git';
   const AUTH_HEADER = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${TOKEN}`).toString('base64')}`;

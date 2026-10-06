@@ -6,6 +6,11 @@ vi.mock('@auto-swe/shared/db', () => ({
 }));
 
 const generateEmbeddingWithSpecMock = vi.fn();
+// The memory gate scans through the shared scanner, which reads its patterns
+// from the database; a clean scan stands in for it here.
+vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
+  scanSkillContent: vi.fn(async () => ({ incomplete: false, safe: true, warnings: [] })),
+}));
 vi.mock('./embeddings.js', () => ({
   generateEmbeddingWithSpec: (...args: unknown[]) => generateEmbeddingWithSpecMock(...args),
 }));

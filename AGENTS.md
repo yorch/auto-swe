@@ -606,7 +606,7 @@ callers depend on seeing a sub-agent's raw transcript.
 
 ### Runtime Security Scanners
 
-Six scanners run during agent execution, each independently advisory or blocking:
+Seven scanners run during agent execution, each independently advisory or blocking:
 
 | Scanner | Stage | Behaviour | Source |
 |---|---|---|---|
@@ -616,6 +616,7 @@ Six scanners run during agent execution, each independently advisory or blocking
 | **Code security** | Post-commit diff scan | Advisory | `CODE_SECURITY` patterns via `codeSecurityScanner.ts`; findings reach the security reviewer through `CodeResult.codeSecurityFindings` |
 | **Skill content** | Skill save + LLM output per TDD iteration | Advisory | `INJECTION` / `EXFILTRATION` patterns via `skillScanner.ts` |
 | **LLM output** | Post-generate per TDD iteration | Advisory | `scanSkillContent`; wrapped in try/catch — a DB failure must never abort the activity |
+| **Memory content** | Every `memory_items` write + every recall into a prompt | **Hard-block** (refuses the write / drops the item; fails closed) | `INJECTION` patterns only, via `memoryGuard.ts` — memory is replayed into every later run that recalls it |
 
 **Built-in patterns:** 63 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION,
 11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 7 SENSITIVE_FILE, 4 PII. Synced idempotently by

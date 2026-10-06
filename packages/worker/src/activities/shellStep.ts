@@ -37,7 +37,12 @@ import { putArtifact } from '../lib/artifactStore.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
-import { redactExecError, redactToken } from '../lib/redactToken.js';
+import {
+  maskCredentialShapes,
+  redactExecError,
+  redactSecrets,
+  redactToken,
+} from '../lib/redactToken.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
@@ -417,6 +422,15 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
 
     const passed = result.exitCode === 0 && !result.signal;
 
+    // The command text leaves this activity twice: in the auto-commit message
+    // pushed to the repository, and in the lesson recalled into later
+    // implementer prompts and listed to operators. Both get the masked form —
+    // the run's own token by value, then anything shaped like a credential.
+    // Masked whole and sliced after, for the same straddling-cut reason as the
+    // summary tail below.
+    const maskedCommand = maskCredentialShapes(
+      redactSecrets(input.command, [meta.token, meta.gitAuthHeader])
+    );
     let finalize: FinalizeResult = { filesChanged: [] };
     let pushError: string | undefined;
     if (passed) {
@@ -425,7 +439,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
         finalize = await finalizeWorkspaceVolume(
           volumeName,
           branch,
-          input.command.slice(0, 80),
+          maskedCommand.slice(0, 80),
           helperImage,
           meta.token,
           meta.cleanUrl,
@@ -460,7 +474,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       // 5-second cap so a slow embedding provider can't extend the shell-step
       // activity past its timeout after the real work has already succeeded.
       await recordLessonBackground({
-        lessonSummary: `Shell step modified ${finalize.filesChanged.length} file(s) on branch ${branch}: ${input.command.slice(0, 200)}`,
+        lessonSummary: `Shell step modified ${finalize.filesChanged.length} file(s) on branch ${branch}: ${maskedCommand.slice(0, 200)}`,
         metadata: {
           branch,
           ...(finalize.committedSha ? { committedSha: finalize.committedSha } : {}),

@@ -1,5 +1,6 @@
 import { prisma } from '@auto-swe/shared/db';
 import { generateEmbeddingWithSpec } from './embeddings.js';
+import { withoutFlaggedMemory } from './memoryGuard.js';
 import { insertMemoryItem, type QueryEmbedding, searchMemoryItemsByVector } from './memoryStore.js';
 
 /** One retrieved channel-memory row with its cosine similarity to the query. */
@@ -87,7 +88,9 @@ export async function retrieveChannelMemory(
     }
   }
 
-  return channelItems;
+  // Recalled memory is prepended to the assistant's turn; drop anything that
+  // reads as an instruction, including rows written before the write gate.
+  return withoutFlaggedMemory(channelItems, (item) => item.summary);
 }
 
 /** One org-wide cross-channel memory hit, carrying its source channel for labelling. */
@@ -206,14 +209,19 @@ function searchTeamChannelMemory(opts: {
  * channels in the same org, returning the source channel id + name for
  * attribution. Privacy filter (Gap G) lives in the shared builder.
  */
-export function searchOrgChannelMemory(opts: {
+export async function searchOrgChannelMemory(opts: {
   orgId: string;
   excludeChannelId: string;
   limit: number;
   similarityThreshold: number;
   precomputed: QueryEmbedding;
 }): Promise<OrgChannelMemoryItem[]> {
-  return runCrossChannelMemoryQuery<OrgChannelMemoryItem>(ORG_CROSS_CHANNEL_SQL, opts.orgId, opts);
+  const rows = await runCrossChannelMemoryQuery<OrgChannelMemoryItem>(
+    ORG_CROSS_CHANNEL_SQL,
+    opts.orgId,
+    opts
+  );
+  return withoutFlaggedMemory(rows, (row) => row.summary);
 }
 
 /** One recent (un-consolidated) channel-memory row, for ambient digest context. */
@@ -237,12 +245,14 @@ export async function recentChannelMemory(
   channelId: string,
   limit = 15
 ): Promise<RecentChannelMemoryItem[]> {
-  return prisma.memoryItem.findMany({
+  const rows = await prisma.memoryItem.findMany({
     orderBy: { createdAt: 'desc' },
     select: { createdAt: true, id: true, lessonSummary: true, rationale: true },
     take: limit,
     where: { channelId, consolidatedAt: null },
   });
+  // The digest prompt reads both fields, so both are scanned.
+  return withoutFlaggedMemory(rows, (row) => `${row.lessonSummary}\n${row.rationale}`);
 }
 
 /**

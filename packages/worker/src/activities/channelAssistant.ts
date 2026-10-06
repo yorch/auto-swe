@@ -28,6 +28,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { calculateCostUsd } from '../lib/costTracking.js';
 import { withHeartbeat } from '../lib/execUtils.js';
+import { fenceRecalledMemory, MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import {
   fetchThreadReplies,
   postSlackThreadMessage,
@@ -280,9 +281,8 @@ export function formatMemoryContext(
     .slice(0, maxItems)
     .map((item) =>
       item.crossChannel ? `- [from another channel] ${item.summary}` : `- ${item.summary}`
-    )
-    .join('\n');
-  return `Relevant context from this channel's memory:\n${bullets}\n\nUser: ${userText}`;
+    );
+  return `${fenceRecalledMemory("Relevant context from this channel's memory:", bullets)}\n\nUser: ${userText}`;
 }
 
 /**
@@ -882,12 +882,19 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   // Phase 2: retrieve channel-scoped memory similar to this message and prepend
   // it as context, so the assistant builds knowledge over time. Best-effort —
   // a retrieval failure (e.g. embedding round-trip) must not block the reply.
+  // Resolved before retrieval, so `channel.memoryContextItems` sets how many
+  // items are fetched rather than only truncating a fixed-size result.
+  const contextLimits = await resolveSettings(
+    ['channel.memoryContextItems', 'channel.threadContextMessages'],
+    { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
+  );
   let memory: ChannelMemoryItem[] = [];
   try {
-    memory = await retrieveChannelMemory(input.userText, {
-      channelId: input.channelId,
-      teamId: input.teamId,
-    });
+    memory = await retrieveChannelMemory(
+      input.userText,
+      { channelId: input.channelId, teamId: input.teamId },
+      contextLimits['channel.memoryContextItems']
+    );
   } catch (err) {
     console.error(
       `[channelAssistant] failed to retrieve channel memory for ${input.channelId}:`,
@@ -915,10 +922,6 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
 
   // Compose context: channel memory block first, then the thread transcript, then
   // the user's message at the bottom (closest to the model's attention).
-  const contextLimits = await resolveSettings(
-    ['channel.memoryContextItems', 'channel.threadContextMessages'],
-    { channelId: input.channelId, orgId: input.orgId, teamId: input.teamId }
-  );
   const withMemory = formatMemoryContext(
     memory,
     input.userText,
@@ -934,8 +937,9 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   // LLM — for injection/exfiltration patterns. ADVISORY only (mirrors the
   // implementer's LLM-output scanner): warnings are recorded as a named security
   // event, but the turn always proceeds. Wrapped in try/catch so a scanner/DB
-  // failure never aborts the turn. We scan only `input.userText`, not the
-  // prepended memory context — that originated from prior, already-scanned input.
+  // failure never aborts the turn. We scan only `input.userText`: the prepended
+  // memory was filtered through the memory gate when it was recalled
+  // (`retrieveChannelMemory`), which drops any item matching an injection pattern.
   await scanChannelInput(input);
 
   // Phase A: give the agent a `delegateTask` tool so it can launch a durable,
@@ -1087,7 +1091,8 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
  *    call on the channel).
  *  - On any failure (summarizer throws, returns no object, or the memory write
  *    fails) we FALL BACK to storing the truncated raw exchange so memory still
- *    accrues. A failure in the fallback path is itself swallowed + logged.
+ *    accrues. A failure in the fallback path is itself swallowed + logged. The
+ *    exception is a write the memory gate refused: nothing is stored.
  */
 async function summarizeAndStoreChannelMemory(
   input: ChannelAssistantTurnInput,
@@ -1135,6 +1140,15 @@ async function summarizeAndStoreChannelMemory(
       userSlackId: input.userSlackId,
     });
   } catch (err) {
+    // A summary refused by the memory gate is not retried as the raw exchange:
+    // the raw text is what the summary was made from, so it carries the same
+    // instruction, unsummarised.
+    if (err instanceof MemoryContentRefusedError) {
+      console.warn(
+        `[channelAssistant] channel memory not stored for ${input.channelId}: ${err.message}`
+      );
+      return costUsd;
+    }
     // Summarization (or its write) failed — fall back to storing the truncated
     // raw exchange so channel memory still accrues. Never let this break the reply.
     console.error(

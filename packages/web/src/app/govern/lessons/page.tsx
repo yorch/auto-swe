@@ -261,7 +261,9 @@ export default function GovernLessonsPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-[10px] text-paper-600">
-                        {lesson.repository.organizationName}/{lesson.repository.repoName}
+                        {lesson.repository
+                          ? `${lesson.repository.organizationName}/${lesson.repository.repoName}`
+                          : 'Deleted repository'}
                       </span>
                       {lesson.failureType && (
                         <Badge className="text-[10px]" tone="muted" uppercase>

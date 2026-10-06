@@ -10,6 +10,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
+import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -173,19 +174,34 @@ export async function commitToMemory(
     });
     llmTraced = true;
 
-    const lessonId = await writeMemoryItemRow({
-      agentKey: 'commitToMemory',
-      costUsd: attribution.costUsd,
-      failureType: lesson.failureType,
-      lessonSummary: lesson.lessonSummary,
-      metadata: lesson.metadata,
-      model: attribution.modelSpec || undefined,
-      rationale: lesson.rationale,
-      repoId: scopedRepoId,
-      skillsActive: skills.map((s) => s.name),
-      workflowId: workflow.id,
-      workflowRunId,
-    });
+    let lessonId: string;
+    try {
+      lessonId = await writeMemoryItemRow({
+        agentKey: 'commitToMemory',
+        costUsd: attribution.costUsd,
+        failureType: lesson.failureType,
+        lessonSummary: lesson.lessonSummary,
+        metadata: lesson.metadata,
+        model: attribution.modelSpec || undefined,
+        rationale: lesson.rationale,
+        repoId: scopedRepoId,
+        skillsActive: skills.map((s) => s.name),
+        workflowId: workflow.id,
+        workflowRunId,
+      });
+    } catch (err) {
+      // A lesson that reads as an instruction is not stored. That is the gate
+      // working, not an activity failure: retrying would regenerate the same
+      // kind of text, and the run it summarises has already merged.
+      if (!(err instanceof MemoryContentRefusedError)) {
+        throw err;
+      }
+      agentTracer.addActivityEvent({
+        name: 'memory.lesson_refused',
+        outputJson: { failureType: lesson.failureType, patterns: err.patterns },
+      });
+      return '';
+    }
 
     agentTracer.addActivityEvent({
       name: 'memory.lesson_written',

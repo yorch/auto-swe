@@ -228,10 +228,11 @@ export async function evaluateReactiveInterjection(
       .join('\n')
       .slice(0, 2000);
     try {
-      memory = await retrieveChannelMemory(query, {
-        channelId: channel.id,
-        teamId: channel.teamId,
-      });
+      memory = await retrieveChannelMemory(
+        query,
+        { channelId: channel.id, teamId: channel.teamId },
+        tuning['channel.memoryContextItems']
+      );
     } catch (err) {
       console.error(
         `[channelReactive] memory retrieval failed for ${channel.id}:`,

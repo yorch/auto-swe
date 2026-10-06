@@ -4,13 +4,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { lessonRoutes } from './lessons.js';
 
 function newMockPrisma() {
-  return {
+  const prisma = {
+    $transaction: vi.fn(),
+    configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: { findFirst: vi.fn() },
     memoryItem: {
       count: vi.fn().mockResolvedValue(0),
+      delete: vi.fn().mockResolvedValue({}),
+      findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
   };
+  prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => unknown) => fn(prisma));
+  return prisma;
 }
 
 async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
@@ -37,6 +43,12 @@ function lastListWhere(prisma: ReturnType<typeof newMockPrisma>) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('GET /lessons (list)', () => {
+  it('lists repository lessons only, never channel memory — even for an admin', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons' });
+    expect(lastListWhere(prisma)).toMatchObject({ scope: 'swe-lessons' });
+  });
+
   it('excludes consolidated lessons by default', async () => {
     const { app, prisma } = await buildApp();
     const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons' });
@@ -131,5 +143,59 @@ describe('GET /lessons/search', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(lastSearchWhere(prisma).consolidatedAt).toBeUndefined();
+  });
+});
+
+describe('DELETE /lessons/:id', () => {
+  const LESSON_ID = '22222222-2222-4222-8222-222222222222';
+
+  it('only finds a lesson by id within the lesson scope', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/lessons/${LESSON_ID}`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(prisma.memoryItem.findFirst.mock.calls[0][0].where).toEqual({
+      id: LESSON_ID,
+      scope: 'swe-lessons',
+    });
+    expect(prisma.memoryItem.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes and audits the deleted content in one transaction', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    const lesson = { id: LESSON_ID, lessonSummary: 'run migrations first', rationale: 'r' };
+    prisma.memoryItem.findFirst.mockResolvedValue(lesson);
+
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/lessons/${LESSON_ID}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(prisma.memoryItem.delete).toHaveBeenCalledWith({ where: { id: LESSON_ID } });
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'DELETE',
+        actorId: 'admin-1',
+        beforeJson: lesson,
+        entityId: LESSON_ID,
+        entityType: 'MemoryItem',
+      }),
+    });
+  });
+
+  it('refuses a non-admin', async () => {
+    const { app } = await buildApp('ENGINEER');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/lessons/${LESSON_ID}`,
+    });
+    expect(res.statusCode).toBe(403);
   });
 });
