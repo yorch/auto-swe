@@ -5500,19 +5500,19 @@
       "title": "Agent runs default to the Mastra loop"
     },
     {
-      "anchor": "export async function resolveClaudeCodeAccess(",
+      "anchor": "bindModel(agentKey, model) {",
       "before": 0,
       "id": "harnessUnsupported",
       "lines": 14,
-      "path": "packages/worker/src/agents/implementerRuntimeSelect.ts",
+      "path": "packages/worker/src/agents/claudeCode/harness.ts",
       "title": "The harness needs an Anthropic model"
     },
     {
-      "anchor": "async function installBinary(workspace: Workspace, binary: string)",
+      "anchor": "async function installBinary(",
       "before": 7,
       "id": "harnessBinary",
-      "lines": 27,
-      "path": "packages/worker/src/agents/claudeCode/runtime.ts",
+      "lines": 38,
+      "path": "packages/worker/src/agents/harness/runtime.ts",
       "title": "Harness binary verified before each turn"
     },
     {
@@ -5524,19 +5524,19 @@
       "title": "Managed settings disable repository allow rules and bypass mode"
     },
     {
-      "anchor": "async function withinDeadline(",
+      "anchor": "export async function decideWithinDeadline(",
       "before": 0,
       "id": "harnessPolicyDeadline",
       "lines": 18,
-      "path": "packages/worker/src/agents/claudeCode/runtime.ts",
+      "path": "packages/worker/src/agents/harness/policy.ts",
       "title": "An undecided tool call is refused"
     },
     {
-      "anchor": "function streamedUsage(",
+      "anchor": "export function runningTotalsUsage(",
       "before": 8,
       "id": "harnessStreamedUsage",
       "lines": 36,
-      "path": "packages/worker/src/agents/claudeCode/runtime.ts",
+      "path": "packages/worker/src/agents/harness/usage.ts",
       "title": "A stopped harness turn is metered from streamed messages"
     },
     {
