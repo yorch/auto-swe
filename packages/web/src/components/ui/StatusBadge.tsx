@@ -8,7 +8,7 @@ export function StatusBadge({ status, showDot = true }: { status: string; showDo
   // The shape comes from Badge; the status palette overrides its tone colours.
   return (
     <Badge
-      className={cn('gap-1.5 text-[11.5px] tracking-[0.06em]', meta.classes)}
+      className={cn('gap-1.5 rounded-full pr-2 pl-1.5', meta.classes)}
       tone="neutral"
       variant="outline"
     >
@@ -16,13 +16,16 @@ export function StatusBadge({ status, showDot = true }: { status: string; showDo
         <span
           aria-hidden
           className={cn(
-            'inline-block h-[5px] w-[5px] rounded-full shrink-0',
+            'inline-block h-1.5 w-1.5 rounded-full shrink-0',
             meta.dotClass,
             isLive && 'pulse-dot'
           )}
         />
       )}
-      <span>{status.replace(/_/g, ' ').toLowerCase()}</span>
+      {/* Lower-cased text, shown sentence-case: `first-letter` needs a block box. */}
+      <span className="inline-block first-letter:uppercase">
+        {status.replace(/_/g, ' ').toLowerCase()}
+      </span>
     </Badge>
   );
 }

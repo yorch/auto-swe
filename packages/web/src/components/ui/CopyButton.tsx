@@ -1,5 +1,6 @@
 'use client';
 
+import { Icon } from '@/components/ui/Icon';
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
@@ -26,7 +27,7 @@ export function CopyButton({ value, className }: CopyButtonProps) {
     <>
       <button
         className={cn(
-          'inline-flex items-center rounded border border-ink-600 bg-ink-800 px-2 py-0.5 font-mono text-[10px] text-paper-400 transition-colors hover:border-ember-400 hover:text-ember-400',
+          'inline-flex items-center gap-1 rounded-md border border-ink-500 bg-ink-700 px-2 py-0.5 text-[11.5px] font-medium text-paper-400 transition-colors hover:border-ember-400/60 hover:text-paper-100',
           FOCUS_RING,
           failed && 'border-brick-400 text-brick-400',
           className
@@ -35,7 +36,8 @@ export function CopyButton({ value, className }: CopyButtonProps) {
         title="Copy to clipboard"
         type="button"
       >
-        {failed ? 'copy failed' : copied ? 'copied' : 'copy'}
+        <Icon name={copied ? 'check' : 'copy'} size={12} />
+        {failed ? 'Copy failed' : copied ? 'Copied' : 'Copy'}
       </button>
       {/* Announces the outcome; the button's own label change is not read out. */}
       <span aria-live="polite" className="sr-only" role="status">

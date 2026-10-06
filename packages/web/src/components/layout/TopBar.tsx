@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { RefObject } from 'react';
+import { type RefObject, useState } from 'react';
+import { CommandPalette, CommandPaletteButton } from '@/components/layout/CommandPalette';
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Select } from '@/components/ui/Select';
@@ -42,9 +43,10 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
   const gatewayStatus = useGatewayStatus();
   const title = pageTitle(pathname);
   const section = pageSection(pathname);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-20 flex h-[60px] min-w-0 items-center gap-2 border-b border-ink-400 bg-ink-950/70 px-3 backdrop-blur-md sm:gap-[14px] md:px-[26px]">
+    <header className="sticky top-0 z-20 flex h-14 min-w-0 items-center gap-2 border-b border-ink-500/70 bg-ink-950/70 px-3 backdrop-blur-md sm:gap-3 md:px-6">
       {/* Menu button — opens the sidebar drawer below md */}
       <button
         aria-controls={SIDEBAR_ID}
@@ -105,7 +107,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
       {/* Inbox badge */}
       {inboxCount > 0 && (
         <Link
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-400/10 px-2.5 py-[5px] text-[12.5px] font-semibold text-amber-400 no-underline max-sm:hidden"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-[12px] font-semibold text-amber-400 no-underline transition-colors hover:bg-amber-400/20 max-sm:hidden"
           href="/govern/approvals"
         >
           <span className="inline-block h-[7px] w-[7px] rounded-full bg-amber-400" />
@@ -119,16 +121,18 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
       {/* Right side */}
       <div className="flex shrink-0 items-center gap-3">
         {/* Gateway reachability — driven by a /health probe, never assumed */}
+        <CommandPaletteButton onClick={() => setPaletteOpen(true)} />
         <Badge
-          className="tracking-[0.18em] max-sm:hidden"
+          className="max-sm:hidden"
           dot={gatewayStatus === 'online' ? 'pulse' : true}
+          title={`Gateway ${GATEWAY_LABEL[gatewayStatus]}`}
           tone={GATEWAY_TONE[gatewayStatus]}
-          uppercase
           variant="text"
         >
           {GATEWAY_LABEL[gatewayStatus]}
         </Badge>
       </div>
+      <CommandPalette onOpenChange={setPaletteOpen} open={paletteOpen} />
     </header>
   );
 }

@@ -57,8 +57,8 @@ const TONE_CLASSES: Record<BadgeTone, Record<BadgeVariant, string>> = {
 };
 
 const VARIANT_BASE: Record<BadgeVariant, string> = {
-  outline: 'inline-flex items-center rounded border px-1.5 py-0.5',
-  solid: 'inline-flex items-center rounded px-1.5 py-0.5',
+  outline: 'inline-flex items-center rounded-md border px-1.5 py-px leading-5',
+  solid: 'inline-flex items-center rounded-md px-1.5 py-px leading-5',
   text: '',
 };
 
@@ -90,10 +90,10 @@ export function Badge({
   return (
     <span
       className={cn(
-        'font-mono text-[11px]',
+        'whitespace-nowrap text-[11.5px] font-medium',
         VARIANT_BASE[variant],
         dot && 'inline-flex items-center gap-1.5',
-        uppercase && 'uppercase tracking-wider',
+        uppercase && 'text-[10.5px] uppercase tracking-[0.06em]',
         TONE_CLASSES[tone][variant],
         className
       )}

@@ -34,7 +34,7 @@ export function SegmentedControl<T extends string>({
     <fieldset
       aria-label={ariaLabel}
       className={cn(
-        'inline-flex min-w-0 max-w-full overflow-x-auto items-center gap-0.5 rounded-md border border-ink-400 bg-ink-900/60 p-0.5',
+        'inline-flex min-w-0 max-w-full overflow-x-auto items-center gap-0.5 rounded-lg border border-ink-400/70 bg-ink-900/60 p-0.5',
         className
       )}
     >
@@ -44,10 +44,10 @@ export function SegmentedControl<T extends string>({
           <button
             aria-pressed={selected}
             className={cn(
-              'whitespace-nowrap rounded-sm px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors',
+              'whitespace-nowrap rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors',
               FOCUS_RING,
               selected
-                ? 'bg-ember-400/15 text-ember-400'
+                ? 'bg-ink-500 text-paper-50 shadow-sm'
                 : 'text-paper-500 hover:bg-ink-600/50 hover:text-paper-200',
               optionClassName
             )}
