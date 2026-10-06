@@ -157,7 +157,7 @@ On a GitHub `check_run` failure webhook, the worker fetches the actual CI logs, 
 
 ### 5.5 Semantic memory / learning loop
 
-When an engineering run's pull request is merged, the memory agent writes a structured lesson — a `MemoryItem` with a failure type, rationale and 1536-dim embedding. The merge-conflict resolver and a shell step that pushes changes record lessons of their own without a model call. On later runs, `executeImplementation` does a per-repository similarity search and adds the closest lessons to the implementer's system prompt, fenced as reference data. A weekly job merges near-duplicate lessons. Every lesson passes an injection gate on the way in and on the way out (see [agents.md §6.4](./agents.md#64-custom-skill-security-scanning)). Platform admins browse, delete and consolidate lessons at `/govern/lessons`.
+When an engineering run's pull request is merged, the memory agent writes a structured lesson — a `MemoryItem` with a failure type, rationale and 1536-dim embedding. The merge-conflict resolver and a shell step that pushes changes record lessons of their own without a model call. On later runs, `executeImplementation` does a per-repository similarity search and adds the closest lessons to the implementer's system prompt, fenced as reference data. A weekly job merges near-duplicate lessons. Every lesson passes an injection gate on the way in and on the way out (see [agents.md §6.4](./agents.md#64-custom-skill-security-scanning)). Platform admins browse, delete and consolidate lessons at `/govern/lessons`. See [memory.md](./memory.md).
 
 ### 5.6 Configurable + versioned workflow templates
 

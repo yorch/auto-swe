@@ -1,0 +1,104 @@
+# Agent memory
+
+auto-swe keeps two long-lived memories in one pgvector-backed table, `memory_items`, separated by
+its `scope` column:
+
+| Memory | `scope` | Keyed by | Read by |
+|---|---|---|---|
+| **Lessons** | `swe-lessons` | repository (`repo_id`) | `executeImplementation`, into the implementer's system prompt |
+| **Channel memory** | `channel-memory` | Slack channel (`channel_id`), with `team_id` / `org_id` | the channel assistant's turns, reactive pass, digests and org flagging |
+
+This doc covers what both share and how lessons work end to end. Channel memory's own behaviour —
+passive ingestion, cross-channel reads, privacy — is in
+[channel-assistant.md §6](./channel-assistant.md#6-memory).
+
+---
+
+## 1. Storage
+
+A `MemoryItem` row holds a `lessonSummary` (what is recalled), a `rationale`, an optional
+`failureType`, a 1536-dimensional `embedding` of the summary with the `embeddingModel` that produced
+it, and provenance: `workflowId`, `workflowRunId`, `agentKey`, `model`, `costUsd`, `skillsActive`
+and a free-form `metadata` object. `consolidatedAt` marks a row that consolidation has merged into
+a newer one; such rows are kept but never recalled.
+
+The embedding column carries an HNSW cosine index (`idx_memory_items_embedding`). It is created by
+hand-written DDL that Prisma cannot express — see the `prisma-pgvector-hnsw` skill before touching
+`schema.prisma`. Embeddings come from the `EmbeddingConfig` singleton
+([model-configuration.md](./model-configuration.md)); a row is only ever compared with rows embedded
+by the same model, so vectors from different models are never compared.
+
+## 2. Writing lessons
+
+| Writer | When | Model call |
+|---|---|---|
+| `commitToMemory` step | After the run's pull request is merged (`humanMergeSignal`), in the default engineering template | Yes — the `commitToMemory` agent summarises the run |
+| Merge-conflict resolver | After it resolves a conflict | No (`recordLessonBackground`) |
+| Shell step | After a step that changed files and pushed them | No; the command is stored with credentials masked |
+
+Every write goes through `insertMemoryItem` (`packages/worker/src/lib/memoryStore.ts`), which
+applies the memory gate (§5) before it embeds anything.
+
+## 3. Recalling lessons
+
+`executeImplementation` embeds the work request's description and searches the repository's
+lessons (`retrieveSimilarLessons`): unconsolidated rows, embedded by the current model, at or above
+`lessonRetrievalThreshold` similarity, at most `lessonRetrievalLimit` of them (both on
+`/govern/workflow-defaults`, default 0.7 and 5). Matches are added to the implementer's system
+prompt inside a `<recalled_memory>` fence that marks them as reference data. A retrieval failure is
+logged and the run continues without lessons.
+
+## 4. Consolidation
+
+A Temporal Schedule (`consolidationCron`, default weekly) starts one `ConsolidateLessonsWorkflow`
+per repository with `Connection.consolidationEnabled`. Admins can also run it from
+`/govern/lessons`. It clusters the repository's active lessons by embedding similarity
+(`consolidationSimilarityThreshold`, default 0.85), and for each cluster of at least
+`consolidationMinClusterSize` (default 3) asks the `lessonConsolidator` agent for one or two
+generalised lessons. In one transaction, under a per-repository advisory lock, it inserts those and
+marks the sources consolidated; `metadata.consolidatedFrom` lists the source ids. Channel memory is
+consolidated the same way on each ambient fire.
+
+## 5. The memory gate
+
+Memory is replayed into every later run that recalls it, so it is held to a blocking rule
+(`packages/worker/src/lib/memoryGuard.ts`): a write whose text matches an `INJECTION` scanner
+pattern is refused, a recalled item that matches is dropped, and a scan that fails refuses. See
+[agents.md §6.4](./agents.md#64-custom-skill-security-scanning).
+
+## 6. Administration
+
+`/govern/lessons` lists, searches and deletes lessons and starts consolidation; deletes are audited
+with the deleted content. Channel memory is edited and deleted per channel
+([channel-assistant.md §6](./channel-assistant.md#6-memory)).
+
+---
+
+## Limitations
+
+- **A lesson is written only after a merge, from little evidence.** The `commitToMemory` agent sees
+  the ticket description and the pull request's status — not CI failures, review verdicts or the
+  diff — and failed, rejected or timed-out runs write no lesson.
+- **A lesson cites its run, not its evidence.** There is no quote, pull-request or trace reference,
+  and the model-free writers record no run or agent at all. A consolidated row keeps only
+  `metadata.consolidatedFrom`; its scope columns, run, agent, model and team are not carried over.
+- **Nothing supersedes a lesson.** There is no confidence score and no notion of one lesson
+  replacing another, so contradictory lessons coexist until an admin deletes one. Lessons never
+  expire.
+- **Deleting does not cascade through consolidation.** Deleting a source leaves its content alive in
+  the consolidated row built from it; deleting a consolidated row leaves its sources marked
+  consolidated, so neither is recalled again.
+- **Deleting a repository orphans its lessons.** `repo_id` is set null; the rows stay in
+  `/govern/lessons` as "Deleted repository" until deleted by hand. There is no way to erase one Slack
+  user's channel memory.
+- **Changing the embedding model hides existing memory.** Rows embedded by the previous model drop
+  out of recall and consolidation, and there is no bulk re-embed.
+- **Filtered search can under-return.** Each search combines the HNSW index with a selective
+  `WHERE` on one repository or channel. With pgvector's default `hnsw.ef_search` of 40, the index
+  can return its nearest candidates from other scopes, leaving a small repository in a large table
+  with fewer matches than exist, or none.
+- **Only the implementer recalls lessons**, and only automatically: no agent can search memory or
+  ask why a lesson was recalled, and the reviewer and the fixers get none.
+- **A refused channel summary still stores the raw exchange.** When the summariser fails for any
+  reason other than the memory gate — a USD-cap refusal included — the turn's text and reply are
+  stored instead, and that embedding is not covered by the channel's budget hold.

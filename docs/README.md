@@ -28,6 +28,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [evals.md](./evals.md) | Output-quality measurement — the `eval` node, scorers, datasets, the regression harness, canary routing |
 | [agent-runs.md](./agent-runs.md) | Running one library agent against a repository on demand — the throwaway workspace, delivery as a branch or draft PR through a trusted container and a deterministic push policy, the tool-grant rule, bounds and concurrency |
 | [channel-assistant.md](./channel-assistant.md) | The Slack channel teammate — a capability in its own right and the platform's conversational control surface; turns, ambient and reactive modes, channel memory, personas, budgets |
+| [memory.md](./memory.md) | Agent memory — lessons and channel memory in pgvector, how they are written, recalled, consolidated and gated |
 | [nl-workflow-authoring.md](./nl-workflow-authoring.md) | Describing an automation in natural language and getting a validated `WorkflowSpec` back |
 | [figma-integration.md](./figma-integration.md) | Design context — the `design-fidelity` skill and submit-time Figma enrichment |
 | [repo-dependency-graph.md](./repo-dependency-graph.md) | Directed dependency edges between git repos — the `RepoDependency` model, the cross-team edge API and management UI, and the neighbour resolver |
