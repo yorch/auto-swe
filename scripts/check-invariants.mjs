@@ -455,8 +455,13 @@ function checkOperatorUrlFetchesAreGuarded() {
       /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
       (str) => str[0] + str.slice(1, -1).replace(/[^\n]/g, ' ') + str[str.length - 1]
     );
-    for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\b(?!\??\s*:)/g)) {
-      if (/\btypeof\s+$/.test(src.slice(0, m.index))) {
+    for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\b/g)) {
+      const before = src.slice(0, m.index);
+      if (/\btypeof\s+$/.test(before)) {
+        continue;
+      }
+      // A property key (`{ fetch: x }`, `, fetch?: T`) follows `{` or `,`; `cond ? fetch : x` does not.
+      if (/^\??\s*:/.test(src.slice(m.index + m[0].length)) && /[{,]\s*$/.test(before)) {
         continue;
       }
       fail(
