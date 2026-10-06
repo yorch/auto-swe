@@ -18,7 +18,7 @@ import {
   ExistingPullRequestNotDraftError,
 } from '../lib/scm/types.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
-import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
+import { requestTicketIsSynthetic } from '../lib/trackerTicket.js';
 
 export interface CreatePullRequestOptions {
   /** Open the PR as a draft; a host that cannot fails the step, never falls back. */
@@ -56,22 +56,46 @@ async function doCreateOrUpdatePullRequest(
   const repoRef = toRepoRef(repo);
   const scm = getScmProvider(repoRef);
 
-  // Check if PR already exists. A request can have several ledger rows (re-runs,
-  // scheduled fires that share a standing request and branch), so the pick is
-  // explicit: an open PR on this execution's own row wins, else the newest.
-  const openPrWhere = { repoId: repo.id, status: 'OPEN' as const };
+  // This execution's own ledger row. A request can have several (re-runs, scheduled fires
+  // that share a standing request and branch), so an unordered request-wide lookup could
+  // link a PR to another execution and aim its CI webhook signals at it. The request-wide
+  // lookup is only the fallback for an execution that keeps no row of its own.
+  const ownWorkflow = await prisma.activeWorkflow.findFirst({
+    where: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },
+  });
+  const workflow =
+    ownWorkflow ??
+    (await prisma.activeWorkflow.findFirst({ where: { workRequestId: request.workRequestId } }));
+
+  // The latest PR on this execution's own row, any status. Open: update it. Closed: a
+  // reviewer closed it without merging, and repushing must not quietly open a replacement
+  // because the close is a decision (a new run of the request has its own row and is not
+  // stopped by it). Merged or none: adopt the newest open PR of the request, if any.
+  const latest = await prisma.pullRequest.findFirst({
+    orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+    where: {
+      repoId: repo.id,
+      workflow: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },
+    },
+  });
+  if (latest?.status === 'CLOSED') {
+    throw ApplicationFailure.nonRetryable(
+      `PR #${latest.prNumber} for ${codeResult.branch} was closed without merging, so no new pull ` +
+        'request is opened for this run. Reopen it, or start a new run of the request.',
+      'PR_CLOSED_BY_REVIEWER'
+    );
+  }
   const existingPR =
-    (await prisma.pullRequest.findFirst({
-      orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
-      where: {
-        ...openPrWhere,
-        workflow: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },
-      },
-    })) ??
-    (await prisma.pullRequest.findFirst({
-      orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
-      where: { ...openPrWhere, workflow: { workRequestId: request.workRequestId } },
-    }));
+    latest?.status === 'OPEN'
+      ? latest
+      : await prisma.pullRequest.findFirst({
+          orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+          where: {
+            repoId: repo.id,
+            status: 'OPEN',
+            workflow: { workRequestId: request.workRequestId },
+          },
+        });
 
   if (existingPR) {
     if (existingPR.prNumber == null) {
@@ -93,8 +117,11 @@ async function doCreateOrUpdatePullRequest(
     // token the `/webhooks/ci` handler guards its transition and its signal on.
     // Leaving a stale PASSED/FAILED here would let a verdict for the previous
     // head suppress the verdict for this one.
+    //
+    // A PR adopted from another execution moves to this one's row: the CI webhook signals
+    // the workflow its row names, and a finished earlier execution cannot receive it.
     await prisma.pullRequest.update({
-      data: { ciStatus: 'PENDING', headSha: codeResult.headSha },
+      data: { ciStatus: 'PENDING', headSha: codeResult.headSha, workflowId: ownWorkflow?.id },
       where: { id: existingPR.id },
     });
 
@@ -112,25 +139,6 @@ async function doCreateOrUpdatePullRequest(
   }
 
   const title = formatPRTitle(request, workflowDefaults.prTitleTemplate);
-
-  // A reviewer closed this workflow's PR without merging it. Repushing must not
-  // quietly open a replacement: the close is a decision. A new run of the same
-  // request has its own ledger row, so it is not stopped by this one.
-  const latest = await prisma.pullRequest.findFirst({
-    orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
-    select: { prNumber: true, status: true },
-    where: {
-      repoId: repo.id,
-      workflow: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },
-    },
-  });
-  if (latest?.status === 'CLOSED') {
-    throw ApplicationFailure.nonRetryable(
-      `PR #${latest.prNumber} for ${codeResult.branch} was closed without merging, so no new pull ` +
-        'request is opened for this run. Reopen it, or start a new run of the request.',
-      'PR_CLOSED_BY_REVIEWER'
-    );
-  }
 
   // Create the PR (or, on Temporal retries, reuse one a prior attempt created
   // on the host but crashed before persisting the DB row — the tracking row is
@@ -164,19 +172,6 @@ async function doCreateOrUpdatePullRequest(
   }
   const { prNumber, prUrl } = created;
 
-  // A work request can have several ledger rows (a scheduled fire's own row
-  // beside the schedule's anchor, one per fire), so an unordered lookup could
-  // link the PR to another execution and aim its CI webhook signals at it.
-  // This execution's own row wins; the request-wide lookup is the fallback for
-  // an execution that keeps no row of its own.
-  const workflow =
-    (await prisma.activeWorkflow.findFirst({
-      where: { temporalWorkflowId: currentWorkflowId(), workRequestId: request.workRequestId },
-    })) ??
-    (await prisma.activeWorkflow.findFirst({
-      where: { workRequestId: request.workRequestId },
-    }));
-
   await prisma.pullRequest.create({
     data: {
       ciStatus: 'PENDING',
@@ -198,12 +193,14 @@ async function doCreateOrUpdatePullRequest(
   });
 
   // A platform-generated ticket id names neither a tracker issue nor a knowledge-base page.
-  const hasRealTicket =
-    !!request.externalTicketId &&
-    (await requestHasTrackerTicket(request.workRequestId, request.externalTicketId));
+  // An unreadable flag (`null`) still attempts the harmless exact tracker lookup, but not
+  // the knowledge-base write, which searches fuzzily and edits a page.
+  const synthetic = request.externalTicketId
+    ? await requestTicketIsSynthetic(request.workRequestId)
+    : true;
 
   // Best-effort tracker sync on PR opened.
-  if (request.externalTicketId && hasRealTicket) {
+  if (request.externalTicketId && synthetic !== true) {
     const trackerConfig = await resolveIssueTrackerConfig();
     await syncTrackerOnEvent(
       {
@@ -218,7 +215,7 @@ async function doCreateOrUpdatePullRequest(
 
   // Best-effort Confluence PR link write-back — search for a page matching the
   // ticket ID and append the PR link. Never blocks the PR creation path.
-  if (request.externalTicketId && hasRealTicket) {
+  if (request.externalTicketId && synthetic === false) {
     try {
       const kbConfig = await resolveKnowledgeBaseConfig();
       const kbProvider = createKnowledgeBaseProvider(kbConfig);

@@ -139,6 +139,16 @@ describe('the knowledge-base PR link write-back when a PR is opened', () => {
   });
 });
 
+describe('when the synthetic flag cannot be read', () => {
+  it('still syncs the tracker but never writes to the knowledge base', async () => {
+    m.prisma.runInput.findUnique.mockRejectedValue(new Error('db down'));
+    m.kb.searchPages.mockResolvedValue([{ id: 'page-1', title: 'T-1 spec' }]);
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(syncTrackerOnEvent).toHaveBeenCalledTimes(1);
+    expect(m.kb.searchPages).not.toHaveBeenCalled();
+  });
+});
+
 describe('which ledger row a new PR is linked to', () => {
   it("links the row of the executing workflow, not another row of the same work request's", async () => {
     m.prisma.activeWorkflow.findFirst.mockImplementation(
@@ -227,39 +237,135 @@ describe('createOrUpdatePullRequest with a PR already recorded for the work requ
   });
 });
 
-describe('which open PR is reused', () => {
-  type Where = { status?: string; workflow: { temporalWorkflowId?: string } };
-  type Row = { id: string; prNumber: number; openedAt: Date; ledger: string };
-  // Fakes the table: filters by the query's ledger scope and honours its orderBy.
+describe('which PR is reused, and whose it becomes', () => {
+  interface Where {
+    repoId: string;
+    status?: string;
+    workflow: { temporalWorkflowId?: string; workRequestId: string };
+  }
+  interface Row {
+    id: string;
+    ledger: string;
+    openedAt: Date;
+    prNumber: number;
+    repoId: string;
+    status: string;
+    workRequestId: string;
+  }
+  const day = (d: number) => new Date(Date.UTC(2026, 0, d));
+  const row = (over: Partial<Row>): Row => ({
+    id: 'x',
+    ledger: 'wf-other',
+    openedAt: day(1),
+    prNumber: 1,
+    repoId: 'repo-1',
+    status: 'OPEN',
+    workRequestId: 'wr-1',
+    ...over,
+  });
+  // Fakes the table: honours every filter of the query and its orderBy.
   const table = (rows: Row[]) =>
     m.prisma.pullRequest.findFirst.mockImplementation(
-      async (args: { where: Where; orderBy?: Array<Record<string, 'asc' | 'desc'>> }) => {
-        if (args.where.status !== 'OPEN') {
-          return null;
-        }
-        const own = args.where.workflow.temporalWorkflowId;
-        const hits = rows.filter((r) => !own || r.ledger === own);
-        if (args.orderBy?.[0]?.openedAt === 'desc') {
-          hits.sort((a, b) => b.openedAt.getTime() - a.openedAt.getTime());
+      async (args: { where: Where; orderBy: Array<Record<string, 'asc' | 'desc'>> }) => {
+        const { where } = args;
+        const hits = rows.filter(
+          (r) =>
+            r.repoId === where.repoId &&
+            r.workRequestId === where.workflow.workRequestId &&
+            (!where.status || r.status === where.status) &&
+            (!where.workflow.temporalWorkflowId || r.ledger === where.workflow.temporalWorkflowId)
+        );
+        for (const order of [...args.orderBy].reverse()) {
+          const [key, dir] = Object.entries(order)[0] as [keyof Row, 'asc' | 'desc'];
+          hits.sort(
+            (x, y) => (dir === 'desc' ? -1 : 1) * (x[key] > y[key] ? 1 : x[key] < y[key] ? -1 : 0)
+          );
         }
         return hits[0] ?? null;
       }
     );
-  const older = { id: 'a', ledger: 'wf-own', openedAt: new Date('2026-01-01'), prNumber: 1 };
-  const newer = { id: 'b', ledger: 'wf-other', openedAt: new Date('2026-02-01'), prNumber: 2 };
+  const run = () => createOrUpdatePullRequest(request, codeResult);
 
-  it("prefers the open PR on this execution's own ledger row over a newer one elsewhere", async () => {
-    table([newer, older]);
-    await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toMatchObject({
-      prNumber: 1,
-    });
+  beforeEach(() => {
+    m.prisma.activeWorkflow.findFirst.mockImplementation(
+      async (args: { where: { temporalWorkflowId?: string } }) =>
+        args.where.temporalWorkflowId === 'wf-own' ? { id: 'own-row' } : { id: 'anchor-row' }
+    );
   });
 
-  it('takes the newest open PR of the request when none is on its own row', async () => {
-    table([{ ...older, ledger: 'wf-x' }, newer]);
-    await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toMatchObject({
-      prNumber: 2,
+  it("prefers the open PR on this execution's own row over a newer one elsewhere", async () => {
+    table([
+      row({ id: 'a', ledger: 'wf-own', prNumber: 1 }),
+      row({ id: 'b', openedAt: day(9), prNumber: 2 }),
+    ]);
+    await expect(run()).resolves.toMatchObject({ prNumber: 1 });
+  });
+
+  it('adopts the newest open PR of the request when none is on its own row, and re-links it', async () => {
+    table([row({ id: 'a', prNumber: 1 }), row({ id: 'b', openedAt: day(9), prNumber: 2 })]);
+    await expect(run()).resolves.toMatchObject({ prNumber: 2 });
+    expect(m.prisma.pullRequest.update).toHaveBeenCalledWith({
+      data: expect.objectContaining({ workflowId: 'own-row' }),
+      where: { id: 'b' },
     });
+    expect(m.prisma.pullRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('breaks an openedAt tie by id, newest first', async () => {
+    table([row({ id: 'a', prNumber: 1 }), row({ id: 'b', prNumber: 2 })]);
+    await expect(run()).resolves.toMatchObject({ prNumber: 2 });
+  });
+
+  it('ignores open PRs of another request or another repository', async () => {
+    table([
+      row({ id: 'a', prNumber: 1 }),
+      row({ id: 'b', openedAt: day(9), prNumber: 2, workRequestId: 'wr-2' }),
+      row({ id: 'c', openedAt: day(9), prNumber: 3, repoId: 'repo-2' }),
+    ]);
+    await expect(run()).resolves.toMatchObject({ prNumber: 1 });
+  });
+
+  it('keeps the link when it reuses its own row, and has nothing to re-link without one', async () => {
+    table([row({ id: 'a', ledger: 'wf-own' })]);
+    await run();
+    expect(m.prisma.pullRequest.update.mock.calls[0]?.[0].data.workflowId).toBe('own-row');
+    m.prisma.activeWorkflow.findFirst.mockImplementation(
+      async (args: { where: { temporalWorkflowId?: string } }) =>
+        args.where.temporalWorkflowId ? null : { id: 'anchor-row' }
+    );
+    table([row({ id: 'a' })]);
+    await run();
+    expect(m.prisma.pullRequest.update.mock.calls[1]?.[0].data.workflowId).toBeUndefined();
+  });
+
+  it('refuses to replace a PR the reviewer closed after this run adopted it', async () => {
+    // Adoption re-linked the PR to this execution's row; the reviewer then closed it.
+    table([row({ id: 'a', ledger: 'wf-own', status: 'CLOSED' })]);
+    await expect(run()).rejects.toMatchObject({ type: 'PR_CLOSED_BY_REVIEWER' });
+    expect(m.prisma.pullRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("checks its own row's close before adopting another open PR", async () => {
+    table([
+      row({ id: 'a', ledger: 'wf-own', status: 'CLOSED' }),
+      row({ id: 'b', openedAt: day(9), prNumber: 2 }),
+    ]);
+    await expect(run()).rejects.toMatchObject({ type: 'PR_CLOSED_BY_REVIEWER' });
+    expect(m.prisma.pullRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('adopts another open PR when its own latest one is merged', async () => {
+    table([
+      row({ id: 'a', ledger: 'wf-own', status: 'MERGED' }),
+      row({ id: 'b', openedAt: day(9), prNumber: 2 }),
+    ]);
+    await expect(run()).resolves.toMatchObject({ prNumber: 2 });
+  });
+
+  it('opens a new PR when its own latest one is merged and none is open', async () => {
+    table([row({ id: 'a', ledger: 'wf-own', status: 'MERGED' })]);
+    await run();
+    expect(m.prisma.pullRequest.create).toHaveBeenCalled();
   });
 });
 
