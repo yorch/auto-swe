@@ -325,6 +325,123 @@ describe('harnessRuntime', () => {
   });
 });
 
+describe('per-call accounting (onCallSpent)', () => {
+  const spec = (input: number, output: number) => ({
+    cacheCreationInputTokens: 0,
+    cachedInputTokens: 0,
+    inputTokens: input,
+    outputTokens: output,
+  });
+
+  function metered(
+    drive: (turn: HarnessTurn) => Promise<{ text?: string; usage: Report }>,
+    onCallSpent: (spent: unknown) => Promise<void>
+  ) {
+    const { adapter } = fakeAdapter(drive);
+    return harnessRuntime(adapter, {
+      onCallSpent: onCallSpent as never,
+      tracer: { addToolCall: vi.fn() } as never,
+      workspace: workspace() as never,
+    });
+  }
+
+  it('debits each call once the next begins, in order, and reports only the rest', async () => {
+    const debited: unknown[] = [];
+    const runtime = metered(
+      async (turn) => {
+        // A call streams several reports; the last before the next call counts.
+        turn.callUsage('c1', 'fake/m', totals(10, 1));
+        turn.callUsage('c1', 'fake/m', totals(10, 4));
+        turn.callUsage('c2', 'fake/m', totals(20, 5));
+        turn.callUsage('c3', 'fake/m', totals(30, 6));
+        // The harness's own totals cover all three calls and a side call it never streamed.
+        return { usage: { m: totals(70, 20) } };
+      },
+      async (spent) => {
+        debited.push(spent);
+      }
+    );
+
+    const outcome = await runtime.runTurn({ system: 'S', user: 'U' });
+
+    expect(debited).toEqual([
+      [{ modelSpec: 'fake/m', usage: spec(10, 4) }],
+      [{ modelSpec: 'fake/m', usage: spec(20, 5) }],
+    ]);
+    // 70/20 less the 30/9 already debited: the last call and the unstreamed one.
+    expect(outcome.usageByModel).toEqual([{ modelSpec: 'fake/m', usage: spec(40, 11) }]);
+  });
+
+  it('ignores a late report for a call it already debited', async () => {
+    const onCallSpent = vi.fn(async () => {});
+    const runtime = metered(async (turn) => {
+      turn.callUsage('c1', 'fake/m', totals(10, 1));
+      turn.callUsage('c2', 'fake/m', totals(20, 2));
+      turn.callUsage('c1', 'fake/m', totals(99, 99));
+      turn.callUsage('c3', 'fake/m', totals(30, 3));
+      return { usage: {} };
+    }, onCallSpent);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(onCallSpent.mock.calls).toEqual([
+      [[{ modelSpec: 'fake/m', usage: spec(10, 1) }]],
+      [[{ modelSpec: 'fake/m', usage: spec(20, 2) }]],
+    ]);
+  });
+
+  it('aborts the turn when a debit throws, and fails with that error and what is still owed', async () => {
+    const budget = Object.assign(new Error('Budget exhausted'), { type: 'BUDGET_EXCEEDED' });
+    let abortedBeforeDriveEnded: boolean | undefined;
+    const runtime = metered(
+      async (turn) => {
+        turn.callUsage('c1', 'fake/m', totals(10, 1));
+        turn.callUsage('c2', 'fake/m', totals(20, 2));
+        // Let the debit of c1 settle, as the stream would while the harness works.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        abortedBeforeDriveEnded = turn.abort.signal.aborted;
+        // The killed harness reports what it streamed.
+        throw withUsageReport(new Error('aborted'), { m: totals(30, 3) });
+      },
+      async () => {
+        throw budget;
+      }
+    );
+
+    const thrown = await runtime.runTurn({ system: 'S', user: 'U' }).catch((e) => e);
+
+    expect(abortedBeforeDriveEnded).toBe(true);
+    expect(thrown).toBe(budget);
+    // c1 was handed to the debit that threw; only c2 is still owed.
+    expect(spentUsageOf(thrown)).toEqual([{ modelSpec: 'fake/m', usage: spec(20, 2) }]);
+  });
+
+  it('fails a turn that finished after its last debit exhausted the budget', async () => {
+    const budget = new Error('Budget exhausted');
+    const runtime = metered(
+      async (turn) => {
+        turn.callUsage('c1', 'fake/m', totals(10, 1));
+        turn.callUsage('c2', 'fake/m', totals(20, 2));
+        return { text: 'done', usage: { m: totals(30, 3) } };
+      },
+      async () => {
+        throw budget;
+      }
+    );
+    const thrown = await runtime.runTurn({ system: 'S', user: 'U' }).catch((e) => e);
+    expect(thrown).toBe(budget);
+    expect(spentUsageOf(thrown)).toEqual([{ modelSpec: 'fake/m', usage: spec(20, 2) }]);
+  });
+
+  it('meters nothing per call without onCallSpent', async () => {
+    const { runtime } = setup(async (turn) => {
+      turn.callUsage('c1', 'fake/m', totals(10, 1));
+      turn.callUsage('c2', 'fake/m', totals(20, 2));
+      return { usage: { m: totals(30, 3) } };
+    });
+    const outcome = await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(outcome.usageByModel).toEqual([{ modelSpec: 'fake/m', usage: spec(30, 3) }]);
+  });
+});
+
 describe('the decision a turn hands the adapter', () => {
   async function decideWith(verdict: () => Promise<unknown>) {
     let turn: HarnessTurn | undefined;

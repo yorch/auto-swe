@@ -71,6 +71,56 @@ export function runningTotalsUsage(
 }
 
 /**
+ * `total` less what was already accrued, per model and counter, never below
+ * zero: what a turn still owes once some of it was debited call by call
+ * (`onCallSpent`). A model left with no input and no output drops out.
+ */
+export function subtractSpent(total: SpentByModel, accrued: SpentByModel): SpentByModel {
+  const done = new Map<
+    string,
+    {
+      cacheCreationInputTokens: number;
+      cachedInputTokens: number;
+      inputTokens: number;
+      outputTokens: number;
+    }
+  >();
+  for (const { modelSpec, usage } of accrued) {
+    const d = done.get(modelSpec) ?? {
+      cacheCreationInputTokens: 0,
+      cachedInputTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
+    d.cacheCreationInputTokens += usage.cacheCreationInputTokens ?? 0;
+    d.cachedInputTokens += usage.cachedInputTokens ?? 0;
+    d.inputTokens += usage.inputTokens ?? 0;
+    d.outputTokens += usage.outputTokens ?? 0;
+    done.set(modelSpec, d);
+  }
+  const left = (n: number | undefined, less: number) => Math.max(0, (n ?? 0) - less);
+  return total
+    .map(({ modelSpec, usage }) => {
+      const d = done.get(modelSpec);
+      return d
+        ? {
+            modelSpec,
+            usage: {
+              cacheCreationInputTokens: left(
+                usage.cacheCreationInputTokens,
+                d.cacheCreationInputTokens
+              ),
+              cachedInputTokens: left(usage.cachedInputTokens, d.cachedInputTokens),
+              inputTokens: left(usage.inputTokens, d.inputTokens),
+              outputTokens: left(usage.outputTokens, d.outputTokens),
+            },
+          }
+        : { modelSpec, usage };
+    })
+    .filter(({ usage }) => (usage.inputTokens ?? 0) > 0 || (usage.outputTokens ?? 0) > 0);
+}
+
+/**
  * What a turn spent, summed from per-call usage reports (`model` → that call's
  * counters), for a turn that never reached the harness's own totals: it was
  * stopped, or its process died. Stateless, and does not move the running

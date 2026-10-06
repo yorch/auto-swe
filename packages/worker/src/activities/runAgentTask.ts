@@ -17,7 +17,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRunTools.js';
 import type { BoundHarness } from '../agents/harness/registry.js';
 import { HARNESSES } from '../agents/harnessRegistry.js';
-import { runImplementerTurn } from '../agents/implementerRuntime.js';
+import { perCallAccounting, runImplementerTurn } from '../agents/implementerRuntime.js';
 import { isMcpToolEnabled, loadMcpTools } from '../agents/mcpTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
@@ -482,8 +482,9 @@ async function runOnMastra(
  * the implementer's "no opinion means everything", and every call goes through
  * the same worker-side policy as an implementer's. MCP does not bind: the
  * harness gets no MCP servers, and the trace says so when the Agent has one.
- * The harness reports usage when its run ends, so the budget is checked before
- * the turn and the turn is accrued after it, not per step.
+ * Each model call is debited as soon as the harness finishes it and the budget
+ * re-checked (`perCallAccounting`), as the Mastra loop debits every step, so an
+ * exhausted budget stops the run with `BUDGET_EXCEEDED` after the call in flight.
  */
 async function runOnHarness(
   input: AgentLoopInput,
@@ -500,11 +501,13 @@ async function runOnHarness(
       outputJson: { agentKey: key, mcpConnectionId: resolved.mcpConnectionId },
     });
   }
+  const accounting = perCallAccounting({ role: key, usageEvent: 'llm.agent_run' });
   const runtime = harness.build({
     deadline: input.deadline,
     exactToolKeys: grantedWorkspaceToolIds(resolved.toolKeys),
     loadProjectSettings: true,
     maxTurns: input.maxSteps,
+    onCallSpent: accounting.onCallSpent,
     tracer,
     workspace: input.workspace,
   });
@@ -513,6 +516,7 @@ async function runOnHarness(
   await assertBudgetAvailable(`agent.${key}`);
   const turn = await runImplementerTurn({
     context: { agentRun: true },
+    debited: accounting.debited,
     role: key,
     runtime,
     system: `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim(),

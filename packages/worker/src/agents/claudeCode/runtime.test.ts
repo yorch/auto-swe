@@ -831,6 +831,55 @@ describe('the outcome of a turn', () => {
   });
 });
 
+describe('per-call accounting', () => {
+  it('debits each API call it streams once the next begins, and reports the rest', async () => {
+    const debited: unknown[] = [];
+    const { runtime } = setup({
+      onCallSpent: async (spent: unknown) => {
+        debited.push(spent);
+      },
+    });
+    h.script.push([
+      [
+        init('s'),
+        // msg_1 streams a message per content block; its last report is the call's.
+        assistantReply('msg_1', 'claude-opus-5-5', streamed(100, 5), 1),
+        assistantReply('msg_1', 'claude-opus-5-5', streamed(100, 30, 50)),
+        assistantReply('msg_2', 'claude-opus-5-5', streamed(200, 10)),
+        success('done', { 'claude-opus-5-5': usage(300, 60, 50) }),
+      ],
+    ]);
+
+    const outcome = await runtime.runTurn({ system: 'S', user: 'U' });
+
+    expect(debited).toEqual([
+      [
+        {
+          modelSpec: 'anthropic/claude-opus-5-5',
+          usage: {
+            cacheCreationInputTokens: 0,
+            cachedInputTokens: 50,
+            inputTokens: 150,
+            outputTokens: 30,
+          },
+        },
+      ],
+    ]);
+    // The result's totals (350 input with the cache read, 60 output) less msg_1.
+    expect(outcome.usageByModel).toEqual([
+      {
+        modelSpec: 'anthropic/claude-opus-5-5',
+        usage: {
+          cacheCreationInputTokens: 0,
+          cachedInputTokens: 0,
+          inputTokens: 200,
+          outputTokens: 30,
+        },
+      },
+    ]);
+  });
+});
+
 describe('a deadline', () => {
   it('stops the turn without failing it, with what the streamed calls spent', async () => {
     const deadline = new AbortController();

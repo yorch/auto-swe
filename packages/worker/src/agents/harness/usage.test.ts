@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runningTotalsUsage, summedCallsUsage } from './usage.js';
+import { runningTotalsUsage, subtractSpent, summedCallsUsage } from './usage.js';
 
 const t = (input: number, output: number, cacheRead = 0, cacheWrite = 0) => ({
   cacheRead,
@@ -73,5 +73,41 @@ describe('summedCallsUsage', () => {
         },
       },
     ]);
+  });
+});
+
+describe('subtractSpent', () => {
+  const u = (input: number, output: number, cached = 0, written = 0) => ({
+    cacheCreationInputTokens: written,
+    cachedInputTokens: cached,
+    inputTokens: input,
+    outputTokens: output,
+  });
+
+  it('takes what was accrued off each model, counter by counter', () => {
+    expect(
+      subtractSpent(
+        [
+          { modelSpec: 'a/x', usage: u(100, 20, 30, 10) },
+          { modelSpec: 'a/y', usage: u(5, 1) },
+        ],
+        [
+          { modelSpec: 'a/x', usage: u(40, 5, 10, 10) },
+          { modelSpec: 'a/x', usage: u(10, 5) },
+        ]
+      )
+    ).toEqual([
+      { modelSpec: 'a/x', usage: u(50, 10, 20, 0) },
+      { modelSpec: 'a/y', usage: u(5, 1) },
+    ]);
+  });
+
+  it('never goes below zero, and drops a model with nothing left', () => {
+    expect(
+      subtractSpent(
+        [{ modelSpec: 'a/x', usage: u(10, 2) }],
+        [{ modelSpec: 'a/x', usage: u(15, 3) }]
+      )
+    ).toEqual([]);
   });
 });

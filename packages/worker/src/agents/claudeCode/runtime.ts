@@ -187,15 +187,20 @@ type ClaudeUsageReport =
   | { modelUsage: Record<string, ModelUsage> | undefined }
   | { streamed: Map<string, { model: string; usage: StreamedUsage }> };
 
+/** One streamed usage block as the shared usage counters. */
+function totalsOfStreamed(usage: StreamedUsage): UsageTotals {
+  return {
+    cacheRead: usage.cache_read_input_tokens ?? 0,
+    cacheWrite: usage.cache_creation_input_tokens ?? 0,
+    input: usage.input_tokens ?? 0,
+    output: usage.output_tokens ?? 0,
+  };
+}
+
 function streamedCalls(streamed: Map<string, { model: string; usage: StreamedUsage }>) {
   return [...streamed.values()].map(({ model, usage }) => ({
     model,
-    usage: {
-      cacheRead: usage.cache_read_input_tokens ?? 0,
-      cacheWrite: usage.cache_creation_input_tokens ?? 0,
-      input: usage.input_tokens ?? 0,
-      output: usage.output_tokens ?? 0,
-    },
+    usage: totalsOfStreamed(usage),
   }));
 }
 
@@ -391,6 +396,9 @@ export function claudeCodeAdapter(
             toolCalls += reply.content.filter((b) => b.type === 'tool_use').length;
             if (reply.id && reply.model && reply.usage) {
               streamed.set(reply.id, { model: reply.model, usage: reply.usage });
+              // One API call streams a message per content block, each with the
+              // call's usage so far; a new id means the previous call is done.
+              turn.callUsage(reply.id, `anthropic/${reply.model}`, totalsOfStreamed(reply.usage));
             }
           } else if (message.type === 'result') {
             result = message;
