@@ -27,15 +27,22 @@ Node 26 no longer bundles Corepack, which is why it is installed from npm first.
 ## 2. Configure the environment
 
 ```bash
-cp .env.example .env
+yarn env:setup init
 ```
 
-Two values are required:
+This creates `.env` from `.env.example` and generates every required secret. It never overwrites
+an existing `.env`; after pulling a change to `.env.example`, run `yarn env:setup sync` to bring
+your file up to date (it keeps your values and backs the old file up first), and
+`yarn env:setup check` to validate it. The values it generates:
 
-| Variable | How to set it |
+| Variable | What it is |
 |---|---|
-| `CONFIG_ENCRYPTION_KEY` | `openssl rand -base64 32`. Encrypts every stored credential; the gateway and worker refuse to start without it |
-| `SEED_ADMIN_PASSWORD` | A password for the seeded admin account, `admin@auto-swe.local` |
+| `CONFIG_ENCRYPTION_KEY` | Base64 of 32 random bytes. Encrypts every stored credential; the gateway and worker refuse to start without it. Never regenerated once set — rotate it with `yarn keys:rotate` |
+| `SEED_ADMIN_PASSWORD` | The password for the seeded admin account, `admin@auto-swe.local` |
+| `BETTER_AUTH_SECRET`, `JWT_SECRET` | Session-cookie and API-token signing keys |
+| `GARAGE_RPC_SECRET` | Node auth for the bundled Garage object store (only while `COMPOSE_PROFILES` includes `objectstore`) |
+
+The generated admin password is in `.env`; the script never prints secrets.
 
 Model keys, GitHub, Slack, and every other integration are stored encrypted in the database and
 managed from the dashboard. `GITHUB_TOKEN` in `.env` still works as a bootstrap fallback.

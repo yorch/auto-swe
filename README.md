@@ -87,11 +87,12 @@ For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per
 npm install -g corepack && corepack enable && yarn install
 
 # 2. Configure environment
-cp .env.example .env
-# Fill in the required-secrets block — CONFIG_ENCRYPTION_KEY, BETTER_AUTH_SECRET,
-# JWT_SECRET and SEED_ADMIN_PASSWORD; each line there carries its generation
-# command (`openssl rand -base64 32|48|24`). The seed in step 4 fails without
-# BETTER_AUTH_SECRET and SEED_ADMIN_PASSWORD.
+yarn env:setup init
+# Creates .env from .env.example and generates the required secrets —
+# CONFIG_ENCRYPTION_KEY, BETTER_AUTH_SECRET, JWT_SECRET, SEED_ADMIN_PASSWORD
+# (and GARAGE_RPC_SECRET for the bundled object store). After pulling a change to
+# .env.example, `yarn env:setup sync` carries your values over; `yarn env:setup check`
+# validates the file.
 # Optionally GITHUB_TOKEN / GITHUB_WEBHOOK_SECRET as bootstrap fallbacks.
 # LLM provider keys and model picks are NOT env vars — add them via the
 # dashboard at /studio/models after starting the gateway+web. See

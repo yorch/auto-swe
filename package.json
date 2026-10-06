@@ -34,6 +34,7 @@
     "docker:app:build": "run docker:app build",
     "docs:check": "node scripts/check-doc-drift.mjs",
     "invariants:check": "node scripts/check-invariants.mjs",
+    "env:setup": "node scripts/env-setup.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check .",
