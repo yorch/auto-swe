@@ -372,6 +372,71 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
       return { data: updated, ...(warnings.length > 0 ? { catalogWarnings: warnings } : {}) };
     }
   );
+
+  // ── Re-embed memory after a model change ─────────────────────────────────
+  //
+  // Recall and consolidation only compare vectors from one model, so after the
+  // embedding model changes every older row drops out of both until it is
+  // re-embedded. These report how many rows that is and start the bulk walk.
+
+  /** Rows the configured model did not embed: another model's, or legacy unlabelled ones. */
+  async function countStaleMemory(modelSpec: string | null) {
+    return runUnscoped('memory-wide re-embed status spans every team', ['MemoryItem'], () =>
+      Promise.all([
+        fastify.prisma.memoryItem.count(),
+        modelSpec
+          ? fastify.prisma.memoryItem.count({
+              where: { OR: [{ embeddingModel: null }, { embeddingModel: { not: modelSpec } }] },
+            })
+          : fastify.prisma.memoryItem.count(),
+      ])
+    );
+  }
+
+  app.get('/embedding-config/reembed', { onRequest: adminOnly }, async () => {
+    const config = await fastify.prisma.embeddingConfig.findUnique({
+      select: { modelSpec: true },
+      where: { id: 'default' },
+    });
+    const modelSpec = config?.modelSpec ?? null;
+    const [[total, stale], running] = await Promise.all([
+      countStaleMemory(modelSpec),
+      fastify.temporal.isReembedStaleMemoryRunning(),
+    ]);
+    return { data: { modelSpec, running, stale, total } };
+  });
+
+  app.post('/embedding-config/reembed', { onRequest: adminOnly }, async (request, reply) => {
+    const actor = requireUser(request);
+    const config = await fastify.prisma.embeddingConfig.findUnique({
+      select: { modelSpec: true },
+      where: { id: 'default' },
+    });
+    if (!config) {
+      return reply.status(409).send({
+        error: {
+          code: 'NO_EMBEDDING_CONFIG',
+          message: 'Configure an embedding model before re-embedding memory.',
+        },
+      });
+    }
+    const [, stale] = await countStaleMemory(config.modelSpec);
+    const started = await fastify.temporal.startReembedStaleMemory();
+    if (!started) {
+      return reply.status(409).send({
+        error: { code: 'REEMBED_IN_PROGRESS', message: 'A memory re-embed is already running.' },
+      });
+    }
+    // Every stale row costs one embedding call, so who started it is recorded.
+    await writeAuditLog(fastify, {
+      action: 'UPDATE',
+      actor,
+      after: { reembedStarted: true, staleRows: stale },
+      entityId: EMBEDDING_CONFIG_SENTINEL_UUID,
+      entityType: 'EmbeddingConfig',
+    });
+    return reply.status(202).send({ data: { staleRows: stale, started: true } });
+  });
 };
 
 // ── Team-scoped credential routes (exported for `teams.ts` to mount) ───────

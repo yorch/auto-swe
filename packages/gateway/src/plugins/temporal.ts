@@ -26,6 +26,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import { getErrorName } from './auth.js';
 
+/**
+ * One fixed id for the bulk memory re-embed, so Temporal refuses a second while
+ * one runs — two walks would embed every stale row twice.
+ */
+const REEMBED_STALE_MEMORY_WORKFLOW_ID = 'reembed-stale-memory';
+
 export const CONSOLIDATION_SCHEDULE_ID = 'auto-swe-lesson-consolidation';
 export const EVAL_SCHEDULE_ID = 'auto-swe-eval-regression';
 export const REVALIDATION_SCHEDULE_ID = 'auto-swe-eval-revalidation';
@@ -239,6 +245,13 @@ declare module 'fastify' {
         input: ChannelAssistantTurnInput
       ) => Promise<void>;
       startReembedMemory: (workflowId: string, memoryId: string) => Promise<void>;
+      /**
+       * Start the bulk re-embed of memory the current embedding model did not
+       * produce. `false` when one is already running: there is one at a time.
+       */
+      startReembedStaleMemory: () => Promise<boolean>;
+      /** Whether the bulk re-embed is running now. */
+      isReembedStaleMemoryRunning: () => Promise<boolean>;
       startRepoDependencyInference: (workflowId: string, repoId: string) => Promise<void>;
       startEvalRunWorkflow: (
         workflowId: string,
@@ -742,6 +755,18 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       }
     },
 
+    async isReembedStaleMemoryRunning(): Promise<boolean> {
+      try {
+        const desc = await client.workflow.getHandle(REEMBED_STALE_MEMORY_WORKFLOW_ID).describe();
+        return desc.status.name === 'RUNNING';
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowNotFoundError') {
+          return false;
+        }
+        throw err;
+      }
+    },
+
     /**
      * Is there an open execution under this id right now?
      *
@@ -853,6 +878,22 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
         taskQueue: 'engineering-workflow',
         workflowId,
       });
+    },
+
+    async startReembedStaleMemory(): Promise<boolean> {
+      try {
+        await client.workflow.start('ReembedStaleMemoryWorkflow', {
+          args: [{}],
+          taskQueue: 'engineering-workflow',
+          workflowId: REEMBED_STALE_MEMORY_WORKFLOW_ID,
+        });
+        return true;
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+          return false;
+        }
+        throw err;
+      }
     },
 
     // One-shot LLM inference for a single repo. The workflow id is caller-supplied

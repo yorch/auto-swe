@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateEmbeddingWithSpec } from './embeddings.js';
 import { assertMemoryContentAllowed } from './memoryGuard.js';
 
@@ -326,4 +327,32 @@ export async function reembedMemoryItem(memoryId: string): Promise<boolean> {
   );
 
   return true;
+}
+
+/**
+ * Ids of up to `limit` memory rows that `spec` did not embed — another model's
+ * rows, and legacy rows that recorded no model — after `afterId`, in id order.
+ * Id order is the cursor a bulk re-embed walks: a row that fails stays stale but
+ * is behind the cursor, so the walk always ends.
+ */
+export async function listStaleMemoryIds(
+  spec: string,
+  afterId: string | null,
+  limit: number
+): Promise<string[]> {
+  const rows = await runUnscoped(
+    'a bulk re-embed covers every memory row, whatever its team',
+    ['MemoryItem'],
+    () =>
+      prisma.memoryItem.findMany({
+        orderBy: { id: 'asc' },
+        select: { id: true },
+        take: limit,
+        where: {
+          OR: [{ embeddingModel: null }, { embeddingModel: { not: spec } }],
+          ...(afterId ? { id: { gt: afterId } } : {}),
+        },
+      })
+  );
+  return rows.map((r) => r.id);
 }

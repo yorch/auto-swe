@@ -1,7 +1,10 @@
 import type { prisma as Prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { searchMemoryItemsByVector as Search } from './memoryStore.js';
+import type {
+  listStaleMemoryIds as ListStale,
+  searchMemoryItemsByVector as Search,
+} from './memoryStore.js';
 
 /**
  * Scoped vector search against real pgvector. Every memory search filters one
@@ -29,6 +32,7 @@ const enabled = process.env.MEMORY_PG_TEST === '1';
 
 let prisma: typeof Prisma;
 let searchMemoryItemsByVector: typeof Search;
+let listStaleMemoryIds: typeof ListStale;
 
 const ORG = '7a000000-0000-4000-8000-000000000001';
 const TEAM = '7a000000-0000-4000-8000-000000000002';
@@ -69,7 +73,7 @@ describe.skipIf(!enabled)('scoped vector search against pgvector', () => {
     url.searchParams.set('options', '-c enable_sort=off');
     process.env.DATABASE_URL = url.toString();
     ({ prisma } = await import('@auto-swe/shared/db'));
-    ({ searchMemoryItemsByVector } = await import('./memoryStore.js'));
+    ({ listStaleMemoryIds, searchMemoryItemsByVector } = await import('./memoryStore.js'));
 
     await cleanup();
     await prisma.organization.create({ data: { id: ORG, name: 'mem-pg', slug: 'mem-pg' } });
@@ -115,6 +119,21 @@ describe.skipIf(!enabled)('scoped vector search against pgvector', () => {
     const rows = await search(SMALL_REPO, 20);
     const similarities = rows.map((r) => Number(r.similarity));
     expect(similarities).toEqual([...similarities].sort((a, b) => b - a));
+  });
+
+  it('lists the rows another model embedded, and unlabelled ones, for re-embedding', async () => {
+    const [other, unlabelled] = await prisma.$queryRawUnsafe<{ id: string }[]>(
+      `INSERT INTO memory_items (id, repo_id, rationale, lesson_summary, embedding_model, skills_active, created_at)
+       VALUES (gen_random_uuid(), $1::uuid, 'r', 'old', 'old/model', '{}', now()),
+              (gen_random_uuid(), $1::uuid, 'r', 'legacy', NULL, '{}', now())
+       RETURNING id`,
+      SMALL_REPO
+    );
+    const stale = await listStaleMemoryIds(SPEC, null, 1_000);
+    expect(new Set(stale)).toEqual(new Set([other?.id, unlabelled?.id]));
+    // The cursor excludes everything up to and including itself.
+    const sorted = [...stale].sort();
+    expect(await listStaleMemoryIds(SPEC, sorted[0] ?? null, 1_000)).toEqual(sorted.slice(1));
   });
 
   it('returns the crowded repository its own lessons too', async () => {

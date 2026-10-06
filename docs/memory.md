@@ -75,7 +75,14 @@ pattern is refused, a recalled item that matches is dropped, and a scan that fai
 ## 6. Administration
 
 `/govern/lessons` lists, searches and deletes lessons and starts consolidation; deletes are audited
-with the deleted content. Channel memory is edited and deleted per channel
+with the deleted content.
+
+After the embedding model changes, the Embeddings tab at `/studio/models` shows how many memory rows
+the configured model did not embed (`GET /api/v1/platform/embedding-config/reembed`) and starts
+`ReembedStaleMemoryWorkflow` (`POST` to the same path, ADMIN, audited). The workflow walks those
+rows in id order, 100 per activity and four embedding calls at a time, and continues as new every
+50 batches. It runs under one fixed workflow id, so a second start while one runs is refused with
+`409 REEMBED_IN_PROGRESS`. Channel memory is edited and deleted per channel
 ([channel-assistant.md §6](./channel-assistant.md#6-memory)).
 
 ---
@@ -97,8 +104,9 @@ with the deleted content. Channel memory is edited and deleted per channel
 - **Deleting a repository orphans its lessons.** `repo_id` is set null; the rows stay in
   `/govern/lessons` as "Deleted repository" until deleted by hand. There is no way to erase one Slack
   user's channel memory.
-- **Changing the embedding model hides existing memory.** Rows embedded by the previous model drop
-  out of recall and consolidation, and there is no bulk re-embed.
+- **Changing the embedding model hides existing memory until an admin re-embeds it.** The re-embed
+  is not started on save, because it is one billed call per row. A row whose re-embed fails stays
+  hidden and is counted in the workflow's result; the next run retries it.
 - **Scoped search depends on pgvector 0.8.** On an older pgvector the iterative scan is
   unavailable: the worker logs a warning once and searches without it, and a small repository or
   channel in a large table can get fewer matches than exist, or none. Even with it, the scan stops
