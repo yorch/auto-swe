@@ -290,6 +290,31 @@ describe('consolidateLessons', () => {
     });
   });
 
+  it('keeps provenance on the consolidated row: scope, entity, agent, model, cost, sources', async () => {
+    mockQueryRaw.mockResolvedValue([
+      makeLessonRow('a', 'lesson a', 0, 'CI_FAILURE'),
+      makeLessonRow('b', 'lesson b', 0, 'CI_FAILURE'),
+      makeLessonRow('c', 'lesson c', 0, 'CI_FAILURE'),
+    ]);
+    const statements: unknown[][] = [];
+    mockTransaction.mockImplementation(async (fn) =>
+      fn({
+        ...defaultTxMock,
+        $executeRawUnsafe: vi.fn(async (...args: unknown[]) => {
+          statements.push(args);
+        }),
+      } as never)
+    );
+    makeSuccessGenerate([{ failureType: 'CI_FAILURE', lessonSummary: 'merged', rationale: 'r' }]);
+
+    await consolidateLessons({ minClusterSize: 3, repoId: 'repo-1', similarityThreshold: 0.85 });
+
+    const insert = statements.find(([sql]) => String(sql).includes('INSERT'));
+    expect(String(insert?.[0])).toContain("'swe-lessons', 'connection', $1::uuid");
+    expect(insert?.[7]).toBe(JSON.stringify({ clusterSize: 3, consolidatedFrom: ['a', 'b', 'c'] }));
+    expect(insert?.slice(8)).toEqual(['lessonConsolidator', 'anthropic/claude-opus-5-5', 0]);
+  });
+
   it('skips clusters smaller than minClusterSize', async () => {
     // Cluster of 2 (same seed) + singleton — both below minClusterSize=3
     mockQueryRaw.mockResolvedValue([

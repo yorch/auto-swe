@@ -246,18 +246,27 @@ async function consolidateLessonsImpl(
 
         for (let i = 0; i < lessons.length; i++) {
           const lesson = lessons[i];
+          // A consolidated lesson keeps the provenance a written one has: its
+          // scope and entity (so scope- and entity-filtered reads still see it),
+          // the agent and model that wrote it, its share of the call's cost, and
+          // the sources it came from — which stay in the table, consolidated.
           await tx.$executeRawUnsafe(
             `INSERT INTO memory_items
-               (id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type, metadata, created_at)
+               (id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type,
+                metadata, scope, entity_type, entity_id, agent_key, model, cost_usd, created_at)
              VALUES
-               (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6, $7::jsonb, now())`,
+               (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6, $7::jsonb,
+                'swe-lessons', 'connection', $1::uuid, $8, $9, $10, now())`,
             repoId,
             lesson.rationale,
             lesson.lessonSummary,
             JSON.stringify(newEmbeddings[i]?.embedding),
             newEmbeddings[i]?.spec ?? null,
             lesson.failureType ?? sharedFailureType,
-            JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds })
+            JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds }),
+            CONSOLIDATOR_AGENT_KEY,
+            bound.spec,
+            attribution.costUsd / lessons.length
           );
         }
 

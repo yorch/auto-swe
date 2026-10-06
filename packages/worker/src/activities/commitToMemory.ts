@@ -65,6 +65,35 @@ export function lessonUserMessage(input: {
   ].join('\n\n');
 }
 
+/** Characters of the evidence kept as the lesson's quote. */
+const CITATION_QUOTE_LIMIT = 300;
+
+/**
+ * Where a lesson came from, for whoever later asks why it was recalled: the
+ * pull requests and head commit it was written about, and a short quote of the
+ * evidence that drove it (the rejection, else the end of the failing CI log).
+ * The run itself is the row's `workflowRunId`, whose traces hold the rest.
+ */
+export function lessonCitation(
+  evidence: LessonEvidence | undefined,
+  pullRequests: ReadonlyArray<{ prNumber: number | null; headSha: string }>
+): Record<string, unknown> {
+  const quoteSource = evidence?.rejectionSummary ?? evidence?.ciFailure;
+  const quote =
+    quoteSource === undefined
+      ? undefined
+      : evidence?.rejectionSummary !== undefined
+        ? quoteSource.slice(0, CITATION_QUOTE_LIMIT)
+        : quoteSource.slice(-CITATION_QUOTE_LIMIT);
+  return {
+    ...(evidence?.change?.headSha ? { headSha: evidence.change.headSha } : {}),
+    pullRequests: pullRequests
+      .filter((pr) => pr.prNumber !== null)
+      .map((pr) => ({ headSha: pr.headSha, prNumber: pr.prNumber })),
+    ...(quote ? { quote } : {}),
+  };
+}
+
 /**
  * Insert one memory_items row + its vector embedding. Shared by the
  * LLM-summarized path (`commitToMemory`) and the phase-8 direct recorder
@@ -228,8 +257,13 @@ export async function commitToMemory(
         costUsd: attribution.costUsd,
         failureType: lesson.failureType,
         lessonSummary: lesson.lessonSummary,
-        // The outcome is recorded by code, not by the model, so it can be trusted.
-        metadata: { ...(lesson.metadata ?? {}), outcome },
+        // The outcome and the citation are recorded by code, not by the model,
+        // so they can be trusted: they say what the lesson was written from.
+        metadata: {
+          ...(lesson.metadata ?? {}),
+          evidence: lessonCitation(evidence, workflow.pullRequests),
+          outcome,
+        },
         model: attribution.modelSpec || undefined,
         rationale: lesson.rationale,
         repoId: scopedRepoId,
@@ -287,6 +321,8 @@ export async function recordLessonDirectly(input: {
   lessonSummary: string;
   failureType?: FailureType;
   metadata?: Record<string, unknown>;
+  /** What wrote the lesson, e.g. `mergeConflictResolver`, `shellStep`. */
+  agentKey?: string;
 }): Promise<string | null> {
   try {
     const workflow = await prisma.activeWorkflow.findFirst({
@@ -295,13 +331,18 @@ export async function recordLessonDirectly(input: {
     if (!workflow) {
       return null;
     }
+    // The run the lesson came from, when there is one to name; a lookup
+    // failure leaves it unset rather than losing the lesson.
+    const workflowRunId = await currentWorkflowRunId().catch(() => undefined);
     return await writeMemoryItemRow({
+      ...(input.agentKey ? { agentKey: input.agentKey } : {}),
       failureType: input.failureType ?? null,
       lessonSummary: input.lessonSummary,
       metadata: input.metadata ?? null,
       rationale: input.rationale,
       repoId: input.repoId,
       workflowId: workflow.id,
+      ...(workflowRunId ? { workflowRunId } : {}),
     });
   } catch (err) {
     // Log so silent failures stay observable, but never propagate.

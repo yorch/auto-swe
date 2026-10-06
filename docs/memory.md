@@ -44,6 +44,12 @@ agent's stored prompt, tells the agent to name a root cause only when the eviden
 fences the evidence as data. The outcome is written into the lesson's `metadata.outcome` by code,
 not by the model. Another template's `commitToMemory` step records `COMPLETED`.
 
+Each lesson records where it came from. The row's `workflowRunId` names the run (whose traces hold
+the rest), `agentKey` and `model` the writer, and `metadata.evidence` cites the pull requests and
+head commit it was written about plus a 300-character quote of the evidence that drove it — the
+start of the rejection, or the end of the failing CI log. The model-free writers record their run
+and an `agentKey` of `mergeConflictResolver` or `shellStep`.
+
 Every write goes through `insertMemoryItem` (`packages/worker/src/lib/memoryStore.ts`), which
 applies the memory gate (§5) before it embeds anything.
 
@@ -70,7 +76,9 @@ per repository with `Connection.consolidationEnabled`. Admins can also run it fr
 (`consolidationSimilarityThreshold`, default 0.85), and for each cluster of at least
 `consolidationMinClusterSize` (default 3) asks the `lessonConsolidator` agent for one or two
 generalised lessons. In one transaction, under a per-repository advisory lock, it inserts those and
-marks the sources consolidated; `metadata.consolidatedFrom` lists the source ids. Channel memory is
+marks the sources consolidated. A consolidated row keeps the provenance a written one has: its
+`scope` and entity columns, the consolidating agent and model, its share of the call's cost, and
+`metadata.consolidatedFrom`, the source ids — whose rows stay in the table, marked consolidated. Channel memory is
 consolidated the same way on each ambient fire.
 
 ## 5. The memory gate
@@ -103,9 +111,9 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
   gate, an implementation error).
 - **The evidence is the last attempt's.** A loop keeps only its latest rejection and CI log, so a
   lesson about a run that failed three different ways sees the third.
-- **A lesson cites its run, not its evidence.** There is no quote, pull-request or trace reference,
-  and the model-free writers record no run or agent at all. A consolidated row keeps only
-  `metadata.consolidatedFrom`; its scope columns, run, agent, model and team are not carried over.
+- **A citation is a pointer, not a proof.** `metadata.evidence` says what a lesson was written
+  from; nothing checks that the lesson's text follows from it, and a consolidated row cites only
+  its sources, not their evidence.
 - **Nothing supersedes a lesson.** There is no confidence score and no notion of one lesson
   replacing another, so contradictory lessons coexist until an admin deletes one. Lessons never
   expire.

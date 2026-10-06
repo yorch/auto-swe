@@ -474,6 +474,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       // 5-second cap so a slow embedding provider can't extend the shell-step
       // activity past its timeout after the real work has already succeeded.
       await recordLessonBackground({
+        agentKey: 'shellStep',
         lessonSummary: `Shell step modified ${finalize.filesChanged.length} file(s) on branch ${branch}: ${maskedCommand.slice(0, 200)}`,
         metadata: {
           branch,

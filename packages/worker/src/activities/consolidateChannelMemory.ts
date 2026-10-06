@@ -320,10 +320,11 @@ export async function consolidateChannelMemory(
             await tx.$executeRawUnsafe(
               `INSERT INTO memory_items
                (id, channel_id, team_id, org_id, agent_key, rationale, lesson_summary,
-                embedding, embedding_model, scope, metadata, created_at)
+                embedding, embedding_model, scope, metadata, entity_type, entity_id, model,
+                cost_usd, created_at)
              VALUES
                (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'channelAssistant', $4, $5,
-                $6::vector, $7, 'channel-memory', $8::jsonb, now())`,
+                $6::vector, $7, 'channel-memory', $8::jsonb, 'channel', $1::uuid, $9, $10, now())`,
               channelId,
               teamId,
               orgId,
@@ -331,7 +332,9 @@ export async function consolidateChannelMemory(
               memory.lessonSummary,
               JSON.stringify(newEmbeddings[i]?.embedding),
               newEmbeddings[i]?.spec ?? null,
-              JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds })
+              JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds }),
+              bound.spec,
+              attribution.costUsd / memories.length
             );
           }
 

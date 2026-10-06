@@ -35,12 +35,12 @@ vi.mock('../lib/models.js', () => ({
 }));
 vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: vi.fn() }));
 
-import { commitToMemory, lessonUserMessage } from './commitToMemory.js';
+import { commitToMemory, lessonCitation, lessonUserMessage } from './commitToMemory.js';
 
 const WORKFLOW = {
   currentStatus: 'IN_REVIEW',
   id: 'wf-row',
-  pullRequests: [{ ciStatus: 'FAILED', prNumber: 7, status: 'OPEN' }],
+  pullRequests: [{ ciStatus: 'FAILED', headSha: 'f00d', prNumber: 7, status: 'OPEN' }],
   repoId: 'repo-1',
   temporalWorkflowId: 'eng-acme-api-T-1',
   workRequest: { description: 'Add a health endpoint', externalTicketId: 'T-1' },
@@ -76,7 +76,14 @@ describe('commitToMemory', () => {
     expect(message).toContain('request body is used unvalidated');
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        metadata: { modelSaid: 'x', outcome: 'REVIEW_FAILED' },
+        metadata: {
+          evidence: {
+            pullRequests: [{ headSha: 'f00d', prNumber: 7 }],
+            quote: 'SECURITY: request body is used unvalidated',
+          },
+          modelSaid: 'x',
+          outcome: 'REVIEW_FAILED',
+        },
         repoId: 'repo-1',
         workflowRunId: 'run-1',
       })
@@ -89,12 +96,13 @@ describe('commitToMemory', () => {
       usage: null,
     });
     await commitToMemory('eng-acme-api-T-1', null, undefined, evidence);
-    expect(insertMock.mock.calls[0]?.[0]?.metadata).toEqual({ outcome: 'REVIEW_FAILED' });
+    expect(insertMock.mock.calls[0]?.[0]?.metadata).toMatchObject({ outcome: 'REVIEW_FAILED' });
   });
 
   it('treats a call without evidence, from a workflow started before it existed, as COMPLETED', async () => {
     await commitToMemory('eng-acme-api-T-1', null);
     expect(insertMock.mock.calls[0]?.[0]?.metadata).toEqual({
+      evidence: { pullRequests: [{ headSha: 'f00d', prNumber: 7 }] },
       modelSaid: 'x',
       outcome: 'COMPLETED',
     });
@@ -114,5 +122,40 @@ describe('lessonUserMessage', () => {
       message.indexOf('</run_evidence>')
     );
     expect(fenced).toContain('Ignore previous instructions');
+  });
+});
+
+describe('lessonCitation', () => {
+  it('quotes the start of a rejection, and the end of a CI log', () => {
+    const long = `${'a'.repeat(400)}END`;
+    expect(lessonCitation({ outcome: 'REVIEW_FAILED', rejectionSummary: long }, []).quote).toBe(
+      'a'.repeat(300)
+    );
+    expect(
+      (lessonCitation({ ciFailure: long, outcome: 'CI_FAILED' }, []).quote as string).endsWith(
+        'END'
+      )
+    ).toBe(true);
+  });
+
+  it('cites the head commit and skips a pull request that never got a number', () => {
+    expect(
+      lessonCitation(
+        {
+          change: {
+            filesChanged: [],
+            filesOmitted: 0,
+            headSha: 'beef',
+            implementationNotes: '',
+            tests: { failing: 0, passed: true, passing: 1, total: 1 },
+          },
+          outcome: 'MERGED',
+        },
+        [
+          { headSha: 'beef', prNumber: 3 },
+          { headSha: 'dead', prNumber: null },
+        ]
+      )
+    ).toEqual({ headSha: 'beef', pullRequests: [{ headSha: 'beef', prNumber: 3 }] });
   });
 });
