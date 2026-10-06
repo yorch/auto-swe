@@ -160,4 +160,20 @@ describe('Install from file', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(fetchSpy.mock.calls.filter((c) => String(c[0]).endsWith('/preview'))).toHaveLength(1);
   });
+
+  it('ignores a second drop that arrives while the first file is still being read', async () => {
+    const fetchSpy = setupFetchMock(routes);
+    render(withQuery(<StudioBundlesPage />));
+    const zone = screen.getByLabelText('Bundle file (.json)').parentElement as HTMLElement;
+    const files = [
+      fileOf(JSON.stringify(BUNDLE), 'a.json'),
+      fileOf(JSON.stringify(BUNDLE), 'b.json'),
+    ];
+    // Both drops land before the first read resolves.
+    fireEvent.drop(zone, { dataTransfer: { files: [files[0]] } });
+    fireEvent.drop(zone, { dataTransfer: { files: [files[1]] } });
+    expect(await screen.findByText('helper')).toBeTruthy();
+    const previews = fetchSpy.mock.calls.filter((c) => String(c[0]).endsWith('/preview'));
+    expect(previews).toHaveLength(1);
+  });
 });

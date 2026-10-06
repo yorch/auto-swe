@@ -45,6 +45,8 @@ export default function StudioBundlesPage() {
   const [dragging, setDragging] = useState(false);
   // dragenter/dragleave fire for every child the pointer crosses, so count them rather than flip.
   const dragDepth = useRef(0);
+  // Set synchronously at entry: `isPending` only flips after the file has been read.
+  const loadingFile = useRef(false);
   const [exportForm, setExportForm] = useState({ name: '', origin: '', version: '1.0.0' });
   // Each card reports its own outcome, so an export failure is never shown above the install card.
   const [installError, setInstallError] = useState<string | null>(null);
@@ -65,26 +67,31 @@ export default function StudioBundlesPage() {
 
   async function handleFile(file: File | undefined) {
     // A drop while a preview is loading would race it and could replace what the admin is reviewing.
-    if (!file || previewBundle.isPending) {
+    if (!file || previewBundle.isPending || loadingFile.current) {
       return;
     }
-    setInstallError(null);
-    setInstallDone(null);
-    const read = await readBundleFile(file);
-    if (!read.ok) {
-      setInstallError(read.message);
-      return;
-    }
+    loadingFile.current = true;
     try {
-      const result = await previewBundle.mutateAsync({ bundle: read.bundle });
-      setFileBundle(read.bundle);
-      setPreview(result);
-    } catch (e) {
-      setInstallError(
-        e instanceof ApiError && e.status === 413
-          ? 'This bundle is larger than the server allows.'
-          : errMsg(e, 'Could not read the bundle')
-      );
+      setInstallError(null);
+      setInstallDone(null);
+      const read = await readBundleFile(file);
+      if (!read.ok) {
+        setInstallError(read.message);
+        return;
+      }
+      try {
+        const result = await previewBundle.mutateAsync({ bundle: read.bundle });
+        setFileBundle(read.bundle);
+        setPreview(result);
+      } catch (e) {
+        setInstallError(
+          e instanceof ApiError && e.status === 413
+            ? 'This bundle is larger than the server allows.'
+            : errMsg(e, 'Could not read the bundle')
+        );
+      }
+    } finally {
+      loadingFile.current = false;
     }
   }
 
