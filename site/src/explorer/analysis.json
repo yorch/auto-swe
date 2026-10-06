@@ -1681,7 +1681,7 @@
     {
       "body": "Spec and run-pinned settings are captured, but not every configuration read is frozen.",
       "category": "Reproducibility",
-      "detail": "GLOBAL agent version maps, skill revisions and run-pinned settings are captured at run start; more-specific agent rows resolve their current active versions. A run-pinned key missing from a run’s snapshot is pinned the first time an activity’s request context reads it, at the value that read resolves, and a value already pinned is never replaced; a channel turn’s run is pinned at its own start and backfilled at its Slack channel’s scope, and a failed backfill falls back to the live value until the next lookup. Each agent’s runtime is pinned on the run the first time the run resolves that agent. Non-run-pinned settings and credentials can change. This is selective reproducibility, not a hermetically frozen run.",
+      "detail": "GLOBAL agent version maps, skill revisions and run-pinned settings are captured at run start; more-specific agent rows resolve their current active versions. A run-pinned key missing from a run’s snapshot is pinned the first time an activity’s request context reads it, at the value that read resolves, and a value already pinned is never replaced; a channel turn’s run is pinned at its own start and backfilled at its Slack channel’s scope, and a failed backfill falls back to the live value until the next lookup. Each agent’s runtime is pinned on the run at start, or at first resolution for an agent the start snapshot lacks. Non-run-pinned settings and credentials can change. This is selective reproducibility, not a hermetically frozen run.",
       "id": "version",
       "refs": [
         "agents",
@@ -1689,6 +1689,7 @@
         "skillSnapshot",
         "pinFirstRead",
         "pinCas",
+        "agentRuntimeSnapshot",
         "agentRuntimePin",
         "channelRunRow"
       ],
@@ -1725,9 +1726,9 @@
     {
       "body": "A trusted signature proves publisher/content integrity, not safe execution or correct prompts.",
       "category": "Distribution",
-      "detail": "Install validates hash/schema and trust policy; skills and agents still require local verification. References to deployment-local MCP IDs may need rewiring. A bundle may declare dependencies only on git_repo and mcp connection types; the server refuses an install naming another, and the SDK’s validator applies the same list so an author learns it before shipping.",
+      "detail": "Install validates hash/schema and trust policy; skills and agents still require local verification. References to deployment-local MCP IDs may need rewiring. A bundle may declare dependencies only on git_repo and mcp connection types; the server refuses an install naming another, and the SDK’s validator applies the same list so an author learns it before shipping. An agent may carry its runtime: a harness runtime with a non-Anthropic model of its own is refused, an install shows a warning for each agent it moves onto the harness, and a bundle that omits the runtime leaves an installed agent’s runtime as it was.",
       "id": "bundle",
-      "refs": ["bundles", "sdk", "bundleConnTypes"],
+      "refs": ["bundles", "sdk", "bundleConnTypes", "bundleRuntime"],
       "status": "Implemented",
       "title": "Trust ≠ verification of behavior"
     }
@@ -1789,16 +1790,16 @@
     {
       "body": "Run a launchable library agent in a throwaway repository workspace, optionally publishing a branch or draft PR.",
       "category": "Engineering",
-      "detail": "Separate from the engineering template. The agent runs on the Mastra loop unless its own runtime is claude-code. Step and wall-clock caps and admission limits apply. On Mastra the run is debited per step. On the harness it is one turn capped at the step ceiling: the budget is checked before the turn and the turn is accrued after it, the wall-clock deadline stops the turn rather than failing it, toolKeys grant only the named workspace tools (none set gives the read-only tools, an empty list gives none), and an MCP connection is not bound. A runtime no harness serves, or a model the harness cannot drive, is refused before any container is created. Delivery uses a fresh trusted container. A draft pull request it opens is recorded as a PullRequest row on the run’s own ledger row; a failed write appears as a pr.record_failed event on the run. No-delivery diffs are explicitly unverified.",
+      "detail": "Separate from the engineering template. The agent runs on the Mastra loop unless its own runtime is claude-code. Step and wall-clock caps and admission limits apply. On Mastra the run is debited per step. On the harness it is one turn capped at the step ceiling: the budget is checked before the turn, each streamed model call is debited once the next begins with the budget re-checked after every debit, the wall-clock deadline stops the turn rather than failing it, toolKeys grant only the named workspace tools (none set gives the read-only tools, an empty list gives none), and an MCP connection is not bound. A runtime no harness serves, or a model the harness cannot drive, is refused before any container is created. Delivery uses a fresh trusted container. A draft pull request it opens is recorded as a PullRequest row on the run’s own ledger row; a failed write appears as a pr.record_failed event on the run. No-delivery diffs are explicitly unverified.",
       "id": "agentRun",
-      "refs": ["agentRun", "trace", "cli", "agentRunLoop", "agentRunHarness"],
+      "refs": ["agentRun", "trace", "cli", "agentRunLoop", "agentRunHarness", "harnessPerCall"],
       "status": "Implemented",
       "title": "One-off repository agent runs"
     },
     {
       "body": "Validate context, implement with test feedback, review, fix CI failures, wait for human merge and learn.",
       "category": "Engineering",
-      "detail": "The default spec repeats review after CI fixes. Its CI wait can use webhook signals or active polling; human merge is an external signal, not an automatic merge. An agent’s own runtime, inherited along its model chain so the fixers follow the implementer, else the run-pinned workspace.implementerRuntime setting, chooses whether implementer, fixer and merge-conflict turns run the platform’s Mastra tool loop or the Claude Code harness inside the workspace, and the run pins each agent’s choice the first time it resolves that agent; under the harness a worker-side policy decides every tool call, within the tools the agent’s toolKeys grant. A reviewer closing the run’s pull request unmerged makes a later push step fail non-retryably rather than open a replacement.",
+      "detail": "The default spec repeats review after CI fixes. Its CI wait can use webhook signals or active polling; human merge is an external signal, not an automatic merge. An agent’s own runtime, inherited along its model chain so the fixers follow the implementer, else the run-pinned workspace.implementerRuntime setting, chooses whether implementer, fixer and merge-conflict turns run the platform’s Mastra tool loop or the Claude Code harness inside the workspace, and the run pins each agent’s choice when it starts; under the harness a worker-side policy decides every tool call, within the tools the agent’s toolKeys grant. A reviewer closing the run’s pull request unmerged makes a later push step fail non-retryably rather than open a replacement.",
       "id": "engineering",
       "refs": [
         "default",
@@ -2353,12 +2354,13 @@
     {
       "body": "Each agent runs on the platform’s Mastra tool loop or the Claude Code harness, and a run never switches an agent’s loop partway through.",
       "category": "Agents",
-      "detail": "Resolution order: a caller-supplied pin (an eval side’s override), then the run’s own pin in WorkflowRun.agentRuntimes, then the Agent version’s runtime (inherited along inheritsModelFrom, through the usual scope cascade and GLOBAL version pin), then the caller’s default. The implementer family and eval cases default to the run-pinned workspace.implementerRuntime setting; agent runs default to Mastra. The first resolution in a run records the answer with a compare-and-set, so parallel activities agree on whichever pinned first; code outside an activity, and an eval, which has no run, pin nothing. The run page shows what each agent ran on. Generic agent nodes have no workspace and always run on Mastra, tracing agent.runtime_not_applicable when their agent asks for the harness. Every runtime other than Mastra is served by a registered harness: a runtime value no harness serves fails non-retryably with HARNESS_UNAVAILABLE, and both the implementer family and agent runs select the harness and bind the agent’s model before building it.",
+      "detail": "Resolution order: a caller-supplied pin (an eval side’s override), then the run’s own pin in WorkflowRun.agentRuntimes (an empty pin means the default, without reading the Agent), then the Agent version’s runtime (inherited along inheritsModelFrom, through the usual scope cascade and GLOBAL version pin), then the caller’s default. The implementer family and eval cases default to the run-pinned workspace.implementerRuntime setting; agent runs default to Mastra. A run snapshots every visible agent’s own runtime at start, resolved in the run’s scope under its version pins; an agent the snapshot lacks (one created later, an agent run’s, a channel-assistant run’s) is pinned at its first resolution with a compare-and-set, so parallel activities agree on whichever pinned first; code outside an activity, and an eval, which has no run, pin nothing. The run page shows what each agent ran on. Generic agent nodes have no workspace and always run on Mastra, tracing agent.runtime_not_applicable when their agent asks for the harness. Every runtime other than Mastra is served by a registered harness: a runtime value no harness serves fails non-retryably with HARNESS_UNAVAILABLE, and both the implementer family and agent runs select the harness and bind the agent’s model before building it.",
       "id": "agentRuntime",
       "refs": [
         "agentRuntimeResolve",
         "agentRuntimePin",
         "runtimeInherit",
+        "agentRuntimeSnapshot",
         "harness",
         "agentRunLoop",
         "runtimeNodeMastra",
@@ -2437,9 +2439,9 @@
     {
       "body": "The run-start pin applies to GLOBAL lineage, not every scope.",
       "category": "Reproducibility",
-      "detail": "fetchActiveAgent looks up active template/channel/team/org versions before applying the GLOBAL version clause. An explicit key@version is threaded through the same map, so it does not force a matching version at a more-specific scope. The runtime is the exception: the run pins it at an agent’s first resolution even when a scoped row supplied it, but an edit made before that first use still reaches the run.",
+      "detail": "fetchActiveAgent looks up active template/channel/team/org versions before applying the GLOBAL version clause. An explicit key@version is threaded through the same map, so it does not force a matching version at a more-specific scope. The runtime is the exception: the run pins it at start even when a scoped row supplied it.",
       "id": "liveOverrides",
-      "refs": ["agents", "agentNode", "agentRuntimePin"],
+      "refs": ["agents", "agentNode", "agentRuntimeSnapshot"],
       "status": "Confirmed boundary",
       "title": "Scoped agent versions remain live"
     },
@@ -2480,9 +2482,9 @@
       "title": "Release-gate templates do not perform deployments"
     },
     {
-      "body": "A Mastra Agent Run debits per step; harness Agent Runs, harness turns and ordinary multi-step generate loops debit at completion.",
+      "body": "A Mastra Agent Run debits per step and a harness Agent Run per streamed model call; harness turns and ordinary multi-step generate loops debit at completion.",
       "category": "Cost control",
-      "detail": "A model call can overshoot a checked budget before returning, and the Claude Code harness reports usage only when its turn ends, so a harness agent run, checked once before its single turn, can overshoot by up to its step ceiling. A harness turn stopped by its deadline, or whose process dies, is metered from its streamed messages, which miss calls the harness makes without streaming one; a turn that ends at its turn cap is metered from the harness’s own totals. A harness turn that fails while its activity is cancelled reports the cancellation, and what that turn spent is not accrued. Workflows with no run have no ActiveWorkflow ledger; a per-execution token cap summed from their trace rows and this worker’s unpersisted calls bounds them instead. It cannot see calls still in flight on another worker, and a failed budget read lets the call through.",
+      "detail": "A model call can overshoot a checked budget before returning, and a harness agent run debits a call only once the next begins, so an exhausted budget stops it one call late; calls the harness makes without streaming a message are charged when the turn ends and never trigger the check. Implementer-family harness turns are still checked once before the turn and debited after it. A harness turn stopped by its deadline, or whose process dies, is metered from its streamed messages, which miss calls the harness makes without streaming one; a turn that ends at its turn cap is metered from the harness’s own totals. A harness turn that fails while its activity is cancelled reports the cancellation, and what that turn spent is not accrued. Workflows with no run have no ActiveWorkflow ledger; a per-execution token cap summed from their trace rows and this worker’s unpersisted calls bounds them instead. It cannot see calls still in flight on another worker, and a failed budget read lets the call through.",
       "id": "budgetGranularity",
       "refs": [
         "trace",
@@ -2491,6 +2493,7 @@
         "runlessBudget",
         "harness",
         "agentRunHarness",
+        "harnessPerCall",
         "harnessStreamedUsage",
         "harnessUsageSelect",
         "harnessCancel"
@@ -2766,13 +2769,20 @@
       "title": "Slack modal approvals confirm in the thread, not privately"
     },
     {
-      "body": "An edit to an agent’s runtime made after a run starts but before the run first uses that agent reaches the run.",
+      "body": "Agents a run’s start snapshot lacks are pinned at first use, so an edit made before then reaches the run.",
       "category": "Reproducibility",
-      "detail": "The pin is written on the first resolution because callers resolve at different scopes, so a run-start snapshot could pin a row the step never uses. The save-time model check sees only a version’s own model; an inherited non-Anthropic model fails with HARNESS_UNSUPPORTED_MODEL when a run resolves it. A team admin cannot set a runtime, so a TEAM override they create has none and falls back to the default, whatever runtime the GLOBAL row chose.",
+      "detail": "An agent created after the run started, an agent run’s agent (resolved in a narrower scope than the run’s) and a channel-assistant run’s agents (that run writes its own row) are pinned where first resolved; an agent whose inheritsModelFrom chain was broken at start is left out of the snapshot and fails where it is used. The save-time model check sees only a version’s own model; an inherited non-Anthropic model fails with HARNESS_UNSUPPORTED_MODEL when a run resolves it. A team admin cannot set a runtime, so a TEAM override they create has none and falls back to the default, whatever runtime the GLOBAL row chose.",
       "id": "runtimePinFirstUse",
-      "refs": ["agentRuntimePin", "runtimeModelCheck", "runtimeAdminOnly", "harnessUnsupported"],
+      "refs": [
+        "agentRuntimeSnapshot",
+        "runtimeSnapshotSkip",
+        "agentRuntimePin",
+        "runtimeModelCheck",
+        "runtimeAdminOnly",
+        "harnessUnsupported"
+      ],
       "status": "Confirmed boundary",
-      "title": "Runtimes pin at first use, not at run start"
+      "title": "Some runtimes pin at first use, not at run start"
     },
     {
       "body": "Scheduled regression runs pass no runtime override, and a runtime breakdown sees only offline harness rows.",
@@ -5625,7 +5635,39 @@
       "id": "agentRuntimePin",
       "lines": 34,
       "path": "packages/worker/src/lib/config/agentRuntime.ts",
-      "title": "A run pins each agent’s runtime at first resolution"
+      "title": "An agent the run-start snapshot lacks is pinned at first resolution"
+    },
+    {
+      "anchor": "export async function snapshotAgentRuntimes(",
+      "before": 0,
+      "id": "agentRuntimeSnapshot",
+      "lines": 35,
+      "path": "packages/worker/src/lib/runPins.ts",
+      "title": "A run pins every visible agent’s runtime at start"
+    },
+    {
+      "anchor": "const agentRuntimes =",
+      "before": 6,
+      "id": "runtimeSnapshotSkip",
+      "lines": 10,
+      "path": "packages/worker/src/activities/templates.ts",
+      "title": "Agent runs skip the run-start runtime snapshot"
+    },
+    {
+      "anchor": "export function perCallAccounting(",
+      "before": 0,
+      "id": "harnessPerCall",
+      "lines": 14,
+      "path": "packages/worker/src/agents/implementerRuntime.ts",
+      "title": "A harness agent run is debited per model call"
+    },
+    {
+      "anchor": "export function validateBundleAgents(",
+      "before": 4,
+      "id": "bundleRuntime",
+      "lines": 30,
+      "path": "packages/shared/src/bundle/index.ts",
+      "title": "Bundles carry an agent’s runtime, checked against its model"
     },
     {
       "anchor": "runtime ??= runtimeOf(parent);",
