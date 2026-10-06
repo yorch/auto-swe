@@ -47,6 +47,7 @@ const WORKFLOW = {
 };
 
 const LESSON = {
+  confidence: 'high',
   failureType: 'REVIEW_REJECTION',
   lessonSummary: 'Validate request bodies with the shared Zod schema before use.',
   metadata: { modelSaid: 'x' },
@@ -76,6 +77,7 @@ describe('commitToMemory', () => {
     expect(message).toContain('request body is used unvalidated');
     expect(insertMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        confidence: 0.9,
         metadata: {
           evidence: {
             pullRequests: [{ headSha: 'f00d', prNumber: 7 }],

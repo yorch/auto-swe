@@ -666,7 +666,7 @@ describe('slackChannelRoutes', () => {
     expect(mockPrisma.memoryItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         take: 200,
-        where: { channelId: CHANNEL, consolidatedAt: null },
+        where: { channelId: CHANNEL, consolidatedAt: null, supersededAt: null },
       })
     );
     // The embedding column must never be selected (Unsupported vector field).

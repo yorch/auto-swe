@@ -258,6 +258,19 @@ export const SETTING_DEFINITIONS = {
     schema: ratio,
     unit: '0–1',
   }),
+  'memory.supersedeThreshold': defineSetting({
+    defaultValue: 0.92,
+    description:
+      'Cosine similarity at which a newly written memory replaces an older one in the same repository or channel. The older item is kept but no longer recalled. Lower it to replace more aggressively; 1 turns replacement off.',
+    group: 'memory',
+    label: 'Supersede threshold',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: ratio,
+    unit: '0–1',
+  }),
 
   // ── Repository permission gating ───────────────────────────────────────────
   // Team membership says which repositories a user may reach; these decide

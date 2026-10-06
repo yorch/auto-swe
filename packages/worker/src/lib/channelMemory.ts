@@ -149,6 +149,7 @@ function crossChannelMemorySql(opts: {
        AND sc.is_private = false${opts.extraWhere ? `\n       ${opts.extraWhere}` : ''}
        AND mi.embedding IS NOT NULL
        AND mi.consolidated_at IS NULL
+       AND mi.superseded_at IS NULL
        AND (mi.embedding_model IS NULL OR mi.embedding_model = $6)
        AND 1 - (mi.embedding <=> $1::vector) >= $4
      ORDER BY mi.embedding <=> $1::vector ASC
@@ -254,7 +255,7 @@ export async function recentChannelMemory(
     orderBy: { createdAt: 'desc' },
     select: { createdAt: true, id: true, lessonSummary: true, rationale: true },
     take: limit,
-    where: { channelId, consolidatedAt: null },
+    where: { channelId, consolidatedAt: null, supersededAt: null },
   });
   // The digest prompt reads both fields, so both are scanned.
   return withoutFlaggedMemory(rows, (row) => `${row.lessonSummary}\n${row.rationale}`);

@@ -181,6 +181,8 @@ export interface LessonSummary {
   summary: string;
   failureType: string | null;
   similarity: number;
+  /** 0–1 as the writer graded it; null when no one did. */
+  confidence: number | null;
 }
 
 /**

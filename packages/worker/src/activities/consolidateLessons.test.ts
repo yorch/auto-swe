@@ -312,7 +312,31 @@ describe('consolidateLessons', () => {
     const insert = statements.find(([sql]) => String(sql).includes('INSERT'));
     expect(String(insert?.[0])).toContain("'swe-lessons', 'connection', $1::uuid");
     expect(insert?.[7]).toBe(JSON.stringify({ clusterSize: 3, consolidatedFrom: ['a', 'b', 'c'] }));
-    expect(insert?.slice(8)).toEqual(['lessonConsolidator', 'anthropic/claude-opus-5-5', 0]);
+    // No source was graded, so the merged lesson is not either.
+    expect(insert?.slice(8)).toEqual(['lessonConsolidator', 'anthropic/claude-opus-5-5', 0, null]);
+  });
+
+  it('grades a merged lesson by the average of its graded sources', async () => {
+    mockQueryRaw.mockResolvedValue([
+      { ...makeLessonRow('a', 'lesson a', 0), confidence: 0.9 },
+      { ...makeLessonRow('b', 'lesson b', 0), confidence: 0.3 },
+      { ...makeLessonRow('c', 'lesson c', 0), confidence: null },
+    ]);
+    const statements: unknown[][] = [];
+    mockTransaction.mockImplementation(async (fn) =>
+      fn({
+        ...defaultTxMock,
+        $executeRawUnsafe: vi.fn(async (...args: unknown[]) => {
+          statements.push(args);
+        }),
+      } as never)
+    );
+    makeSuccessGenerate();
+
+    await consolidateLessons({ minClusterSize: 3, repoId: 'repo-1', similarityThreshold: 0.85 });
+
+    const insert = statements.find(([sql]) => String(sql).includes('INSERT'));
+    expect(insert?.[11]).toBeCloseTo(0.6);
   });
 
   it('skips clusters smaller than minClusterSize', async () => {

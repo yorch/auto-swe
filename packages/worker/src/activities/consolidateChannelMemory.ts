@@ -150,6 +150,7 @@ export async function consolidateChannelMemory(
      FROM memory_items
      WHERE channel_id = $1::uuid
        AND consolidated_at IS NULL
+       AND superseded_at IS NULL
        AND (embedding_model IS NULL OR embedding_model = $2)
      ORDER BY created_at DESC`,
     channelId,
@@ -308,7 +309,7 @@ export async function consolidateChannelMemory(
             SELECT pg_advisory_xact_lock(hashtextextended(${channelId}, 0))
           `;
           const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(
-            `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
+            `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL AND superseded_at IS NULL`,
             sourceIds
           );
           if (stillActive.length < sourceIds.length) {

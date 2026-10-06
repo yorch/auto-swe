@@ -42,6 +42,7 @@ interface RawLesson {
   failureType: string | null;
   rationale: string;
   embeddingJson: string | null;
+  confidence: number | null;
 }
 
 /**
@@ -86,10 +87,12 @@ async function consolidateLessonsImpl(
        lesson_summary   AS "lessonSummary",
        failure_type     AS "failureType",
        rationale,
+       confidence,
        embedding::text  AS "embeddingJson"
      FROM memory_items
      WHERE repo_id = $1::uuid
        AND consolidated_at IS NULL
+       AND superseded_at IS NULL
        AND (embedding_model IS NULL OR embedding_model = $2)
      ORDER BY created_at DESC`,
     repoId,
@@ -213,6 +216,14 @@ async function consolidateLessonsImpl(
         return { consolidated: 0, created: 0 };
       }
 
+      // A merged lesson is as well supported as its sources on average; sources
+      // nobody graded do not count, and a cluster of them leaves it ungraded.
+      const graded = clusterLessons
+        .map((l) => l.confidence)
+        .filter((c): c is number => typeof c === 'number');
+      const clusterConfidence =
+        graded.length > 0 ? graded.reduce((a, b) => a + b, 0) / graded.length : null;
+
       // Determine dominant failureType across the cluster (null if mixed).
       const types = [...new Set(clusterLessons.map((l) => l.failureType))];
       const sharedFailureType = types.length === 1 ? types[0] : null;
@@ -237,7 +248,7 @@ async function consolidateLessonsImpl(
             SELECT pg_advisory_xact_lock(hashtextextended(${repoId}, 0))
           `;
         const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(
-          `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
+          `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL AND superseded_at IS NULL`,
           sourceIds
         );
         if (stillActive.length < sourceIds.length) {
@@ -253,10 +264,11 @@ async function consolidateLessonsImpl(
           await tx.$executeRawUnsafe(
             `INSERT INTO memory_items
                (id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type,
-                metadata, scope, entity_type, entity_id, agent_key, model, cost_usd, created_at)
+                metadata, scope, entity_type, entity_id, agent_key, model, cost_usd, confidence,
+                created_at)
              VALUES
                (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6, $7::jsonb,
-                'swe-lessons', 'connection', $1::uuid, $8, $9, $10, now())`,
+                'swe-lessons', 'connection', $1::uuid, $8, $9, $10, $11, now())`,
             repoId,
             lesson.rationale,
             lesson.lessonSummary,
@@ -266,7 +278,8 @@ async function consolidateLessonsImpl(
             JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds }),
             CONSOLIDATOR_AGENT_KEY,
             bound.spec,
-            attribution.costUsd / lessons.length
+            attribution.costUsd / lessons.length,
+            clusterConfidence
           );
         }
 

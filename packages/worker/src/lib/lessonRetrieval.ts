@@ -8,6 +8,7 @@ interface RetrievedLesson {
   failureType: string | null;
   similarity: number;
   createdAt: Date;
+  confidence: number | null;
 }
 
 /**
@@ -32,6 +33,7 @@ export async function retrieveSimilarLessons(
       'id',
       'lesson_summary AS "lessonSummary"',
       'failure_type AS "failureType"',
+      'confidence',
       'created_at AS "createdAt"',
     ],
     similarityThreshold,
@@ -41,6 +43,7 @@ export async function retrieveSimilarLessons(
   // these go straight into the implementer's system prompt.
   const allowed = await withoutFlaggedMemory(lessons, (l) => l.lessonSummary);
   return allowed.map((l) => ({
+    confidence: l.confidence ?? null,
     failureType: l.failureType,
     lessonId: l.id,
     similarity: l.similarity,

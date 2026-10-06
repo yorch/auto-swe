@@ -520,7 +520,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
             take: 200,
             where: {
               channelId: request.params.id,
-              ...(showConsolidated ? {} : { consolidatedAt: null }),
+              ...(showConsolidated ? {} : { consolidatedAt: null, supersededAt: null }),
             },
           })
       );

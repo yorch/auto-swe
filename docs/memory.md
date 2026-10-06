@@ -17,10 +17,11 @@ passive ingestion, cross-channel reads, privacy — is in
 ## 1. Storage
 
 A `MemoryItem` row holds a `lessonSummary` (what is recalled), a `rationale`, an optional
-`failureType`, a 1536-dimensional `embedding` of the summary with the `embeddingModel` that produced
+`failureType`, a `confidence`, a 1536-dimensional `embedding` of the summary with the `embeddingModel` that produced
 it, and provenance: `workflowId`, `workflowRunId`, `agentKey`, `model`, `costUsd`, `skillsActive`
 and a free-form `metadata` object. `consolidatedAt` marks a row that consolidation has merged into
-a newer one; such rows are kept but never recalled.
+a newer one, and `supersededAt` / `supersededById` one a later item replaced (§2); both kinds are
+kept but never recalled or consolidated again.
 
 The embedding column carries an HNSW cosine index (`idx_memory_items_embedding`). It is created by
 hand-written DDL that Prisma cannot express — see the `prisma-pgvector-hnsw` skill before touching
@@ -49,6 +50,18 @@ the rest), `agentKey` and `model` the writer, and `metadata.evidence` cites the 
 head commit it was written about plus a 300-character quote of the evidence that drove it — the
 start of the rejection, or the end of the failing CI log. The model-free writers record their run
 and an `agentKey` of `mergeConflictResolver` or `shellStep`.
+
+The agent also grades its confidence by how directly the evidence supports the lesson — `high`
+when a rejection or CI failure states the problem, `medium` when it points to it, `low` when the
+lesson rests on the ticket or the outcome alone — stored as 0.9, 0.6 or 0.3. A consolidated lesson
+takes the average of its graded sources; the model-free writers leave it null. A lesson below 0.5 is
+still recalled, labelled `low confidence` in the implementer's prompt.
+
+**Newer replaces older.** After a write, every active item in the same repository (or channel) and
+scope, embedded by the same model, at or above `memory.supersedeThreshold` similarity (default 0.92;
+1 turns it off) is marked superseded by the new one. A lesson written from fresher evidence about
+the same thing therefore replaces the old one in recall instead of sitting beside it; the old row
+stays, with `supersededById` naming its replacement.
 
 Every write goes through `insertMemoryItem` (`packages/worker/src/lib/memoryStore.ts`), which
 applies the memory gate (§5) before it embeds anything.
@@ -114,9 +127,12 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 - **A citation is a pointer, not a proof.** `metadata.evidence` says what a lesson was written
   from; nothing checks that the lesson's text follows from it, and a consolidated row cites only
   its sources, not their evidence.
-- **Nothing supersedes a lesson.** There is no confidence score and no notion of one lesson
-  replacing another, so contradictory lessons coexist until an admin deletes one. Lessons never
-  expire.
+- **Supersession is similarity, not contradiction.** A newer lesson replaces an older one only when
+  their summaries embed close together. Two lessons that contradict each other in different words
+  both stay active, and a near-duplicate that adds a detail still replaces the original. Nothing
+  un-supersedes a lesson, and lessons never expire.
+- **Confidence is the writer's own grade.** It is the model's reading of a fixed rubric, not a
+  measurement, and it labels a recalled lesson rather than filtering it.
 - **Deleting does not cascade through consolidation.** Deleting a source leaves its content alive in
   the consolidated row built from it; deleting a consolidated row leaves its sources marked
   consolidated, so neither is recalled again.

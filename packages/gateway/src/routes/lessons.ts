@@ -63,7 +63,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       const where: Prisma.MemoryItemWhereInput = {
         ...accessFilter,
         scope: LESSON_SCOPE,
-        ...(!includeConsolidated && { consolidatedAt: null }),
+        ...(!includeConsolidated && { consolidatedAt: null, supersededAt: null }),
         // Combined with the access filter, never replacing it: a repoId the caller cannot
         // reach matches nothing rather than widening the result.
         ...(repoId && { repoId }),
@@ -159,7 +159,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
                 { lessonSummary: { contains: q, mode: 'insensitive' } },
                 { rationale: { contains: q, mode: 'insensitive' } },
               ],
-              ...(!includeConsolidated && { consolidatedAt: null }),
+              ...(!includeConsolidated && { consolidatedAt: null, supersededAt: null }),
               repoId,
               scope: LESSON_SCOPE,
             },
@@ -235,7 +235,12 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma.memoryItem.groupBy({
             _count: { _all: true },
             by: ['repoId'],
-            where: { consolidatedAt: null, repoId: { not: null }, scope: LESSON_SCOPE },
+            where: {
+              consolidatedAt: null,
+              repoId: { not: null },
+              scope: LESSON_SCOPE,
+              supersededAt: null,
+            },
           }),
         ])
     );

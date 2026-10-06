@@ -204,7 +204,10 @@ export async function executeImplementation(
       if (lessons.length > 0) {
         lessonsContext = `\n\n${fenceRecalledMemory(
           '## Lessons from Previous Workflows',
-          lessons.map((l) => `- [${l.failureType ?? 'GENERAL'}] ${l.summary}`)
+          lessons.map(
+            (l) =>
+              `- [${l.failureType ?? 'GENERAL'}${lowConfidence(l.confidence) ? ', low confidence' : ''}] ${l.summary}`
+          )
         )}`;
         tracer.addActivityEvent({
           name: 'lessons.retrieved',
@@ -459,4 +462,12 @@ export async function executeImplementation(
     }
     await workspace.destroy();
   }
+}
+
+/**
+ * A lesson its writer graded as resting on little evidence. It is still
+ * recalled — it may be the only one — but labelled, so the implementer weighs it.
+ */
+function lowConfidence(confidence: number | null | undefined): boolean {
+  return confidence !== null && confidence !== undefined && confidence < 0.5;
 }

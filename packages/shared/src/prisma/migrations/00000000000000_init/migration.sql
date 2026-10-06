@@ -103,6 +103,9 @@ CREATE TABLE "memory_items" (
     "skills_active" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "consolidated_at" TIMESTAMPTZ,
+    "superseded_by_id" UUID,
+    "superseded_at" TIMESTAMPTZ,
+    "confidence" DOUBLE PRECISION,
 
     CONSTRAINT "memory_items_pkey" PRIMARY KEY ("id")
 );
@@ -1525,6 +1528,9 @@ CREATE INDEX "active_workflows_repo_id_assigned_branch_idx" ON "active_workflows
 CREATE INDEX "memory_items_repo_id_consolidated_at_idx" ON "memory_items"("repo_id", "consolidated_at");
 
 -- CreateIndex
+CREATE INDEX "memory_items_superseded_by_id_idx" ON "memory_items"("superseded_by_id");
+
+-- CreateIndex
 CREATE INDEX "memory_items_scope_consolidated_at_idx" ON "memory_items"("scope", "consolidated_at");
 
 -- CreateIndex
@@ -2075,6 +2081,9 @@ ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_org_id_fkey" FOREIGN KEY
 
 -- AddForeignKey
 ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_workflow_run_id_fkey" FOREIGN KEY ("workflow_run_id") REFERENCES "workflow_runs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "memory_items" ADD CONSTRAINT "memory_items_superseded_by_id_fkey" FOREIGN KEY ("superseded_by_id") REFERENCES "memory_items"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "context_snapshots" ADD CONSTRAINT "context_snapshots_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
