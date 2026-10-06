@@ -1,6 +1,8 @@
 /**
- * Records `RunnableWorkflow` execution histories to JSON fixtures, which
- * `runnable.replay.test.ts` then replays against current workflow code.
+ * Records workflow execution histories to binary fixtures, which
+ * `runnable.replay.test.ts` (RunnableWorkflow) and `orchestration.replay.test.ts`
+ * (the epic orchestrator and the channel workflows) replay against current
+ * workflow code.
  *
  * One fixture per control-flow *shape*, because replay only guards the paths a
  * recorded history actually walked. A linear run says nothing about whether a
@@ -38,16 +40,38 @@ const spec = (nodes: Record<string, unknown>, entry: string) => ({
   schemaVersion: SPEC_SCHEMA_VERSION,
 });
 
+type Spec = ReturnType<typeof spec>;
+
 interface Scenario {
   /** Fixture filename stem. */
   name: string;
-  spec: ReturnType<typeof spec>;
   /**
-   * Drives a workflow that parks. Receives a handle and the domain-state log,
-   * and must unblock the run — a signal sent before the interpreter reaches
-   * the wait node is deliberately dropped, so this has to observe first.
+   * The RunnableWorkflow's spec. For a scenario that records another workflow
+   * type, the spec any RunnableWorkflow child it starts runs (see `childSpecs`).
    */
-  drive?: (handle: DriveHandle, states: string[]) => Promise<void>;
+  spec?: Spec;
+  /**
+   * Specs for RunnableWorkflow children, keyed by the `templateId` they are
+   * started with — an epic's children each resolve their own template.
+   */
+  childSpecs?: Record<string, Spec>;
+  /**
+   * Records a workflow other than RunnableWorkflow. Such a scenario runs its
+   * worker on `engineering-workflow`, the queue every child is started on, and
+   * its drive must see any abandoned child to completion so the next scenario's
+   * worker on that queue does not inherit it.
+   */
+  workflow?: {
+    type: string;
+    args: unknown[] | ((env: TestWorkflowEnvironment) => Promise<unknown[]>);
+  };
+  /**
+   * Drives a workflow that parks. Receives a handle, the domain-state log and
+   * the test environment, and must unblock the run — a signal sent before the
+   * interpreter reaches the wait node is deliberately dropped, so this has to
+   * observe first.
+   */
+  drive?: (handle: DriveHandle, states: string[], env: TestWorkflowEnvironment) => Promise<void>;
   /**
    * Activity overrides for this scenario, built fresh per recording so a closure
    * (an attempt counter, say) cannot leak between scenarios.
@@ -56,8 +80,15 @@ interface Scenario {
 }
 
 interface DriveHandle {
+  workflowId: string;
   signal(name: string, arg?: unknown): Promise<void>;
+  cancel(): Promise<unknown>;
+  result(): Promise<unknown>;
+  fetchHistory(): Promise<proto.temporal.api.history.v1.IHistory>;
 }
+
+/** The queue every child workflow is started on (epic children, channel tasks). */
+const CHILD_TASK_QUEUE = 'engineering-workflow';
 
 /** Parks the run at a marker step so a signal can be timed against it. */
 const marker = (status: string, next: string) => ({
@@ -78,6 +109,97 @@ async function waitForState(states: string[], want: string): Promise<void> {
   // Give the worker a beat to park on the condition after the marker returns.
   await new Promise((r) => setTimeout(r, 750));
 }
+
+/** Like {@link waitForState}, for a state several parallel branches each reach. */
+async function waitForStateCount(states: string[], want: string, count: number): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  const seen = () => states.filter((s) => s === want).length;
+  while (seen() < count && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (seen() < count) {
+    throw new Error(`timed out waiting for ${count}× domain state '${want}' (saw ${seen()})`);
+  }
+  await new Promise((r) => setTimeout(r, 750));
+}
+
+const EventType = proto.temporal.api.enums.v1.EventType;
+
+/** Waits until the run's history holds an event of `type` — a timer started, say. */
+async function waitForEvent(
+  handle: Pick<DriveHandle, 'fetchHistory'>,
+  type: proto.temporal.api.enums.v1.EventType
+): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const history = await handle.fetchHistory();
+    if ((history.events ?? []).some((e) => e.eventType === type)) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`timed out waiting for history event ${EventType[type]}`);
+}
+
+/** A RunnableWorkflow request, for scenarios that start one as a child. */
+const childRequest = (description: string) => ({
+  budgetTier: 'STANDARD',
+  description,
+  externalTicketId: 'REPLAY-1',
+  repoId: '00000000-0000-4000-8000-000000000001',
+  requestPayload: '{}',
+  workRequestId: '00000000-0000-4000-8000-000000000002',
+});
+
+const EPIC_REQUEST = {
+  description: 'replay fixture epic',
+  externalTicketId: 'REPLAY-EPIC-1',
+  requestPayload: '{}',
+  workRequestId: '00000000-0000-4000-8000-000000000003',
+};
+
+/** A child spec that succeeds without parking. */
+const CHILD_OK = spec({ done: { status: 'SUCCESS', type: 'terminate' } }, 'done');
+/** A child spec whose run ends FAILED, so its epic dependents are skipped. */
+const CHILD_FAIL = spec({ failed: { status: 'FAILED', type: 'terminate' } }, 'failed');
+
+const CHANNEL_TURN_INPUT = {
+  channelId: 'chan-replay',
+  orgId: 'org-replay',
+  slackChannelId: 'C0REPLAY',
+  teamId: 'team-replay',
+  threadTs: '1700000000.000100',
+  userSlackId: 'U0REPLAY',
+  userText: 'replay fixture',
+};
+
+/**
+ * Channel assistant turn activities. `turn` is what `runChannelAssistantTurn`
+ * returns (or throws) — the field the workflow branches on.
+ */
+const channelActivities = (turn: () => Promise<unknown>) => ({
+  createChannelTaskRun: async () => ({
+    request: childRequest('channel task'),
+    templateId: 'tpl-task',
+    templateVersion: 1,
+    workflowId: 'replay-fixture-channel-assistant-delegate-task',
+  }),
+  createChannelWorkflowDraft: async () => ({ name: 'Fixture flow', summary: 'two steps' }),
+  finalizeChannelRun: async () => {},
+  isChannelOverBudgetForTask: async () => false,
+  postChannelPlaceholder: async () => ({ ts: '1700000000.000200' }),
+  postChannelReply: async () => {},
+  refineChannelWorkflowDraft: async () => ({
+    name: 'Fixture flow',
+    status: 'refined',
+    summary: 'added a step',
+    version: 2,
+  }),
+  runChannelAssistantTurn: turn,
+  startChannelRun: async () => {},
+  touchChannelThreadSession: async () => {},
+  updateChannelReply: async () => {},
+});
 
 const SCENARIOS: Scenario[] = [
   {
@@ -495,6 +617,335 @@ const SCENARIOS: Scenario[] = [
       'seed'
     ),
   },
+  {
+    // A signal node nobody signals: the wait's timer fires and the run takes
+    // `onTimeout`. Every other signal fixture resumes on a payload, so the
+    // timeout branch of the wait was unguarded.
+    name: 'signal-timeout',
+    spec: spec(
+      {
+        merged: { status: 'SUCCESS', type: 'terminate' },
+        seed: { next: 'wait', type: 'set', values: { 'context.ready': { literal: true } } },
+        timedOut: { status: 'TIMED_OUT', type: 'terminate' },
+        wait: {
+          name: 'humanMergeSignal',
+          onReceive: 'merged',
+          onTimeout: 'timedOut',
+          timeout: '1h',
+          type: 'signal',
+        },
+      },
+      'seed'
+    ),
+  },
+  {
+    drive: async (handle, states) => {
+      await waitForStateCount(states, 'AWAITING_HUMAN', 2);
+      await handle.signal('hitl_fan[0]/gate', { action: 'approve' });
+      await handle.signal('hitl_fan[1]/gate', { action: 'approve' });
+    },
+    // A HITL gate inside a fan-out branch waits on a branch-unique signal
+    // (`hitl_fan[0]/gate`) whose handler is registered lazily, on first wait —
+    // not at startup like a top-level gate. Both branches park, then resume.
+    name: 'fan-out-human-gate',
+    spec: spec(
+      {
+        branchDone: { type: 'set', values: { 'context.branch': { literal: true } } },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          concurrency: 2,
+          itemKey: 'subtask',
+          join: 'done',
+          over: { literal: [{ id: 'a' }, { id: 'b' }] },
+          subgraph: 'mark',
+          type: 'fanOut',
+        },
+        gate: {
+          onApprove: 'branchDone',
+          onReject: 'branchDone',
+          onTimeout: 'branchDone',
+          timeout: '24h',
+          title: 'Approve this branch',
+          type: 'humanApproval',
+        },
+        mark: marker('AWAITING_HUMAN', 'gate'),
+      },
+      'fan'
+    ),
+  },
+  {
+    drive: async (handle, states) => {
+      await waitForStateCount(states, 'AWAITING_HUMAN', 2);
+      await handle.cancel();
+    },
+    // A workflow cancel (the run-cancel route) while every fan-out branch is
+    // parked: the branches' waits unwind as a cancellation and finalization
+    // still runs, in a non-cancellable scope, recording CANCELLED.
+    name: 'fan-out-cancel',
+    spec: spec(
+      {
+        branchDone: { type: 'set', values: { 'context.branch': { literal: true } } },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          concurrency: 2,
+          itemKey: 'subtask',
+          join: 'done',
+          over: { literal: [{ id: 'a' }, { id: 'b' }] },
+          subgraph: 'mark',
+          type: 'fanOut',
+        },
+        gate: {
+          onApprove: 'branchDone',
+          onReject: 'branchDone',
+          onTimeout: 'branchDone',
+          timeout: '24h',
+          title: 'Hold this branch open',
+          type: 'humanApproval',
+        },
+        mark: marker('AWAITING_HUMAN', 'gate'),
+      },
+      'fan'
+    ),
+  },
+  {
+    // Event-driven DAG scheduling (`epic-event-driven-scheduling`): a and b
+    // start together, c starts the moment a succeeds, and d — downstream of
+    // the failed b — is skipped without ever starting.
+    activities: () => ({
+      planEpic: async () => {
+        throw new Error('planEpic must not run: the request carries its repos');
+      },
+      resolveTemplateForRepo: async (repoId: string) => ({
+        templateId: repoId === 'b' ? 'tpl-fail' : 'tpl-ok',
+        templateVersion: 1,
+      }),
+    }),
+    childSpecs: { 'tpl-fail': CHILD_FAIL, 'tpl-ok': CHILD_OK },
+    name: 'epic-dag',
+    workflow: {
+      args: [
+        {
+          ...EPIC_REQUEST,
+          epicWorkflowId: 'replay-fixture-epic-dag',
+          repos: [
+            { dependsOn: [], repoId: 'a' },
+            { dependsOn: [], repoId: 'b' },
+            { dependsOn: ['a'], repoId: 'c' },
+            { dependsOn: ['b'], repoId: 'd' },
+          ],
+        },
+      ],
+      type: 'EpicOrchestratorWorkflow',
+    },
+  },
+  {
+    // No pre-decomposed repos: the planner activity runs first, and its plan
+    // (p2 behind p1) is what the scheduler walks.
+    activities: () => ({
+      planEpic: async () => [
+        { dependsOn: [], repoId: 'p1' },
+        { dependsOn: ['p1'], repoId: 'p2' },
+      ],
+      resolveTemplateForRepo: async () => ({ templateId: 'tpl-ok', templateVersion: 1 }),
+    }),
+    childSpecs: { 'tpl-ok': CHILD_OK },
+    name: 'epic-planned',
+    workflow: {
+      args: [
+        {
+          ...EPIC_REQUEST,
+          epicWorkflowId: 'replay-fixture-epic-planned',
+          repoIds: ['p1', 'p2'],
+          repos: [],
+        },
+      ],
+      type: 'EpicOrchestratorWorkflow',
+    },
+  },
+  {
+    activities: () => ({
+      resolveTemplateForRepo: async () => ({ templateId: 'tpl-park', templateVersion: 1 }),
+    }),
+    childSpecs: {
+      'tpl-park': spec(
+        {
+          approved: { status: 'SUCCESS', type: 'terminate' },
+          gate: {
+            onApprove: 'approved',
+            onReject: 'approved',
+            onTimeout: 'approved',
+            timeout: '24h',
+            title: 'Hold the child open',
+            type: 'humanApproval',
+          },
+          mark: marker('AWAITING_HUMAN', 'gate'),
+        },
+        'mark'
+      ),
+    },
+    drive: async (handle, states) => {
+      await waitForStateCount(states, 'AWAITING_HUMAN', 2);
+      await handle.signal('epicCancelSignal');
+    },
+    // `epicCancelSignal` while two children are parked (`epic-cancel-children`):
+    // the child scope is cancelled, both children are cancelled with it, and
+    // z — behind x — never starts.
+    name: 'epic-cancel',
+    workflow: {
+      args: [
+        {
+          ...EPIC_REQUEST,
+          epicWorkflowId: 'replay-fixture-epic-cancel',
+          repos: [
+            { dependsOn: [], repoId: 'x' },
+            { dependsOn: [], repoId: 'y' },
+            { dependsOn: ['x'], repoId: 'z' },
+          ],
+        },
+      ],
+      type: 'EpicOrchestratorWorkflow',
+    },
+  },
+  {
+    // The plain @mention turn: placeholder, LLM turn, edit the placeholder in
+    // place, mark the thread session live, finalize.
+    activities: () => channelActivities(async () => ({ reply: 'here you go' })),
+    name: 'channel-assistant-reply',
+    workflow: { args: [CHANNEL_TURN_INPUT], type: 'ChannelAssistantWorkflow' },
+  },
+  {
+    // A follow-up (no re-@mention) the agent decided was not for it: no
+    // placeholder up front, and nothing posted after.
+    activities: () => channelActivities(async () => ({ reply: 'SKIP', suppressed: true })),
+    name: 'channel-assistant-followup-skip',
+    workflow: {
+      args: [{ ...CHANNEL_TURN_INPUT, followup: true }],
+      type: 'ChannelAssistantWorkflow',
+    },
+  },
+  {
+    // The LLM turn fails: the placeholder is edited with the fallback text and
+    // the run is finalized FAILED, without the thread-session touch.
+    activities: () =>
+      channelActivities(async () => {
+        throw ApplicationFailure.nonRetryable('fixture turn failure');
+      }),
+    name: 'channel-assistant-error',
+    workflow: { args: [CHANNEL_TURN_INPUT], type: 'ChannelAssistantWorkflow' },
+  },
+  {
+    // A delegate intent: budget gate, prepare the run, start the thread-bound
+    // RunnableWorkflow child (ABANDON, REJECT_DUPLICATE), then post the ack.
+    activities: () =>
+      channelActivities(async () => ({
+        delegate: { description: 'do the thing', route: 'general', title: 'Thing' },
+        reply: 'on it',
+      })),
+    childSpecs: { 'tpl-task': CHILD_OK },
+    drive: async (handle, _states, env) => {
+      // The child is abandoned, so it outlives the turn: see it finish here
+      // rather than leave it for the next scenario's worker on the queue.
+      await handle.result();
+      await env.client.workflow
+        .getHandle('replay-fixture-channel-assistant-delegate-task')
+        .result();
+    },
+    name: 'channel-assistant-delegate',
+    workflow: { args: [CHANNEL_TURN_INPUT], type: 'ChannelAssistantWorkflow' },
+  },
+  {
+    // A generateWorkflow intent: budget gate, draft generation, reply.
+    activities: () =>
+      channelActivities(async () => ({
+        generate: { description: 'lint then test', name: 'Fixture flow' },
+        reply: '',
+      })),
+    name: 'channel-assistant-generate',
+    workflow: { args: [CHANNEL_TURN_INPUT], type: 'ChannelAssistantWorkflow' },
+  },
+  {
+    // A refineWorkflow intent: budget gate, draft refinement, reply.
+    activities: () =>
+      channelActivities(async () => ({ refine: { instruction: 'add a step' }, reply: '' })),
+    name: 'channel-assistant-refine',
+    workflow: { args: [CHANNEL_TURN_INPUT], type: 'ChannelAssistantWorkflow' },
+  },
+  {
+    childSpecs: {
+      'tpl-deferred': spec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          mark: marker('AWAITING_SIGNAL', 'wait'),
+          wait: {
+            name: 'humanMergeSignal',
+            onReceive: 'done',
+            onTimeout: 'done',
+            // Well past the 15m the drive skips, so the skip cannot time the wait out.
+            timeout: '24h',
+            type: 'signal',
+          },
+        },
+        'mark'
+      ),
+    },
+    drive: async (handle, states, env) => {
+      // Steer while the wrapper sleeps (folded into the description), then
+      // skip past runAt (inside the recorder's 2h execution timeout) so it
+      // launches the run, then steer again (forwarded to
+      // the running child as an external signal), then let the child finish.
+      await waitForEvent(handle, EventType.EVENT_TYPE_TIMER_STARTED);
+      await handle.signal('steer', 'pre-launch guidance');
+      await env.sleep('15m');
+      await waitForState(states, 'AWAITING_SIGNAL');
+      await handle.signal('steer', 'post-launch guidance');
+      await waitForEvent(handle, EventType.EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED);
+      await env.client.workflow
+        .getHandle(`${handle.workflowId}-run`)
+        .signal('humanMergeSignal', true);
+    },
+    // The deferred-task wrapper: sleep until runAt, start the run as a child,
+    // forward later steering to it, and stay alive until it closes.
+    name: 'channel-scheduled-task',
+    workflow: {
+      args: async (env) => [
+        {
+          request: childRequest('deferred task'),
+          runAt: new Date((await env.currentTimeMs()) + 10 * 60_000).toISOString(),
+          templateId: 'tpl-deferred',
+          templateVersion: 1,
+        },
+      ],
+      type: 'ChannelScheduledTaskWorkflow',
+    },
+  },
+  {
+    // The ambient schedule's five best-effort passes, in order. The digest
+    // fails, so the run is finalized FAILED while the other passes still run.
+    activities: () => ({
+      consolidateChannelMemory: async () => ({}),
+      finalizeChannelRun: async () => {},
+      flagOrgSignals: async () => ({}),
+      passiveIngestChannelMemory: async () => ({}),
+      runChannelAmbientDigest: async () => {
+        throw ApplicationFailure.nonRetryable('fixture digest failure');
+      },
+      startChannelRun: async () => {},
+      sweepChannelOpenItems: async () => ({}),
+    }),
+    name: 'channel-ambient',
+    workflow: { args: [{ channelId: 'chan-replay' }], type: 'ChannelAmbientWorkflow' },
+  },
+  {
+    // The reactive schedule: one interjection check between the run record's
+    // start and finalize.
+    activities: () => ({
+      evaluateReactiveInterjection: async () => ({ outcome: 'skipped' }),
+      finalizeChannelRun: async () => {},
+      startChannelRun: async () => {},
+    }),
+    name: 'channel-reactive',
+    workflow: { args: [{ channelId: 'chan-replay' }], type: 'ChannelReactiveWorkflow' },
+  },
 ];
 
 /**
@@ -524,12 +975,20 @@ function withTimeout<T>(name: string, work: Promise<T>): Promise<T> {
 
 async function record(scenario: Scenario, env: TestWorkflowEnvironment): Promise<number> {
   const states: string[] = [];
-  const taskQueue = `replay-recorder-${scenario.name}`;
+  const taskQueue = scenario.workflow ? CHILD_TASK_QUEUE : `replay-recorder-${scenario.name}`;
   const worker = await Worker.create({
     activities: {
       cancelPendingHumanSteps: async () => {},
       createHumanStep: async () => {},
-      createWorkflowRun: async () => ({ runId: `replay-${scenario.name}`, spec: scenario.spec }),
+      createWorkflowRun: async (input: { templateId: string; workflowId: string }) => {
+        if (!scenario.workflow) {
+          return { runId: `replay-${scenario.name}`, spec: scenario.spec };
+        }
+        const childSpec = scenario.childSpecs?.[input.templateId];
+        return childSpec
+          ? { runId: `replay-${input.workflowId}`, spec: childSpec }
+          : { error: `no child spec for template '${input.templateId}'` };
+      },
       executeImplementation: async () => ({ ok: true, summary: 'fixture' }),
       finalizeWorkflowRun: async () => {},
       mcpCallTool: async () => ({ ok: true, result: 'fixture' }),
@@ -555,26 +1014,21 @@ async function record(scenario: Scenario, env: TestWorkflowEnvironment): Promise
   // promise settles, and `start()` settles the moment the workflow is queued —
   // leaving nothing to poll it to completion.
   const history = await worker.runUntil(async () => {
-    const handle = await env.client.workflow.start('RunnableWorkflow', {
-      args: [
-        {
-          request: {
-            budgetTier: 'STANDARD',
-            description: 'replay fixture',
-            externalTicketId: 'REPLAY-1',
-            repoId: '00000000-0000-4000-8000-000000000001',
-            requestPayload: '{}',
-            workRequestId: '00000000-0000-4000-8000-000000000002',
-          },
-          templateId: 'tpl-replay',
-          templateVersion: 1,
-        },
-      ],
+    const wf = scenario.workflow;
+    const args = wf
+      ? typeof wf.args === 'function'
+        ? await wf.args(env)
+        : wf.args
+      : [{ request: childRequest('replay fixture'), templateId: 'tpl-replay', templateVersion: 1 }];
+    const handle = await env.client.workflow.start(wf?.type ?? 'RunnableWorkflow', {
+      args,
       taskQueue,
       workflowExecutionTimeout: '2 hours',
+      // The replay tests replay each fixture under this same id: a workflow that
+      // derives a child's id from its own would diverge under any other.
       workflowId: `replay-fixture-${scenario.name}`,
     });
-    await scenario.drive?.(handle, states);
+    await scenario.drive?.(handle, states, env);
     await handle.result().catch(() => undefined);
     return handle.fetchHistory();
   });
@@ -602,7 +1056,7 @@ async function main(): Promise<void> {
     }
     for (const scenario of SCENARIOS.filter((sc) => only.length === 0 || only.includes(sc.name))) {
       const events = await withTimeout(scenario.name, record(scenario, env));
-      console.log(`${scenario.name.padEnd(16)} ${events} events`);
+      console.log(`${scenario.name.padEnd(32)} ${events} events`);
     }
   } finally {
     await env.teardown();

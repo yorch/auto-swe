@@ -1191,12 +1191,17 @@ Current constraints of the system as built. Deliberate product boundaries are in
   states freely, so an exact name match is tried first and otherwise the target maps through
   Linear's five canonical state types. A status with neither an exact name nor a type mapping
   no-ops rather than failing the run.
-- **Replay guards command shape, not data.** The determinism fixtures now cover every node type
-  the interpreter dispatches, plus the finalization spill path, but Temporal compares command type
-  and sequence rather than activity arguments — permuting same-type branch activities replays
-  clean either way. Replay also only guards paths a *recorded* history walked, so a new node type
-  needs a new fixture; `runnable.replay.test.ts` asserts the fixture list explicitly so losing one
-  fails loudly rather than quietly narrowing the guard.
+- **Replay guards command shape, not data.** The determinism fixtures cover every node type
+  the interpreter dispatches, plus the finalization spill path, a workflow cancel during a fan-out,
+  a signal timeout and a human gate inside a fan-out branch; `orchestration.replay.test.ts` does the
+  same for the epic orchestrator (event-driven scheduling, planning, cancel) and the channel
+  workflows (each assistant turn branch, the deferred-task wrapper, ambient, reactive). Temporal
+  compares command type and sequence rather than activity arguments — permuting same-type branch
+  activities replays clean either way. Replay also only guards paths a *recorded* history walked,
+  so a new node type or workflow branch needs a new fixture; both replay tests assert their fixture
+  list explicitly so losing one fails loudly rather than quietly narrowing the guard. An epic's or
+  channel task's own children are guarded only as `RunnableWorkflow` histories, not as part of the
+  parent's.
 - **Generic workspace and outcome dispatch is wired end-to-end, with provider-specific writes
   idempotent by workflow identity.** `Connection.type`, `RunRequest`, `MemoryItem.entityType`/
   `entityId`, `workspaceProvider` on `WorkflowTemplate`, and outcome publishers are typed and
