@@ -2,7 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveRepoDependencyContext } from '@auto-swe/shared/lib/repoDependencyResolver';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { EpicPlanRequest, EpicRepoEntry, RepoInfo } from '@auto-swe/shared/types/workflow';
-import { heartbeat } from '@temporalio/activity';
+import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { decomposeEpic } from '../agents/plannerAgent.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -157,6 +157,16 @@ async function planEpicImpl(epicRequest: EpicPlanRequest): Promise<EpicRepoEntry
       repoId: r.id,
     })
   );
+
+  // Nothing to plan against (every requested id is gone or not a git repo):
+  // refuse before spending a planner call. Non-retryable — a retry reads the
+  // same rows. The orchestrator would otherwise schedule an empty plan.
+  if (repoInfos.length === 0) {
+    throw ApplicationFailure.nonRetryable(
+      'Epic plan is empty: none of the requested repositories is an available git repository',
+      'EPIC_PLAN_EMPTY'
+    );
+  }
 
   heartbeat('decomposing epic via planner agent');
 

@@ -68,6 +68,7 @@ import {
   buildImplementerForActivity,
   createImplementerAgent,
   effectivePersonaToolKeys,
+  resolveImplementerConfig,
   skillMenuLine,
 } from './implementer.js';
 
@@ -252,6 +253,26 @@ describe('buildImplementerForActivity', () => {
     const built = await buildImplementerForActivity(workspace, new AgentTracer(), ctx);
     expect(getModel).toHaveBeenCalledWith('implementer', ctx);
     expect(built.maxSteps).toBe(77);
+  });
+});
+
+describe('resolveImplementerConfig', () => {
+  it("narrows a persona's tools and resolves its budgets without building an agent or opening MCP", async () => {
+    vi.mocked(loadAgentSkills).mockResolvedValue([]);
+    vi.mocked(getModel).mockClear();
+    vi.mocked(resolveAgentMcpUrl).mockClear();
+    vi.mocked(loadAgentToolConfig).mockImplementation(async (role: string) =>
+      role === 'implementer' ? ['readFile', 'bash', 'mcp'] : ['readFile', 'writeFile', 'mcp']
+    );
+    const config = await resolveImplementerConfig({ teamId: 't' }, 'reviewFixer');
+    expect(config).toMatchObject({
+      maxSteps: 77,
+      maxToolOutputChars: 20_000,
+      toolKeys: ['readFile', 'mcp'],
+    });
+    expect(getModel).not.toHaveBeenCalled();
+    expect(resolveAgentMcpUrl).not.toHaveBeenCalled();
+    vi.mocked(loadAgentToolConfig).mockResolvedValue(null);
   });
 });
 

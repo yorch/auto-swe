@@ -11,6 +11,7 @@ const run = {
   costUsdAccrued: 0,
   endedAt: '2026-10-01T12:05:00Z',
   id: 'run-1',
+  implementerRuntime: null as string | null,
   result: null,
   specSnapshot: {},
   startedAt: '2026-10-01T12:00:00Z',
@@ -116,6 +117,26 @@ async function renderPage() {
   });
 }
 afterEach(cleanup);
+
+describe('run page header', () => {
+  afterEach(() => {
+    run.implementerRuntime = null;
+  });
+
+  it('names the implementer runtime the run pinned', async () => {
+    state.layout = 'A';
+    run.implementerRuntime = 'claude-code';
+    await renderPage();
+    expect(screen.getByText('Claude Code harness')).toBeTruthy();
+  });
+
+  it('shows no runtime badge when the run pinned none', async () => {
+    state.layout = 'A';
+    await renderPage();
+    expect(screen.queryByText('Claude Code harness')).toBeNull();
+    expect(screen.queryByText('Mastra loop')).toBeNull();
+  });
+});
 
 describe('run page summary band', () => {
   it.each(['A', 'B', 'C'] as const)(

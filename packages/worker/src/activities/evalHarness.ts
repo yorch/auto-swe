@@ -1,5 +1,5 @@
 /**
- * Offline eval harness — P1 of the evals feature (docs/evals-p1.md WS4).
+ * Offline eval harness (docs/evals.md §3).
  *
  * Orchestrates a candidate-vs-baseline comparison over a frozen benchmark:
  * for each case it obtains a binary floor outcome (golden test pass/fail) under
@@ -16,25 +16,24 @@
  * scoring a false 0.
  */
 
-import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
-import { createImplementerAgent } from '../agents/implementer.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
-import { selectImplementerRuntime } from '../agents/implementerRuntimeSelect.js';
+import {
+  buildImplementerTurnRunner,
+  type ImplementerTurnRunner,
+} from '../agents/implementerRuntimeSelect.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
-import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
 import { recordRunFinalized } from '../lib/metrics.js';
-import { type LanguageModel, resolveModel } from '../lib/models.js';
 import { withRunlessCapScale } from '../lib/runlessBudget.js';
 import { ownerOfDataset, withSpendOwner } from '../lib/spendOwner.js';
 import { createWorkspace, type Workspace } from './workspace.js';
@@ -88,7 +87,7 @@ export interface HarnessDeps {
 }
 
 async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
-  // Quarantined cases (stale references — P3 re-validation) are excluded from the
+  // Quarantined cases (stale references — see re-validation in docs/evals.md) are excluded from the
   // gate so a dataset that has rotted doesn't fail candidates for non-agent reasons.
   return prisma.evalCase.findMany({
     select: {
@@ -133,11 +132,24 @@ async function defaultFinalize(evalRunId: string, status: string, summary: unkno
  * `ref` format: `"<agentKey>"` (float to latest active) or
  * `"<agentKey>@<version>"` (pin exact version). The version pin flows into
  * model, system prompt, skills, and tool selection via `resolveAgent`.
+ *
+ * `scope` is the dataset's tenant (its team and organization). Every setting and
+ * Agent row resolves in it, so a TEAM or ORGANIZATION override — the runtime,
+ * the step budget, the agent version itself — is what the eval grades, as it
+ * is what that tenant's production runs get. Omitted, the case resolves at
+ * GLOBAL scope, which is right only for a GLOBAL dataset.
  */
-export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise<0 | 1> {
+export async function runCaseDefault(
+  caseRow: EvalCaseRow,
+  ref: string,
+  scope: Pick<ResolveCtx, 'orgId' | 'teamId'> = {}
+): Promise<0 | 1> {
   const parsed = parseAgentRef(ref);
-  const ctx: ResolveCtx =
-    parsed.version !== undefined ? { agentVersions: { [parsed.key]: parsed.version } } : {};
+  const ctx: ResolveCtx = {
+    ...(scope.teamId ? { teamId: scope.teamId } : {}),
+    ...(scope.orgId ? { orgId: scope.orgId } : {}),
+    ...(parsed.version !== undefined ? { agentVersions: { [parsed.key]: parsed.version } } : {}),
+  };
 
   // Attempt cap comes from the DB-backed workflow defaults (falls back to 3).
   // Resolved once per case-arm — not a hot path (each iteration is a Docker +
@@ -152,7 +164,7 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
   // execution from its trace rows.
   const tracer = new AgentTracer();
   let workspace: Workspace | undefined;
-  let closeMcp: (() => Promise<void>) | undefined;
+  let turns: ImplementerTurnRunner | undefined;
   try {
     workspace = await createWorkspace(
       caseRow.repoUrl,
@@ -162,58 +174,20 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
       caseRow.baselineSha
     );
 
-    // All three depend only on the key and the scope, so they resolve together,
-    // as `buildImplementerForActivity` does on the production path.
-    //
-    // The tool-output budget is resolved here rather than left to the registry
-    // default for the same reason the model is: it changes how much of a failing
-    // test run the implementer sees, so an eval that ignored an operator's
-    // override would be grading it under conditions production never runs it in.
-    // The step budget likewise: an eval capped at a different number of tool
-    // steps per turn than production is not measuring production.
-    const [resolved, mcpTarget, agentSettings] = await Promise.all([
-      resolveAgent(parsed.key, ctx),
-      resolveAgentMcpUrl(parsed.key, ctx),
-      resolveSettings(['workspace.maxToolOutputChars', 'workspace.agentMaxSteps'], ctx),
-    ]);
-    const model: LanguageModel = resolveModel(
-      resolved.model.spec,
-      resolved.model.apiKey,
-      resolved.model.apiBase
-    );
-    const built = await createImplementerAgent(
-      workspace,
-      tracer,
-      resolved.toolKeys,
-      resolved.skills,
-      {
-        maxToolOutputChars: agentSettings['workspace.maxToolOutputChars'],
-        mcpAllowPrivateNetwork: mcpTarget?.allowPrivateNetwork,
-        mcpBearerToken: mcpTarget?.bearerToken,
-        mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
-        mcpHeaders: mcpTarget?.headers,
-        mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
-        mcpServerRef: mcpTarget?.url,
-      },
-      model
-    );
-    closeMcp = built.closeMcp;
-    // Chosen once for the whole case, like production: the same runtime the
-    // setting gives a real run is the one an eval must grade, and a runtime that
-    // resumes its session across iterations must not be rebuilt per iteration.
-    const { promptSuffix, runtime } = await selectImplementerRuntime({
-      agent: built.agent,
-      agentKey: parsed.key,
-      ctx,
-      maxSteps: agentSettings['workspace.agentMaxSteps'],
-      promptSuffix: built.promptSuffix,
-      skills: resolved.skills,
-      tracer,
-      workspace,
-    });
+    // Built exactly as production builds it (`buildImplementerTurnRunner`), so the
+    // eval grades what a run gets: the runtime the setting chooses, the tool keys
+    // with persona narrowing, the skills, the MCP binding with its headers and
+    // private-network opt-in, and the step and tool-output budgets — an eval run
+    // under different conditions than production is not measuring production.
+    // Chosen once for the whole case: a runtime that resumes its session across
+    // iterations must not be rebuilt per iteration.
+    turns = await buildImplementerTurnRunner({ agentKey: parsed.key, ctx, tracer, workspace });
+    // The model spec the turn is priced at and the version's own system prompt.
+    const resolved = await resolveAgent(parsed.key, ctx);
 
-    const basePrompt = resolved.model.systemPrompt ?? IMPLEMENTER_SYSTEM_PROMPT;
-    const systemPrompt = promptSuffix ? `${basePrompt}\n\n${promptSuffix}` : basePrompt;
+    const systemPrompt = turns.systemPrompt(
+      resolved.model.systemPrompt ?? IMPLEMENTER_SYSTEM_PROMPT
+    );
     const taskDescription =
       typeof caseRow.input === 'string' ? caseRow.input : JSON.stringify(caseRow.input);
 
@@ -230,7 +204,7 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
         boundModelSpec: resolved.model.spec,
         context: { caseId: caseRow.id, iteration: i, ref },
         role: parsed.key,
-        runtime,
+        runtime: turns.runtime,
         system: systemPrompt,
         tracer,
         usageEvent,
@@ -255,7 +229,7 @@ export async function runCaseDefault(caseRow: EvalCaseRow, ref: string): Promise
     }
     return 0;
   } finally {
-    await closeMcp?.();
+    await turns?.close();
     // Always — a case that threw is exactly the one whose trace is needed.
     await persistActivityTrace(tracer, parsed.key);
     await workspace?.destroy();
@@ -367,13 +341,16 @@ export const _defaults = { defaultFinalize, defaultLoadCases };
  */
 export async function runEvalHarnessActivity(input: HarnessInput): Promise<void> {
   try {
-    // No run row: the spend is the dataset's owner's.
-    await withSpendOwner(ownerOfDataset(input.datasetId), () =>
-      runEvalHarness(input, {
+    // No run row: the spend is the dataset's owner's, and the dataset's tenant is
+    // the scope every case resolves its settings and Agent rows in.
+    const owner = ownerOfDataset(input.datasetId);
+    await withSpendOwner(owner, async () => {
+      const scope = await owner;
+      return runEvalHarness(input, {
         loadCases: defaultLoadCases,
-        runCase: runCaseDefault,
-      })
-    );
+        runCase: (caseRow, ref) => runCaseDefault(caseRow, ref, scope),
+      });
+    });
   } catch (err) {
     // Mark the run FAILED (not stuck RUNNING / not a false SUCCESS) and re-throw
     // so Temporal records the failure.

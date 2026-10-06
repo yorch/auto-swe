@@ -1,5 +1,4 @@
 import { resolveSetting } from '@auto-swe/shared/config';
-import type { Agent } from '@mastra/core/agent';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../activities/workspace.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
@@ -7,6 +6,7 @@ import { resolveAgent } from '../lib/config/agentResolver.js';
 import { type ResolvedSkill, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { claudeCodeRuntime } from './claudeCode/runtime.js';
+import { buildImplementerForActivity, resolveImplementerConfig } from './implementer.js';
 import { type ImplementerRuntime, mastraRuntime } from './implementerRuntime.js';
 
 const ANTHROPIC_PREFIX = 'anthropic/';
@@ -34,45 +34,112 @@ async function resolveClaudeCodeAccess(agentKey: string, ctx?: ResolveCtx) {
   };
 }
 
-/**
- * Chooses the loop that drives an implementer turn, from the run-pinned
- * `workspace.implementerRuntime` setting, and the prompt suffix that loop needs.
- *
- * The suffix differs because the Mastra loop discloses skills progressively
- * through a `loadSkill` tool, which the harness does not have: it gets each
- * skill's text inline instead.
- *
- * `agent` is the Mastra agent the caller already built. It is unused under the
- * harness, which brings its own tools.
- */
-export async function selectImplementerRuntime(input: {
-  agent: Pick<Agent, 'generate'>;
-  agentKey: string;
-  ctx?: ResolveCtx;
-  maxSteps: number;
+/** One implementer session's loop, built for the runtime the setting chose. */
+export interface ImplementerTurnRunner {
+  /** Drives each turn; pass it to `runImplementerTurn`. */
+  runtime: ImplementerRuntime;
+  /**
+   * What this runtime needs appended to the system prompt: the Mastra loop's
+   * skill menu (it discloses skills through a `loadSkill` tool), or each
+   * skill's text inline for the harness, which has no such tool. `''` when the
+   * agent has no skills.
+   */
   promptSuffix: string;
   skills: ResolvedSkill[];
+  /** The `workspace.agentMaxSteps` budget the runtime was built with. */
+  maxSteps: number;
+  /** The effective tool keys, persona narrowing applied (`null` = every tool). */
+  toolKeys: string[] | null;
+  /** `base` with `promptSuffix` appended. */
+  systemPrompt(base: string): string;
+  /**
+   * Releases what the runtime opened (the Mastra loop's MCP client). Safe to
+   * call more than once; callers MUST call it in a `finally` block.
+   */
+  close(): Promise<void>;
+}
+
+/**
+ * Builds the loop that drives an implementer session. `workspace.implementerRuntime`
+ * (run-pinned) is resolved FIRST and only what that runtime uses is built: the
+ * Mastra agent, its model binding and its MCP connection for `mastra`; the
+ * Anthropic credential for `claude-code`, which brings its own tools and so
+ * never opens the MCP client or binds a Mastra model.
+ *
+ * Both runtimes run on the same Agent row's config (`resolveImplementerConfig`):
+ * its tool keys — narrowed for a persona — skills, and step budget.
+ *
+ * Build one per session, not per turn: a runtime that resumes its session across
+ * turns (the harness) keeps its context and its prompt cache only while the same
+ * runner is reused.
+ */
+export async function buildImplementerTurnRunner(input: {
+  agentKey?: string;
+  ctx?: ResolveCtx;
   tracer: AgentTracer;
   workspace: Workspace;
-}): Promise<{ promptSuffix: string; runtime: ImplementerRuntime }> {
+}): Promise<ImplementerTurnRunner> {
+  const agentKey = input.agentKey ?? 'implementer';
   const kind = await resolveSetting('workspace.implementerRuntime', input.ctx);
+
   if (kind === 'mastra') {
-    return {
-      promptSuffix: input.promptSuffix,
-      runtime: mastraRuntime(input.agent, input.maxSteps),
-    };
+    const built = await buildImplementerForActivity(
+      input.workspace,
+      input.tracer,
+      input.ctx,
+      agentKey
+    );
+    return runner({
+      close: built.closeMcp,
+      maxSteps: built.maxSteps,
+      promptSuffix: built.promptSuffix,
+      runtime: mastraRuntime(built.agent, built.maxSteps),
+      skills: built.skills,
+      toolKeys: built.toolKeys,
+    });
   }
-  return {
-    promptSuffix: skillsToPromptSuffix(input.skills) ?? '',
+
+  const [config, access] = await Promise.all([
+    resolveImplementerConfig(input.ctx, agentKey),
+    resolveClaudeCodeAccess(agentKey, input.ctx),
+  ]);
+  return runner({
+    maxSteps: config.maxSteps,
+    promptSuffix: skillsToPromptSuffix(config.skills) ?? '',
     runtime: claudeCodeRuntime({
-      access: await resolveClaudeCodeAccess(input.agentKey, input.ctx),
+      access,
       // The repository's own CLAUDE.md and `.claude` settings apply, so a flow ported
       // from a developer machine behaves as it did there. Its hooks run in the
       // container; the worker-side policy still decides every tool call.
       loadProjectSettings: true,
-      maxTurns: input.maxSteps,
+      maxTurns: config.maxSteps,
+      // The Agent row's tools bound the harness as they bound the Mastra loop.
+      toolKeys: config.toolKeys,
       tracer: input.tracer,
       workspace: input.workspace,
     }),
+    skills: config.skills,
+    toolKeys: config.toolKeys,
+  });
+}
+
+function runner(parts: {
+  close?: () => Promise<void>;
+  maxSteps: number;
+  promptSuffix: string;
+  runtime: ImplementerRuntime;
+  skills: ResolvedSkill[];
+  toolKeys: string[] | null;
+}): ImplementerTurnRunner {
+  const { close, promptSuffix, ...rest } = parts;
+  let closed: Promise<void> | undefined;
+  return {
+    ...rest,
+    close: () => {
+      closed ??= close?.() ?? Promise.resolve();
+      return closed;
+    },
+    promptSuffix,
+    systemPrompt: (base) => (promptSuffix ? `${base}\n\n${promptSuffix}` : base),
   };
 }

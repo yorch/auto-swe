@@ -5,10 +5,12 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
+import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
+import { ConfigMissingError } from '../lib/config/resolver.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModel, getModelSpec } from '../lib/models.js';
@@ -97,11 +99,20 @@ async function runReviewerAgent(
           );
         }
 
-        if (!result.object) {
-          throw new Error(`${reviewerType} reviewer agent did not return structured output`);
+        // Validate rather than cast: an object that does not match the schema
+        // (a missing `findings`, an unknown severity) is no verdict at all.
+        const parsed = ReviewVerdictSchema.safeParse(result.object);
+        if (!parsed.success) {
+          throw new Error(`${reviewerType} reviewer agent did not return valid structured output`);
         }
-        const verdict = result.object as z.infer<typeof ReviewVerdictSchema>;
-        const verdictWithType = { ...verdict, reviewer: reviewerType };
+        const verdict = parsed.data;
+        const verdictWithType = {
+          ...verdict,
+          // A CRITICAL verdict is a rejection whatever `approved` says: the
+          // two fields disagreeing must not let a critical finding through.
+          approved: verdict.approved && verdict.severity !== 'CRITICAL',
+          reviewer: reviewerType,
+        };
 
         tracer?.addLlmResponse({
           costUsd: attribution.costUsd,
@@ -237,12 +248,36 @@ export async function runReviewNetwork(
     runReviewerAgent(performancePrompt, 'PERFORMANCE', codeResult, tracer),
   ]);
 
+  // A failure the reviewer cannot recover from on its own is not a verdict on
+  // the code: an exhausted budget, a missing config row, an unpriced model.
+  // Turning it into a REVIEWER_CRASH rejection would send the change back to
+  // the implementer for a review-fix session that changes nothing about the
+  // cause, up to the retry limit. Surface it as the activity's failure instead.
+  for (const result of results) {
+    if (result.status === 'rejected' && isUnrecoverableReviewerFailure(result.reason)) {
+      throw result.reason;
+    }
+  }
+  // Every persona failed (a provider outage, typically): there is no review to
+  // aggregate. Throw a retryable failure so Temporal retries the activity
+  // rather than reporting three synthetic rejections as a review.
+  if (results.every((r) => r.status === 'rejected')) {
+    const reasons = results.map(
+      (r) => (r as PromiseRejectedResult).reason?.message ?? 'Unknown error'
+    );
+    throw ApplicationFailure.retryable(
+      `All reviewers failed: ${reasons.join('; ')}`,
+      'REVIEW_NETWORK_UNAVAILABLE'
+    );
+  }
+
   const verdicts: ReviewVerdict[] = results.map((result, index) => {
     const reviewerTypes: ReviewVerdict['reviewer'][] = ['SECURITY', 'DOMAIN_LOGIC', 'PERFORMANCE'];
     if (result.status === 'fulfilled') {
       return result.value;
     }
-    // If a reviewer crashes, treat as a critical finding requiring manual review
+    // Some (not all) reviewers crashed: the rest gave a verdict, so the review
+    // stands, and the missing one is a critical finding requiring manual review.
     return {
       approved: false,
       findings: [
@@ -260,13 +295,7 @@ export async function runReviewNetwork(
 
   const approved = verdicts.every((v) => v.approved);
 
-  const rejectionSummary = approved
-    ? undefined
-    : verdicts
-        .filter((v) => !v.approved)
-        .flatMap((v) => v.findings)
-        .map((f) => `[${f.category}] ${f.file}${f.line ? `:${f.line}` : ''} — ${f.suggestedFix}`)
-        .join('\n');
+  const rejectionSummary = approved ? undefined : summarizeRejections(verdicts);
 
   return {
     approved,
@@ -274,4 +303,43 @@ export async function runReviewNetwork(
     rejectionSummary,
     verdicts,
   };
+}
+
+/**
+ * A reviewer failure that retrying the review (or fixing the code) cannot
+ * cure: a non-retryable `ApplicationFailure` (`BUDGET_EXCEEDED`,
+ * `MODEL_UNPRICED`, …) or a missing configuration row.
+ */
+function isUnrecoverableReviewerFailure(err: unknown): boolean {
+  if (err instanceof ConfigMissingError) {
+    return true;
+  }
+  return err instanceof ApplicationFailure && err.nonRetryable === true;
+}
+
+/**
+ * The feedback a review-fix session starts from: every rejecting reviewer's
+ * findings, each with its severity, the problem, and the suggested fix. A
+ * rejection with no findings still gets a line, so the fixer is not handed an
+ * empty summary for a review that failed.
+ */
+export function summarizeRejections(verdicts: ReviewVerdict[]): string {
+  const lines: string[] = [];
+  for (const v of verdicts) {
+    if (v.approved) {
+      continue;
+    }
+    if (v.findings.length === 0) {
+      lines.push(`[${v.reviewer}/${v.severity}] rejected without findings: ${v.reviewer}`);
+      continue;
+    }
+    for (const f of v.findings) {
+      const where = `${f.file}${f.line ? `:${f.line}` : ''}`;
+      lines.push(
+        `[${v.reviewer}/${v.severity}] [${f.category}] ${where} — ${f.description}` +
+          ` — Suggested fix: ${f.suggestedFix}`
+      );
+    }
+  }
+  return lines.join('\n');
 }

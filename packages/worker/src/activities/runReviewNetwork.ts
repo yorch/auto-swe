@@ -98,39 +98,42 @@ async function runReviewNetworkImpl(
   heartbeat('starting review network');
   const tracer = new AgentTracer();
 
-  // Resolve each sub-reviewer Agent by its own key: its prompt and skills are
-  // its own, and it inherits the reviewer model via inheritsModelFrom. The
-  // parent `reviewer` row's prompt applies only when an admin customised it
-  // (see `reviewerPersonaPrompt`): it is seeded with the domain-logic prompt,
-  // and passing that to all three personas made the security and performance
-  // reviewers review domain logic.
-  const ctx = await currentRequestContext();
-  const [securityAgent, domainAgent, performanceAgent, reviewerAgent] = await Promise.all([
-    resolveAgent(REVIEWER_AGENT_KEYS.SECURITY, ctx),
-    resolveAgent(REVIEWER_AGENT_KEYS.DOMAIN_LOGIC, ctx),
-    resolveAgent(REVIEWER_AGENT_KEYS.PERFORMANCE, ctx),
-    // Only its prompt is read; the personas already resolved its model.
-    resolveAgent('reviewer', ctx).catch(() => null),
-  ]);
-  const parentPrompt = customisedReviewerPrompt(
-    reviewerAgent?.model.systemPrompt,
-    domainAgent.model.systemPrompt
-  );
-
-  // Cross-repo dependency context (repo dependency graph, P2) — the reviewers'
-  // primary consumer: a breaking-change verdict needs the downstream list.
-  // Best-effort by construction; `loadRepoDependencyContext` never throws.
-  const crossRepoContext = wantsCrossRepoContext(options)
-    ? await loadRepoDependencyContext(codeResult.repoId, ctx.orgId)
-    : '';
-  if (crossRepoContext) {
-    tracer.addActivityEvent({
-      name: 'crossRepo.context_loaded',
-      outputJson: { chars: crossRepoContext.length },
-    });
-  }
-
+  // Everything after the tracer exists runs inside the try, so whatever it
+  // records (the cross-repo context event) persists even when agent
+  // resolution or the review throws.
   try {
+    // Resolve each sub-reviewer Agent by its own key: its prompt and skills are
+    // its own, and it inherits the reviewer model via inheritsModelFrom. The
+    // parent `reviewer` row's prompt applies only when an admin customised it
+    // (see `reviewerPersonaPrompt`): it is seeded with the domain-logic prompt,
+    // and passing that to all three personas made the security and performance
+    // reviewers review domain logic.
+    const ctx = await currentRequestContext();
+    const [securityAgent, domainAgent, performanceAgent, reviewerAgent] = await Promise.all([
+      resolveAgent(REVIEWER_AGENT_KEYS.SECURITY, ctx),
+      resolveAgent(REVIEWER_AGENT_KEYS.DOMAIN_LOGIC, ctx),
+      resolveAgent(REVIEWER_AGENT_KEYS.PERFORMANCE, ctx),
+      // Only its prompt is read; the personas already resolved its model.
+      resolveAgent('reviewer', ctx).catch(() => null),
+    ]);
+    const parentPrompt = customisedReviewerPrompt(
+      reviewerAgent?.model.systemPrompt,
+      domainAgent.model.systemPrompt
+    );
+
+    // Cross-repo dependency context (repo dependency graph, P2) — the reviewers'
+    // primary consumer: a breaking-change verdict needs the downstream list.
+    // Best-effort by construction; `loadRepoDependencyContext` never throws.
+    const crossRepoContext = wantsCrossRepoContext(options)
+      ? await loadRepoDependencyContext(codeResult.repoId, ctx.orgId)
+      : '';
+    if (crossRepoContext) {
+      tracer.addActivityEvent({
+        name: 'crossRepo.context_loaded',
+        outputJson: { chars: crossRepoContext.length },
+      });
+    }
+
     const result = await runReview(codeResult, {
       crossRepoContext: crossRepoContext || undefined,
       domainLogicPrompt: reviewerPersonaPrompt(

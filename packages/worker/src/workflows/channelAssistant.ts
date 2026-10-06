@@ -139,6 +139,13 @@ const CHANNEL_TASK_ALREADY_RUNNING_TEXT =
   ":information_source: I've already taken on a task in this thread. Reply here to " +
   'steer it while it runs, or start a new thread to kick off a separate task.';
 
+// Posted (instead of the agent's ack) when starting the task failed for any
+// reason other than the thread already hosting one: nothing launched, so the
+// agent's "on it" would claim work that is not happening.
+const CHANNEL_TASK_LAUNCH_FAILED_TEXT =
+  ":warning: I couldn't start that task — something went wrong on my side. " +
+  'Please try again in a moment; if it keeps failing, an admin can check the run logs.';
+
 export async function ChannelAssistantWorkflow(input: ChannelAssistantTurnInput): Promise<void> {
   // 0. Create the run record FIRST (keyed to this Temporal workflowId) so the
   //    turn's agent traces resolve a runId and persist. Best-effort: a failure
@@ -322,8 +329,8 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
         await deliver(input, placeholderTs, CHANNEL_TASK_ALREADY_RUNNING_TEXT);
         return 'SUCCESS';
       }
-      // Refused on access. Same shape as above and for the same reason: nothing
-      // launched, so the ack must not claim otherwise.
+      // Refused on access, or the launch failed. Same shape as above and for the
+      // same reason: nothing launched, so the ack must not claim otherwise.
       if (outcome.refusal) {
         await deliver(input, placeholderTs, outcome.refusal);
         return 'SUCCESS';
@@ -391,9 +398,11 @@ interface LaunchOutcome {
    */
   alreadyRunning?: boolean;
   /**
-   * Text to post INSTEAD of the agent's ack, when the task was refused on
-   * access. Distinct from {@link prefix}, which decorates an ack that still
-   * happened: nothing launched here, so claiming "on it" would be a lie.
+   * Text to post INSTEAD of the agent's ack, when nothing launched: the task
+   * was refused on access, or starting it failed
+   * ({@link CHANNEL_TASK_LAUNCH_FAILED_TEXT}). Distinct from {@link prefix},
+   * which decorates an ack that still happened: nothing launched here, so
+   * claiming "on it" would be a lie.
    */
   refusal?: string;
 }
@@ -416,7 +425,8 @@ interface LaunchOutcome {
  * would silently operate on the first (closed) run's row. REJECT_DUPLICATE prevents
  * that — a second delegate in a thread surfaces `alreadyRunning` and the caller
  * tells the user to steer the existing task or open a new thread (rather than a
- * false "on it"). Other launch errors are swallowed so they never break the ack.
+ * false "on it"). Any other launch error is reported to the user in place of the
+ * ack, for the same reason; it never fails the turn.
  */
 async function launchTask(
   input: ChannelAssistantTurnInput,
@@ -470,12 +480,13 @@ async function launchTask(
       });
       return { alreadyRunning: true, prefix: '' };
     }
-    // Any other launch failure is best-effort: don't break the ack we still post.
-    log.warn('ChannelAssistantWorkflow: task launch failed; ack still delivered', {
+    // Any other launch failure: nothing started, so the user is told so
+    // instead of receiving the agent's "on it" ack.
+    log.warn('ChannelAssistantWorkflow: task launch failed; posting failure notice', {
       channelId: input.channelId,
       err: err instanceof Error ? err.message : String(err),
     });
-    return { prefix: '' };
+    return { prefix: '', refusal: CHANNEL_TASK_LAUNCH_FAILED_TEXT };
   }
 }
 

@@ -16,9 +16,23 @@ import {
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import { activityCancellationSignal, throwIfActivityCancelled } from '../../lib/cancellation.js';
 import { spawnCaptureAsync } from '../../lib/execUtils.js';
-import type { ImplementerRuntime, ImplementerTurnOutcome } from '../implementerRuntime.js';
-import { PLATFORM_PROBE, parseContainerPlatform, resolveClaudeBinary } from './binary.js';
-import { decideToolCall, HARNESS_TOOLS, type PolicyContext } from './policy.js';
+import {
+  type ImplementerRuntime,
+  type ImplementerTurnOutcome,
+  withSpentUsage,
+} from '../implementerRuntime.js';
+import {
+  binarySha256,
+  PLATFORM_PROBE,
+  parseContainerPlatform,
+  resolveClaudeBinary,
+} from './binary.js';
+import {
+  decideToolCall,
+  harnessToolsFor,
+  type PolicyContext,
+  type ToolDecision,
+} from './policy.js';
 
 /** The checkout inside every workspace container (`createWorkspace` clones here). */
 const WORKSPACE_DIR = '/workspace/target-repo';
@@ -37,7 +51,34 @@ const HARNESS_BINARY = `${HARNESS_DIR}/claude`;
  * container and the prompt points at it.
  */
 const MAX_INLINE_SYSTEM_CHARS = 100_000;
-const STAGED_PROMPT = `${HARNESS_DIR}/system-prompt.md`;
+/**
+ * Under the harness's `.claude` directory: the one place outside the checkout
+ * the policy lets `Read` reach, so the harness can read what it is told to.
+ */
+const STAGED_PROMPT = `${HARNESS_HOME}/.claude/system-prompt.md`;
+
+/**
+ * How long the worker's policy may take over one tool call before the call is
+ * refused. The scanners are bounded well inside this; it is here so a stalled
+ * dependency (the pattern store) ends in a deny the worker chose.
+ */
+export const POLICY_DECISION_MS = 60_000;
+/**
+ * The harness's own deadline for the PreToolUse hook, in seconds. It is longer
+ * than {@link POLICY_DECISION_MS}, so the worker always answers first: a hook
+ * the harness gives up on falls back to its ordinary permission rules.
+ */
+export const PRE_TOOL_USE_TIMEOUT_S = 120;
+
+/** The stderr kept for an error message. */
+const STDERR_TAIL_CHARS = 4000;
+
+/**
+ * Environment the SDK adds for the harness (`CLAUDE_CODE_ENTRYPOINT`,
+ * `CLAUDE_AGENT_SDK_VERSION`, …). Only these names are forwarded into the
+ * container, and only when the SDK set or changed them — see `sdkEnvArgs`.
+ */
+const SDK_ENV_NAME = /^CLAUDE_(?:CODE|AGENT_SDK)_[A-Z0-9_]+$/;
 
 /** A tool result in a trace row is bounded: a `Read` of a large file would otherwise fill the row. */
 const TRACE_OUTPUT_CHARS = 20_000;
@@ -58,6 +99,13 @@ export interface ClaudeCodeRuntimeOptions {
   loadProjectSettings: boolean;
   /** `workspace.agentMaxSteps`, as the cap on turns in one harness run. */
   maxTurns: number;
+  /**
+   * The resolved Agent's `toolKeys` (`IMPLEMENTER_TOOL_IDS`), read as the Mastra
+   * implementer reads them: null, absent or empty grants every tool. Each key
+   * stands for harness tools ({@link harnessToolsFor}); the rest are neither
+   * offered to the harness nor allowed by the policy.
+   */
+  toolKeys?: readonly string[] | null;
   tracer: AgentTracer;
   workspace: Workspace;
 }
@@ -80,11 +128,12 @@ function forTrace(value: unknown): unknown {
 }
 
 /**
- * Put the harness into the container once per workspace: learn the platform,
- * make sure bash is there (Claude Code refuses to start a shell tool without
- * it, and Alpine ships only busybox `sh`), and copy in the binary that matches.
+ * Prepare the container once per workspace: learn the platform, make sure bash
+ * is there (Claude Code refuses to start a shell tool without it, and Alpine
+ * ships only busybox `sh`), and make the harness's home. Returns the worker's
+ * binary that matches the container, which {@link installBinary} puts in place.
  */
-async function prepareContainer(workspace: Workspace): Promise<void> {
+async function prepareContainer(workspace: Workspace): Promise<string> {
   const probe = await workspace.execCapture(PLATFORM_PROBE);
   const { arch, libc } = parseContainerPlatform(probe.stdout);
   const binary = resolveClaudeBinary(arch, libc);
@@ -100,7 +149,28 @@ async function prepareContainer(workspace: Workspace): Promise<void> {
     );
   }
 
-  await workspace.exec(`mkdir -p ${HARNESS_HOME}`);
+  await workspace.exec(`mkdir -p ${HARNESS_HOME}/.claude`);
+  return binary;
+}
+
+/** The hash `sha256sum` reports for the container's copy of the binary, or '' without one. */
+async function installedSha256(workspace: Workspace): Promise<string> {
+  const out = await workspace.execCapture(`sha256sum ${HARNESS_BINARY} 2>/dev/null`);
+  return out.exitCode === 0 ? (out.stdout.trim().split(/\s+/)[0] ?? '') : '';
+}
+
+/**
+ * Make sure the container's copy of the binary is the worker's, before every
+ * turn. The copy sits on a path the agent can write, and a replaced binary
+ * would run without the worker's hooks and report whatever usage it liked; so
+ * a copy whose hash differs is replaced, and one that still differs fails the
+ * turn. The copy is skipped when the right binary is already there.
+ */
+async function installBinary(workspace: Workspace, binary: string): Promise<void> {
+  const expected = await binarySha256(binary);
+  if ((await installedSha256(workspace)) === expected) {
+    return;
+  }
   const copy = await spawnCaptureAsync(
     'docker',
     ['cp', binary, `${workspace.containerId}:${HARNESS_BINARY}`],
@@ -108,6 +178,51 @@ async function prepareContainer(workspace: Workspace): Promise<void> {
   );
   if (copy.exitCode !== 0) {
     throw new Error(`Could not copy the Claude Code binary into the workspace: ${copy.stderr}`);
+  }
+  if ((await installedSha256(workspace)) !== expected) {
+    throw ApplicationFailure.nonRetryable(
+      "The Claude Code binary in the workspace does not match the worker's copy after installing it. The image needs `sha256sum` (coreutils or busybox) for the runtime to verify it.",
+      'HARNESS_BINARY_UNVERIFIED'
+    );
+  }
+}
+
+/**
+ * `docker exec -e` arguments for what the SDK added to the harness's
+ * environment. The SDK builds that environment from the worker's own
+ * `process.env`, which holds the worker's secrets, so it is never forwarded
+ * whole: only `CLAUDE_CODE_*` / `CLAUDE_AGENT_SDK_*` names whose value the SDK
+ * set or changed (it is absent from, or differs from, `process.env`) travel,
+ * with their value spelled out. Those are the SDK's own switches (entrypoint,
+ * version, session-state flags), not credentials.
+ */
+export function sdkEnvArgs(env: Record<string, string | undefined>): string[] {
+  const args: string[] = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined && SDK_ENV_NAME.test(name) && process.env[name] !== value) {
+      args.push('-e', `${name}=${value}`);
+    }
+  }
+  return args;
+}
+
+/** `decision`, or a deny once `ms` have passed without one. */
+async function withinDeadline(decision: Promise<ToolDecision>, ms: number): Promise<ToolDecision> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<ToolDecision>((resolve) => {
+    timer = setTimeout(
+      () =>
+        resolve({
+          allow: false,
+          reason: `The security check did not finish within ${ms / 1000} s; the call was refused.`,
+        }),
+      ms
+    );
+  });
+  try {
+    return await Promise.race([decision, expired]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -147,13 +262,16 @@ interface Totals {
 export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): ImplementerRuntime {
   const { access, loadProjectSettings, maxTurns, tracer, workspace } = options;
   const baseUrl = normalizeAnthropicBaseUrl(access.apiBase);
+  const tools = harnessToolsFor(options.toolKeys);
   const policy: PolicyContext = {
     containerId: workspace.containerId,
     cwd: WORKSPACE_DIR,
     home: HARNESS_HOME,
+    projectConfigLoaded: loadProjectSettings,
+    tools,
   };
 
-  let prepared: Promise<void> | undefined;
+  let prepared: Promise<string> | undefined;
   let sessionId: string | undefined;
   // The harness reports usage as running totals per model, and a resumed session
   // starts from its saved totals. What a turn spent is the change since the last.
@@ -198,8 +316,17 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
   }
 
   async function runTurn({ system, user }: { system: string; user: string }) {
-    prepared ??= prepareContainer(workspace);
-    await prepared;
+    if (!prepared) {
+      const preparing = prepareContainer(workspace);
+      prepared = preparing;
+      // A failed preparation is not remembered: the next turn tries again.
+      preparing.catch(() => {
+        if (prepared === preparing) {
+          prepared = undefined;
+        }
+      });
+    }
+    await installBinary(workspace, await prepared);
 
     const tag = randomBytes(8).toString('hex');
     const abort = new AbortController();
@@ -217,15 +344,16 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
     const warnings = new Map<string, { tag?: string; text: string }>();
 
     const preToolUse: HookCallback = async (input, toolUseId) => {
-      const { tool_name: toolName, tool_input: toolInput } = input as PreToolUseHookInput;
+      const { cwd, tool_name: toolName, tool_input: toolInput } = input as PreToolUseHookInput;
       const id = toolUseId ?? '';
       startedAt.set(id, Date.now());
-      let verdict: Awaited<ReturnType<typeof decideToolCall>>;
+      let verdict: ToolDecision;
       try {
-        verdict = await decideToolCall(
-          toolName,
-          (toolInput ?? {}) as Record<string, unknown>,
-          policy
+        // A hook the harness gives up on falls back to its own permission rules;
+        // the worker answers first, and a decision it cannot reach is a deny.
+        verdict = await withinDeadline(
+          decideToolCall(toolName, (toolInput ?? {}) as Record<string, unknown>, policy, cwd),
+          POLICY_DECISION_MS
         );
       } catch (err) {
         // A scanner that cannot complete cannot clear the call: fail closed.
@@ -324,7 +452,15 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
           hooks: {
             PostToolUse: [{ hooks: [postToolUse] }],
             PostToolUseFailure: [{ hooks: [postToolUseFailure] }],
-            PreToolUse: [{ hooks: [preToolUse] }],
+            PreToolUse: [{ hooks: [preToolUse], timeout: PRE_TOOL_USE_TIMEOUT_S }],
+          },
+          // Should the hook still fail, the harness falls back to its permission
+          // rules. The policy tier makes it ignore every allow rule outside that
+          // tier (a repository's `.claude/settings.json` among them), so the
+          // fallback reaches `canUseTool` above, which refuses.
+          managedSettings: {
+            allowManagedPermissionRulesOnly: true,
+            permissions: { disableBypassPermissionsMode: 'disable' },
           },
           maxTurns,
           model: access.modelId,
@@ -334,16 +470,22 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
           resume: sessionId,
           settingSources: loadProjectSettings ? ['project'] : [],
           // The highest-priority settings layer: a repository's own `.claude/settings.json`
-          // cannot point the harness (and the key it sends) at another host.
-          settings: { env: { ANTHROPIC_BASE_URL: baseUrl } },
-          spawnClaudeCodeProcess: (spawnOptions) =>
-            spawn(
+          // cannot point the harness (and the key it sends) at another host, nor
+          // start it in a mode that grants tool calls without asking.
+          settings: {
+            env: { ANTHROPIC_BASE_URL: baseUrl },
+            permissions: { defaultMode: 'default', disableBypassPermissionsMode: 'disable' },
+          },
+          spawnClaudeCodeProcess: (spawnOptions) => {
+            const child = spawn(
               'docker',
               [
                 'exec',
                 '-i',
                 '-w',
                 WORKSPACE_DIR,
+                // First, so the platform's own `-e` below win any clash.
+                ...sdkEnvArgs(spawnOptions.env),
                 '-e',
                 `${EXEC_TAG_ENV}=${tag}`,
                 // Named without a value: docker reads it from its own environment below,
@@ -371,12 +513,18 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
                 signal: spawnOptions.signal,
                 stdio: ['pipe', 'pipe', 'pipe'],
               }
-            ),
-          stderr: (data) => {
-            stderrTail = (stderrTail + data).slice(-4000);
+            );
+            // With a custom spawn the SDK never reads stderr (its `stderr` option only
+            // serves its own spawn). Drain it here: unread, a full pipe stalls the
+            // harness, and its tail is what explains a run that died.
+            child.stderr?.setEncoding('utf8');
+            child.stderr?.on('data', (data: string) => {
+              stderrTail = (stderrTail + data).slice(-STDERR_TAIL_CHARS);
+            });
+            return child;
           },
           systemPrompt: { append, preset: 'claude_code', type: 'preset' },
-          tools: [...HARNESS_TOOLS],
+          tools: [...tools],
         },
         prompt: user,
       });
@@ -400,7 +548,13 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
         // Reaching the turn cap ends the run with an error result and then a throw. The
         // Mastra loop stops at its step budget without error, so this does too.
         if (result?.subtype !== 'error_max_turns') {
-          throw result ? harnessFailure(result, stderrTail) : err;
+          if (result) {
+            throw withSpentUsage(harnessFailure(result, stderrTail), usageSince(result));
+          }
+          // The process died before it could say why: what it wrote to stderr does.
+          throw err instanceof Error && stderrTail.trim()
+            ? new Error(`${err.message}\n${stderrTail.trim()}`, { cause: err })
+            : err;
         }
       }
 
@@ -411,7 +565,8 @@ export function claudeCodeRuntime(options: ClaudeCodeRuntimeOptions): Implemente
         result.subtype !== 'error_max_turns' &&
         (result.is_error || result.subtype !== 'success')
       ) {
-        throw harnessFailure(result, stderrTail);
+        // The failed run was billed for what it spent: the error carries it.
+        throw withSpentUsage(harnessFailure(result, stderrTail), usageSince(result));
       }
 
       return {

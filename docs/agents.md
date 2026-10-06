@@ -162,9 +162,9 @@ Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is fo
 
 Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present whenever an MCP server was contacted (including a connect that returned zero tools) and **must** be called in a `finally` block.
 
-Activities don't call the factory directly — they use the **`buildImplementerForActivity(workspace, tracer, ctx, agentKey?)`** helper (same file), which loads `toolKeys` + skills at the current scope, resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent in one call (returning `{ agent, promptSuffix, closeMcp, maxSteps, skills, toolKeys }`). `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer` and `resolveMergeConflict` passes `mergeConflictResolver`, so each runs on its own row and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, and `resolveMergeConflict` all go through it, so the load + MCP-binding lifecycle lives in one place.
+Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the run-pinned `workspace.implementerRuntime` setting first and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for the Claude Code harness it loads the same `toolKeys`, skills and step budget and the Anthropic credential, and never opens the MCP client or binds a Mastra model. It returns `{ runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`; `close` releases the MCP client and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key, so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
 
-**Running a turn:** activities do not call `agent.generate` themselves. `runImplementerTurn` (`agents/implementerRuntime.ts`) runs one turn through an `ImplementerRuntime` — today the Mastra tool loop, built with `mastraRuntime(agent, maxSteps)` — then accrues usage through `recordLlmUsage`, runs the advisory output scan, and records the LLM call on the tracer. `executeImplementation`, `implementerSession`, the eval harness, and the merge-conflict resolver all take this path, so a turn is metered and traced identically wherever it runs. The runtime only drives the loop and reports text, tool-call count, and usage; the caller still calls `assertBudgetAvailable` first and owns any failure row.
+**Running a turn:** activities do not call `agent.generate` themselves. `runImplementerTurn` (`agents/implementerRuntime.ts`) runs one turn through an `ImplementerRuntime` — the Mastra tool loop (`mastraRuntime(agent, maxSteps)`) or the Claude Code harness, chosen by the run-pinned `workspace.implementerRuntime` setting ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) — then accrues usage through `recordLlmUsage`, runs the advisory output scan, and records the LLM call on the tracer. `executeImplementation`, `implementerSession`, the eval harness, and the merge-conflict resolver all take this path, so a turn is metered and traced identically wherever it runs. The runtime only drives the loop and reports text, tool-call count, and usage; the caller still calls `assertBudgetAvailable` first and owns any failure row.
 
 **Step budget.** One `agent.generate` call is a *turn*: the model calls tools until it answers or
 runs out of steps, and every tool call counts as one step. The budget is the
@@ -371,16 +371,31 @@ SDK's `PreToolUse` hook runs in the worker, so every tool call is decided there,
 | Tool | Worker-side policy |
 |---|---|
 | `Bash` | audit line with secrets redacted, then `scanShellCommand` (soft block) |
-| `Write`, `Edit` | path confined to the checkout, `checkSensitiveFilePath` (hard block), then the pre-write content check on the inserted text (CRITICAL blocks; lower severities allow with a warning returned to the model) |
-| `Read`, `Glob`, `Grep` | confined to the checkout and the harness's own `.claude` directory; a glob may not be absolute or contain `..` |
+| `Write`, `Edit` | an absolute path inside the checkout; the harness's own configuration refused while the run loads it (see *Repository configuration*); `checkSensitiveFilePath` (hard block), then the pre-write content check on the inserted text (CRITICAL blocks; lower severities allow with a warning returned to the model) |
+| `Read`, `Glob`, `Grep` | an absolute path inside the checkout or the harness's own `.claude` directory; a search with no path runs from the harness's current directory, which must be inside the checkout; a glob may not be absolute or contain `..` |
 | anything else | refused |
 
-The tools are the same capability as the four Mastra workspace tools under Claude Code's names:
-`toolKeys`, `loadSkill` and the `mcp` binding do not apply. A scanner that cannot complete throws and
-the call is refused. Decisions are granted explicitly (`permissionMode: 'default'` with a hook
-`allow`); `bypassPermissions` is not used, and the harness refuses it as root anyway. Refusals and
-warnings carry the same `AgentTrace.error` tags (`SECURITY_TRACE_ERRORS`) as the Mastra tools, so the
+Paths must be absolute because the harness resolves a relative one against its own current
+directory, which a `cd` in an earlier `Bash` call moves: `cd .git` followed by a `Write` of
+`hooks/pre-push` would otherwise be checked as one file and written as another.
+
+The tools are the same capability as the four Mastra workspace tools under Claude Code's names, and
+the Agent's `toolKeys` gate them the same way: `readFile` and `listDirectory` grant `Read`, `Glob`
+and `Grep`, `writeFile` grants `Write` and `Edit`, `bash` grants `Bash`, and `null`, `[]` or a list
+naming no workspace tool grants all six. A tool the keys do not grant is left out of the harness's
+tool list and refused by the policy as well. `loadSkill` and the `mcp` binding do not apply. A scanner
+that cannot complete throws and the call is refused, and so is a call the policy has not decided
+within 60 s. Decisions are granted explicitly (`permissionMode: 'default'` with a hook `allow`);
+`bypassPermissions` is not used, and the harness refuses it as root anyway. Refusals and warnings
+carry the same `AgentTrace.error` tags (`SECURITY_TRACE_ERRORS`) as the Mastra tools, so the
 security-events view counts them.
+
+**When the hook fails.** A `PreToolUse` hook the harness gives up on (its timeout is 120 s, past the
+worker's own 60 s deadline) falls back to Claude Code's ordinary permission evaluation. That fallback
+is pinned to refuse: the SDK's policy settings tier sets `allowManagedPermissionRulesOnly`, so allow
+rules from any other source — a repository's `.claude/settings.json` included — are ignored, and the
+call reaches the runtime's `canUseTool`, which denies everything. The flag settings layer also pins
+`permissions.defaultMode: 'default'` and disables bypass mode.
 
 **Model access.** The harness runs on the model and decrypted credential the Mastra runtime would
 have used for the same Agent, and only for `anthropic/<model>` specs — Claude Code speaks the
@@ -393,15 +408,22 @@ cannot redirect the key to another host.
 
 **Repository configuration.** The repository's `CLAUDE.md` and `.claude` settings apply
 (`settingSources: ['project']`), so a flow ported from a developer machine behaves as it did there.
+Because the harness reads them again when the next turn starts, `Write` and `Edit` may not change
+them: anything under a `.claude` directory, `CLAUDE.md` and `CLAUDE.local.md` at any depth, and the
+root `.mcp.json` are refused.
 
 **Skills.** The Mastra loop discloses skills through a `loadSkill` tool; the harness has none, so it
 receives each skill's text inline in the system prompt. A prompt over 100 000 characters is staged as
-a file in the container, because it travels on a command line capped at 128 KiB per argument.
+a file in the container, because it travels on a command line capped at 128 KiB per argument. The file
+is `/workspace/.harness/home/.claude/system-prompt.md`, inside the one directory outside the checkout
+the policy lets `Read` reach.
 
 **Usage.** The harness reports usage per model as running totals, and a resumed session starts from
 its saved totals, so a turn records the change since the last. Each model is priced at its own spec
 (a harness may delegate small tasks to a cheaper model). Cache reads and writes count as input
-tokens toward the budget and are priced at the model's cache rates.
+tokens toward the budget and are priced at the model's cache rates. A turn that ends in an error
+result has still been billed for what it spent: the runtime attaches that usage to the error
+(`withSpentUsage`), and `runImplementerTurn` accrues it before rethrowing the original error.
 
 **Sessions and cleanup.** Turns after the first resume the same session, so a TDD loop keeps its
 context and prompt cache. Every process the harness starts carries the exec tag
@@ -411,7 +433,14 @@ its children running.
 
 **Container requirements.** The runtime copies the binary in at first use, choosing the variant for
 the container's architecture and libc, and installs `bash` on Alpine (Claude Code's shell tool needs
-it and busybox `sh` is not enough). The SDK ships a binary per platform as an optional dependency;
+it and busybox `sh` is not enough). The libc is what `ldd --version` reports; without a verdict from
+it, a glibc loader means glibc even beside a musl loader. Before every turn the container's copy is
+compared with the worker's by SHA-256 (`sha256sum` in the container) and copied again when it
+differs; a copy that still differs fails the turn without retrying, so the image needs `sha256sum`
+(coreutils or busybox). A preparation that fails is retried on the next turn. The harness's stderr is
+read by the worker, so a full pipe cannot stall it and its tail explains a run that died. The SDK's
+own environment switches (`CLAUDE_CODE_*`, `CLAUDE_AGENT_SDK_*` that the SDK set or changed) are passed
+into the container with their values; nothing else from the worker's environment is. The SDK ships a binary per platform as an optional dependency;
 `.yarnrc.yml` sets `supportedArchitectures` so both libc variants for the build architecture are
 installed and end up in the worker image. An executor image with neither `bash` nor `apk`, or on an
 architecture the worker was not built for, fails the turn without retrying.
@@ -419,8 +448,8 @@ architecture the worker was not built for, fails the turn without retrying.
 **Testing.** `runtime.docker.test.ts` runs the real runtime against a real container and a mock
 Messages API, with no API key: `CLAUDE_CODE_DOCKER_TEST=1 yarn vitest run
 packages/worker/src/agents/claudeCode/runtime.docker.test.ts`. It needs the Docker registry and
-Alpine's package mirror, so it is run on demand and is not part of the CI gate that image
-publishing depends on.
+Alpine's package mirror; the `docker-tests` job in `ci.yml` runs it with the flag set, so it is
+part of the CI gate that image publishing depends on.
 
 ---
 
@@ -428,7 +457,7 @@ publishing depends on.
 
 **File:** `packages/worker/src/agents/reviewNetwork.ts`
 
-**Entry point:** `runReviewNetwork(codeResult, successCriteria?, tracer?, systemPromptOverride?, securitySkillSuffix?, domainSkillSuffix?, performanceSkillSuffix?)`
+**Entry point:** `runReviewNetwork(codeResult, options?)` — `options` (`ReviewNetworkOptions`) carries the per-persona prompts and skill suffixes, success criteria, cross-repo context, a step-level prompt override and the tracer.
 
 Runs three Mastra `Agent` instances in parallel via `Promise.allSettled`. Each reviewer runs as its own persona Agent: the `runReviewNetwork` activity resolves `securityReviewer`, `domainLogicReviewer`, and `performanceReviewer` and hands each one its own row's `systemPrompt` and skills, and each binds its model with `getModel(<persona>)` — the `reviewer` model through `inheritsModelFrom` unless the persona row overrides it. Each persona's base prompt is chosen in this order: a step-level `systemPrompt` on the review node (replacing all three); the persona row's own prompt, when an admin has customised it (it differs from that persona's built-in prompt); the parent `reviewer` row's prompt, when an admin has customised it; the persona row's seeded prompt; the built-in constant. The `reviewer` row is seeded with the domain-logic prompt, so it counts as customised only when it differs both from that constant and from the `domainLogicReviewer` row's text — the second comparison keeps a deployment seeded before a later rewording from handing the domain-logic prompt to all three. Each reviewer keeps its own skill suffix whichever prompt it runs.
 
@@ -438,7 +467,13 @@ Runs three Mastra `Agent` instances in parallel via `Promise.allSettled`. Each r
 | `DOMAIN_LOGIC` | `domainLogicReviewer` | `DOMAIN_LOGIC_REVIEWER_PROMPT` (+ success criteria) |
 | `PERFORMANCE` | `performanceReviewer` | `PERFORMANCE_REVIEWER_PROMPT` |
 
-If a reviewer crashes, it returns a synthetic `REVIEWER_CRASH` finding at `CRITICAL` severity rather than failing the whole network. The overall `approved` flag requires all three verdicts to be `approved: true`.
+Each verdict's structured output is validated against the verdict schema; an object that fails it counts as a reviewer failure. A failure is handled by kind:
+
+- **Unrecoverable** — a non-retryable `ApplicationFailure` (`BUDGET_EXCEEDED`, `MODEL_UNPRICED`) or a `ConfigMissingError`: the network rethrows it and the activity fails. It is not a verdict on the code, so it never sends the change to a review-fix session.
+- **Every reviewer failed** (a provider outage, typically): the network throws a retryable `REVIEW_NETWORK_UNAVAILABLE` failure and Temporal retries the activity under its retry policy.
+- **Some, not all, reviewers failed**: each missing verdict becomes a synthetic `REVIEWER_CRASH` finding at `CRITICAL` severity, and the review stands on the others.
+
+The overall `approved` flag requires all three verdicts to be approved. A verdict at `CRITICAL` severity is a rejection even when the model set `approved: true`. On rejection, `rejectionSummary` — the review-fix session's input — carries one line per finding of every rejecting reviewer, with the reviewer, severity, category, location, the problem (`description`) and the suggested fix; a reviewer that rejected without findings gets a `rejected without findings: <reviewer>` line.
 
 Each reviewer produces a structured `ReviewVerdict`:
 ```typescript
@@ -456,9 +491,9 @@ The code security scanner findings (`codeResult.codeSecurityFindings`) are forma
 
 ## 5. Planner & Decomposer Agents
 
-**Planner:** `packages/worker/src/agents/plannerAgent.ts` — decomposes a multi-repo epic brief into per-repo `Subtask[]`. No tools; structured output (Zod schema). Uses `planner` model.
+**Planner:** `packages/worker/src/agents/plannerAgent.ts` — decomposes a multi-repo epic brief into per-repo `Subtask[]`. No tools; structured output (Zod schema, validated rather than cast). Uses `planner` model. The planner decides ordering, not scope (`normalizePlan`): an entry for a repository outside the epic is dropped, a repository listed twice is merged, every epic repository the planner omitted is added with no dependencies, and self-edges and dependencies outside the plan are removed. An empty plan fails non-retryably (`EPIC_PLAN_EMPTY`); `planEpic` refuses before the model call when none of the requested ids is an available git repository.
 
-**Decomposer:** `packages/worker/src/agents/decomposer.ts` — sub-agent that refines per-repo work into feature-level subtasks. No tools; structured output. Runs as the `decomposer` Agent (its own prompt and skills) on the `planner` model it inherits. Caps at 8 subtasks; subtask IDs must match `^[a-z][a-z0-9-]{0,39}$`. Falls back to a singleton plan if the LLM returns unstructured output.
+**Decomposer:** `packages/worker/src/agents/decomposer.ts` — sub-agent that refines per-repo work into feature-level subtasks. No tools; structured output. Runs as the `decomposer` Agent (its own prompt and skills) on the `planner` model it inherits. Caps at 8 subtasks; subtask IDs must match `^[a-z][a-z0-9-]{0,39}$`. Falls back to a singleton plan if the LLM returns no structured output, or output that fails the schema.
 
 ---
 
@@ -900,6 +935,20 @@ template override is never badged, because it may use a different model or crede
 
 ## 11. Limitations
 
+- **The Claude Code harness's container-side checks are tripwires, not a boundary.** The binary's
+  hash is taken with the container's own `sha256sum`, so code that controls the container (its
+  `sha256sum`, or a process that outlives the turn's tag cleanup) can defeat the check; the harness's
+  hooks and its reported usage are only as trustworthy as the binary. The usage a turn records is
+  what the harness process inside the container reports. The fallback pin relies on the SDK's policy
+  tier, which Claude Code drops when the container has an administrator-tier managed settings file
+  of its own (for example one written to `/etc/claude-code/` by an earlier `Bash` call). The
+  worker-side policy hook decides every call a genuine binary makes; the container's own isolation is
+  what holds when the binary is not genuine.
+- **Under the Claude Code harness, `Bash` can still change the harness's configuration.** The
+  `.claude` / `CLAUDE.md` / `.mcp.json` refusal applies to `Write` and `Edit`; a shell command is
+  checked only by the shell-command scanner, whose write-target extraction is a heuristic over the
+  command text and does not know the harness's current directory.
+
 - **MCP authentication is a static bearer token plus up to five static custom headers.** OAuth flows
   and per-user tokens are not supported. The SSRF guard checks the URL's host text and then resolves the name at connection time and
   connects only to a checked address (see `docs/configuration.md` §5, outbound URL guard), so a
@@ -913,9 +962,15 @@ template override is never badged, because it may use a different model or crede
   also its only one. An epic's children are runs of their own and pin at their own start, so an edit
   between the epic's start and a child's start reaches that child. A run created before the
   `skillRevisions` column existed has no pin. A channel-resident run started by the channel assistant
-  (`startChannelRun`) writes its own `WorkflowRun` and has no pin; a channel task run through
+  (`startChannelRun`) writes its own `WorkflowRun` and pins the latest active GLOBAL Agent versions
+  and the skills visible to the channel's team and organization; a channel task run through
   `createWorkflowRun` with no repository pins GLOBAL skills plus those of the team and organization
   of the Slack channel its request came from (matched on Slack's channel id). Eval-harness cases are not runs and always read current text.
+- **The token budget is a soft cap under fan-out.** The budget gate runs before a call and usage is
+  accrued after it, so calls that start together all pass the same gate: the review network checks
+  once before its three reviewers start, and the parallel branches a decomposition fans out to each
+  check before their own turn while their siblings' usage is still unrecorded. The overshoot is bounded by the concurrency times one turn's usage,
+  not by the cap.
 - **A skill's `isActive` flag is not pinned.** It is read live on purpose, so a pinned run cannot keep
   using a skill an admin has disabled; the cost is that disabling and re-enabling mid-run changes
   which skills a retry sees.
@@ -1009,8 +1064,9 @@ template override is never badged, because it may use a different model or crede
   loaded, a repository can ship shell hooks and permission rules. They execute in the untrusted
   container and cannot override the worker-side decision on a tool call (a deny wins), but they
   can run code at session start and shape what the model is told.
-- **The harness ignores `toolKeys` and the `mcp` binding.** It gets the six fixed tools; MCP servers
-  an Agent references are not passed to it, and there is no sub-agent, web or plugin tool.
+- **The harness ignores the `mcp` binding.** It gets at most the six tools the Agent's `toolKeys`
+  grant; MCP servers an Agent references are not passed to it, and there is no sub-agent, web or
+  plugin tool.
 - **`Edit` is content-checked on the inserted text only,** not on the whole resulting file, and
   `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
   evade them.

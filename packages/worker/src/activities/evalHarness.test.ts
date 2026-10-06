@@ -11,24 +11,26 @@ const destroy = vi.fn(async () => {});
 vi.mock('./workspace.js', () => ({
   createWorkspace: vi.fn(async () => ({ destroy, execCapture })),
 }));
+const closeMcp = vi.fn(async () => {});
+const buildImplementerForActivity = vi.fn(async (..._args: unknown[]) => ({
+  agent: { generate },
+  closeMcp,
+  maxSteps: 64,
+  promptSuffix: '',
+  skills: [],
+  toolKeys: null,
+}));
 vi.mock('../agents/implementer.js', () => ({
-  createImplementerAgent: vi.fn(async () => ({
-    agent: { generate },
-    closeMcp: undefined,
-    promptSuffix: '',
-  })),
+  buildImplementerForActivity: (...args: unknown[]) => buildImplementerForActivity(...args),
+}));
+const resolveAgent = vi.fn(async (..._args: unknown[]) => ({
+  model: { apiBase: undefined, apiKey: 'k', spec: 'anthropic/x', systemPrompt: undefined },
+  skills: [],
+  toolKeys: null,
 }));
 vi.mock('../lib/config/agentResolver.js', () => ({
-  resolveAgent: vi.fn(async () => ({
-    model: { apiBase: undefined, apiKey: 'k', spec: 'anthropic/x', systemPrompt: undefined },
-    skills: [],
-    toolKeys: null,
-  })),
+  resolveAgent: (...args: unknown[]) => resolveAgent(...args),
 }));
-vi.mock('../lib/config/mcpConnection.js', () => ({
-  resolveAgentMcpUrl: vi.fn(async () => undefined),
-}));
-vi.mock('../lib/models.js', () => ({ resolveModel: vi.fn(() => ({})) }));
 const persistActivityTrace = vi.fn(async () => {});
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn(() => 'eval-wf-1'),
@@ -47,9 +49,16 @@ vi.mock('../lib/costTracking.js', () => ({
 }));
 vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput: vi.fn(async () => {}) }));
 const evalRunUpdateMany = vi.fn();
+const evalCaseFindMany = vi.fn(async () => [] as unknown[]);
+const evalDatasetFindUnique = vi.fn(async () => null as unknown);
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { evalRun: { updateMany: (...a: unknown[]) => evalRunUpdateMany(...(a as [])) } },
+  prisma: {
+    evalCase: { findMany: (...a: unknown[]) => evalCaseFindMany(...(a as [])) },
+    evalDataset: { findUnique: (...a: unknown[]) => evalDatasetFindUnique(...(a as [])) },
+    evalRun: { updateMany: (...a: unknown[]) => evalRunUpdateMany(...(a as [])) },
+  },
 }));
+vi.mock('../lib/evalCapture.js', () => ({ recordEvalResult: vi.fn(async () => {}) }));
 const recordRunFinalized = vi.fn();
 vi.mock('../lib/metrics.js', () => ({
   recordRunFinalized: (...a: unknown[]) => recordRunFinalized(...(a as [])),
@@ -59,8 +68,9 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 }));
 // The harness resolves the implementer's tool-output budget the same way it
 // resolves the model; without this the registry resolver reaches for Prisma.
+const resolveSetting = vi.fn(async (..._args: unknown[]) => 'mastra');
 vi.mock('@auto-swe/shared/config', () => ({
-  resolveSetting: vi.fn(async () => 'mastra'),
+  resolveSetting: (...args: unknown[]) => resolveSetting(...args),
   resolveSettings: vi.fn(async () => ({
     'workspace.agentMaxSteps': 64,
     'workspace.maxToolOutputChars': 20_000,
@@ -68,14 +78,13 @@ vi.mock('@auto-swe/shared/config', () => ({
 }));
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
-import { createImplementerAgent } from '../agents/implementer.js';
-import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import {
   _defaults,
   type EvalCaseRow,
   type HarnessDeps,
   runCaseDefault,
   runEvalHarness,
+  runEvalHarnessActivity,
 } from './evalHarness.js';
 
 const cases: EvalCaseRow[] = [
@@ -318,25 +327,37 @@ describe('runCaseDefault iteration cap', () => {
     expect((generate.mock.calls[0] as unknown[])[1]).toMatchObject({ maxSteps: 64 });
   });
 
-  it('hands the connection headers and private-network opt-in to the implementer', async () => {
-    generate.mockResolvedValue({ text: 'done', usage: { inputTokens: 10, outputTokens: 5 } });
+  it('builds the implementer once per case, in the dataset’s tenant, as production does', async () => {
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 2 } as never);
+    buildImplementerForActivity.mockClear();
+    closeMcp.mockClear();
+    resolveSetting.mockClear();
+
+    await runCaseDefault(cases[0], 'ciFixer@4', { orgId: 'org-1', teamId: 'team-1' });
+
+    const ctx = { agentVersions: { ciFixer: 4 }, orgId: 'org-1', teamId: 'team-1' };
+    // The runtime choice reads the dataset's TEAM/ORGANIZATION overrides, not GLOBAL only.
+    expect(resolveSetting).toHaveBeenCalledWith('workspace.implementerRuntime', ctx);
+    // The production builder: persona tool narrowing, MCP headers and private-network
+    // opt-in all come with it. Built once, not per iteration.
+    expect(buildImplementerForActivity).toHaveBeenCalledTimes(1);
+    expect(buildImplementerForActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      ctx,
+      'ciFixer'
+    );
+    expect(resolveAgent).toHaveBeenCalledWith('ciFixer', ctx);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(closeMcp).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves at GLOBAL scope (plus the version pin) when the dataset has no tenant', async () => {
     vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 1 } as never);
-    const headers = [{ name: 'x-tenant', value: 'acme' }];
-    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce({
-      allowPrivateNetwork: true,
-      bearerToken: 'tok',
-      headers,
-      url: 'http://10.0.0.5/mcp',
-    } as never);
-
-    await runCaseDefault(cases[0], 'implementer');
-
-    const options = vi.mocked(createImplementerAgent).mock.calls.at(-1)?.[4];
-    expect(options).toMatchObject({
-      mcpAllowPrivateNetwork: true,
-      mcpBearerToken: 'tok',
-      mcpHeaders: headers,
-      mcpServerRef: 'http://10.0.0.5/mcp',
+    resolveSetting.mockClear();
+    await runCaseDefault(cases[0], 'implementer@2');
+    expect(resolveSetting).toHaveBeenCalledWith('workspace.implementerRuntime', {
+      agentVersions: { implementer: 2 },
     });
   });
 
@@ -366,5 +387,31 @@ describe('runCaseDefault iteration cap', () => {
 
     expect(result).toBe(1);
     expect(generate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('runEvalHarnessActivity', () => {
+  it('runs every case in the dataset’s tenant', async () => {
+    evalCaseFindMany.mockResolvedValueOnce([cases[0]]);
+    evalDatasetFindUnique.mockResolvedValueOnce({ orgId: 'org-x', teamId: null });
+    evalRunUpdateMany.mockResolvedValue({ count: 1 });
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValue({ maxEvalIterations: 1 } as never);
+    resolveSetting.mockClear();
+
+    await runEvalHarnessActivity({
+      baselineRef: 'implementer@1',
+      candidateRef: 'implementer@2',
+      datasetId: 'd1',
+      evalRunId: 'run-1',
+    });
+
+    const scopes = resolveSetting.mock.calls
+      .filter((c) => c[0] === 'workspace.implementerRuntime')
+      .map((c) => c[1]);
+    expect(scopes).toHaveLength(2);
+    for (const scope of scopes) {
+      expect(scope).toMatchObject({ orgId: 'org-x' });
+      expect(scope).not.toHaveProperty('teamId');
+    }
   });
 });

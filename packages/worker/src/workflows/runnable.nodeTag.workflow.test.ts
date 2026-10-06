@@ -9,7 +9,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
-import { ApplicationFailure } from '@temporalio/activity';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import {
@@ -106,9 +105,10 @@ const fakeActivities = {
   runEvalNode: async () => traced('runEvalNode', async () => ({ score: 1 })),
   runLint: async () =>
     traced('runLint', async () => {
-      // `flaky` fails its first interpreter attempt with a non-retryable error.
+      // `flaky` fails its first interpreter attempt as a gate failure. Not a
+      // thrown non-retryable error: the interpreter does not retry those.
       if (bump('lint') === 1 && currentSpec.name === 'node-tag-retry') {
-        throw ApplicationFailure.nonRetryable('lint failed', 'LINT');
+        return { passed: false, summary: 'lint failed' };
       }
       return { passed: true };
     }),

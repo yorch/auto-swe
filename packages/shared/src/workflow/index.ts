@@ -104,6 +104,7 @@ export {
   SPEC_SCHEMA_VERSION,
   setNodeEdge,
   WorkflowSpecSchema,
+  waitDurationMs,
 } from './spec.js';
 export type { SpecDiff, SpecMetaChange } from './specDiff.js';
 export { diffSpecs, specsEqual } from './specDiff.js';

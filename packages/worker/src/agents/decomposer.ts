@@ -105,14 +105,24 @@ export async function planDecomposition(
           );
         }
 
-        if (!result.object) {
+        // Validate rather than cast: an object that fails the schema (too many
+        // subtasks, a malformed id) is treated like no structured output.
+        const validated = DecomposerOutputSchema.safeParse(result.object);
+        if (!validated.success) {
           // Fall back to a single-subtask plan rather than failing the run.
-          const fallback = singletonFallback(request, 'decomposer returned no structured output');
+          const fallback = singletonFallback(
+            request,
+            result.object
+              ? 'decomposer returned structured output that failed validation'
+              : 'decomposer returned no structured output'
+          );
           tracer?.addLlmResponse({
             // The call was made and paid for even though its output was unusable.
             ...failedCallAttribution(undefined, modelSpec, recorded),
             durationMs: Date.now() - start,
-            error: 'no structured output — used singleton fallback',
+            error: result.object
+              ? 'invalid structured output — used singleton fallback'
+              : 'no structured output — used singleton fallback',
             inputJson: { systemPrompt, userMessage: llmUserMessage },
             outputJson: fallback,
             role: 'decomposer',
@@ -120,7 +130,7 @@ export async function planDecomposition(
           return fallback;
         }
 
-        const parsed = result.object as z.infer<typeof DecomposerOutputSchema>;
+        const parsed = validated.data;
         const subtasks = dedupeIds(parsed.subtasks);
         const decompositionResult = {
           ...(parsed.rationale ? { rationale: parsed.rationale } : {}),

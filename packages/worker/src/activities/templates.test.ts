@@ -1,3 +1,4 @@
+import { Prisma } from '@auto-swe/shared';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { Context } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -358,6 +359,99 @@ describe('createWorkflowRun', () => {
     expect((args.create as Record<string, unknown>).agentVersions).toEqual({
       implementer: 1,
       reviewer: 2,
+    });
+  });
+
+  describe('pinned settings backfill', () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const run = async () => ({
+      result: (await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+      })) as { pinnedSettings: Record<string, unknown> },
+    });
+    const pinWrites = () =>
+      updateManyRuns.mock.calls
+        .map((c) => c[0] as { data: Record<string, unknown>; where: Record<string, unknown> })
+        .filter((a) => 'pinnedSettings' in a.data);
+    /** The fresh snapshot createWorkflowRun computed for the row it upserted. */
+    const fresh = () => {
+      const args = upsertRun.mock.calls.at(-1)?.[0] as
+        | { create: { pinnedSettings: Record<string, unknown> } }
+        | undefined;
+      return args?.create.pinnedSettings ?? {};
+    };
+
+    beforeEach(() => {
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+      updateManyRuns.mockResolvedValue({ count: 1 } as never);
+      findRun.mockReset();
+    });
+
+    it('writes nothing when the stored snapshot already has every run-pinned key', async () => {
+      // The first call learns the snapshot's shape; the second stores it whole.
+      await run();
+      const full = { ...fresh(), 'workspace.implementerRuntime': 'claude-code' };
+      upsertRun.mockResolvedValueOnce({ id: 'run-1', pinnedSettings: full } as never);
+      updateManyRuns.mockClear();
+
+      const { result } = await run();
+
+      expect(pinWrites()).toHaveLength(0);
+      expect(result.pinnedSettings).toEqual(full);
+    });
+
+    it('adds a missing key at its current value and keeps every value already pinned', async () => {
+      await run();
+      const all = fresh();
+      const keys = Object.keys(all);
+      expect(keys.length).toBeGreaterThan(1);
+      // Snapshotted before the last key was declared runPinned, with a pinned
+      // value that differs from what resolves live now.
+      const [kept, missing] = [keys[0] as string, keys.at(-1) as string];
+      const stored = Object.fromEntries(
+        keys.filter((k) => k !== missing).map((k) => [k, k === kept ? 'PINNED' : all[k]])
+      );
+      upsertRun.mockResolvedValueOnce({ id: 'run-1', pinnedSettings: stored } as never);
+      updateManyRuns.mockClear();
+
+      const { result } = await run();
+
+      const writes = pinWrites();
+      expect(writes).toHaveLength(1);
+      // Compare-and-set against exactly what was read.
+      expect(writes[0]?.where).toEqual({ id: 'run-1', pinnedSettings: { equals: stored } });
+      expect(writes[0]?.data.pinnedSettings).toEqual({ ...stored, [missing]: all[missing] });
+      expect(result.pinnedSettings[kept]).toBe('PINNED');
+      expect(result.pinnedSettings[missing]).toEqual(all[missing]);
+    });
+
+    it('backfills a row that pre-dates the column only while it is still null', async () => {
+      upsertRun.mockResolvedValueOnce({ id: 'run-1', pinnedSettings: null } as never);
+      updateManyRuns.mockClear();
+
+      const { result } = await run();
+
+      const writes = pinWrites();
+      expect(writes).toHaveLength(1);
+      expect(writes[0]?.where.pinnedSettings).toEqual({ equals: Prisma.DbNull });
+      expect(result.pinnedSettings).toEqual(fresh());
+    });
+
+    it('returns what a concurrent attempt stored when it loses the race, without overwriting it', async () => {
+      await run();
+      const all = fresh();
+      const winner = Object.fromEntries(Object.keys(all).map((k) => [k, `winner:${k}`]));
+      upsertRun.mockResolvedValueOnce({ id: 'run-1', pinnedSettings: {} } as never);
+      updateManyRuns.mockClear();
+      updateManyRuns.mockResolvedValueOnce({ count: 0 } as never);
+      findRun.mockResolvedValueOnce({ pinnedSettings: winner } as never);
+
+      const { result } = await run();
+
+      expect(pinWrites()).toHaveLength(1);
+      expect(result.pinnedSettings).toEqual(winner);
     });
   });
 

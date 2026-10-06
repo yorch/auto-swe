@@ -127,8 +127,147 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
   // which would otherwise hit WorkflowExecutionAlreadyStartedError on every iteration.
   const finishedRepos = new Set<string>();
 
-  // Process repos respecting dependency order
+  /** Run one repo's child workflow to a terminal verdict. Never rejects. */
+  const runRepo = async (repo: EpicRepoEntry): Promise<void> => {
+    const childRequest: RepoWorkRequest = {
+      description: request.description,
+      externalTicketId: request.externalTicketId,
+      // The epic's launcher launched every child. Spread only when present,
+      // so a child of an epic started before this field existed gets exactly
+      // the input it always did.
+      ...(request.launchedById ? { launchedById: request.launchedById } : {}),
+      parentWorkflowId: request.epicWorkflowId,
+      repoId: repo.repoId,
+      requestPayload: request.requestPayload,
+      workRequestId: request.workRequestId,
+    };
+
+    // Scope the child ID to this epic execution so that retrying the epic
+    // (which gets a new epicWorkflowId) doesn't collide with a previous run,
+    // and so sibling repos within the same epic are always distinguishable.
+    const childWorkflowId = `${request.epicWorkflowId}-${repo.repoId}`;
+
+    try {
+      // Each child resolves its own template from its repo's team default
+      // (with global fallback). Different repos in one epic may belong to
+      // different teams and want different workflows.
+      const { templateId, templateVersion } = await templateActivities.resolveTemplateForRepo(
+        repo.repoId
+      );
+      const handle = await startChild('RunnableWorkflow', {
+        args: [{ request: childRequest, templateId, templateVersion }],
+        parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
+        taskQueue: 'engineering-workflow',
+        workflowId: childWorkflowId,
+      });
+
+      const result = (await handle.result()) as WorkflowResult;
+      childResults[repo.repoId] = result;
+      if (result.status === 'SUCCESS') {
+        succeededRepos.add(repo.repoId);
+      }
+    } catch (err: unknown) {
+      childResults[repo.repoId] = {
+        lessonsGenerated: [],
+        status: 'FAILED',
+        ...(cancelled || isCancellation(err) ? { skippedReason: 'epic cancelled' } : {}),
+        totalCIRetries: 0,
+        totalReviewRetries: 0,
+      };
+    }
+    // Mark finished regardless of outcome — prevents infinite re-pickup of
+    // repos that returned FAILED/TIMED_OUT/SKIPPED or threw.
+    finishedRepos.add(repo.repoId);
+  };
+
+  /**
+   * A repo that finished without SUCCESS blocks its transitive dependents:
+   * mark them SKIPPED so the scheduler can terminate once every repo is
+   * accounted for.
+   */
+  const skipDependentsOf = (repoId: string): void => {
+    const result = childResults[repoId];
+    if (!result || result.status === 'SUCCESS') {
+      return;
+    }
+    for (const dependentId of computeTransitiveDependents(repoId, request.repos)) {
+      if (!finishedRepos.has(dependentId)) {
+        childResults[dependentId] = {
+          lessonsGenerated: [],
+          skippedReason: `upstream ${repoId} ${result.status.toLowerCase()}`,
+          status: 'SKIPPED',
+          totalCIRetries: 0,
+          totalReviewRetries: 0,
+        };
+        finishedRepos.add(dependentId);
+      }
+    }
+  };
+
+  /**
+   * Anything still unfinished has at least one dep that will never succeed
+   * (chain of failures, a cycle, or an orphan dep id). Mark it SKIPPED so the
+   * EpicResult is honest about what didn't run.
+   */
+  const skipUnreachable = (): void => {
+    for (const r of request.repos) {
+      if (!finishedRepos.has(r.repoId)) {
+        const blockingDeps = r.dependsOn.filter((dep) => !succeededRepos.has(dep));
+        childResults[r.repoId] = {
+          lessonsGenerated: [],
+          skippedReason: `upstream dependency unsatisfied: ${blockingDeps.join(', ')}`,
+          status: 'SKIPPED',
+          totalCIRetries: 0,
+          totalReviewRetries: 0,
+        };
+        finishedRepos.add(r.repoId);
+      }
+    }
+  };
+
+  // Event-driven: each repo starts the moment its own deps have succeeded,
+  // rather than waiting for every sibling in its wave. Patched: a history
+  // recorded under wave scheduling starts children in a different order, and
+  // its replay must keep taking the wave path.
+  const eventDriven = patched('epic-event-driven-scheduling');
+
   await childScope.run(async () => {
+    if (eventDriven) {
+      const started = new Set<string>();
+      const inFlight = new Map<string, Promise<string>>();
+      const startReady = (): void => {
+        for (const r of request.repos) {
+          if (cancelled) {
+            return;
+          }
+          if (
+            !started.has(r.repoId) &&
+            !finishedRepos.has(r.repoId) &&
+            r.dependsOn.every((dep) => succeededRepos.has(dep))
+          ) {
+            started.add(r.repoId);
+            inFlight.set(
+              r.repoId,
+              runRepo(r).then(() => r.repoId)
+            );
+          }
+        }
+      };
+
+      startReady();
+      while (inFlight.size > 0) {
+        const doneId = await Promise.race(inFlight.values());
+        inFlight.delete(doneId);
+        skipDependentsOf(doneId);
+        startReady();
+      }
+      if (!cancelled) {
+        skipUnreachable();
+      }
+      return;
+    }
+
+    // Wave scheduling, kept for histories recorded before the patch.
     while (finishedRepos.size < request.repos.length && !cancelled) {
       // A repo is ready when (a) it hasn't reached a terminal state yet AND
       // (b) every dep has SUCCEEDED. SKIPPED/FAILED deps never satisfy — their
@@ -138,99 +277,15 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
       );
 
       if (ready.length === 0) {
-        // No repos are runnable. Anything left has at least one dep that finished
-        // without succeeding (chain of failures, or orphan dep id). Mark remaining
-        // repos SKIPPED so the EpicResult is honest about what didn't run.
-        for (const r of request.repos) {
-          if (!finishedRepos.has(r.repoId)) {
-            const blockingDeps = r.dependsOn.filter((dep) => !succeededRepos.has(dep));
-            childResults[r.repoId] = {
-              lessonsGenerated: [],
-              skippedReason: `upstream dependency unsatisfied: ${blockingDeps.join(', ')}`,
-              status: 'SKIPPED',
-              totalCIRetries: 0,
-              totalReviewRetries: 0,
-            };
-            finishedRepos.add(r.repoId);
-          }
-        }
+        skipUnreachable();
         break;
       }
 
       // Start ready repos in parallel as child workflows
-      const childPromises = ready.map(async (repo) => {
-        const childRequest: RepoWorkRequest = {
-          description: request.description,
-          externalTicketId: request.externalTicketId,
-          // The epic's launcher launched every child. Spread only when present,
-          // so a child of an epic started before this field existed gets exactly
-          // the input it always did.
-          ...(request.launchedById ? { launchedById: request.launchedById } : {}),
-          parentWorkflowId: request.epicWorkflowId,
-          repoId: repo.repoId,
-          requestPayload: request.requestPayload,
-          workRequestId: request.workRequestId,
-        };
+      await Promise.allSettled(ready.map(runRepo));
 
-        // Scope the child ID to this epic execution so that retrying the epic
-        // (which gets a new epicWorkflowId) doesn't collide with a previous run,
-        // and so sibling repos within the same epic are always distinguishable.
-        const childWorkflowId = `${request.epicWorkflowId}-${repo.repoId}`;
-
-        try {
-          // Each child resolves its own template from its repo's team default
-          // (with global fallback). Different repos in one epic may belong to
-          // different teams and want different workflows.
-          const { templateId, templateVersion } = await templateActivities.resolveTemplateForRepo(
-            repo.repoId
-          );
-          const handle = await startChild('RunnableWorkflow', {
-            args: [{ request: childRequest, templateId, templateVersion }],
-            parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
-            taskQueue: 'engineering-workflow',
-            workflowId: childWorkflowId,
-          });
-
-          const result = (await handle.result()) as WorkflowResult;
-          childResults[repo.repoId] = result;
-          if (result.status === 'SUCCESS') {
-            succeededRepos.add(repo.repoId);
-          }
-        } catch (err: unknown) {
-          childResults[repo.repoId] = {
-            lessonsGenerated: [],
-            status: 'FAILED',
-            ...(cancelled || isCancellation(err) ? { skippedReason: 'epic cancelled' } : {}),
-            totalCIRetries: 0,
-            totalReviewRetries: 0,
-          };
-        }
-        // Mark finished regardless of outcome — prevents infinite re-pickup of
-        // repos that returned FAILED/TIMED_OUT/SKIPPED or threw.
-        finishedRepos.add(repo.repoId);
-      });
-
-      await Promise.allSettled(childPromises);
-
-      // Propagate failure: any repo that just finished without SUCCESS blocks its
-      // transitive dependents. Mark them SKIPPED here so the next loop iteration
-      // can terminate cleanly when all repos are accounted for.
       for (const repo of ready) {
-        const result = childResults[repo.repoId];
-        if (result && result.status !== 'SUCCESS') {
-          for (const dependentId of computeTransitiveDependents(repo.repoId, request.repos)) {
-            if (!finishedRepos.has(dependentId)) {
-              childResults[dependentId] = {
-                lessonsGenerated: [],
-                skippedReason: `upstream ${repo.repoId} ${result.status.toLowerCase()}`,
-                status: 'SKIPPED',
-                totalCIRetries: 0,
-                totalReviewRetries: 0,
-              };
-              finishedRepos.add(dependentId);
-            }
-          }
-        }
+        skipDependentsOf(repo.repoId);
       }
     }
   });
@@ -241,7 +296,12 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
     return { childResults, status: 'CANCELLED' };
   }
 
-  const allSuccess = request.repos.every((r) => childResults[r.repoId]?.status === 'SUCCESS');
+  // An empty plan did no work, so it cannot have succeeded: `every` over no
+  // repos is vacuously true. `planEpic` refuses to return one; this is the
+  // orchestrator's own guard for a request that arrives with none.
+  const allSuccess =
+    request.repos.length > 0 &&
+    request.repos.every((r) => childResults[r.repoId]?.status === 'SUCCESS');
   const finalStatus = allSuccess ? 'SUCCESS' : 'FAILED';
   await stateActivities.updateDomainState(
     request.epicWorkflowId,

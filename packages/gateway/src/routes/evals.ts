@@ -1,11 +1,11 @@
 /**
- * Eval admin routes — P1 of the evals feature (docs/evals-p1.md).
+ * Eval admin routes (docs/evals.md §6).
  *
  * CRUD for frozen-benchmark datasets/cases and a paginated results-query
- * endpoint (the read path the P3 drift dashboard will also use). Admin-only,
- * mirroring the agent-library + security-events route patterns. Starting an
- * offline harness run is wired in WS4 (a Temporal workflow); this file owns the
- * datasets, cases, and result/run reads.
+ * endpoint (the read path the `/govern/evals` dashboard uses). Admin-only,
+ * mirroring the agent-library + security-events route patterns. This file also
+ * starts an offline harness run (a Temporal workflow) and owns the datasets,
+ * cases, and result/run reads.
  */
 
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
@@ -299,7 +299,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // ── Results query (paginated; the P3 drift dashboard reuses this) ──
+  // ── Results query (paginated; the /govern/evals dashboard reads it) ──
   app.get(
     '/evals/results',
     { onRequest: adminOnly, schema: { querystring: ResultsQuery } },
@@ -504,10 +504,10 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // ── Start an offline harness run (P1/WS4) ──
+  // ── Start an offline harness run ──
   // Creates the EvalRun row; the durable harness (a Temporal workflow wrapping
   // runEvalHarness) is started here — that start is the integration seam
-  // (docs/evals-p1.md WS4). The CLI polls GET /evals/runs/:id for the verdict.
+  // (docs/evals.md §3). The CLI polls GET /evals/runs/:id for the verdict.
   app.post(
     '/evals/runs',
     { onRequest: adminOnly, schema: { body: StartRunBody } },
@@ -552,7 +552,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // ── List judge rubrics (P2) ──
+  // ── List judge rubrics ──
   app.get('/evals/rubrics', { onRequest: adminOnly }, async () => {
     const rows = await runUnscoped('admin rubric listing spans every team', ['EvalRubric'], () =>
       fastify.prisma.evalRubric.findMany({ orderBy: { createdAt: 'desc' } })
@@ -561,7 +561,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     return { data };
   });
 
-  // ── Create a judge rubric (P2) ──
+  // ── Create a judge rubric ──
   // promptText is scanned for injection/exfiltration like Skill/agent prompt
   // text — non-blocking warnings are returned alongside the created rubric.
   app.post(

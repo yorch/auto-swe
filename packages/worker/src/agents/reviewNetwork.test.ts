@@ -39,6 +39,8 @@ vi.mock('../lib/models.js', () => ({
 }));
 
 import { Agent } from '@mastra/core/agent';
+import { ApplicationFailure } from '@temporalio/activity';
+import { ConfigMissingError } from '../lib/config/resolver.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel } from '../lib/models.js';
 import { runReviewNetwork } from './reviewNetwork.js';
@@ -190,5 +192,103 @@ describe('runReviewNetwork per-persona configuration', () => {
       'performanceReviewer',
       'securityReviewer',
     ]);
+  });
+});
+
+describe('runReviewNetwork reviewer failures', () => {
+  const ok = (severity = 'PASS', approved = true, findings: unknown[] = []) => ({
+    object: { approved, findings, reviewer: 'SECURITY', severity },
+    usage: { inputTokens: 1, outputTokens: 1 },
+  });
+
+  it('rethrows a non-retryable failure (budget) instead of a REVIEWER_CRASH verdict', async () => {
+    generateMock
+      .mockImplementationOnce(async () => ok())
+      .mockImplementationOnce(async () => {
+        throw ApplicationFailure.nonRetryable('Budget exhausted', 'BUDGET_EXCEEDED');
+      })
+      .mockImplementationOnce(async () => ok());
+    await expect(runReviewNetwork(CODE_RESULT)).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'BUDGET_EXCEEDED',
+    });
+  });
+
+  it('rethrows ConfigMissingError', async () => {
+    vi.mocked(getModel).mockRejectedValueOnce(new ConfigMissingError('no reviewer row'));
+    await expect(runReviewNetwork(CODE_RESULT)).rejects.toBeInstanceOf(ConfigMissingError);
+  });
+
+  it('throws a retryable failure when every reviewer crashed', async () => {
+    generateMock.mockImplementation(async () => {
+      throw new Error('provider 503');
+    });
+    const err = await runReviewNetwork(CODE_RESULT).catch((e) => e);
+    expect(err).toBeInstanceOf(ApplicationFailure);
+    expect(err).toMatchObject({ nonRetryable: false, type: 'REVIEW_NETWORK_UNAVAILABLE' });
+    expect(err.message).toContain('provider 503');
+  });
+
+  it('keeps the synthetic REVIEWER_CRASH verdict when only some reviewers crashed', async () => {
+    generateMock
+      .mockImplementationOnce(async () => ok())
+      .mockImplementationOnce(async () => {
+        throw new Error('provider 503');
+      })
+      .mockImplementationOnce(async () => ok());
+    const result = await runReviewNetwork(CODE_RESULT);
+    expect(result.approved).toBe(false);
+    const crashed = result.verdicts.find((v) => v.reviewer === 'DOMAIN_LOGIC');
+    expect(crashed?.findings[0]?.category).toBe('REVIEWER_CRASH');
+    expect(result.rejectionSummary).toContain('provider 503');
+  });
+
+  it('treats a structured output that fails the schema as a reviewer failure', async () => {
+    generateMock
+      .mockImplementationOnce(async () => ok())
+      .mockImplementationOnce(async () => ({ object: { approved: true }, usage: undefined }))
+      .mockImplementationOnce(async () => ok());
+    const result = await runReviewNetwork(CODE_RESULT);
+    expect(result.approved).toBe(false);
+    expect(result.rejectionSummary).toContain('did not return valid structured output');
+  });
+});
+
+describe('runReviewNetwork verdict consistency and summary', () => {
+  it('treats a CRITICAL verdict as a rejection even when approved is true', async () => {
+    generateMock.mockImplementationOnce(async () => ({
+      object: {
+        approved: true,
+        findings: [
+          {
+            category: 'INJECTION',
+            description: 'SQL built by concatenation',
+            file: 'a.ts',
+            line: 3,
+            suggestedFix: 'Use a parameterised query',
+          },
+        ],
+        reviewer: 'SECURITY',
+        severity: 'CRITICAL',
+      },
+      usage: undefined,
+    }));
+    const result = await runReviewNetwork(CODE_RESULT);
+    expect(result.approved).toBe(false);
+    expect(result.verdicts.find((v) => v.reviewer === 'SECURITY')?.approved).toBe(false);
+    // The fixer sees the problem and its severity, not only the fix.
+    expect(result.rejectionSummary).toBe(
+      '[SECURITY/CRITICAL] [INJECTION] a.ts:3 — SQL built by concatenation — Suggested fix: Use a parameterised query'
+    );
+  });
+
+  it('names a reviewer that rejected without findings', async () => {
+    generateMock.mockImplementationOnce(async () => ({
+      object: { approved: false, findings: [], reviewer: 'SECURITY', severity: 'WARNING' },
+      usage: undefined,
+    }));
+    const result = await runReviewNetwork(CODE_RESULT);
+    expect(result.approved).toBe(false);
+    expect(result.rejectionSummary).toContain('rejected without findings: SECURITY');
   });
 });

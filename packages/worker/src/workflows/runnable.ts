@@ -8,7 +8,7 @@ import type {
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
 import type { Duration } from '@temporalio/common';
-import { ApplicationFailure, CancelledFailure } from '@temporalio/common';
+import { ApplicationFailure, CancelledFailure, TemporalFailure } from '@temporalio/common';
 import {
   CancellationScope,
   condition,
@@ -410,22 +410,46 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       // that arrived since the previous one.
       return steerBuffer.splice(0);
     },
+    isCancellation(err) {
+      return isCancellation(err);
+    },
     async notifyHumanStep(args) {
       await stateActivities.createHumanStep({ ...args, runId });
     },
+    patched(id) {
+      return patched(id);
+    },
     async recordStep(args) {
-      await stateActivities.recordWorkflowStep({ ...args, runId });
+      // Activity inputs are written to history, and a step's inputs/outputs can
+      // carry a whole diff or log — recorded again on every attempt. Bound what
+      // goes through; the full values stay in the run context (spilled to
+      // artifacts at finalization by `snapshotContext`).
+      await stateActivities.recordWorkflowStep({
+        ...args,
+        ...(args.error !== undefined ? { error: boundString(args.error) } : {}),
+        ...(args.inputs !== undefined ? { inputs: boundForRecord(args.inputs) } : {}),
+        ...(args.outputs !== undefined ? { outputs: boundForRecord(args.outputs) } : {}),
+        runId,
+      });
     },
     async resolveHumanStep(args) {
       await stateActivities.resolveHumanStep({ ...args, runId });
     },
-    async waitSignal(name, timeout) {
+    async waitSignal(name, timeout, opts) {
       // No stale-payload reset here: a signal that lands before the interpreter
       // reaches its wait node (a CI webhook racing the PR-open step is the
       // common case) is kept and satisfies that wait. `take()` consumes the
       // payload, so a wait never sees a value an earlier wait already used.
       ensureSignalHandler(name);
       const received = await condition(() => slots.hasPending(name), timeout as Duration);
+      // A wait the interpreter abandoned (block-mode cancelled its fan-out
+      // branch) still resolves here when a payload arrives, because the
+      // condition is not cancelled — that keeps the commands identical. It must
+      // not take the payload a later wait on the same name is owed. `take()`
+      // emits no command; the patch gates the payload staying in the slot.
+      if (received && opts?.abandoned?.() && patched(ORPHANED_WAIT_PATCH)) {
+        return undefined;
+      }
       return received ? slots.take(name) : undefined;
     },
   };
@@ -493,7 +517,22 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   });
 
   if (runError) {
-    throw runError instanceof Error ? runError : new Error(String(runError));
+    // A Temporal failure (an activity failure, a cancellation) keeps its own
+    // meaning. Anything else — a blocking gate failure, a failed fan-out branch,
+    // MAX_NODE_TRANSITIONS, an expression error, an executor guard — is a plain
+    // Error, and a plain Error fails the workflow *task*, which Temporal
+    // retries forever: the run would stay Running while its row says FAILED.
+    // These failures are deterministic, so a retry can never succeed; fail the
+    // run once instead. No `patched()` guard: the old path never completed (its
+    // last workflow task kept failing), so no closed history records it, and an
+    // open one stuck on it is exactly what this lets finish.
+    if (runError instanceof TemporalFailure) {
+      throw runError;
+    }
+    throw ApplicationFailure.nonRetryable(
+      runError instanceof Error ? runError.message : String(runError),
+      'WORKFLOW_SPEC_FAILED'
+    );
   }
 
   // Spread result FIRST so a `status` key inside the terminate node's result
@@ -1144,12 +1183,19 @@ async function runWithCancellation<T>(
   if (!cancellation) {
     return body();
   }
+  // The scope the branch runs in. When IT was cancelled — the whole run, not
+  // just this branch — the cancellation is the run's, and must reach the
+  // workflow as one so the run ends CANCELLED rather than FAILED.
+  const parent = CancellationScope.current();
   const scope = new CancellationScope({ cancellable: true });
   cancellation.token = { cancel: () => scope.cancel() };
   try {
     return await scope.run(body);
   } catch (err) {
     if (isCancellation(err) || err instanceof CancelledFailure) {
+      if (parent.consideredCancelled && patched(WORKFLOW_CANCEL_PATCH)) {
+        throw err;
+      }
       throw new BranchCancelledError();
     }
     throw err;
@@ -1159,6 +1205,48 @@ async function runWithCancellation<T>(
     // of the branch's actual in-flight work.
     cancellation.token = undefined;
   }
+}
+
+/**
+ * Patch ids. `WORKFLOW_CANCEL_PATCH` is the same literal the interpreter gates
+ * its own cancellation handling on (`interpreter.ts`), so one marker decides
+ * both halves for a run.
+ */
+const WORKFLOW_CANCEL_PATCH = 'workflow-cancel-propagates';
+const ORPHANED_WAIT_PATCH = 'orphaned-signal-wait-keeps-payload';
+
+/** Longest string a step record carries; past this it is cut with a note. */
+const RECORD_STRING_LIMIT = 8000;
+
+/** Nesting below which a step record's values are summarised rather than copied. */
+const RECORD_MAX_DEPTH = 12;
+
+function boundString(value: string): string {
+  return value.length > RECORD_STRING_LIMIT
+    ? `${value.slice(0, RECORD_STRING_LIMIT)}… [truncated ${value.length} chars in the step record; the run context keeps the full value]`
+    : value;
+}
+
+/**
+ * A step's inputs/outputs as recorded: oversized strings cut, everything else
+ * copied as is. Pure and deterministic — it runs inside the workflow isolate.
+ */
+function boundForRecord(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') {
+    return boundString(value);
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (depth >= RECORD_MAX_DEPTH) {
+    return '[nested too deep for the step record]';
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => boundForRecord(v, depth + 1));
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [k, boundForRecord(v, depth + 1)])
+  );
 }
 
 /** Strings longer than this are spilled to a `WorkflowArtifact`. */

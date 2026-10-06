@@ -14,6 +14,27 @@ import { checkContentSecurity, formatViolationMessage } from '../preWriteSecurit
  */
 export const HARNESS_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'] as const;
 
+export type HarnessTool = (typeof HARNESS_TOOLS)[number];
+
+/** Which harness tools stand in for each Mastra workspace tool key (`IMPLEMENTER_TOOL_IDS`). */
+const HARNESS_TOOLS_BY_KEY: Record<string, readonly HarnessTool[]> = {
+  bash: ['Bash'],
+  listDirectory: ['Read', 'Glob', 'Grep'],
+  readFile: ['Read', 'Glob', 'Grep'],
+  writeFile: ['Write', 'Edit'],
+};
+
+/**
+ * The harness tools a resolved Agent's `toolKeys` grant, read exactly as the
+ * Mastra implementer reads them (`createImplementerAgent`): `null`, `[]`, or a
+ * list naming no workspace tool (`['mcp']`) means all four, and otherwise only
+ * the named tools are granted.
+ */
+export function harnessToolsFor(toolKeys: readonly string[] | null | undefined): HarnessTool[] {
+  const granted = new Set((toolKeys ?? []).flatMap((key) => HARNESS_TOOLS_BY_KEY[key] ?? []));
+  return granted.size === 0 ? [...HARNESS_TOOLS] : HARNESS_TOOLS.filter((t) => granted.has(t));
+}
+
 export type ToolDecision =
   | {
       allow: true;
@@ -30,6 +51,13 @@ export interface PolicyContext {
   cwd: string;
   /** The harness's own home inside the container; its tool-output files live under `.claude`. */
   home: string;
+  /**
+   * The harness loads the repository's `.claude` settings and `CLAUDE.md`, so
+   * the agent may not rewrite them: what it wrote would govern the next turn.
+   */
+  projectConfigLoaded: boolean;
+  /** The harness tools the Agent's `toolKeys` grant ({@link harnessToolsFor}). */
+  tools: readonly HarnessTool[];
 }
 
 /** `p` relative to `root` when it stays inside it (`''` for the root itself), else null. */
@@ -51,17 +79,56 @@ const deny = (reason: string, securityTag?: string): ToolDecision => ({
   securityTag,
 });
 
-/** A write target: inside the checkout, not the checkout itself. */
-function writeTarget(raw: unknown, ctx: PolicyContext): { rel: string } | { error: string } {
+/**
+ * A tool's file path must be absolute. The harness resolves a relative one
+ * against its own current directory, which a `cd` in an earlier Bash call moves
+ * (`cd .git`, then `Write hooks/pre-push`); refusing it leaves every path the
+ * policy checks with exactly one meaning. The harness's tools document absolute
+ * paths, so a well-behaved call never sends anything else.
+ */
+function absolute(raw: unknown): string | undefined {
   const p = str(raw);
-  const rel = p === undefined ? null : within(ctx.cwd, p);
-  return rel ? { rel } : { error: `Path rejected: writes must stay inside ${ctx.cwd}` };
+  return p !== undefined && path.posix.isAbsolute(p) ? p : undefined;
 }
 
-/** A read target: the checkout, or the harness's own `.claude` directory. */
-function readAllowed(raw: unknown, ctx: PolicyContext): boolean {
-  const p = str(raw) ?? ctx.cwd;
-  return within(ctx.cwd, p) !== null || within(`${ctx.home}/.claude`, p) !== null;
+/** A write target: an absolute path inside the checkout, not the checkout itself. */
+function writeTarget(raw: unknown, ctx: PolicyContext): { rel: string } | { error: string } {
+  const p = absolute(raw);
+  const rel = p === undefined ? null : within(ctx.cwd, p);
+  return rel ? { rel } : { error: `Path rejected: writes take an absolute path inside ${ctx.cwd}` };
+}
+
+/**
+ * The harness's own configuration inside the checkout: `.claude/` (settings,
+ * hooks, commands, agents), `CLAUDE.md` and `CLAUDE.local.md` at any depth, and
+ * the root `.mcp.json`. The harness reads them when a turn starts, so a write
+ * here would change what the next turn runs under.
+ */
+function isHarnessConfig(rel: string): boolean {
+  const segments = rel.toLowerCase().split('/');
+  const base = segments.at(-1) ?? '';
+  return (
+    segments.includes('.claude') ||
+    base === 'claude.md' ||
+    base === 'claude.local.md' ||
+    rel.toLowerCase() === '.mcp.json'
+  );
+}
+
+/**
+ * A read or search target: an absolute path in the checkout or the harness's
+ * own `.claude` directory. With no path (Glob and Grep default to it) the target
+ * is the harness's current directory, which must itself be in the checkout.
+ */
+function readAllowed(raw: unknown, ctx: PolicyContext, harnessCwd: string | undefined): boolean {
+  if (raw === undefined || raw === null || raw === '') {
+    const cwd = absolute(harnessCwd);
+    return cwd !== undefined && within(ctx.cwd, cwd) !== null;
+  }
+  const p = absolute(raw);
+  return (
+    p !== undefined && (within(ctx.cwd, p) !== null || within(`${ctx.home}/.claude`, p) !== null)
+  );
 }
 
 /**
@@ -74,8 +141,14 @@ function readAllowed(raw: unknown, ctx: PolicyContext): boolean {
  * cannot edit it.
  *
  * Differences from the Mastra tools, forced by the harness's own tools:
- *  - the harness addresses files by absolute path, so every path is confined to
- *    the checkout here (the Mastra tools refused absolute paths outright);
+ *  - the harness addresses files by absolute path, so every path must be
+ *    absolute and is confined to the checkout here (the Mastra tools refused
+ *    absolute paths outright); a search with no path is confined by the
+ *    harness's current directory, `harnessCwd`, as its hook input reports it;
+ *  - writes to the harness's own configuration in the checkout are refused
+ *    while the harness loads it ({@link isHarnessConfig});
+ *  - a harness tool the Agent's `toolKeys` do not grant is refused here as well
+ *    as left out of the harness's tool list;
  *  - `Edit` carries a fragment, so the content check sees `new_string`, not the
  *    whole resulting file.
  *
@@ -85,8 +158,15 @@ function readAllowed(raw: unknown, ctx: PolicyContext): boolean {
 export async function decideToolCall(
   toolName: string,
   input: Record<string, unknown>,
-  ctx: PolicyContext
+  ctx: PolicyContext,
+  harnessCwd?: string
 ): Promise<ToolDecision> {
+  if (
+    (HARNESS_TOOLS as readonly string[]).includes(toolName) &&
+    !ctx.tools.includes(toolName as HarnessTool)
+  ) {
+    return deny(`The ${toolName} tool is not enabled for this agent.`);
+  }
   switch (toolName) {
     case 'Bash': {
       const command = str(input.command);
@@ -105,6 +185,11 @@ export async function decideToolCall(
       const target = writeTarget(input.file_path, ctx);
       if ('error' in target) {
         return deny(target.error);
+      }
+      if (ctx.projectConfigLoaded && isHarnessConfig(target.rel)) {
+        return deny(
+          `Path rejected: ${target.rel} is Claude Code configuration, which this run loads and may not change.`
+        );
       }
       const sensitive = await checkSensitiveFilePath(target.rel);
       if (sensitive) {
@@ -128,9 +213,9 @@ export async function decideToolCall(
     }
 
     case 'Read':
-      return readAllowed(input.file_path, ctx)
+      return str(input.file_path) !== undefined && readAllowed(input.file_path, ctx, harnessCwd)
         ? { allow: true }
-        : deny(`Path rejected: reads must stay inside ${ctx.cwd}`);
+        : deny(`Path rejected: reads take an absolute path inside ${ctx.cwd}`);
 
     case 'Glob':
     case 'Grep': {
@@ -139,9 +224,11 @@ export async function decideToolCall(
       if (pattern !== undefined && (path.posix.isAbsolute(pattern) || pattern.includes('..'))) {
         return deny('Pattern rejected: patterns must be relative and stay inside the checkout.');
       }
-      return readAllowed(input.path, ctx)
+      return readAllowed(input.path, ctx, harnessCwd)
         ? { allow: true }
-        : deny(`Path rejected: searches must stay inside ${ctx.cwd}`);
+        : deny(
+            `Path rejected: searches take an absolute path inside ${ctx.cwd}, or run from a directory inside it`
+          );
     }
 
     default:

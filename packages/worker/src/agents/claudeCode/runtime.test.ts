@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PassThrough } from 'node:stream';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** The part of the SDK's `query()` options these tests read back. */
 interface HookOutput {
@@ -8,13 +9,22 @@ type HookFn = (input: unknown, toolUseId?: string) => Promise<HookOutput>;
 interface QueryOptions {
   abortController: AbortController;
   canUseTool: () => Promise<{ behavior: string }>;
-  hooks: Record<'PostToolUse' | 'PostToolUseFailure' | 'PreToolUse', { hooks: HookFn[] }[]>;
+  hooks: Record<
+    'PostToolUse' | 'PostToolUseFailure' | 'PreToolUse',
+    { hooks: HookFn[]; timeout?: number }[]
+  >;
   resume?: string;
   settingSources: string[];
-  spawnClaudeCodeProcess: (o: { args: string[]; signal?: AbortSignal }) => unknown;
+  spawnClaudeCodeProcess: (o: {
+    args: string[];
+    env: Record<string, string | undefined>;
+    signal?: AbortSignal;
+  }) => unknown;
   systemPrompt: { append: string };
   [key: string]: unknown;
 }
+
+const { BINARY_SHA } = vi.hoisted(() => ({ BINARY_SHA: 'ab'.repeat(32) }));
 
 const h = vi.hoisted(() => ({
   activityCancellationSignal: vi.fn((): AbortSignal | undefined => undefined),
@@ -39,6 +49,7 @@ vi.mock('../../lib/cancellation.js', () => ({
 vi.mock('../../lib/execUtils.js', () => ({ spawnCaptureAsync: h.spawnCaptureAsync }));
 vi.mock('./binary.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./binary.js')>()),
+  binarySha256: vi.fn(async () => BINARY_SHA),
   resolveClaudeBinary: vi.fn(() => '/app/node_modules/sdk-linux-x64-musl/claude'),
 }));
 vi.mock('./policy.js', async (importOriginal) => ({
@@ -63,7 +74,14 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 import type { AgentTracer } from '../../lib/agentTracer.js';
-import { claudeCodeRuntime, normalizeAnthropicBaseUrl } from './runtime.js';
+import { spentUsageOf } from '../implementerRuntime.js';
+import {
+  claudeCodeRuntime,
+  normalizeAnthropicBaseUrl,
+  POLICY_DECISION_MS,
+  PRE_TOOL_USE_TIMEOUT_S,
+  sdkEnvArgs,
+} from './runtime.js';
 
 const init = (session_id: string) => ({ session_id, subtype: 'init', type: 'system' });
 const assistantToolUses = (n: number) => ({
@@ -88,13 +106,28 @@ const API_KEY = 'sk-ant-test-key-do-not-leak';
 
 function setup(overrides: Record<string, unknown> = {}) {
   const exec = vi.fn(async (_c: string) => '');
+  // The hash of what is at the binary's path in the container ('' = nothing there).
+  const container = { installed: '' };
+  h.spawnCaptureAsync.mockImplementation(async () => {
+    container.installed = BINARY_SHA;
+    return { exitCode: 0, stderr: '', stdout: '' };
+  });
   const workspace = {
+    container,
     containerId: 'workspace-abc123',
     exec,
     execCapture: vi.fn(async (command: string) =>
       command.startsWith('uname')
         ? { exitCode: 0, stderr: '', stdout: 'x86_64\n/lib/ld-musl-x86_64.so.1\n' }
-        : { exitCode: 0, stderr: '', stdout: '' }
+        : command.startsWith('sha256sum')
+          ? container.installed
+            ? {
+                exitCode: 0,
+                stderr: '',
+                stdout: `${container.installed}  /workspace/.harness/claude\n`,
+              }
+            : { exitCode: 1, stderr: '', stdout: '' }
+          : { exitCode: 0, stderr: '', stdout: '' }
     ),
     execStdin: vi.fn(async () => ''),
   };
@@ -115,11 +148,14 @@ function setup(overrides: Record<string, unknown> = {}) {
   return { exec, runtime, toolCalls, workspace };
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   h.queryCalls.length = 0;
   h.script.length = 0;
-  h.spawnCaptureAsync.mockResolvedValue({ exitCode: 0, stderr: '', stdout: '' });
   h.decideToolCall.mockResolvedValue({ allow: true });
   h.activityCancellationSignal.mockReturnValue(undefined);
   h.spawn.mockReturnValue({ pid: 1 });
@@ -150,9 +186,14 @@ describe('preparing the container', () => {
     await runtime.runTurn({ system: 'S', user: 'U1' });
     await runtime.runTurn({ system: 'S', user: 'U2' });
 
-    expect(workspace.execCapture).toHaveBeenCalledTimes(2); // platform probe + bash, not repeated
-    expect(workspace.execCapture.mock.calls[1]?.[0]).toContain('apk add --no-cache bash');
-    expect(exec).toHaveBeenCalledWith('mkdir -p /workspace/.harness/home');
+    const commands = workspace.execCapture.mock.calls.map((c) => c[0]);
+    // Platform probe + bash once; the binary's hash before every turn (and after the copy).
+    expect(commands.filter((c) => c.startsWith('uname'))).toHaveLength(1);
+    expect(commands.filter((c) => c.includes('apk add --no-cache bash'))).toHaveLength(1);
+    expect(
+      commands.filter((c) => c.startsWith('sha256sum /workspace/.harness/claude'))
+    ).toHaveLength(3);
+    expect(exec).toHaveBeenCalledWith('mkdir -p /workspace/.harness/home/.claude');
     expect(h.spawnCaptureAsync).toHaveBeenCalledTimes(1);
     expect(h.spawnCaptureAsync.mock.calls[0]?.slice(0, 2)).toEqual([
       'docker',
@@ -182,6 +223,53 @@ describe('preparing the container', () => {
     h.spawnCaptureAsync.mockResolvedValue({ exitCode: 1, stderr: 'no space left', stdout: '' });
     await expect(runtime.runTurn({ system: 'S', user: 'U' })).rejects.toThrow(/no space left/);
   });
+
+  it('does not copy a binary that is already in place with the right hash', async () => {
+    const { runtime, workspace } = setup();
+    workspace.container.installed = BINARY_SHA;
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(h.spawnCaptureAsync).not.toHaveBeenCalled();
+  });
+
+  it('replaces a binary that was changed in the container between turns', async () => {
+    const { runtime, workspace } = setup();
+    h.script.push([[init('s1'), success('one')]], [[init('s1'), success('two')]]);
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+
+    workspace.container.installed = 'cd'.repeat(32); // the agent swapped it
+    await runtime.runTurn({ system: 'S', user: 'U2' });
+
+    expect(h.spawnCaptureAsync).toHaveBeenCalledTimes(2);
+    expect(workspace.container.installed).toBe(BINARY_SHA);
+    expect(h.queryCalls).toHaveLength(2);
+  });
+
+  it('refuses to run a binary it cannot verify, without retrying', async () => {
+    const { runtime } = setup();
+    // The copy "succeeds" but the hash never matches (no sha256sum, or a tampered one).
+    h.spawnCaptureAsync.mockResolvedValue({ exitCode: 0, stderr: '', stdout: '' });
+    await expect(runtime.runTurn({ system: 'S', user: 'U' })).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'HARNESS_BINARY_UNVERIFIED',
+    });
+    expect(h.queryCalls).toHaveLength(0);
+  });
+
+  it('tries the preparation again on the next turn after it failed', async () => {
+    const { runtime, workspace } = setup();
+    const capture = workspace.execCapture.getMockImplementation();
+    workspace.execCapture.mockRejectedValueOnce(new Error('docker daemon restarting'));
+    if (capture) {
+      workspace.execCapture.mockImplementation(capture);
+    }
+    h.script.push([[init('s1'), success('ok')]]);
+
+    await expect(runtime.runTurn({ system: 'S', user: 'U1' })).rejects.toThrow(/restarting/);
+    await expect(runtime.runTurn({ system: 'S', user: 'U2' })).resolves.toMatchObject({
+      text: 'ok',
+    });
+  });
 });
 
 describe('what the harness is started with', () => {
@@ -201,11 +289,42 @@ describe('what the harness is started with', () => {
       model: 'claude-opus-5-5',
       permissionMode: 'default',
       settingSources: ['project'],
-      settings: { env: { ANTHROPIC_BASE_URL: 'https://kong.example/anthropic' } },
+      settings: {
+        env: { ANTHROPIC_BASE_URL: 'https://kong.example/anthropic' },
+        permissions: { defaultMode: 'default', disableBypassPermissionsMode: 'disable' },
+      },
       systemPrompt: { append: 'THE SYSTEM PROMPT', preset: 'claude_code', type: 'preset' },
       tools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
     });
     await expect(call.options.canUseTool()).resolves.toMatchObject({ behavior: 'deny' });
+  });
+
+  it('makes a hook failure fall back to a deny, not to the repository’s allow rules', async () => {
+    const { call } = await started();
+    // The harness's own deadline is longer than the worker's, so the worker answers first.
+    expect(call.options.hooks.PreToolUse[0]?.timeout).toBe(PRE_TOOL_USE_TIMEOUT_S);
+    expect(PRE_TOOL_USE_TIMEOUT_S * 1000).toBeGreaterThan(POLICY_DECISION_MS);
+    // Allow rules outside the policy tier are ignored, so the fallback reaches canUseTool.
+    expect(call.options.managedSettings).toMatchObject({ allowManagedPermissionRulesOnly: true });
+  });
+
+  it('offers only the tools the Agent’s toolKeys grant, and the policy enforces the same set', async () => {
+    const ctx = setup({ toolKeys: ['readFile'] });
+    h.script.push([[init('s1'), success('ok')]]);
+    await ctx.runtime.runTurn({ system: 'S', user: 'U' });
+    const options = h.queryCalls[0]?.options as QueryOptions;
+    expect(options.tools).toEqual(['Read', 'Glob', 'Grep']);
+
+    await options.hooks.PreToolUse[0]?.hooks[0]?.(
+      { cwd: '/workspace/target-repo', tool_input: { command: 'ls' }, tool_name: 'Bash' },
+      't'
+    );
+    expect(h.decideToolCall).toHaveBeenCalledWith(
+      'Bash',
+      { command: 'ls' },
+      expect.objectContaining({ tools: ['Read', 'Glob', 'Grep'] }),
+      '/workspace/target-repo'
+    );
   });
 
   it('can be told to ignore the repository’s own settings', async () => {
@@ -219,7 +338,11 @@ describe('what the harness is started with', () => {
     const { call } = await started();
     const signal = new AbortController().signal;
 
-    call.options.spawnClaudeCodeProcess({ args: ['--output-format', 'stream-json'], signal });
+    call.options.spawnClaudeCodeProcess({
+      args: ['--output-format', 'stream-json'],
+      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' },
+      signal,
+    });
 
     const [file, args, spawnOptions] = h.spawn.mock.calls[0] as [
       string,
@@ -228,6 +351,7 @@ describe('what the harness is started with', () => {
     ];
     expect(file).toBe('docker');
     expect(args.slice(0, 4)).toEqual(['exec', '-i', '-w', '/workspace/target-repo']);
+    expect(args).toContain('CLAUDE_CODE_ENTRYPOINT=sdk-ts');
     expect(args).toContain('ANTHROPIC_API_KEY'); // named, valueless
     expect(args.join(' ')).not.toContain(API_KEY);
     expect(args).toContain('ANTHROPIC_BASE_URL=https://kong.example/anthropic');
@@ -243,7 +367,49 @@ describe('what the harness is started with', () => {
     expect(spawnOptions.signal).toBe(signal);
   });
 
-  it('keeps an oversized system prompt off the command line', async () => {
+  it('forwards only the harness switches the SDK added, never the worker’s own environment', () => {
+    const previous = process.env.CLAUDE_CODE_FROM_WORKER;
+    process.env.CLAUDE_CODE_FROM_WORKER = 'worker-value';
+    try {
+      const args = sdkEnvArgs({
+        ...process.env,
+        CLAUDE_AGENT_SDK_VERSION: 'test-version',
+        CLAUDE_CODE_ENTRYPOINT: 'test-entrypoint',
+        CLAUDE_CODE_FROM_WORKER: 'worker-value', // the worker's, unchanged by the SDK
+        claude_code_lower: 'x',
+        DATABASE_URL: 'postgres://secret', // not a harness switch
+      });
+      expect(args.filter((a) => a !== '-e').sort()).toEqual([
+        'CLAUDE_AGENT_SDK_VERSION=test-version',
+        'CLAUDE_CODE_ENTRYPOINT=test-entrypoint',
+      ]);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.CLAUDE_CODE_FROM_WORKER;
+      } else {
+        process.env.CLAUDE_CODE_FROM_WORKER = previous;
+      }
+    }
+  });
+
+  it('drains the harness’s stderr and reports its tail when the run ends without a result', async () => {
+    const ctx = setup();
+    let release: () => void = () => {};
+    h.script.push([[init('s1')], undefined, new Promise<void>((r) => (release = r))]);
+    const stderr = new PassThrough();
+    h.spawn.mockReturnValue({ pid: 1, stderr });
+
+    const turn = ctx.runtime.runTurn({ system: 'S', user: 'U' });
+    await vi.waitFor(() => expect(h.queryCalls).toHaveLength(1));
+    h.queryCalls[0]?.options.spawnClaudeCodeProcess({ args: [], env: {} });
+    stderr.write('Error: ENOSPC writing session\n');
+    await new Promise((r) => setImmediate(r));
+    release();
+
+    await expect(turn).rejects.toThrow(/ENOSPC writing session/);
+  });
+
+  it('keeps an oversized system prompt off the command line, where the harness may read it', async () => {
     const ctx = setup();
     h.script.push([[init('s1'), success('ok')]]);
     const big = 'x'.repeat(100_001);
@@ -251,11 +417,11 @@ describe('what the harness is started with', () => {
     await ctx.runtime.runTurn({ system: big, user: 'U' });
 
     expect(ctx.workspace.execStdin).toHaveBeenCalledWith(
-      'cat > /workspace/.harness/system-prompt.md',
+      'cat > /workspace/.harness/home/.claude/system-prompt.md',
       big
     );
     const append = h.queryCalls[0]?.options.systemPrompt.append ?? '';
-    expect(append).toContain('/workspace/.harness/system-prompt.md');
+    expect(append).toContain('/workspace/.harness/home/.claude/system-prompt.md');
     expect(append.length).toBeLessThan(500);
   });
 });
@@ -287,6 +453,7 @@ describe('the policy hooks', () => {
     };
   }
   const preInput = (tool_name: string, tool_input: unknown) => ({
+    cwd: '/workspace/target-repo/src',
     hook_event_name: 'PreToolUse',
     tool_input,
     tool_name,
@@ -297,11 +464,27 @@ describe('the policy hooks', () => {
     await expect(pre(preInput('Bash', { command: 'ls' }), 't1')).resolves.toEqual({
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' },
     });
+    // The harness's current directory travels with the call: a search with no path runs there.
     expect(h.decideToolCall).toHaveBeenCalledWith(
       'Bash',
       { command: 'ls' },
-      expect.objectContaining({ cwd: '/workspace/target-repo' })
+      expect.objectContaining({ cwd: '/workspace/target-repo', projectConfigLoaded: true }),
+      '/workspace/target-repo/src'
     );
+  });
+
+  it('refuses a call whose policy decision does not arrive in time', async () => {
+    const { pre, toolCalls } = await hooks();
+    vi.useFakeTimers();
+    h.decideToolCall.mockReturnValue(new Promise(() => {}));
+
+    const out = pre(preInput('Bash', { command: 'ls' }), 't1');
+    await vi.advanceTimersByTimeAsync(POLICY_DECISION_MS);
+
+    await expect(out).resolves.toMatchObject({
+      hookSpecificOutput: { permissionDecision: 'deny' },
+    });
+    expect(toolCalls).toHaveLength(1);
   });
 
   it('refuses a call the policy refuses, tells the model why, and traces it with the security tag', async () => {
@@ -565,6 +748,37 @@ describe('the outcome of a turn', () => {
     expect(failure.nonRetryable).toBeUndefined();
   });
 
+  it('hands what a failed run spent to the caller on the error, and counts it once', async () => {
+    const { runtime } = setup();
+    const failed = {
+      errors: ['overloaded'],
+      is_error: true,
+      modelUsage: { m: usage(300, 60) },
+      subtype: 'error_during_execution',
+      type: 'result',
+    };
+    h.script.push(
+      [[init('s'), failed], new Error('Claude Code returned an error result')],
+      [[init('s'), success('ok', { m: usage(350, 70) })]]
+    );
+
+    const failure = await runtime.runTurn({ system: 'S', user: 'U' }).catch((e) => e);
+    expect(spentUsageOf(failure)).toEqual([
+      {
+        modelSpec: 'anthropic/m',
+        usage: {
+          cacheCreationInputTokens: 0,
+          cachedInputTokens: 0,
+          inputTokens: 300,
+          outputTokens: 60,
+        },
+      },
+    ]);
+    // The next turn reports only what it added on top.
+    const next = await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(next.usageByModel?.[0]?.usage).toMatchObject({ inputTokens: 50, outputTokens: 10 });
+  });
+
   it('fails when the process dies before any result, with what it wrote to stderr', async () => {
     const { runtime } = setup();
     h.script.push([[init('s')], new Error('Claude Code process terminated by signal SIGKILL')]);
@@ -580,7 +794,7 @@ describe('cancellation and cleanup', () => {
       h.script.push(failing ? [[init('s')], new Error('boom')] : [[init('s'), success('ok')]]);
       await runtime.runTurn({ system: 'S', user: 'U' }).catch(() => undefined);
 
-      h.queryCalls[0]?.options.spawnClaudeCodeProcess({ args: [], signal: undefined });
+      h.queryCalls[0]?.options.spawnClaudeCodeProcess({ args: [], env: {}, signal: undefined });
       const spawned = h.spawn.mock.calls.at(-1)?.[1] as string[] | undefined;
       const tag = spawned?.find((a) => a.startsWith('AUTO_SWE_EXEC_ID='))?.split('=')[1];
       const script = exec.mock.calls.map((c) => c[0]).find((c) => c.includes('kill -'));

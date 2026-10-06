@@ -107,6 +107,16 @@ engineering template. `channelAssistant` is on the agent-run non-launchable list
 > The fan-in lives inside one activity rather than using a `fanOut` node because the interpreter
 > cannot surface a branch agent's text back to a join.
 
+**Launch outcome.** The agent's "on it" reply is posted only when a task actually started. When
+nothing did, the thread gets a message in its place: the thread already hosts a task (its
+per-thread workflow id is single-use), the requester was refused on access, or the launch failed
+for any other reason ("I couldn't start that task"). A launch failure never fails the turn itself.
+
+**Run pins.** Each turn's own `WorkflowRun` (`startChannelRun`) pins the latest active GLOBAL Agent
+versions and the revisions of the skills visible to the channel's team and organization, as
+`createWorkflowRun` does for other runs, so a retried turn activity resolves the same agent and
+skill text.
+
 **Steering.** A reply in the task's thread sends a `steer` signal to the running workflow, which
 `drainSteering` picks up and `prependSteering` folds into the next agent call — mid-task hand-off
 without restarting.

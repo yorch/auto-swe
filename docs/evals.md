@@ -83,9 +83,11 @@ optional `reference` (expected tests, golden diff, ideal answer), provenance bac
 and tags. Running a dataset compares a **candidate** against a **baseline**, both given as
 `key@version` agent refs, and reports paired statistics with error bars rather than a single number.
 
-`runCaseDefault` resolves each ref through `resolveAgent` with the version pin applied, builds the
-implementer with that model override, and runs a bounded TDD loop scoring the golden test's exit
-code.
+`runCaseDefault` resolves each ref in the dataset's tenant — its team and organization, with the
+version pin applied — and builds the implementer through the same `buildImplementerTurnRunner` a run
+uses, so the runtime, tool keys, skills, MCP binding and step budgets a TEAM or ORGANIZATION
+override gives that tenant's runs are what the eval grades. A GLOBAL dataset resolves at GLOBAL
+scope. It then runs a bounded TDD loop scoring the golden test's exit code.
 
 **Infrastructure errors throw rather than scoring zero.** A Docker, model, agent, or MCP failure
 marks the `EvalRun` `FAILED`; it never records a false `0` that would poison the regression verdict

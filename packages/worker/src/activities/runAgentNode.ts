@@ -84,27 +84,30 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
     resolveCtx
   );
 
-  // P2/WS3: bind MCP tools when the Agent enables them; closed in finally.
-  // loadMcpTools is failure-isolated, so a bad server degrades to no tools.
+  // Bind MCP tools when the Agent enables them; closed in finally. The tracer
+  // is created before the try and everything that writes to it runs inside,
+  // so the MCP connection rows `loadMcpTools` records persist even when the
+  // binding or the run throws. loadMcpTools is failure-isolated, so a bad
+  // server degrades to no tools.
   const tracer = new AgentTracer();
-  const mcpTarget = await resolveAgentMcpUrl(key, resolveCtx);
   let closeMcp: (() => Promise<void>) | undefined;
-  let mcpTools: AgentTools | undefined;
-  if (mcpTarget) {
-    const loaded = await loadMcpTools(mcpTarget.url, tracer, {
-      allowPrivateNetwork: mcpTarget.allowPrivateNetwork,
-      bearerToken: mcpTarget.bearerToken,
-      callTimeoutMs: mcpTarget.callTimeoutMs,
-      headers: mcpTarget.headers,
-      listTimeoutMs: mcpTarget.listTimeoutMs,
-    });
-    closeMcp = loaded.close;
-    mcpTools = loaded.tools as AgentTools;
-    // Built-in/spec tools win over MCP tools on key collision.
-    spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;
-  }
-
   try {
+    const mcpTarget = await resolveAgentMcpUrl(key, resolveCtx);
+    let mcpTools: AgentTools | undefined;
+    if (mcpTarget) {
+      const loaded = await loadMcpTools(mcpTarget.url, tracer, {
+        allowPrivateNetwork: mcpTarget.allowPrivateNetwork,
+        bearerToken: mcpTarget.bearerToken,
+        callTimeoutMs: mcpTarget.callTimeoutMs,
+        headers: mcpTarget.headers,
+        listTimeoutMs: mcpTarget.listTimeoutMs,
+      });
+      closeMcp = loaded.close;
+      mcpTools = loaded.tools as AgentTools;
+      // Built-in/spec tools win over MCP tools on key collision.
+      spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;
+    }
+
     const baseMessage = input.userMessage ?? inputsToMessage(input.inputs);
     const userMessage = prependSteering(baseMessage, input.steering);
     // One tracer for the MCP tool rows and the loop's rows, so they share one

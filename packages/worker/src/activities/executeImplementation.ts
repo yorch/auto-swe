@@ -13,9 +13,11 @@ import type {
   TestRunResult,
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
-import { buildImplementerForActivity } from '../agents/implementer.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
-import { selectImplementerRuntime } from '../agents/implementerRuntimeSelect.js';
+import {
+  buildImplementerTurnRunner,
+  type ImplementerTurnRunner,
+} from '../agents/implementerRuntimeSelect.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { currentAttempt, currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
@@ -132,8 +134,8 @@ export async function executeImplementation(
   );
 
   const tracer = new AgentTracer();
-  // P2/WS3: present when the implementer Agent enabled MCP — closed in finally.
-  let closeMcp: (() => Promise<void>) | undefined;
+  // Holds the MCP client open under the Mastra loop — closed in finally.
+  let turns: ImplementerTurnRunner | undefined;
 
   // Before anything the agent can touch: the commit the guarded change is measured from.
   // Inside the try so a failure still destroys the workspace.
@@ -175,26 +177,14 @@ export async function executeImplementation(
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
     const testCommand = detectTestCommand(packageJson, repo.gateCommands);
 
-    // Load tool config + skills (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade),
-    // resolve any MCP server, and build the agent — bound to the workspace so
-    // the tracer captures every call. promptSuffix carries prompt-fragment
-    // skills to append to the system prompt.
+    // The runtime — the Mastra loop or the Claude Code harness — is chosen first,
+    // and only what it needs is built: tool config + skills (WORKFLOW_TEMPLATE →
+    // TEAM → GLOBAL cascade), and under Mastra the agent and any MCP server, bound
+    // to the workspace so the tracer captures every call. The runtime decides how
+    // skills reach the prompt, so the suffix comes back from it.
     const activityCtx = await currentRequestContext();
-    const built = await buildImplementerForActivity(workspace, tracer, activityCtx);
-    const { skills } = built;
-    closeMcp = built.closeMcp;
-    // The runtime — the Mastra loop or the Claude Code harness — decides how skills
-    // reach the prompt, so the suffix comes back from it.
-    const { promptSuffix, runtime } = await selectImplementerRuntime({
-      agent: built.agent,
-      agentKey: 'implementer',
-      ctx: activityCtx,
-      maxSteps: built.maxSteps,
-      promptSuffix: built.promptSuffix,
-      skills,
-      tracer,
-      workspace,
-    });
+    turns = await buildImplementerTurnRunner({ ctx: activityCtx, tracer, workspace });
+    const { runtime, skills } = turns;
 
     tracer.addActivityEvent({
       name: 'skills.loaded',
@@ -302,11 +292,7 @@ export async function executeImplementation(
     );
 
     const llmSystemPrompt =
-      systemPrompt +
-      (promptSuffix ? `\n\n${promptSuffix}` : '') +
-      lessonsContext +
-      designContext +
-      crossRepoContext;
+      turns.systemPrompt(systemPrompt) + lessonsContext + designContext + crossRepoContext;
 
     // TDD loop — bound by the DB-backed workflow default (falls back to 5).
     const maxTddIterations = workflowDefaults.maxTddIterations;
@@ -454,7 +440,7 @@ export async function executeImplementation(
       testResults: testResult,
     };
   } finally {
-    await closeMcp?.();
+    await turns?.close();
     await persistActivityTrace(tracer, 'implementer');
     if (baseSha) {
       // Best-effort — the baseline SHA is an optional historical-replay aid. One

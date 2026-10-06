@@ -457,6 +457,8 @@ describe('resolveMergeConflict', () => {
     expect(result.mergedBranches).toEqual(['auto/TICK-1/db']);
     expect(result.unmergedBranches).toEqual([]);
     expect(generateMock).not.toHaveBeenCalled();
+    // No conflict, no resolver: nothing is built and no MCP client is opened.
+    expect(buildImplementerMock).not.toHaveBeenCalled();
     expect(scanSecurityMock).not.toHaveBeenCalled();
     expect(execCommands().some((c) => c.includes('push origin'))).toBe(true);
   });
@@ -686,6 +688,9 @@ describe('resolveMergeConflict', () => {
     const scanned = scanSecurityMock.mock.calls[0]?.[0] as string;
     expect(scanned).toContain("'sha-1^1'");
     expect(scanned).toContain("'sha-2^1'");
+    // Both branches resolve in the one workspace, through the one resolver session.
+    expect(buildImplementerMock).toHaveBeenCalledTimes(1);
+    expect(closeMcpMock).toHaveBeenCalledTimes(1);
   });
 
   it('treats a README whose setext heading is "=======" as resolved', async () => {
@@ -824,6 +829,9 @@ describe('resolveMergeConflict', () => {
 
     expect(result.passed).toBe(true);
     expect(generateMock).toHaveBeenCalledTimes(2);
+    // One resolver session across attempts: built once, closed once, after the loop.
+    expect(buildImplementerMock).toHaveBeenCalledTimes(1);
+    expect(closeMcpMock).toHaveBeenCalledTimes(1);
     // Nothing is staged while a marker is left, so the unmerged path survives
     // the failed attempt instead of being committed with markers in it.
     expect(execCommands().filter((c) => c.startsWith('git add --'))).toHaveLength(1);

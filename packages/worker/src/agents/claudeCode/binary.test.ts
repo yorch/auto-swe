@@ -1,5 +1,10 @@
+import { createHash } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  binarySha256,
   claudeBinaryPackage,
   PLATFORM_PROBE,
   parseContainerPlatform,
@@ -28,6 +33,30 @@ describe('parseContainerPlatform', () => {
       expect.objectContaining({ nonRetryable: true, type: 'HARNESS_UNSUPPORTED_PLATFORM' })
     );
     expect(() => parseContainerPlatform('')).toThrow(/architecture/);
+  });
+
+  it('reads a glibc image that also has a musl loader as glibc', () => {
+    // Debian with its `musl` package: ldd is glibc's.
+    expect(
+      parseContainerPlatform(
+        'x86_64\n/lib/ld-musl-x86_64.so.1\n/lib64/ld-linux-x86-64.so.2\nldd (Debian GLIBC 2.36-9+deb12u4) 2.36\n'
+      ).libc
+    ).toBe('glibc');
+    // The same without an ldd: the glibc loader decides.
+    expect(
+      parseContainerPlatform(
+        'aarch64\n/lib/ld-musl-aarch64.so.1\n/lib/ld-linux-aarch64.so.1\nsh: ldd: not found\n'
+      ).libc
+    ).toBe('glibc');
+    expect(parseContainerPlatform('x86_64\n\n\nldd (GNU libc) 2.38\n').libc).toBe('glibc');
+  });
+
+  it('believes a musl ldd over a glibc-named loader (Alpine with gcompat)', () => {
+    expect(
+      parseContainerPlatform(
+        'x86_64\n/lib/ld-musl-x86_64.so.1\n/lib/ld-linux-x86-64.so.2\nmusl libc (x86_64)\n'
+      ).libc
+    ).toBe('musl');
   });
 
   it('probes with a command that always exits zero, so a missing loader is not an error', () => {
@@ -73,5 +102,24 @@ describe('resolveClaudeBinary', () => {
     for (const libc of ['glibc', 'musl'] as const) {
       expect(resolveClaudeBinary(arch, libc)).toMatch(/claude-agent-sdk-linux-.*\/claude$/);
     }
+  });
+});
+
+describe('binarySha256', () => {
+  it('hashes the file the worker holds', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+    const file = path.join(dir, 'claude');
+    writeFileSync(file, 'binary bytes');
+    await expect(binarySha256(file)).resolves.toBe(
+      createHash('sha256').update('binary bytes').digest('hex')
+    );
+  });
+
+  it('does not remember a file it could not read', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+    const file = path.join(dir, 'later');
+    await expect(binarySha256(file)).rejects.toThrow();
+    writeFileSync(file, 'x');
+    await expect(binarySha256(file)).resolves.toBe(createHash('sha256').update('x').digest('hex'));
   });
 });

@@ -2012,3 +2012,203 @@ describe('fan-out branch contexts are isolated (F2)', () => {
     });
   });
 });
+
+describe('run cancellation and non-retryable errors', () => {
+  /** A cancellation as the Temporal dispatcher would recognise it. */
+  class FakeCancelled extends Error {
+    readonly fakeCancelled = true;
+  }
+
+  function dispatcherWith(opts: {
+    step: (attempt: number) => unknown;
+    patched?: (id: string) => boolean;
+    isCancellation?: boolean;
+  }): { dispatcher: Dispatcher; attempts: () => number; patchIds: string[] } {
+    let attempts = 0;
+    const patchIds: string[] = [];
+    const dispatcher: Dispatcher = {
+      async dispatchStep() {
+        attempts++;
+        return opts.step(attempts);
+      },
+      async recordStep() {},
+      async waitSignal() {
+        return undefined;
+      },
+      ...(opts.isCancellation === false
+        ? {}
+        : { isCancellation: (err: unknown) => err instanceof FakeCancelled }),
+      ...(opts.patched
+        ? {
+            patched: (id: string) => {
+              patchIds.push(id);
+              return opts.patched?.(id) ?? true;
+            },
+          }
+        : {}),
+    };
+    return { attempts: () => attempts, dispatcher, patchIds };
+  }
+
+  const oneStep = (work: Record<string, unknown>) =>
+    parseWorkflowSpec({
+      entry: 'work',
+      name: 'policy',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        work: { next: 'done', step: 'x', type: 'step', ...work },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+
+  it.each([
+    ['onError: continue', { onError: 'continue' }],
+    ['onFail: warn', { onFail: 'warn' }],
+    ['onFail: retry', { onFail: { retry: 3 } }],
+  ])('a run cancellation bypasses %s', async (_label, policy) => {
+    const { dispatcher, attempts } = dispatcherWith({
+      step: () => {
+        throw new FakeCancelled('cancelled');
+      },
+    });
+    await expect(runSpec(oneStep(policy), baseCtx(), dispatcher)).rejects.toThrow(FakeCancelled);
+    expect(attempts()).toBe(1);
+  });
+
+  it('keeps the old policy handling for a run whose history predates the patch', async () => {
+    const { dispatcher, patchIds } = dispatcherWith({
+      patched: () => false,
+      step: () => {
+        throw new FakeCancelled('cancelled');
+      },
+    });
+    const result = await runSpec(oneStep({ onError: 'continue' }), baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(patchIds).toEqual(['workflow-cancel-propagates']);
+  });
+
+  it('treats any error as an ordinary failure when the dispatcher has no cancellation hook', async () => {
+    const { dispatcher } = dispatcherWith({
+      isCancellation: false,
+      step: () => {
+        throw new FakeCancelled('cancelled');
+      },
+    });
+    const result = await runSpec(oneStep({ onError: 'continue' }), baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+  });
+
+  it('a run cancellation in a branch is not swallowed by onBranchFail: continue', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fan-cancel',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          onBranchFail: 'continue',
+          over: { literal: [1, 2] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: { next: 'branchDone', onFail: 'warn', step: 'x', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher } = dispatcherWith({
+      step: () => {
+        throw new FakeCancelled('cancelled');
+      },
+    });
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(FakeCancelled);
+  });
+
+  it('does not retry an error marked non-retryable, on itself or in its cause chain', async () => {
+    const direct = Object.assign(new Error('permanent'), { nonRetryable: true });
+    const wrapped = new Error('Activity task failed', {
+      cause: Object.assign(new Error('permanent'), { nonRetryable: true }),
+    });
+    for (const err of [direct, wrapped]) {
+      const { dispatcher, attempts, patchIds } = dispatcherWith({
+        patched: () => true,
+        step: () => {
+          throw err;
+        },
+      });
+      await expect(
+        runSpec(oneStep({ onFail: { retry: 3 } }), baseCtx(), dispatcher)
+      ).rejects.toThrow(err.message);
+      expect(attempts()).toBe(1);
+      expect(patchIds).toEqual(['interpreter-skips-retry-of-non-retryable']);
+    }
+  });
+
+  it('still retries a retryable error, and a non-retryable one under a pre-patch history', async () => {
+    const retryable = dispatcherWith({
+      step: () => {
+        throw Object.assign(new Error('flaky'), { nonRetryable: false });
+      },
+    });
+    await expect(
+      runSpec(oneStep({ onFail: { retry: 3 } }), baseCtx(), retryable.dispatcher)
+    ).rejects.toThrow('flaky');
+    expect(retryable.attempts()).toBe(4);
+
+    const prePatch = dispatcherWith({
+      patched: () => false,
+      step: () => {
+        throw Object.assign(new Error('permanent'), { nonRetryable: true });
+      },
+    });
+    await expect(
+      runSpec(oneStep({ onFail: { retry: 3 } }), baseCtx(), prePatch.dispatcher)
+    ).rejects.toThrow('permanent');
+    expect(prePatch.attempts()).toBe(4);
+  });
+
+  it('marks a signal wait abandoned when block-mode cancels its branch', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fan-wait',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fail: { next: 'branchDone', step: 'boom', type: 'step' },
+        fan: {
+          concurrency: 2,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: ['wait', 'fail'] },
+          subgraph: 'route',
+          type: 'fanOut',
+        },
+        route: { expr: "subtask == 'wait'", onFalse: 'fail', onTrue: 'wait', type: 'cond' },
+        wait: {
+          name: 'shared',
+          onReceive: 'branchDone',
+          onTimeout: 'branchDone',
+          timeout: '1h',
+          type: 'signal',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const waits: Array<{ abandoned?: () => boolean } | undefined> = [];
+    const dispatcher: Dispatcher = {
+      async dispatchStep() {
+        // Let the wait in the other branch start first.
+        await Promise.resolve();
+        throw new Error('boom');
+      },
+      async recordStep() {},
+      waitSignal(_name, _timeout, opts) {
+        waits.push(opts);
+        return new Promise(() => {});
+      },
+    };
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('boom');
+    expect(waits).toHaveLength(1);
+    expect(waits[0]?.abandoned?.()).toBe(true);
+  });
+});

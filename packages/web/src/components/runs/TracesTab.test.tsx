@@ -89,6 +89,36 @@ describe('TracesTab', () => {
     );
     expect(screen.queryByText(/Filtered to/)).toBeNull();
   });
+
+  it('summarises Claude Code harness tool calls by path, command and pattern', () => {
+    const call = (id: string, toolName: string, inputJson: Record<string, unknown>) => ({
+      ...makeTrace('implement', id),
+      inputJson,
+      toolName,
+      type: 'tool_call' as const,
+    });
+    render(
+      <TracesTab
+        filterNodeId={null}
+        linker={EMPTY_LINKER}
+        onClearFilter={() => {}}
+        traces={[
+          call('a', 'Bash', { command: 'yarn test --run' }),
+          call('b', 'Read', { file_path: 'src/read-me.ts' }),
+          call('c', 'Write', { content: 'x', file_path: 'src/written.ts' }),
+          call('d', 'Edit', { file_path: 'src/edited.ts', new_string: 'b', old_string: 'a' }),
+          call('e', 'Glob', { pattern: '**/*.tsx' }),
+          call('f', 'Grep', { path: 'src', pattern: 'TODO' }),
+        ]}
+      />
+    );
+    expect(screen.getByText('yarn test --run')).toBeTruthy();
+    expect(screen.getByText('src/read-me.ts')).toBeTruthy();
+    expect(screen.getByText('src/written.ts')).toBeTruthy();
+    expect(screen.getByText('src/edited.ts')).toBeTruthy();
+    expect(screen.getByText('**/*.tsx')).toBeTruthy();
+    expect(screen.getByText('TODO in src')).toBeTruthy();
+  });
 });
 
 describe('TracesTab node linkage', () => {

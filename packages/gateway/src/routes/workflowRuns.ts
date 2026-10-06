@@ -66,6 +66,20 @@ const RunListResponseSchema = z.object({
 });
 
 const RunDetailResponseSchema = z.object({ data: z.unknown() });
+
+/**
+ * The implementer runtime a run pinned at start (`workspace.implementerRuntime`
+ * in `WorkflowRun.pinnedSettings`). Null for a run that predates the setting or
+ * whose snapshot holds no string there — the viewer shows nothing rather than
+ * guessing the default.
+ */
+export function pinnedImplementerRuntime(pinned: unknown): string | null {
+  if (!pinned || typeof pinned !== 'object' || Array.isArray(pinned)) {
+    return null;
+  }
+  const value = (pinned as Record<string, unknown>)['workspace.implementerRuntime'];
+  return typeof value === 'string' ? value : null;
+}
 const RunTracesResponseSchema = z.object({
   data: z.array(z.unknown()),
   /**
@@ -536,6 +550,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           costUsdAccrued: run.costUsdAccrued,
           endedAt: run.endedAt,
           id: run.id,
+          implementerRuntime: pinnedImplementerRuntime(run.pinnedSettings),
           // Keyed on the template's reserved origin, never its display name: a team
           // template can carry any name, but not this origin.
           isAgentRun:

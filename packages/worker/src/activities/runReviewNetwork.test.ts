@@ -116,6 +116,19 @@ describe('runReviewNetwork activity', () => {
     expect(persistedEventNames()).toContain('crossRepo.context_loaded');
   });
 
+  it('persists the recorded events when the review itself throws', async () => {
+    loadMock.mockResolvedValue('BLOCK');
+    runReviewMock.mockRejectedValueOnce(new Error('all reviewers failed'));
+    await expect(runReviewNetwork(CODE_RESULT)).rejects.toThrow('all reviewers failed');
+    expect(persistedEventNames()).toContain('crossRepo.context_loaded');
+  });
+
+  it('persists the trace when resolving a persona throws', async () => {
+    resolveAgentMock.mockRejectedValueOnce(new Error('ConfigMissing'));
+    await expect(runReviewNetwork(CODE_RESULT)).rejects.toThrow('ConfigMissing');
+    expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
+  });
+
   it('records no event when there is nothing to inject', async () => {
     await runReviewNetwork(CODE_RESULT);
     expect(persistedEventNames()).not.toContain('crossRepo.context_loaded');

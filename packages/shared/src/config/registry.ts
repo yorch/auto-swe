@@ -505,7 +505,7 @@ export const SETTING_DEFINITIONS = {
   'workspace.implementerRuntime': defineSetting({
     defaultValue: 'mastra',
     description:
-      "Which loop drives the implementer, the CI/review/gate fixers and the merge-conflict resolver. `mastra` runs the platform's own tool loop. `claude-code` runs the Claude Code harness inside the workspace container, which brings its own tools, plugins and instruction files. The harness needs a model API key (or a gateway key) inside the container, where anything the agent runs can read it; see the Limitations in docs/agents.md before enabling it.",
+      "Which loop drives the implementer, the CI/review/gate fixers and the merge-conflict resolver. `mastra` runs the platform's own tool loop. `claude-code` runs the Claude Code harness inside the workspace container: it reads the repository's own CLAUDE.md and .claude settings, but the worker allows only its Read, Write, Edit, Bash, Glob and Grep tools, narrowed by the agent's tool keys and behind the same security scanners, and refuses every other tool, including web access, sub-agents and plugin tools. The harness needs a model API key (or a gateway key) inside the container, where anything the agent runs can read it; see the Limitations in docs/agents.md before enabling it.",
     group: 'workspace',
     label: 'Implementer runtime',
     overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],

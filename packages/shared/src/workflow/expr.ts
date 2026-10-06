@@ -198,6 +198,14 @@ type Tok =
         | ')';
     };
 
+/** Does this token end an operand, so a following `-` must be the binary operator? */
+function endsOperand(tok: Tok | undefined): boolean {
+  if (!tok) {
+    return false;
+  }
+  return tok.kind !== 'op' || tok.val === ')';
+}
+
 function tokenizeExpr(input: string): Tok[] {
   const tokens: Tok[] = [];
   let i = 0;
@@ -235,7 +243,13 @@ function tokenizeExpr(input: string): Tok[] {
     }
     // number — accept at most one decimal point so malformed literals like
     // `1.2.3` fail fast instead of being silently truncated by parseFloat.
-    if ((c >= '0' && c <= '9') || (c === '-' && /\d/.test(input[i + 1] ?? ''))) {
+    // A `-` directly before a digit is a sign only where an operand may start;
+    // after an operand (`a-1`, `5-3`, `(a)-1`) it is binary minus. Every input
+    // that reading changes was a syntax error before (two adjacent operands).
+    if (
+      (c >= '0' && c <= '9') ||
+      (c === '-' && /\d/.test(input[i + 1] ?? '') && !endsOperand(tokens.at(-1)))
+    ) {
       let j = i + 1;
       let seenDot = false;
       while (j < len) {

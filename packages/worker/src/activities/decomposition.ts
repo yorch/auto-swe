@@ -17,9 +17,11 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
-import { buildImplementerForActivity } from '../agents/implementer.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
-import { selectImplementerRuntime } from '../agents/implementerRuntimeSelect.js';
+import {
+  buildImplementerTurnRunner,
+  type ImplementerTurnRunner,
+} from '../agents/implementerRuntimeSelect.js';
 import { MERGE_CONFLICT_RESOLVER_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import {
@@ -247,6 +249,19 @@ export async function resolveMergeConflict(
   const conflicts: Array<{ branch: string; output: string }> = [];
   const tracer = new AgentTracer();
   const resolutions: ResolverCommit[] = [];
+  // One resolver session for the whole activity, built at the first conflict: every
+  // branch and attempt runs in this one workspace, and a runtime that resumes its
+  // session (the harness) must not be rebuilt — and re-installed — per attempt.
+  let turns: ImplementerTurnRunner | undefined;
+  const resolverTurns = async (): Promise<ImplementerTurnRunner> => {
+    turns ??= await buildImplementerTurnRunner({
+      agentKey: 'mergeConflictResolver',
+      ctx: await currentRequestContext(),
+      tracer,
+      workspace,
+    });
+    return turns;
+  };
 
   try {
     for (let idx = 0; idx < sourceBranches.length; idx++) {
@@ -257,6 +272,7 @@ export async function resolveMergeConflict(
         maxAttempts: maxAttemptsPerBranch,
         messagePrefix,
         tracer,
+        turns: resolverTurns,
       });
       if (resolved.resolution) {
         resolutions.push(resolved.resolution);
@@ -321,6 +337,7 @@ export async function resolveMergeConflict(
       unmergedBranches: unmerged,
     };
   } finally {
+    await turns?.close();
     const done = persistActivityTrace(tracer, 'mergeConflictResolver');
     await workspace.destroy();
     await done;
@@ -476,6 +493,8 @@ async function mergeOneWithResolver(
     maxAttempts: number;
     messagePrefix: string;
     tracer: AgentTracer;
+    /** The activity's one resolver session, built on first use. */
+    turns: () => Promise<ImplementerTurnRunner>;
   }
 ): Promise<{ passed: boolean; output: string; resolution?: ResolverCommit }> {
   const commitMessage = `${opts.messagePrefix}: merge ${source} into ${targetBranch}`;
@@ -512,11 +531,12 @@ async function mergeOneWithResolver(
     return { output: 'merge failed without conflicted files', passed: false };
   }
 
-  const activityCtx = await currentRequestContext();
   const systemPrompt = await resolveSystemPrompt(
     'mergeConflictResolver',
     MERGE_CONFLICT_RESOLVER_PROMPT
   );
+  const turns = await opts.turns();
+  const fullSystemPrompt = turns.systemPrompt(systemPrompt);
 
   for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
     throwIfActivityCancelled();
@@ -524,32 +544,12 @@ async function mergeOneWithResolver(
       `resolver attempt ${attempt}/${opts.maxAttempts} for ${source}: ${conflictedFiles.length} files`
     );
 
-    const built = await buildImplementerForActivity(
-      workspace,
-      opts.tracer,
-      activityCtx,
-      'mergeConflictResolver'
-    );
-    const { closeMcp } = built;
     // Declared out here so the catch can trace the request. Built inside the
-    // try: choosing the runtime and reading the payloads can throw, and the MCP
-    // client is already open.
-    let fullSystemPrompt = systemPrompt;
+    // try: reading the payloads can throw.
     let userMessage = '';
     let calledModel = false;
     const start = Date.now();
     try {
-      const { promptSuffix, runtime } = await selectImplementerRuntime({
-        agent: built.agent,
-        agentKey: 'mergeConflictResolver',
-        ctx: activityCtx,
-        maxSteps: built.maxSteps,
-        promptSuffix: built.promptSuffix,
-        skills: built.skills,
-        tracer: opts.tracer,
-        workspace,
-      });
-      fullSystemPrompt = systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
       userMessage = JSON.stringify({
         attempt,
         conflictedFiles: await readConflictPayloads(workspace, conflictedFiles),
@@ -562,7 +562,7 @@ async function mergeOneWithResolver(
       await runImplementerTurn({
         context: { attempt, source },
         role: 'mergeConflictResolver',
-        runtime,
+        runtime: turns.runtime,
         system: fullSystemPrompt,
         tracer: opts.tracer,
         usageEvent: `llm.resolve_conflict.${source}.attempt_${attempt}`,
@@ -583,8 +583,6 @@ async function mergeOneWithResolver(
         });
       }
       throw err;
-    } finally {
-      await closeMcp?.();
     }
 
     const withMarkers = await filesWithConflictMarkers(workspace, conflictedFiles);

@@ -160,6 +160,7 @@ const fakeActivities = {
       'AGENT_RUN_PUSH_POLICY'
     );
   },
+  runLint: async () => ({ passed: false, summary: 'lint broke' }),
   runReviewNetwork: async () => ({ approved: true, rejectionSummary: '', verdicts: [] }),
   runTool: async (input: unknown) => {
     calls.runTool.push(input);
@@ -741,6 +742,115 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.finalize.length).toBeGreaterThan(before);
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'CANCELLED' });
     expect(calls.cancelledHumanSteps).toContain('run-test-1');
+  }, 120_000);
+
+  it('fails the run (not just the workflow task) when a blocking gate fails', async () => {
+    // A gate failure surfaces from the interpreter as a plain Error. Rethrown as
+    // is it failed the workflow *task*, which Temporal retries forever: the run
+    // stayed Running while its row said FAILED, and this await never returned.
+    const before = calls.finalize.length;
+    currentSpec = makeSpec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        lint: { next: 'done', step: 'runLint', type: 'step' },
+      },
+      'lint'
+    );
+    const handle = await env.client.workflow.start('RunnableWorkflow', startArgs('wf-gate-fail'));
+    const failure = await handle.result().then(
+      () => null,
+      (err: unknown) => err as { cause?: { type?: string; message?: string } }
+    );
+    expect(failure?.cause?.type).toBe('WORKFLOW_SPEC_FAILED');
+    expect(failure?.cause?.message).toBe('lint broke');
+    expect(calls.finalize.length).toBeGreaterThan(before);
+    expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+  }, 120_000);
+
+  it('fails the run when a fan-out branch fails under block mode', async () => {
+    const before = calls.finalize.length;
+    currentSpec = makeSpec(
+      {
+        branchFailed: { status: 'FAILED', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: ['a'] },
+          subgraph: 'branchFailed',
+          type: 'fanOut',
+        },
+      },
+      'fan'
+    );
+    const handle = await env.client.workflow.start('RunnableWorkflow', startArgs('wf-fan-fail'));
+    const failure = await handle.result().then(
+      () => null,
+      (err: unknown) => err as { cause?: { type?: string; message?: string } }
+    );
+    expect(failure?.cause?.type).toBe('WORKFLOW_SPEC_FAILED');
+    expect(failure?.cause?.message).toContain('branch 0 terminated with status FAILED');
+    expect(calls.finalize.length).toBeGreaterThan(before);
+    expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+  }, 120_000);
+
+  it('finalizes a run cancelled during a fan-out as CANCELLED, whatever onBranchFail says', async () => {
+    // Each branch is inside an activity when the run is cancelled. The branch's
+    // per-dispatch scope sees the cancellation too; it used to become a
+    // BranchCancelledError, so the run was finalized FAILED — and with
+    // `onBranchFail: 'continue'` the fan-out swallowed it and carried on.
+    const before = calls.finalize.length;
+    calls.domainStates.length = 0;
+    updateDomainStateImpl = async (_wf, status) => {
+      calls.domainStates.push(status);
+      if (status === 'BRANCH_SLOW') {
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    };
+    try {
+      currentSpec = makeSpec(
+        {
+          branchDone: { status: 'SUCCESS', type: 'terminate' },
+          done: { status: 'SUCCESS', type: 'terminate' },
+          fan: {
+            concurrency: 2,
+            // Straight to a terminate: no activity after the fan-out whose own
+            // cancellation could mask one the fan-out swallowed.
+            join: 'done',
+            onBranchFail: 'continue',
+            over: { literal: ['a', 'b'] },
+            subgraph: 'slow',
+            type: 'fanOut',
+          },
+          slow: {
+            config: { status: 'BRANCH_SLOW' },
+            next: 'branchDone',
+            onError: 'continue',
+            step: 'updateDomainState',
+            type: 'step',
+          },
+        },
+        'fan'
+      );
+      const handle = await env.client.workflow.start(
+        'RunnableWorkflow',
+        startArgs('wf-fan-cancel')
+      );
+      const deadline = Date.now() + 15_000;
+      const parked = () => calls.domainStates.filter((s) => s === 'BRANCH_SLOW').length >= 2;
+      while (!parked() && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(parked()).toBe(true);
+      await handle.cancel();
+      await expect(handle.result()).rejects.toThrow();
+      expect(calls.finalize.length).toBeGreaterThan(before);
+      expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'CANCELLED' });
+    } finally {
+      updateDomainStateImpl = async (_wf, status) => {
+        calls.domainStates.push(status);
+      };
+    }
   }, 120_000);
 
   it('defaults resolveWorkspace/readSource/writeOutcome from the run-level workspace', async () => {
