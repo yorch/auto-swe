@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { fetchBundleJson } from '../lib/bundleFetch.js';
-import { resolveBundleBodyLimit } from '../lib/bundleLimits.js';
+import { resolveBundleBodyLimit, resolveMaxBundleBytes } from '../lib/bundleLimits.js';
 import {
   BundleDependencyError,
   BundleIntegrityError,
@@ -175,6 +175,12 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get('/bundles', { onRequest: adminOnly }, async () => ({
     data: await listInstalledBundles(fastify.prisma),
+  }));
+
+  // The effective size cap, so the browser's file picker refuses an oversize file against the
+  // server's own number (`BUNDLE_MAX_BYTES`) instead of a copy of its default.
+  app.get('/bundles/limits', { onRequest: adminOnly }, async () => ({
+    data: { maxBytes: resolveMaxBundleBytes() },
   }));
 
   app.post(

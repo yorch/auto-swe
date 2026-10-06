@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_BUNDLE_FILE_BYTES, readBundleFile } from '@/lib/bundleFile';
+import { DEFAULT_BUNDLE_FILE_BYTES, readBundleFile } from '@/lib/bundleFile';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import StudioBundlesPage from './page';
 
@@ -53,16 +53,24 @@ describe('readBundleFile', () => {
 
   it('refuses a file over the size cap without reading it', async () => {
     const big = fileOf('{}');
-    Object.defineProperty(big, 'size', { value: MAX_BUNDLE_FILE_BYTES + 1 });
+    Object.defineProperty(big, 'size', { value: DEFAULT_BUNDLE_FILE_BYTES + 1 });
     const r = await readBundleFile(big);
     expect(r.ok).toBe(false);
     expect(!r.ok && r.message).toContain('larger than 5 MB');
+  });
+
+  it('uses the cap it is given instead of the default', async () => {
+    const file = fileOf('{}');
+    Object.defineProperty(file, 'size', { value: 600_000 });
+    const r = await readBundleFile(file, 500_000);
+    expect(!r.ok && r.message).toContain('larger than 0.5 MB');
   });
 });
 
 describe('Install from file', () => {
   const routes = {
     'GET /api/v1/platform/bundles': () => ({ data: [] }),
+    'GET /api/v1/platform/bundles/limits': () => ({ data: { maxBytes: 5_000_000 } }),
     'POST /api/v1/platform/bundles/install': () => ({
       data: {
         counts: { agents: 1, scannerPatterns: 0, skills: 0, templates: 0 },
@@ -105,9 +113,28 @@ describe('Install from file', () => {
     setupFetchMock(routes);
     render(withQuery(<StudioBundlesPage />));
     const big = fileOf('{}');
-    Object.defineProperty(big, 'size', { value: MAX_BUNDLE_FILE_BYTES + 1 });
+    Object.defineProperty(big, 'size', { value: DEFAULT_BUNDLE_FILE_BYTES + 1 });
     fireEvent.change(screen.getByLabelText('Bundle file (.json)'), { target: { files: [big] } });
     expect(await screen.findByText(/larger than 5 MB/)).toBeTruthy();
+  });
+
+  it('checks the file against the cap the server reports', async () => {
+    const fetchSpy = setupFetchMock({
+      ...routes,
+      'GET /api/v1/platform/bundles/limits': () => ({ data: { maxBytes: 1_000_000 } }),
+    });
+    render(withQuery(<StudioBundlesPage />));
+    await waitFor(() =>
+      expect(fetchSpy.mock.calls.some((c) => String(c[0]).endsWith('/bundles/limits'))).toBe(true)
+    );
+    // Let the response land and the page re-render with the cap.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    const file = fileOf('{}');
+    Object.defineProperty(file, 'size', { value: 2_000_000 });
+    fireEvent.change(screen.getByLabelText('Bundle file (.json)'), { target: { files: [file] } });
+    expect(await screen.findByText(/larger than 1 MB/)).toBeTruthy();
   });
 
   it('maps a 413 from the gateway to a plain message', async () => {

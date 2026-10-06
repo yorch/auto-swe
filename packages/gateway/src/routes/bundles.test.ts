@@ -14,6 +14,7 @@ import {
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveMaxBundleBytes } from '../lib/bundleLimits.js';
 import { SkillChangedError } from '../lib/bundleService.js';
 import { bundleRoutes } from './bundles.js';
 
@@ -92,6 +93,26 @@ describe('bundleRoutes', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.payload).data).toHaveLength(1);
     await app.close();
+  });
+
+  it('reports the effective size cap to an admin and refuses a non-admin', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/bundles/limits',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).data).toEqual({ maxBytes: resolveMaxBundleBytes() });
+    await app.close();
+    const eng = await buildApp('ENGINEER');
+    const denied = await eng.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/bundles/limits',
+    });
+    expect(denied.statusCode).toBe(403);
+    await eng.close();
   });
 
   it('rejects export for a non-admin', async () => {
