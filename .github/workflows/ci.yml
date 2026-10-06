@@ -95,6 +95,46 @@ jobs:
       - name: Build
         run: yarn build
 
+  # Real-container job: the suites that drive a real Docker daemon. The
+  # unit-test job skips them (`describe.skipIf(!enabled)`), and the code they
+  # cover — the Claude Code harness through `docker exec`, its worker-side tool
+  # policy and native binary, and the trusted agent-run finalize shell — is
+  # mocked everywhere else. GitHub-hosted Ubuntu runners have a Docker daemon;
+  # the suites pull public Alpine images and `apk add` inside them, and the
+  # harness talks to a local mock Messages API, so no secret is needed.
+  docker-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: '.node-version'
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Generate Prisma client
+        run: yarn db:generate
+
+      # The real runtime against a real container and a mock model API: the SDK,
+      # `docker exec`, the musl binary from node_modules and the policy hook together.
+      - name: Claude Code harness (Docker-backed tests)
+        env:
+          CLAUDE_CODE_DOCKER_TEST: '1'
+        run: yarn test packages/worker/src/agents/claudeCode/runtime.docker.test.ts
+
+      # The trusted finalize path's real shell against a deliberately hostile
+      # agent container (a lying `git`, `* -diff`, a planted symlink, a secret).
+      - name: Agent-run finalize (Docker-backed tests)
+        env:
+          AGENT_RUN_DOCKER_TEST: '1'
+        run: yarn test packages/worker/src/activities/agentRunFinalize.docker.test.ts
+
   # Real-database job: applies every migration to a fresh Postgres+pgvector
   # and runs the seed. The unit-test job deliberately uses an unreachable
   # DATABASE_URL (all Prisma access is mocked), so without this nothing in CI

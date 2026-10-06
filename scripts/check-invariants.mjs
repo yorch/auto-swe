@@ -16,9 +16,9 @@
  * Run: `yarn invariants:check`
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -412,14 +412,15 @@ function checkConnectorFetchesSetRedirect() {
 }
 
 // ---------------------------------------------------------------------------
-// INVARIANT 6 — every database-backed test suite runs in CI, with its opt-in flag set.
+// INVARIANT 6 — every opt-in test suite runs in CI, with its opt-in flag set.
 //
-// A `*.pg.test.ts` suite gates itself on an environment flag (`describe.skipIf(!enabled)`), because
-// it writes to a real database and the unit-test job has none. The `migrations` job runs each one
-// in a named step of `ci.yml` that sets that flag. Two mistakes would be invisible: a new suite that
-// no step lists is never run anywhere, and a suite listed under the wrong flag has every test
-// skipped by its own gate. Both leave CI green — a skipped suite and an absent suite report the
-// same thing. A step with `if:` or `continue-on-error:` can skip or swallow a suite the same way.
+// A `*.pg.test.ts` suite writes to a real database and a `*.docker.test.ts` suite drives a real
+// container; the unit-test job has neither, so each gates itself on an environment flag
+// (`describe.skipIf(!enabled)`) and a named step of `ci.yml` runs it with that flag set. Two
+// mistakes would be invisible: a new suite that no step lists is never run anywhere, and a suite
+// listed under the wrong flag has every test skipped by its own gate. Both leave CI green — a
+// skipped suite and an absent suite report the same thing. A step with `if:` or
+// `continue-on-error:` can skip or swallow a suite the same way.
 //
 // Like the MCP rule, this is a standing constraint, not a past incident: no unlisted suite has
 // reached main, the gap was caught twice in review.
@@ -431,6 +432,9 @@ function checkConnectorFetchesSetRedirect() {
 // ---------------------------------------------------------------------------
 
 const CI_WORKFLOW = '.github/workflows/ci.yml';
+const RULE = 'opt-in-suites-run-in-ci';
+/** The suffixes of suites that skip themselves without their flag. */
+const OPT_IN_SUITE = /\.(?:pg|docker)\.test\.ts$/;
 
 /** Each workflow step as `{ line, text }`, the slice from its `- key:` line to the next one. */
 function workflowSteps(yml) {
@@ -446,37 +450,41 @@ function workflowSteps(yml) {
   return steps;
 }
 
-function checkPgSuitesRunInCi() {
-  const suites = walk('packages', (f) => f.endsWith('.pg.test.ts'));
+/**
+ * The violations of invariant 6 for `suites` (`{ path, src }`, repo-relative) against the text of
+ * `ci.yml`. Pure, so the rule is tested without touching the repository.
+ */
+export function optInSuiteViolations(suites, ciYml) {
+  const out = [];
+  const add = (file, line, detail, why) => out.push({ detail, file, invariant: RULE, line, why });
   const named = new Map(); // suite path -> the steps whose `yarn test` line names it
-  for (const step of workflowSteps(read(CI_WORKFLOW))) {
+  for (const step of workflowSteps(ciYml)) {
     const lines = step.text.split('\n');
     const runs = lines.filter((l) => !l.trim().startsWith('#') && l.includes('yarn test'));
-    for (const path of runs.join('\n').match(/packages\/[^\s'"]+\.pg\.test\.ts/g) ?? []) {
+    for (const path of runs.join('\n').match(/packages\/[^\s'"]+\.(?:pg|docker)\.test\.ts/g) ??
+      []) {
       named.set(path, [...(named.get(path) ?? []), { ...step, lines }]);
     }
   }
 
-  for (const file of suites) {
+  for (const { path: file, src } of suites) {
     const runners = named.get(file);
     if (!runners) {
-      fail(
+      add(
         file,
         1,
-        'pg-suites-run-in-ci',
         `${file} is not run by any \`yarn test\` step in ${CI_WORKFLOW}`,
-        'Database-backed suites are opt-in and the unit-test job skips them, so a suite no ' +
-          'migrations-job step names never runs anywhere while CI stays green. Add a step that sets its flag.'
+        'Opt-in suites skip themselves in the unit-test job, so a suite no step names never ' +
+          'runs anywhere while CI stays green. Add a step that sets its flag.'
       );
       continue;
     }
     // The gates: every `process.env.X === '1'` in the code, not in its doc comment.
-    const gates = [...stripComments(read(file)).matchAll(/process\.env\.(\w+)\s*===\s*'1'/g)];
+    const gates = [...stripComments(src).matchAll(/process\.env\.(\w+)\s*===\s*'1'/g)];
     if (gates.length === 0) {
-      fail(
+      add(
         file,
         1,
-        'pg-suites-run-in-ci',
         "cannot find the suite's opt-in gate (`process.env.X === '1'`)",
         'Without knowing which flag it gates on, the check cannot tell whether CI sets it, and a ' +
           'step with the wrong flag is green with every test skipped. Gate it in that form, or teach this rule the new one.'
@@ -488,52 +496,72 @@ function checkPgSuitesRunInCi() {
         if (
           !step.lines.some((l) => new RegExp(`^\\s+${flag}:\\s*['"]?1['"]?\\s*(#.*)?$`).test(l))
         ) {
-          fail(
+          add(
             CI_WORKFLOW,
             step.line,
-            'pg-suites-run-in-ci',
             `the step running ${file} does not set ${flag}: '1'`,
             `The suite skips every test unless ${flag}=1, and a skipped suite is a passing step.`
           );
         }
       }
       if (step.lines.some((l) => /^\s+(?:- )?(?:if|continue-on-error):/.test(l))) {
-        fail(
+        add(
           CI_WORKFLOW,
           step.line,
-          'pg-suites-run-in-ci',
           `the step running ${file} has \`if:\` or \`continue-on-error:\``,
           'A condition can skip the suite and continue-on-error swallows its failure; either way the step stays green.'
         );
       }
     }
   }
+  return out;
 }
 
-checkWorkspaceImageLiterals();
-checkDockerfileYarnProvisioning();
-checkLayoutRendersPerRequest();
-checkMcpCodeHasNoDatabaseAccess();
-checkConnectorFetchesSetRedirect();
-checkPgSuitesRunInCi();
+function checkOptInSuitesRunInCi() {
+  const suites = walk('packages', (f) => OPT_IN_SUITE.test(f)).map((path) => ({
+    path,
+    src: read(path),
+  }));
+  failures.push(...optInSuiteViolations(suites, read(CI_WORKFLOW)));
+}
 
-if (failures.length > 0) {
-  console.error(`Invariant check failed — ${failures.length} violation(s).\n`);
-  for (const f of failures) {
-    console.error(`  ${relative('.', f.file)}:${f.line}  [${f.invariant}]`);
-    console.error(`    ${f.detail}`);
-    console.error(`    ${f.why}\n`);
+function main() {
+  checkWorkspaceImageLiterals();
+  checkDockerfileYarnProvisioning();
+  checkLayoutRendersPerRequest();
+  checkMcpCodeHasNoDatabaseAccess();
+  checkConnectorFetchesSetRedirect();
+  checkOptInSuitesRunInCi();
+  report();
+}
+
+function report() {
+  if (failures.length > 0) {
+    console.error(`Invariant check failed — ${failures.length} violation(s).\n`);
+    for (const f of failures) {
+      console.error(`  ${relative('.', f.file)}:${f.line}  [${f.invariant}]`);
+      console.error(`    ${f.detail}`);
+      console.error(`    ${f.why}\n`);
+    }
+    console.error('These rules exist because each one already shipped to main past a green');
+    console.error('test suite. If a violation is deliberate, say so in code and adjust the rule\n');
+    console.error('in scripts/check-invariants.mjs — do not silence it at the call site.\n');
+    process.exit(1);
   }
-  console.error('These rules exist because each one already shipped to main past a green');
-  console.error('test suite. If a violation is deliberate, say so in code and adjust the rule\n');
-  console.error('in scripts/check-invariants.mjs — do not silence it at the call site.\n');
-  process.exit(1);
+
+  console.log('Invariant check passed — 6 invariants, no violations.');
+  console.log('  workspace image is inherited, never written inline at a call site');
+  console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
+  console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
+  console.log('  MCP code takes no database access: it reaches data only through a REST route');
+  console.log('  connector fetches state a redirect policy');
+  console.log('  every database- or Docker-backed test suite runs in CI with its opt-in flag set');
 }
 
-console.log('Invariant check passed — 6 invariants, no violations.');
-console.log('  workspace image is inherited, never written inline at a call site');
-console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
-console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
-console.log('  MCP code takes no database access: it reaches data only through a REST route');
-console.log('  connector fetches state a redirect policy');
-console.log('  every database-backed test suite runs in CI with its opt-in flag set');
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+
+if (invokedDirectly) {
+  main();
+}
