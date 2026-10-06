@@ -53,6 +53,8 @@ import { claudeCodeRuntime } from './runtime.js';
 const run = promisify(execFile);
 const REPO = '/workspace/target-repo';
 const API_KEY = 'sk-ant-integration-test';
+/** The mock Messages API reports no prompt-cache tokens, and the runtime reports both fields. */
+const NO_CACHE = { cacheCreationInputTokens: 0, cachedInputTokens: 0 };
 
 let api: MockMessagesApi;
 let containers: string[] = [];
@@ -173,7 +175,10 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
     ]);
     // Two model calls (the tool request, then the answer), billed to the model that was asked for.
     expect(outcome.usageByModel).toEqual([
-      { modelSpec: 'anthropic/claude-sonnet-5-5', usage: { inputTokens: 200, outputTokens: 40 } },
+      {
+        modelSpec: 'anthropic/claude-sonnet-5-5',
+        usage: { ...NO_CACHE, inputTokens: 200, outputTokens: 40 },
+      },
     ]);
 
     const main = api.requests.filter((r) => r.tools.includes('Bash'));
@@ -214,9 +219,17 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
     const first = await runtime.runTurn({ system: 'S', user: 'write hello' });
     const second = await runtime.runTurn({ system: 'S', user: 'now what' });
 
-    expect(first.usageByModel?.[0]?.usage).toEqual({ inputTokens: 200, outputTokens: 40 });
+    expect(first.usageByModel?.[0]?.usage).toEqual({
+      ...NO_CACHE,
+      inputTokens: 200,
+      outputTokens: 40,
+    });
     // The harness reports running totals; the second turn made one model call.
-    expect(second.usageByModel?.[0]?.usage).toEqual({ inputTokens: 100, outputTokens: 20 });
+    expect(second.usageByModel?.[0]?.usage).toEqual({
+      ...NO_CACHE,
+      inputTokens: 100,
+      outputTokens: 20,
+    });
     const history = api.requests.filter((r) => r.tools.includes('Bash')).map((r) => r.messageCount);
     expect(history.at(-1)).toBeGreaterThan(history[0] ?? Number.POSITIVE_INFINITY);
   }, 180_000);
