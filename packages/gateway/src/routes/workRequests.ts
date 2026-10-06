@@ -9,6 +9,7 @@ import {
   createKnowledgeBaseProvider,
 } from '@auto-swe/shared/lib/integrations/registry';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
+import { confirmInFlight, liveInFlightExecution } from '@auto-swe/shared/lib/requestInFlight';
 import {
   resolveCanaryConfig,
   resolveFigmaConfig,
@@ -935,17 +936,64 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repo.repoName,
         repo.githubUrl
       );
-      const allocated = await allocateWorkflowId(
-        fastify.prisma,
-        baseWorkflowId,
-        { externalTicketId: workRequest.externalTicketId, repoId: repo.id },
-        legacyWorkflowIdBases(
-          workRequest.externalTicketId,
-          repo.organizationName,
-          repo.repoName,
-          repo.githubUrl
-        )
-      );
+      const settled = fastify.temporal.workflowSettledStatus;
+      // `otherRow`: the row belongs to another connection row, whose workflow id
+      // the other 409s do not name either.
+      const unconfirmedReply = (workflowId: string, otherRow = false) =>
+        reply.status(409).send({
+          error: {
+            code: 'WORKFLOW_ALREADY_EXISTS',
+            message: `Could not confirm whether ${otherRow ? 'a run' : workflowId} for ${workRequest.externalTicketId} has finished (Temporal unreachable); retry shortly`,
+          },
+        });
+
+      // A scheduled request's fires run under `sched-<id>-<ts>`, which the
+      // allocator below never reads, and a re-run pushing the same branch while
+      // one is in flight would adopt and re-link its pull request, leaving the
+      // earlier run waiting on CI that never reports. This runs first so that a
+      // row of this request whose execution is over (the commonest: a previous
+      // `eng-…` run terminated before its first activity, which has no run row
+      // for the reaper) is closed before the allocator would refuse on it.
+      const running = await liveInFlightExecution(fastify.prisma, workRequest.id, { settled });
+      if (running) {
+        return running.unconfirmed
+          ? unconfirmedReply(running.temporalWorkflowId)
+          : reply.status(409).send({
+              error: {
+                code: 'WORKFLOW_ALREADY_EXISTS',
+                message: `Workflow still running for ${workRequest.externalTicketId} (${running.temporalWorkflowId})`,
+              },
+            });
+      }
+
+      const allocate = () =>
+        allocateWorkflowId(
+          fastify.prisma,
+          baseWorkflowId,
+          { externalTicketId: workRequest.externalTicketId, repoId: repo.id },
+          legacyWorkflowIdBases(
+            workRequest.externalTicketId,
+            repo.organizationName,
+            repo.repoName,
+            repo.githubUrl
+          )
+        );
+      let allocated = await allocate();
+      // The allocator refuses on any non-terminal row of the ticket's family,
+      // including another request's, without asking Temporal. Confirm the row it
+      // names the same way and allocate again once a finished one is closed.
+      for (let attempt = 0; attempt < 3 && 'conflictWorkflowId' in allocated; attempt++) {
+        const stillRunning = await confirmInFlight(fastify.prisma, allocated.conflictWorkflowId, {
+          settled,
+        });
+        if (stillRunning) {
+          if (stillRunning.unconfirmed) {
+            return unconfirmedReply(stillRunning.temporalWorkflowId, allocated.conflictOtherRow);
+          }
+          break;
+        }
+        allocated = await allocate();
+      }
       if ('conflictWorkflowId' in allocated) {
         return reply.status(409).send({
           error: {

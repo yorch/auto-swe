@@ -30,7 +30,9 @@ import {
 } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
+import { liveInFlightExecution, type SettledLookup } from '@auto-swe/shared/lib/requestInFlight';
 import { ApplicationFailure, log } from '@temporalio/activity';
+import { workflowSettledStatus } from '../lib/agentRunSlots.js';
 
 /** The Temporal failure type a refused fire carries. */
 export const SCHEDULED_FIRE_REFUSED = 'SCHEDULED_FIRE_REFUSED';
@@ -52,6 +54,7 @@ export type ScheduledFireRefusalReason =
   | 'gate-unreadable'
   | 'not-an-org-member'
   | 'org-budget-exceeded'
+  | 'request-in-flight'
   | keyof typeof REPO_ACCESS_REFUSAL_MESSAGE;
 
 export interface ScheduledFireRefusal {
@@ -82,7 +85,8 @@ const ADVISORY_LOG: AccessLog = {
  */
 export async function scheduledFireRefusal(
   db: PrismaClient,
-  input: { workflowId: string; workRequestId?: string; launchedById?: string | null }
+  input: { workflowId: string; workRequestId?: string; launchedById?: string | null },
+  settled: SettledLookup = workflowSettledStatus
 ): Promise<ScheduledFireRefusal | null> {
   if (!input.workRequestId || !input.workflowId.startsWith('sched-')) {
     return null;
@@ -266,6 +270,25 @@ export async function scheduledFireRefusal(
       );
     }
   }
+
+  // A re-run of the standing request pushes the schedule's one branch too. A
+  // fire starting under it would adopt and re-link its pull request, so this
+  // tick is skipped, as SKIP skips one that meets another fire; the next tick
+  // asks again, and a re-run that is over (or whose row is stale: Temporal is
+  // asked) no longer blocks. The re-run is refused the other way round in the
+  // gateway.
+  const running = await liveInFlightExecution(db, input.workRequestId, {
+    ignoreFires: true,
+    settled,
+  });
+  if (running) {
+    return refuse(
+      'request-in-flight',
+      running.unconfirmed
+        ? `could not confirm whether another run of this work request (${running.temporalWorkflowId}) has finished, because Temporal could not be asked; this fire is skipped and the next one asks again`
+        : `another run of this work request is still in flight (${running.temporalWorkflowId}); this fire is skipped and the next one starts once it ends`
+    );
+  }
   return null;
 }
 
@@ -281,8 +304,14 @@ export async function recordScheduledFireRefusal(
   refusal: ScheduledFireRefusal,
   workflowId: string
 ): Promise<void> {
+  // A skipped fire is expected while a re-run is in flight, not a fault.
+  const skipped = refusal.reason === 'request-in-flight';
   try {
-    log.warn('scheduled fire refused', { ...refusal, workflowId });
+    if (skipped) {
+      log.info('scheduled fire skipped', { ...refusal, workflowId });
+    } else {
+      log.warn('scheduled fire refused', { ...refusal, workflowId });
+    }
   } catch {
     console.warn('[scheduledFire] refused', refusal, workflowId);
   }
@@ -304,7 +333,7 @@ export async function recordScheduledFireRefusal(
         action: 'UPDATE',
         actorId: null,
         afterJson: {
-          event: 'fire-refused',
+          event: skipped ? 'fire-skipped' : 'fire-refused',
           message: refusal.message,
           reason: refusal.reason,
           workflowId,
@@ -336,7 +365,7 @@ export async function assertScheduledFireAuthorized(input: {
   }
   await recordScheduledFireRefusal(prisma, refusal, input.workflowId);
   throw ApplicationFailure.nonRetryable(
-    `scheduled fire refused: ${refusal.message}`,
+    `scheduled fire ${refusal.reason === 'request-in-flight' ? 'skipped' : 'refused'}: ${refusal.message}`,
     SCHEDULED_FIRE_REFUSED,
     { reason: refusal.reason, scheduleId: refusal.scheduleId }
   );

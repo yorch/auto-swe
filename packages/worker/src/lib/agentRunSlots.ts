@@ -1,7 +1,9 @@
 import { prisma } from '@auto-swe/shared/db';
 import {
   type AgentRunSlot,
+  type ClosedLedgerStatus,
   closeAgentRunLedgerRows,
+  closedLedgerStatusFor,
   isWorkflowStatusFinished,
   loadAgentRunSlots,
   reconcileAgentRunSlots,
@@ -22,6 +24,24 @@ export async function workflowIsRunning(workflowId: string): Promise<boolean> {
   } catch (err) {
     if (err instanceof WorkflowNotFoundError) {
       return false;
+    }
+    throw err;
+  }
+}
+
+/**
+ * The ledger status a finished execution closes its row with, null while it
+ * runs; `FAILED` for one that does not exist. Throws when Temporal cannot be asked.
+ */
+export async function workflowSettledStatus(
+  workflowId: string
+): Promise<ClosedLedgerStatus | null> {
+  try {
+    const { status } = await getTemporalClient().workflow.getHandle(workflowId).describe();
+    return closedLedgerStatusFor(status.name);
+  } catch (err) {
+    if (err instanceof WorkflowNotFoundError) {
+      return 'FAILED';
     }
     throw err;
   }

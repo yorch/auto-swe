@@ -9,8 +9,11 @@ vi.mock('@temporalio/activity', () => ({
       return err;
     },
   },
-  log: { warn: vi.fn() },
+  log: { info: vi.fn(), warn: vi.fn() },
 }));
+
+const temporal = vi.hoisted(() => ({ running: vi.fn() }));
+vi.mock('../lib/agentRunSlots.js', () => ({ workflowSettledStatus: temporal.running }));
 
 const gate = vi.hoisted(() => ({
   value: { mode: 'off', staleAfterHours: 72 } as { mode: string; staleAfterHours: number } | null,
@@ -41,6 +44,7 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    activeWorkflow: { findMany: vi.fn(), updateMany: vi.fn() },
     configAuditLog: { create: vi.fn(), findFirst: vi.fn() },
     connection: { findUnique: vi.fn() },
     organizationMembership: { findUnique: vi.fn() },
@@ -117,6 +121,9 @@ beforeEach(() => {
   db.orgMonthlyUsage.findUnique.mockResolvedValue(null);
   db.configAuditLog.findFirst.mockResolvedValue(null);
   db.configAuditLog.create.mockResolvedValue({});
+  db.activeWorkflow.findMany.mockResolvedValue([]);
+  db.activeWorkflow.updateMany.mockResolvedValue({ count: 1 });
+  temporal.running.mockResolvedValue(null);
 });
 
 describe('scheduledFireRefusal', () => {
@@ -293,6 +300,66 @@ describe('scheduledFireRefusal', () => {
     }
   });
 
+  const RERUN = 'eng-acme-payments-T-1';
+  const staleRow = (updatedAt = new Date(Date.now() - 3_600_000)) => ({
+    temporalWorkflowId: RERUN,
+    updatedAt,
+  });
+
+  it('skips a fire while a re-run of the standing request is in flight', async () => {
+    db.activeWorkflow.findMany.mockResolvedValueOnce([staleRow()]);
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+      message: expect.stringContaining(RERUN),
+      reason: 'request-in-flight',
+      scheduleId: SCHEDULE_ID,
+    });
+    expect(temporal.running).toHaveBeenCalledWith(RERUN);
+    expect(db.activeWorkflow.updateMany).not.toHaveBeenCalled();
+    // Fires are left out of the question (SKIP keeps those apart), and the
+    // request's id and the non-terminal statuses are what it asks about.
+    expect(db.activeWorkflow.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          currentStatus: { notIn: expect.arrayContaining(['COMPLETED', 'SCHEDULED']) },
+          NOT: { temporalWorkflowId: { startsWith: 'sched-' } },
+          workRequestId: 'wr-1',
+        },
+      })
+    );
+  });
+
+  it('lets a fire proceed when nothing else of the request is in flight', async () => {
+    expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
+  });
+
+  it('closes a stale row whose workflow Temporal reports finished, and lets the fire proceed', async () => {
+    db.activeWorkflow.findMany.mockResolvedValueOnce([staleRow()]);
+    temporal.running.mockResolvedValueOnce('TIMED_OUT');
+    expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
+    expect(db.activeWorkflow.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { currentStatus: 'TIMED_OUT' },
+        where: expect.objectContaining({ temporalWorkflowId: { in: [RERUN] } }),
+      })
+    );
+  });
+
+  it('trusts a row written moments ago without asking Temporal', async () => {
+    db.activeWorkflow.findMany.mockResolvedValueOnce([staleRow(new Date())]);
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'request-in-flight' });
+    expect(temporal.running).not.toHaveBeenCalled();
+  });
+
+  it('skips the fire, saying why, when Temporal cannot be asked', async () => {
+    db.activeWorkflow.findMany.mockResolvedValueOnce([staleRow()]);
+    temporal.running.mockRejectedValueOnce(new Error('unavailable'));
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+      message: expect.stringContaining('Temporal could not be asked'),
+      reason: 'request-in-flight',
+    });
+    expect(db.activeWorkflow.updateMany).not.toHaveBeenCalled();
+  });
+
   it('fails closed when the access policy has never been readable', async () => {
     gate.value = null;
     expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'gate-unreadable' });
@@ -344,5 +411,21 @@ describe('assertScheduledFireAuthorized', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('records a skip for an in-flight re-run as a skip, not as an access refusal', async () => {
+    db.activeWorkflow.findMany.mockResolvedValueOnce([
+      { temporalWorkflowId: 'eng-acme-payments-T-1', updatedAt: new Date(Date.now() - 3_600_000) },
+    ]);
+    const err = (await assertScheduledFireAuthorized(FIRE).catch((e) => e)) as Error;
+    expect(err.message).toMatch(/^scheduled fire skipped/);
+    expect(db.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: expect.objectContaining({ event: 'fire-skipped', reason: 'request-in-flight' }),
+      }),
+    });
+    const { log } = await import('@temporalio/activity');
+    expect(log.info).toHaveBeenCalledWith('scheduled fire skipped', expect.anything());
+    expect(log.warn).not.toHaveBeenCalled();
   });
 });

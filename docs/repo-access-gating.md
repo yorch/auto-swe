@@ -434,7 +434,12 @@ Platform `ADMIN`s bypass the gate, consistent with every other check in the gate
   installation retirement, org membership and the org's monthly cap — and refuses the fire with a
   non-retryable failure when any of them no longer holds; the next tick decides again, so restoring
   access resumes the schedule. A refused fire is logged by the worker and audited against the
-  schedule (`config_audit_log`, entity `ScheduledWorkRequest`) at most once an hour per reason. The
+  schedule (`config_audit_log`, entity `ScheduledWorkRequest`) at most once an hour per reason. One
+  refusal is not an access decision: while a retry (or any other non-fire run) of the standing
+  request is in flight, which can be days when it awaits a merge, every fire is skipped with reason
+  `request-in-flight`. That is expected: each tick shows as a refused execution, the worker logs it at
+  info, the audit row's `afterJson.event` is `fire-skipped` (its action is `UPDATE`, as for a refusal), and the schedule resumes on the first tick after the
+  retry ends ([work-views.md](./work-views.md)). The
   acting user (`actsAsUserId`) is whoever last re-activated the schedule or changed what it runs —
   that edit takes the launch decision, so it also takes over the schedule — and their own saved
   token is the identity judged. A schedule from before that was recorded falls back to its creator,

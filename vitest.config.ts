@@ -52,6 +52,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/tenantGuard.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/requestInFlight',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/requestInFlight.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/sameRepositoryIds',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/sameRepositoryIds.ts'),
       },
