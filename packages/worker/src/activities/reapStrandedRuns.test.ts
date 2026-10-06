@@ -23,6 +23,7 @@ vi.mock('./channelRun.js', () => ({
 const { NotFound } = vi.hoisted(() => ({ NotFound: class extends Error {} }));
 vi.mock('@temporalio/client', () => ({ WorkflowNotFoundError: NotFound }));
 
+import { closedLedgerStatusFor } from '@auto-swe/shared/lib/agentRunAdmission';
 import { REAPER_GRACE_MS, reapedStatusFor, reapStrandedRuns } from './reapStrandedRuns.js';
 
 const run = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -36,6 +37,17 @@ const run = (id: string, extra: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('reapedStatusFor and the ledger mapping', () => {
+  it('agree for every Temporal state, COMPLETED reading SUCCESS on the run', () => {
+    for (const state of ['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED', 'TERMINATED', 'X']) {
+      const run = reapedStatusFor(state);
+      expect(closedLedgerStatusFor(state === 'X' ? 'FAILED' : state)).toBe(
+        run === 'SUCCESS' ? 'COMPLETED' : run
+      );
+    }
+  });
 });
 
 describe('reapedStatusFor', () => {

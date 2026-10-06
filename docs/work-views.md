@@ -206,12 +206,30 @@ http(s) address.
   execution with no such row (a self-registered ledger row with no request, an unmatched scheduled
   anchor) is not covered and may open a new PR after a close, and an open PR it adopts stays linked
   to its earlier execution, whose workflow receives the CI signal.
-- Two executions of one request can overlap: a retry of a scheduled standing request is not refused
-  while a fire is running, because the workflow id allocator checks only the ticket's own id family
-  and a schedule's overlap policy covers only the schedule's own fires. Both push the same branch,
-  and the second to reach the PR step adopts and re-links the other's open PR, so the other keeps
-  waiting for a CI signal that now goes to the adopter until its wait times out. With two concurrent
-  adoptions the last write wins.
+- Two executions of one request are kept apart by two checks that each read the ledger and then
+  act, with no lock between them. A retry is refused with `409 WORKFLOW_ALREADY_EXISTS` while any
+  ledger row of the request is not terminal, a scheduled fire's and a template-launched run's
+  included (a retry of a `wf-` run is refused while that run is in flight). A scheduled fire is
+  skipped (reason `request-in-flight`) while a row of the request that is not a fire is not
+  terminal; a retry can last days awaiting a merge, and every fire in that time is skipped, each
+  tick shown as a refused execution with at most one audit row an hour (its `afterJson.event` is
+  `fire-skipped`), and the schedule resumes on the first tick after the retry ends. The schedule's
+  own overlap policy keeps fires apart from each other.
+- A ledger row is only a claim, and one can be left non-terminal with no run row for the reaper to
+  find (a launch that failed after its ledger write, a workflow terminated before its first
+  activity). So before either check refuses, the row is confirmed with Temporal: a finished or
+  absent workflow has its row closed with the status Temporal reports (`COMPLETED`, `TIMED_OUT`,
+  `CANCELLED` for a terminated or cancelled one, else `FAILED`) and does not block; a row written in
+  the last five minutes is trusted without asking; and when Temporal cannot be asked, or does not
+  answer within three seconds, the row blocks and the 409 or the skip says it could not be confirmed.
+  The retry's workflow id allocator refuses on any non-terminal row of the ticket's `eng-` family
+  without asking, so a retry confirms the row the allocator names the same way (including one of
+  another request) and allocates again once it is closed. Rows of the ticket's family under a legacy
+  id spelling are confirmed the same way, since the allocator names whichever row it refuses on.
+  A retry and a fire that both read before either has written its ledger row can still overlap, and
+  the second to reach the PR step then adopts and re-links the other's open PR as described above.
+- A run ended by a `terminate` node with status `SKIPPED` closes its ledger row as `COMPLETED`, the
+  run keeping `SKIPPED`, so it never reads as in flight.
 - Adopting an open PR of the request is by request and repository only; no head branch is stored.
   After a branch prefix change, or a missed close webhook, the adopted PR may have a different head
   branch than the one the run pushed.

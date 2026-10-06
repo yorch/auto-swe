@@ -1,4 +1,8 @@
-import { isWorkflowStatusFinished } from '@auto-swe/shared/lib/agentRunAdmission';
+import {
+  type ClosedLedgerStatus,
+  closedLedgerStatusFor,
+  isWorkflowStatusFinished,
+} from '@auto-swe/shared/lib/agentRunAdmission';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
 import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
@@ -263,6 +267,12 @@ declare module 'fastify' {
        * is `false`; an unreachable Temporal throws.
        */
       isWorkflowGone: (workflowId: string) => Promise<boolean>;
+      /**
+       * The ledger status a finished execution closes its row with
+       * (`closedLedgerStatusFor`; FAILED when it does not exist), null while it
+       * runs; an unreachable Temporal throws.
+       */
+      workflowSettledStatus: (workflowId: string) => Promise<ClosedLedgerStatus | null>;
       cancelWorkflow: (workflowId: string) => Promise<void>;
       syncConsolidationSchedule: (config: ConsolidationScheduleConfig) => Promise<void>;
       getConsolidationScheduleStatus: () => Promise<ConsolidationScheduleStatus>;
@@ -1035,6 +1045,18 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       // SKIP: a manual fire while a previous fire is still running is dropped
       // (same branch / same standing work request — overlap is never useful).
       await handle.trigger(ScheduleOverlapPolicy.SKIP);
+    },
+
+    async workflowSettledStatus(workflowId: string): Promise<ClosedLedgerStatus | null> {
+      try {
+        const description = await client.workflow.getHandle(workflowId).describe();
+        return closedLedgerStatusFor(description.status.name);
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowNotFoundError') {
+          return 'FAILED';
+        }
+        throw err;
+      }
     },
   });
 
