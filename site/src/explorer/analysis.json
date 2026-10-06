@@ -1648,9 +1648,17 @@
     {
       "body": "Spec and run-pinned settings are captured, but not every configuration read is frozen.",
       "category": "Reproducibility",
-      "detail": "GLOBAL agent version maps, skill revisions and run-pinned settings are captured at run start; more-specific agent rows resolve their current active versions. A run-pinned key missing from a run’s snapshot is pinned the first time an activity’s request context reads it, at the value that read resolves, and a value already pinned is never replaced; channel-turn runs are not backfilled this way, and a failed backfill falls back to the live value until the next lookup. Each agent’s runtime is pinned on the run the first time the run resolves that agent. Non-run-pinned settings and credentials can change. This is selective reproducibility, not a hermetically frozen run.",
+      "detail": "GLOBAL agent version maps, skill revisions and run-pinned settings are captured at run start; more-specific agent rows resolve their current active versions. A run-pinned key missing from a run’s snapshot is pinned the first time an activity’s request context reads it, at the value that read resolves, and a value already pinned is never replaced; a channel turn’s run is pinned at its own start and backfilled at its Slack channel’s scope, and a failed backfill falls back to the live value until the next lookup. Each agent’s runtime is pinned on the run the first time the run resolves that agent. Non-run-pinned settings and credentials can change. This is selective reproducibility, not a hermetically frozen run.",
       "id": "version",
-      "refs": ["agents", "pins", "skillSnapshot", "pinFirstRead", "pinCas", "agentRuntimePin"],
+      "refs": [
+        "agents",
+        "pins",
+        "skillSnapshot",
+        "pinFirstRead",
+        "pinCas",
+        "agentRuntimePin",
+        "channelRunRow"
+      ],
       "status": "Implemented",
       "title": "Snapshots ≠ total immutability"
     },
@@ -1767,7 +1775,8 @@
         "harnessPolicy",
         "prClosedGuard",
         "agentRuntimeResolve",
-        "agentRuntimePin"
+        "agentRuntimePin",
+        "harnessRegistry"
       ],
       "status": "Implemented",
       "title": "Ticket-to-PR engineering"
@@ -1899,9 +1908,18 @@
     {
       "body": "Store embeddings and lessons with run/agent lineage, retrieve related items and consolidate similar memories.",
       "category": "Knowledge",
-      "detail": "MemoryItem supports generic scopes and entities plus repo/channel/team/org links. Storage uses vector(1536); embedding model compatibility matters. Consolidation soft-deletes merged items.",
+      "detail": "MemoryItem supports generic scopes and entities plus repo/channel/team/org links. Storage uses vector(1536); embedding model compatibility matters. Consolidation soft-deletes merged items. Recalled memory is text a later run reads, so the worker gates it on injection patterns: a lesson, a channel summary or a passively ingested note written through insertMemoryItem is refused before it is embedded when its lesson or rationale matches an INJECTION scanner pattern, and the two consolidation passes apply the same check to their merged notes before inserting, leaving the cluster as it was. Lesson and channel-memory retrieval drop any recalled item that matches, which also covers rows written before the gate and an admin’s edit: PATCH /slack-channels/:id/memory/:memoryId saves edited text without the check. A scan that throws refuses the write or recalls nothing; a scan that returns incomplete (a pattern that overran its budget or is quarantined) gates only on the patterns it ran. The implementer’s lessons block and the channel assistant’s memory context are wrapped in a block that labels the notes reference data, not instructions. The gate does not use the EXFILTRATION patterns, and passing the gate is not proof that recalled text is benign. A shell step’s command text is masked for credential-shaped values before it becomes an auto-commit message or a stored lesson. The lessons routes list and delete only repository lessons (scope swe-lessons), not channel memory, and a lesson delete writes an audit row carrying the deleted content.",
       "id": "memory",
-      "refs": ["memory", "schema"],
+      "refs": [
+        "memory",
+        "memoryGuard",
+        "memoryWrite",
+        "consolidationGuard",
+        "adminMemoryEdit",
+        "lessonsScope",
+        "maskShell",
+        "schema"
+      ],
       "status": "Implemented",
       "title": "Scoped semantic memory"
     },
@@ -2025,7 +2043,7 @@
     {
       "body": "Launch scheduled repository work, template webhooks, GitHub event handling and maintenance sweeps.",
       "category": "Operations",
-      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration (repository access sync, eval regression and revalidation); lesson consolidation, repository dependency scans, provider model discovery, the run reaper and the skill-source update check, by contrast, are on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. The skill-source check is one system-wide schedule (daily by default) that asks each tracked source’s host which commit its ref names and only flags a different one; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow.",
+      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration (repository access sync, eval regression and revalidation); lesson consolidation, repository dependency scans, provider model discovery, the run reaper and the skill-source update check, by contrast, are on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. The skill-source check is one system-wide schedule (daily by default) that asks each tracked source’s host which commit its ref names and only flags a different one; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow. While a re-run (or any other non-fire run) of a schedule’s standing request is in flight, each fire is skipped as a refused execution with reason request-in-flight, logged at info and audited (event fire-skipped, action UPDATE) at most once an hour, and the schedule resumes on the first tick after the run ends. A re-run is refused with 409 WORKFLOW_ALREADY_EXISTS while any live ledger row of the request exists: a fire’s, an earlier run’s, or a child run that carries the request’s id. Both read the request’s non-terminal ledger rows, the schedule’s anchor excluded, and confirm each with Temporal before refusing: a finished or absent workflow has its stale row closed with the status Temporal reports (COMPLETED, TIMED_OUT, CANCELLED for terminated or cancelled, else FAILED) and does not block (closing the row is best-effort: a failed close is ignored and the next check asks again), a row written in the last five minutes is trusted, and when Temporal cannot be asked or does not answer within three seconds the row blocks and the refusal says so. The re-run also confirms the row its workflow id allocator refuses on, which reads only the ticket’s eng- family and never asks Temporal itself, and allocates again once that row is closed. A run ended by a SKIPPED terminate node closes its ledger row as COMPLETED, so it never reads as in flight. Between the read and the start there is no lock.",
       "id": "schedules",
       "refs": [
         "gateway",
@@ -2042,7 +2060,14 @@
         "sweepDefaults",
         "skillUpdateSchedule",
         "skillUpdateEnv",
-        "skillUpdateWorkflow"
+        "skillUpdateWorkflow",
+        "retryInFlight",
+        "fireInFlight",
+        "inFlightQuery",
+        "inFlightConfirm",
+        "fireSkipAudit",
+        "closeStatus",
+        "skippedClose"
       ],
       "status": "Implemented",
       "title": "Scheduled automation & webhooks"
@@ -2309,7 +2334,7 @@
     {
       "body": "The worker decides every harness tool call, verifies the harness binary before each turn and treats an undecided call as a refusal.",
       "category": "Security",
-      "detail": "Tools the agent’s grant leaves out are left off the harness’s tool list and refused by the policy. A tool call the worker does not answer within the decision deadline is refused, and writes to the harness’s own configuration (.claude/, CLAUDE.md, CLAUDE.local.md, .mcp.json) are refused. Managed settings make the harness ignore the repository’s permission allow rules and disable bypass mode. Before every turn the container’s copy of the binary is compared by SHA-256 with the worker’s, re-copied on a mismatch, and a turn whose copy still differs fails with HARNESS_BINARY_UNVERIFIED.",
+      "detail": "Tools the agent’s grant leaves out are left off the harness’s tool list and refused by the policy. A harness is selectable only if it declares that the worker decides each of its tool calls; the registry refuses one that does not. A tool call the worker does not answer within the decision deadline, or whose decision throws, is refused, and writes to the harness’s own configuration (.claude/, CLAUDE.md, CLAUDE.local.md, .mcp.json) are refused. Managed settings make the harness ignore the repository’s permission allow rules and disable bypass mode. Before every turn the container’s copy of the binary is compared by SHA-256 with the worker’s, re-copied on a mismatch, and a turn whose copy still differs fails with HARNESS_BINARY_UNVERIFIED.",
       "id": "harnessConfinement",
       "refs": [
         "harnessPolicy",
@@ -2317,7 +2342,9 @@
         "harnessConfigGuard",
         "harnessPolicyDeadline",
         "harnessManaged",
-        "harnessBinary"
+        "harnessBinary",
+        "harnessRegistry",
+        "harnessDecide"
       ],
       "status": "Implemented",
       "title": "Claude Code harness confinement"
@@ -2426,7 +2453,8 @@
         "runlessBudget",
         "harness",
         "agentRunHarness",
-        "harnessStreamedUsage"
+        "harnessStreamedUsage",
+        "harnessUsageSelect"
       ],
       "status": "Code-derived caveat",
       "title": "Budget precision differs by execution path"
@@ -2510,7 +2538,8 @@
         "harnessManaged",
         "harnessConfigGuard",
         "harnessUnsupported",
-        "agentRunHarness"
+        "agentRunHarness",
+        "harnessKeySource"
       ],
       "status": "Confirmed boundary",
       "title": "The Claude Code runtime puts a model key in the workspace"
@@ -2572,7 +2601,7 @@
     {
       "body": "Skill pinning covers runs that have a WorkflowRun row, and it is not a freeze of every skill input.",
       "category": "Coverage",
-      "detail": "The channel assistant’s own conversational runs pin GLOBAL agent versions and skill revisions on the row they create, for the turn’s team and organization (taken from its Slack channel when the turn does not name them). An epic’s children are runs of their own and pin at their own start. A skill with no entry in the map, such as one created after the run began, resolves its current revision. isActive is read live, within the config cache window. A missing pinned revision row falls back to the live text, with a warning in the log and, inside an activity, a skill.pinned_revision_missing trace event, which is the swap pinning exists to prevent. A repo-less channel task finds its tenant by Slack channel id, which is unique only per workspace.",
+      "detail": "The channel assistant’s own conversational runs pin GLOBAL agent versions and skill revisions on the row they create, for the turn’s team and organization (taken from its Slack channel when the turn does not name them), and the run-pinned settings at the scope the turn reads them with: its template, its channel and that tenant. An epic’s children are runs of their own and pin at their own start. A skill with no entry in the map, such as one created after the run began, resolves its current revision. isActive is read live, within the config cache window. A missing pinned revision row falls back to the live text, with a warning in the log and, inside an activity, a skill.pinned_revision_missing trace event, which is the swap pinning exists to prevent. A repo-less channel task finds its tenant by Slack channel id, which is unique only per workspace.",
       "id": "skillPinGaps",
       "refs": ["skillSnapshot", "skillTenant", "skillPinRead", "skillPinMissing", "channelRunRow"],
       "status": "Confirmed boundary",
@@ -2662,7 +2691,7 @@
     {
       "body": "A pull-request webhook updates a row; of those events only a merge reaches the workflow, and only a delivered webhook updates anything.",
       "category": "Reliability",
-      "detail": "Only pull requests that a workflow’s pull-request step or an Agent Run’s draft delivery opens get a row. CLOSED and MERGED come only from signed pull_request webhooks, so without delivery (polling-only CI, a lost delivery) the row stays OPEN, and the list and the PR_CLOSED_BY_REVIEWER refusal both depend on delivery. An Agent Run’s own execution has ended by the time its pull request merges, so a merge is recorded without a signal, and its generated ticket id is never synced to the tracker. If an older row still holds the pull request’s number in that repository, the new row is not written. A run waiting on its merge keeps waiting after its pull request is closed unmerged, until a merge arrives or the wait ends; the refusal appears only when a later push step reaches the pull-request activity. A webhook for a pull request the platform did not open finds no row and changes nothing. Reopening restores only CLOSED to OPEN, and event times come from the host’s payload when it parses, else the time of receipt. The ticket list shows the tracker’s title, status and link as captured when a request was submitted, from the newest visible request that holds an answer; they are not refreshed. RunInput.ticketIsSynthetic marks an id the platform generated: the template launch and template webhook fallbacks, PRD runs (PRD-… ids), scheduled work requests (…-SCHED-… ids) and PRD stories the tracker gave no id; it defaults to false, so a user- or tracker-supplied id is never flagged. Agent runs and channel tasks are flagged and also recognised by template origin, template name or channel id; the channel assistant files no request of its own. An adopted pull request is re-linked only when the executing workflow has a ledger row of its own; without one it stays linked to its earlier execution, whose workflow receives the CI signal, and the close check does not cover it. Adoption matches by request and repository only and no head branch is stored, so after a branch prefix change or a missed close webhook the adopted pull request can have a different head branch than the one pushed. A retry of a scheduled standing request is not refused while a fire is running (the workflow id allocator checks only the ticket’s own id family, and the schedule’s overlap policy covers only its own fires); both push the same branch, and the later one to reach the pull-request step adopts and re-links the other’s pull request, so the other waits for a CI signal that now goes to the adopter until its wait ends.",
+      "detail": "Only pull requests that a workflow’s pull-request step or an Agent Run’s draft delivery opens get a row. CLOSED and MERGED come only from signed pull_request webhooks, so without delivery (polling-only CI, a lost delivery) the row stays OPEN, and the list and the PR_CLOSED_BY_REVIEWER refusal both depend on delivery. An Agent Run’s own execution has ended by the time its pull request merges, so a merge is recorded without a signal, and its generated ticket id is never synced to the tracker. If an older row still holds the pull request’s number in that repository, the new row is not written. A run waiting on its merge keeps waiting after its pull request is closed unmerged, until a merge arrives or the wait ends; the refusal appears only when a later push step reaches the pull-request activity. A webhook for a pull request the platform did not open finds no row and changes nothing. Reopening restores only CLOSED to OPEN, and event times come from the host’s payload when it parses, else the time of receipt. The ticket list shows the tracker’s title, status and link as captured when a request was submitted, from the newest visible request that holds an answer; they are not refreshed. RunInput.ticketIsSynthetic marks an id the platform generated: the template launch and template webhook fallbacks, PRD runs (PRD-… ids), scheduled work requests (…-SCHED-… ids) and PRD stories the tracker gave no id; it defaults to false, so a user- or tracker-supplied id is never flagged. Agent runs and channel tasks are flagged and also recognised by template origin, template name or channel id; the channel assistant files no request of its own. An adopted pull request is re-linked only when the executing workflow has a ledger row of its own; without one it stays linked to its earlier execution, whose workflow receives the CI signal, and the close check does not cover it. Adoption matches by request and repository only and no head branch is stored, so after a branch prefix change or a missed close webhook the adopted pull request can have a different head branch than the one pushed. A retry is refused while a live ledger row of its request exists, a scheduled fire’s or a template-launched run’s included, and a fire is skipped while a live non-fire row does; each row is confirmed with Temporal before it blocks (the allocator’s own conflict row included), and each check reads the ledger and then acts, so a retry and a fire that both read before either writes its row can still push the same branch, and the later one to reach the pull-request step adopts and re-links the other’s pull request, so the other waits for a CI signal that now goes to the adopter until its wait ends.",
       "id": "prTrackingBounds",
       "refs": [
         "prEvents",
@@ -2674,7 +2703,10 @@
         "ticketSynthPrd",
         "ticketSynthSchedule",
         "ticketAutomated",
-        "agentRunPr"
+        "agentRunPr",
+        "retryInFlight",
+        "fireInFlight",
+        "inFlightConfirm"
       ],
       "status": "Confirmed boundary",
       "title": "Pull-request tracking records the host’s state; it does not steer the run"
@@ -2715,7 +2747,7 @@
     {
       "body": "The binary is hashed by sha256sum inside the workspace, which the agent can modify.",
       "category": "Trust boundary",
-      "detail": "The check catches a replaced or damaged copy between turns, but an agent able to replace the container’s sha256sum could make a substitute binary pass. It runs before each turn, not during one, and needs sha256sum in the image.",
+      "detail": "The check catches a replaced or damaged copy between turns, but it relies on the container’s sha256sum, which the agent can write. It runs before each turn, not during one, and needs sha256sum in the image.",
       "id": "harnessBinaryCheck",
       "refs": ["harnessBinary"],
       "status": "Code-derived caveat",
@@ -3551,9 +3583,9 @@
       "anchor": "export async function buildImplementerTurnRunner(",
       "before": 11,
       "id": "harness",
-      "lines": 45,
+      "lines": 65,
       "path": "packages/worker/src/agents/implementerRuntimeSelect.ts",
-      "title": "Implementer runtime selection"
+      "title": "Implementer runtime selection through the harness registry"
     },
     {
       "anchor": "export const HARNESS_TOOLS",
@@ -3565,9 +3597,9 @@
     },
     {
       "anchor": "// Named without a value: docker reads it from its own environment below,",
-      "before": 14,
+      "before": 11,
       "id": "harnessKey",
-      "lines": 30,
+      "lines": 33,
       "path": "packages/worker/src/agents/harness/runtime.ts",
       "title": "Harness credential inside the workspace"
     },
@@ -4148,6 +4180,46 @@
       "title": "A scheduled fire’s run connection is its schedule’s repository"
     },
     {
+      "anchor": "const running = await liveInFlightExecution(fastify.prisma, workRequest.id, { settled });",
+      "before": 17,
+      "id": "retryInFlight",
+      "lines": 67,
+      "path": "packages/gateway/src/routes/workRequests.ts",
+      "title": "A retry confirms this request’s rows, then the allocator’s conflict row, with Temporal before refusing"
+    },
+    {
+      "anchor": "const running = await liveInFlightExecution(db, input.workRequestId, {",
+      "before": 6,
+      "id": "fireInFlight",
+      "lines": 18,
+      "path": "packages/worker/src/activities/scheduledFireAuthorization.ts",
+      "title": "A scheduled fire is skipped while a live non-fire execution of its request exists"
+    },
+    {
+      "anchor": "const rows = await db.activeWorkflow.findMany({",
+      "before": 1,
+      "id": "inFlightQuery",
+      "lines": 12,
+      "path": "packages/shared/src/lib/requestInFlight.ts",
+      "title": "Candidates are the request’s non-terminal ledger rows, the schedule anchor excluded"
+    },
+    {
+      "anchor": "const status = await new Promise<ClosedLedgerStatus | null>((resolve, reject) => {",
+      "before": 8,
+      "id": "inFlightConfirm",
+      "lines": 32,
+      "path": "packages/shared/src/lib/requestInFlight.ts",
+      "title": "A candidate is trusted inside a grace window, asked of Temporal under a timeout, and blocks when the lookup does not answer"
+    },
+    {
+      "anchor": "const skipped = refusal.reason === 'request-in-flight';",
+      "before": 0,
+      "id": "fireSkipAudit",
+      "lines": 37,
+      "path": "packages/worker/src/activities/scheduledFireAuthorization.ts",
+      "title": "A skipped fire is logged at info and audited once an hour as event fire-skipped"
+    },
+    {
       "anchor": "export async function planEpic(epicRequest: EpicPlanRequest)",
       "before": 0,
       "id": "epicOwner",
@@ -4517,11 +4589,11 @@
     },
     {
       "anchor": "snapshotSkillRevisions({ orgId, teamId }),",
-      "before": 6,
+      "before": 9,
       "id": "channelRunRow",
-      "lines": 18,
+      "lines": 33,
       "path": "packages/worker/src/activities/channelRun.ts",
-      "title": "A channel run row pins agent versions and skill revisions"
+      "title": "A channel run row pins agent versions, skill revisions and run-pinned settings"
     },
     {
       "anchor": "export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';",
@@ -5487,17 +5559,17 @@
       "anchor": "async function runOnHarness(",
       "before": 12,
       "id": "agentRunHarness",
-      "lines": 46,
+      "lines": 53,
       "path": "packages/worker/src/activities/runAgentTask.ts",
-      "title": "An agent run on the Claude Code harness"
+      "title": "An agent run on a registered harness"
     },
     {
       "anchor": "const loop = await resolveAgentRuntime(key, agentCtx, 'mastra');",
-      "before": 4,
+      "before": 3,
       "id": "agentRunLoop",
       "lines": 8,
       "path": "packages/worker/src/activities/runAgentTask.ts",
-      "title": "Agent runs default to the Mastra loop"
+      "title": "Agent runs use the Mastra loop unless the agent selects a registered harness"
     },
     {
       "anchor": "export const claudeCodeHarness = defineHarness<ClaudeCodeAccess>({",
@@ -5621,11 +5693,11 @@
     },
     {
       "anchor": "async function pinOnFirstRead(",
-      "before": 14,
+      "before": 5,
       "id": "pinFirstRead",
-      "lines": 25,
+      "lines": 41,
       "path": "packages/worker/src/lib/config/contextLookup.ts",
-      "title": "Missing run-pinned keys are pinned on first read"
+      "title": "Missing run-pinned keys are pinned on first read, a channel turn's at its channel's scope"
     },
     {
       "anchor": "export async function backfillPinnedSettings(",
@@ -5738,6 +5810,102 @@
       "lines": 9,
       "path": "packages/worker/src/workflows/channelAssistant.ts",
       "title": "A thread is told when a task cannot start"
+    },
+    {
+      "anchor": "export function createHarnessRegistry(",
+      "before": 7,
+      "id": "harnessRegistry",
+      "lines": 35,
+      "path": "packages/worker/src/agents/harness/registry.ts",
+      "title": "The harness registry refuses a harness the worker cannot decide every call of"
+    },
+    {
+      "anchor": "export async function decideToolCall(",
+      "before": 12,
+      "id": "harnessDecide",
+      "lines": 39,
+      "path": "packages/worker/src/agents/claudeCode/policy.ts",
+      "title": "The worker decides each Claude Code tool call within the granted tools"
+    },
+    {
+      "anchor": "secretEnv: { ANTHROPIC_API_KEY: access.apiKey },",
+      "before": 8,
+      "id": "harnessKeySource",
+      "lines": 11,
+      "path": "packages/worker/src/agents/claudeCode/runtime.ts",
+      "title": "The Claude Code API key is handed to the harness process in the container"
+    },
+    {
+      "anchor": "const spent = (): ClaudeUsageReport =>",
+      "before": 3,
+      "id": "harnessUsageSelect",
+      "lines": 4,
+      "path": "packages/worker/src/agents/claudeCode/runtime.ts",
+      "title": "A turn with no final result reports the streamed calls"
+    },
+    {
+      "anchor": "export async function memoryInjectionMatches(",
+      "before": 3,
+      "id": "memoryGuard",
+      "lines": 70,
+      "path": "packages/worker/src/lib/memoryGuard.ts",
+      "title": "Injection gate on memory writes and recall (INJECTION patterns only)"
+    },
+    {
+      "anchor": "export async function insertMemoryItem(input: {",
+      "before": 0,
+      "id": "memoryWrite",
+      "lines": 45,
+      "path": "packages/worker/src/lib/memoryStore.ts",
+      "title": "Memory write path"
+    },
+    {
+      "anchor": "export function closedLedgerStatusFor(",
+      "before": 8,
+      "id": "closeStatus",
+      "lines": 24,
+      "path": "packages/shared/src/lib/agentRunAdmission.ts",
+      "title": "A finished execution closes its row COMPLETED, TIMED_OUT or CANCELLED, else FAILED"
+    },
+    {
+      "anchor": "s === 'SUCCESS' || s === 'SKIPPED' ? 'COMPLETED' : s;",
+      "before": 6,
+      "id": "skippedClose",
+      "lines": 7,
+      "path": "packages/worker/src/activities/templates.ts",
+      "title": "A SKIPPED run closes its ledger row COMPLETED"
+    },
+    {
+      "anchor": "where: { id: request.params.id, scope: LESSON_SCOPE },",
+      "before": 6,
+      "id": "lessonsScope",
+      "lines": 30,
+      "path": "packages/gateway/src/routes/lessons.ts",
+      "title": "Lesson routes are scoped to swe-lessons and a delete is audited with its content"
+    },
+    {
+      "anchor": "const refused = await memoryInjectionMatches(",
+      "before": 3,
+      "id": "consolidationGuard",
+      "lines": 14,
+      "path": "packages/worker/src/activities/consolidateLessons.ts",
+      "title": "A consolidated note that matches an injection pattern is refused before it is inserted"
+    },
+    {
+      "anchor": "...(body.lessonSummary !== undefined ? { lessonSummary: body.lessonSummary } : {}),",
+      "before": 14,
+      "id": "adminMemoryEdit",
+      "lines": 22,
+      "path": "packages/gateway/src/routes/slackChannels.ts",
+      "title": "An admin’s memory edit is saved without the injection check"
+    },
+    {
+      "anchor": "export function maskCredentialShapes(",
+      "before": 0,
+      "id": "maskShell",
+      "lines": 22,
+      "path": "packages/worker/src/lib/redactToken.ts",
+      "title": "Credential-shaped values are masked in a shell step’s command text"
     }
   ],
   "usecases": [
