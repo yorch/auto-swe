@@ -166,7 +166,7 @@ Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is fo
 
 Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present whenever an MCP server was contacted (including a connect that returned zero tools) and **must** be called in a `finally` block.
 
-Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for the Claude Code harness it loads the same `toolKeys`, skills and step budget and the Anthropic credential, and never opens the MCP client or binds a Mastra model. It returns `{ kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
+Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for a harness it takes the one the harness registry holds for that runtime ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)), loads the same `toolKeys`, skills and step budget, binds the Agent's model and credential through that harness, and never opens the MCP client or binds a Mastra model. It returns `{ kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
 
 **Running a turn:** activities do not call `agent.generate` themselves. `runImplementerTurn` (`agents/implementerRuntime.ts`) runs one turn through an `ImplementerRuntime` — the Mastra tool loop (`mastraRuntime(agent, maxSteps)`) or the Claude Code harness, chosen per agent ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) — then accrues usage through `recordLlmUsage`, runs the advisory output scan, and records the LLM call on the tracer. `executeImplementation`, `implementerSession`, the eval harness, and the merge-conflict resolver all take this path, so a turn is metered and traced identically wherever it runs. The runtime only drives the loop and reports text, tool-call count, and usage; the caller still calls `assertBudgetAvailable` first and owns any failure row.
 
@@ -355,7 +355,7 @@ command is covered the same as a passing one.
 ### 3.7 Runtimes: Mastra and the Claude Code harness
 
 **Files:** `packages/worker/src/agents/implementerRuntimeSelect.ts`, `lib/config/agentRuntime.ts`,
-`agents/claudeCode/`
+`agents/harness/`, `agents/harnessRegistry.ts`, `agents/claudeCode/`
 
 Two loops can drive an agent that works in a workspace: the platform's own Mastra tool loop, and the
 Claude Code harness running inside the workspace container. Which one drives an agent is decided per
@@ -415,10 +415,46 @@ text, tool-call count and usage. Usage accounting, the advisory output scan and 
 in `runImplementerTurn`, so a turn is metered and traced identically whichever loop ran it. Our own
 outer loop — TDD iterations, the test run, commit, push, the diff scans — is unchanged.
 
+**The harness seam.** A harness is a `HarnessAdapter` (`harness/adapter.ts`) run by the shared
+`harnessRuntime` (`harness/runtime.ts`). The split is what every harness needs and none may get
+wrong, against what is one harness's own:
+
+| Shared — `harnessRuntime` | Per harness — `HarnessAdapter` |
+|---|---|
+| The platform probe; installing the binary and checking its SHA-256 before every turn | `provisioning`: the binary for a platform, its hash, its path in the container, any one-off container setup |
+| The `docker exec -i` spawn: exec tag, secrets named without a value, stderr drained | `runTurn`: driving one turn over the harness's own protocol, and reporting a deadline as a stop |
+| Killing the turn's tag when it ends, however it ends | `decide`: mapping a native tool call onto the canonical vocabulary |
+| Cancellation and a caller's deadline, wired to one abort controller; a cancelled turn reports the cancellation | `usage`: a normaliser from what the harness reports to per-model usage |
+| Each decision bounded by the 60 s deadline, a throw turned into a deny, a refusal traced with its tag | `capabilities`: whether it can enforce the per-call policy |
+| Tool results bounded to 20 000 characters in the trace; a failed turn's usage accrued | `close`: anything held beyond a turn (optional) |
+
+The canonical vocabulary (`harness/policy.ts`) is the four capabilities of the Mastra workspace
+tools, and `decideCanonicalCall` applies their scanners to it: `shell` gets the audit line and
+`scanShellCommand`; `write` gets confinement to the checkout, the protected-configuration check,
+`checkSensitiveFilePath` and the pre-write content check; `read` and `search` get confinement to the
+checkout and the harness's own read roots. An adapter maps its native tools onto those four (a
+`ToolVocabulary`), and tool keys grant capabilities, not native names: `readFile` and
+`listDirectory` grant `read` and `search`, `writeFile` grants `write`, `bash` grants `shell`. The
+implementer family reads the Agent's `toolKeys` (no opinion grants all four); an agent run passes an
+exact grant (`exactToolKeys`), where nothing named is nothing granted.
+
+Both `buildImplementerTurnRunner` and `runAgentTask` pick a harness only through the registry
+(`harnessRegistry.ts`, built with `createHarnessRegistry`), keyed by the runtime `resolveAgentRuntime`
+returned. Selecting binds the Agent's resolved model into the access the harness's client needs, and
+refuses a model it cannot speak to before anything is built — an agent run binds it before its
+container is cloned. A harness declares `enforcesPerCallPolicyInWorker` only when it asks the worker
+before **every** tool call, over a channel the worker owns, waits for the answer, and cannot run a
+refused call — and no file in the repository or the container can grant a call without that answer.
+The registry refuses a harness without it when it is registered (at worker start-up) and again when
+it is selected, and `harnessRuntime` refuses such an adapter too, all with the non-retryable
+`HARNESS_POLICY_UNENFORCEABLE`. A runtime value no harness serves fails with `HARNESS_UNAVAILABLE`.
+
 **How the harness runs.** The Claude Agent SDK runs in the worker. The `claude` binary runs in the
 workspace container, started through `docker exec -i` with the SDK's `spawnClaudeCodeProcess`. The
 SDK's `PreToolUse` hook runs in the worker, so every tool call is decided there, by `decideToolCall`
-(`claudeCode/policy.ts`), before the harness executes it:
+(`claudeCode/policy.ts`), before the harness executes it. It maps Claude Code's tools onto the
+canonical vocabulary (`Bash` → `shell`; `Write`, `Edit` → `write`; `Read` → `read`; `Glob`, `Grep` →
+`search`) and decides them with `decideCanonicalCall`:
 
 | Tool | Worker-side policy |
 |---|---|
@@ -504,6 +540,37 @@ Messages API, with no API key: `CLAUDE_CODE_DOCKER_TEST=1 yarn vitest run
 packages/worker/src/agents/claudeCode/runtime.docker.test.ts`. It needs the Docker registry and
 Alpine's package mirror; the `docker-tests` job in `ci.yml` runs it with the flag set, so it is
 part of the CI gate that image publishing depends on.
+
+**Other harnesses.** Claude Code is the only harness registered. Codex CLI, OpenCode and Gemini CLI
+were each checked for what the registry requires: a callback the worker answers, synchronously,
+before every tool call, that nothing inside the container can bypass. None provides it.
+
+- **Codex CLI.** Its worker-reachable channel is the `codex app-server` JSON-RPC protocol over
+  stdio, whose `item/commandExecution/requestApproval` and `item/fileChange/requestApproval`
+  requests do block until the client answers. They are sent only when the approval policy escalates
+  a call, though: `on-request` asks only for commands that leave Codex's own sandbox, `granular`
+  only allows or auto-rejects categories of prompt, `never` asks for nothing, and `untrusted` is no
+  longer accepted. Commands Codex already trusts, and every command that runs inside its sandbox,
+  run without a request — and Codex reads files through its shell, so a read of a file outside the
+  checkout reaches no scanner. Its `PreToolUse` hooks are commands Codex spawns, so they run inside
+  the container the agent controls.
+- **OpenCode.** Setting every permission key to `ask` makes each tool call wait for a permission
+  reply, which the worker could give over `opencode acp` (ACP `session/request_permission`) or the
+  `opencode serve` API. But OpenCode loads plugins from the repository (`.opencode/plugins/` and the
+  `plugin` list in a project `opencode.json`) into the harness process at start-up, with no switch to
+  turn that off, and a plugin's `permission.ask` hook can set a call to `allow` without the client
+  being asked. A repository could therefore grant calls the worker never sees.
+- **Gemini CLI.** In ACP mode a call that needs confirmation blocks on `session/request_permission`,
+  and an admin-tier policy rule for `*` with `ask_user` routes read-only tools there too. The request
+  carries no tool arguments, only a display title, a diff for edits, and file locations, so the
+  worker would be scanning a rendering of a shell command rather than the command. The rule that
+  makes every call ask, and the system settings that keep repository settings out, are files inside
+  the container (for example `/etc/gemini-cli/policies/`), which the agent's own shell can rewrite;
+  there is no client-supplied settings layer like the one the Claude Agent SDK passes over its pipe.
+
+Adding a harness is an adapter in its own directory, a `defineHarness` entry in `harnessRegistry.ts`,
+a new value in `IMPLEMENTER_RUNTIMES`, unit tests, and a `*.docker.test.ts` named on the
+`docker-tests` job in `ci.yml` — and the adapter must honestly declare `enforcesPerCallPolicyInWorker`.
 
 ---
 
@@ -998,6 +1065,15 @@ template override is never badged, because it may use a different model or crede
   of its own (for example one written to `/etc/claude-code/` by an earlier `Bash` call). The
   worker-side policy hook decides every call a genuine binary makes; the container's own isolation is
   what holds when the binary is not genuine.
+- **Claude Code is the only harness an agent can run on.** Codex CLI, OpenCode and Gemini CLI each
+  lack a worker-answered callback before every tool call that the repository or the container cannot
+  bypass, so the registry would refuse them ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness),
+  *Other harnesses*). The verdict rests on what each CLI exposes for that callback; one that gains
+  it fits the same seam.
+- **The capability flag is declared, not proven.** The registry trusts what an adapter declares in
+  `enforcesPerCallPolicyInWorker`; it refuses an adapter that says no, but cannot test that one which
+  says yes routes every call through `turn.decide`. Each adapter's unit and Docker-backed tests are
+  what show it does.
 - **Under the Claude Code harness, `Bash` can still change the harness's configuration.** The
   `.claude` / `CLAUDE.md` / `.mcp.json` refusal applies to `Write` and `Edit`; a shell command is
   checked only by the shell-command scanner, whose write-target extraction is a heuristic over the
