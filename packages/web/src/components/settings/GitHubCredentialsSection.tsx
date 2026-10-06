@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { SectionHeader } from '@/components/ui/PageHeader';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type MyCredential,
@@ -14,23 +14,31 @@ import {
   useRepositories,
 } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { SettingsListRow, SettingsSection } from './SettingsSection';
 
 function CredentialRow({ credential, name }: { credential: MyCredential; name: string }) {
   const remove = useDeleteMyCredential(credential.connectionId);
   const [confirming, setConfirming] = useState(false);
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 py-3">
-      <div className="min-w-0">
-        <div className="truncate text-sm text-paper-100">{name}</div>
-        <div className="font-mono text-[11px] text-paper-500">
-          Token ending in …{credential.lastFour || '????'} · updated{' '}
-          {formatDate(credential.updatedAt)}
-        </div>
-      </div>
-      <Button onClick={() => setConfirming(true)} size="sm" variant="danger">
-        Revoke
-      </Button>
+    <>
+      <SettingsListRow
+        action={
+          <Button onClick={() => setConfirming(true)} size="sm" variant="danger">
+            Revoke
+          </Button>
+        }
+        detail={
+          <>
+            Token ending in …{credential.lastFour || '????'} · updated{' '}
+            <span title={formatDate(credential.updatedAt)}>
+              {formatRelativeTime(credential.updatedAt)}
+            </span>
+          </>
+        }
+        leading={<Icon name="github" size={16} />}
+        title={<span className="break-all">{name}</span>}
+      />
       <ConfirmModal
         confirmLabel="Revoke"
         dangerous
@@ -43,7 +51,7 @@ function CredentialRow({ credential, name }: { credential: MyCredential; name: s
         pendingLabel="Revoking…"
         title={`Revoke your token for ${name}?`}
       />
-    </li>
+    </>
   );
 }
 
@@ -52,7 +60,7 @@ function CredentialRow({ credential, name }: { credential: MyCredential; name: s
  * Saving one stays on the Connections page, beside the repository it is for. Hidden while the
  * feature is off and nothing is saved, since there is then nothing to show or do.
  */
-export function GitHubCredentialsSection({ number }: { number?: string }) {
+export function GitHubCredentialsSection() {
   const mine = useMyCredentials();
   const repos = useRepositories({ includeInactive: true, limit: 500 });
   const credentials = mine.data?.credentials ?? [];
@@ -64,25 +72,38 @@ export function GitHubCredentialsSection({ number }: { number?: string }) {
     return repo ? connectionLabel(repo) : 'A repository you can no longer see';
   };
   return (
-    <>
-      <SectionHeader
-        hint="your own token for specific repositories"
-        number={number}
-        title="GitHub credentials"
-      />
-      <Card variant="inset">
+    <SettingsSection
+      actions={
+        <ButtonLink href="/connections" size="sm">
+          Open Connections
+        </ButtonLink>
+      }
+      description="Your own GitHub token for specific repositories. Runs you launch there act as you."
+      icon="github"
+      id="github-credentials"
+      title="GitHub credentials"
+    >
+      {mine.isLoading ? (
+        <SkeletonRows rows={2} />
+      ) : (
         <QueryBoundary
           compact
           error={mine.error}
           isError={mine.isError}
           isFetching={mine.isFetching}
-          isLoading={mine.isLoading}
+          isLoading={false}
           label="your GitHub credentials"
           onRetry={() => void mine.refetch()}
         >
           {credentials.length === 0 ? (
             <EmptyState
+              action={
+                <ButtonLink href="/connections" size="sm">
+                  Go to Connections
+                </ButtonLink>
+              }
               hint="Add one from a repository on the Connections page, using My token."
+              icon="github"
               title="No saved tokens"
             />
           ) : (
@@ -93,7 +114,7 @@ export function GitHubCredentialsSection({ number }: { number?: string }) {
             </ul>
           )}
         </QueryBoundary>
-      </Card>
-    </>
+      )}
+    </SettingsSection>
   );
 }

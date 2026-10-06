@@ -3,12 +3,21 @@
 import type { WorkflowRunDetail } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useId, useState } from 'react';
+import { Icon } from '@/components/ui/Icon';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
 import { runMetaSummary } from '@/lib/runMeta';
-import { cn, formatCost, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
+import {
+  cn,
+  FOCUS_RING,
+  formatCost,
+  formatCount,
+  formatDate,
+  formatDuration,
+  formatTokens,
+} from '@/lib/utils';
 import { AutonomyDecisionsPanel } from './AutonomyDecisionsPanel';
 import { EvalSignalsPanel } from './EvalSignalsPanel';
-import { RailRow, RailSection } from './Rail';
+import { RAIL_CODE, RAIL_KEY, RAIL_VALUE, RailRow, RailSection } from './Rail';
 
 interface RunMetaRailProps {
   run: WorkflowRunDetail;
@@ -21,16 +30,16 @@ interface RunMetaRailProps {
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <RailRow className="items-start">
-      <dt className="kicker shrink-0 pt-0.5">{label}</dt>
-      <dd className="text-right min-w-0">{children}</dd>
+    <RailRow className="items-baseline">
+      <dt className={RAIL_KEY}>{label}</dt>
+      <dd className="min-w-0 text-right">{children}</dd>
     </RailRow>
   );
 }
 
-function MonoValue({ children, accent }: { children: React.ReactNode; accent?: boolean }) {
+function Value({ children, title }: { children: React.ReactNode; title?: string }) {
   return (
-    <span className={cn('font-mono text-[11px]', accent ? 'text-ember-400' : 'text-paper-300')}>
+    <span className={RAIL_VALUE} title={title}>
       {children}
     </span>
   );
@@ -62,71 +71,76 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
       <RailSection className="pt-5" divider={false} title={collapsible ? undefined : 'Run details'}>
         <dl>
           <MetaRow label="Started">
-            <MonoValue>{formatDate(run.startedAt)}</MonoValue>
+            <Value>{formatDate(run.startedAt)}</Value>
           </MetaRow>
           {run.endedAt && (
             <MetaRow label="Ended">
-              <MonoValue>{formatDate(run.endedAt)}</MonoValue>
+              <Value>{formatDate(run.endedAt)}</Value>
             </MetaRow>
           )}
           {durationMs !== null && (
             <MetaRow label="Duration">
-              <MonoValue>{formatDuration(durationMs)}</MonoValue>
-            </MetaRow>
-          )}
-          <MetaRow label="Workflow">
-            <MonoValue>
-              {temporalUrl ? (
-                <a
-                  className="truncate block max-w-[140px] text-right text-ember-400 hover:underline"
-                  href={temporalUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                  title={`${run.workflowId} — open in Temporal`}
-                >
-                  {shortWorkflowId}
-                </a>
-              ) : (
-                <span className="truncate block max-w-[140px] text-right" title={run.workflowId}>
-                  {shortWorkflowId}
-                </span>
-              )}
-            </MonoValue>
-          </MetaRow>
-          {totalTraces > 0 && (
-            <MetaRow label="Trace events">
-              <MonoValue>{totalTraces}</MonoValue>
+              <Value>{formatDuration(durationMs)}</Value>
             </MetaRow>
           )}
           {cost > 0 && (
             <MetaRow label="Cost">
-              <MonoValue>{formatCost(cost)}</MonoValue>
+              <Value>{formatCost(cost)}</Value>
             </MetaRow>
           )}
           {totalTokens > 0 && (
             <MetaRow label="Tokens">
-              <span
-                className="text-paper-300"
+              <Value
                 title={`${formatCount(run.tokensInputTotal)} in / ${formatCount(run.tokensOutputTotal)} out`}
               >
-                <MonoValue>{formatTokens(totalTokens)} total</MonoValue>
-              </span>
+                {formatTokens(totalTokens)} total
+              </Value>
+            </MetaRow>
+          )}
+          {totalTraces > 0 && (
+            <MetaRow label="Trace events">
+              <Value>{formatCount(totalTraces)}</Value>
             </MetaRow>
           )}
           <MetaRow label="Template">
-            <MonoValue>
-              {/* The Agent Run template is hidden; its route answers 404. */}
-              {isAgentRun ? (
-                run.templateName
-              ) : (
-                <Link
-                  className="text-ember-400 transition-colors hover:text-ember-600"
-                  href={`/workflows/library/${run.templateId}`}
-                >
-                  {run.templateName}
-                </Link>
-              )}
-            </MonoValue>
+            {/* The Agent Run template is hidden; its route answers 404. */}
+            {isAgentRun ? (
+              <span className="text-[13px] text-paper-200">{run.templateName}</span>
+            ) : (
+              <Link
+                className={cn(
+                  'rounded-sm text-[13px] text-ember-400 transition-colors hover:text-ember-300',
+                  FOCUS_RING
+                )}
+                href={`/workflows/library/${run.templateId}`}
+              >
+                {run.templateName}
+              </Link>
+            )}
+          </MetaRow>
+          <MetaRow label="Workflow ID">
+            {temporalUrl ? (
+              <a
+                className={cn(
+                  RAIL_CODE,
+                  'block max-w-[150px] truncate rounded-sm text-right text-ember-400 hover:underline',
+                  FOCUS_RING
+                )}
+                href={temporalUrl}
+                rel="noreferrer"
+                target="_blank"
+                title={`${run.workflowId} — open in Temporal`}
+              >
+                {shortWorkflowId}
+              </a>
+            ) : (
+              <span
+                className={cn(RAIL_CODE, 'block max-w-[150px] truncate text-right')}
+                title={run.workflowId}
+              >
+                {shortWorkflowId}
+              </span>
+            )}
           </MetaRow>
         </dl>
       </RailSection>
@@ -134,10 +148,12 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
       {/* Request block */}
       {run.workRequest && (
         <RailSection title="Request">
-          <div className="mb-1 font-mono text-xs tracking-[0.06em] text-ember-400">
-            {run.workRequest.externalTicketId}
-          </div>
-          <p className="text-paper-400 text-[12px] leading-relaxed">
+          {run.workRequest.externalTicketId && (
+            <div className="mb-1.5 font-mono text-xs text-paper-300">
+              {run.workRequest.externalTicketId}
+            </div>
+          )}
+          <p className="line-clamp-[12] whitespace-pre-wrap break-words text-[13px] leading-relaxed text-paper-400">
             {run.workRequest.description}
           </p>
         </RailSection>
@@ -157,16 +173,21 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
         <button
           aria-controls={panelId}
           aria-expanded={open}
-          className="flex min-h-[44px] w-full items-center gap-3 px-4 py-2 text-left"
+          className={cn(
+            'flex min-h-[44px] w-full items-center gap-2.5 px-4 py-2 text-left transition-colors hover:bg-ink-700/50',
+            FOCUS_RING
+          )}
           onClick={() => setOpen((v) => !v)}
           type="button"
         >
-          <span aria-hidden="true" className="w-3 font-mono text-[10px] text-paper-500">
-            {open ? '▼' : '▶'}
-          </span>
-          <span className="kicker">Run details</span>
+          <Icon
+            className={cn('text-paper-500 transition-transform', open && 'rotate-90')}
+            name="chevronRight"
+            size={14}
+          />
+          <span className="shrink-0 text-[13px] font-semibold text-paper-100">Run details</span>
           {summary.length > 0 && (
-            <span className="min-w-0 truncate font-mono text-[11px] text-paper-500">
+            <span className="tabular min-w-0 truncate text-xs text-paper-500">
               {summary.join(' · ')}
             </span>
           )}
