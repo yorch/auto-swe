@@ -7,6 +7,7 @@ const { abortSignalOption, recordLlmUsage, recordSuspiciousLlmOutput } = vi.hois
 }));
 
 vi.mock('../lib/activityContext.js', () => ({ currentWorkflowId: vi.fn(() => 'wf-1') }));
+vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
 vi.mock('../lib/cancellation.js', () => ({ abortSignalOption }));
 vi.mock('../lib/costTracking.js', () => ({ recordLlmUsage }));
 vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput }));
@@ -16,6 +17,8 @@ import {
   type ImplementerRuntime,
   mastraRuntime,
   runImplementerTurn,
+  spentUsageOf,
+  withSpentUsage,
 } from './implementerRuntime.js';
 
 const addLlmResponse = vi.fn();
@@ -202,7 +205,7 @@ describe('runImplementerTurn', () => {
     );
   });
 
-  it('records no call row and accrues nothing when the runtime throws', async () => {
+  it('records no call row and accrues nothing when the runtime throws a plain error', async () => {
     const runtime: ImplementerRuntime = {
       runTurn: async () => {
         throw new Error('provider 529');
@@ -213,6 +216,42 @@ describe('runImplementerTurn', () => {
 
     expect(recordLlmUsage).not.toHaveBeenCalled();
     expect(addLlmResponse).not.toHaveBeenCalled();
+  });
+
+  it('accrues what a failed turn spent when the error carries it, and rethrows that same error', async () => {
+    const failure = withSpentUsage(new Error('Claude Code ended with error_during_execution'), [
+      { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 300, outputTokens: 60 } },
+    ]);
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => {
+        throw failure;
+      },
+    };
+
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      'wf-1',
+      'implementer',
+      { inputTokens: 300, outputTokens: 60 },
+      'llm.implementer.iteration_0',
+      'anthropic/claude-opus-5-5'
+    );
+    // The failure row stays the caller's.
+    expect(addLlmResponse).not.toHaveBeenCalled();
+  });
+
+  it('rethrows the runtime’s error even when accruing its usage fails', async () => {
+    recordLlmUsage.mockRejectedValue(new Error('BUDGET_EXCEEDED'));
+    const failure = withSpentUsage(new Error('harness failed'), [
+      { modelSpec: 'anthropic/m', usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => {
+        throw failure;
+      },
+    };
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
   });
 
   it('propagates a budget failure from the usage ledger before the call row is written', async () => {
@@ -231,10 +270,23 @@ describe('runImplementerTurn', () => {
   });
 });
 
+describe('withSpentUsage', () => {
+  it('marks an error without changing it, and ignores an empty spend', () => {
+    const err = new Error('x');
+    expect(withSpentUsage(err, [])).toBe(err);
+    expect(spentUsageOf(err)).toBeUndefined();
+    const spent = [{ modelSpec: 'anthropic/m', usage: { inputTokens: 1, outputTokens: 1 } }];
+    expect(withSpentUsage(err, spent)).toBe(err);
+    expect(spentUsageOf(err)).toBe(spent);
+    expect(spentUsageOf('not an error')).toBeUndefined();
+  });
+});
+
 describe('mastraRuntime', () => {
   it('generates with the step budget and maps the result', async () => {
     const generate = vi.fn(async () => ({
-      steps: [{}, {}],
+      // Tool calls, not model steps: three calls over two steps, plus a final text-only step.
+      steps: [{ toolCalls: [{}, {}] }, { toolCalls: [{}] }, { toolCalls: [] }],
       text: 'ok',
       usage: { inputTokens: 5, outputTokens: 6 },
     }));
@@ -253,7 +305,7 @@ describe('mastraRuntime', () => {
     );
     expect(outcome).toEqual({
       text: 'ok',
-      toolCallCount: 2,
+      toolCallCount: 3,
       usage: { inputTokens: 5, outputTokens: 6 },
     });
   });
