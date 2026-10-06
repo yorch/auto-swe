@@ -7,10 +7,12 @@ import {
 } from '@auto-swe/shared/lib/workspaceProviders';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import { useId, useRef, useState } from 'react';
+import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
 import { WorkflowLaunchSummary } from '@/components/requests/WorkflowLaunchSummary';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import {
   buildInitialPayload,
@@ -22,6 +24,15 @@ import { useRepositories } from '@/hooks/useRepositories';
 import { useRunTemplate } from '@/hooks/useTemplates';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
+
+/** `targetBranch` → "Target branch". */
+function humanize(key: string) {
+  const spaced = key
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
+}
 
 export function WorkflowLaunchForm({
   template,
@@ -82,47 +93,47 @@ export function WorkflowLaunchForm({
   }
   return (
     <Card className="space-y-5">
-      <div>
-        <h2 className="text-lg font-semibold">{review ? 'Review and launch' : 'Task details'}</h2>
-        <p className="mt-1 text-sm text-paper-400">{template.description || template.name}</p>
-      </div>
+      <LaunchCardHeader
+        description={
+          review
+            ? 'Check what will run, then launch it.'
+            : `Name this task and fill in what ${template.name} needs.`
+        }
+        stage={review ? 'review' : 'details'}
+        title={review ? 'Review and launch' : 'Task details'}
+      />
       {launch.isError && <Alert>{errMsg(launch.error, 'Could not start the workflow')}</Alert>}
       {review ? (
         <>
-          <dl className="space-y-3 text-sm">
-            <div>
-              <dt className="text-paper-400">Task</dt>
-              <dd className="break-words">{label}</dd>
-            </div>
-            <div>
-              <dt className="text-paper-400">Workflow</dt>
-              <dd>
-                {template.name} · active version {template.activeVersion}
-              </dd>
-            </div>
-            {Object.entries(payload).map(([key, value]) => (
-              <div key={key}>
-                <dt className="text-paper-400">
-                  {schema?.properties[key]?.type === 'connection' || key === 'connectionId'
+          <ReviewList
+            items={[
+              { label: 'Task', value: label },
+              {
+                label: 'Workflow',
+                value: `${template.name} · active version ${template.activeVersion}`,
+              },
+              ...Object.entries(payload).map(([key, value]) => ({
+                label:
+                  schema?.properties[key]?.type === 'connection' || key === 'connectionId'
                     ? 'Target connection'
-                    : key.replace(/([A-Z])/g, ' $1')}
-                </dt>
-                <dd className="whitespace-pre-wrap break-words">{displayValue(key, value)}</dd>
-              </div>
-            ))}
-          </dl>
+                    : humanize(key),
+                multiline: true,
+                value: displayValue(key, value),
+              })),
+            ]}
+          />
           {(template.experimentSplit ?? 0) > 0 && (
-            <p className="text-sm text-paper-400">
-              An experiment is enabled: this request may use version {template.experimentVersion}{' '}
-              instead of the active version.
-            </p>
+            <Alert title="Experiment enabled" variant="info">
+              This request may use version {template.experimentVersion} instead of the active
+              version.
+            </Alert>
           )}
           <WorkflowLaunchSummary templateId={template.id} />
           <Alert variant="info">
             This workflow follows its configured steps, checks, and approvals. Review its process in
             the workflow library if you need to confirm what it may publish.
           </Alert>
-          <div className="flex justify-end gap-3">
+          <div className="flex flex-wrap justify-end gap-3 border-t border-ink-600 pt-4">
             <Button
               disabled={launch.isPending || launch.isSuccess}
               onClick={() => setReview(false)}
@@ -173,9 +184,10 @@ export function WorkflowLaunchForm({
               value={typeof payload.connectionId === 'string' ? payload.connectionId : ''}
             />
           )}
-          <div className="flex justify-end">
+          <div className="flex justify-end border-t border-ink-600 pt-4">
             <Button onClick={reviewInputs} variant="primary">
               Review workflow
+              <Icon name="arrowRight" size={14} />
             </Button>
           </div>
         </>

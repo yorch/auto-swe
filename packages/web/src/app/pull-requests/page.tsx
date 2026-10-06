@@ -2,15 +2,17 @@
 
 import { PULL_REQUEST_STATES, type PullRequestState } from '@auto-swe/shared/lib/pullRequest';
 import { Suspense, useEffect, useState } from 'react';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { PullRequestTable } from '@/components/work/PullRequestTable';
 import { useRepositories } from '@/hooks/useRepositories';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
@@ -68,82 +70,117 @@ function PullRequests() {
   const total = meta?.total ?? 0;
   const filtered = state !== 'OPEN' || draft !== 'any' || repoId || ticket;
 
+  const clearFilters = () => {
+    setTicketDraft('');
+    update({ draft: null, offset: null, repo: null, state: null, ticket: null });
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
         subtitle="Pull requests the platform opened, with their state on the host, CI and the run behind them."
         title="Pull requests"
       />
-      <Card variant="inset">
-        <div className="flex flex-wrap items-end gap-4">
-          <SegmentedControl
-            ariaLabel="Pull request scope"
-            onChange={(value) => update({ offset: null, scope: value })}
-            options={[
-              { label: 'My requests', value: 'MINE' },
-              { label: 'Team requests', value: 'TEAM' },
-            ]}
-            value={scope}
-          />
-          <Select
-            label="State"
-            onChange={(value) => update({ offset: null, state: value === 'OPEN' ? null : value })}
-            options={STATES}
-            value={state}
-          />
-          <Select
-            label="Draft"
-            onChange={(value) => update({ draft: value === 'any' ? null : value, offset: null })}
-            options={[...DRAFTS]}
-            value={draft}
-          />
-          <Combobox
-            label="Repository"
-            onChange={(value) => update({ offset: null, repo: value })}
-            options={[
-              { label: 'All repositories', value: '' },
-              ...repositories
-                .filter((repo) => repo.type === 'git_repo')
-                .map((repo) => ({
-                  label: `${repo.organizationName}/${repo.repoName}`,
-                  value: repo.id,
-                })),
-            ]}
-            value={repoId}
-          />
-          <div className="min-w-48 flex-1">
-            <Input
-              label="Ticket"
-              maxLength={200}
-              onChange={(event) => setTicketDraft(event.target.value)}
-              placeholder="Ticket id…"
+      <div className="space-y-4">
+        <Card className="overflow-hidden p-0">
+          <Toolbar
+            className="mb-0 border-b border-ink-600 px-4 py-3"
+            end={
+              <SegmentedControl
+                ariaLabel="Pull request scope"
+                onChange={(value) => update({ offset: null, scope: value })}
+                options={[
+                  { label: 'My requests', value: 'MINE' },
+                  { label: 'Team requests', value: 'TEAM' },
+                ]}
+                value={scope}
+              />
+            }
+          >
+            <SearchInput
+              label="Filter by ticket"
+              onChange={(value) => setTicketDraft(value.slice(0, 200))}
+              placeholder="Filter by ticket id…"
               value={ticketDraft}
             />
-          </div>
-        </div>
-      </Card>
-      <QueryBoundary
-        error={error}
-        isError={isError}
-        isFetching={isFetching}
-        isLoading={isLoading}
-        label="pull requests"
-        onRetry={() => void refetch()}
-      >
-        {pullRequests.length === 0 ? (
-          <EmptyState
-            hint={
-              filtered
-                ? 'Try another state or clear the filters.'
-                : 'Pull requests the platform opens for your requests appear here.'
-            }
-            title={filtered ? 'No pull requests match these filters' : 'No open pull requests'}
-          />
-        ) : (
-          <Card className="overflow-hidden p-0">
-            <PullRequestTable pullRequests={pullRequests} />
-          </Card>
-        )}
+            <Select
+              appearance="pill"
+              aria-label="State"
+              onChange={(value) => update({ offset: null, state: value === 'OPEN' ? null : value })}
+              options={STATES}
+              prefix="State:"
+              value={state}
+            />
+            <Select
+              appearance="pill"
+              aria-label="Draft"
+              onChange={(value) => update({ draft: value === 'any' ? null : value, offset: null })}
+              options={[...DRAFTS]}
+              value={draft}
+            />
+            <Combobox
+              aria-label="Repository"
+              className="w-full sm:w-56"
+              compact
+              onChange={(value) => update({ offset: null, repo: value })}
+              options={[
+                { label: 'All repositories', value: '' },
+                ...repositories
+                  .filter((repo) => repo.type === 'git_repo')
+                  .map((repo) => ({
+                    label: `${repo.organizationName}/${repo.repoName}`,
+                    value: repo.id,
+                  })),
+              ]}
+              placeholder="All repositories"
+              value={repoId}
+            />
+            {filtered && (
+              <Button onClick={clearFilters} size="sm" variant="ghost">
+                Clear filters
+              </Button>
+            )}
+          </Toolbar>
+          {isLoading ? (
+            <SkeletonRows className="px-4 py-4" rows={6} />
+          ) : (
+            <QueryBoundary
+              error={error}
+              isError={isError}
+              isFetching={isFetching}
+              isLoading={false}
+              label="pull requests"
+              onRetry={() => void refetch()}
+            >
+              {pullRequests.length === 0 ? (
+                <EmptyState
+                  action={
+                    filtered ? (
+                      <Button onClick={clearFilters} size="sm">
+                        Clear filters
+                      </Button>
+                    ) : (
+                      <ButtonLink href="/start" size="sm" variant="secondary">
+                        Start work
+                      </ButtonLink>
+                    )
+                  }
+                  hint={
+                    filtered
+                      ? 'Try another state or clear the filters.'
+                      : 'Pull requests the platform opens for your requests appear here, as drafts for you to review.'
+                  }
+                  icon={filtered ? 'search' : 'pullRequest'}
+                  title={
+                    filtered ? 'No pull requests match these filters' : 'No open pull requests'
+                  }
+                />
+              ) : (
+                <PullRequestTable pullRequests={pullRequests} />
+              )}
+            </QueryBoundary>
+          )}
+        </Card>
         <Pagination
           hasNext={offset + PAGE_SIZE < total}
           hasPrev={offset > 0}
@@ -155,7 +192,7 @@ function PullRequests() {
           rangeStart={total === 0 ? 0 : offset + 1}
           total={total}
         />
-      </QueryBoundary>
+      </div>
     </div>
   );
 }

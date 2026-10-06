@@ -2,6 +2,7 @@
 
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import { useMemo } from 'react';
+import { ReviewList } from '@/components/requests/LaunchSteps';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { nodeDisplayName } from '@/components/workflow/nodeDisplay';
 import { useWorkflowTemplate } from '@/hooks/useTemplates';
@@ -36,33 +37,37 @@ export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
       isFetching={query.isFetching}
       isLoading={query.isLoading}
       label="workflow process"
+      loadingMessage="Loading the workflow process…"
       onRetry={() => void query.refetch()}
     >
       {summary ? (
-        <dl className="space-y-3 text-sm">
-          <div>
-            <dt className="text-paper-400">Declared outputs</dt>
-            <dd>
-              {summary.outputs.length
-                ? summary.outputs.map((output) => output.replace(/([A-Z])/g, ' $1')).join(', ')
-                : 'This workflow does not declare a structured result.'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-paper-400">Human steps in the process</dt>
-            <dd>
-              {summary.humanSteps.length
-                ? summary.humanSteps.join(', ')
-                : 'No explicit human steps. Platform policies may still require approval.'}
-            </dd>
-          </div>
-          {summary.signals.length > 0 && (
-            <div>
-              <dt className="text-paper-400">Waits for external events</dt>
-              <dd>{summary.signals.join(', ')}</dd>
-            </div>
-          )}
-        </dl>
+        <ReviewList
+          items={[
+            {
+              label: 'Declared outputs',
+              value: summary.outputs.length ? (
+                summary.outputs.map((output) => output.replace(/([A-Z])/g, ' $1')).join(', ')
+              ) : (
+                <span className="text-paper-400">
+                  This workflow does not declare a structured result.
+                </span>
+              ),
+            },
+            {
+              label: 'Human steps',
+              value: summary.humanSteps.length ? (
+                summary.humanSteps.join(', ')
+              ) : (
+                <span className="text-paper-400">
+                  No explicit human steps. Platform policies may still require approval.
+                </span>
+              ),
+            },
+            ...(summary.signals.length > 0
+              ? [{ label: 'Waits for external events', value: summary.signals.join(', ') }]
+              : []),
+          ]}
+        />
       ) : (
         <p className="text-sm text-paper-400">
           The process summary is unavailable. Open the workflow in the library to review its steps.

@@ -2,10 +2,12 @@
 
 import Link from 'next/link';
 import { useRef, useState } from 'react';
+import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { RadioGroup } from '@/components/ui/RadioGroup';
 import { Select } from '@/components/ui/Select';
@@ -52,7 +54,7 @@ function LaunchErrorAlert({ view }: { view: LaunchErrorView }) {
       <div>{view.message}</div>
       {view.hint && <div className="mt-1 opacity-80">{view.hint}</div>}
       {view.duplicate && (
-        <Link className="mt-1 inline-block underline" href="/runs">
+        <Link className="mt-1 inline-block font-medium text-ember-400 underline" href="/runs">
           View runs
         </Link>
       )}
@@ -140,43 +142,45 @@ export function AgentRunForm({
 
   if (launched) {
     return (
-      <Card className="space-y-4 p-6">
-        <Alert variant="success">Agent run started.</Alert>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
-          <dt className="label-mono">Delivery</dt>
-          <dd className="text-paper-300">
-            {DELIVER_OPTIONS.find((o) => o.value === launched.effective.deliver)?.label}
-          </dd>
-          <dt className="label-mono">Step limit</dt>
-          <dd className="font-mono text-paper-300">{launched.effective.maxSteps}</dd>
-          <dt className="label-mono">Time limit</dt>
-          <dd className="font-mono text-paper-300">{launched.effective.maxWallClockSeconds} s</dd>
-        </dl>
-        <div className="flex items-center gap-3">
-          <Link
-            className="text-ember-400 hover:underline"
-            href={requestHref(launched.workRequestId)}
-          >
-            View the request →
-          </Link>
+      <Card className="space-y-5">
+        <Alert title="Agent run started." variant="success">
+          The agent is working in its own workspace. Follow it from the request.
+        </Alert>
+        <ReviewList
+          items={[
+            {
+              label: 'Delivery',
+              value: DELIVER_OPTIONS.find((o) => o.value === launched.effective.deliver)?.label,
+            },
+            { label: 'Step limit', value: launched.effective.maxSteps },
+            { label: 'Time limit', value: `${launched.effective.maxWallClockSeconds} s` },
+          ]}
+        />
+        <div className="flex flex-wrap items-center gap-3 border-t border-ink-600 pt-4">
+          <ButtonLink href={requestHref(launched.workRequestId)} variant="primary">
+            View the request
+            <Icon name="arrowRight" size={14} />
+          </ButtonLink>
           {started.runId ? (
-            <Link className="text-paper-400 hover:underline" href={`/runs/${started.runId}`}>
+            <ButtonLink href={`/runs/${started.runId}`} variant="ghost">
               Diagnostics
-            </Link>
+            </ButtonLink>
           ) : started.timedOut ? (
-            <Link className="text-paper-400 hover:underline" href="/runs">
+            <ButtonLink href="/runs" variant="ghost">
               All runs
-            </Link>
+            </ButtonLink>
           ) : (
-            <span className="text-paper-500 text-[13px]">Locating the run…</span>
+            <span aria-live="polite" className="text-[13px] text-paper-500" role="status">
+              Locating the run…
+            </span>
           )}
           <Button
+            className="ml-auto"
             onClick={() => {
               launch.reset();
               setAttempted(false);
               setValues((v) => ({ ...v, prompt: '' }));
             }}
-            size="sm"
             variant="secondary"
           >
             Run another
@@ -191,38 +195,36 @@ export function AgentRunForm({
     const failure = launch.isError ? describeLaunchError(launch.error) : null;
     return (
       <Card className="space-y-5">
-        <h2 className="text-lg font-semibold">Review and launch</h2>
-        <dl className="space-y-3 text-sm">
-          <div>
-            <dt className="text-paper-400">Repository</dt>
-            <dd>{selectedRepo ? connectionLabel(selectedRepo) : values.repoId}</dd>
-          </div>
-          <div>
-            <dt className="text-paper-400">Agent</dt>
-            <dd>
-              {agent?.name}{' '}
-              {effective.pinnedVersion !== null ? `· v${effective.pinnedVersion}` : '· latest'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-paper-400">Task</dt>
-            <dd className="whitespace-pre-wrap break-words">{values.prompt}</dd>
-          </div>
-          <div>
-            <dt className="text-paper-400">Delivery</dt>
-            <dd>{DELIVER_OPTIONS.find((option) => option.value === values.deliver)?.label}</dd>
-          </div>
-          <div>
-            <dt className="text-paper-400">Limits</dt>
-            <dd>
-              {values.maxSteps || limits.data?.maxSteps.ceiling || 'Platform default'} steps ·{' '}
-              {values.maxWallClockSeconds ||
+        <LaunchCardHeader
+          description="Check what the agent will do, then launch it."
+          stage="review"
+          title="Review and launch"
+        />
+        <ReviewList
+          items={[
+            {
+              label: 'Repository',
+              value: selectedRepo ? connectionLabel(selectedRepo) : values.repoId,
+            },
+            {
+              label: 'Agent',
+              value: `${agent?.name ?? ''} ${effective.pinnedVersion !== null ? `· v${effective.pinnedVersion}` : '· latest'}`,
+            },
+            { label: 'Task', multiline: true, value: values.prompt },
+            {
+              label: 'Delivery',
+              value: DELIVER_OPTIONS.find((option) => option.value === values.deliver)?.label,
+            },
+            {
+              label: 'Limits',
+              value: `${values.maxSteps || limits.data?.maxSteps.ceiling || 'Platform default'} steps · ${
+                values.maxWallClockSeconds ||
                 limits.data?.maxWallClockSeconds.ceiling ||
-                'Platform default'}{' '}
-              seconds
-            </dd>
-          </div>
-        </dl>
+                'Platform default'
+              } seconds`,
+            },
+          ]}
+        />
         <Alert variant="info">
           {values.deliver === 'none'
             ? 'The output stays in the temporary workspace. No branch or pull request is published.'
@@ -232,7 +234,7 @@ export function AgentRunForm({
           Nothing is merged automatically.
         </Alert>
         {failure && <LaunchErrorAlert view={failure} />}
-        <div className="flex justify-end gap-3">
+        <div className="flex flex-wrap justify-end gap-3 border-t border-ink-600 pt-4">
           <Button disabled={launch.isPending} onClick={() => setReviewing(false)} variant="ghost">
             Back to details
           </Button>
@@ -249,7 +251,14 @@ export function AgentRunForm({
   const clockCeiling = limits.data?.maxWallClockSeconds.ceiling;
 
   return (
-    <Card className="space-y-5 p-6">
+    <Card className="space-y-5">
+      {reviewBeforeLaunch && (
+        <LaunchCardHeader
+          description="Pick a repository and an agent, then say what it should do."
+          stage="details"
+          title="Task details"
+        />
+      )}
       {disabledByPlatform && (
         <Alert title="Agent runs are turned off" variant="warning">
           An administrator has disabled agent runs
@@ -338,36 +347,42 @@ export function AgentRunForm({
         </Alert>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Input
-          error={show('maxSteps')}
-          hint={
-            stepsCeiling === undefined
-              ? 'Optional. Can only lower the platform ceiling.'
-              : `Optional. Platform ceiling: ${stepsCeiling}.`
-          }
-          inputMode="numeric"
-          label="Max steps"
-          onChange={(e) => set('maxSteps', e.target.value)}
-          placeholder={stepsCeiling === undefined ? 'ceiling' : String(stepsCeiling)}
-          value={values.maxSteps}
-        />
-        <Input
-          error={show('maxWallClockSeconds')}
-          hint={
-            clockCeiling === undefined
-              ? 'Optional, in seconds. Can only lower the platform ceiling.'
-              : `Optional, in seconds. Platform ceiling: ${clockCeiling}.`
-          }
-          inputMode="numeric"
-          label="Time limit (seconds)"
-          onChange={(e) => set('maxWallClockSeconds', e.target.value)}
-          placeholder={clockCeiling === undefined ? 'ceiling' : String(clockCeiling)}
-          value={values.maxWallClockSeconds}
-        />
-      </div>
+      <fieldset className="border-t border-ink-600 pt-5">
+        <legend className="sr-only">Limits</legend>
+        <div aria-hidden="true" className="mb-3 text-sm font-medium text-paper-200">
+          Limits <span className="font-normal text-paper-500">· optional</span>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Input
+            error={show('maxSteps')}
+            hint={
+              stepsCeiling === undefined
+                ? 'Optional. Can only lower the platform ceiling.'
+                : `Optional. Platform ceiling: ${stepsCeiling}.`
+            }
+            inputMode="numeric"
+            label="Max steps"
+            onChange={(e) => set('maxSteps', e.target.value)}
+            placeholder={stepsCeiling === undefined ? 'ceiling' : String(stepsCeiling)}
+            value={values.maxSteps}
+          />
+          <Input
+            error={show('maxWallClockSeconds')}
+            hint={
+              clockCeiling === undefined
+                ? 'Optional, in seconds. Can only lower the platform ceiling.'
+                : `Optional, in seconds. Platform ceiling: ${clockCeiling}.`
+            }
+            inputMode="numeric"
+            label="Time limit (seconds)"
+            onChange={(e) => set('maxWallClockSeconds', e.target.value)}
+            placeholder={clockCeiling === undefined ? 'ceiling' : String(clockCeiling)}
+            value={values.maxWallClockSeconds}
+          />
+        </div>
+      </fieldset>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end border-t border-ink-600 pt-4">
         <Button
           disabled={!canSubmit}
           onClick={
@@ -380,10 +395,10 @@ export function AgentRunForm({
                 }
               : submit
           }
-          size="lg"
           variant="primary"
         >
-          {launch.isPending ? 'Starting…' : reviewBeforeLaunch ? 'Review agent run' : 'Run agent →'}
+          {launch.isPending ? 'Starting…' : reviewBeforeLaunch ? 'Review agent run' : 'Run agent'}
+          {!launch.isPending && <Icon name="arrowRight" size={14} />}
         </Button>
       </div>
     </Card>
