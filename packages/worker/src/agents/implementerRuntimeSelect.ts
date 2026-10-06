@@ -1,39 +1,13 @@
 import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
-import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../activities/workspace.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { type AgentRuntimeSource, resolveAgentRuntime } from '../lib/config/agentRuntime.js';
 import { type ResolvedSkill, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import type { ResolveCtx } from '../lib/config/types.js';
-import { claudeCodeRuntime } from './claudeCode/runtime.js';
+import { HARNESSES } from './harnessRegistry.js';
 import { buildImplementerForActivity, resolveImplementerConfig } from './implementer.js';
 import { type ImplementerRuntime, mastraRuntime } from './implementerRuntime.js';
-
-const ANTHROPIC_PREFIX = 'anthropic/';
-
-/**
- * The model and credential the harness runs on: the same Agent row, and the same
- * decrypted credential, the Mastra runtime would have used.
- *
- * Claude Code speaks the Anthropic Messages API, so the Agent's model must be an
- * Anthropic one. Pointing the credential's `apiBase` at a gateway that routes to
- * Anthropic is how a deployment sends the harness through its own gateway.
- */
-export async function resolveClaudeCodeAccess(agentKey: string, ctx?: ResolveCtx) {
-  const { model } = await resolveAgent(agentKey, ctx);
-  if (!model.spec.startsWith(ANTHROPIC_PREFIX)) {
-    throw ApplicationFailure.nonRetryable(
-      `The claude-code runtime needs an Anthropic model, but agent '${agentKey}' resolves to '${model.spec}'. Set the agent's model to anthropic/<model>, or set its runtime (or workspace.implementerRuntime) back to mastra.`,
-      'HARNESS_UNSUPPORTED_MODEL'
-    );
-  }
-  return {
-    apiBase: model.apiBase ?? undefined,
-    apiKey: model.apiKey,
-    modelId: model.spec.slice(ANTHROPIC_PREFIX.length),
-  };
-}
 
 /** One implementer session's loop, built for the runtime the agent resolved to. */
 export interface ImplementerTurnRunner {
@@ -58,8 +32,9 @@ export interface ImplementerTurnRunner {
   /** `base` with `promptSuffix` appended. */
   systemPrompt(base: string): string;
   /**
-   * Releases what the runtime opened (the Mastra loop's MCP client). Safe to
-   * call more than once; callers MUST call it in a `finally` block.
+   * Releases what the runtime opened (the Mastra loop's MCP client, or what a
+   * harness adapter holds across turns). Safe to call more than once; callers
+   * MUST call it in a `finally` block.
    */
   close(): Promise<void>;
 }
@@ -69,11 +44,13 @@ export interface ImplementerTurnRunner {
  * resolved FIRST (`resolveAgentRuntime`: the Agent version's own `runtime`, else
  * the run-pinned `workspace.implementerRuntime`; pinned on the run at first use)
  * and only what that runtime uses is built: the
- * Mastra agent, its model binding and its MCP connection for `mastra`; the
- * Anthropic credential for `claude-code`, which brings its own tools and so
- * never opens the MCP client or binds a Mastra model.
+ * Mastra agent, its model binding and its MCP connection for `mastra`; for any
+ * other value, the harness the registry (`harnessRegistry.ts`) holds for it,
+ * bound to the Agent's own model and credential. A harness brings its own tools,
+ * so it never opens the MCP client or binds a Mastra model. The registry only
+ * holds harnesses whose every tool call the worker decides, and refuses the rest.
  *
- * Both runtimes run on the same Agent row's config (`resolveImplementerConfig`):
+ * Every runtime runs on the same Agent row's config (`resolveImplementerConfig`):
  * its tool keys — narrowed for a persona — skills, and step budget.
  *
  * The choice is steered only through pins, never a parameter: a run's own
@@ -123,27 +100,30 @@ export async function buildImplementerTurnRunner(input: {
     });
   }
 
-  const [config, access] = await Promise.all([
+  const harness = HARNESSES.select(kind);
+  const [config, { model }] = await Promise.all([
     resolveImplementerConfig(input.ctx, agentKey),
-    resolveClaudeCodeAccess(agentKey, input.ctx),
+    resolveAgent(agentKey, input.ctx),
   ]);
+  const runtime = harness.bind(agentKey, model).build({
+    // The repository's own harness configuration (Claude Code's CLAUDE.md and
+    // `.claude` settings) applies, so a flow ported from a developer machine
+    // behaves as it did there. Its hooks run in the container; the worker-side
+    // policy still decides every tool call.
+    loadProjectSettings: true,
+    maxTurns: config.maxSteps,
+    // The Agent row's tools bound the harness as they bound the Mastra loop.
+    toolKeys: config.toolKeys,
+    tracer: input.tracer,
+    workspace: input.workspace,
+  });
   return runner({
-    kind,
+    close: runtime.close,
+    kind: harness.kind,
     kindSource,
     maxSteps: config.maxSteps,
     promptSuffix: skillsToPromptSuffix(config.skills) ?? '',
-    runtime: claudeCodeRuntime({
-      access,
-      // The repository's own CLAUDE.md and `.claude` settings apply, so a flow ported
-      // from a developer machine behaves as it did there. Its hooks run in the
-      // container; the worker-side policy still decides every tool call.
-      loadProjectSettings: true,
-      maxTurns: config.maxSteps,
-      // The Agent row's tools bound the harness as they bound the Mastra loop.
-      toolKeys: config.toolKeys,
-      tracer: input.tracer,
-      workspace: input.workspace,
-    }),
+    runtime,
     skills: config.skills,
     toolKeys: config.toolKeys,
   });
