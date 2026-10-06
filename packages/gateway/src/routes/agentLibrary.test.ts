@@ -719,6 +719,11 @@ describe('agent runtime', () => {
     expect(res.statusCode).toBe(200);
     expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.runtime).toBe('claude-code');
     expect(mockPrisma.configAuditLog.create).toHaveBeenCalled();
+    const { data } = mockPrisma.configAuditLog.create.mock.calls[0]?.[0] ?? {};
+    expect(data).toMatchObject({
+      afterJson: { modelSpec: 'anthropic/claude-opus-4-8', runtime: 'claude-code', version: 2 },
+      beforeJson: { modelSpec: 'anthropic/claude-opus-5-5', runtime: 'claude-code', version: 1 },
+    });
     await app.close();
   });
 
@@ -777,6 +782,7 @@ describe('agent runtime', () => {
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
       id: 'v2',
+      modelSpec: 'anthropic/claude-sonnet-5-5',
       runtime: 'claude-code',
       skillRefs: [],
       version: 2,
@@ -790,7 +796,21 @@ describe('agent runtime', () => {
     expect(res.statusCode).toBe(200);
     expect(mockPrisma.configAuditLog.create).toHaveBeenCalledTimes(1);
     const { data } = mockPrisma.configAuditLog.create.mock.calls[0]?.[0] ?? {};
-    expect(data).toMatchObject({ action: 'UPDATE', entityId: 'v2', entityType: 'Agent' });
+    expect(data).toMatchObject({
+      action: 'UPDATE',
+      // The model is what a team admin most often changes here, so the row must show it.
+      afterJson: { modelSpec: 'anthropic/claude-sonnet-5-5', runtime: 'claude-code', version: 2 },
+      beforeJson: {
+        key: 'teamAgent',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        runtime: 'claude-code',
+        scope: 'TEAM',
+        teamId: TEAM,
+        version: 1,
+      },
+      entityId: 'v2',
+      entityType: 'Agent',
+    });
     await app.close();
   });
 
