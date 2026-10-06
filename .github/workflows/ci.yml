@@ -309,6 +309,15 @@ jobs:
           SKILL_SOURCE_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/skillSource.pg.test.ts packages/gateway/src/lib/skillSourceBudget.pg.test.ts
 
+      # Run-pinned settings pinned on first read: the compare-and-set on the
+      # JSON column (and on SQL NULL) is what keeps concurrent activities of one
+      # run from overwriting each other's pin, which a mocked Prisma does not
+      # evaluate.
+      - name: Pinned settings backfill (database-backed tests)
+        env:
+          PINNED_SETTINGS_PG_TEST: '1'
+        run: yarn test packages/worker/src/lib/config/pinnedSettings.pg.test.ts
+
       # Password sign-in for an admin-created user, through the real better-auth
       # handler: it looks an account up by the lower-cased email, so a route that
       # stores the address as typed makes an account nobody can sign in to.
