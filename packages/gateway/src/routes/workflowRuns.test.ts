@@ -213,6 +213,28 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(res.json().data.isAgentRun).toBe(expected);
   });
 
+  it.each([
+    [
+      'a run pinned to the harness',
+      { 'workspace.implementerRuntime': 'claude-code' },
+      'claude-code',
+    ],
+    ['a run pinned to the Mastra loop', { 'workspace.implementerRuntime': 'mastra' }, 'mastra'],
+    ['a run whose pin predates the setting', { 'workflow.maxSteps': 10 }, null],
+    ['a run with no pinned settings', null, null],
+  ])('implementerRuntime for %s', async (_label, pinnedSettings, expected) => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    const row = await prisma.workflowRun.findFirst();
+    prisma.workflowRun.findFirst.mockResolvedValue({ ...row, pinnedSettings });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}`,
+    });
+    expect(res.json().data.implementerRuntime).toBe(expected);
+  });
+
   it('returns the spec snapshot by default and when includeSpec=true', async () => {
     const { app, prisma } = await buildApp();
     mockRun(prisma);

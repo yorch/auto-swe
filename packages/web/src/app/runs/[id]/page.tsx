@@ -47,6 +47,12 @@ const LAYOUTS: Record<RunDetailLayout, (props: RunLayoutProps) => React.ReactNod
   C: FlightRecorder,
 };
 
+/** Header label for the run's pinned `workspace.implementerRuntime`. */
+const IMPLEMENTER_RUNTIME_LABELS: Record<string, string> = {
+  'claude-code': 'Claude Code harness',
+  mastra: 'Mastra loop',
+};
+
 /** `sm` buttons are 28px tall: on a phone the header actions get a 40px target instead. */
 const TOUCH_SM = 'h-[40px] lg:h-7';
 
@@ -227,6 +233,16 @@ export default function RunDetailPage({ params }: PageProps) {
         </h1>
 
         <StatusBadge status={run.status} />
+
+        {run.implementerRuntime && (
+          <Badge
+            title="Implementer runtime pinned at run start (workspace.implementerRuntime)"
+            tone="muted"
+            variant="outline"
+          >
+            {IMPLEMENTER_RUNTIME_LABELS[run.implementerRuntime] ?? run.implementerRuntime}
+          </Badge>
+        )}
 
         <span className="font-mono text-[10.5px] text-paper-600">
           {run.templateName ? `${run.templateName} · ` : ''}v{run.templateVersion} ·{' '}

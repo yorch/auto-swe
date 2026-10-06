@@ -613,6 +613,11 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   templateName: string;
   /** A run of the hidden Agent Run system template (keyed on its origin, not its name). */
   isAgentRun?: boolean;
+  /**
+   * The `workspace.implementerRuntime` value pinned at run start (`mastra` or
+   * `claude-code`); null when the run's pinned settings do not carry it.
+   */
+  implementerRuntime?: string | null;
   humanSteps?: HumanStepSummary[];
 }
 

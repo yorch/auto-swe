@@ -143,10 +143,10 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
         </RailSection>
       )}
 
-      {/* Eval signals (P0) */}
+      {/* Eval signals */}
       <EvalSignalsPanel runId={run.id} />
 
-      {/* Autonomy decisions (P3) */}
+      {/* Autonomy decisions */}
       <AutonomyDecisionsPanel runId={run.id} />
     </>
   );

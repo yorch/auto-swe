@@ -11,10 +11,19 @@ import { cn, formatCount, formatDuration, formatTokens } from '@/lib/utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Mastra tool-loop names (camelCase) and Claude Code harness names (PascalCase)
+// both appear: the harness records the tool name and input exactly as its
+// hooks receive them (`agents/claudeCode/runtime.ts`).
 const TOOL_LABELS: Record<string, string> = {
+  Bash: 'bash',
   bash: 'bash',
+  Edit: 'edit',
+  Glob: 'glob',
+  Grep: 'grep',
   listDirectory: 'ls',
+  Read: 'read',
   readFile: 'read',
+  Write: 'write',
   writeFile: 'write',
 };
 
@@ -69,8 +78,15 @@ function traceSummary(trace: AgentTraceRecord): { label: string; detail: string 
   if (name === 'listDirectory') {
     return { detail: String(input.path ?? '.'), label };
   }
-  if (name === 'bash') {
+  if (name === 'bash' || name === 'Bash') {
     return { detail: String(input.command ?? '').slice(0, 80), label };
+  }
+  if (name === 'Read' || name === 'Write' || name === 'Edit') {
+    return { detail: String(input.file_path ?? ''), label };
+  }
+  if (name === 'Glob' || name === 'Grep') {
+    const pattern = String(input.pattern ?? '');
+    return { detail: input.path ? `${pattern} in ${String(input.path)}` : pattern, label };
   }
   return { detail: '', label };
 }
