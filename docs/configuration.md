@@ -181,8 +181,11 @@ view reports the value's source as `PINNED`.
 Everything else re-resolves on every call. That is what lets a model or credential edit land inside
 an already-running workflow rather than waiting for a fresh run.
 
-A run created before the snapshot column existed carries `NULL`, and falls back to the built-in
-defaults.
+A snapshot that lacks a key — the row was created before the column existed, or before the setting
+was marked `runPinned` — is completed when `createWorkflowRun` runs against that row again (a retry,
+or a reused workflow id): each missing key is added at its current value, and a value already
+pinned is never changed. The write is a compare-and-set on the stored snapshot, so two attempts
+racing cannot overwrite each other's pins.
 
 ---
 
@@ -255,6 +258,9 @@ from the definition.
   immediately; the other service picks the change up when its ~30 s TTL expires. Gateway and worker
   are separate processes and there is no cross-process invalidation, the same limitation the scanner
   pattern cache carries.
+- **A run's missing pin is completed only at run start.** A run whose snapshot lacks a key and
+  that never re-enters `createWorkflowRun` resolves that key from the live cascade for the rest of
+  its life, so an edit to it can reach the run between two activities.
 - **`restartRequired` is advisory.** The UI says a restart is needed; nothing enforces or performs
   it.
 - **Grants are not scoped below a team.** Authority is expressed at GLOBAL, ORGANIZATION, or TEAM.

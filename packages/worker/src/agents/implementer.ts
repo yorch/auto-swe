@@ -266,23 +266,55 @@ export function effectivePersonaToolKeys(
 }
 
 /**
- * Shared implementer setup for activities: loads the agent's tool config +
- * skills at the current scope (WORKFLOW_TEMPLATE → TEAM → GLOBAL), resolves its
- * optional MCP server URL, and builds the agent. Used by every implementer
- * activity so the load + MCP-binding lifecycle lives in one place. The caller
- * MUST invoke the returned `closeMcp` in a `finally` block.
+ * What an implementer session runs with, whichever runtime drives it: the tool
+ * keys, skills, step budget and tool-output budget of `agentKey` at `ctx`.
  *
  * `agentKey` names the Agent row the session runs as. The fix paths and the
- * merge-conflict resolver pass their own persona key, so that row's tools, MCP
- * binding and model resolve — the model through `inheritsModelFrom` to the
- * implementer unless the persona overrides it. Skills are the persona's own;
- * a persona with no skills of its own gets the implementer's, since the seeded
- * personas carry none and would otherwise lose every coding skill.
+ * merge-conflict resolver pass their own persona key. A persona's tools are
+ * bounded by the implementer's (`effectivePersonaToolKeys`), and its skills are
+ * its own — or, when it has none, the implementer's, since the seeded personas
+ * carry none and would otherwise lose every coding skill.
+ */
+export async function resolveImplementerConfig(
+  ctx?: ResolveCtx,
+  agentKey = 'implementer'
+): Promise<{
+  maxSteps: number;
+  maxToolOutputChars: number;
+  skills: ResolvedSkill[];
+  toolKeys: string[] | null;
+}> {
+  const isPersona = agentKey !== 'implementer';
+  const [ownToolKeys, implementerToolKeys, ownSkills, settings] = await Promise.all([
+    loadAgentToolConfig(agentKey, ctx),
+    isPersona ? loadAgentToolConfig('implementer', ctx) : null,
+    loadAgentSkills(agentKey, ctx),
+    resolveSettings(['workspace.maxToolOutputChars', 'workspace.agentMaxSteps'], ctx),
+  ]);
+  const toolKeys = isPersona
+    ? effectivePersonaToolKeys(ownToolKeys, implementerToolKeys)
+    : ownToolKeys;
+  const skills =
+    ownSkills.length === 0 && isPersona ? await loadAgentSkills('implementer', ctx) : ownSkills;
+  return {
+    maxSteps: settings['workspace.agentMaxSteps'],
+    maxToolOutputChars: settings['workspace.maxToolOutputChars'],
+    skills,
+    toolKeys,
+  };
+}
+
+/**
+ * The Mastra implementer for an activity: resolves the session's config
+ * (`resolveImplementerConfig`) and its optional MCP server URL, and builds the
+ * agent. Activities reach it through `buildImplementerTurnRunner`, which picks
+ * the runtime first and builds this only for the Mastra loop. The caller MUST
+ * invoke the returned `closeMcp` in a `finally` block.
  *
- * A persona's tools are bounded by the implementer's
- * (`effectivePersonaToolKeys`), and a persona with no MCP binding of its own
- * uses the implementer's — still subject to that bound, so it binds only when
- * both rows allow `mcp`.
+ * A persona with no MCP binding of its own uses the implementer's — still
+ * subject to the tool bound, so it binds only when both rows allow `mcp`. The
+ * model resolves through `inheritsModelFrom` to the implementer unless the
+ * persona overrides it.
  *
  * `maxSteps` is the `workspace.agentMaxSteps` step budget. Every
  * `agent.generate` on the returned agent MUST pass it: without it Mastra stops
@@ -302,17 +334,10 @@ export async function buildImplementerForActivity(
   toolKeys: string[] | null;
 }> {
   const isPersona = agentKey !== 'implementer';
-  const [ownToolKeys, implementerToolKeys, ownSkills, settings] = await Promise.all([
-    loadAgentToolConfig(agentKey, ctx),
-    isPersona ? loadAgentToolConfig('implementer', ctx) : null,
-    loadAgentSkills(agentKey, ctx),
-    resolveSettings(['workspace.maxToolOutputChars', 'workspace.agentMaxSteps'], ctx),
-  ]);
-  const toolKeys = isPersona
-    ? effectivePersonaToolKeys(ownToolKeys, implementerToolKeys)
-    : ownToolKeys;
-  const skills =
-    ownSkills.length === 0 && isPersona ? await loadAgentSkills('implementer', ctx) : ownSkills;
+  const { maxSteps, maxToolOutputChars, skills, toolKeys } = await resolveImplementerConfig(
+    ctx,
+    agentKey
+  );
   const mcpTarget =
     (await resolveAgentMcpUrl(agentKey, ctx)) ??
     (isPersona ? await resolveAgentMcpUrl('implementer', ctx) : null);
@@ -323,7 +348,7 @@ export async function buildImplementerForActivity(
     skills,
     {
       agentKey,
-      maxToolOutputChars: settings['workspace.maxToolOutputChars'],
+      maxToolOutputChars,
       mcpAllowPrivateNetwork: mcpTarget?.allowPrivateNetwork,
       mcpBearerToken: mcpTarget?.bearerToken,
       mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
@@ -333,12 +358,5 @@ export async function buildImplementerForActivity(
       resolveCtx: ctx,
     }
   );
-  return {
-    agent,
-    closeMcp,
-    maxSteps: settings['workspace.agentMaxSteps'],
-    promptSuffix,
-    skills,
-    toolKeys,
-  };
+  return { agent, closeMcp, maxSteps, promptSuffix, skills, toolKeys };
 }

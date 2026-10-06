@@ -5,9 +5,11 @@ import type {
   TestRunResult,
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
-import { buildImplementerForActivity } from '../agents/implementer.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
-import { selectImplementerRuntime } from '../agents/implementerRuntimeSelect.js';
+import {
+  buildImplementerTurnRunner,
+  type ImplementerTurnRunner,
+} from '../agents/implementerRuntimeSelect.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -129,8 +131,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   );
 
   const tracer = new AgentTracer();
-  // P2/WS3: present when the implementer Agent enabled MCP — closed in finally.
-  let closeMcp: (() => Promise<void>) | undefined;
+  // Holds the MCP client open under the Mastra loop — closed in finally.
+  let turns: ImplementerTurnRunner | undefined;
 
   try {
     heartbeat(`${mode} workspace provisioned`);
@@ -166,15 +168,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // that Agent row's prompt, tools, skills and MCP binding, with the model
     // inherited from the implementer unless the persona overrides it.
     const activityCtx = await currentRequestContext();
-    const built = await buildImplementerForActivity(workspace, tracer, activityCtx, input.agentKey);
-    closeMcp = built.closeMcp;
-    const { promptSuffix, runtime } = await selectImplementerRuntime({
-      agent: built.agent,
+    turns = await buildImplementerTurnRunner({
       agentKey: input.agentKey,
       ctx: activityCtx,
-      maxSteps: built.maxSteps,
-      promptSuffix: built.promptSuffix,
-      skills: built.skills,
       tracer,
       workspace,
     });
@@ -184,7 +180,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       input.defaultSystemPrompt,
       input.systemPromptOverride
     );
-    const fullSystemPrompt = systemPrompt + (promptSuffix ? `\n\n${promptSuffix}` : '');
+    const fullSystemPrompt = turns.systemPrompt(systemPrompt);
     const userMessage = JSON.stringify({
       mode,
       previousDiff: previousCodeResult.diff.slice(-20_000),
@@ -195,7 +191,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     await runImplementerTurn({
       context: { mode },
       role: input.agentKey,
-      runtime,
+      runtime: turns.runtime,
       system: fullSystemPrompt,
       tracer,
       usageEvent: input.usageEventName,
@@ -313,7 +309,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       testResults: testResult,
     };
   } finally {
-    await closeMcp?.();
+    await turns?.close();
     const done = persistActivityTrace(tracer, input.agentKey);
     await workspace.destroy();
     await done;
