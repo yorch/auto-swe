@@ -17,7 +17,7 @@ import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { lessonMaxAgeDays } from '../lib/lessonRetrieval.js';
-import { memoryInjectionMatches } from '../lib/memoryGuard.js';
+import { CONSOLIDATION_SCAN_UNAVAILABLE, memoryInjectionMatches } from '../lib/memoryGuard.js';
 import { getBoundModel, resolveSystemPrompt } from '../lib/models.js';
 import { ownerOfConnection, withSpendOwner } from '../lib/spendOwner.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -211,10 +211,18 @@ async function consolidateLessonsImpl(
 
       // Consolidated rows are inserted here rather than through `insertMemoryItem`,
       // so the memory gate is applied here: a merged note that reads as an
-      // instruction leaves the cluster as it was. A scan that fails refuses too.
+      // instruction leaves the cluster as it was. A scan that fails refuses too,
+      // but is traced as an outage, not as a security event: no pattern matched.
       const refused = await memoryInjectionMatches(
         lessons.flatMap((m) => [m.lessonSummary, m.rationale])
-      ).catch(() => ['scan unavailable']);
+      ).catch(() => null);
+      if (refused === null) {
+        tracer.addActivityEvent({
+          name: CONSOLIDATION_SCAN_UNAVAILABLE,
+          outputJson: { sourceIds },
+        });
+        return { consolidated: 0, created: 0 };
+      }
       if (refused.length > 0) {
         tracer.addActivityEvent({
           name: MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED,

@@ -21,6 +21,13 @@ import { recordMemorySecurityEvent, unreportedRecallDrops } from './memorySecuri
 
 const INJECTION_KEY_PREFIX = 'injection:';
 
+/**
+ * Traced when a consolidator could not scan its merged rows, and so left the
+ * cluster as it was. The gate failed closed, but nothing matched a pattern, so
+ * this is an outage, not one of the `MEMORY_SECURITY_EVENTS`.
+ */
+export const CONSOLIDATION_SCAN_UNAVAILABLE = 'memory.consolidation_scan_unavailable';
+
 /** Thrown by a memory write whose text matches an injection pattern. */
 export class MemoryContentRefusedError extends Error {
   readonly patterns: string[];
