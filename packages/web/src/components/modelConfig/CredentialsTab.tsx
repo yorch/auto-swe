@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -66,6 +67,53 @@ export function usedByLabel(usedBy: string[]): string {
   const names = agents.slice(0, 4).map(humanizeKey).join(', ');
   const more = agents.length > 4 ? ` and ${agents.length - 4} more` : '';
   return `Used by ${count}${embeddings ? ' and embeddings' : ''}: ${names}${more}`;
+}
+
+type CredentialForm = {
+  provider: string;
+  scope: 'GLOBAL' | 'TEAM';
+  teamId: string;
+  apiBase: string;
+  apiKey: string;
+  allowPrivateNetwork: boolean;
+};
+
+type CredentialSaveBody = {
+  provider?: string;
+  scope?: 'GLOBAL' | 'TEAM';
+  teamId?: string;
+  // null clears the column on the server; undefined keeps the existing value.
+  apiBase?: string | null;
+  apiKey?: string;
+  allowPrivateNetwork?: boolean;
+};
+
+/** What the credential modal saves: the whole form on create, only what changed on edit. */
+export function credentialSaveBody(
+  existing: ProviderCredentialRow | null,
+  form: CredentialForm
+): CredentialSaveBody {
+  if (existing) {
+    // Update: only apiBase, apiKey and the private-network opt-in are editable. When the user
+    // clears apiBase, send `null` explicitly so the gateway nulls the column — omitting the key
+    // entirely would leave the stale URL in place.
+    const apiBaseChanged = form.apiBase !== (existing.apiBase ?? '');
+    return {
+      ...(apiBaseChanged && { apiBase: form.apiBase || null }),
+      ...(form.apiKey && { apiKey: form.apiKey }),
+      ...(form.allowPrivateNetwork !== existing.allowPrivateNetwork && {
+        allowPrivateNetwork: form.allowPrivateNetwork,
+      }),
+    };
+  }
+  return {
+    apiKey: form.apiKey,
+    provider: form.provider,
+    scope: form.scope,
+    ...(form.scope === 'TEAM' && { teamId: form.teamId }),
+    ...(form.apiBase && { apiBase: form.apiBase }),
+    ...(form.allowPrivateNetwork && { allowPrivateNetwork: true }),
+  };
 }
 
 function deleteMessage(target: ProviderCredentialRow, all: ProviderCredentialRow[]) {
@@ -378,14 +426,7 @@ function CredentialModal({
   existing: ProviderCredentialRow | null;
   initialProvider?: string;
   onClose: () => void;
-  onSave: (body: {
-    provider?: string;
-    scope?: 'GLOBAL' | 'TEAM';
-    teamId?: string;
-    // null clears the column on the server; undefined keeps the existing value.
-    apiBase?: string | null;
-    apiKey?: string;
-  }) => Promise<void>;
+  onSave: (body: CredentialSaveBody) => Promise<void>;
 }) {
   const [provider, setProvider] = useState(existing?.provider ?? initialProvider);
   const [scope, setScope] = useState<'GLOBAL' | 'TEAM'>(
@@ -394,6 +435,9 @@ function CredentialModal({
   const [teamId, setTeamId] = useState(existing?.teamId ?? '');
   const [apiBase, setApiBase] = useState(existing?.apiBase ?? '');
   const [apiKey, setApiKey] = useState('');
+  const [allowPrivateNetwork, setAllowPrivateNetwork] = useState(
+    existing?.allowPrivateNetwork === true
+  );
   const { error, saving, submit } = useIntegrationConfigForm();
   const { data: teams } = useTeams();
 
@@ -421,25 +465,18 @@ function CredentialModal({
     if (problem) {
       return;
     }
-    void submit(() => {
-      if (existing) {
-        // Update: only apiBase + apiKey are editable. When the user clears
-        // apiBase, send `null` explicitly so the gateway nulls the column —
-        // omitting the key entirely would leave the stale URL in place.
-        const apiBaseChanged = apiBase !== (existing.apiBase ?? '');
-        return onSave({
-          ...(apiBaseChanged && { apiBase: apiBase || null }),
-          ...(apiKey && { apiKey }),
-        });
-      }
-      return onSave({
-        apiKey,
-        provider,
-        scope,
-        ...(scope === 'TEAM' && { teamId }),
-        ...(apiBase && { apiBase }),
-      });
-    });
+    void submit(() =>
+      onSave(
+        credentialSaveBody(existing, {
+          allowPrivateNetwork,
+          apiBase,
+          apiKey,
+          provider,
+          scope,
+          teamId,
+        })
+      )
+    );
   };
 
   return (
@@ -507,6 +544,13 @@ function CredentialModal({
           onChange={(e) => setApiBase(e.target.value)}
           placeholder="https://opencode.ai/zen/go/v1"
           value={apiBase}
+        />
+        <Checkbox
+          checked={allowPrivateNetwork}
+          hint="Tick this for a provider on an internal network address (for example 10.x, 192.168.x or a VPN address), or one whose public name resolves to a private address on your network. The platform's own addresses, link-local addresses and cloud metadata endpoints are always refused."
+          id="allowPrivateNetwork"
+          label="This provider is on a private network"
+          onChange={(e) => setAllowPrivateNetwork(e.target.checked)}
         />
         <Input
           className="font-mono"

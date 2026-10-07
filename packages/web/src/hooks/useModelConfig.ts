@@ -18,6 +18,8 @@ export interface ProviderCredentialRow {
   teamId: string | null;
   orgId: string | null;
   apiBase: string | null;
+  /** ADMIN opt-in: the credential's host may resolve to a private-network address. */
+  allowPrivateNetwork: boolean;
   lastFour: string;
   maskedKey: string;
   keyVersion: number;
@@ -66,6 +68,7 @@ export function useAdminCreateCredential() {
       orgId?: string;
       apiBase?: string;
       apiKey: string;
+      allowPrivateNetwork?: boolean;
     }) => api.post<{ data: ProviderCredentialRow }>('/api/v1/platform/credentials', body),
     onSuccess: () => invalidateCredentialQueries(qc),
   });
@@ -74,8 +77,15 @@ export function useAdminCreateCredential() {
 export function useAdminUpdateCredential() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; apiBase?: string | null; apiKey?: string }) =>
-      api.put<{ data: ProviderCredentialRow }>(`/api/v1/platform/credentials/${id}`, body),
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      apiBase?: string | null;
+      apiKey?: string;
+      allowPrivateNetwork?: boolean;
+    }) => api.put<{ data: ProviderCredentialRow }>(`/api/v1/platform/credentials/${id}`, body),
     onSuccess: () => invalidateCredentialQueries(qc),
   });
 }
