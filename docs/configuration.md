@@ -248,8 +248,8 @@ link-local, unspecified, multicast, reserved and cloud-metadata addresses are re
 A DNS failure or timeout (5 s) refuses with a fixed message and never echoes resolver detail.
 Redirects are followed by hand or refused, so each hop passes through the same guard.
 Where one call talks to a single trusted host and may be redirected elsewhere (the CI log download,
-an MCP server), the private-network allowance is scoped to that host's origin and every other
-origin is checked strictly. The exception is a CI log download for a repository on a GitHub
+an MCP server, a provider credential's list-models request), the private-network allowance is
+scoped to that host's origin and every other origin is checked strictly. The exception is a CI log download for a repository on a GitHub
 Enterprise host (not github.com): its log storage lives on the same internal network, so every hop
 may resolve to a private address, while loopback, link-local, unspecified, reserved and metadata
 addresses stay refused on every hop. The check classifies one source of truth for addresses: besides

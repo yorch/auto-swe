@@ -162,6 +162,19 @@ newline is harmless), then refuses a key still containing whitespace or control 
 `apiBase` containing a username or password, each with a `400` (`INVALID_CREDENTIAL`). A dismissal, an
 undismissal and an on-demand run are each written to the config audit log (`ModelSuggestion`).
 
+**Private networks.** A credential's host is refused when it is, or resolves to, a private address
+(RFC 1918, carrier-grade NAT, IPv6 ULA, the fake-IP range) unless the credential carries
+`allowPrivateNetwork` — the **This provider is on a private network** checkbox. With it, the save-time
+check, the **Test** probe, discovery and the catalog refresh accept a private address for that
+credential's own host only; any other host is checked strictly. Loopback, link-local and cloud-metadata
+addresses are refused regardless, so a model server running on the gateway's or worker's host is reached
+through `host.docker.internal` or a LAN address, not `localhost`. It applies to every provider, so a
+built-in one whose public name resolves privately (split DNS, a fake-IP proxy) can be opted in too.
+Only a platform ADMIN sets it: the team credential routes refuse a body carrying it with `403`
+(`FORBIDDEN`), and a team admin who changes a credential's `apiBase` clears it. Saving a private
+`apiBase` without it, or turning it off while the stored `apiBase` is private, is a `400`
+(`UNSAFE_API_BASE`).
+
 **The workflow editor's cost estimate** prices each step from the same source. A step's
 `costHint` names a role; `GET /model-catalog/role-pricing` — readable by any signed-in user, since
 template authors cannot read the agent library — returns, per role, the model its GLOBAL agent runs
@@ -377,7 +390,8 @@ Pick a name (`opencodego`, `groq`, `bedrock`, …). If the provider speaks the O
 1. Sign into the dashboard as an admin → **Admin → Model Config → Credentials → + New credential**.
 2. Provider name: lowercase kebab-case, e.g. `opencodego`.
 3. Scope: GLOBAL (visible everywhere) or TEAM.
-4. API base: e.g. `https://opencode.ai/zen/go/v1`.
+4. API base: e.g. `https://opencode.ai/zen/go/v1`. For a server on a LAN or VPN address, tick
+   **This provider is on a private network** (see *Private networks* above).
 5. API key: paste from your password manager — you won't see it again after save.
 6. Click **Test** to verify the credential works (issues a `GET <base>/models` probe).
 
@@ -487,7 +501,7 @@ curl -X POST http://localhost:8080/api/v1/platform/agent-library \
   }'
 
 # Rotate a credential (admin scope). Provider + scope are immutable; only
-# apiBase and apiKey can change.
+# apiBase, apiKey and allowPrivateNetwork can change.
 curl -X PUT http://localhost:8080/api/v1/platform/credentials/<credential-id> \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
@@ -586,10 +600,14 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   by a name filter that can miss one or drop one it should not, and outside Google — which says which
   methods a model serves — whether a model is chat or embedding is read from its id. Up to five
   pages per provider are followed.
-- **A local `apiBase` is always refused.** Credentials have no `allowPrivateNetwork` flag, so an
-  Ollama or other private-address endpoint is reported as `blocked address`, in discovery and in the
-  credential **Test** alike. The guard also resolves the host and refuses a name that answers with a private
-  address, and the scheduled run makes these calls from the worker.
+- **A loopback `apiBase` is always refused.** The private-network opt-in never covers loopback,
+  link-local or metadata addresses, so an Ollama endpoint on `localhost` is reported as
+  `blocked address` in discovery and in the credential **Test**. The guard resolves the host, so a name
+  that answers with a private address is refused too unless the credential opts in, and the scheduled
+  run makes these calls from the worker, whose network view may differ from the gateway's.
+- **Model calls at run time are not guarded.** The worker's chat and embedding calls connect to a
+  credential's `apiBase` directly, without the outbound URL guard, so the opt-in governs what an admin
+  can save, test and list through, not what a run can reach once a URL is stored.
 - **Retirement flags reflect what one key can see.** A key restricted to some models (an OpenAI
   project key, say) flags every other priced model of that provider as possibly retired.
 - **A retirement flag is a hint.** A provider may serve an alias or a pinned id it does not list, so
