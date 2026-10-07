@@ -7,7 +7,8 @@ vi.mock('./implementerSession.js', () => ({
 }));
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
-import { executeReviewFixImplementation } from './ciFixLoop.js';
+import { CI_FAILURE_TRACE_CHARS, CI_FAILURE_TRACE_EVENT } from '../lib/attemptTrace.js';
+import { executeCIFixImplementation, executeReviewFixImplementation } from './ciFixLoop.js';
 
 const previous = {
   branch: 'auto/T-1',
@@ -16,6 +17,7 @@ const previous = {
 
 type SessionInput = {
   lessonQuery: string;
+  startEvent?: { name: string; outputJson: { logTail: string } };
   notes: (t: { passed: boolean }) => string;
   userPayload: { reviewFindings: unknown };
 };
@@ -43,5 +45,18 @@ describe('executeReviewFixImplementation', () => {
   it('passes a review network summary through unchanged', async () => {
     await executeReviewFixImplementation('a\nb', previous);
     expect(sessionInput().userPayload.reviewFindings).toBe('a\nb');
+  });
+});
+
+describe('executeCIFixImplementation', () => {
+  beforeEach(() => sessionMock.mockClear());
+
+  it('records the end of the failure it was handed, for a lesson about the run', async () => {
+    const logs = `${'noise\n'.repeat(2_000)}Error: expected 2 to be 3`;
+    await executeCIFixImplementation(logs, previous);
+    const event = sessionInput().startEvent;
+    expect(event?.name).toBe(CI_FAILURE_TRACE_EVENT);
+    expect(event?.outputJson.logTail).toHaveLength(CI_FAILURE_TRACE_CHARS);
+    expect(event?.outputJson.logTail.endsWith('Error: expected 2 to be 3')).toBe(true);
   });
 });

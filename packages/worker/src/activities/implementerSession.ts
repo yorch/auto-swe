@@ -86,6 +86,12 @@ export interface FixSessionInput {
    * the ticket text the implementer recalls by would not.
    */
   lessonQuery?: string;
+  /**
+   * A trace event recorded when the session starts, before anything can fail,
+   * so it is persisted with the session's trace whatever happens next. The CI
+   * fixer records the failure it was handed here (`lib/attemptTrace.ts`).
+   */
+  startEvent?: { name: string; outputJson: Record<string, unknown> };
 }
 
 /**
@@ -139,6 +145,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   );
 
   const tracer = new AgentTracer();
+  if (input.startEvent) {
+    tracer.addActivityEvent(input.startEvent);
+  }
   // Holds the MCP client open under the Mastra loop — closed in finally.
   let turns: ImplementerTurnRunner | undefined;
 

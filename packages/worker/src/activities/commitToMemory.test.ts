@@ -1,11 +1,14 @@
 import type { LessonEvidence } from '@auto-swe/shared/types/workflow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { generateMock, insertMock, findWorkflowMock } = vi.hoisted(() => ({
-  findWorkflowMock: vi.fn(),
-  generateMock: vi.fn(),
-  insertMock: vi.fn(),
-}));
+const { generateMock, insertMock, findWorkflowMock, readHistoryMock, persistTraceMock } =
+  vi.hoisted(() => ({
+    findWorkflowMock: vi.fn(),
+    generateMock: vi.fn(),
+    insertMock: vi.fn(),
+    persistTraceMock: vi.fn(),
+    readHistoryMock: vi.fn(),
+  }));
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: { activeWorkflow: { findFirst: findWorkflowMock } },
@@ -17,7 +20,11 @@ vi.mock('@mastra/core/agent', () => ({
 }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn(async () => 'run-1'),
-  persistActivityTrace: vi.fn(),
+  persistActivityTrace: persistTraceMock,
+}));
+vi.mock('../lib/lessonAttemptHistory.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/lessonAttemptHistory.js')>()),
+  readLessonAttemptHistory: readHistoryMock,
 }));
 vi.mock('../lib/config/agentSkills.js', () => ({ loadAgentSkills: vi.fn(async () => []) }));
 vi.mock('../lib/config/contextLookup.js', () => ({
@@ -59,7 +66,22 @@ beforeEach(() => {
   findWorkflowMock.mockResolvedValue(WORKFLOW);
   generateMock.mockResolvedValue({ object: LESSON, usage: null });
   insertMock.mockResolvedValue('lesson-1');
+  readHistoryMock.mockResolvedValue(NO_HISTORY);
 });
+
+const NO_HISTORY = {
+  ciFailures: [],
+  omitted: { ciFailures: 0, reviewRejections: 0 },
+  reviewRejections: [],
+};
+
+/** The names of the trace events the activity persisted. */
+const tracedEvents = () => {
+  const tracer = persistTraceMock.mock.calls[0]?.[0] as
+    | { records: Array<{ toolName?: string }> }
+    | undefined;
+  return (tracer?.records ?? []).map((r) => r.toolName);
+};
 
 describe('commitToMemory', () => {
   const evidence: LessonEvidence = {
@@ -90,6 +112,50 @@ describe('commitToMemory', () => {
         workflowRunId: 'run-1',
       })
     );
+  });
+
+  it('hands the writer every attempt the run recorded and cites how many it saw', async () => {
+    readHistoryMock.mockResolvedValue({
+      ...NO_HISTORY,
+      reviewRejections: [
+        { attempt: 1, text: 'SECURITY: missing auth check' },
+        { attempt: 2, text: 'SECURITY: request body is used unvalidated' },
+      ],
+    });
+    await commitToMemory('eng-acme-api-T-1', null, undefined, evidence);
+
+    expect(readHistoryMock).toHaveBeenCalledWith('run-1');
+    const message = generateMock.mock.calls[0]?.[0]?.[0]?.content as string;
+    expect(message).toContain('"attempts" lists the review rejections and CI failures');
+    const fenced = message.slice(message.indexOf('<run_evidence>'));
+    expect(fenced).toContain('missing auth check');
+    expect(insertMock.mock.calls[0]?.[0]?.metadata.evidence).toEqual({
+      attempts: { ciFailures: 0, reviewRejections: 2 },
+      pullRequests: [{ headSha: 'f00d', prNumber: 7 }],
+      quote: 'SECURITY: request body is used unvalidated',
+    });
+  });
+
+  it('leaves the history out when it holds only the latest attempt', async () => {
+    readHistoryMock.mockResolvedValue({
+      ...NO_HISTORY,
+      reviewRejections: [{ attempt: 1, text: 'SECURITY: request body is used unvalidated' }],
+    });
+    await commitToMemory('eng-acme-api-T-1', null, undefined, evidence);
+    const message = generateMock.mock.calls[0]?.[0]?.[0]?.content as string;
+    expect(message).not.toContain('"attempts"');
+    expect(insertMock.mock.calls[0]?.[0]?.metadata.evidence).not.toHaveProperty('attempts');
+  });
+
+  it('writes the lesson from the latest attempt when the history cannot be read', async () => {
+    readHistoryMock.mockRejectedValue(new Error('pg down'));
+    await expect(commitToMemory('eng-acme-api-T-1', null, undefined, evidence)).resolves.toBe(
+      'lesson-1'
+    );
+    const message = generateMock.mock.calls[0]?.[0]?.[0]?.content as string;
+    expect(message).toContain('request body is used unvalidated');
+    expect(message).not.toContain('"attempts"');
+    expect(tracedEvents()).toContain('memory.attempt_history_unavailable');
   });
 
   it('lets the recorded outcome win over one the model put in metadata', async () => {

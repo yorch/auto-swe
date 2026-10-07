@@ -46,11 +46,28 @@ agent's stored prompt, tells the agent to name a root cause only when the eviden
 fences the evidence as data. The outcome is written into the lesson's `metadata.outcome` by code,
 not by the model. Another template's `commitToMemory` step records `COMPLETED`.
 
+That context holds only each loop's latest rejection and CI logs, and a loop revisit overwrites its
+nodes' `WorkflowStep` rows, so the activity rebuilds the earlier attempts from the run's
+`AgentTrace` rows (`lib/lessonAttemptHistory.ts`), every query scoped to the run:
+
+- each review network dispatch that rejected, worded as its fix was given it, from the reviewers'
+  verdict rows; a reviewer that crashed counts as a critical rejection, as it does in the review;
+- each CI failure a fix session was handed, from the `ci_fix.failure_logs` event the CI fixer
+  records with the last 4,000 characters of the logs.
+
+A dispatch that Temporal retried counts once. The latest five attempts of each kind are kept and
+share 4,000 characters, at most 1,500 each: a rejection keeps its head, a log its tail. The history
+reaches the agent, inside the same fence, only when some kind has more than one attempt, and the
+agent is told to say so when the attempts failed in different ways. A history that cannot be read is
+traced as `memory.attempt_history_unavailable` and the lesson is written from the latest attempt
+alone.
+
 Each lesson records where it came from. The row's `workflowRunId` names the run (whose traces hold
 the rest), `agentKey` and `model` the writer, and `metadata.evidence` cites the pull requests and
 head commit it was written about plus a 300-character quote of the evidence that drove it — the
-start of the rejection, or the end of the failing CI log. The model-free writers record their run
-and an `agentKey` of `mergeConflictResolver` or `shellStep`.
+start of the rejection, or the end of the failing CI log — and, when the lesson saw earlier
+attempts, how many rejections and CI failures it was written from (`attempts`). The model-free
+writers record their run and an `agentKey` of `mergeConflictResolver` or `shellStep`.
 
 The agent also grades its confidence by how directly the evidence supports the lesson — `high`
 when a rejection or CI failure states the problem, `medium` when it points to it, `low` when the
@@ -159,8 +176,13 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
   often without a written reason, and a `REVIEW_FAILED` lesson is written as the review network's.
   A run that times out waiting for CI or a merge writes no lesson, and neither does one that fails
   outside the review and CI loops (a security gate, an implementation error).
-- **The evidence is the last attempt's.** A loop keeps only its latest rejection and CI log, so a
-  lesson about a run that failed three different ways sees the third.
+- **The attempt history is only as complete as the traces.** Trace writes are best-effort, so an
+  attempt whose rows were not written is missing from it, and it holds only the latest five
+  attempts of each kind. A `four-eyes` sign-off rejection is a person's answer, not a trace, and is
+  not in it.
+- **The CI run that exhausts the loop is never read.** The loop fetches logs only for a failure it
+  is about to fix, so the latest CI failure a lesson sees is the one before the run that ended the
+  loop.
 - **A citation is a pointer, not a proof.** `metadata.evidence` says what a lesson was written
   from; nothing checks that the lesson's text follows from it, and a consolidated row cites only
   its sources, not their evidence.
