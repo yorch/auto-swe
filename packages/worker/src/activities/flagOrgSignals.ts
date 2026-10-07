@@ -6,6 +6,7 @@ import {
   searchOrgChannelMemory,
 } from '../lib/channelMemory.js';
 import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
+import { fenceRecalledMemory } from '../lib/memoryGuard.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
 import { isChannelOverBudgetNow, runHeldChannelTurn } from './channelAssistant.js';
 import { SKIP_SENTINEL } from './channelConstants.js';
@@ -68,13 +69,19 @@ export function buildOrgFlagPrompt(
   interestSummaries: string[],
   candidates: OrgChannelMemoryItem[]
 ): string {
-  const focus = interestSummaries.map((s) => `- ${s}`).join('\n');
-  const signals = candidates
-    .map((c) => {
+  // Both lists are channel memory — this channel's and other channels' — so
+  // both are fenced as reference data, like every other memory read.
+  const focus = fenceRecalledMemory(
+    "This channel's recent focus:",
+    interestSummaries.map((s) => `- ${s}`)
+  );
+  const signals = fenceRecalledMemory(
+    'Recent activity in other org channels:',
+    candidates.map((c) => {
       const where = c.sourceChannelName ? `#${c.sourceChannelName}` : 'another channel';
       return `- [${where}] ${c.summary.slice(0, MAX_SUMMARY_CHARS)}`;
     })
-    .join('\n');
+  );
 
   return [
     "You are this Slack channel's resident teammate with visibility across the",
@@ -89,10 +96,8 @@ export function buildOrgFlagPrompt(
     'name the source channel. If nothing is genuinely worth flagging — the common',
     'case — reply with exactly: SKIP',
     '',
-    "This channel's recent focus:",
     focus,
     '',
-    'Recent activity in other org channels:',
     signals,
   ].join('\n');
 }

@@ -755,7 +755,7 @@ The warnings of the save-time and install-time scans are stored on the `SkillRev
 - Every reader that puts memory in a prompt — `retrieveSimilarLessons`, `retrieveChannelMemory`, `recentChannelMemory`, `searchOrgChannelMemory` — drops a matching item, so a row written before the gate existed, or edited since, never reaches a model.
 - `EXFILTRATION` hits do not gate: those patterns match a URL or a `curl`, which an engineering lesson names as a matter of course.
 - The gate fails closed. A scan that throws refuses the write and recalls nothing.
-- Recalled memory is wrapped in a `<recalled_memory>` fence stating that it is reference data, not instructions.
+- Every prompt that carries memory wraps it in a `<recalled_memory>` fence stating that it is reference data, not instructions (`fenceRecalledMemory`): recalled lessons, and channel memory in a mention turn, a reactive interjection, an ambient digest and an org-flagging check.
 
 The shell step masks its command before storing it as a lesson: the run's token by value, then anything shaped like a credential (`maskCredentialShapes` in `packages/worker/src/lib/redactToken.ts` — URL userinfo, auth headers, `*_TOKEN=`-style assignments, `--password`-style flags, well-known token prefixes). The auto-commit message it pushes gets the same masked text.
 

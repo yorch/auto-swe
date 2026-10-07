@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { type RecentChannelMemoryItem, recentChannelMemory } from '../lib/channelMemory.js';
 import { resolvePersonaPrompt } from '../lib/channelPersona.js';
+import { fenceRecalledMemory } from '../lib/memoryGuard.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
 import {
   DEFAULT_CHANNEL_AGENT_KEY,
@@ -29,7 +30,12 @@ const MIN_DIGEST_LENGTH = 12;
 export function buildAmbientPrompt(items: RecentChannelMemoryItem[]): string {
   // The item cap is enforced authoritatively at the fetch (`recentChannelMemory`
   // is called with MAX_DIGEST_MEMORY_ITEMS), so no re-slice is needed here.
-  const bullets = items.map((item) => `- ${item.lessonSummary}`).join('\n');
+  // Fenced like every other memory read: the notes were distilled from earlier
+  // messages and model output, so they are quoted, not obeyed.
+  const memory = fenceRecalledMemory(
+    "Recent context from this channel's memory:",
+    items.map((item) => `- ${item.lessonSummary}`)
+  );
   return [
     "You are this Slack channel's resident teammate posting a proactive, top-level",
     'update (not a reply to anyone). Below is recent context this channel has',
@@ -40,8 +46,7 @@ export function buildAmbientPrompt(items: RecentChannelMemoryItem[]): string {
     '',
     'If nothing here is worth posting right now, reply with exactly: SKIP',
     '',
-    "Recent context from this channel's memory:",
-    bullets,
+    memory,
   ].join('\n');
 }
 

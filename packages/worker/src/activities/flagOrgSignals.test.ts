@@ -113,6 +113,25 @@ describe('buildOrgFlagPrompt', () => {
     expect(prompt).toContain('SKIP');
     expect(prompt).toContain('HIGH bar');
   });
+
+  it('fences both this channel focus and the other channels activity as reference data', () => {
+    const prompt = buildOrgFlagPrompt(
+      ['focus note'],
+      [
+        {
+          id: 's1',
+          similarity: 0.8,
+          sourceChannelId: 'c2',
+          sourceChannelName: null,
+          summary: 'signal note',
+        },
+      ]
+    );
+    const blocks = prompt.split('<recalled_memory>').slice(1);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]?.split('</recalled_memory>')[0]).toContain('focus note');
+    expect(blocks[1]?.split('</recalled_memory>')[0]).toContain('[another channel] signal note');
+  });
 });
 
 describe('flagOrgSignals', () => {
