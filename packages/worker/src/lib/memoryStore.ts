@@ -130,6 +130,8 @@ export async function searchMemoryItemsByVector(opts: {
    *  embed once via {@link embedQuery} and pass the result here to avoid a
    *  redundant embedding round-trip per search. */
   precomputed?: QueryEmbedding;
+  /** Leave out rows older than this many days; absent or 0 keeps every age. */
+  maxAgeDays?: number;
 }): Promise<Record<string, unknown>[]> {
   assertScopeColumn(opts.scopeColumn);
 
@@ -140,6 +142,12 @@ export async function searchMemoryItemsByVector(opts: {
     ',\n      '
   );
 
+  // In the WHERE clause rather than after the query, so LIMIT still counts
+  // only rows that may be returned.
+  const maxAgeDays = opts.maxAgeDays ?? 0;
+  const ageFilter =
+    maxAgeDays > 0 ? '\n      AND created_at >= now() - make_interval(days => $6::int)' : '';
+
   return scopedVectorQuery<Record<string, unknown>>(
     `SELECT
       ${projection}
@@ -149,14 +157,15 @@ export async function searchMemoryItemsByVector(opts: {
       AND consolidated_at IS NULL
       AND superseded_at IS NULL
       AND (embedding_model IS NULL OR embedding_model = $5)
-      AND 1 - (embedding <=> $1::vector) >= $3
+      AND 1 - (embedding <=> $1::vector) >= $3${ageFilter}
     ORDER BY embedding <=> $1::vector ASC
     LIMIT $4`,
     JSON.stringify(queryEmbedding),
     opts.scopeId,
     opts.similarityThreshold,
     opts.limit,
-    embeddingSpec
+    embeddingSpec,
+    ...(maxAgeDays > 0 ? [maxAgeDays] : [])
   );
 }
 

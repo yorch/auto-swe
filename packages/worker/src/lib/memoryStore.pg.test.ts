@@ -38,6 +38,7 @@ const ORG = '7a000000-0000-4000-8000-000000000001';
 const TEAM = '7a000000-0000-4000-8000-000000000002';
 const CROWDED_REPO = '7a000000-0000-4000-8000-000000000003';
 const SMALL_REPO = '7a000000-0000-4000-8000-000000000004';
+const AGED_REPO = '7a000000-0000-4000-8000-000000000005';
 const SPEC = 'test/embedding';
 const DIMS = 1536;
 
@@ -82,6 +83,7 @@ describe.skipIf(!enabled)('scoped vector search against pgvector', () => {
       data: [
         { id: CROWDED_REPO, teamId: TEAM },
         { id: SMALL_REPO, teamId: TEAM },
+        { id: AGED_REPO, teamId: TEAM },
       ],
     });
     // The crowded repository fills the query's neighbourhood; the small one's
@@ -136,6 +138,36 @@ describe.skipIf(!enabled)('scoped vector search against pgvector', () => {
     expect(await listStaleMemoryIds(SPEC, sorted[0] ?? null, 1_000)).toEqual(sorted.slice(1));
   });
 
+  it('leaves lessons past the maximum age out before LIMIT, so N fresh ones still come back', async () => {
+    // Ten old lessons right at the query, five fresh ones far from it: without
+    // the filter the old ones take every slot.
+    await seed(AGED_REPO, 10, 0.1, query);
+    await prisma.$executeRawUnsafe(
+      `UPDATE memory_items SET created_at = now() - interval '100 days' WHERE repo_id = $1::uuid`,
+      AGED_REPO
+    );
+    await seed(AGED_REPO, 5, 1, null);
+    const fresh = await prisma.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT id FROM memory_items WHERE repo_id = $1::uuid AND created_at > now() - interval '1 day'`,
+      AGED_REPO
+    );
+
+    const rows = await searchMemoryItemsByVector({
+      limit: 5,
+      maxAgeDays: 30,
+      precomputed: { embedding: query, spec: SPEC },
+      queryText: 'unused: the embedding is precomputed',
+      scopeColumn: 'repo_id',
+      scopeId: AGED_REPO,
+      selectColumns: ['id'],
+      similarityThreshold: -1,
+    });
+    expect(new Set(rows.map((r) => r.id))).toEqual(new Set(fresh.map((r) => r.id)));
+    // Without the filter the old lessons win every slot.
+    const unfiltered = await search(AGED_REPO, 5);
+    expect(unfiltered.some((r) => fresh.some((f) => f.id === r.id))).toBe(false);
+  });
+
   it('returns the crowded repository its own lessons too', async () => {
     const rows = await search(CROWDED_REPO, 5);
     expect(rows).toHaveLength(5);
@@ -147,8 +179,9 @@ async function cleanup() {
     'test fixture rows, by fixed id',
     ['MemoryItem', 'Connection', 'Team'],
     async () => {
-      await prisma.memoryItem.deleteMany({ where: { repoId: { in: [CROWDED_REPO, SMALL_REPO] } } });
-      await prisma.connection.deleteMany({ where: { id: { in: [CROWDED_REPO, SMALL_REPO] } } });
+      const repos = [CROWDED_REPO, SMALL_REPO, AGED_REPO];
+      await prisma.memoryItem.deleteMany({ where: { repoId: { in: repos } } });
+      await prisma.connection.deleteMany({ where: { id: { in: repos } } });
       await prisma.team.deleteMany({ where: { id: TEAM } });
       await prisma.organization.deleteMany({ where: { id: ORG } });
     }

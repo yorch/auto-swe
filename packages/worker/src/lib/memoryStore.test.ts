@@ -36,6 +36,7 @@ import {
   reembedMemoryItem,
   scopedVectorQuery,
   searchMemoryItemsByEntity,
+  searchMemoryItemsByVector,
 } from './memoryStore.js';
 
 // Flags any text containing INJECT as a prompt injection, as the real scanner would.
@@ -159,6 +160,40 @@ describe('insertMemoryItem', () => {
     const [, ...params] = queryRawUnsafeMock.mock.calls[0];
     expect(params[17]).toBe('document');
     expect(params[18]).toBe('doc-uuid');
+  });
+});
+
+describe('searchMemoryItemsByVector', () => {
+  const search = (maxAgeDays?: number) =>
+    searchMemoryItemsByVector({
+      limit: 5,
+      ...(maxAgeDays === undefined ? {} : { maxAgeDays }),
+      precomputed: { embedding: [0.1], spec: 'openai/text-embedding-3-large' },
+      queryText: 'q',
+      scopeColumn: 'repo_id',
+      scopeId: 'repo-1',
+      selectColumns: ['id'],
+      similarityThreshold: 0.7,
+    });
+
+  it('filters by age in the query, before LIMIT, when a maximum age is set', async () => {
+    queryRawUnsafeMock.mockResolvedValue([]);
+    await search(30);
+    const [sql, ...params] = queryRawUnsafeMock.mock.calls[0] as [string, ...unknown[]];
+    expect(sql).toContain('AND created_at >= now() - make_interval(days => $6::int)');
+    expect(sql.indexOf('make_interval')).toBeLessThan(sql.indexOf('LIMIT'));
+    expect(params).toHaveLength(6);
+    expect(params[5]).toBe(30);
+  });
+
+  it('adds no age filter when the maximum age is 0 or absent', async () => {
+    queryRawUnsafeMock.mockResolvedValue([]);
+    await search(0);
+    await search();
+    for (const call of queryRawUnsafeMock.mock.calls) {
+      expect(call[0]).not.toContain('make_interval');
+      expect(call).toHaveLength(6);
+    }
   });
 });
 

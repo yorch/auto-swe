@@ -16,6 +16,7 @@ import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
+import { lessonMaxAgeDays } from '../lib/lessonRetrieval.js';
 import { memoryInjectionMatches } from '../lib/memoryGuard.js';
 import { getBoundModel, resolveSystemPrompt } from '../lib/models.js';
 import { ownerOfConnection, withSpendOwner } from '../lib/spendOwner.js';
@@ -82,6 +83,9 @@ async function consolidateLessonsImpl(
   // assumed to share it) — cosine similarity across different embedding
   // models is meaningless and would merge unrelated lessons.
   const embeddingSpec = await currentEmbeddingSpec();
+  // A lesson past `memory.lessonMaxAgeDays` is not merged: the merged row
+  // would be new, and would bring the aged advice back into recall.
+  const maxAgeDays = await lessonMaxAgeDays(repoId);
   const rows = await prisma.$queryRawUnsafe<RawLesson[]>(
     `SELECT
        id,
@@ -95,9 +99,11 @@ async function consolidateLessonsImpl(
        AND consolidated_at IS NULL
        AND superseded_at IS NULL
        AND (embedding_model IS NULL OR embedding_model = $2)
+       AND ($3::int = 0 OR created_at >= now() - make_interval(days => $3::int))
      ORDER BY created_at DESC`,
     repoId,
-    embeddingSpec
+    embeddingSpec,
+    maxAgeDays
   );
 
   if (rows.length < minClusterSize) {

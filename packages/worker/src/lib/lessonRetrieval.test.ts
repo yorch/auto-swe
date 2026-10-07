@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./memoryStore.js', () => ({
   searchMemoryItemsByVector: vi.fn().mockResolvedValue([]),
 }));
+vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn().mockResolvedValue(0) }));
+vi.mock('./spendOwner.js', () => ({
+  ownerOfConnection: vi.fn(async () => ({ orgId: 'org-1', teamId: 'team-1' })),
+}));
 vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
   scanSkillContent: vi.fn(async (text: string) => {
     const warnings = text.includes('INJECT') ? ['injection:ignore-previous-instructions'] : [];
@@ -10,10 +14,12 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
   }),
 }));
 
+import { resolveSetting } from '@auto-swe/shared/config';
 import { retrieveSimilarLessons } from './lessonRetrieval.js';
 import { searchMemoryItemsByVector } from './memoryStore.js';
 
 const mockSearch = vi.mocked(searchMemoryItemsByVector);
+const mockResolveSetting = vi.mocked(resolveSetting);
 
 describe('retrieveSimilarLessons', () => {
   beforeEach(() => {
@@ -61,5 +67,21 @@ describe('retrieveSimilarLessons', () => {
     const lessons = await retrieveSimilarLessons('q', 'repo-1');
 
     expect(lessons.map((l) => l.lessonId)).toEqual(['a']);
+  });
+
+  it("filters by the repository's lesson age in the query, resolved at its owning team", async () => {
+    mockResolveSetting.mockResolvedValueOnce(90 as never);
+    await retrieveSimilarLessons('q', 'repo-1', 5, 0.7);
+
+    expect(mockResolveSetting).toHaveBeenCalledWith('memory.lessonMaxAgeDays', {
+      orgId: 'org-1',
+      teamId: 'team-1',
+    });
+    expect(mockSearch).toHaveBeenCalledWith(expect.objectContaining({ limit: 5, maxAgeDays: 90 }));
+  });
+
+  it('passes 0, keeping every age, when the setting is off', async () => {
+    await retrieveSimilarLessons('q', 'repo-1');
+    expect(mockSearch).toHaveBeenCalledWith(expect.objectContaining({ maxAgeDays: 0 }));
   });
 });

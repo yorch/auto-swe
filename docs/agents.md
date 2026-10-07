@@ -227,9 +227,9 @@ searchLessons({ query: string, limit?: 1–10 }) → { lessons: [{ lessonId, sum
 explainLesson({ lessonId: uuid }) → { found, lesson: { outcome, evidence, mergedFrom, replaced, status, … } }
 ```
 
-`searchLessons` returns what recall would for the agent's own query; `explainLesson` reads a lesson
-of the same repository (any other id is not found) and withholds any field that matches an injection
-pattern. Recalled lessons carry their ids, so the agent can ask about one. See
+`searchLessons` returns what recall would for the agent's own query, under the same maximum age
+(`memory.lessonMaxAgeDays`); `explainLesson` reads a lesson of the same repository (any other id is
+not found), whatever its age, and withholds any field that matches an injection pattern. Recalled lessons carry their ids, so the agent can ask about one. See
 [memory.md §3](./memory.md#3-recalling-lessons).
 
 ### 3.3 Path Safety
