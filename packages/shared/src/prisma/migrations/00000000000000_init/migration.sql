@@ -509,6 +509,8 @@ CREATE TABLE "users" (
     "github_login_account_id" TEXT,
     "role" "Role" NOT NULL DEFAULT 'ENGINEER',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "approved_at" TIMESTAMPTZ,
+    "approval_source" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "preferences" JSONB NOT NULL DEFAULT '{}',

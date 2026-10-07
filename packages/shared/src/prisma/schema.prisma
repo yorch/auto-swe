@@ -1095,6 +1095,13 @@ model User {
   githubLoginAccountId String?  @map("github_login_account_id")
   role                 Role     @default(ENGINEER)
   isActive             Boolean  @default(true) @map("is_active")
+  /// When an account was first made active, by an admin or by the GitHub org
+  /// auto-approval rule. Never cleared, so it separates a deactivated account
+  /// (set) from one still waiting in the approval queue (null): auto-approval
+  /// only ever acts on the second, and deactivation therefore sticks.
+  approvedAt           DateTime? @map("approved_at") @db.Timestamptz
+  /// Who approved: `admin`, or `github-org:<org>` for the auto-approval rule.
+  approvalSource       String?  @map("approval_source")
   createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   preferences          Json     @default("{}") @map("preferences")

@@ -78,6 +78,41 @@ Notes:
 - **A GitHub App's credentials also work, with one permission.** A GitHub App's user token ignores the scopes the gateway requests, so the App must be granted **Account permissions → Email addresses → Read-only**. Without it GHE answers `403` to `/user/emails` and sign-in is refused. An OAuth App needs no such setting.
 - **When sign-in fails.** The login page shows a short message. The detail is in the gateway log, for example `GitHub Enterprise sign-in refused for ghe.example.com: GET /user/emails answered 403; Resource not accessible by integration; needs emails=read`: GHE's own message and the permission it says the token needed. The log never contains the access token.
 
+### Auto-approving an organization's members
+
+New sign-ups wait in the approval queue at `/govern/users`. To let the members of chosen
+organizations skip it, list their lowercase logins in **Platform settings → GitHub → Auto-approve
+sign-ins from organizations** (`github.signInAutoApproveOrgs`). An empty list, the default, turns
+auto-approval off. There is deliberately no "approve every GitHub user" mode.
+
+When a user signs in with GitHub for the first time, the gateway records their GitHub username and
+then asks GitHub whether that user is a member of a listed organization
+(`GET /orgs/{org}/members/{username}`). A member is made active with the `ENGINEER` role, stamped
+`approvedAt` with source `github-org:<org>`, and an audit entry is written with no human actor.
+
+- **Which credential.** The platform's own GitHub credential on the instance's host, never the
+  user's token, so the sign-in scopes do not change. It must be allowed to read organization
+  members: a GitHub App with **Organization permissions → Members → Read-only**, or a PAT from an
+  organization member with `read:org`. A credential that is not itself a member of the organization
+  can only see public members, and GitHub then answers with a redirect that is treated as
+  "could not ask".
+- **Fails closed.** A missing credential, an outage, a rate limit, a rejected credential, a private
+  membership the credential cannot see, an unverified email or an unrecorded GitHub username all
+  leave the user in the queue, and sign-in itself still succeeds. A gateway log line names the
+  cause.
+- **Only for accounts still waiting.** The rule applies to a user who is inactive, has never been
+  approved (`approvedAt` is empty) and whose only sign-in method is GitHub. An admin who deactivates
+  an account stamps `approvedAt`, so deactivation sticks: that person cannot sign in again and be
+  re-approved by the rule. It does not change an account that is already active.
+- **Default team.** Every new user, auto-approved or not, is added to the default team on creation.
+  With `repoAccess.mode` off, team membership alone grants that team's repositories, so set
+  `repoAccess.mode` to `enforce` or point the default team slug (`/govern/workflow-defaults`) at a team with nothing
+  sensitive before listing a large organization.
+- **Timing.** The list is read through the ~30 s settings cache, so removing an organization takes
+  up to that long to apply. It never revokes anyone already approved.
+- **GitHub Enterprise.** The membership is asked of the same host the user signed in against. A
+  credential that belongs to another host is refused, as everywhere else.
+
 ### Production-only extras
 
 - **Public homepage**: GitHub requires a real homepage URL for apps used in production. Set `Homepage URL` to your real domain.

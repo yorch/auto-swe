@@ -38,6 +38,13 @@ export const hostEntry = z
   .refine((h) => !h.split(':')[0].endsWith('.'), 'omit the trailing dot')
   .max(253);
 const hostList = z.array(hostEntry).max(50);
+/// A GitHub organization login: alphanumerics and single hyphens, at most 39
+/// characters, lowercase because GitHub treats logins case-insensitively and
+/// the stored form is the one compared and sent.
+const githubOrgLogin = z
+  .string()
+  .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, 'must be a lowercase GitHub organization login')
+  .max(39);
 const ratio = z.number().min(0).max(1);
 
 export const SETTING_DEFINITIONS = {
@@ -164,6 +171,19 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: hostList,
+    sensitive: true,
+  }),
+  'github.signInAutoApproveOrgs': defineSetting({
+    defaultValue: [],
+    description:
+      "GitHub organizations whose members are approved automatically when they first sign in with GitHub, skipping the approval queue. Empty turns auto-approval off. Membership is checked with the platform GitHub credential against the instance's own GitHub host, so the credential needs permission to read organization members; any error, a private membership it cannot see, or a missing GitHub login leaves the user waiting for an admin. Approved users get the ENGINEER role and join the default team like any other sign-up, and a deactivated account is never re-approved. Lowercase organization logins, comma-separated. Read through a ~30 s cache, so removing an organization takes up to that long to apply.",
+    group: 'github',
+    label: 'Auto-approve sign-ins from organizations',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.array(githubOrgLogin).max(50),
     sensitive: true,
   }),
   'github.userCredentialHosts': defineSetting({
