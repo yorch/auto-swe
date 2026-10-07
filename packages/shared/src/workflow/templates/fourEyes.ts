@@ -2,6 +2,7 @@ import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
   ciWaitEntry,
+  failureLesson,
   initCounters,
   mergeNodes,
   openPullRequest,
@@ -68,7 +69,7 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
         group: 'implement',
       }),
     },
-    reviewLoop({ approved: 'setAwaitingCi' }),
+    reviewLoop({ approved: 'setAwaitingCi', exhausted: 'lessonReviewFailed' }),
     {
       setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     },
@@ -78,10 +79,18 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
     // nothing is counted as a spent attempt instead of waiting for a CI event that
     // cannot come.
     ciLoop({
+      exhausted: 'lessonCIFailed',
       fix: { handoff: { repush: 'repushAfterFix' }, retryIfUnchanged: true },
       passed: 'setAwaitingSignoff',
     }),
     {
+      // The agent review and CI loops store what blocked them before the run fails. The
+      // sign-off loop does not: its rejections are people's, often with no written reason,
+      // and a REVIEW_FAILED lesson tells the writer the review network rejected the change.
+      lessonReviewFailed: failureLesson('REVIEW_FAILED', 'terminateReviewFailed', {
+        group: 'review loop',
+      }),
+      lessonCIFailed: failureLesson('CI_FAILED', 'terminateCIFailed', { group: 'CI loop' }),
       setAwaitingSignoff: statusStamp('IN_REVIEW', 'storeSignoffContext', { group: 'approval' }),
       storeSignoffContext: {
         group: 'approval',

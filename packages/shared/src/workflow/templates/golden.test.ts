@@ -358,6 +358,35 @@ function defaultEngineeringFailureLessons(g: WorkflowSpec): WorkflowSpec {
   return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
 }
 
+/**
+ * The other engineering templates store a lesson the same way when a review or CI loop runs
+ * out of attempts: a `commitToMemory` step on the loop's exhausted edge (`checkReviewLimit` /
+ * `checkCILimit`) that continues to the same terminal, on error too.
+ */
+function failureLessons(g: WorkflowSpec, loops: ReadonlyArray<'review' | 'ci'>): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
+  const lesson = (outcome: string, next: string) => ({
+    inputs: { outcome: { literal: outcome } },
+    next,
+    onError: 'continue',
+    step: 'commitToMemory',
+    type: 'step',
+  });
+  if (loops.includes('review')) {
+    (nodes.checkReviewLimit as Record<string, unknown>).onTrue = 'lessonReviewFailed';
+    nodes.lessonReviewFailed = lesson('REVIEW_FAILED', 'terminateReviewFailed');
+  }
+  if (loops.includes('ci')) {
+    (nodes.checkCILimit as Record<string, unknown>).onTrue = 'lessonCIFailed';
+    nodes.lessonCIFailed = lesson('CI_FAILED', 'terminateCIFailed');
+  }
+  return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
+}
+
+const FAILURE_LESSONS_REASON =
+  'a review or CI loop that runs out of attempts stores a lesson about what blocked it ' +
+  'before the run fails';
+
 const INTENDED_CHANGES: Record<
   string,
   { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec }
@@ -380,6 +409,19 @@ const INTENDED_CHANGES: Record<
       },
     ])
   ),
+  'agent-reviewed-pr': {
+    apply: (g: WorkflowSpec) =>
+      failureLessons(removePassThrough(g, 'setCompleted'), ['review', 'ci']),
+    reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
+  },
+  'code-and-ci': {
+    apply: (g: WorkflowSpec) => failureLessons(removePassThrough(g, 'setCompleted'), ['ci']),
+    reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
+  },
+  'dependency-update': {
+    apply: (g: WorkflowSpec) => failureLessons(removePassThrough(g, 'setCompleted'), ['ci']),
+    reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
+  },
   'default-engineering': {
     apply: (g: WorkflowSpec) =>
       defaultEngineeringFailureLessons(removePassThrough(g, 'setCompleted')),
@@ -391,18 +433,25 @@ const INTENDED_CHANGES: Record<
   // The two templates that ended the run on the first CI failure now fix and retry like their
   // siblings, with CI ahead of the human / consensus gates (and the setCompleted removal above).
   'consensus-review': {
-    apply: (g: WorkflowSpec) => consensusReviewAfterCiFirst(removePassThrough(g, 'setCompleted')),
+    apply: (g: WorkflowSpec) =>
+      failureLessons(consensusReviewAfterCiFirst(removePassThrough(g, 'setCompleted')), [
+        'review',
+        'ci',
+      ]),
     reason:
       'the finalizer already writes COMPLETED on SUCCESS; the PR opens straight after the ' +
       'implementation, a failing CI is fixed (2 attempts) before anything else, and the ' +
-      'two-reviewer consensus runs on the green code, a rejection going fix -> CI -> consensus',
+      'two-reviewer consensus runs on the green code, a rejection going fix -> CI -> consensus; ' +
+      FAILURE_LESSONS_REASON,
   },
   'four-eyes': {
-    apply: (g: WorkflowSpec) => fourEyesAfterCiFirst(removePassThrough(g, 'setCompleted')),
+    apply: (g: WorkflowSpec) =>
+      failureLessons(fourEyesAfterCiFirst(removePassThrough(g, 'setCompleted')), ['review', 'ci']),
     reason:
       'the finalizer already writes COMPLETED on SUCCESS; CI (with a 2-attempt fix loop) runs ' +
       'after the agent review and before the two sign-offs, which see the green code, and a ' +
-      'rejection goes fix -> CI -> both sign-offs again instead of failing the run',
+      'rejection goes fix -> CI -> both sign-offs again instead of failing the run; the agent ' +
+      'review and CI loops store a lesson when they run out of attempts (the sign-off loop does not)',
   },
 };
 

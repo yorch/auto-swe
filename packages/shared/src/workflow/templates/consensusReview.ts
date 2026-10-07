@@ -2,6 +2,7 @@ import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
   ciWaitEntry,
+  failureLesson,
   initCounters,
   mergeNodes,
   openPullRequest,
@@ -145,7 +146,7 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
         expr: 'context.reviewRetries >= 3',
         group: 'consensus review',
         onFalse: 'consensusFix',
-        onTrue: 'terminateReviewFailed',
+        onTrue: 'lessonReviewFailed',
         title: 'Out of attempts?',
         type: 'cond',
       },
@@ -185,6 +186,11 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
       setAwaitingCiAfterFix: statusStamp('AWAITING_CI', 'repushAfterFix', {
         group: 'consensus review',
       }),
+      // A consensus that runs out of attempts stores what the reviewers rejected before the
+      // run fails. The rejection is the last round's per-branch results, read as text.
+      lessonReviewFailed: failureLesson('REVIEW_FAILED', 'terminateReviewFailed', {
+        group: 'consensus review',
+      }),
       terminateReviewFailed: terminate('FAILED', {
         group: 'consensus review',
         result: prResult(),
@@ -196,10 +202,12 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
     // `repushAfterFix` only re-arms the CI wait for the new head. The reviewers run after.
     // A CI fix that changed nothing is counted as a spent attempt instead of waiting.
     ciLoop({
+      exhausted: 'lessonCIFailed',
       fix: { handoff: { repush: 'repushAfterFix' }, retryIfUnchanged: true },
       passed: 'setReviewing',
     }),
     {
+      lessonCIFailed: failureLesson('CI_FAILED', 'terminateCIFailed', { group: 'CI loop' }),
       done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
     }
   ),

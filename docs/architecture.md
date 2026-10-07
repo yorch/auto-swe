@@ -401,7 +401,9 @@ head, which is what lets the CI webhook match a verdict to it. `agent-reviewed-p
 `dependency-update`, `canary-rollout`, `signal-gated-rollout`, `consensus-review` and `four-eyes`
 go straight from the fix back to the CI wait. `default-engineering` instead sends the fixed code
 back through its review loop first. `pr-approval-gate` only observes CI: both outcomes end the run.
-A CI failure therefore spends agent time and tokens before the run can fail.
+A CI failure therefore spends agent time and tokens before the run can fail. In the engineering
+templates a CI or review loop that runs out of attempts stores a lesson about it first
+([memory.md §2](./memory.md#2-writing-lessons)).
 
 `consensus-review` and `four-eyes` put CI ahead of their gate, so the gate sees code that is already
 green and identical to the pull request head. Both open the pull request (ready for review; the

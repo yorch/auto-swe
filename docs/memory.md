@@ -33,14 +33,15 @@ by the same model, so vectors from different models are never compared.
 
 | Writer | When | Model call |
 |---|---|---|
-| `commitToMemory` step | In the default engineering template: after the pull request is merged (`MERGED`), and when the review loop or the CI loop runs out of attempts (`REVIEW_FAILED`, `CI_FAILED`) before the run fails | Yes — the `commitToMemory` agent writes the lesson from the run's evidence |
+| `commitToMemory` step | When a review loop or a CI loop runs out of attempts (`REVIEW_FAILED`, `CI_FAILED`), before the run fails, in the engineering templates that have one: `default-engineering`, `agent-reviewed-pr`, `code-and-ci`, `consensus-review`, `dependency-update` and `four-eyes`. In `default-engineering` also after the pull request is merged (`MERGED`) | Yes — the `commitToMemory` agent writes the lesson from the run's evidence |
 | Merge-conflict resolver | After it resolves a conflict | No (`recordLessonBackground`) |
 | Shell step | After a step that changed files and pushed them | No; the command is stored with credentials masked |
 
 The step hands the agent the run's evidence, read from the workflow's own context and bounded
-there (`lib/lessonEvidence.ts`): the outcome, the review network's last rejection, the tail of the
-last failing CI run's logs, and the changed files with their line counts, the implementer's notes
-and the test totals — never the diff itself. The user message, built in code rather than in the
+there (`lib/lessonEvidence.ts`): the outcome, the review network's last rejection (in
+`consensus-review`, the last round's rejecting reviewers, joined), the tail of the last CI logs the
+fix loop fetched, and the changed files with their line counts, the implementer's notes and the
+test totals — never the diff itself. The user message, built in code rather than in the
 agent's stored prompt, tells the agent to name a root cause only when the evidence shows one and
 fences the evidence as data. The outcome is written into the lesson's `metadata.outcome` by code,
 not by the model. Another template's `commitToMemory` step records `COMPLETED`.
@@ -152,10 +153,12 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
-- **Only the default engineering template writes failure lessons.** Other templates reach
-  `commitToMemory`, if at all, on their success path; a run that times out waiting for a merge
-  writes no lesson, and neither does one that fails outside the review and CI loops (a security
-  gate, an implementation error).
+- **Not every loop that fails writes a lesson.** The release templates `canary-rollout` and
+  `signal-gated-rollout` have the same review and CI loops and write none. Nor does the sign-off
+  loop of `four-eyes`, when people reject the change three times: those rejections are people's,
+  often without a written reason, and a `REVIEW_FAILED` lesson is written as the review network's.
+  A run that times out waiting for CI or a merge writes no lesson, and neither does one that fails
+  outside the review and CI loops (a security gate, an implementation error).
 - **The evidence is the last attempt's.** A loop keeps only its latest rejection and CI log, so a
   lesson about a run that failed three different ways sees the third.
 - **A citation is a pointer, not a proof.** `metadata.evidence` says what a lesson was written

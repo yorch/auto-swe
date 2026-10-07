@@ -41,6 +41,20 @@ describe('buildLessonEvidence', () => {
     });
   });
 
+  it("reads a fan-out review's per-branch results as the rejection", () => {
+    // `consensus-review` keeps the fan-out's results at `context.lastRejectionSummary`.
+    const evidence = buildLessonEvidence({
+      ciLogs: undefined,
+      codeResult: undefined,
+      outcome: 'REVIEW_FAILED',
+      rejectionSummary: [
+        { status: 'SUCCESS' },
+        { exports: { 'context.branchRejectionSummary': 'needs tests' }, status: 'FAILED' },
+      ],
+    });
+    expect(evidence.rejectionSummary).toBe('needs tests');
+  });
+
   it('never forwards the diff or test stdout, and bounds the file list', () => {
     const evidence = buildLessonEvidence({
       ciLogs: undefined,

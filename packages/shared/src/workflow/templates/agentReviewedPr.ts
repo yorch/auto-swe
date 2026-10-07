@@ -2,6 +2,7 @@ import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
   ciWaitEntry,
+  failureLesson,
   initCounters,
   mergeNodes,
   openPullRequest,
@@ -42,16 +43,22 @@ export const AGENT_REVIEWED_PR_SPEC: WorkflowSpec = {
       },
       initCounters: initCounters('setReviewing', { group: 'implement' }),
     },
-    reviewLoop({ approved: 'setAwaitingCi' }),
+    reviewLoop({ approved: 'setAwaitingCi', exhausted: 'lessonReviewFailed' }),
     {
       setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     },
     openPullRequest({ next: ciWaitEntry() }),
     ciLoop({
+      exhausted: 'lessonCIFailed',
       fix: { handoff: { repush: 'repushAfterCIFix' } },
       passed: 'done',
     }),
     {
+      // A loop that runs out of attempts stores what blocked it before the run fails.
+      lessonReviewFailed: failureLesson('REVIEW_FAILED', 'terminateReviewFailed', {
+        group: 'review loop',
+      }),
+      lessonCIFailed: failureLesson('CI_FAILED', 'terminateCIFailed', { group: 'CI loop' }),
       done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
     }
   ),

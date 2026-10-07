@@ -1,8 +1,9 @@
 import type { CodeResult, LessonEvidence, LessonOutcome } from '@auto-swe/shared/types/workflow';
+import { rejectionText } from './rejectionText.js';
 
 /**
  * Builds the evidence a run's lesson is written from, out of the workflow's own
- * context. Pure and import-free at runtime, so the workflow isolate can call it.
+ * context. Pure, and imports only pure modules, so the workflow isolate can call it.
  *
  * Every field is bounded: the result is an activity argument and lands in
  * workflow history, and CI logs or implementation notes can each run to
@@ -32,7 +33,8 @@ export function buildLessonEvidence(input: {
       : 'COMPLETED';
   const evidence: LessonEvidence = { outcome };
 
-  const rejection = head(input.rejectionSummary);
+  // A fan-out review keeps its per-branch results here rather than one summary.
+  const rejection = head(rejectionText(input.rejectionSummary));
   if (rejection) {
     evidence.rejectionSummary = rejection;
   }
