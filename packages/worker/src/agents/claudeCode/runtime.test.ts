@@ -834,11 +834,10 @@ describe('the outcome of a turn', () => {
 describe('per-call accounting', () => {
   it('debits each API call it streams once the next begins, and reports the rest', async () => {
     const debited: unknown[] = [];
-    const { runtime } = setup({
-      onCallSpent: async (spent: unknown) => {
-        debited.push(spent);
-      },
-    });
+    const onCallSpent = async (spent: unknown) => {
+      debited.push(spent);
+    };
+    const { runtime } = setup();
     h.script.push([
       [
         init('s'),
@@ -850,7 +849,7 @@ describe('per-call accounting', () => {
       ],
     ]);
 
-    const outcome = await runtime.runTurn({ system: 'S', user: 'U' });
+    const outcome = await runtime.runTurn({ onCallSpent, system: 'S', user: 'U' });
 
     expect(debited).toEqual([
       [

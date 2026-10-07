@@ -836,17 +836,15 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
   });
 
   it('debits each call the harness finishes, and reports the whole turn’s cost', async () => {
-    m.claudeCodeRuntime.mockImplementation(
-      (options: { onCallSpent: (s: unknown) => Promise<void> }) => ({
-        runTurn: async () => {
-          // The runtime hands each completed call to the run's per-call accounting.
-          await options.onCallSpent([
-            { modelSpec: 'anthropic/x', usage: { inputTokens: 100, outputTokens: 20 } },
-          ]);
-          return { steps: 2, text: 'harness done', toolCallCount: 1, usageByModel: [] };
-        },
-      })
-    );
+    m.claudeCodeRuntime.mockImplementation(() => ({
+      runTurn: async (input: { onCallSpent: (s: unknown) => Promise<void> }) => {
+        // The runtime hands each completed call to the turn's per-call accounting.
+        await input.onCallSpent([
+          { modelSpec: 'anthropic/x', usage: { inputTokens: 100, outputTokens: 20 } },
+        ]);
+        return { steps: 2, text: 'harness done', toolCallCount: 1, usageByModel: [] };
+      },
+    }));
 
     const result = await runAgentTask({ request: request() });
 
@@ -866,14 +864,12 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
     const budget = Object.assign(new Error('Budget already exhausted'), {
       type: 'BUDGET_EXCEEDED',
     });
-    m.claudeCodeRuntime.mockImplementation(
-      (options: { onCallSpent: (s: unknown) => Promise<void> }) => ({
-        runTurn: () =>
-          options.onCallSpent([
-            { modelSpec: 'anthropic/x', usage: { inputTokens: 1, outputTokens: 1 } },
-          ]),
-      })
-    );
+    m.claudeCodeRuntime.mockImplementation(() => ({
+      runTurn: (input: { onCallSpent: (s: unknown) => Promise<void> }) =>
+        input.onCallSpent([
+          { modelSpec: 'anthropic/x', usage: { inputTokens: 1, outputTokens: 1 } },
+        ]),
+    }));
     m.assertBudget.mockResolvedValueOnce(undefined).mockRejectedValueOnce(budget);
     await expect(
       runAgentTask({

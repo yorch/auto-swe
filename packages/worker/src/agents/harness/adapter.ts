@@ -4,7 +4,7 @@ import type { Workspace } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import type { ContainerPlatform } from './binary.js';
 import type { ToolDecision } from './policy.js';
-import type { SpentByModel, UsageNormaliser, UsageTotals } from './usage.js';
+import type { UsageNormaliser, UsageTotals } from './usage.js';
 
 /** The checkout inside every workspace container (`createWorkspace` clones here). */
 export const WORKSPACE_DIR = '/workspace/target-repo';
@@ -106,9 +106,9 @@ export interface HarnessTurn {
   /**
    * What one model call has reported spending so far, as the harness streams it.
    * A later report for the same `callId` replaces the earlier one; a report for a
-   * different call means every earlier call is complete, and a caller that meters
-   * per call (`onCallSpent`) is debited for it then. Adapters report every call
-   * they see; without `onCallSpent` this does nothing.
+   * different call means every earlier call is complete, and a turn metered per
+   * call (`ImplementerTurnInput.onCallSpent`) is debited for it then. Adapters
+   * report every call they see; a turn without `onCallSpent` ignores them.
    */
   callUsage(callId: string, modelSpec: string, usage: UsageTotals): void;
 }
@@ -188,15 +188,6 @@ export interface HarnessRuntimeOptions<Access> {
    * spent, as the Mastra loop's deadline does.
    */
   deadline?: AbortSignal;
-  /**
-   * Per-call accounting: called, one at a time, with each model call's usage once
-   * the call is complete, while the turn runs. It debits the call and may then
-   * throw (the run's budget is exhausted); the turn is aborted and fails with
-   * that error. A call handed here is not reported again in the turn's usage.
-   * The harness reports totals only when its run ends, so without this a long
-   * run is metered once, after it has spent.
-   */
-  onCallSpent?: (spent: SpentByModel) => Promise<void>;
   tracer: AgentTracer;
   workspace: Workspace;
 }

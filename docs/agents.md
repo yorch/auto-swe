@@ -456,7 +456,7 @@ wrong, against what is one harness's own:
 | Cancellation and a caller's deadline, wired to one abort controller; a cancelled turn reports the cancellation | `usage`: a normaliser from what the harness reports to per-model usage |
 | Each decision bounded by the 60 s deadline, a throw turned into a deny, a refusal traced with its tag | `capabilities`: whether it can enforce the per-call policy |
 | Tool results bounded to 20 000 characters in the trace; a failed turn's usage accrued | `close`: anything held beyond a turn (optional) |
-| Per-call metering for a caller that asks (`onCallSpent`): each call debited once the next begins, a throw aborting the turn, the turn's report reconciled against what was debited | Reporting each model call's usage as it streams (`turn.callUsage`) |
+| Per-call metering for every turn (`onCallSpent` on the turn's input): each call debited once the next begins, a throw aborting the turn, the turn's report reconciled against what was debited | Reporting each model call's usage as it streams (`turn.callUsage`) |
 
 The canonical vocabulary (`harness/policy.ts`) is the four capabilities of the Mastra workspace
 tools, and `decideCanonicalCall` applies their scanners to it: `shell` gets the audit line and
@@ -540,8 +540,9 @@ the policy lets `Read` reach.
 its saved totals, so a turn records the change since the last. A turn that ends without a result — a
 deadline stopped it, or the process died — is metered from the assistant messages it streamed, each of
 which carries its API call's usage (the last report per message id counts). The adapter hands those
-reports to the shared runtime as they stream (`turn.callUsage`); a caller that meters per call
-(`onCallSpent`, an agent run) is debited for a call once the next one begins, and the turn's own
+reports to the shared runtime as they stream (`turn.callUsage`). Every turn is metered per call:
+`runImplementerTurn` hands the runtime the turn's `onCallSpent` (`perCallAccounting`), each call is
+debited once the next one begins and the budget re-checked, and the turn's own
 report is then reconciled against what was debited (`subtractSpent`), so nothing is charged twice.
 Each model is priced at its own spec
 (a harness may delegate small tasks to a cheaper model). Cache reads and writes count as input
@@ -1254,14 +1255,13 @@ template override is never badged, because it may use a different model or crede
 - **Generic `agent` nodes never run on the harness.** They have no workspace, so an Agent asking for
   `claude-code` runs on Mastra there, with a trace event saying so; a node that needs the harness has
   to be an implementer-family step or an agent run.
-- **Harness agent runs are metered per streamed call.** A call is debited once the next one begins, so
+- **Harness turns are metered per streamed call.** A call is debited once the next one begins, so
   an exhausted budget stops the run one call late, as the Mastra loop stops one step late, and the
   call that was streaming when the budget ran out is charged when the turn ends. Calls the harness
   makes without streaming a message (a small-model side task) are not seen until the turn's totals
   arrive, so they are charged at the end and never trigger the check. A turn stopped by its
   deadline, or whose process died, has no totals and is metered from its streamed messages alone, so
-  it can undercount by those side calls. Implementer-family turns on the harness are still metered
-  per turn (below).
+  it can undercount by those side calls.
 - **The seeded agents carry no runtime.** Built-in agents seed with none, so the implementer family
   follows `workspace.implementerRuntime` until an ADMIN sets one; a seeded default-model move keeps
   that choice. A bundle can carry an agent's `runtime` ([bundles.md](./bundles.md)); one that omits
@@ -1276,9 +1276,7 @@ template override is never badged, because it may use a different model or crede
   `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
   evade them.
 - **Harness usage is metered conservatively and priced by the model it names.** Cache reads and
-  writes count in full against the token budget, though they are priced at the cache rates. For an
-  implementer-family turn the budget is checked before the turn and accrued after it, so one turn can
-  overshoot by up to its step budget (agent runs debit per call, above); the
+  writes count in full against the token budget, though they are priced at the cache rates. The
   SDK's own cost cap is not used because it is a client-side estimate. A model the harness picks that
   has no catalog price records $0 with a warning; the organization-USD-cap guard checks only the
   Agent's configured model.

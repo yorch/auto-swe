@@ -17,7 +17,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRunTools.js';
 import type { BoundHarness } from '../agents/harness/registry.js';
 import { HARNESSES } from '../agents/harnessRegistry.js';
-import { perCallAccounting, runImplementerTurn } from '../agents/implementerRuntime.js';
+import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { isMcpToolEnabled, loadMcpTools } from '../agents/mcpTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
@@ -501,13 +501,11 @@ async function runOnHarness(
       outputJson: { agentKey: key, mcpConnectionId: resolved.mcpConnectionId },
     });
   }
-  const accounting = perCallAccounting({ role: key, usageEvent: 'llm.agent_run' });
   const runtime = harness.build({
     deadline: input.deadline,
     exactToolKeys: grantedWorkspaceToolIds(resolved.toolKeys),
     loadProjectSettings: true,
     maxTurns: input.maxSteps,
-    onCallSpent: accounting.onCallSpent,
     tracer,
     workspace: input.workspace,
   });
@@ -516,7 +514,6 @@ async function runOnHarness(
   await assertBudgetAvailable(`agent.${key}`);
   const turn = await runImplementerTurn({
     context: { agentRun: true },
-    debited: accounting.debited,
     role: key,
     runtime,
     system: `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim(),

@@ -338,11 +338,15 @@ describe('per-call accounting (onCallSpent)', () => {
     onCallSpent: (spent: unknown) => Promise<void>
   ) {
     const { adapter } = fakeAdapter(drive);
-    return harnessRuntime(adapter, {
-      onCallSpent: onCallSpent as never,
+    const runtime = harnessRuntime(adapter, {
       tracer: { addToolCall: vi.fn() } as never,
       workspace: workspace() as never,
     });
+    // The caller meters the turn: `onCallSpent` rides on the turn's input.
+    return {
+      runTurn: (input: { system: string; user: string }) =>
+        runtime.runTurn({ ...input, onCallSpent: onCallSpent as never }),
+    };
   }
 
   it('debits each call once the next begins, in order, and reports only the rest', async () => {

@@ -9,7 +9,11 @@ import {
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import { activityCancellationSignal, throwIfActivityCancelled } from '../../lib/cancellation.js';
 import { spawnCaptureAsync } from '../../lib/execUtils.js';
-import { type ImplementerRuntime, withSpentUsage } from '../implementerRuntime.js';
+import {
+  type ImplementerRuntime,
+  type ImplementerTurnInput,
+  withSpentUsage,
+} from '../implementerRuntime.js';
 import {
   type HarnessAdapter,
   type HarnessProvisioning,
@@ -109,7 +113,7 @@ export interface HarnessRuntime extends ImplementerRuntime {
  * stop. Every tool call is decided by the worker, through `turn.decide`,
  * within {@link POLICY_DECISION_MS} and failing closed.
  *
- * With `onCallSpent`, each model call is debited as soon as it is complete
+ * With the turn's `onCallSpent`, each model call is debited as soon as it is complete
  * (the next call has begun), in order, one at a time; a throw from it aborts the
  * turn, which then fails with that error. The turn's own report is reconciled
  * against what was debited, so nothing is counted twice: only the remainder —
@@ -122,7 +126,6 @@ export function harnessRuntime<Report>(
   adapter: HarnessAdapter<Report>,
   options: {
     deadline?: AbortSignal;
-    onCallSpent?: (spent: SpentByModel) => Promise<void>;
     tracer: AgentTracer;
     workspace: Workspace;
   }
@@ -133,10 +136,11 @@ export function harnessRuntime<Report>(
       'HARNESS_POLICY_UNENFORCEABLE'
     );
   }
-  const { deadline, onCallSpent, tracer, workspace } = options;
+  const { deadline, tracer, workspace } = options;
   let prepared: Promise<string> | undefined;
 
-  async function runTurn(input: { system: string; user: string }) {
+  async function runTurn(input: ImplementerTurnInput) {
+    const { onCallSpent } = input;
     if (!prepared) {
       const preparing = prepareContainer(workspace, adapter.provisioning);
       prepared = preparing;
