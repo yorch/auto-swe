@@ -39,7 +39,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
-import { TOKEN } from '@/lib/palette';
+import { useTokens } from '@/hooks/useTokens';
 import { cn, FOCUS_RING, formatCost, plural } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
@@ -123,9 +123,30 @@ function EditorInner({
     }
   }, [nodesInitialized, fit]);
 
-  const initial = useMemo(() => specToFlow(spec, { editable: true }), [spec]);
+  const tokens = useTokens();
+  const initial = useMemo(() => specToFlow(spec, { editable: true, tokens }), [spec, tokens]);
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode<DagNodeData>>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
+
+  // Edge colours are literal hex (SVG markers cannot read `var()`), so a theme
+  // switch repaints each existing edge in place — positions and selection stay.
+  useEffect(() => {
+    const fresh = new Map(initial.edges.map((e) => [e.id, e]));
+    setEdges((prev) =>
+      prev.map((e) => {
+        const next = fresh.get(e.id);
+        return next
+          ? {
+              ...e,
+              labelBgStyle: next.labelBgStyle,
+              labelStyle: next.labelStyle,
+              markerEnd: next.markerEnd,
+              style: next.style,
+            }
+          : e;
+      })
+    );
+  }, [initial.edges, setEdges]);
 
   // Resync when the parent spec changes (e.g. after Save, version switch,
   // starter template load, an inspector edit). We compare by serializing — for
@@ -680,7 +701,7 @@ function EditorInner({
           role="application"
         >
           <ReactFlow
-            connectionLineStyle={{ stroke: TOKEN.ember400, strokeWidth: 2 }}
+            connectionLineStyle={{ stroke: 'var(--color-ember-400)', strokeWidth: 2 }}
             deleteKeyCode="Delete"
             edges={edges}
             maxZoom={2.5}

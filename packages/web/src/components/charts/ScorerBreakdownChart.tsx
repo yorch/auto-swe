@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { useThemeStore } from '@/stores/themeStore';
 import {
   ACTIVE_DOT_PROPS,
   AXIS_COMMON_PROPS,
@@ -100,6 +101,7 @@ export function ScorerBreakdownChart({
   /** Names the chart for assistive tech, e.g. the scorer's name. */
   title?: string;
 }) {
+  const theme = useThemeStore((s) => s.resolved);
   const words = granularityWords(granularity);
   const series = collapseSeries(allSeries);
   if (series.every((s) => s.daily.every((d) => d.n === 0))) {
@@ -162,7 +164,7 @@ export function ScorerBreakdownChart({
               isAnimationActive={false}
               key={seriesKey(i)}
               name={s.label}
-              stroke={seriesColor(i, s.label)}
+              stroke={seriesColor(i, s.label, theme)}
               strokeDasharray={seriesDash(i, s.label)}
               strokeWidth={LINE_WIDTH}
               type="monotone"

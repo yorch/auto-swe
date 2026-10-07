@@ -40,6 +40,7 @@ import {
 } from 'react';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
+import { useTokens } from '@/hooks/useTokens';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
@@ -161,6 +162,7 @@ function InnerDag({
   const specKey = JSON.stringify([spec, groupFold.extraEdges]);
   const statusesKey = JSON.stringify(statuses?.byNodeId ?? null);
   const diffKey = JSON.stringify(diffMarkers ?? null);
+  const tokens = useTokens();
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on serialized content so identity-only poll changes don't rebuild the graph
   const initial = useMemo(
     () =>
@@ -169,8 +171,9 @@ function InnerDag({
         extraEdges: groupFold.extraEdges,
         folded: groupFold.folded,
         statuses,
+        tokens,
       }),
-    [specKey, statusesKey, diffKey]
+    [specKey, statusesKey, diffKey, tokens]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode<DagNodeData>>(initial.nodes);

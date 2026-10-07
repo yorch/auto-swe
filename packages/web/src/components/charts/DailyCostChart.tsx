@@ -1,7 +1,7 @@
 'use client';
 
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from 'recharts';
-import { TOKEN } from '@/lib/palette';
+import { useTokens } from '@/hooks/useTokens';
 import { formatCost } from '@/lib/utils';
 import {
   AXIS_COMMON_PROPS,
@@ -42,6 +42,7 @@ interface Props {
 
 /** LLM spend per day, or per week for a long window. One series, so the card title names it and there is no legend. */
 export function DailyCostChart({ data, granularity = 'day', title }: Props) {
+  const t = useTokens();
   const words = granularityWords(granularity);
   if (data.every((d) => d.calls === 0)) {
     return <EmptyChart label="No LLM calls in this window." />;
@@ -86,7 +87,7 @@ export function DailyCostChart({ data, granularity = 'day', title }: Props) {
           />
           <Bar
             dataKey="costUsd"
-            fill={TOKEN.ember400}
+            fill={t.ember400}
             maxBarSize={BAR_MAX_SIZE}
             radius={[4, 4, 0, 0]}
           />

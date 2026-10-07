@@ -9,7 +9,7 @@
  */
 import type { Node as SpecNode, WorkflowSpec } from '@auto-swe/shared/workflow';
 import type { Edge as RFEdge, Node as RFNode } from '@xyflow/react';
-import { TOKEN } from '@/lib/palette';
+import { TOKEN, type Tokens } from '@/lib/palette';
 import { type DiffKind, type EdgeKind, type LayoutEdge, layoutSpec } from '@/lib/workflowLayout';
 import type { DagNodeData } from './dagNode';
 import type { FoldedGroup } from './foldGroups';
@@ -37,18 +37,20 @@ const EDGE_LABEL: Partial<Record<EdgeKind, string>> = {
 // Literals rather than `var(--color-*)`: React Flow puts the marker colour on an
 // SVG presentation attribute, which does not resolve custom properties. TOKEN is
 // checked against globals.css by lib/palette.test.ts.
-const EDGE_STROKE: Record<EdgeKind, string> = {
-  join: TOKEN.ember400,
-  next: TOKEN.paper400,
-  onApprove: TOKEN.moss400,
-  onFalse: TOKEN.brick400,
-  onReceive: TOKEN.dust400,
-  onReject: TOKEN.brick400,
-  onSubmit: TOKEN.moss400,
-  onTimeout: TOKEN.amber400,
-  onTrue: TOKEN.moss400,
-  subgraph: TOKEN.violet400,
-};
+function edgeStroke(t: Tokens): Record<EdgeKind, string> {
+  return {
+    join: t.ember400,
+    next: t.paper400,
+    onApprove: t.moss400,
+    onFalse: t.brick400,
+    onReceive: t.dust400,
+    onReject: t.brick400,
+    onSubmit: t.moss400,
+    onTimeout: t.amber400,
+    onTrue: t.moss400,
+    subgraph: t.violet400,
+  };
+}
 
 function subLabelFor(node: SpecNode, id: string): string | undefined {
   switch (node.type) {
@@ -103,6 +105,8 @@ interface ConvertOpts {
   /** The collapsed-group cards in `spec`, and the edges that leave them (see `foldGroups`). */
   folded?: Record<string, FoldedGroup>;
   extraEdges?: readonly LayoutEdge[];
+  /** The painted theme's literal palette (`useTokens()`); dark when omitted. */
+  tokens?: Tokens;
 }
 
 export function specToFlow(
@@ -110,6 +114,8 @@ export function specToFlow(
   opts: ConvertOpts = {}
 ): { nodes: RFNode<DagNodeData>[]; edges: RFEdge[] } {
   const layout = layoutSpec(spec, opts.extraEdges);
+  const tokens = opts.tokens ?? TOKEN;
+  const strokes = edgeStroke(tokens);
 
   const nodes: RFNode<DagNodeData>[] = layout.nodes.map((n) => {
     const card = opts.folded?.[n.id];
@@ -166,7 +172,7 @@ export function specToFlow(
   });
 
   const edges: RFEdge[] = layout.edges.map((e) => {
-    const color = EDGE_STROKE[e.kind];
+    const color = strokes[e.kind];
     const dashed = opts.diffMarkers?.[e.from] === 'removed';
     const label = EDGE_LABEL[e.kind];
     return {
@@ -175,7 +181,7 @@ export function specToFlow(
       ...(label && {
         label,
         labelBgPadding: [4, 2] as [number, number],
-        labelBgStyle: { fill: TOKEN.ink900, fillOpacity: 0.85 },
+        labelBgStyle: { fill: tokens.ink900, fillOpacity: 0.85 },
         labelStyle: {
           fill: color,
           fontFamily: 'inherit',

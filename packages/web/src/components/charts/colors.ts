@@ -7,19 +7,24 @@
  * Recharts hands several of these to SVG presentation attributes, which do not
  * resolve `var()` — see `lib/palette.ts`.
  */
-import { TOKEN } from '@/lib/palette';
+import { TOKEN, TOKEN_LIGHT, type Tokens } from '@/lib/palette';
 
-export const STATUS_CHART_COLORS: Record<string, string> = {
-  AWAITING_CI: TOKEN.amber400,
-  AWAITING_HUMAN_MERGE: TOKEN.amber400,
-  COMPLETED: TOKEN.moss400,
-  FAILED: TOKEN.brick400,
-  IMPLEMENTING: TOKEN.ember400,
-  IN_REVIEW: TOKEN.violet400,
-  RUNNING: TOKEN.dust400,
-  TIMED_OUT: TOKEN.paper500,
-  VALIDATING_CONTEXT: TOKEN.ember400,
-};
+export function statusChartColors(t: Tokens): Record<string, string> {
+  return {
+    AWAITING_CI: t.amber400,
+    AWAITING_HUMAN_MERGE: t.amber400,
+    COMPLETED: t.moss400,
+    FAILED: t.brick400,
+    IMPLEMENTING: t.ember400,
+    IN_REVIEW: t.violet400,
+    RUNNING: t.dust400,
+    TIMED_OUT: t.paper500,
+    VALIDATING_CONTEXT: t.ember400,
+  };
+}
+
+/** The dark theme's status colours; `statusChartColors(useTokens())` follows the theme. */
+export const STATUS_CHART_COLORS = statusChartColors(TOKEN);
 
 /**
  * Categorical series colours, in the order they are assigned. An Okabe-Ito
@@ -38,6 +43,21 @@ export const CHART_PALETTE = [
   '#f0e442', // yellow
   '#8f8cff', // periwinkle
   '#ff7f50', // vermillion
+] as const;
+
+/**
+ * The same seven roles darkened for the light chart background: each keeps its
+ * hue family and order, and reads at 4.5:1 or better on white. Checked by
+ * `colors.test.ts` exactly like `CHART_PALETTE`.
+ */
+export const CHART_PALETTE_LIGHT = [
+  '#3270ae', // blue
+  '#954c04', // orange
+  '#037754', // bluish green
+  '#9e2e71', // reddish purple
+  '#675f1e', // olive (yellow's light-theme stand-in)
+  '#0646db', // ultramarine
+  '#db3006', // vermillion
 ] as const;
 
 /** The neutral colour for the merged "Other" series. */
@@ -60,11 +80,16 @@ export const CHART_DASHES: (string | undefined)[] = [
 export const OTHER_LABEL = 'Other';
 
 /** A series colour by position; the merged "Other" series is always neutral. */
-export function seriesColor(index: number, label?: string): string {
+export function seriesColor(
+  index: number,
+  label?: string,
+  theme: 'dark' | 'light' = 'dark'
+): string {
   if (label === OTHER_LABEL) {
-    return CHART_OTHER_COLOR;
+    return theme === 'light' ? TOKEN_LIGHT.paper500 : CHART_OTHER_COLOR;
   }
-  return CHART_PALETTE[index % CHART_PALETTE.length];
+  const palette = theme === 'light' ? CHART_PALETTE_LIGHT : CHART_PALETTE;
+  return palette[index % palette.length];
 }
 
 export function seriesDash(index: number, label?: string): string | undefined {
@@ -93,8 +118,8 @@ export function topNWithOther<T>(
 }
 
 /** Colors used for the stacked area / workflow-over-time chart. */
-export const TREND_COLORS = {
-  active: TOKEN.ember400,
-  completed: TOKEN.moss400,
-  failed: TOKEN.brick400,
-} as const;
+export function trendColors(t: Tokens) {
+  return { active: t.ember400, completed: t.moss400, failed: t.brick400 } as const;
+}
+
+export const TREND_COLORS = trendColors(TOKEN);

@@ -81,6 +81,60 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   Light theme — the same token names, re-pointed.
+
+   Every surface and text class resolves through the custom properties above,
+   so the light theme is a second set of values, not a second set of classes.
+   The ramps keep their *roles* rather than their lightness: ink-700 is still
+   "the card", ink-800 still "the page", ink-400 still "a border", and
+   paper-50 still "the strongest text". The accent and status colours are
+   darkened so text in them clears WCAG AA (4.5:1) on the light surfaces.
+   `data-theme` is set on <html> before first paint (see ThemeScript); the dark
+   values stay the default, so a page without the attribute renders as before.
+   `lib/palette.ts` mirrors these as TOKEN_LIGHT and `palette.test.ts` checks
+   that the two cannot drift.
+   ──────────────────────────────────────────────────────────────────────── */
+:root[data-theme='light'] {
+  --color-ink-950: #ffffff; /* top bar, deepest panels */
+  --color-ink-900: #f3f5f9; /* recessed rails, code blocks */
+  --color-ink-800: #f6f7fb; /* page ground */
+  --color-ink-700: #ffffff; /* card */
+  --color-ink-600: #eceef4; /* raised / selected rows, hover */
+  --color-ink-500: #e1e5ee; /* surface-2, the selected segment */
+  --color-ink-400: #d3d8e3; /* borders */
+  --color-ink-300: #b5bccc; /* strong dividers, hovered borders */
+
+  --color-paper-50: #0f1320;
+  --color-paper-100: #151a28;
+  --color-paper-200: #1d2333; /* body text */
+  --color-paper-300: #353d51;
+  --color-paper-400: #475066;
+  --color-paper-500: #586176;
+  --color-paper-600: #626b80;
+
+  --color-ember-50: #f1efff;
+  --color-ember-100: #e3dfff;
+  --color-ember-200: #c8c0ff;
+  --color-ember-300: #5b4ce0;
+  --color-ember-400: #5143d6;
+  --color-ember-500: #5a4bf0;
+  --color-ember-600: #4334c4;
+  --color-ember-700: #33289a;
+
+  --color-moss-400: #13804b;
+  --color-moss-600: #0f6b3e;
+  --color-amber-400: #9a5b00;
+  --color-amber-600: #7a4800;
+  --color-brick-400: #c53030;
+  --color-brick-600: #a32424;
+  --color-dust-400: #2457c5;
+  --color-dust-600: #1c46a0;
+  --color-violet-400: #0b7a6b;
+  --color-violet-600: #08665a;
+  color-scheme: light;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    Legacy semantic aliases — keep var(--background) etc. call sites working.
    ──────────────────────────────────────────────────────────────────────── */
 @layer base {
@@ -122,6 +176,11 @@
       radial-gradient(900px 500px at 100% 0%, rgba(52, 216, 192, 0.1), transparent 55%);
     background-repeat: no-repeat;
     background-attachment: fixed;
+  }
+  :root[data-theme='light'] body {
+    background-image:
+      radial-gradient(900px 500px at 12% -8%, rgba(90, 75, 240, 0.07), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(11, 122, 107, 0.05), transparent 55%);
   }
 
   /* Sans-serif for all headlines */
@@ -433,6 +492,36 @@
 }
 .react-flow__minimap-mask {
   fill: rgba(14, 17, 26, 0.85);
+}
+:root[data-theme='light'] .react-flow__minimap-mask {
+  fill: rgba(243, 245, 249, 0.85);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Recharts chrome follows the theme.
+
+   Recharts writes axis, grid, cursor and dot-ring colours as SVG presentation
+   attributes (literal hex from lib/palette.ts). A stylesheet rule outranks a
+   presentation attribute in every browser, so these re-point the chrome at the
+   current theme's tokens without touching each chart. Data colours are not
+   chrome: charts read those from `useTokens()` / `useChartColors()`.
+   ──────────────────────────────────────────────────────────────────────── */
+.recharts-cartesian-axis-tick-value,
+.recharts-cartesian-axis .recharts-label {
+  fill: var(--color-paper-500);
+}
+.recharts-cartesian-axis-line {
+  stroke: var(--color-ink-500);
+}
+.recharts-cartesian-grid line {
+  stroke: var(--color-ink-600);
+}
+.recharts-tooltip-cursor {
+  fill: var(--color-ink-600);
+}
+.recharts-line-dots circle,
+.recharts-active-dot circle {
+  stroke: var(--color-ink-700);
 }
 /* Keyboard-focus ring on a node wrapper (React Flow makes nodes tabbable) so
    arrow-key DAG traversal is visible before selection lands. */

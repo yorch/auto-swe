@@ -32,6 +32,33 @@ export const TOKEN = {
   violet400: '#34d8c0',
 } as const;
 
+/** Shape shared by both themes' literal palettes. */
+export type Tokens = { readonly [K in keyof typeof TOKEN]: string };
+
+/**
+ * The light theme's values for the same tokens — the `:root[data-theme='light']`
+ * block in `globals.css`, checked by `palette.test.ts` like `TOKEN` is.
+ */
+export const TOKEN_LIGHT: Tokens = {
+  amber400: '#9a5b00',
+  brick400: '#c53030',
+  dust400: '#2457c5',
+  dust600: '#1c46a0',
+  ember300: '#5b4ce0',
+  ember400: '#5143d6',
+  ink500: '#e1e5ee',
+  ink600: '#eceef4',
+  ink700: '#ffffff',
+  ink900: '#f3f5f9',
+  ink950: '#ffffff',
+  moss400: '#13804b',
+  paper200: '#1d2333',
+  paper300: '#353d51',
+  paper400: '#475066',
+  paper500: '#586176',
+  violet400: '#0b7a6b',
+};
+
 /** `TOKEN` key → the custom-property name it mirrors in `globals.css`. */
 export const TOKEN_CSS_VAR: Record<keyof typeof TOKEN, string> = {
   amber400: '--color-amber-400',
