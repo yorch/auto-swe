@@ -19,6 +19,7 @@ const OUTCOMES: ReadonlySet<string> = new Set<LessonOutcome>([
   'REVIEW_FAILED',
   'CI_FAILED',
   'COMPLETED',
+  'MERGE_TIMED_OUT',
 ]);
 
 export function buildLessonEvidence(input: {

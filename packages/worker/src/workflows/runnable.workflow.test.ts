@@ -67,6 +67,8 @@ const calls: {
   writeOutcome: [],
 };
 
+/** The evidence each `commitToMemory` call received (its fourth argument). */
+const lessonEvidence: unknown[] = [];
 /** Spec served by the fake createWorkflowRun; set per test before starting. */
 let currentSpec: Record<string, unknown> = {};
 /**
@@ -101,7 +103,10 @@ const fakeActivities = {
     calls.cancelledHumanSteps.push(runId);
   },
   // The activities the seeded default-engineering template needs on its happy path.
-  commitToMemory: async () => 'lesson-1',
+  commitToMemory: async (...args: unknown[]) => {
+    lessonEvidence.push(args[3]);
+    return 'lesson-1';
+  },
   createHumanStep: async () => {},
   createOrUpdatePullRequest: async (_request: unknown, ...rest: unknown[]) => {
     calls.pullRequestArgs.push(rest);
@@ -310,6 +315,32 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
       'AWAITING_HUMAN_MERGE',
     ]);
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
+  }, 120_000);
+
+  it('stores a MERGE_TIMED_OUT lesson when nobody merges the default-engineering PR', async () => {
+    // The seeded seven-day wait, shortened to fit inside the test's execution timeout.
+    const spec = structuredClone(DEFAULT_ENGINEERING_SPEC) as unknown as {
+      nodes: Record<string, Record<string, unknown>>;
+    };
+    spec.nodes.waitForHumanMerge = { ...spec.nodes.waitForHumanMerge, timeout: '1h' };
+    currentSpec = spec as unknown as Record<string, unknown>;
+    calls.domainStates.length = 0;
+    lessonEvidence.length = 0;
+    const handle = await env.client.workflow.start(
+      'RunnableWorkflow',
+      startArgs('wf-default-eng-merge-timeout')
+    );
+    const deadline = Date.now() + 30_000;
+    while (!calls.domainStates.includes('AWAITING_CI') && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    await handle.signal('ciPipelineSignal', { passed: true });
+    // No merge signal: the time-skipping server runs the wait out.
+    const result = (await handle.result()) as { status: string };
+
+    expect(result.status).toBe('TIMED_OUT');
+    expect(lessonEvidence).toEqual([expect.objectContaining({ outcome: 'MERGE_TIMED_OUT' })]);
+    expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'TIMED_OUT' });
   }, 120_000);
 
   it('fails the run once, without retrying the task, when run setup reports an error', async () => {

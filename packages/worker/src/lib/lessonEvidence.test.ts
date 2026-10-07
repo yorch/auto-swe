@@ -106,6 +106,17 @@ describe('buildLessonEvidence', () => {
     expect(ci?.length).toBeLessThan(EVIDENCE_TEXT_LIMIT + 50);
   });
 
+  it('carries a merge timeout as its own outcome', () => {
+    expect(
+      buildLessonEvidence({
+        ciLogs: null,
+        codeResult: null,
+        outcome: 'MERGE_TIMED_OUT',
+        rejectionSummary: null,
+      })
+    ).toEqual({ outcome: 'MERGE_TIMED_OUT' });
+  });
+
   it('treats an unknown outcome as COMPLETED', () => {
     expect(
       buildLessonEvidence({

@@ -337,9 +337,10 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
  * listed here must match exactly.
  */
 /**
- * default-engineering stores a lesson when its review or CI loop runs out of attempts, and
- * tags each `commitToMemory` step with the outcome it records. The two lesson steps sit on
- * the loops' exhausted edges and continue to the same terminals on error.
+ * default-engineering stores a lesson when its review or CI loop runs out of attempts or its
+ * merge wait times out, and tags each `commitToMemory` step with the outcome it records. The
+ * three lesson steps sit on the loops' exhausted edges and the merge wait's timeout edge, and
+ * continue to the same terminals on error.
  */
 function defaultEngineeringFailureLessons(g: WorkflowSpec): WorkflowSpec {
   const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
@@ -354,6 +355,8 @@ function defaultEngineeringFailureLessons(g: WorkflowSpec): WorkflowSpec {
   (nodes.checkCILimit as Record<string, unknown>).onTrue = 'lessonCIFailed';
   nodes.lessonReviewFailed = lesson('REVIEW_FAILED', 'terminateReviewFailed');
   nodes.lessonCIFailed = lesson('CI_FAILED', 'terminateCIFailed');
+  (nodes.waitForHumanMerge as Record<string, unknown>).onTimeout = 'lessonMergeTimedOut';
+  nodes.lessonMergeTimedOut = lesson('MERGE_TIMED_OUT', 'terminateMergeTimedOut');
   nodes.commitLesson = { inputs: { outcome: { literal: 'MERGED' } }, ...nodes.commitLesson };
   return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
 }
@@ -427,8 +430,8 @@ const INTENDED_CHANGES: Record<
       defaultEngineeringFailureLessons(removePassThrough(g, 'setCompleted')),
     reason:
       'the finalizer already writes COMPLETED on SUCCESS; a review or CI loop that runs out ' +
-      'of attempts stores a lesson about what blocked it before the run fails, and every ' +
-      'commitToMemory step names the outcome it records',
+      'of attempts, or a merge wait that times out, stores a lesson about what happened ' +
+      'before the run ends, and every commitToMemory step names the outcome it records',
   },
   // The two templates that ended the run on the first CI failure now fix and retry like their
   // siblings, with CI ahead of the human / consensus gates (and the setCompleted removal above).

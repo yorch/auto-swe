@@ -46,6 +46,11 @@ const OUTCOME_GUIDANCE: Record<LessonEvidence['outcome'], string> = {
     'The run FAILED: CI kept failing after every fix attempt and the change was abandoned. ' +
     'The lesson is about what made CI fail, read from the CI output.',
   COMPLETED: 'The run completed.',
+  MERGE_TIMED_OUT:
+    'The run TIMED OUT: the change passed review and CI, but nobody merged it before the wait ' +
+    'for a merge ran out. The evidence does not say why it was not merged; do not guess a ' +
+    'reason. If the review or CI rejected an earlier attempt, the lesson is about what that ' +
+    'rejection caught; otherwise there may be nothing to learn beyond the outcome.',
   MERGED:
     'The change was MERGED. If the review or CI rejected an earlier attempt, the lesson is ' +
     'about what that rejection caught; otherwise it is about what made the change succeed.',
