@@ -82,43 +82,40 @@ function Tickets() {
               title="Agent runs, channel tasks and launches that have no ticket of their own."
             />
           </Toolbar>
-          {isLoading ? (
-            <SkeletonRows className="px-4 py-4" rows={6} />
-          ) : (
-            <QueryBoundary
-              error={error}
-              isError={isError}
-              isFetching={isFetching}
-              isLoading={false}
-              label="tickets"
-              onRetry={() => void refetch()}
-            >
-              {groups.length === 0 ? (
-                <EmptyState
-                  action={
-                    search ? (
-                      <Button onClick={() => setSearchDraft('')} size="sm">
-                        Clear search
-                      </Button>
-                    ) : (
-                      <ButtonLink href="/start" size="sm" variant="secondary">
-                        Start work
-                      </ButtonLink>
-                    )
-                  }
-                  hint={
-                    search || includeAutomated
-                      ? 'Try another search.'
-                      : 'Work started with a ticket id appears here, grouped by ticket.'
-                  }
-                  icon={search ? 'search' : 'ticket'}
-                  title={search ? 'No tickets match this search' : 'No tickets yet'}
-                />
-              ) : (
-                <TicketTable groups={groups} />
-              )}
-            </QueryBoundary>
-          )}
+          <QueryBoundary
+            error={error}
+            isError={isError}
+            isFetching={isFetching}
+            isLoading={isLoading}
+            label="tickets"
+            loading={<SkeletonRows className="px-4 py-4" rows={6} />}
+            onRetry={() => void refetch()}
+          >
+            {groups.length === 0 ? (
+              <EmptyState
+                action={
+                  search ? (
+                    <Button onClick={() => setSearchDraft('')} size="sm">
+                      Clear search
+                    </Button>
+                  ) : (
+                    <ButtonLink href="/start" size="sm" variant="secondary">
+                      Start work
+                    </ButtonLink>
+                  )
+                }
+                hint={
+                  search || includeAutomated
+                    ? 'Try another search.'
+                    : 'Work started with a ticket id appears here, grouped by ticket.'
+                }
+                icon={search ? 'search' : 'ticket'}
+                title={search ? 'No tickets match this search' : 'No tickets yet'}
+              />
+            ) : (
+              <TicketTable groups={groups} />
+            )}
+          </QueryBoundary>
         </Card>
         <Pagination
           hasNext={offset + PAGE_SIZE < total}

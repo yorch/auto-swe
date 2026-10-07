@@ -592,99 +592,96 @@ export default function GovernScannerPage() {
         error={loadError}
         isError={isError}
         isFetching={isFetching}
-        isLoading={false}
+        isLoading={isLoading}
         label="scanner patterns"
-        onRetry={() => void refetch()}
-      >
-        {isLoading ? (
+        loading={
           <Card>
             <SkeletonRows rows={8} />
           </Card>
+        }
+        onRetry={() => void refetch()}
+      >
+        <Toolbar
+          className="mb-0"
+          end={
+            <span className="text-xs text-paper-500 tabular-nums">
+              {filtering || category
+                ? `${shown} of ${all.length} patterns`
+                : `${activeTotal} of ${all.length} active`}
+            </span>
+          }
+        >
+          <SearchInput
+            label="Search patterns"
+            onChange={setSearch}
+            placeholder="Search label or regex…"
+            value={search}
+          />
+          <Select
+            aria-label="Filter by category"
+            className="h-8 w-full text-[13px] sm:w-60"
+            onChange={(v) => setCategory(v as '' | PatternType)}
+            options={[
+              { label: 'All categories', value: '' },
+              ...SCANNER_PATTERN_TYPE_ORDER.map((type) => ({
+                label: `${SCANNER_PATTERN_TYPE_INFO[type].title} (${countOf(type)})`,
+                value: type,
+              })),
+            ]}
+            value={category}
+          />
+          <SegmentedControl<StatusFilter>
+            ariaLabel="Filter by state"
+            onChange={setStatus}
+            options={[
+              { label: 'All', value: '' },
+              { label: 'Active', value: 'active' },
+              { label: 'Off', value: 'inactive' },
+            ]}
+            value={status}
+          />
+          {(filtering || category) && (
+            <Button onClick={clearFilters} size="sm" variant="ghost">
+              Clear filters
+            </Button>
+          )}
+        </Toolbar>
+        {actionError && <Alert variant="error">{actionError}</Alert>}
+        {all.length === 0 ? (
+          <EmptyState
+            action={
+              <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
+                New pattern
+              </Button>
+            }
+            bordered
+            hint="Built-in patterns sync when the gateway starts. Restart it, or create a custom pattern."
+            icon="scan"
+            title="No scanner patterns"
+          />
+        ) : sections.length === 0 ? (
+          <EmptyState
+            action={
+              <Button onClick={clearFilters} size="sm">
+                Clear filters
+              </Button>
+            }
+            bordered
+            hint="Try a different search or state."
+            icon="search"
+            title="No patterns match these filters"
+          />
         ) : (
-          <>
-            <Toolbar
-              className="mb-0"
-              end={
-                <span className="text-xs text-paper-500 tabular-nums">
-                  {filtering || category
-                    ? `${shown} of ${all.length} patterns`
-                    : `${activeTotal} of ${all.length} active`}
-                </span>
-              }
-            >
-              <SearchInput
-                label="Search patterns"
-                onChange={setSearch}
-                placeholder="Search label or regex…"
-                value={search}
-              />
-              <Select
-                aria-label="Filter by category"
-                className="h-8 w-full text-[13px] sm:w-60"
-                onChange={(v) => setCategory(v as '' | PatternType)}
-                options={[
-                  { label: 'All categories', value: '' },
-                  ...SCANNER_PATTERN_TYPE_ORDER.map((type) => ({
-                    label: `${SCANNER_PATTERN_TYPE_INFO[type].title} (${countOf(type)})`,
-                    value: type,
-                  })),
-                ]}
-                value={category}
-              />
-              <SegmentedControl<StatusFilter>
-                ariaLabel="Filter by state"
-                onChange={setStatus}
-                options={[
-                  { label: 'All', value: '' },
-                  { label: 'Active', value: 'active' },
-                  { label: 'Off', value: 'inactive' },
-                ]}
-                value={status}
-              />
-              {(filtering || category) && (
-                <Button onClick={clearFilters} size="sm" variant="ghost">
-                  Clear filters
-                </Button>
-              )}
-            </Toolbar>
-            {actionError && <Alert variant="error">{actionError}</Alert>}
-            {all.length === 0 ? (
-              <EmptyState
-                action={
-                  <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
-                    New pattern
-                  </Button>
-                }
-                bordered
-                hint="Built-in patterns sync when the gateway starts. Restart it, or create a custom pattern."
-                icon="scan"
-                title="No scanner patterns"
-              />
-            ) : sections.length === 0 ? (
-              <EmptyState
-                action={
-                  <Button onClick={clearFilters} size="sm">
-                    Clear filters
-                  </Button>
-                }
-                bordered
-                hint="Try a different search or state."
-                icon="search"
-                title="No patterns match these filters"
-              />
-            ) : (
-              sections.map((sec) => (
-                <PatternSection
-                  actions={rowActions}
-                  filtered={filtering}
-                  key={sec.type}
-                  patterns={sec.patterns}
-                  total={sec.total}
-                  type={sec.type}
-                />
-              ))
-            )}
-          </>
+          sections.map((sec) => (
+            <PatternSection
+              actions={rowActions}
+              filtered={filtering}
+              key={sec.type}
+              patterns={sec.patterns}
+              total={sec.total}
+              type={sec.type}
+            />
+          ))
         )}
       </QueryBoundary>
 

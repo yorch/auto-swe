@@ -188,195 +188,190 @@ export default function ConnectionsPage() {
               />
             )}
           </Toolbar>
-          {isLoading ? (
-            <SkeletonRows className="px-4 py-4" rows={4} />
-          ) : (
-            <QueryBoundary
-              error={loadError}
-              isError={isError}
-              isFetching={isFetching}
-              isLoading={false}
-              label="connections"
-              onRetry={() => void refetch()}
-            >
-              {rows.length === 0 ? (
-                <EmptyState
-                  action={
-                    query ? (
-                      <Button onClick={() => setSearch('')} size="sm">
-                        Clear search
+          <QueryBoundary
+            error={loadError}
+            isError={isError}
+            isFetching={isFetching}
+            isLoading={isLoading}
+            label="connections"
+            loading={<SkeletonRows className="px-4 py-4" rows={4} />}
+            onRetry={() => void refetch()}
+          >
+            {rows.length === 0 ? (
+              <EmptyState
+                action={
+                  query ? (
+                    <Button onClick={() => setSearch('')} size="sm">
+                      Clear search
+                    </Button>
+                  ) : canManage ? (
+                    <>
+                      <Button onClick={() => setMode({ kind: 'import' })} size="sm">
+                        Import from GitHub
                       </Button>
-                    ) : canManage ? (
-                      <>
-                        <Button onClick={() => setMode({ kind: 'import' })} size="sm">
-                          Import from GitHub
-                        </Button>
-                        <Button
-                          onClick={() => setMode({ kind: 'create' })}
-                          size="sm"
-                          variant="primary"
-                        >
-                          Add connection
-                        </Button>
-                      </>
-                    ) : undefined
-                  }
-                  hint={
-                    query
-                      ? 'Try a different search.'
-                      : canManage
-                        ? 'Connect a git repository or an external API so workflows have somewhere to run.'
-                        : 'Ask a team lead or admin to add one.'
-                  }
-                  icon={query ? 'search' : 'connections'}
-                  title={query ? 'No connections match your search' : 'No connections yet'}
-                />
-              ) : (
-                <Table stacked>
-                  <caption className="sr-only">Connections available to your teams</caption>
-                  <THead>
-                    <Th variant="plain">Connection</Th>
-                    <Th variant="plain">Type</Th>
-                    <Th variant="plain">Team</Th>
-                    <Th variant="plain">Branch</Th>
-                    <Th align="right" variant="plain">
-                      Workflows
-                    </Th>
-                    <Th variant="plain">Status</Th>
-                    <Th align="right" variant="plain">
-                      <span className="sr-only">Actions</span>
-                    </Th>
-                  </THead>
-                  <tbody>
-                    {rows.map((r) => {
-                      const isGitRepo = !r.type || r.type === 'git_repo';
-                      const myCredential = isGitRepo ? credentialFor(r.id) : undefined;
-                      // Offered when the feature is on, and kept reachable when it is off
-                      // but a token is still saved, so it can always be removed.
-                      const showCredential = isGitRepo && (credentialsEnabled || !!myCredential);
-                      const canEdit = canManageTeam(r.team?.id);
-                      const label = connectionLabel(r);
-                      const menu: ActionMenuItem[] = [
-                        ...(isGitRepo
-                          ? [
-                              {
-                                icon: 'layers' as const,
-                                id: 'dependencies',
-                                label: 'Dependencies',
-                                onAction: () => setMode({ kind: 'dependencies', repo: r }),
-                              },
-                            ]
-                          : []),
-                        ...(showCredential
-                          ? [
-                              {
-                                icon: 'key' as const,
-                                id: 'credential',
-                                label: myCredential ? 'My token' : 'Use my token',
-                                onAction: () => setMode({ kind: 'credential', repo: r }),
-                              },
-                            ]
-                          : []),
-                        // The server decides: only the owning team's leads (and
-                        // platform admins) may change sharing.
-                        ...(canEdit && isGitRepo
-                          ? [
-                              {
-                                icon: 'teams' as const,
-                                id: 'share',
-                                label: 'Share with teams',
-                                onAction: () => setMode({ kind: 'share', repo: r }),
-                              },
-                            ]
-                          : []),
-                      ];
-                      return (
-                        <TRow hover key={r.id}>
-                          <Td className="max-w-md px-4 py-3" primary>
-                            <div className="truncate font-medium text-paper-100" title={label}>
-                              {label}
+                      <Button
+                        onClick={() => setMode({ kind: 'create' })}
+                        size="sm"
+                        variant="primary"
+                      >
+                        Add connection
+                      </Button>
+                    </>
+                  ) : undefined
+                }
+                hint={
+                  query
+                    ? 'Try a different search.'
+                    : canManage
+                      ? 'Connect a git repository or an external API so workflows have somewhere to run.'
+                      : 'Ask a team lead or admin to add one.'
+                }
+                icon={query ? 'search' : 'connections'}
+                title={query ? 'No connections match your search' : 'No connections yet'}
+              />
+            ) : (
+              <Table stacked>
+                <caption className="sr-only">Connections available to your teams</caption>
+                <THead>
+                  <Th variant="plain">Connection</Th>
+                  <Th variant="plain">Type</Th>
+                  <Th variant="plain">Team</Th>
+                  <Th variant="plain">Branch</Th>
+                  <Th align="right" variant="plain">
+                    Workflows
+                  </Th>
+                  <Th variant="plain">Status</Th>
+                  <Th align="right" variant="plain">
+                    <span className="sr-only">Actions</span>
+                  </Th>
+                </THead>
+                <tbody>
+                  {rows.map((r) => {
+                    const isGitRepo = !r.type || r.type === 'git_repo';
+                    const myCredential = isGitRepo ? credentialFor(r.id) : undefined;
+                    // Offered when the feature is on, and kept reachable when it is off
+                    // but a token is still saved, so it can always be removed.
+                    const showCredential = isGitRepo && (credentialsEnabled || !!myCredential);
+                    const canEdit = canManageTeam(r.team?.id);
+                    const label = connectionLabel(r);
+                    const menu: ActionMenuItem[] = [
+                      ...(isGitRepo
+                        ? [
+                            {
+                              icon: 'layers' as const,
+                              id: 'dependencies',
+                              label: 'Dependencies',
+                              onAction: () => setMode({ kind: 'dependencies', repo: r }),
+                            },
+                          ]
+                        : []),
+                      ...(showCredential
+                        ? [
+                            {
+                              icon: 'key' as const,
+                              id: 'credential',
+                              label: myCredential ? 'My token' : 'Use my token',
+                              onAction: () => setMode({ kind: 'credential', repo: r }),
+                            },
+                          ]
+                        : []),
+                      // The server decides: only the owning team's leads (and
+                      // platform admins) may change sharing.
+                      ...(canEdit && isGitRepo
+                        ? [
+                            {
+                              icon: 'teams' as const,
+                              id: 'share',
+                              label: 'Share with teams',
+                              onAction: () => setMode({ kind: 'share', repo: r }),
+                            },
+                          ]
+                        : []),
+                    ];
+                    return (
+                      <TRow hover key={r.id}>
+                        <Td className="max-w-md px-4 py-3" primary>
+                          <div className="truncate font-medium text-paper-100" title={label}>
+                            {label}
+                          </div>
+                          {(r.description || showCredential) && (
+                            <div className="mt-0.5 truncate text-xs font-normal text-paper-400">
+                              {r.description}
+                              {r.description && showCredential && ' · '}
+                              {showCredential &&
+                                (myCredential
+                                  ? `Your token …${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
+                                  : 'Platform credential')}
                             </div>
-                            {(r.description || showCredential) && (
-                              <div className="mt-0.5 truncate text-xs font-normal text-paper-400">
-                                {r.description}
-                                {r.description && showCredential && ' · '}
-                                {showCredential &&
-                                  (myCredential
-                                    ? `Your token …${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
-                                    : 'Platform credential')}
-                              </div>
-                            )}
-                          </Td>
-                          <Td className="px-4 py-3" label="Type">
-                            <ConnectionTypeBadge type={r.type ?? 'git_repo'} />
-                          </Td>
-                          <Td className="px-4 py-3 text-paper-300" label="Team">
-                            <div>
-                              {r.team?.name ?? <span className="text-paper-500">None</span>}
+                          )}
+                        </Td>
+                        <Td className="px-4 py-3" label="Type">
+                          <ConnectionTypeBadge type={r.type ?? 'git_repo'} />
+                        </Td>
+                        <Td className="px-4 py-3 text-paper-300" label="Team">
+                          <div>{r.team?.name ?? <span className="text-paper-500">None</span>}</div>
+                          {(r.shares?.length ?? 0) > 0 && (
+                            <div
+                              className="max-w-48 truncate text-xs text-paper-500"
+                              title={(r.shares ?? []).map((sh) => sh.team.name).join(', ')}
+                            >
+                              Shared with {(r.shares ?? []).map((sh) => sh.team.name).join(', ')}
                             </div>
-                            {(r.shares?.length ?? 0) > 0 && (
-                              <div
-                                className="max-w-48 truncate text-xs text-paper-500"
-                                title={(r.shares ?? []).map((sh) => sh.team.name).join(', ')}
-                              >
-                                Shared with {(r.shares ?? []).map((sh) => sh.team.name).join(', ')}
+                          )}
+                        </Td>
+                        <Td className="px-4 py-3" label="Branch">
+                          {isGitRepo ? (
+                            <>
+                              <div className="font-mono text-xs text-paper-300">
+                                {r.defaultBranch}
                               </div>
-                            )}
-                          </Td>
-                          <Td className="px-4 py-3" label="Branch">
-                            {isGitRepo ? (
-                              <>
-                                <div className="font-mono text-xs text-paper-300">
-                                  {r.defaultBranch}
-                                </div>
-                                {r.executorImage && (
-                                  <div
-                                    className="max-w-48 truncate font-mono text-[11px] text-paper-500"
-                                    title={`Executor image: ${r.executorImage}`}
-                                  >
-                                    {r.executorImage}
-                                  </div>
-                                )}
-                              </>
-                            ) : (
-                              <span className="text-paper-500">—</span>
-                            )}
-                          </Td>
-                          <Td
-                            align="right"
-                            className="tabular px-4 py-3 text-paper-200"
-                            label="Workflows"
-                          >
-                            {r._count?.activeWorkflows ?? 0}
-                          </Td>
-                          <Td className="px-4 py-3" label="Status">
-                            <Badge dot tone={r.isActive ? 'moss' : 'muted'}>
-                              {r.isActive ? 'Active' : 'Inactive'}
-                            </Badge>
-                          </Td>
-                          <Td align="right" className="whitespace-nowrap px-4 py-3">
-                            <div className="flex items-center justify-end gap-1 max-sm:justify-start">
-                              {canEdit && (
-                                <Button
-                                  aria-label={`Edit ${label}`}
-                                  onClick={() => setMode({ kind: 'edit', repo: r })}
-                                  size="sm"
-                                  variant="ghost"
+                              {r.executorImage && (
+                                <div
+                                  className="max-w-48 truncate font-mono text-[11px] text-paper-500"
+                                  title={`Executor image: ${r.executorImage}`}
                                 >
-                                  Edit
-                                </Button>
+                                  {r.executorImage}
+                                </div>
                               )}
-                              <ActionMenu items={menu} label={`More actions for ${label}`} />
-                            </div>
-                          </Td>
-                        </TRow>
-                      );
-                    })}
-                  </tbody>
-                </Table>
-              )}
-            </QueryBoundary>
-          )}
+                            </>
+                          ) : (
+                            <span className="text-paper-500">—</span>
+                          )}
+                        </Td>
+                        <Td
+                          align="right"
+                          className="tabular px-4 py-3 text-paper-200"
+                          label="Workflows"
+                        >
+                          {r._count?.activeWorkflows ?? 0}
+                        </Td>
+                        <Td className="px-4 py-3" label="Status">
+                          <Badge dot tone={r.isActive ? 'moss' : 'muted'}>
+                            {r.isActive ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </Td>
+                        <Td align="right" className="whitespace-nowrap px-4 py-3">
+                          <div className="flex items-center justify-end gap-1 max-sm:justify-start">
+                            {canEdit && (
+                              <Button
+                                aria-label={`Edit ${label}`}
+                                onClick={() => setMode({ kind: 'edit', repo: r })}
+                                size="sm"
+                                variant="ghost"
+                              >
+                                Edit
+                              </Button>
+                            )}
+                            <ActionMenu items={menu} label={`More actions for ${label}`} />
+                          </div>
+                        </Td>
+                      </TRow>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            )}
+          </QueryBoundary>
         </Card>
         {meta !== undefined && meta.total > PAGE_SIZE && (
           <Pagination

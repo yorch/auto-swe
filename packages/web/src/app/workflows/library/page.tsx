@@ -726,13 +726,12 @@ export default function TemplatesPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="workflows"
+          loading={<SkeletonRows className="px-5 py-4" rows={8} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows className="px-5 py-4" rows={8} />
-          ) : visibleTemplates.length === 0 ? (
+          {visibleTemplates.length === 0 ? (
             all.length === 0 ? (
               <EmptyState
                 action={newWorkflowButton}

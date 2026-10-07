@@ -243,52 +243,51 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
         </Alert>
       )}
 
-      {isLoading ? (
-        <SkeletonRows rows={2} />
-      ) : workspacesIsError ? (
-        <QueryBoundary
-          error={workspacesError}
-          isError
-          isFetching={workspacesIsFetching}
-          isLoading={false}
-          label="workspaces"
-          onRetry={() => void refetch()}
-        />
-      ) : !workspaces || workspaces.length === 0 ? (
-        <EmptyState
-          bordered
-          className="py-6"
-          hint="Use Add to Slack to install the app into a workspace."
-          icon="chat"
-          title="No workspaces yet"
-        />
-      ) : (
-        <ul className="divide-y divide-ink-600 rounded-lg border border-ink-500/60">
-          {workspaces.map((w) => (
-            <li
-              className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5"
-              key={w.workspaceId}
-            >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-paper-100">
-                  {w.name ?? w.slackTeamId}
+      <QueryBoundary
+        error={workspacesError}
+        isError={workspacesIsError}
+        isFetching={workspacesIsFetching}
+        isLoading={isLoading}
+        label="workspaces"
+        loading={<SkeletonRows rows={2} />}
+        onRetry={() => void refetch()}
+      >
+        {!workspaces || workspaces.length === 0 ? (
+          <EmptyState
+            bordered
+            className="py-6"
+            hint="Use Add to Slack to install the app into a workspace."
+            icon="chat"
+            title="No workspaces yet"
+          />
+        ) : (
+          <ul className="divide-y divide-ink-600 rounded-lg border border-ink-500/60">
+            {workspaces.map((w) => (
+              <li
+                className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5"
+                key={w.workspaceId}
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-paper-100">
+                    {w.name ?? w.slackTeamId}
+                  </div>
+                  <div className="text-xs text-paper-500">
+                    <span className="font-mono">{w.slackTeamId}</span> · {w.channelCount} channel
+                    {w.channelCount === 1 ? '' : 's'}
+                  </div>
                 </div>
-                <div className="text-xs text-paper-500">
-                  <span className="font-mono">{w.slackTeamId}</span> · {w.channelCount} channel
-                  {w.channelCount === 1 ? '' : 's'}
-                </div>
-              </div>
-              {w.installed ? (
-                <Badge dot tone="moss">
-                  Installed{w.tokenLastFour ? ` · …${w.tokenLastFour}` : ''}
-                </Badge>
-              ) : (
-                <Badge tone="muted">Singleton fallback</Badge>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+                {w.installed ? (
+                  <Badge dot tone="moss">
+                    Installed{w.tokenLastFour ? ` · …${w.tokenLastFour}` : ''}
+                  </Badge>
+                ) : (
+                  <Badge tone="muted">Singleton fallback</Badge>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </QueryBoundary>
     </IntegrationCard>
   );
 }

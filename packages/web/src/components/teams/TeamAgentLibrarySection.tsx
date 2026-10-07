@@ -183,13 +183,12 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
         error={loadError}
         isError={isError}
         isFetching={isFetching}
-        isLoading={false}
+        isLoading={isLoading}
         label="team agents"
+        loading={<SkeletonRows rows={2} />}
         onRetry={() => void refetch()}
       >
-        {isLoading ? (
-          <SkeletonRows rows={2} />
-        ) : (agents ?? []).length === 0 ? (
+        {(agents ?? []).length === 0 ? (
           <EmptyState
             action={
               <Button onClick={openCreate} size="sm" variant="secondary">

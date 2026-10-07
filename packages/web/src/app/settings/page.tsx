@@ -156,131 +156,128 @@ export default function SettingsPage() {
         id="sign-in"
         title="Sign-in methods"
       >
-        {providersQuery.isLoading || linkedQuery.isLoading ? (
-          <SkeletonRows rows={4} />
-        ) : (
-          <QueryBoundary
-            compact
-            error={providersQuery.error ?? linkedQuery.error}
-            isError={providersQuery.isError || linkedQuery.isError}
-            isFetching={providersQuery.isFetching || linkedQuery.isFetching}
-            isLoading={false}
-            label="your sign-in methods"
-            onRetry={() => {
-              void providersQuery.refetch();
-              void linkedQuery.refetch();
-            }}
-          >
-            <ul className="divide-y divide-ink-600">
-              <SettingsListRow
-                detail="Change your password with Forgot password on the sign-in page. A magic link needs no setup: request one there whenever you need a fresh session."
-                leading={<Icon name="key" size={16} />}
-                title="Email and password"
-              />
-              {SOCIAL_PROVIDERS.map((p) => {
-                const isLinked = linkedIds.has(p.id);
-                const configured = providers?.[p.id] ?? false;
-                const account = linked.find((a) => a.providerId === p.id);
-                return (
-                  <SettingsListRow
-                    action={
-                      isLinked && account ? (
-                        <Button
-                          onClick={() =>
-                            setUnlinkTarget({
-                              accountId: account.id,
-                              label: p.label,
-                              providerId: p.id,
-                            })
-                          }
-                          size="sm"
-                          variant="danger"
-                        >
-                          Unlink
-                        </Button>
-                      ) : configured ? (
-                        <Button disabled={busy === p.id} onClick={() => handleLink(p.id)} size="sm">
-                          {busy === p.id ? 'Linking…' : 'Link'}
-                        </Button>
-                      ) : null
-                    }
-                    detail={
-                      isLinked ? (
-                        account?.accountId ? (
-                          <>
-                            Account{' '}
-                            <span className="font-mono text-xs text-paper-400">
-                              {account.accountId.slice(0, 12)}…
-                            </span>
-                          </>
-                        ) : (
-                          p.description
-                        )
-                      ) : configured ? (
-                        p.description
+        <QueryBoundary
+          compact
+          error={providersQuery.error ?? linkedQuery.error}
+          isError={providersQuery.isError || linkedQuery.isError}
+          isFetching={providersQuery.isFetching || linkedQuery.isFetching}
+          isLoading={providersQuery.isLoading || linkedQuery.isLoading}
+          label="your sign-in methods"
+          loading={<SkeletonRows rows={4} />}
+          onRetry={() => {
+            void providersQuery.refetch();
+            void linkedQuery.refetch();
+          }}
+        >
+          <ul className="divide-y divide-ink-600">
+            <SettingsListRow
+              detail="Change your password with Forgot password on the sign-in page. A magic link needs no setup: request one there whenever you need a fresh session."
+              leading={<Icon name="key" size={16} />}
+              title="Email and password"
+            />
+            {SOCIAL_PROVIDERS.map((p) => {
+              const isLinked = linkedIds.has(p.id);
+              const configured = providers?.[p.id] ?? false;
+              const account = linked.find((a) => a.providerId === p.id);
+              return (
+                <SettingsListRow
+                  action={
+                    isLinked && account ? (
+                      <Button
+                        onClick={() =>
+                          setUnlinkTarget({
+                            accountId: account.id,
+                            label: p.label,
+                            providerId: p.id,
+                          })
+                        }
+                        size="sm"
+                        variant="danger"
+                      >
+                        Unlink
+                      </Button>
+                    ) : configured ? (
+                      <Button disabled={busy === p.id} onClick={() => handleLink(p.id)} size="sm">
+                        {busy === p.id ? 'Linking…' : 'Link'}
+                      </Button>
+                    ) : null
+                  }
+                  detail={
+                    isLinked ? (
+                      account?.accountId ? (
+                        <>
+                          Account{' '}
+                          <span className="font-mono text-xs text-paper-400">
+                            {account.accountId.slice(0, 12)}…
+                          </span>
+                        </>
                       ) : (
-                        'Not enabled by your administrator'
+                        p.description
                       )
-                    }
-                    key={p.id}
-                    leading={<ProviderMark id={p.id} />}
-                    status={
-                      isLinked ? (
-                        <Badge dot tone="moss" variant="outline">
-                          Linked
-                        </Badge>
-                      ) : configured ? null : (
-                        <Badge tone="muted" variant="outline">
-                          Unavailable
-                        </Badge>
-                      )
-                    }
-                    title={p.label}
-                  />
-                );
-              })}
+                    ) : configured ? (
+                      p.description
+                    ) : (
+                      'Not enabled by your administrator'
+                    )
+                  }
+                  key={p.id}
+                  leading={<ProviderMark id={p.id} />}
+                  status={
+                    isLinked ? (
+                      <Badge dot tone="moss" variant="outline">
+                        Linked
+                      </Badge>
+                    ) : configured ? null : (
+                      <Badge tone="muted" variant="outline">
+                        Unavailable
+                      </Badge>
+                    )
+                  }
+                  title={p.label}
+                />
+              );
+            })}
 
-              {/* Slack lives outside better-auth — keep its custom OAuth flow. */}
-              <SettingsListRow
-                action={
-                  user?.slackId ? null : (
-                    // A full-page navigation to the gateway's OAuth start, not an
-                    // app route, so it stays a plain anchor rather than a ButtonLink.
-                    <a
-                      className={buttonClassName('secondary', 'sm')}
-                      href={`${API_BASE}/api/v1/auth/slack/connect`}
-                      style={BUTTON_STYLE}
-                    >
-                      Connect
-                    </a>
-                  )
-                }
-                detail={
-                  user?.slackId ? (
-                    <>
-                      Slack user{' '}
-                      <span className="font-mono text-xs text-paper-400">{user.slackId}</span>
-                    </>
-                  ) : (
-                    <>
-                      Needed for the <code className="font-mono text-xs">/auto-swe</code> slash
-                      command and per-step failure DMs.
-                    </>
-                  )
-                }
-                leading={<ProviderMark id="slack" />}
-                status={
-                  user?.slackId ? (
-                    <Badge dot tone="moss" variant="outline">
-                      Connected
-                    </Badge>
-                  ) : null
-                }
-                title="Slack"
-              />
-            </ul>
-          </QueryBoundary>
-        )}
+            {/* Slack lives outside better-auth — keep its custom OAuth flow. */}
+            <SettingsListRow
+              action={
+                user?.slackId ? null : (
+                  // A full-page navigation to the gateway's OAuth start, not an
+                  // app route, so it stays a plain anchor rather than a ButtonLink.
+                  <a
+                    className={buttonClassName('secondary', 'sm')}
+                    href={`${API_BASE}/api/v1/auth/slack/connect`}
+                    style={BUTTON_STYLE}
+                  >
+                    Connect
+                  </a>
+                )
+              }
+              detail={
+                user?.slackId ? (
+                  <>
+                    Slack user{' '}
+                    <span className="font-mono text-xs text-paper-400">{user.slackId}</span>
+                  </>
+                ) : (
+                  <>
+                    Needed for the <code className="font-mono text-xs">/auto-swe</code> slash
+                    command and per-step failure DMs.
+                  </>
+                )
+              }
+              leading={<ProviderMark id="slack" />}
+              status={
+                user?.slackId ? (
+                  <Badge dot tone="moss" variant="outline">
+                    Connected
+                  </Badge>
+                ) : null
+              }
+              title="Slack"
+            />
+          </ul>
+        </QueryBoundary>
       </SettingsSection>
 
       <AccessTokensSection />

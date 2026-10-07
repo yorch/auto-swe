@@ -247,13 +247,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
             error={membersQuery.error}
             isError={membersQuery.isError}
             isFetching={membersQuery.isFetching}
-            isLoading={false}
+            isLoading={membersQuery.isLoading}
             label="members"
+            loading={<SkeletonRows rows={3} />}
             onRetry={() => void membersQuery.refetch()}
           >
-            {membersQuery.isLoading ? (
-              <SkeletonRows rows={3} />
-            ) : memberCount === 0 ? (
+            {memberCount === 0 ? (
               <EmptyState
                 className="py-6"
                 hint={
@@ -446,136 +445,133 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               error={budgetQuery.error}
               isError={budgetQuery.isError}
               isFetching={budgetQuery.isFetching}
-              isLoading={false}
+              isLoading={budgetQuery.isLoading}
               label="budget"
+              loading={<SkeletonRows rows={3} />}
               onRetry={() => void budgetQuery.refetch()}
             >
-              {budgetQuery.isLoading ? (
-                <SkeletonRows rows={3} />
-              ) : (
-                <div className="space-y-4">
-                  {budgetError ? <Alert variant="error">{budgetError}</Alert> : null}
-                  {overThreshold && cap != null && threshold != null && (
-                    <Alert variant="warning">
-                      Monthly spend is {formatCents(spent * 100)} (
-                      {formatPercent((spent * 100) / cap)} of the {formatCents(cap)} cap) — above
-                      the {formatPercent(threshold / 100)} alert threshold.
-                    </Alert>
-                  )}
-                  <div>
-                    <div className="text-xs text-paper-500">
-                      {budget?.currentMonthUsage?.yearMonth
-                        ? `Spent in ${budget.currentMonthUsage.yearMonth}`
-                        : 'Spent this month'}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-baseline gap-x-2">
-                      <span className="text-2xl font-semibold tracking-tight text-paper-50 tabular-nums">
-                        {formatCents(spent * 100)}
-                      </span>
-                      <span className="text-sm text-paper-400 tabular-nums">
-                        {cap != null ? `of ${formatCents(cap)}` : 'no cap set'}
-                      </span>
-                    </div>
-                    {usedPercent != null && (
-                      <div
-                        aria-label={`${formatPercent(usedPercent / 100)} of the cap used`}
-                        className="relative mt-3 h-2 overflow-hidden rounded-full bg-ink-500"
-                        role="img"
-                      >
-                        <div
-                          className={cn(
-                            'absolute inset-y-0 left-0 rounded-full',
-                            usedPercent >= 100
-                              ? 'bg-brick-400'
-                              : overThreshold
-                                ? 'bg-amber-400'
-                                : 'bg-moss-400'
-                          )}
-                          style={{ width: `${Math.min(100, usedPercent)}%` }}
-                        />
-                        {threshold != null && threshold > 0 && threshold < 100 && (
-                          <div
-                            className="absolute inset-y-0 w-0.5 bg-paper-200/80"
-                            style={{ left: `${threshold}%` }}
-                            title={`Alert at ${formatPercent(threshold / 100)}`}
-                          />
-                        )}
-                      </div>
-                    )}
-                    {budget && (
-                      <p className="mt-2 text-xs leading-relaxed text-paper-500">
-                        {budget.currentMonthUsage && (
-                          <>
-                            {plural(budget.currentMonthUsage.runsCompleted, 'run')} ·{' '}
-                            {formatTokens(
-                              Number(budget.currentMonthUsage.tokensInput) +
-                                Number(budget.currentMonthUsage.tokensOutput)
-                            )}{' '}
-                            tokens ·{' '}
-                          </>
-                        )}
-                        {formatCents(budget.currentMonthSpend.inFlightUsd * 100)} in flight ·{' '}
-                        {formatCents(budget.currentMonthSpend.runlessUsd * 100)} without a run
-                      </p>
-                    )}
+              <div className="space-y-4">
+                {budgetError ? <Alert variant="error">{budgetError}</Alert> : null}
+                {overThreshold && cap != null && threshold != null && (
+                  <Alert variant="warning">
+                    Monthly spend is {formatCents(spent * 100)} (
+                    {formatPercent((spent * 100) / cap)} of the {formatCents(cap)} cap) — above the{' '}
+                    {formatPercent(threshold / 100)} alert threshold.
+                  </Alert>
+                )}
+                <div>
+                  <div className="text-xs text-paper-500">
+                    {budget?.currentMonthUsage?.yearMonth
+                      ? `Spent in ${budget.currentMonthUsage.yearMonth}`
+                      : 'Spent this month'}
                   </div>
-                  <dl className="grid grid-cols-2 gap-3 border-t border-ink-600 pt-4 text-sm">
-                    <div>
-                      <dt className="text-xs text-paper-500">Monthly cap</dt>
-                      <dd className="mt-0.5 text-paper-100 tabular-nums">
-                        {cap != null ? formatCents(cap) : 'No cap'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-paper-500">Alert threshold</dt>
-                      <dd className="mt-0.5 text-paper-100 tabular-nums">
-                        {threshold != null ? formatPercent(threshold / 100) : 'Not set'}
-                      </dd>
-                    </div>
-                  </dl>
-                  {canAdmin && (
-                    <div className="space-y-4 border-t border-ink-600 pt-4">
-                      <Input
-                        hint="In dollars, e.g. 100.00. Leave blank for no cap."
-                        label="Monthly cap"
-                        min="0"
-                        onChange={(e) => setBudgetInput(e.target.value)}
-                        placeholder="No cap"
-                        prefix="$"
-                        step="0.01"
-                        type="number"
-                        value={budgetInput}
-                      />
-                      <Input
-                        hint="Warn when spend crosses this percent of the cap (0–100). Blank disables it."
-                        label="Alert threshold (%)"
-                        onChange={(e) => setThresholdInput(e.target.value)}
-                        placeholder="Not set"
-                        type="number"
-                        value={thresholdInput}
-                      />
-                      <div className="flex flex-wrap justify-end gap-2">
-                        {budget?.monthlyBudgetUsdCents != null && (
-                          <Button
-                            disabled={patchBudget.isPending}
-                            onClick={() => setConfirmRemoveCap(true)}
-                            variant="ghost"
-                          >
-                            Remove cap
-                          </Button>
+                  <div className="mt-1 flex flex-wrap items-baseline gap-x-2">
+                    <span className="text-2xl font-semibold tracking-tight text-paper-50 tabular-nums">
+                      {formatCents(spent * 100)}
+                    </span>
+                    <span className="text-sm text-paper-400 tabular-nums">
+                      {cap != null ? `of ${formatCents(cap)}` : 'no cap set'}
+                    </span>
+                  </div>
+                  {usedPercent != null && (
+                    <div
+                      aria-label={`${formatPercent(usedPercent / 100)} of the cap used`}
+                      className="relative mt-3 h-2 overflow-hidden rounded-full bg-ink-500"
+                      role="img"
+                    >
+                      <div
+                        className={cn(
+                          'absolute inset-y-0 left-0 rounded-full',
+                          usedPercent >= 100
+                            ? 'bg-brick-400'
+                            : overThreshold
+                              ? 'bg-amber-400'
+                              : 'bg-moss-400'
                         )}
-                        <Button
-                          disabled={patchBudget.isPending}
-                          onClick={handleSaveBudget}
-                          variant="secondary"
-                        >
-                          {patchBudget.isPending ? 'Saving…' : 'Save budget'}
-                        </Button>
-                      </div>
+                        style={{ width: `${Math.min(100, usedPercent)}%` }}
+                      />
+                      {threshold != null && threshold > 0 && threshold < 100 && (
+                        <div
+                          className="absolute inset-y-0 w-0.5 bg-paper-200/80"
+                          style={{ left: `${threshold}%` }}
+                          title={`Alert at ${formatPercent(threshold / 100)}`}
+                        />
+                      )}
                     </div>
+                  )}
+                  {budget && (
+                    <p className="mt-2 text-xs leading-relaxed text-paper-500">
+                      {budget.currentMonthUsage && (
+                        <>
+                          {plural(budget.currentMonthUsage.runsCompleted, 'run')} ·{' '}
+                          {formatTokens(
+                            Number(budget.currentMonthUsage.tokensInput) +
+                              Number(budget.currentMonthUsage.tokensOutput)
+                          )}{' '}
+                          tokens ·{' '}
+                        </>
+                      )}
+                      {formatCents(budget.currentMonthSpend.inFlightUsd * 100)} in flight ·{' '}
+                      {formatCents(budget.currentMonthSpend.runlessUsd * 100)} without a run
+                    </p>
                   )}
                 </div>
-              )}
+                <dl className="grid grid-cols-2 gap-3 border-t border-ink-600 pt-4 text-sm">
+                  <div>
+                    <dt className="text-xs text-paper-500">Monthly cap</dt>
+                    <dd className="mt-0.5 text-paper-100 tabular-nums">
+                      {cap != null ? formatCents(cap) : 'No cap'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-paper-500">Alert threshold</dt>
+                    <dd className="mt-0.5 text-paper-100 tabular-nums">
+                      {threshold != null ? formatPercent(threshold / 100) : 'Not set'}
+                    </dd>
+                  </div>
+                </dl>
+                {canAdmin && (
+                  <div className="space-y-4 border-t border-ink-600 pt-4">
+                    <Input
+                      hint="In dollars, e.g. 100.00. Leave blank for no cap."
+                      label="Monthly cap"
+                      min="0"
+                      onChange={(e) => setBudgetInput(e.target.value)}
+                      placeholder="No cap"
+                      prefix="$"
+                      step="0.01"
+                      type="number"
+                      value={budgetInput}
+                    />
+                    <Input
+                      hint="Warn when spend crosses this percent of the cap (0–100). Blank disables it."
+                      label="Alert threshold (%)"
+                      onChange={(e) => setThresholdInput(e.target.value)}
+                      placeholder="Not set"
+                      type="number"
+                      value={thresholdInput}
+                    />
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {budget?.monthlyBudgetUsdCents != null && (
+                        <Button
+                          disabled={patchBudget.isPending}
+                          onClick={() => setConfirmRemoveCap(true)}
+                          variant="ghost"
+                        >
+                          Remove cap
+                        </Button>
+                      )}
+                      <Button
+                        disabled={patchBudget.isPending}
+                        onClick={handleSaveBudget}
+                        variant="secondary"
+                      >
+                        {patchBudget.isPending ? 'Saving…' : 'Save budget'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </QueryBoundary>
           </Card>
 
@@ -588,42 +584,39 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               error={orgQuery.error}
               isError={orgQuery.isError}
               isFetching={orgQuery.isFetching}
-              isLoading={false}
+              isLoading={orgQuery.isLoading}
               label="organization"
+              loading={<SkeletonRows rows={2} />}
               onRetry={() => void orgQuery.refetch()}
             >
-              {orgQuery.isLoading ? (
-                <SkeletonRows rows={2} />
-              ) : (
-                <div className="space-y-4">
-                  {orgError ? <Alert variant="error">{orgError}</Alert> : null}
-                  <Input
-                    label="Name"
-                    onChange={(e) => setOrgName(e.target.value)}
-                    readOnly={!canAdmin}
-                    value={orgName}
-                  />
-                  <Input
-                    className="font-mono"
-                    hint="Lowercase letters, numbers and hyphens"
-                    label="Slug"
-                    onChange={(e) => setOrgSlug(e.target.value)}
-                    readOnly={!canAdmin}
-                    value={orgSlug}
-                  />
-                  {canAdmin && (
-                    <div className="flex justify-end">
-                      <Button
-                        disabled={patchOrg.isPending}
-                        onClick={handleSaveOrg}
-                        variant="secondary"
-                      >
-                        {patchOrg.isPending ? 'Saving…' : 'Save profile'}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="space-y-4">
+                {orgError ? <Alert variant="error">{orgError}</Alert> : null}
+                <Input
+                  label="Name"
+                  onChange={(e) => setOrgName(e.target.value)}
+                  readOnly={!canAdmin}
+                  value={orgName}
+                />
+                <Input
+                  className="font-mono"
+                  hint="Lowercase letters, numbers and hyphens"
+                  label="Slug"
+                  onChange={(e) => setOrgSlug(e.target.value)}
+                  readOnly={!canAdmin}
+                  value={orgSlug}
+                />
+                {canAdmin && (
+                  <div className="flex justify-end">
+                    <Button
+                      disabled={patchOrg.isPending}
+                      onClick={handleSaveOrg}
+                      variant="secondary"
+                    >
+                      {patchOrg.isPending ? 'Saving…' : 'Save profile'}
+                    </Button>
+                  </div>
+                )}
+              </div>
             </QueryBoundary>
           </Card>
         </div>

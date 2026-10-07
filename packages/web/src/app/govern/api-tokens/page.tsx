@@ -101,14 +101,15 @@ export default function GovernAccessTokensPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="tokens"
+          loading={
+            <Card>
+              <SkeletonRows rows={5} />
+            </Card>
+          }
           onRetry={() => void refetch()}
-        >
-          <Card>
-            <SkeletonRows rows={5} />
-          </Card>
-        </QueryBoundary>
+        />
       </div>
     );
   }

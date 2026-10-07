@@ -441,15 +441,16 @@ export default function AutonomyPoliciesPage() {
         error={error}
         isError={isError}
         isFetching={isFetching}
-        isLoading={false}
+        isLoading={isLoading}
         label="policies"
-        onRetry={() => void refetch()}
-      >
-        {isLoading ? (
+        loading={
           <Card>
             <SkeletonRows rows={3} />
           </Card>
-        ) : sorted.length === 0 ? (
+        }
+        onRetry={() => void refetch()}
+      >
+        {sorted.length === 0 ? (
           <EmptyState
             action={
               <Button onClick={startCreate} size="sm" variant="primary">

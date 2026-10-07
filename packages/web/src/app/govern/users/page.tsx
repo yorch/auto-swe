@@ -107,14 +107,15 @@ export default function UsersPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="users"
+          loading={
+            <Card>
+              <SkeletonRows rows={5} />
+            </Card>
+          }
           onRetry={() => void refetch()}
-        >
-          <Card>
-            <SkeletonRows rows={5} />
-          </Card>
-        </QueryBoundary>
+        />
         <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
       </div>
     );

@@ -301,13 +301,12 @@ export default function GovernConfigGrantsPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="grants"
+          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows rows={3} />
-          ) : allGrants.length === 0 ? (
+          {allGrants.length === 0 ? (
             <EmptyState
               hint="Only admins can change settings until you grant a role or a user access to some of them."
               icon="lock"

@@ -56,14 +56,15 @@ export default function GovernSessionsPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="sessions"
+          loading={
+            <Card>
+              <SkeletonRows rows={5} />
+            </Card>
+          }
           onRetry={() => void refetch()}
-        >
-          <Card>
-            <SkeletonRows rows={5} />
-          </Card>
-        </QueryBoundary>
+        />
       </div>
     );
   }

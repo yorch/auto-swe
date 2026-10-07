@@ -419,13 +419,12 @@ export default function AgentLibraryPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="agents"
+          loading={<SkeletonRows rows={8} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows rows={8} />
-          ) : visibleAgents.length === 0 ? (
+          {visibleAgents.length === 0 ? (
             filtering ? (
               <EmptyState
                 action={

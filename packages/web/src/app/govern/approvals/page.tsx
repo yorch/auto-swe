@@ -117,90 +117,87 @@ export default function GovernApprovalsPage() {
             />
           </Toolbar>
 
-          {isLoading ? (
-            <ApprovalSkeleton />
-          ) : (
-            <QueryBoundary
-              error={error}
-              isError={isError}
-              isFetching={isFetching}
-              isLoading={false}
-              label="inbox"
-              onRetry={() => void refetch()}
-            >
-              {count > 0 && (
-                <div className="space-y-3">
-                  {visible.map((step) => (
-                    <HumanStepCard key={step.id} step={step} />
-                  ))}
-                  {count > PAGE_SIZE && (
-                    <div className="pt-2">
-                      <Pagination
-                        hasNext={current < pageCount - 1}
-                        hasPrev={current > 0}
-                        onNext={() => setPage(current + 1)}
-                        onPrev={() => setPage(current - 1)}
-                        rangeEnd={Math.min(count, (current + 1) * PAGE_SIZE)}
-                        rangeStart={current * PAGE_SIZE + 1}
-                        total={count}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {count === 0 &&
-                (overdueOnly ? (
-                  <EmptyState
-                    action={
-                      <Button
-                        onClick={() => {
-                          setOverdueOnly(false);
-                          resetPage();
-                        }}
-                        size="sm"
-                      >
-                        Show every step
-                      </Button>
-                    }
-                    bordered
-                    hint="Nothing has passed its deadline. Clear the filter to see the rest."
-                    icon="clock"
-                    title="No overdue steps"
-                  />
-                ) : filter === 'PENDING' ? (
-                  <EmptyState
-                    action={
-                      <Button
-                        onClick={() => {
-                          setFilter('ALL');
-                          resetPage();
-                        }}
-                        size="sm"
-                      >
-                        See answered steps
-                      </Button>
-                    }
-                    bordered
-                    hint="When a run reaches an approval, decision, input or review step, it waits here for a person to answer."
-                    icon="inbox"
-                    title="You're all caught up"
-                  />
-                ) : (
-                  <EmptyState
-                    action={
-                      <ButtonLink href="/workflows/library" size="sm">
-                        Browse workflows
-                      </ButtonLink>
-                    }
-                    bordered
-                    hint="Steps that need a person appear here once a workflow with a human step runs."
-                    icon="inbox"
-                    title="No human steps yet"
-                  />
+          <QueryBoundary
+            error={error}
+            isError={isError}
+            isFetching={isFetching}
+            isLoading={isLoading}
+            label="inbox"
+            loading={<ApprovalSkeleton />}
+            onRetry={() => void refetch()}
+          >
+            {count > 0 && (
+              <div className="space-y-3">
+                {visible.map((step) => (
+                  <HumanStepCard key={step.id} step={step} />
                 ))}
-            </QueryBoundary>
-          )}
+                {count > PAGE_SIZE && (
+                  <div className="pt-2">
+                    <Pagination
+                      hasNext={current < pageCount - 1}
+                      hasPrev={current > 0}
+                      onNext={() => setPage(current + 1)}
+                      onPrev={() => setPage(current - 1)}
+                      rangeEnd={Math.min(count, (current + 1) * PAGE_SIZE)}
+                      rangeStart={current * PAGE_SIZE + 1}
+                      total={count}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {count === 0 &&
+              (overdueOnly ? (
+                <EmptyState
+                  action={
+                    <Button
+                      onClick={() => {
+                        setOverdueOnly(false);
+                        resetPage();
+                      }}
+                      size="sm"
+                    >
+                      Show every step
+                    </Button>
+                  }
+                  bordered
+                  hint="Nothing has passed its deadline. Clear the filter to see the rest."
+                  icon="clock"
+                  title="No overdue steps"
+                />
+              ) : filter === 'PENDING' ? (
+                <EmptyState
+                  action={
+                    <Button
+                      onClick={() => {
+                        setFilter('ALL');
+                        resetPage();
+                      }}
+                      size="sm"
+                    >
+                      See answered steps
+                    </Button>
+                  }
+                  bordered
+                  hint="When a run reaches an approval, decision, input or review step, it waits here for a person to answer."
+                  icon="inbox"
+                  title="You're all caught up"
+                />
+              ) : (
+                <EmptyState
+                  action={
+                    <ButtonLink href="/workflows/library" size="sm">
+                      Browse workflows
+                    </ButtonLink>
+                  }
+                  bordered
+                  hint="Steps that need a person appear here once a workflow with a human step runs."
+                  icon="inbox"
+                  title="No human steps yet"
+                />
+              ))}
+          </QueryBoundary>
         </div>
       </div>
     </div>

@@ -138,13 +138,12 @@ export function SkillSourcesTab() {
           error={error}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="skill sources"
+          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows rows={3} />
-          ) : !sources?.length ? (
+          {!sources?.length ? (
             <EmptyState
               action={
                 <Button onClick={() => setAddOpen(true)} size="sm" variant="primary">

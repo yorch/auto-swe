@@ -194,13 +194,12 @@ export default function StudioGithubInstallationsPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="GitHub installations"
+          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows rows={3} />
-          ) : !installations || installations.length === 0 ? (
+          {!installations || installations.length === 0 ? (
             <EmptyState
               action={
                 <Button onClick={() => setNewOpen(true)} size="sm">

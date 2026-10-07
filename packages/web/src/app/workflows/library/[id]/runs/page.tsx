@@ -168,13 +168,12 @@ function TemplateRuns({ id: rawId }: { id: string }) {
           error={error}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="runs"
+          loading={<SkeletonRows className="px-5 py-4" rows={6} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows className="px-5 py-4" rows={6} />
-          ) : rows.length === 0 ? (
+          {rows.length === 0 ? (
             filtering ? (
               <EmptyState
                 action={

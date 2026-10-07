@@ -83,38 +83,35 @@ export function GitHubCredentialsSection() {
       id="github-credentials"
       title="GitHub credentials"
     >
-      {mine.isLoading ? (
-        <SkeletonRows rows={2} />
-      ) : (
-        <QueryBoundary
-          compact
-          error={mine.error}
-          isError={mine.isError}
-          isFetching={mine.isFetching}
-          isLoading={false}
-          label="your GitHub credentials"
-          onRetry={() => void mine.refetch()}
-        >
-          {credentials.length === 0 ? (
-            <EmptyState
-              action={
-                <ButtonLink href="/connections" size="sm">
-                  Go to Connections
-                </ButtonLink>
-              }
-              hint="Add one from a repository on the Connections page, using My token."
-              icon="github"
-              title="No saved tokens"
-            />
-          ) : (
-            <ul className="divide-y divide-ink-600">
-              {credentials.map((c) => (
-                <CredentialRow credential={c} key={c.connectionId} name={nameOf(c.connectionId)} />
-              ))}
-            </ul>
-          )}
-        </QueryBoundary>
-      )}
+      <QueryBoundary
+        compact
+        error={mine.error}
+        isError={mine.isError}
+        isFetching={mine.isFetching}
+        isLoading={mine.isLoading}
+        label="your GitHub credentials"
+        loading={<SkeletonRows rows={2} />}
+        onRetry={() => void mine.refetch()}
+      >
+        {credentials.length === 0 ? (
+          <EmptyState
+            action={
+              <ButtonLink href="/connections" size="sm">
+                Go to Connections
+              </ButtonLink>
+            }
+            hint="Add one from a repository on the Connections page, using My token."
+            icon="github"
+            title="No saved tokens"
+          />
+        ) : (
+          <ul className="divide-y divide-ink-600">
+            {credentials.map((c) => (
+              <CredentialRow credential={c} key={c.connectionId} name={nameOf(c.connectionId)} />
+            ))}
+          </ul>
+        )}
+      </QueryBoundary>
     </SettingsSection>
   );
 }
