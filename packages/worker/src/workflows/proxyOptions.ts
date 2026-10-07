@@ -57,7 +57,7 @@ export const RETRY_STATE = {
  * 2 attempts, 30s → 2m backoff. Long-lived implementer/LLM activities where a
  * retry is expensive.
  * `{ backoffCoefficient: 2, initialInterval: '30s', maximumAttempts: 2, maximumInterval: '2m' }`
- * Used by: agentActivities + conflictActivities (runnable).
+ * Used by: agentActivities + conflictActivities + agentNodeWorkspaceActivities (runnable).
  */
 export const RETRY_AGENT = {
   backoffCoefficient: 2,
@@ -165,7 +165,7 @@ export const T_5M: Duration = '5m';
 export const T_10M: Duration = '10m';
 /** `'15m'` — merge / quality-gate / PRD startToClose. */
 export const T_15M: Duration = '15m';
-/** `'30m'` — long implementer + conflict-resolution startToClose. */
+/** `'30m'` — long implementer, conflict-resolution and checkout agent-node startToClose. */
 export const T_30M: Duration = '30m';
 /** `'60m'` — sandboxed shell / container steps. */
 export const T_60M: Duration = '60m';

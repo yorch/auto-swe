@@ -169,6 +169,18 @@ export const agentNodeActivities = proxyActivities<
   startToCloseTimeout: T_10M,
 });
 
+// The same activity for an `agent` node that asks for a workspace: it clones the
+// run's repository and may run a whole harness turn, so it takes the implementer's
+// timeouts and retry shape, not a single-shot call's. The node's own
+// `startToCloseTimeout` is not read (validateSpec reports it as ignored).
+export const agentNodeWorkspaceActivities = proxyActivities<
+  Pick<typeof activitiesType, 'runAgentNode'>
+>({
+  heartbeatTimeout: T_5M,
+  retry: RETRY_AGENT,
+  startToCloseTimeout: T_30M,
+});
+
 // The Agent Run system template's step: a workspace container, an agent loop of
 // up to the platform's wall-clock ceiling (max 4 h), then a trusted-container
 // gate and push. Single attempt, because a retry would re-spend and could

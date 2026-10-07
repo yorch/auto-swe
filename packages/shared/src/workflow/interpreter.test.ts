@@ -1662,6 +1662,25 @@ describe('agent node (P2)', () => {
     expect(calls.map((c) => c.step)).toEqual(['runAgentNode']);
     expect(calls[0].config.agentRef).toBe('reviewer');
     expect(calls[0].config.userMessage).toBe('review this');
+    expect(calls[0].config).not.toHaveProperty('workspace');
+  });
+
+  it('passes a workspace request through to the step config', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'agent-workspace',
+      nodes: {
+        a: { agentRef: 'reviewer', next: 'done', type: 'agent', workspace: true },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runAgentNode: { text: 'ok' } },
+    });
+    await runSpec(spec, baseCtx(), dispatcher);
+    expect(calls[0].config.workspace).toBe(true);
   });
 
   it('does not set config.steering when the dispatcher has no drainSteering hook', async () => {

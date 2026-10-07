@@ -10,6 +10,7 @@
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
 import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -479,6 +480,12 @@ export function AgentSection({
         onChange={(e) => onChange({ ...node, systemPrompt: e.target.value || undefined })}
         spellCheck={false}
         value={node.systemPrompt ?? ''}
+      />
+      <Checkbox
+        checked={node.workspace === true}
+        hint="Clones the run’s repository for the agent to read; nothing it changes is kept. Runs on the agent’s own runtime"
+        label="Run in a checkout of the repository"
+        onChange={(e) => onChange({ ...node, workspace: e.target.checked || undefined })}
       />
       <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>

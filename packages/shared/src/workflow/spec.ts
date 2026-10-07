@@ -249,6 +249,14 @@ const AgentNodeSchema = z.object({
   systemPrompt: z.string().optional(),
   type: z.literal('agent'),
   userMessage: z.string().optional(),
+  /**
+   * Run the agent in a throwaway checkout of the run's repository, at the run's
+   * branch (the default branch before the run has pushed one). The Agent gets the
+   * workspace tools an agent run grants and runs on its own runtime (the Claude
+   * Code harness when it asks for one); nothing it changes leaves the checkout.
+   * A run with no repository fails the node.
+   */
+  workspace: z.boolean().optional(),
 });
 
 /**

@@ -22,7 +22,8 @@ import {
   vi,
 } from 'vitest';
 
-const { rows } = vi.hoisted(() => ({
+const { agentNodeInputs, rows } = vi.hoisted(() => ({
+  agentNodeInputs: [] as Array<Record<string, unknown>>,
   rows: [] as Array<Record<string, unknown>>,
 }));
 
@@ -100,7 +101,11 @@ const fakeActivities = {
     }),
   recordWorkflowStep: async () => {},
   resolveHumanStep: async () => {},
-  runAgentNode: async () => traced('runAgentNode', async () => ({ ok: true })),
+  runAgentNode: async (input: Record<string, unknown>) =>
+    traced('runAgentNode', async () => {
+      agentNodeInputs.push(input);
+      return { ok: true };
+    }),
   runContainerStep: async () => traced('runContainerStep', async () => ({ ok: true })),
   runEvalNode: async () => traced('runEvalNode', async () => ({ score: 1 })),
   runLint: async () =>
@@ -149,6 +154,7 @@ beforeEach((ctx: TestContext) => {
     ctx.skip();
   }
   rows.length = 0;
+  agentNodeInputs.length = 0;
   for (const k of Object.keys(counters)) {
     delete counters[k];
   }
@@ -372,6 +378,38 @@ describe('trace attribution through RunnableWorkflow', () => {
       expect(byActivity('runLint').map(tagOf)).toEqual([
         { attempt: 1, recording: 'flaky', spec: 'flaky', step: 1 },
         { attempt: 1, recording: 'flaky', spec: 'flaky', step: 2 },
+      ]);
+    },
+    TEST_TIMEOUT_MS
+  );
+});
+
+describe('agent node workspace', () => {
+  it(
+    "hands a workspace node the run's repository, ticket and code-result branch",
+    async () => {
+      const result = await run(
+        'wf-agent-workspace',
+        makeSpec(
+          {
+            bare: { agentRef: 'reviewer', next: 'end', type: 'agent' },
+            end: done,
+            read: { agentRef: 'reviewer', next: 'setBranch', type: 'agent', workspace: true },
+            readAgain: { agentRef: 'reviewer', next: 'bare', type: 'agent', workspace: true },
+            setBranch: {
+              next: 'readAgain',
+              type: 'set',
+              values: { 'context.currentCodeResult': { literal: { branch: 'auto/T-1-sub' } } },
+            },
+          },
+          'read'
+        )
+      );
+      expect(result.status).toBe('SUCCESS');
+      expect(agentNodeInputs.map((i) => i.workspace)).toEqual([
+        { repoId: REQUEST.repoId, ticketId: 'T-1' },
+        { branch: 'auto/T-1-sub', repoId: REQUEST.repoId, ticketId: 'T-1' },
+        undefined,
       ]);
     },
     TEST_TIMEOUT_MS
