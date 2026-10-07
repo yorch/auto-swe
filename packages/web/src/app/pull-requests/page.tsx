@@ -141,45 +141,40 @@ function PullRequests() {
               </Button>
             )}
           </Toolbar>
-          {isLoading ? (
-            <SkeletonRows className="px-4 py-4" rows={6} />
-          ) : (
-            <QueryBoundary
-              error={error}
-              isError={isError}
-              isFetching={isFetching}
-              isLoading={false}
-              label="pull requests"
-              onRetry={() => void refetch()}
-            >
-              {pullRequests.length === 0 ? (
-                <EmptyState
-                  action={
-                    filtered ? (
-                      <Button onClick={clearFilters} size="sm">
-                        Clear filters
-                      </Button>
-                    ) : (
-                      <ButtonLink href="/start" size="sm" variant="secondary">
-                        Start work
-                      </ButtonLink>
-                    )
-                  }
-                  hint={
-                    filtered
-                      ? 'Try another state or clear the filters.'
-                      : 'Pull requests the platform opens for your requests appear here, as drafts for you to review.'
-                  }
-                  icon={filtered ? 'search' : 'pullRequest'}
-                  title={
-                    filtered ? 'No pull requests match these filters' : 'No open pull requests'
-                  }
-                />
-              ) : (
-                <PullRequestTable pullRequests={pullRequests} />
-              )}
-            </QueryBoundary>
-          )}
+          <QueryBoundary
+            error={error}
+            isError={isError}
+            isFetching={isFetching}
+            isLoading={isLoading}
+            label="pull requests"
+            loading={<SkeletonRows className="px-4 py-4" rows={6} />}
+            onRetry={() => void refetch()}
+          >
+            {pullRequests.length === 0 ? (
+              <EmptyState
+                action={
+                  filtered ? (
+                    <Button onClick={clearFilters} size="sm">
+                      Clear filters
+                    </Button>
+                  ) : (
+                    <ButtonLink href="/start" size="sm" variant="secondary">
+                      Start work
+                    </ButtonLink>
+                  )
+                }
+                hint={
+                  filtered
+                    ? 'Try another state or clear the filters.'
+                    : 'Pull requests the platform opens for your requests appear here, as drafts for you to review.'
+                }
+                icon={filtered ? 'search' : 'pullRequest'}
+                title={filtered ? 'No pull requests match these filters' : 'No open pull requests'}
+              />
+            ) : (
+              <PullRequestTable pullRequests={pullRequests} />
+            )}
+          </QueryBoundary>
         </Card>
         <Pagination
           hasNext={offset + PAGE_SIZE < total}

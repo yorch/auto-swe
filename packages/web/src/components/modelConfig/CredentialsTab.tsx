@@ -218,13 +218,12 @@ export function CredentialsTab() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="credentials"
+          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows rows={3} />
-          ) : (credentials ?? []).length === 0 ? (
+          {(credentials ?? []).length === 0 ? (
             <EmptyState
               action={
                 <Button onClick={() => openCreate()} size="sm" variant="primary">

@@ -94,115 +94,112 @@ export default function GovernSlackChannelsPage() {
       />
 
       <Card>
-        {isLoading ? (
-          <SkeletonRows rows={4} />
-        ) : (
-          <QueryBoundary
-            error={loadError}
-            isError={isError}
-            isFetching={isFetching}
-            isLoading={false}
-            label="Slack channels"
-            onRetry={() => void refetch()}
-          >
-            {!channels || channels.length === 0 ? (
-              <EmptyState
-                action={
-                  <Button onClick={() => setRegisterOpen(true)} size="sm">
-                    Register channel
-                  </Button>
+        <QueryBoundary
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="Slack channels"
+          loading={<SkeletonRows rows={4} />}
+          onRetry={() => void refetch()}
+        >
+          {!channels || channels.length === 0 ? (
+            <EmptyState
+              action={
+                <Button onClick={() => setRegisterOpen(true)} size="sm">
+                  Register channel
+                </Button>
+              }
+              hint="Register a channel to let the assistant answer, follow up and remember context there. Each channel belongs to a team and can carry its own spend cap."
+              icon="chat"
+              title="No Slack channels registered yet"
+            />
+          ) : (
+            <>
+              <Toolbar
+                end={
+                  <span className="text-xs text-paper-500 tabular-nums">
+                    {needle ? `${shown.length} of ${channels.length}` : channels.length} channel
+                    {channels.length === 1 ? '' : 's'}
+                  </span>
                 }
-                hint="Register a channel to let the assistant answer, follow up and remember context there. Each channel belongs to a team and can carry its own spend cap."
-                icon="chat"
-                title="No Slack channels registered yet"
-              />
-            ) : (
-              <>
-                <Toolbar
-                  end={
-                    <span className="text-xs text-paper-500 tabular-nums">
-                      {needle ? `${shown.length} of ${channels.length}` : channels.length} channel
-                      {channels.length === 1 ? '' : 's'}
-                    </span>
+              >
+                <SearchInput
+                  label="Search channels"
+                  onChange={setQuery}
+                  placeholder="Search channel or team…"
+                  value={query}
+                />
+              </Toolbar>
+              {shown.length === 0 ? (
+                <EmptyState
+                  action={
+                    <Button onClick={() => setQuery('')} size="sm">
+                      Clear search
+                    </Button>
                   }
-                >
-                  <SearchInput
-                    label="Search channels"
-                    onChange={setQuery}
-                    placeholder="Search channel or team…"
-                    value={query}
-                  />
-                </Toolbar>
-                {shown.length === 0 ? (
-                  <EmptyState
-                    action={
-                      <Button onClick={() => setQuery('')} size="sm">
-                        Clear search
-                      </Button>
-                    }
-                    icon="search"
-                    title="No channels match your search"
-                  />
-                ) : (
-                  <div className="-mx-4">
-                    <Table>
-                      <THead>
-                        <Th variant="plain">Channel</Th>
-                        <Th variant="plain">Team</Th>
-                        <Th variant="plain">Status</Th>
-                        <Th align="right" variant="plain">
-                          Spend this month
-                        </Th>
-                      </THead>
-                      <tbody>
-                        {shown.map((ch) => (
-                          <TRow hover key={ch.id}>
-                            <Td className="px-4 py-3">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Link
-                                  className={cn(
-                                    'rounded-sm font-medium text-paper-100 hover:text-ember-300',
-                                    FOCUS_RING
-                                  )}
-                                  href={`/govern/slack-channels/${ch.id}`}
-                                >
-                                  {ch.name ? `#${ch.name}` : 'Unnamed channel'}
-                                </Link>
-                                {ch.isPrivate && (
-                                  <Badge tone="amber" variant="outline">
-                                    Private
-                                  </Badge>
+                  icon="search"
+                  title="No channels match your search"
+                />
+              ) : (
+                <div className="-mx-4">
+                  <Table>
+                    <THead>
+                      <Th variant="plain">Channel</Th>
+                      <Th variant="plain">Team</Th>
+                      <Th variant="plain">Status</Th>
+                      <Th align="right" variant="plain">
+                        Spend this month
+                      </Th>
+                    </THead>
+                    <tbody>
+                      {shown.map((ch) => (
+                        <TRow hover key={ch.id}>
+                          <Td className="px-4 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Link
+                                className={cn(
+                                  'rounded-sm font-medium text-paper-100 hover:text-ember-300',
+                                  FOCUS_RING
                                 )}
-                              </div>
-                              <div className="mt-0.5 font-mono text-xs text-paper-500">
-                                {ch.slackChannelId}
-                              </div>
-                            </Td>
-                            <Td className="px-4 py-3 text-sm text-paper-300">
-                              {teamNames.get(ch.teamId) ?? '—'}
-                            </Td>
-                            <Td className="px-4 py-3">
-                              <Badge dot tone={ch.isActive ? 'moss' : 'muted'} variant="text">
-                                {ch.isActive ? 'Active' : 'Inactive'}
-                              </Badge>
-                            </Td>
-                            <Td
-                              align="right"
-                              className="px-4 py-3 text-[13px] text-paper-300 tabular-nums"
-                            >
-                              {spendLabel(ch)}
-                              <SpendMeter channel={ch} />
-                            </Td>
-                          </TRow>
-                        ))}
-                      </tbody>
-                    </Table>
-                  </div>
-                )}
-              </>
-            )}
-          </QueryBoundary>
-        )}
+                                href={`/govern/slack-channels/${ch.id}`}
+                              >
+                                {ch.name ? `#${ch.name}` : 'Unnamed channel'}
+                              </Link>
+                              {ch.isPrivate && (
+                                <Badge tone="amber" variant="outline">
+                                  Private
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="mt-0.5 font-mono text-xs text-paper-500">
+                              {ch.slackChannelId}
+                            </div>
+                          </Td>
+                          <Td className="px-4 py-3 text-sm text-paper-300">
+                            {teamNames.get(ch.teamId) ?? '—'}
+                          </Td>
+                          <Td className="px-4 py-3">
+                            <Badge dot tone={ch.isActive ? 'moss' : 'muted'} variant="text">
+                              {ch.isActive ? 'Active' : 'Inactive'}
+                            </Badge>
+                          </Td>
+                          <Td
+                            align="right"
+                            className="px-4 py-3 text-[13px] text-paper-300 tabular-nums"
+                          >
+                            {spendLabel(ch)}
+                            <SpendMeter channel={ch} />
+                          </Td>
+                        </TRow>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+              )}
+            </>
+          )}
+        </QueryBoundary>
       </Card>
 
       <RegisterChannelModal

@@ -37,42 +37,41 @@ export default function EpicsPage() {
         title="Epics"
       />
 
-      {epicsQuery.isLoading ? (
-        <Card className="px-5 py-3">
-          <SkeletonRows rows={5} />
-        </Card>
-      ) : (
-        <QueryBoundary
-          error={epicsQuery.error}
-          isError={epicsQuery.isError}
-          isFetching={epicsQuery.isFetching}
-          isLoading={false}
-          label="epics"
-          onRetry={() => void epicsQuery.refetch()}
-        >
-          {epics.length === 0 ? (
-            <EmptyState
-              action={
-                canCreate ? (
-                  <ButtonLink href="/start?mode=epic" variant="primary">
-                    Start an epic
-                  </ButtonLink>
-                ) : undefined
-              }
-              bordered
-              hint={
-                canCreate
-                  ? 'Describe one change once and the planner fans it out across your repositories.'
-                  : 'A team lead or administrator can start one to fan work out across repositories.'
-              }
-              icon="epics"
-              title="No epics yet"
-            />
-          ) : (
-            <EpicList epics={epics} />
-          )}
-        </QueryBoundary>
-      )}
+      <QueryBoundary
+        error={epicsQuery.error}
+        isError={epicsQuery.isError}
+        isFetching={epicsQuery.isFetching}
+        isLoading={epicsQuery.isLoading}
+        label="epics"
+        loading={
+          <Card className="px-5 py-3">
+            <SkeletonRows rows={5} />
+          </Card>
+        }
+        onRetry={() => void epicsQuery.refetch()}
+      >
+        {epics.length === 0 ? (
+          <EmptyState
+            action={
+              canCreate ? (
+                <ButtonLink href="/start?mode=epic" variant="primary">
+                  Start an epic
+                </ButtonLink>
+              ) : undefined
+            }
+            bordered
+            hint={
+              canCreate
+                ? 'Describe one change once and the planner fans it out across your repositories.'
+                : 'A team lead or administrator can start one to fan work out across repositories.'
+            }
+            icon="epics"
+            title="No epics yet"
+          />
+        ) : (
+          <EpicList epics={epics} />
+        )}
+      </QueryBoundary>
     </div>
   );
 }

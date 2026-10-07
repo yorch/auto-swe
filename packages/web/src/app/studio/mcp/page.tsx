@@ -599,13 +599,12 @@ export default function StudioMcpConnectionsPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="MCP connections"
+          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows rows={3} />
-          ) : !connections || connections.length === 0 ? (
+          {!connections || connections.length === 0 ? (
             <EmptyState
               action={
                 <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">

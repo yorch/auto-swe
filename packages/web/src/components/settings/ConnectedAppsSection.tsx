@@ -41,74 +41,71 @@ export function ConnectedAppsSection() {
         id="connected-apps"
         title="Connected apps"
       >
-        {isLoading ? (
-          <SkeletonRows rows={2} />
-        ) : (
-          <QueryBoundary
-            compact
-            error={error}
-            isError={isError}
-            isFetching={isFetching}
-            isLoading={false}
-            label="apps"
-            onRetry={() => void refetch()}
-          >
-            {grants.length === 0 ? (
-              <EmptyState
-                hint="When you approve an MCP client, such as a coding agent, it appears here so you can disconnect it later."
-                icon="plug"
-                title="No connected apps"
-              />
-            ) : (
-              <ul className="divide-y divide-ink-600">
-                {grants.map((grant) => {
-                  const canWrite = grant.scopes.includes(MCP_SCOPE_WRITE);
-                  return (
-                    <SettingsListRow
-                      action={
-                        <Button onClick={() => setTarget(grant)} size="sm" variant="danger">
-                          Disconnect
-                        </Button>
-                      }
-                      detail={
-                        <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                          <span className="break-all font-mono text-xs text-paper-400">
-                            {hostsOf(grant)}
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span>{canWrite ? 'Read and write' : 'Read only'}</span>
-                          <span aria-hidden="true">·</span>
-                          <span title={formatDate(grant.grantedAt)}>
-                            Connected {formatRelativeTime(grant.grantedAt)}
-                          </span>
+        <QueryBoundary
+          compact
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="apps"
+          loading={<SkeletonRows rows={2} />}
+          onRetry={() => void refetch()}
+        >
+          {grants.length === 0 ? (
+            <EmptyState
+              hint="When you approve an MCP client, such as a coding agent, it appears here so you can disconnect it later."
+              icon="plug"
+              title="No connected apps"
+            />
+          ) : (
+            <ul className="divide-y divide-ink-600">
+              {grants.map((grant) => {
+                const canWrite = grant.scopes.includes(MCP_SCOPE_WRITE);
+                return (
+                  <SettingsListRow
+                    action={
+                      <Button onClick={() => setTarget(grant)} size="sm" variant="danger">
+                        Disconnect
+                      </Button>
+                    }
+                    detail={
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span className="break-all font-mono text-xs text-paper-400">
+                          {hostsOf(grant)}
                         </span>
-                      }
-                      key={grant.clientId}
-                      leading={<Icon name="plug" size={16} />}
-                      status={
-                        <>
-                          <Badge
-                            title="The app named itself; auto-swe has not checked it"
-                            tone="amber"
-                            variant="outline"
-                          >
-                            Unverified
+                        <span aria-hidden="true">·</span>
+                        <span>{canWrite ? 'Read and write' : 'Read only'}</span>
+                        <span aria-hidden="true">·</span>
+                        <span title={formatDate(grant.grantedAt)}>
+                          Connected {formatRelativeTime(grant.grantedAt)}
+                        </span>
+                      </span>
+                    }
+                    key={grant.clientId}
+                    leading={<Icon name="plug" size={16} />}
+                    status={
+                      <>
+                        <Badge
+                          title="The app named itself; auto-swe has not checked it"
+                          tone="amber"
+                          variant="outline"
+                        >
+                          Unverified
+                        </Badge>
+                        {canWrite && (
+                          <Badge tone="ember" variant="outline">
+                            Can write
                           </Badge>
-                          {canWrite && (
-                            <Badge tone="ember" variant="outline">
-                              Can write
-                            </Badge>
-                          )}
-                        </>
-                      }
-                      title={grant.clientName ?? 'Unnamed app'}
-                    />
-                  );
-                })}
-              </ul>
-            )}
-          </QueryBoundary>
-        )}
+                        )}
+                      </>
+                    }
+                    title={grant.clientName ?? 'Unnamed app'}
+                  />
+                );
+              })}
+            </ul>
+          )}
+        </QueryBoundary>
       </SettingsSection>
 
       <ConfirmModal

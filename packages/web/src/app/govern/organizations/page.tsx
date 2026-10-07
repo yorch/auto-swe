@@ -96,13 +96,12 @@ export default function GovernOrganizationsPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="organizations"
+          loading={<SkeletonRows rows={4} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows rows={4} />
-          ) : rows.length === 0 ? (
+          {rows.length === 0 ? (
             filtering && all.length > 0 ? (
               <EmptyState
                 action={

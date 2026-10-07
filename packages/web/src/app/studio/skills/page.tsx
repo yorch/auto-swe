@@ -459,13 +459,12 @@ function EffectivenessCard() {
         error={loadError}
         isError={isError}
         isFetching={isFetching}
-        isLoading={false}
+        isLoading={isLoading}
         label="skill effectiveness"
+        loading={<SkeletonRows rows={3} />}
         onRetry={() => void refetch()}
       >
-        {isLoading ? (
-          <SkeletonRows rows={3} />
-        ) : !data?.perSkill.length ? (
+        {!data?.perSkill.length ? (
           <EmptyState
             bordered
             className="py-8"
@@ -656,13 +655,12 @@ export default function StudioSkillsPage() {
               error={loadError}
               isError={isError}
               isFetching={isFetching}
-              isLoading={false}
+              isLoading={isLoading}
               label="skills"
+              loading={<SkeletonRows rows={8} />}
               onRetry={() => void refetch()}
             >
-              {isLoading ? (
-                <SkeletonRows rows={8} />
-              ) : !skills?.length ? (
+              {!skills?.length ? (
                 <EmptyState
                   action={
                     <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">

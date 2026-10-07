@@ -295,13 +295,12 @@ export default function StudioBundlesPage() {
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="bundles"
+          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows rows={3} />
-          ) : !bundles || bundles.length === 0 ? (
+          {!bundles || bundles.length === 0 ? (
             <EmptyState
               bordered
               hint="The built-in starter content is seeded with the platform, not installed from a bundle, so it is not listed here."

@@ -154,79 +154,78 @@ function RequestsWorkspace() {
             </Button>
           )}
         </Toolbar>
-        {active.isLoading ? (
-          <Card className="px-5 py-3">
-            <SkeletonRows rows={6} />
-          </Card>
-        ) : (
-          <QueryBoundary
-            error={active.error}
-            isError={active.isError}
-            isFetching={active.isFetching}
-            isLoading={false}
-            label={showEpics ? 'epics' : 'requests'}
-            onRetry={() => void active.refetch()}
-          >
-            <div className="space-y-4">
-              {showEpics ? (
-                epics.length ? (
-                  <EpicList epics={epics} />
-                ) : (
-                  <EmptyState
-                    action={
-                      <ButtonLink href="/start?mode=epic" size="sm" variant="secondary">
-                        Start an epic
-                      </ButtonLink>
-                    }
-                    bordered
-                    hint="An epic fans one brief out across several repositories."
-                    icon="epics"
-                    title="No epics yet"
-                  />
-                )
-              ) : requests.length ? (
-                <RequestList hrefFor={(id) => urlFor({ request: id })} requests={requests} />
+        <QueryBoundary
+          error={active.error}
+          isError={active.isError}
+          isFetching={active.isFetching}
+          isLoading={active.isLoading}
+          label={showEpics ? 'epics' : 'requests'}
+          loading={
+            <Card className="px-5 py-3">
+              <SkeletonRows rows={6} />
+            </Card>
+          }
+          onRetry={() => void active.refetch()}
+        >
+          <div className="space-y-4">
+            {showEpics ? (
+              epics.length ? (
+                <EpicList epics={epics} />
               ) : (
                 <EmptyState
                   action={
-                    filtered ? (
-                      <Button
-                        onClick={() => {
-                          setSearchDraft('');
-                          update({ offset: null, search: null, state: null });
-                        }}
-                        size="sm"
-                      >
-                        Clear filters
-                      </Button>
-                    ) : (
-                      <ButtonLink href="/start" size="sm" variant="primary">
-                        Start work
-                      </ButtonLink>
-                    )
+                    <ButtonLink href="/start?mode=epic" size="sm" variant="secondary">
+                      Start an epic
+                    </ButtonLink>
                   }
                   bordered
-                  hint={
-                    filtered
-                      ? 'Try another search or status.'
-                      : 'Run a workflow or give an agent a task. Its progress and results collect here.'
-                  }
-                  icon={filtered ? 'search' : 'inbox'}
-                  title={filtered ? 'No requests match these filters' : 'No requests yet'}
+                  hint="An epic fans one brief out across several repositories."
+                  icon="epics"
+                  title="No epics yet"
                 />
-              )}
-              <Pagination
-                hasNext={offset + PAGE_SIZE < total}
-                hasPrev={offset > 0}
-                onNext={() => update({ offset: String(offset + PAGE_SIZE) })}
-                onPrev={() => update({ offset: String(Math.max(0, offset - PAGE_SIZE)) })}
-                rangeEnd={Math.min(offset + PAGE_SIZE, total)}
-                rangeStart={total ? offset + 1 : 0}
-                total={total}
+              )
+            ) : requests.length ? (
+              <RequestList hrefFor={(id) => urlFor({ request: id })} requests={requests} />
+            ) : (
+              <EmptyState
+                action={
+                  filtered ? (
+                    <Button
+                      onClick={() => {
+                        setSearchDraft('');
+                        update({ offset: null, search: null, state: null });
+                      }}
+                      size="sm"
+                    >
+                      Clear filters
+                    </Button>
+                  ) : (
+                    <ButtonLink href="/start" size="sm" variant="primary">
+                      Start work
+                    </ButtonLink>
+                  )
+                }
+                bordered
+                hint={
+                  filtered
+                    ? 'Try another search or status.'
+                    : 'Run a workflow or give an agent a task. Its progress and results collect here.'
+                }
+                icon={filtered ? 'search' : 'inbox'}
+                title={filtered ? 'No requests match these filters' : 'No requests yet'}
               />
-            </div>
-          </QueryBoundary>
-        )}
+            )}
+            <Pagination
+              hasNext={offset + PAGE_SIZE < total}
+              hasPrev={offset > 0}
+              onNext={() => update({ offset: String(offset + PAGE_SIZE) })}
+              onPrev={() => update({ offset: String(Math.max(0, offset - PAGE_SIZE)) })}
+              rangeEnd={Math.min(offset + PAGE_SIZE, total)}
+              rangeStart={total ? offset + 1 : 0}
+              total={total}
+            />
+          </div>
+        </QueryBoundary>
       </div>
       {requestId && (
         <RequestPanel

@@ -55,11 +55,9 @@ export default function TeamsPage() {
         error={loadError}
         isError={isError}
         isFetching={isFetching}
-        isLoading={false}
+        isLoading={isLoading}
         label="teams"
-        onRetry={() => void refetch()}
-      >
-        {isLoading ? (
+        loading={
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {['a', 'b', 'c'].map((k) => (
               <Card key={k}>
@@ -69,7 +67,10 @@ export default function TeamsPage() {
               </Card>
             ))}
           </div>
-        ) : all.length === 0 ? (
+        }
+        onRetry={() => void refetch()}
+      >
+        {all.length === 0 ? (
           <EmptyState
             action={newTeamButton('sm')}
             bordered

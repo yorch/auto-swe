@@ -256,116 +256,113 @@ export default function GovernBaselinesPage() {
             value={selectedOrgId}
           />
         </Toolbar>
-        {orgsLoading || baselinesLoading ? (
-          <SkeletonRows rows={3} />
-        ) : (
-          <QueryBoundary
-            error={orgsIsError ? orgsError : baselinesError}
-            isError={orgsIsError || baselinesIsError}
-            isFetching={orgsIsFetching || baselinesIsFetching}
-            isLoading={false}
-            label="baselines"
-            onRetry={() => void (orgsIsError ? refetchOrgs() : refetch())}
-          >
-            {!baselines || baselines.length === 0 ? (
-              <EmptyState
-                action={
-                  <Button onClick={() => setNewOpen(true)} size="sm">
-                    New baseline
-                  </Button>
-                }
-                hint="Record how often people get a kind of work wrong, so analytics can show whether agents do better or worse."
-                icon="target"
-                title="No baselines recorded yet"
-              />
-            ) : (
-              <div className="-mx-4">
-                <Table className="max-sm:px-4" stacked>
-                  <THead>
-                    <Th variant="plain">Domain</Th>
-                    <Th variant="plain">Outcome</Th>
-                    <Th align="right" variant="plain">
-                      Sample
-                    </Th>
-                    <Th align="right" variant="plain">
-                      Errors
-                    </Th>
-                    <Th align="right" variant="plain">
-                      Error rate
-                    </Th>
-                    <Th align="right" variant="plain">
-                      Recorded
-                    </Th>
-                    <Th variant="plain">
-                      <span className="sr-only">Actions</span>
-                    </Th>
-                  </THead>
-                  <tbody>
-                    {baselines.map((b) => (
-                      <TRow hover key={b.id}>
-                        <Td className="px-4 py-3 font-medium text-paper-100" primary>
-                          {domainLabel(b.domain)}
-                        </Td>
-                        <Td className="px-4 py-3 text-paper-400" label="Outcome">
-                          {b.outcomeType ?? '—'}
-                        </Td>
-                        <Td align="right" className="px-4 py-3 tabular-nums" label="Sample">
-                          <span className="inline-flex items-center justify-end gap-2">
-                            {b.sampleSize < MIN_BASELINE_SAMPLE && (
-                              <Badge
-                                title={`Analytics compares only from ${MIN_BASELINE_SAMPLE} cases`}
-                                tone="amber"
-                                variant="outline"
-                              >
-                                Too small to compare
-                              </Badge>
-                            )}
-                            {b.sampleSize}
-                          </span>
-                        </Td>
-                        <Td align="right" className="px-4 py-3 tabular-nums" label="Errors">
-                          {b.errorCount}
-                        </Td>
-                        <Td
-                          align="right"
-                          className="px-4 py-3 font-medium text-paper-100 tabular-nums"
-                          label="Error rate"
+        <QueryBoundary
+          error={orgsIsError ? orgsError : baselinesError}
+          isError={orgsIsError || baselinesIsError}
+          isFetching={orgsIsFetching || baselinesIsFetching}
+          isLoading={orgsLoading || baselinesLoading}
+          label="baselines"
+          loading={<SkeletonRows rows={3} />}
+          onRetry={() => void (orgsIsError ? refetchOrgs() : refetch())}
+        >
+          {!baselines || baselines.length === 0 ? (
+            <EmptyState
+              action={
+                <Button onClick={() => setNewOpen(true)} size="sm">
+                  New baseline
+                </Button>
+              }
+              hint="Record how often people get a kind of work wrong, so analytics can show whether agents do better or worse."
+              icon="target"
+              title="No baselines recorded yet"
+            />
+          ) : (
+            <div className="-mx-4">
+              <Table className="max-sm:px-4" stacked>
+                <THead>
+                  <Th variant="plain">Domain</Th>
+                  <Th variant="plain">Outcome</Th>
+                  <Th align="right" variant="plain">
+                    Sample
+                  </Th>
+                  <Th align="right" variant="plain">
+                    Errors
+                  </Th>
+                  <Th align="right" variant="plain">
+                    Error rate
+                  </Th>
+                  <Th align="right" variant="plain">
+                    Recorded
+                  </Th>
+                  <Th variant="plain">
+                    <span className="sr-only">Actions</span>
+                  </Th>
+                </THead>
+                <tbody>
+                  {baselines.map((b) => (
+                    <TRow hover key={b.id}>
+                      <Td className="px-4 py-3 font-medium text-paper-100" primary>
+                        {domainLabel(b.domain)}
+                      </Td>
+                      <Td className="px-4 py-3 text-paper-400" label="Outcome">
+                        {b.outcomeType ?? '—'}
+                      </Td>
+                      <Td align="right" className="px-4 py-3 tabular-nums" label="Sample">
+                        <span className="inline-flex items-center justify-end gap-2">
+                          {b.sampleSize < MIN_BASELINE_SAMPLE && (
+                            <Badge
+                              title={`Analytics compares only from ${MIN_BASELINE_SAMPLE} cases`}
+                              tone="amber"
+                              variant="outline"
+                            >
+                              Too small to compare
+                            </Badge>
+                          )}
+                          {b.sampleSize}
+                        </span>
+                      </Td>
+                      <Td align="right" className="px-4 py-3 tabular-nums" label="Errors">
+                        {b.errorCount}
+                      </Td>
+                      <Td
+                        align="right"
+                        className="px-4 py-3 font-medium text-paper-100 tabular-nums"
+                        label="Error rate"
+                      >
+                        {formatPercent(b.errorRate)}
+                      </Td>
+                      <Td
+                        align="right"
+                        className="px-4 py-3 text-[13px] text-paper-400"
+                        label="Recorded"
+                      >
+                        <time
+                          className="whitespace-nowrap"
+                          dateTime={b.recordedAt}
+                          title={formatDate(b.recordedAt)}
                         >
-                          {formatPercent(b.errorRate)}
-                        </Td>
-                        <Td
-                          align="right"
-                          className="px-4 py-3 text-[13px] text-paper-400"
-                          label="Recorded"
+                          {formatRelativeTime(b.recordedAt)}
+                        </time>
+                      </Td>
+                      <Td align="right" className="px-4 py-3">
+                        <Button
+                          aria-label={`Delete ${domainLabel(b.domain)} baseline`}
+                          className="px-2 text-paper-500 hover:text-brick-400"
+                          onClick={() => setDeleteTarget(b)}
+                          size="sm"
+                          title="Delete baseline"
+                          variant="ghost"
                         >
-                          <time
-                            className="whitespace-nowrap"
-                            dateTime={b.recordedAt}
-                            title={formatDate(b.recordedAt)}
-                          >
-                            {formatRelativeTime(b.recordedAt)}
-                          </time>
-                        </Td>
-                        <Td align="right" className="px-4 py-3">
-                          <Button
-                            aria-label={`Delete ${domainLabel(b.domain)} baseline`}
-                            className="px-2 text-paper-500 hover:text-brick-400"
-                            onClick={() => setDeleteTarget(b)}
-                            size="sm"
-                            title="Delete baseline"
-                            variant="ghost"
-                          >
-                            <Icon name="trash" size={14} />
-                          </Button>
-                        </Td>
-                      </TRow>
-                    ))}
-                  </tbody>
-                </Table>
-              </div>
-            )}
-          </QueryBoundary>
-        )}
+                          <Icon name="trash" size={14} />
+                        </Button>
+                      </Td>
+                    </TRow>
+                  ))}
+                </tbody>
+              </Table>
+            </div>
+          )}
+        </QueryBoundary>
       </Card>
 
       <CreateBaselineModal

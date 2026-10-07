@@ -120,94 +120,91 @@ export function AccessTokensSection() {
         id="api-tokens"
         title="API tokens"
       >
-        {isLoading ? (
-          <SkeletonRows rows={3} />
-        ) : (
-          <QueryBoundary
-            compact
-            error={loadError}
-            isError={isError}
-            isFetching={isFetching}
-            isLoading={false}
-            label="tokens"
-            onRetry={() => void refetch()}
-          >
-            {list.length === 0 ? (
-              <EmptyState
-                action={
-                  <Button onClick={() => setCreating(true)} size="sm">
-                    <Icon name="plus" size={14} />
-                    Create a token
-                  </Button>
-                }
-                hint="Create one to sign the CLI in, or to call the API from a script or CI job."
-                icon="key"
-                title="No tokens yet"
-              />
-            ) : (
-              <Table className="-mx-1" stacked>
-                <THead>
-                  <Th className="pl-1">Name</Th>
-                  <Th>Created</Th>
-                  <Th>Last used</Th>
-                  <Th>Expires</Th>
-                  <Th>Status</Th>
-                  <Th className="pr-1">
-                    <span className="sr-only">Actions</span>
-                  </Th>
-                </THead>
-                <tbody>
-                  {list.map((t) => {
-                    const revoked = !!t.revokedAt;
-                    const expired = !!t.expiresAt && new Date(t.expiresAt) < new Date();
-                    return (
-                      <TRow key={t.id}>
-                        <Td className="py-3 pr-4 pl-1" primary>
-                          <div
-                            className={
-                              revoked ? 'text-paper-400 line-through' : 'font-medium text-paper-100'
-                            }
-                          >
-                            {t.name}
-                          </div>
-                          <code className="font-mono text-xs text-paper-500">{t.prefix}…</code>
-                        </Td>
-                        <Td className="px-4 py-3 text-[13px] text-paper-400" label="Created">
-                          <When value={t.createdAt} />
-                        </Td>
-                        <Td className="px-4 py-3 text-[13px] text-paper-400" label="Last used">
-                          <When empty="Never" value={t.lastUsedAt} />
-                        </Td>
-                        <Td className="px-4 py-3 text-[13px] text-paper-400" label="Expires">
-                          <When empty="Never" value={t.expiresAt} />
-                        </Td>
-                        <Td className="px-4 py-3" label="Status">
-                          <TokenStatus expired={expired} revoked={revoked} />
-                        </Td>
-                        <Td align="right" className="py-3 pr-1 pl-4">
-                          {!revoked && (
-                            <ActionMenu
-                              items={[
-                                {
-                                  icon: 'trash',
-                                  id: 'revoke',
-                                  label: 'Revoke token',
-                                  onAction: () => setRevoking({ id: t.id, name: t.name }),
-                                  tone: 'danger',
-                                },
-                              ]}
-                              label={`Actions for token ${t.name}`}
-                            />
-                          )}
-                        </Td>
-                      </TRow>
-                    );
-                  })}
-                </tbody>
-              </Table>
-            )}
-          </QueryBoundary>
-        )}
+        <QueryBoundary
+          compact
+          error={loadError}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="tokens"
+          loading={<SkeletonRows rows={3} />}
+          onRetry={() => void refetch()}
+        >
+          {list.length === 0 ? (
+            <EmptyState
+              action={
+                <Button onClick={() => setCreating(true)} size="sm">
+                  <Icon name="plus" size={14} />
+                  Create a token
+                </Button>
+              }
+              hint="Create one to sign the CLI in, or to call the API from a script or CI job."
+              icon="key"
+              title="No tokens yet"
+            />
+          ) : (
+            <Table className="-mx-1" stacked>
+              <THead>
+                <Th className="pl-1">Name</Th>
+                <Th>Created</Th>
+                <Th>Last used</Th>
+                <Th>Expires</Th>
+                <Th>Status</Th>
+                <Th className="pr-1">
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </THead>
+              <tbody>
+                {list.map((t) => {
+                  const revoked = !!t.revokedAt;
+                  const expired = !!t.expiresAt && new Date(t.expiresAt) < new Date();
+                  return (
+                    <TRow key={t.id}>
+                      <Td className="py-3 pr-4 pl-1" primary>
+                        <div
+                          className={
+                            revoked ? 'text-paper-400 line-through' : 'font-medium text-paper-100'
+                          }
+                        >
+                          {t.name}
+                        </div>
+                        <code className="font-mono text-xs text-paper-500">{t.prefix}…</code>
+                      </Td>
+                      <Td className="px-4 py-3 text-[13px] text-paper-400" label="Created">
+                        <When value={t.createdAt} />
+                      </Td>
+                      <Td className="px-4 py-3 text-[13px] text-paper-400" label="Last used">
+                        <When empty="Never" value={t.lastUsedAt} />
+                      </Td>
+                      <Td className="px-4 py-3 text-[13px] text-paper-400" label="Expires">
+                        <When empty="Never" value={t.expiresAt} />
+                      </Td>
+                      <Td className="px-4 py-3" label="Status">
+                        <TokenStatus expired={expired} revoked={revoked} />
+                      </Td>
+                      <Td align="right" className="py-3 pr-1 pl-4">
+                        {!revoked && (
+                          <ActionMenu
+                            items={[
+                              {
+                                icon: 'trash',
+                                id: 'revoke',
+                                label: 'Revoke token',
+                                onAction: () => setRevoking({ id: t.id, name: t.name }),
+                                tone: 'danger',
+                              },
+                            ]}
+                            label={`Actions for token ${t.name}`}
+                          />
+                        )}
+                      </Td>
+                    </TRow>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
+        </QueryBoundary>
       </SettingsSection>
 
       <Modal

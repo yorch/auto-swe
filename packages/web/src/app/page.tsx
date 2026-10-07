@@ -181,44 +181,41 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
           <Icon name="arrowRight" size={13} />
         </Link>
       </div>
-      {query.isLoading ? (
-        <Card className="px-5 py-3">
-          <SkeletonRows rows={3} />
-        </Card>
-      ) : (
-        <QueryBoundary
-          error={query.error}
-          isError={query.isError}
-          isFetching={query.isFetching}
-          isLoading={false}
-          label={bucket.title.toLowerCase()}
-          onRetry={() => void query.refetch()}
-        >
-          {requests.length ? (
-            <RequestList
-              hrefFor={(id) =>
-                `/workflows?${new URLSearchParams({ request: id, scope }).toString()}`
-              }
-              requests={requests}
-            />
-          ) : (
-            <EmptyState
-              action={
-                bucket.empty.action ? (
-                  <ButtonLink href="/start" size="sm" variant="secondary">
-                    Start work
-                  </ButtonLink>
-                ) : undefined
-              }
-              bordered
-              className="py-7"
-              hint={bucket.empty.hint}
-              icon={bucket.icon}
-              title={bucket.empty.title}
-            />
-          )}
-        </QueryBoundary>
-      )}
+      <QueryBoundary
+        error={query.error}
+        isError={query.isError}
+        isFetching={query.isFetching}
+        isLoading={query.isLoading}
+        label={bucket.title.toLowerCase()}
+        loading={
+          <Card className="px-5 py-3">
+            <SkeletonRows rows={3} />
+          </Card>
+        }
+        onRetry={() => void query.refetch()}
+      >
+        {requests.length ? (
+          <RequestList
+            hrefFor={(id) => `/workflows?${new URLSearchParams({ request: id, scope }).toString()}`}
+            requests={requests}
+          />
+        ) : (
+          <EmptyState
+            action={
+              bucket.empty.action ? (
+                <ButtonLink href="/start" size="sm" variant="secondary">
+                  Start work
+                </ButtonLink>
+              ) : undefined
+            }
+            bordered
+            className="py-7"
+            hint={bucket.empty.hint}
+            icon={bucket.icon}
+            title={bucket.empty.title}
+          />
+        )}
+      </QueryBoundary>
     </section>
   );
 }

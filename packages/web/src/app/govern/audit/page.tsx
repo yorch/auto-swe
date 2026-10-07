@@ -259,13 +259,12 @@ function AuditWorkspace() {
           error={error}
           isError={isError}
           isFetching={isFetching}
-          isLoading={false}
+          isLoading={isLoading}
           label="audit log"
+          loading={<SkeletonRows rows={8} />}
           onRetry={() => void refetch()}
         >
-          {isLoading ? (
-            <SkeletonRows rows={8} />
-          ) : rows.length === 0 ? (
+          {rows.length === 0 ? (
             hasFilters ? (
               <EmptyState
                 action={
