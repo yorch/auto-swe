@@ -1188,6 +1188,15 @@ async function summarizeAndStoreChannelMemory(
         userSlackId: input.userSlackId,
       });
     } catch (fallbackErr) {
+      // The summary failed for another reason, but the raw text itself reads
+      // as an instruction: a refusal like any other, so it is recorded.
+      if (fallbackErr instanceof MemoryContentRefusedError) {
+        await recordMemorySecurityEvent(MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED, {
+          channelId: input.channelId,
+          patterns: fallbackErr.patterns,
+          source: 'turn-raw-exchange',
+        });
+      }
       console.error(
         `[channelAssistant] fallback raw-exchange memory write failed for ${input.channelId}:`,
         fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
