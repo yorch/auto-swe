@@ -227,6 +227,19 @@ describe('discoverProviderModels', () => {
     } as unknown as PrismaClient;
   }
 
+  it('lists through a private apiBase when the credential opts in, and refuses it otherwise', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ data: [{ id: 'llama-5' }] }))
+    );
+    const optedIn = { ...credential('vllm', 'http://10.0.0.5:8000/v1'), allowPrivateNetwork: true };
+    const strict = { ...credential('tgi', 'http://10.0.0.6:8000/v1'), allowPrivateNetwork: false };
+    const [tgi, vllm] = await discoverProviderModels(fakePrisma([strict, optedIn], []));
+    expect(vllm).toMatchObject({ ok: true, provider: 'vllm' });
+    expect(vllm.models.map((m) => m.spec)).toEqual(['vllm/llama-5']);
+    expect(tgi).toMatchObject({ error: 'blocked address', ok: false, provider: 'tgi' });
+  });
+
   it('returns only what nothing prices, per provider, and one failure never stops the rest', async () => {
     vi.stubGlobal(
       'fetch',

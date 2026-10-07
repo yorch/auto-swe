@@ -100,6 +100,20 @@ describe('listProviderModels step', () => {
     expect(m.list).toHaveBeenCalledWith(expect.objectContaining({ apiKey: SECRET }));
   });
 
+  it("lists through each credential's private-network opt-in", async () => {
+    m.prisma.providerCredential.findMany.mockResolvedValue([
+      { ...cred('anthropic'), allowPrivateNetwork: true },
+      { ...cred('openai'), allowPrivateNetwork: false },
+    ]);
+    await listProviderModels({ request });
+    expect(m.list).toHaveBeenCalledWith(
+      expect.objectContaining({ allowPrivateNetwork: true, provider: 'anthropic' })
+    );
+    expect(m.list).toHaveBeenCalledWith(
+      expect.objectContaining({ allowPrivateNetwork: false, provider: 'openai' })
+    );
+  });
+
   it('reports a failed provider in fixed words and never repeats its error, in output or logs', async () => {
     const leaked = `fetch failed: Authorization: Bearer ${SECRET} https://user:${SECRET}@host`;
     m.list.mockImplementation(async ({ provider }: { provider: string }) =>

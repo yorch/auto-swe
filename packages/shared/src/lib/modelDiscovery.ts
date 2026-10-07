@@ -410,6 +410,7 @@ export async function discoverProviderModels(prisma: PrismaClient): Promise<Prov
         return failed('credential could not be decrypted');
       }
       const listed = await listProviderModels({
+        allowPrivateNetwork: cred.allowPrivateNetwork,
         apiBase: cred.apiBase,
         apiKey,
         provider: cred.provider,

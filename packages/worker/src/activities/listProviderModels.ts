@@ -122,6 +122,7 @@ export async function listProviderModels(
           nonce: cred.apiKeyNonce,
         });
         const listed = await listProviderModelsLive({
+          allowPrivateNetwork: cred.allowPrivateNetwork,
           apiBase: cred.apiBase,
           apiKey,
           provider: cred.provider,
