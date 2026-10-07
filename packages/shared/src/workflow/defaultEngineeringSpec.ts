@@ -24,8 +24,10 @@ import {
  * A review or CI loop that runs out of attempts, and a merge wait that times
  * out, stores a lesson about what happened before the run ends. A step that
  * throws — the security gate's SECURITY_GATE_FAILURE, any other implementation
- * error — fails the run where it stands: a failing step has no edge to route
- * along, so no lesson is written for it.
+ * error — fails the run where it stands, so no lesson is written for it. It
+ * could be routed to one only by continuing past the failure (`onFail: 'warn'`,
+ * then a `cond` on `nodes.<id>.error`), which gives up the run's typed failure
+ * exit and leaves only `String(err)` — the SDK wrapper's message — as evidence.
  *
  * Written with the authoring helpers, which expand at module load into the same
  * flat nodes (and the same node ids) this template has always had.

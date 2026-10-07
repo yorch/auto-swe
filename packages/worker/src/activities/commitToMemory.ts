@@ -49,8 +49,8 @@ const OUTCOME_GUIDANCE: Record<LessonEvidence['outcome'], string> = {
   MERGE_TIMED_OUT:
     'The run TIMED OUT: the change passed review and CI, but nobody merged it before the wait ' +
     'for a merge ran out. The evidence does not say why it was not merged; do not guess a ' +
-    'reason. If the review or CI rejected an earlier attempt, the lesson is about what that ' +
-    'rejection caught; otherwise there may be nothing to learn beyond the outcome.',
+    'reason. The lesson is about what the review or CI rejected on the way, read from the ' +
+    'evidence.',
   MERGED:
     'The change was MERGED. If the review or CI rejected an earlier attempt, the lesson is ' +
     'about what that rejection caught; otherwise it is about what made the change succeed.',
@@ -211,6 +211,19 @@ async function writeMemoryItemRow(input: {
 }
 
 /**
+ * A merge that timed out after the change passed review and CI at the first
+ * attempt: nothing went wrong that the evidence shows, and nothing says why it
+ * was not merged, so there is no lesson to write.
+ */
+export function nothingToLearn(evidence: LessonEvidence | undefined): boolean {
+  return (
+    evidence?.outcome === 'MERGE_TIMED_OUT' &&
+    evidence.rejectionSummary === undefined &&
+    evidence.ciFailure === undefined
+  );
+}
+
+/**
  * Summarizes a completed workflow into a reusable lesson and persists it
  * with a vector embedding for future semantic search.
  */
@@ -226,6 +239,21 @@ export async function commitToMemory(
    */
   evidence?: LessonEvidence
 ): Promise<string> {
+  if (nothingToLearn(evidence)) {
+    // No model call and no lesson: one that rested on the outcome alone would
+    // be recalled into later prompts while saying only "nobody merged it".
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({
+      name: 'memory.lesson_skipped',
+      outputJson: {
+        outcome: evidence?.outcome,
+        reason: 'no rejection or CI failure to learn from',
+      },
+    });
+    await persistActivityTrace(tracer, 'commitToMemory');
+    return '';
+  }
+
   const workflow = await prisma.activeWorkflow.findFirst({
     include: {
       pullRequests: true,

@@ -264,6 +264,32 @@ describe('lessonCitation', () => {
   });
 });
 
+describe('a merge that timed out', () => {
+  it('writes no lesson and calls no model when nothing was rejected on the way', async () => {
+    const addEvent = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+    await expect(
+      commitToMemory('eng-acme-api-T-1', null, undefined, { outcome: 'MERGE_TIMED_OUT' })
+    ).resolves.toBe('');
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(insertMock).not.toHaveBeenCalled();
+    expect(addEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'memory.lesson_skipped' })
+    );
+    addEvent.mockRestore();
+  });
+
+  it('writes a lesson when the review or CI rejected an earlier attempt', async () => {
+    await expect(
+      commitToMemory('eng-acme-api-T-1', null, undefined, {
+        ciFailure: 'Error: expected 2 to be 3',
+        outcome: 'MERGE_TIMED_OUT',
+      })
+    ).resolves.toBe('lesson-1');
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(insertMock.mock.calls[0]?.[0]?.metadata).toMatchObject({ outcome: 'MERGE_TIMED_OUT' });
+  });
+});
+
 describe('memory gate refusals', () => {
   it('records a refused lesson under the shared security event name and returns no id', async () => {
     const addEvent = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
