@@ -120,6 +120,12 @@ edited and deleted per channel ([channel-assistant.md §6](./channel-assistant.m
 
 The response and the audit row list every id deleted and restored.
 
+**Erasing one person's channel memory.** `POST /api/v1/platform/slack-channels/memory/erase-user`
+(ADMIN, body `{ "slackUserId": "U…" }`) forgets, the same way, every channel-memory item written
+from that Slack user's turns (`metadata.userSlackId`) in every channel. Its audit row records the
+Slack user id and how many items went and came back — never their text, which would keep what was
+erased. There is no dashboard control for it; it is API-only.
+
 After the embedding model changes, the Embeddings tab at `/studio/models` shows how many memory rows
 the configured model did not embed (`GET /api/v1/platform/embedding-config/reembed`) and starts
 `ReembedStaleMemoryWorkflow` (`POST` to the same path, ADMIN, audited). The workflow walks those
@@ -149,9 +155,12 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 - **Forgetting follows provenance links, not content.** A delete reaches the rows
   `metadata.consolidatedFrom` and `supersededById` connect to it. A separate lesson that happens to
   restate the deleted one — written by another run, never merged with it — stays.
-- **Deleting a repository orphans its lessons.** `repo_id` is set null; the rows stay in
-  `/govern/lessons` as "Deleted repository" until deleted by hand. There is no way to erase one Slack
-  user's channel memory.
+- **Erasure reaches only what is attributed.** A turn's memory carries the asking user's
+  `userSlackId`, but passive ingestion distils facts from many people's messages and records no
+  author, so those facts — and anything a summary of another person's turn repeated — are not found
+  by a per-user erasure. They can be deleted one by one.
+- **A repository's lessons outlive its deactivation.** No route deletes a repository, so its lessons
+  stay; one whose row is removed by hand keeps them, listed as "Deleted repository".
 - **Changing the embedding model hides existing memory until an admin re-embeds it.** The re-embed
   is not started on save, because it is one billed call per row. A row whose re-embed fails stays
   hidden and is counted in the workflow's result; the next run retries it.

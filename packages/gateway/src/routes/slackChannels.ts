@@ -256,10 +256,69 @@ async function assertChannelAccess(
   return true;
 }
 
+/**
+ * The audit log keys every row on a UUID entity id, and an erasure is about a
+ * Slack user, whose id is not one. Every erasure is recorded against this one
+ * fixed id, with the Slack user id in the row's body.
+ */
+const MEMORY_ERASURE_SENTINEL_UUID = '00000000-0000-4000-a000-000000000002';
+
+const EraseUserBody = z.object({
+  // A Slack member id: `U…` for a user, `W…` for an Enterprise Grid user.
+  slackUserId: z.string().regex(/^[UW][A-Z0-9]{2,}$/),
+});
+
 export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
   const authed = requireAuth({ requiredRole: 'ENGINEER' });
+
+  // POST /memory/erase-user — forget every channel memory written from one
+  // Slack user's turns, in every channel, with everything merged from them
+  // (`forgetMemoryItems`). For a person's request to be forgotten, so the audit
+  // row records how much went, never what: copying the erased text into the
+  // audit log would keep it.
+  app.post(
+    '/memory/erase-user',
+    { onRequest: adminOnly, schema: { body: EraseUserBody } },
+    async (request) => {
+      const actor = requireUser(request);
+      const { slackUserId } = request.body;
+      const result = await fastify.prisma.$transaction(async (tx) => {
+        const items = await runUnscoped(
+          "a person's memory spans every channel and team",
+          ['MemoryItem'],
+          () =>
+            tx.memoryItem.findMany({
+              select: { id: true },
+              where: {
+                metadata: { equals: slackUserId, path: ['userSlackId'] },
+                scope: 'channel-memory',
+              },
+            })
+        );
+        const forgotten = await forgetMemoryItems(
+          tx,
+          items.map((i) => i.id)
+        );
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor,
+          after: {
+            erasure: 'slack-user',
+            forgotten: forgotten.deleted.length,
+            restored: forgotten.restored.length,
+            slackUserId,
+          },
+          client: tx,
+          entityId: MEMORY_ERASURE_SENTINEL_UUID,
+          entityType: 'MemoryItem',
+        });
+        return forgotten;
+      });
+      return { data: { forgotten: result.deleted.length, restored: result.restored.length } };
+    }
+  );
 
   // GET / — list channels. Admins see all; everyone else sees channels whose
   // owning team they belong to.
