@@ -50,6 +50,13 @@ export function SecurityEventBadge({ type }: { type: SecurityEventType }) {
 
 // ── Detail extraction ─────────────────────────────────────────────────────────
 
+/** What a refused memory write was, by the event name the worker recorded. */
+const MEMORY_WRITE_LABELS: Record<string, string> = {
+  [MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED]: 'Channel memory',
+  [MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED]: 'Consolidated memory',
+  [MEMORY_SECURITY_EVENTS.LESSON_REFUSED]: 'Lesson',
+};
+
 function extractDetail(event: SecurityEvent): { primary: string; secondary?: string } {
   const input = event.inputJson as Record<string, unknown> | null;
   const output = event.outputJson as Record<string, unknown> | null;
@@ -110,7 +117,7 @@ function extractDetail(event: SecurityEvent): { primary: string; secondary?: str
       const what =
         event.eventType === 'MEMORY_RECALL_DROPPED'
           ? `${Number(output?.count ?? 0)} recalled item(s) dropped`
-          : `${event.toolName ?? 'memory write'} refused`;
+          : `${MEMORY_WRITE_LABELS[event.toolName ?? ''] ?? 'Memory write'} refused`;
       return {
         primary: what,
         secondary: patterns.slice(0, 3).join(', ') || undefined,

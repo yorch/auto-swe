@@ -229,7 +229,8 @@ explainLesson({ lessonId: uuid }) → { found, lesson: { outcome, evidence, merg
 
 `searchLessons` returns what recall would for the agent's own query, under the same maximum age
 (`memory.lessonMaxAgeDays`); `explainLesson` reads a lesson of the same repository (any other id is
-not found), whatever its age, and withholds any field that matches an injection pattern. Recalled lessons carry their ids, so the agent can ask about one. See
+not found), whatever its age, and withholds any field that matches an injection pattern. Recalled
+lessons carry their ids, so the agent can ask about one. See
 [memory.md §3](./memory.md#3-recalling-lessons).
 
 ### 3.3 Path Safety
@@ -792,7 +793,7 @@ The warnings of the save-time and install-time scans are stored on the `SkillRev
 **Memory is gated, not advised.** A lesson or a channel-memory item is replayed into every later run that recalls it — a lesson into the implementer's *system prompt* — so the same scanner is used as a gate there (`packages/worker/src/lib/memoryGuard.ts`):
 
 - Every write through `insertMemoryItem`, and every row the two consolidators insert, is scanned over the whole text (summary and rationale). A match on an `INJECTION` pattern refuses the write: `commitToMemory` records a `memory.lesson_refused` event and returns no lesson id, a consolidator leaves the cluster unconsolidated and records `memory.consolidation_refused`, a channel turn summary or a passively ingested fact is skipped and recorded as `memory.channel_write_refused`, and a lesson from a model-free writer (merge-conflict resolver, shell step) is skipped and recorded as `memory.lesson_refused`.
-- Every reader that puts memory in a prompt — `retrieveSimilarLessons`, `retrieveChannelMemory`, `recentChannelMemory`, `searchOrgChannelMemory` — drops a matching item, so a row written before the gate existed, or edited since, never reaches a model. A drop is recorded as `memory.recall_dropped`, naming the dropped items' ids and the patterns they matched.
+- Every reader that puts memory in a prompt — `retrieveSimilarLessons`, `retrieveChannelMemory`, `recentChannelMemory`, `searchOrgChannelMemory` — drops a matching item, so a row written before the gate existed, or edited since, never reaches a model. A drop is recorded as `memory.recall_dropped`, naming the patterns matched and the dropped items' ids (only a count for the organization-wide channel search, whose items may belong to another team). One id is reported at most once per hour per process (a bounded map of the last 1,000), and the event is written in the background, so a recall never waits for it.
 - Those event names are defined once, in `MEMORY_SECURITY_EVENTS` (`@auto-swe/shared/lib/scannerCache`), and the security-events endpoint reads them: the three refusals are `MEMORY_WRITE_REFUSED`, a drop is `MEMORY_RECALL_DROPPED`, both filtered at the DB level like the scanner tags. An event names patterns and ids, never the text, which is the payload. A refusal or drop seen by code that holds no tracer of its own (a recall inside a reader, a channel turn summary, a model-free lesson) writes its own `activity_event` row for the current activity, under the agent key `memoryGuard`; recording it is best-effort and never fails the caller.
 - `EXFILTRATION` hits do not gate: those patterns match a URL or a `curl`, which an engineering lesson names as a matter of course.
 - The gate fails closed. A scan that throws refuses the write and recalls nothing.
@@ -1167,11 +1168,15 @@ template override is never badged, because it may use a different model or crede
   only the phrasings the `INJECTION` patterns name; a reworded instruction is stored and recalled,
   with only the `<recalled_memory>` fence between it and the model. A refused write or a dropped
   recall is a security event on `/govern/security`, but there is no review queue: the refused text
-  is not kept, and a dropped row stays in the table until an admin deletes it. A refusal or drop
-  outside a Temporal activity has no run to attach a row to, so it is logged only, and so is a
-  recall whose scan failed — it recalls nothing, but no pattern matched, so it is not an event. `maskCredentialShapes` masks
-  credential *shapes*; a secret with no recognisable name or prefix in a shell step's command is
-  stored as written.
+  is not kept, and a dropped row stays in the table until an admin deletes it. Such a row is
+  reported once per hour per process, not on every recall, so the feed undercounts how often it is
+  reached, and a drop event is written after the recall returns, so a worker that exits at once can
+  lose it. A refusal or drop outside a Temporal activity has no run to attach a row to, so it is
+  logged only, and so is a recall whose scan failed — it recalls nothing, but no pattern matched,
+  so it is not an event. A drop from the organization-wide channel search records a count and the
+  patterns, not the ids, because those items may belong to another team. `maskCredentialShapes`
+  masks credential *shapes*; a secret with no recognisable name or prefix in a shell step's command
+  is stored as written.
 
 - **MCP authentication is a static bearer token plus up to five static custom headers.** OAuth flows
   and per-user tokens are not supported. The SSRF guard checks the URL's host text and then resolves the name at connection time and

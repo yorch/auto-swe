@@ -54,6 +54,28 @@ describe('SecurityEventList', () => {
   });
 });
 
+describe('SecurityEventList memory events', () => {
+  it('names a refused memory write in words, not by its event name', () => {
+    render(
+      <SecurityEventList
+        events={[
+          {
+            ...base,
+            error: null,
+            eventType: 'MEMORY_WRITE_REFUSED',
+            inputJson: null,
+            outputJson: { patterns: ['ignore-previous-instructions'] },
+            toolName: 'memory.lesson_refused',
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText('Lesson refused')).toBeTruthy();
+    expect(screen.queryByText(/memory\.lesson_refused/)).toBeNull();
+  });
+});
+
 describe('SecurityEventList rows', () => {
   it('is only a toggle when the event has detail, and shows the absolute time on hover', () => {
     const noDetail: SecurityEvent = {

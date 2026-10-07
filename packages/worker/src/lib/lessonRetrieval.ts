@@ -56,11 +56,9 @@ export async function retrieveSimilarLessons(
 
   // A row stored before the write gate, or edited since, is filtered here too:
   // these go straight into the implementer's system prompt.
-  const allowed = await withoutFlaggedMemory(
-    lessons,
-    (l) => l.lessonSummary,
-    (l) => l.id
-  );
+  const allowed = await withoutFlaggedMemory(lessons, (l) => l.lessonSummary, {
+    idOf: (l) => l.id,
+  });
   return allowed.map((l) => ({
     confidence: l.confidence ?? null,
     failureType: l.failureType,

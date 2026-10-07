@@ -95,11 +95,7 @@ export async function retrieveChannelMemory(
 
   // Recalled memory is prepended to the assistant's turn; drop anything that
   // reads as an instruction, including rows written before the write gate.
-  return withoutFlaggedMemory(
-    channelItems,
-    (item) => item.summary,
-    (item) => item.id
-  );
+  return withoutFlaggedMemory(channelItems, (item) => item.summary, { idOf: (item) => item.id });
 }
 
 /** One org-wide cross-channel memory hit, carrying its source channel for labelling. */
@@ -234,7 +230,9 @@ export async function searchOrgChannelMemory(opts: {
   return withoutFlaggedMemory(
     rows,
     (row) => row.summary,
-    (row) => row.id
+    // Other channels of the organization may belong to other teams: their ids
+    // stay off this run's trace.
+    { idOf: (row) => row.id, recordIds: false }
   );
 }
 
@@ -266,11 +264,9 @@ export async function recentChannelMemory(
     where: { channelId, consolidatedAt: null, supersededAt: null },
   });
   // The digest prompt reads both fields, so both are scanned.
-  return withoutFlaggedMemory(
-    rows,
-    (row) => `${row.lessonSummary}\n${row.rationale}`,
-    (row) => row.id
-  );
+  return withoutFlaggedMemory(rows, (row) => `${row.lessonSummary}\n${row.rationale}`, {
+    idOf: (row) => row.id,
+  });
 }
 
 /**

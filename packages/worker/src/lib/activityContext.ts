@@ -99,9 +99,13 @@ function reserveSeq(count: number): number {
  * Captures the active OTel span context (if any, and unless the caller already
  * attached a more specific one) so trace rows can be correlated with
  * Grafana/Tempo spans via otelTraceId/otelSpanId.
- * Best-effort: errors are swallowed inside `AgentTracer.persist`.
+ * Best-effort: errors are swallowed inside `AgentTracer.persist`; resolves
+ * false when the write failed.
  */
-export async function persistActivityTrace(tracer: AgentTracer, agentKey: string): Promise<void> {
+export async function persistActivityTrace(
+  tracer: AgentTracer,
+  agentKey: string
+): Promise<boolean> {
   const spanContext = trace.getActiveSpan()?.spanContext();
   if (!tracer.hasSpanContext() && spanContext?.traceId && spanContext?.spanId) {
     tracer.setSpanContext(spanContext.traceId, spanContext.spanId);
@@ -135,4 +139,5 @@ export async function persistActivityTrace(tracer: AgentTracer, agentKey: string
   if (!written) {
     restore();
   }
+  return written;
 }
