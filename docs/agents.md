@@ -630,16 +630,19 @@ before every tool call, that nothing inside the container can bypass. None provi
   the container the agent controls.
 - **OpenCode.** Setting every permission key to `ask` makes each tool call wait for a permission
   reply, which the worker could give over `opencode acp` (ACP `session/request_permission`) or the
-  `opencode serve` API. But OpenCode loads plugins from the repository (`.opencode/plugins/` and the
-  `plugin` list in a project `opencode.json`) into the harness process at start-up, with no switch to
-  turn that off, and a plugin's `permission.ask` hook can set a call to `allow` without the client
-  being asked. A repository could therefore grant calls the worker never sees.
+  `opencode serve` API. But OpenCode imports the repository's `.opencode/plugins/` into the harness
+  process at start-up, and neither `--pure` nor `OPENCODE_DISABLE_PROJECT_CONFIG` stops it (they skip
+  the project `opencode.json`, not that directory). A plugin is handed an SDK client for the same
+  server and sees the `permission.asked` event, so it can answer a pending request itself through the
+  server's permission-reply endpoint and grant the call. The plugin `permission.ask` hook no longer
+  fires, but its removal does not close that path. A repository could therefore grant calls the
+  worker never decides.
 - **Gemini CLI.** In ACP mode a call that needs confirmation blocks on `session/request_permission`,
   and an admin-tier policy rule for `*` with `ask_user` routes read-only tools there too. The request
-  carries no tool arguments, only a display title, a diff for edits, and file locations, so the
-  worker would be scanning a rendering of a shell command rather than the command. The rule that
-  makes every call ask, and the system settings that keep repository settings out, are files inside
-  the container (for example `/etc/gemini-cli/policies/`), which the agent's own shell can rewrite;
+  (and the `tool_call` update before it) carries no tool arguments (no `rawInput`), only a display
+  title, a diff for edits, and file locations, so the worker would be scanning a rendering of a
+  shell command rather than the command. The rule that makes every call ask, and the system settings
+  that keep repository settings out, are files inside the container (for example `/etc/gemini-cli/policies/`), which the agent's own shell can rewrite;
   there is no client-supplied settings layer like the one the Claude Agent SDK passes over its pipe.
 
 Adding a harness is an adapter in its own directory, a `defineHarness` entry in `harnessRegistry.ts`,
