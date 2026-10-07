@@ -10,6 +10,8 @@ interface QueryBoundaryProps {
   /** True while a refetch is running; the Retry button disables and says so. */
   isFetching?: boolean;
   error?: unknown;
+  /** Rendered while loading instead of the spinner — e.g. `<SkeletonRows />` shaped like the list. */
+  loading?: ReactNode;
   /** Caption for the loading indicator. */
   loadingMessage?: string;
   /** One-line loading indicator, for a section inside a card rather than a whole page. */
@@ -36,11 +38,12 @@ export function QueryBoundary({
   isFetching = false,
   isLoading,
   label,
+  loading,
   loadingMessage,
   onRetry,
 }: QueryBoundaryProps) {
   if (isLoading) {
-    return <LoadingState compact={compact} message={loadingMessage} />;
+    return loading ?? <LoadingState compact={compact} message={loadingMessage} />;
   }
   if (isError) {
     const detail = errMsg(error, 'request failed');

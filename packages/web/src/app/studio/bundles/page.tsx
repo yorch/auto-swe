@@ -277,7 +277,7 @@ export default function StudioBundlesPage() {
           )}
           <div className="mt-5 flex justify-end border-t border-ink-600 pt-4">
             <Button disabled={exportBundle.isPending} onClick={handleExport}>
-              <Icon className="rotate-90" name="arrowRight" size={14} />
+              <Icon name="download" size={14} />
               {exportBundle.isPending ? 'Exporting…' : 'Export and download'}
             </Button>
           </div>

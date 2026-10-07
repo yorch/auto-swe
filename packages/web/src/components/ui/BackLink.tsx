@@ -1,8 +1,8 @@
 import Link from 'next/link';
-import { Icon } from '@/components/ui/Icon';
 import { cn, FOCUS_RING } from '@/lib/utils';
+import { Icon } from './Icon';
 
-/** The "← Parent list" link above a govern detail page's header. */
+/** The "← Parent list" link above a detail page's header. */
 export function BackLink({ href, label }: { href: string; label: string }) {
   return (
     <Link

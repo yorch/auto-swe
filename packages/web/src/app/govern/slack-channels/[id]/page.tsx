@@ -1,11 +1,11 @@
 'use client';
 
 import { use } from 'react';
-import { BackLink } from '@/components/govern/BackLink';
 import { ChannelActivityTab } from '@/components/slackChannels/ChannelActivityTab';
 import { ChannelMemoryTab } from '@/components/slackChannels/ChannelMemoryTab';
 import { ChannelOpenItemsTab } from '@/components/slackChannels/ChannelOpenItemsTab';
 import { ChannelSettingsTab } from '@/components/slackChannels/ChannelSettingsTab';
+import { BackLink } from '@/components/ui/BackLink';
 import { Badge } from '@/components/ui/Badge';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';

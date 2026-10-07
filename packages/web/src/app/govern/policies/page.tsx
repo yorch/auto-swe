@@ -2,7 +2,6 @@
 
 import { KNOWN_RISK_CLASSES } from '@auto-swe/shared/lib/autonomyPolicy';
 import { useEffect, useMemo, useState } from 'react';
-import { RelativeTime } from '@/components/govern/RelativeTime';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -17,6 +16,7 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
 import {
   type AutonomyPolicy,

@@ -3,13 +3,13 @@ import Link from 'next/link';
 import { useId, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { requestHref } from '@/lib/requestDisplay';
 import { safeHttpUrl } from '@/lib/safeUrl';
 import { cn, FOCUS_RING, formatCost } from '@/lib/utils';
 import { PullRequestStateBadge } from './PullRequestBadges';
-import { RelativeTime } from './RelativeTime';
 
 const LINK = cn('rounded-sm text-ember-400 hover:underline', FOCUS_RING);
 
@@ -76,7 +76,7 @@ function TicketRow({ group }: { group: TicketGroup }) {
           {formatCost(group.costUsd)}
         </Td>
         <Td className="whitespace-nowrap px-4 py-3 text-paper-400" label="Last activity">
-          <RelativeTime date={group.lastActivityAt} />
+          <RelativeTime value={group.lastActivityAt} />
         </Td>
         <Td align="right" className="px-4 py-3">
           <Button

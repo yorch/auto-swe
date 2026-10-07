@@ -1,9 +1,9 @@
 import type { EpicSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { RelativeTime } from '@/components/work/RelativeTime';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 /** The epics list, shared by the Epics page and the Requests "Epics" type filter. */
@@ -54,7 +54,7 @@ export function EpicList({ epics }: { epics: EpicSummary[] }) {
                 )}
               </Td>
               <Td className="whitespace-nowrap px-4 py-3 text-paper-400" label="Created">
-                <RelativeTime date={epic.createdAt} />
+                <RelativeTime value={epic.createdAt} />
               </Td>
             </TRow>
           ))}

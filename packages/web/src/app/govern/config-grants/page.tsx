@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from 'react';
 import { EligibleUserSelect } from '@/components/EligibleUserSelect';
-import { RelativeTime } from '@/components/govern/RelativeTime';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -15,6 +14,7 @@ import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';

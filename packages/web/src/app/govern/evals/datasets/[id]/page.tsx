@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { use, useState } from 'react';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
-import { BackLink } from '@/components/govern/BackLink';
+import { BackLink } from '@/components/ui/BackLink';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';

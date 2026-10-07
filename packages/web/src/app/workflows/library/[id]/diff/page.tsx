@@ -305,7 +305,7 @@ function TemplateDiffContent({ params }: PageProps) {
               title="Swap before and after"
               variant="secondary"
             >
-              <Icon name="refresh" size={13} />
+              <Icon name="swap" size={13} />
               Swap
             </Button>
             {before !== null && after !== null && before !== after && (

@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { use, useState } from 'react';
-import { BackLink } from '@/components/govern/BackLink';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
@@ -10,6 +9,7 @@ import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySect
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
+import { BackLink } from '@/components/ui/BackLink';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';

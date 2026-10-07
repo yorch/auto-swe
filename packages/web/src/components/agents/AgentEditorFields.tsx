@@ -88,7 +88,7 @@ export function SkillRefEditor({
                 size="sm"
                 variant="ghost"
               >
-                <Icon className="rotate-180" name="chevronDown" size={14} />
+                <Icon name="arrowUp" size={14} />
               </Button>
               <Button
                 aria-label={`Move ${nameFor(ref.skillId)} down`}
@@ -98,7 +98,7 @@ export function SkillRefEditor({
                 size="sm"
                 variant="ghost"
               >
-                <Icon name="chevronDown" size={14} />
+                <Icon name="arrowDown" size={14} />
               </Button>
               <Button
                 aria-label={`Remove ${nameFor(ref.skillId)}`}
