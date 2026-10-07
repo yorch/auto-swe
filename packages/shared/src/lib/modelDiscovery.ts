@@ -1,7 +1,8 @@
+import { resolveSetting } from '../config/index.js';
 import type { PrismaClient } from '../index.js';
 import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
 import { createGuardedFetch, SSRF_BLOCKED_CODE } from './guardedDispatcher.js';
-import { isSafeProbeUrl } from './ssrfGuard.js';
+import { checkProbeUrl } from './ssrfGuard.js';
 import { runUnscoped } from './tenantGuard.js';
 
 /**
@@ -27,8 +28,10 @@ export function modelListRequest(args: {
   apiKey: string;
   apiBase?: string | null;
   query?: Record<string, string>;
+  /** `models.privateNetworkHosts`: the hosts whose private address the guard waives. */
+  privateHosts?: readonly string[];
 }): { url: string; init: RequestInit } | { error: string } {
-  const { provider, apiKey, apiBase, query = {} } = args;
+  const { provider, apiKey, apiBase, query = {}, privateHosts = [] } = args;
   const withQuery = (base: string, extra: Record<string, string> = {}) => {
     const params = new URLSearchParams({ ...extra, ...query });
     return params.size ? `${base}?${params}` : base;
@@ -55,7 +58,9 @@ export function modelListRequest(args: {
   if (!apiBase) {
     return { error: 'apiBase required to list models from an OpenAI-compatible provider' };
   }
-  const safety = isSafeProbeUrl(apiBase);
+  const safety = checkProbeUrl(apiBase, {
+    allowPrivate: isPrivateHostListed(apiBase, privateHosts),
+  });
   if (!safety.ok) {
     return { error: `apiBase rejected: ${safety.reason}` };
   }
@@ -84,8 +89,46 @@ export const DISCOVERY_ERRORS = {
   unrecognised: 'unrecognised response',
 } as const;
 
-// Provider list requests: no private-network opt-in exists here, so the guard is strict.
-const guardedFetch = createGuardedFetch();
+/**
+ * Whether `apiBase`'s host (`host` or `host:port`, as a URL spells it) is one an
+ * admin listed in `models.privateNetworkHosts`. Loopback, link-local and metadata
+ * addresses stay refused whatever is listed: `checkProbeUrl` never waives those.
+ */
+export function isPrivateHostListed(apiBase: string, privateHosts: readonly string[]): boolean {
+  try {
+    const host = new URL(apiBase).host.toLowerCase();
+    return privateHosts.some((h) => h.toLowerCase() === host);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `models.privateNetworkHosts`. Unreadable settings degrade to the strict guard
+ * (no host listed): a lookup failure must never widen what a probe may reach.
+ */
+export async function resolvePrivateModelHosts(): Promise<string[]> {
+  try {
+    return await resolveSetting('models.privateNetworkHosts');
+  } catch {
+    return [];
+  }
+}
+
+const strictFetch = createGuardedFetch();
+const permissiveFetch = createGuardedFetch({ allowPrivate: true });
+
+/**
+ * The fetch for provider list requests: resolved, checked and pinned. A request
+ * to a listed host may land on a private address; every other host, and every
+ * address `checkProbeUrl` never waives, is refused as before.
+ */
+export function modelListFetch(privateHosts: readonly string[]): typeof fetch {
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    return (isPrivateHostListed(raw, privateHosts) ? permissiveFetch : strictFetch)(input, init);
+  }) as typeof fetch;
+}
 
 const SAFE_TOKEN = /^[A-Za-z0-9_]{1,40}$/;
 
@@ -302,13 +345,17 @@ export async function listProviderModels(args: {
   provider: string;
   apiKey: string;
   apiBase?: string | null;
+  /** Resolved from `models.privateNetworkHosts` when omitted. */
+  privateHosts?: readonly string[];
 }): Promise<ProviderListing> {
   const models: DiscoveredModel[] = [];
   const listedIds = new Set<string>();
   let unfollowable = false;
   let query: Record<string, string> | null = firstPageQuery(args.provider);
+  const privateHosts = args.privateHosts ?? (await resolvePrivateModelHosts());
+  const guardedFetch = modelListFetch(privateHosts);
   for (let page = 0; query && page < MAX_PAGES; page++) {
-    const request = modelListRequest({ ...args, query });
+    const request = modelListRequest({ ...args, privateHosts, query });
     if ('error' in request) {
       return { error: safeRequestError(request.error), ok: false };
     }

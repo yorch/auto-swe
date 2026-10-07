@@ -559,7 +559,7 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 
 **`"Agent for '<role>' pins a credential for a different provider"`**: caught at worker boot by `assertConfigReady`. Either unpin the credential (so the resolver looks one up by provider name) or pick a credential whose `provider` matches the spec.
 
-**Test button returns `"apiBase rejected: host '…' is on a private network"`**: the gateway's SSRF guard blocks loopback / RFC1918 / link-local / `.local` / `.internal` hosts. Use a publicly routable URL or set up a tunnel.
+**Test button returns `"apiBase rejected: host '…' is on a private network"`, or discovery and Test report `blocked address`**: the gateway's SSRF guard blocks loopback / RFC1918 / link-local / `.local` / `.internal` hosts, and refuses a name that resolves to one. For an internal provider (vLLM, Ollama, an internal gateway), an ADMIN lists its host in `models.privateNetworkHosts` at `/govern/platform-settings` (`internal.example.com`, or `10.0.0.5:8000` when it has a port), then saves or tests the credential again; the change applies within the settings cache's ~30 s. Loopback, `localhost` and link-local / cloud-metadata addresses stay refused whatever is listed, so a service on the gateway's own host needs a routable name (`host.docker.internal`, a Compose service name). `blocked address` also appears when the gateway container cannot resolve the name at all.
 
 **Model changes don't seem to apply mid-run**: confirm the activity is past the `await getModel(...)` call before you edited. Already-bound `LanguageModel` instances aren't swapped mid-`generate()`; the next call after the cache TTL (default 30s) picks up the new value.
 
@@ -586,10 +586,13 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   by a name filter that can miss one or drop one it should not, and outside Google — which says which
   methods a model serves — whether a model is chat or embedding is read from its id. Up to five
   pages per provider are followed.
-- **A local `apiBase` is always refused.** Credentials have no `allowPrivateNetwork` flag, so an
-  Ollama or other private-address endpoint is reported as `blocked address`, in discovery and in the
-  credential **Test** alike. The guard also resolves the host and refuses a name that answers with a private
-  address, and the scheduled run makes these calls from the worker.
+- **A private `apiBase` needs an admin opt-in, and a loopback one is never allowed.** Saving a
+  credential, its **Test** button, discovery and the scheduled catalog refresh all refuse a host that is
+  or resolves to a private address, reported as `blocked address`, unless `models.privateNetworkHosts`
+  lists it. The list is platform-wide (GLOBAL, ADMIN only), not per credential, so every team that
+  names a listed host reaches it. Listing a name trusts DNS to mean the server intended, and the
+  scheduled run makes these calls from the worker. Loopback, `localhost`, link-local and cloud-metadata
+  addresses stay refused. Inference and embedding calls do not pass through this guard.
 - **Retirement flags reflect what one key can see.** A key restricted to some models (an OpenAI
   project key, say) flags every other priced model of that provider as possibly retired.
 - **A retirement flag is a hint.** A provider may serve an alias or a pinned id it does not list, so
