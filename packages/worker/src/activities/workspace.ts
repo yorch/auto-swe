@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import {
   type CapturedResult,
@@ -632,17 +632,29 @@ export async function createWorkspace(
   //    `buildMetadataBlockArgs`) run right after this container starts, since
   //    installing the route here would need `NET_ADMIN`, which conflicts
   //    with `--cap-drop=ALL`.
+  //  - With the harness model proxy advertised at the Docker host alias, the
+  //    alias resolves to the host gateway, so a harness turn can reach the
+  //    worker's proxy (and never needs the provider credential itself).
+  //    A deployment can instead put workspaces on a network the worker joins
+  //    (`WORKSPACE_NETWORK`), which needs no port published on the host.
   //
   // Everything from `docker run` on sits inside one try: the container has a
   // deterministic name before it exists, so any failure — including a
   // `docker run` whose client timed out after the daemon had already created
   // the container — removes it by that name instead of leaking it.
+  const proxyHost =
+    infra.harnessModelProxy && new URL(infra.harnessModelProxy.url).hostname === DOCKER_HOST_ALIAS
+      ? ` --add-host=${DOCKER_HOST_ALIAS}:host-gateway`
+      : '';
+  // A deployment-chosen network in place of the default bridge — the one the
+  // worker also joins, so a harness turn reaches the worker's model proxy.
+  const network = infra.network ? ` --network=${shellQuote(infra.network)}` : '';
   try {
     await execShellAsync(
       // `workspaceMemory` is a DB-backed string, so shell-quote it (the numeric
       // caps can't carry shell metacharacters); defense-in-depth on top of the
       // route-level format validation.
-      `docker run -d --name ${containerName} --init --dns=1.1.1.1 --dns=8.8.8.8 --memory=${shellQuote(infra.memory)} --cpus=${infra.cpus} --pids-limit=${infra.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0 -- ${shellQuote(effectiveImage)} sleep infinity`,
+      `docker run -d --name ${containerName} --init --dns=1.1.1.1 --dns=8.8.8.8 --memory=${shellQuote(infra.memory)} --cpus=${infra.cpus} --pids-limit=${infra.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0${proxyHost}${network} -- ${shellQuote(effectiveImage)} sleep infinity`,
       { heartbeatLabel: 'workspace: starting container' }
     );
 

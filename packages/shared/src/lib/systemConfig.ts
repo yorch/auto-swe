@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { decryptSecret } from './crypto.js';
 import { hostFamily } from './githubHostScope.js';
@@ -746,6 +747,64 @@ export interface WorkspaceInfraConfig {
   maxConcurrentActivities: number;
   /// Per-target wall-clock budget for a scanner pattern, in milliseconds.
   regexScanBudgetMs: number;
+  /// The worker-side model proxy a harness turn sends its model calls through,
+  /// so the workspace container never holds the provider credential. `null`
+  /// when `HARNESS_MODEL_PROXY_PORT` is unset: the harness then holds the key.
+  harnessModelProxy: HarnessModelProxyConfig | null;
+  /// A Docker network every workspace container joins in place of the default
+  /// bridge (`WORKSPACE_NETWORK`), or `null` for the default bridge. A network
+  /// the worker also joins is how a workspace reaches the worker's model proxy
+  /// without the proxy being published on the host.
+  network: string | null;
+}
+
+export interface HarnessModelProxyConfig {
+  /// Where the worker listens.
+  bindHost: string;
+  port: number;
+  /// The base URL a workspace container reaches the proxy at.
+  url: string;
+}
+
+/// The host a workspace container reaches its Docker host at, through the
+/// `host-gateway` alias `createWorkspace` adds when the proxy is advertised there.
+export const DOCKER_HOST_ALIAS = 'host.docker.internal';
+
+/// Replaced in `HARNESS_MODEL_PROXY_URL` with this worker's hostname — in a
+/// container, its short id, which Docker's DNS resolves on a user-defined
+/// network — so each worker replica advertises itself, not a shared alias.
+const HOSTNAME_PLACEHOLDER = '{hostname}';
+
+const DOCKER_NETWORK_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+
+const PORT_RE = /^\d{1,5}$/;
+const isPort = (raw: string) => PORT_RE.test(raw) && Number(raw) >= 1 && Number(raw) <= 65535;
+const isHttpUrl = (raw: string) => {
+  try {
+    const url = new URL(raw.replaceAll(HOSTNAME_PLACEHOLDER, hostname()));
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password
+    );
+  } catch {
+    return false;
+  }
+};
+
+/// Lenient, like the rest of this section: an unusable value turns the proxy
+/// off rather than throwing; `assertWorkspaceInfraEnv()` fails the boot on it.
+function resolveHarnessModelProxy(): HarnessModelProxyConfig | null {
+  const port = process.env.HARNESS_MODEL_PROXY_PORT;
+  if (!port || !isPort(port)) {
+    return null;
+  }
+  const url = process.env.HARNESS_MODEL_PROXY_URL;
+  return {
+    bindHost: process.env.HARNESS_MODEL_PROXY_BIND || '0.0.0.0',
+    port: Number(port),
+    url: (url && isHttpUrl(url) ? url : `http://${DOCKER_HOST_ALIAS}:${port}`)
+      .replaceAll(HOSTNAME_PLACEHOLDER, hostname())
+      .replace(/\/+$/, ''),
+  };
 }
 
 /// Parses a positive integer from the environment, clamped to `[min, max]`.
@@ -803,6 +862,7 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
   return {
     blockMetadata: process.env.WORKSPACE_BLOCK_METADATA !== 'false',
     cpus: Number.isFinite(cpus) && cpus > 0 ? cpus : 2,
+    harnessModelProxy: resolveHarnessModelProxy(),
     image: validatedEnv('WORKSPACE_IMAGE', 'node:24-alpine', DOCKER_IMAGE_REF_RE, IMAGE_HINT),
     maxConcurrentActivities: boundedEnvInt('WORKER_MAX_CONCURRENT_ACTIVITIES', 10, 1, 1000),
     memory: validatedEnv(
@@ -817,6 +877,8 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
       DOCKER_IMAGE_REF_RE,
       IMAGE_HINT
     ),
+    network:
+      validatedEnv('WORKSPACE_NETWORK', '', DOCKER_NETWORK_RE, 'a Docker network name') || null,
     pidsLimit: boundedEnvInt('WORKSPACE_PIDS_LIMIT', 512, 1, Number.MAX_SAFE_INTEGER),
     regexScanBudgetMs: boundedEnvInt('SCANNER_REGEX_BUDGET_MS', 250, 10, 60_000),
   };
@@ -861,6 +923,9 @@ export function validateWorkspaceInfraEnv(): string[] {
   );
   check('WORKER_MAX_CONCURRENT_ACTIVITIES', positiveInt, 'a positive integer');
   check('SCANNER_REGEX_BUDGET_MS', positiveInt, 'a positive integer (milliseconds)');
+  check('HARNESS_MODEL_PROXY_PORT', isPort, 'a port number (1-65535)');
+  check('HARNESS_MODEL_PROXY_URL', isHttpUrl, 'an http(s) URL with no credentials');
+  check('WORKSPACE_NETWORK', (raw) => DOCKER_NETWORK_RE.test(raw), 'a Docker network name');
   return problems;
 }
 

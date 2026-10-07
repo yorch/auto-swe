@@ -519,10 +519,23 @@ call reaches the runtime's `canUseTool`, which denies everything. The flag setti
 have used for the same Agent, and only for `anthropic/<model>` specs — Claude Code speaks the
 Anthropic Messages API. A credential's `apiBase` is how a deployment sends the harness through its
 own gateway (for example Kong); a trailing `/v1`, which the AI SDK spelling includes, is stripped
-because the harness appends it. The credential reaches the container as `ANTHROPIC_API_KEY`, named on
-the `docker exec` command line without a value so it never appears in `ps`. The base URL is also
-pinned through the SDK's highest-priority settings layer, so a repository's own `.claude/settings.json`
-cannot redirect the key to another host.
+because the harness appends it.
+
+With the worker's **model proxy** on (`HARNESS_MODEL_PROXY_PORT`, [configuration.md](./configuration.md)),
+the credential never enters the container. Each turn registers with the proxy
+(`agents/claudeCode/modelProxy.ts`) and the harness gets a random token in place of the key and the
+proxy's address in place of the provider's. The proxy accepts only `POST /v1/messages` and
+`/v1/messages/count_tokens`, only with a token whose turn is still running, sends the call on to the
+credential's host with the real key, and streams the answer back unchanged. A token read out of the
+container is good for that turn's model calls, at the proxy, until the turn ends, and spends against
+the run's budget like any other call. A workspace reaches the proxy at `HARNESS_MODEL_PROXY_URL`: by
+default `host.docker.internal`, which `createWorkspace` maps to the Docker host gateway, or a worker
+that shares `WORKSPACE_NETWORK` with its workspaces, as the shipped compose files run it.
+
+Without the proxy the credential reaches the container as `ANTHROPIC_API_KEY`, named on the
+`docker exec` command line without a value so it never appears in `ps`. Either way the base URL is
+pinned through the SDK's highest-priority settings layer, so a repository's own
+`.claude/settings.json` cannot redirect the harness, and the key or token it sends, to another host.
 
 **Repository configuration.** The repository's `CLAUDE.md` and `.claude` settings apply
 (`settingSources: ['project']`), so a flow ported from a developer machine behaves as it did there.
@@ -536,14 +549,18 @@ a file in the container, because it travels on a command line capped at 128 KiB 
 is `/workspace/.harness/home/.claude/system-prompt.md`, inside the one directory outside the checkout
 the policy lets `Read` reach.
 
-**Usage.** The harness reports usage per model as running totals, and a resumed session starts from
-its saved totals, so a turn records the change since the last. A turn that ends without a result — a
-deadline stopped it, or the process died — is metered from the assistant messages it streamed, each of
-which carries its API call's usage (the last report per message id counts). The adapter hands those
-reports to the shared runtime as they stream (`turn.callUsage`). Every turn is metered per call:
-`runImplementerTurn` hands the runtime the turn's `onCallSpent` (`perCallAccounting`), each call is
-debited once the next one begins and the budget re-checked, and the turn's own
-report is then reconciled against what was debited (`subtractSpent`), so nothing is charged twice.
+**Usage.** Every turn is metered per call: `runImplementerTurn` hands the runtime the turn's
+`onCallSpent` (`perCallAccounting`), each model call is debited and the budget re-checked as the call
+ends, and an exhausted budget aborts the turn with `BUDGET_EXCEEDED`. Through the model proxy the calls
+are exact: the proxy reads each response's usage as it streams past and reports the call when its
+response ends (`turn.callSpent`) — the small-model side calls the harness makes without streaming a
+message included — and once the turn is aborted its in-flight calls are cut off and new ones refused.
+Without the proxy the adapter reports the usage each streamed assistant message carries
+(`turn.callUsage`), and a call is debited once the next one begins. The harness itself reports usage
+per model as running totals (a resumed session starts from its saved totals, so a turn records the
+change since the last); a turn that ends without a result — a deadline stopped it, or the process
+died — falls back to its streamed messages. Whichever report the turn ends with is reconciled against
+what was debited call by call (`subtractSpent`), so nothing is charged twice.
 Each model is priced at its own spec
 (a harness may delegate small tasks to a cheaper model). Cache reads and writes count as input
 tokens toward the budget and are priced at the model's cache rates. A turn that ends in an error
@@ -1237,12 +1254,20 @@ template override is never badged, because it may use a different model or crede
 - **A call that never reaches a tool has no duration.** `runAgent` times the calls that execute;
   one that failed input validation or named no tool is read from the steps of a `generate` that
   returned, with `durationMs` 0, so a `generate` that throws loses those and keeps the rest.
-- **The Claude Code harness holds a model credential inside the workspace container.** The agent
-  runs as root on a network with unrestricted egress, so anything it runs can read the key and send
-  it elsewhere; a repository's settings cannot move where the harness itself sends it, but the
-  agent's own commands can. The blast radius is whatever the key can spend. Point the credential at
-  a gateway key scoped to that run's budget, and enable `workspace.implementerRuntime`, or an
-  agent's `runtime`, only where that is acceptable. Minting a key per run is not built.
+- **Without the model proxy, the Claude Code harness holds a model credential inside the workspace
+  container.** The agent runs as root on a network with unrestricted egress, so anything it runs can
+  read the key and send it elsewhere; a repository's settings cannot move where the harness itself
+  sends it, but the agent's own commands can. The blast radius is whatever the key can spend. Turn
+  the proxy on (`HARNESS_MODEL_PROXY_PORT`; the shipped compose files do), or point the credential
+  at a gateway key scoped to that run's budget.
+- **The model proxy's token is still a bearer token inside the container.** Anything the agent runs
+  can read it and spend through the proxy until the turn ends — but only on the Messages API, only
+  against the run's budget, and only at the credential's own host. The proxy listens on
+  `HARNESS_MODEL_PROXY_BIND` (every interface by default), so any host that can reach that port can
+  try a token; tokens are 256-bit random values that die with their turn. A workspace that cannot
+  reach the proxy fails its turn with the harness's connection error; nothing falls back to handing
+  it the key. A call cut off mid-stream (an aborted turn) is charged the input it was billed and the
+  output the provider had reported, which is less than it may have spent.
 - **A repository's own hooks and settings run inside the container.** With project settings
   loaded, a repository can ship shell hooks and permission rules. They execute in the untrusted
   container and cannot override the worker-side decision on a tool call (a deny wins), but they
@@ -1255,13 +1280,13 @@ template override is never badged, because it may use a different model or crede
 - **Generic `agent` nodes never run on the harness.** They have no workspace, so an Agent asking for
   `claude-code` runs on Mastra there, with a trace event saying so; a node that needs the harness has
   to be an implementer-family step or an agent run.
-- **Harness turns are metered per streamed call.** A call is debited once the next one begins, so
-  an exhausted budget stops the run one call late, as the Mastra loop stops one step late, and the
-  call that was streaming when the budget ran out is charged when the turn ends. Calls the harness
-  makes without streaming a message (a small-model side task) are not seen until the turn's totals
-  arrive, so they are charged at the end and never trigger the check. A turn stopped by its
-  deadline, or whose process died, has no totals and is metered from its streamed messages alone, so
-  it can undercount by those side calls.
+- **A harness turn stops one call late.** The budget is re-checked after each call is debited, so
+  an exhausted budget stops the turn after the call that exhausted it (and any running beside it),
+  as the Mastra loop stops one step late. Without the model proxy the gap is wider: a streamed call
+  is debited only once the next one begins, the calls the harness makes without streaming a message
+  (a small-model side task) are charged only from the turn's final totals and never trigger the
+  check, and a turn stopped by its deadline or whose process died has no totals, so it is metered
+  from its streamed messages and can undercount by those side calls.
 - **The seeded agents carry no runtime.** Built-in agents seed with none, so the implementer family
   follows `workspace.implementerRuntime` until an ADMIN sets one; a seeded default-model move keeps
   that choice. A bundle can carry an agent's `runtime` ([bundles.md](./bundles.md)); one that omits

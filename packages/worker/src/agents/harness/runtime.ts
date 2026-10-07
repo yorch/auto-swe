@@ -200,6 +200,13 @@ export function harnessRuntime<Report>(
 
     const turn: HarnessTurn = {
       abort,
+      callSpent(callId, modelSpec, usage) {
+        if (!onCallSpent || debitedCalls.has(callId)) {
+          return;
+        }
+        debitedCalls.add(callId);
+        debit({ modelSpec, usage });
+      },
       callUsage(callId, modelSpec, usage) {
         if (!onCallSpent || debitedCalls.has(callId)) {
           return;

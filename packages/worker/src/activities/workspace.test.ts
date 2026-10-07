@@ -24,6 +24,7 @@ vi.mock('../lib/execUtils.js', async (importOriginal) => {
 // `createWorkspace` reads container caps, the default base image and the
 // metadata-blocking policy from the environment-backed infra resolver.
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  DOCKER_HOST_ALIAS: 'host.docker.internal',
   resolveWorkspaceInfra: vi.fn(() => ({
     blockMetadata: true,
     cpus: 2,
@@ -168,6 +169,56 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     expect(startCmd).toContain(shellQuote('custom/base:1.2'));
 
     await ws.destroy();
+  });
+
+  it('maps the Docker host alias to the host gateway only when the model proxy is advertised there', async () => {
+    const infra = {
+      blockMetadata: true,
+      cpus: 2,
+      image: 'node:24-alpine',
+      memory: '4g',
+      metadataBlockImage: 'alpine:3.20',
+      pidsLimit: 512,
+    };
+    const startCommand = async () => {
+      const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/T-1', 'main');
+      await ws.destroy();
+      const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+      vi.mocked(execShellAsync).mockClear();
+      return commands.find((c) => c.includes('docker run -d --name')) ?? '';
+    };
+
+    vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
+      ...infra,
+      harnessModelProxy: {
+        bindHost: '0.0.0.0',
+        port: 8790,
+        url: 'http://host.docker.internal:8790',
+      },
+    } as never);
+    expect(await startCommand()).toContain('--add-host=host.docker.internal:host-gateway');
+
+    vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
+      ...infra,
+      harnessModelProxy: { bindHost: '0.0.0.0', port: 8790, url: 'http://10.0.0.5:8790' },
+    } as never);
+    expect(await startCommand()).not.toContain('host-gateway');
+
+    vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
+      ...infra,
+      harnessModelProxy: null,
+    } as never);
+    expect(await startCommand()).not.toContain('host-gateway');
+
+    // Or on the network the worker joins: no host gateway needed, the worker is a peer.
+    vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
+      ...infra,
+      harnessModelProxy: { bindHost: '0.0.0.0', port: 8790, url: 'http://0123abcd:8790' },
+      network: 'auto-swe-workspaces',
+    } as never);
+    const onNetwork = await startCommand();
+    expect(onNetwork).toContain(`--network=${shellQuote('auto-swe-workspaces')}`);
+    expect(onNetwork).not.toContain('host-gateway');
   });
 
   it('honours an explicit image argument over the resolved default image', async () => {

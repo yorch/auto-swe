@@ -1001,3 +1001,114 @@ describe('cancellation and cleanup', () => {
     expect(h.queryCalls[0]?.options.abortController.signal.aborted).toBe(true);
   });
 });
+
+describe('through the worker’s model proxy', () => {
+  const PROXY_URL = 'http://host.docker.internal:8790';
+  const TOKEN = 'sk-ant-proxy-turn-token';
+
+  function fakeProxy(onRegistered?: (reg: { onCall: (call: unknown) => void }) => void) {
+    const release = vi.fn(async () => {});
+    const register = vi.fn(async (reg: { onCall: (call: unknown) => void }) => {
+      onRegistered?.(reg);
+      return { baseUrl: PROXY_URL, release, token: TOKEN };
+    });
+    return { proxy: { close: vi.fn(), listen: vi.fn(), register }, register, release };
+  }
+
+  it('gives the container a turn token and the proxy’s address, never the credential', async () => {
+    const { proxy, register, release } = fakeProxy();
+    const { runtime } = setup({ modelProxy: proxy });
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    // The real key and the provider's host are handed to the proxy, in the worker.
+    expect(register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: API_KEY,
+        upstreamBaseUrl: 'https://kong.example/anthropic',
+      })
+    );
+    expect(release).toHaveBeenCalledTimes(1);
+
+    const call = h.queryCalls[0] as (typeof h.queryCalls)[number];
+    expect((call.options.settings as { env: unknown }).env).toEqual({
+      ANTHROPIC_BASE_URL: PROXY_URL,
+    });
+    call.options.spawnClaudeCodeProcess({
+      args: [],
+      env: {},
+      signal: new AbortController().signal,
+    });
+    const [, args, spawnOptions] = h.spawn.mock.calls[0] as [
+      string,
+      string[],
+      { env: Record<string, string> },
+    ];
+    expect(args).toContain(`ANTHROPIC_BASE_URL=${PROXY_URL}`);
+    expect(spawnOptions.env.ANTHROPIC_API_KEY).toBe(TOKEN);
+    expect(JSON.stringify([args, spawnOptions.env.ANTHROPIC_API_KEY])).not.toContain(API_KEY);
+  });
+
+  it('debits each call the proxy saw end — side calls included — and not the streamed reports', async () => {
+    let report: ((call: unknown) => void) | undefined;
+    const { proxy } = fakeProxy((reg) => {
+      report = reg.onCall;
+    });
+    const { runtime } = setup({ modelProxy: proxy });
+    const debited: unknown[] = [];
+    let proxySaw: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      proxySaw = resolve;
+    });
+    h.script.push([
+      [
+        init('s'),
+        assistantReply('msg_1', 'claude-opus-5-5', streamed(100, 5)),
+        assistantReply('msg_2', 'claude-opus-5-5', streamed(200, 10)),
+      ],
+      undefined,
+      gate,
+    ]);
+    h.script[0]?.[0]?.push(
+      success('done', {
+        'claude-haiku-4-5-20251001': usage(7, 3),
+        'claude-opus-5-5': usage(300, 15),
+      })
+    );
+
+    const turn = runtime.runTurn({
+      onCallSpent: async (spent: unknown) => {
+        debited.push(spent);
+      },
+      system: 'S',
+      user: 'U',
+    });
+    // While the turn runs the proxy reports each call as its response ends.
+    await vi.waitFor(() => expect(report).toBeDefined());
+    report?.({
+      id: 'msg_1',
+      model: 'claude-opus-5-5',
+      usage: { cacheRead: 0, cacheWrite: 0, input: 100, output: 5 },
+    });
+    report?.({
+      id: 'msg_side',
+      model: 'claude-haiku-4-5-20251001',
+      usage: { cacheRead: 0, cacheWrite: 0, input: 7, output: 3 },
+    });
+    report?.({
+      id: 'msg_2',
+      model: 'claude-opus-5-5',
+      usage: { cacheRead: 0, cacheWrite: 0, input: 200, output: 10 },
+    });
+    proxySaw();
+    const outcome = await turn;
+
+    expect(debited.map((d) => (d as { modelSpec: string }[])[0]?.modelSpec)).toEqual([
+      'anthropic/claude-opus-5-5',
+      'anthropic/claude-haiku-4-5-20251001',
+      'anthropic/claude-opus-5-5',
+    ]);
+    // Every call was debited as it ended, so the turn owes nothing more.
+    expect(outcome.usageByModel).toEqual([]);
+  });
+});

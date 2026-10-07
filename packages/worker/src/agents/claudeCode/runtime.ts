@@ -13,6 +13,8 @@ import {
   HARNESS_HOME,
   type HarnessAdapter,
   type HarnessRuntimeOptions,
+  type HarnessTurn,
+  type HarnessTurnResult,
   WORKSPACE_DIR,
   withUsageReport,
 } from '../harness/adapter.js';
@@ -20,6 +22,7 @@ import { POLICY_DECISION_MS } from '../harness/policy.js';
 import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { runningTotalsUsage, summedCallsUsage, type UsageTotals } from '../harness/usage.js';
 import { binarySha256, resolveClaudeBinary } from './binary.js';
+import { type ModelProxy, workerModelProxy } from './modelProxy.js';
 import {
   CLAUDE_CODE_CAPABILITIES,
   decideToolCall,
@@ -80,6 +83,11 @@ export interface ClaudeCodeRuntimeOptions
    * what the Agent names, and an empty list here is no tools, never all of them.
    */
   tools?: readonly HarnessTool[];
+  /**
+   * The model proxy the turns go through: omitted, the worker's own (when the
+   * deployment runs one); `null`, none — the harness holds the credential.
+   */
+  modelProxy?: ModelProxy | null;
 }
 
 /**
@@ -220,7 +228,7 @@ function streamedCalls(streamed: Map<string, { model: string; usage: StreamedUsa
 export function claudeCodeAdapter(
   options: Omit<ClaudeCodeRuntimeOptions, 'tracer'>
 ): HarnessAdapter<ClaudeUsageReport> {
-  const { access, loadProjectSettings, maxTurns, workspace } = options;
+  const { access, loadProjectSettings, maxTurns, modelProxy, workspace } = options;
   const baseUrl = normalizeAnthropicBaseUrl(access.apiBase);
   const tools = options.tools ? [...options.tools] : harnessToolsFor(options.toolKeys);
   const policy: PolicyContext = {
@@ -235,6 +243,218 @@ export function claudeCodeAdapter(
   const totals = runningTotalsUsage('anthropic/');
   let sessionId: string | undefined;
 
+  /**
+   * One turn against `endpoint`: the provider itself with the real key, or the
+   * worker's model proxy with a token good only for this turn.
+   */
+  async function driveTurn(
+    turn: HarnessTurn,
+    { system, user }: { system: string; user: string },
+    endpoint: { baseUrl: string; apiKey: string; proxied: boolean }
+  ): Promise<HarnessTurnResult<ClaudeUsageReport>> {
+    let result: SDKResultMessage | undefined;
+    let toolCalls = 0;
+    const streamed = new Map<string, { model: string; usage: StreamedUsage }>();
+    const spent = (): ClaudeUsageReport =>
+      result ? { modelUsage: result.modelUsage } : { streamed };
+    // The deadline is a stop: end the turn with what it has and what it spent.
+    const stopped = () => ({
+      stoppedReason: 'wall_clock' as const,
+      toolCallCount: toolCalls,
+      usage: spent(),
+    });
+
+    const preToolUse: HookCallback = async (input, toolUseId) => {
+      const { cwd, tool_name: toolName, tool_input: toolInput } = input as PreToolUseHookInput;
+      // A hook the harness gives up on falls back to its own permission rules;
+      // the worker answers first, and a decision it cannot reach is a deny.
+      const verdict = await turn.decide(
+        toolUseId ?? '',
+        toolName,
+        (toolInput ?? {}) as Record<string, unknown>,
+        cwd
+      );
+      if (!verdict.allow) {
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse' as const,
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason: verdict.reason,
+          },
+        };
+      }
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          permissionDecision: 'allow' as const,
+        },
+      };
+    };
+
+    const postToolUse: HookCallback = async (input, toolUseId) => {
+      const {
+        tool_input: toolInput,
+        tool_name: toolName,
+        tool_response: response,
+      } = input as PostToolUseHookInput;
+      const { warning } = turn.completed(toolUseId ?? '', {
+        inputJson: toolInput,
+        output: response,
+        toolName,
+      });
+      return warning
+        ? {
+            hookSpecificOutput: {
+              additionalContext: warning,
+              hookEventName: 'PostToolUse' as const,
+            },
+          }
+        : {};
+    };
+
+    const postToolUseFailure: HookCallback = async (input, toolUseId) => {
+      const {
+        error,
+        tool_input: toolInput,
+        tool_name: toolName,
+      } = input as PostToolUseFailureHookInput;
+      turn.failed(toolUseId ?? '', { error, inputJson: toolInput, toolName });
+      return {};
+    };
+
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+
+    // The prompt rides the command line; past the per-argument cap it is staged
+    // as a file the harness is told to read first.
+    let append = system;
+    if (system.length > MAX_INLINE_SYSTEM_CHARS) {
+      await turn.workspace.execStdin(`cat > ${STAGED_PROMPT}`, system);
+      append = `Your operating instructions are in ${STAGED_PROMPT}. Read that file in full before anything else, and follow it as if it were this prompt.`;
+    }
+
+    const stream = query({
+      options: {
+        abortController: turn.abort,
+        // Anything not allowed by the policy hook is refused: nobody is attending.
+        canUseTool: async () => ({
+          behavior: 'deny',
+          message: 'This workspace run is unattended, so no one can approve that action.',
+        }),
+        cwd: WORKSPACE_DIR,
+        hooks: {
+          PostToolUse: [{ hooks: [postToolUse] }],
+          PostToolUseFailure: [{ hooks: [postToolUseFailure] }],
+          PreToolUse: [{ hooks: [preToolUse], timeout: PRE_TOOL_USE_TIMEOUT_S }],
+        },
+        // Should the hook still fail, the harness falls back to its permission
+        // rules. The policy tier makes it ignore every allow rule outside that
+        // tier (a repository's `.claude/settings.json` among them), so the
+        // fallback reaches `canUseTool` above, which refuses.
+        managedSettings: {
+          allowManagedPermissionRulesOnly: true,
+          permissions: { disableBypassPermissionsMode: 'disable' },
+        },
+        maxTurns,
+        model: access.modelId,
+        // Hook decisions grant each call; `bypassPermissions` would skip them,
+        // and the harness refuses it as root anyway.
+        permissionMode: 'default',
+        resume: sessionId,
+        settingSources: loadProjectSettings ? ['project'] : [],
+        // The highest-priority settings layer: a repository's own `.claude/settings.json`
+        // cannot point the harness (and the key it sends) at another host, nor
+        // start it in a mode that grants tool calls without asking.
+        settings: {
+          env: { ANTHROPIC_BASE_URL: endpoint.baseUrl },
+          permissions: { defaultMode: 'default', disableBypassPermissionsMode: 'disable' },
+        },
+        // With a custom spawn the SDK never reads stderr (its `stderr` option only
+        // serves its own spawn); the shared spawn drains it.
+        spawnClaudeCodeProcess: (spawnOptions) =>
+          turn.spawn({
+            args: spawnOptions.args,
+            env: [
+              `ANTHROPIC_BASE_URL=${endpoint.baseUrl}`,
+              `HOME=${HARNESS_HOME}`,
+              'SHELL=/bin/bash',
+              'DISABLE_AUTOUPDATER=1',
+              'DISABLE_TELEMETRY=1',
+              'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
+            ],
+            leadingEnvArgs: sdkEnvArgs(spawnOptions.env),
+            secretEnv: { ANTHROPIC_API_KEY: endpoint.apiKey },
+            signal: spawnOptions.signal,
+          }),
+        systemPrompt: { append, preset: 'claude_code', type: 'preset' },
+        tools: [...tools],
+      },
+      prompt: user,
+    });
+
+    try {
+      for await (const message of stream) {
+        turn.heartbeat();
+        if (message.type === 'system' && message.subtype === 'init') {
+          sessionId = message.session_id;
+        } else if (message.type === 'assistant') {
+          const reply = message.message as AssistantReply;
+          toolCalls += reply.content.filter((b) => b.type === 'tool_use').length;
+          if (reply.id && reply.model && reply.usage) {
+            streamed.set(reply.id, { model: reply.model, usage: reply.usage });
+            // One API call streams a message per content block, each with the
+            // call's usage so far; a new id means the previous call is done.
+            // Through the proxy every call is metered there, exactly, instead.
+            if (!endpoint.proxied) {
+              turn.callUsage(reply.id, `anthropic/${reply.model}`, totalsOfStreamed(reply.usage));
+            }
+          }
+        } else if (message.type === 'result') {
+          result = message;
+        }
+      }
+    } catch (err) {
+      turn.throwIfCancelled();
+      if (turn.deadlineReached()) {
+        return stopped();
+      }
+      // Reaching the turn cap ends the run with an error result and then a throw. The
+      // Mastra loop stops at its step budget without error, so this does too.
+      if (result?.subtype !== 'error_max_turns') {
+        if (result) {
+          throw withUsageReport(harnessFailure(result, turn.stderrTail()), spent());
+        }
+        // The process died before it could say why: what it wrote to stderr does.
+        // Its streamed messages still say what the calls it made were billed.
+        const stderr = turn.stderrTail().trim();
+        throw withUsageReport(
+          err instanceof Error && stderr
+            ? new Error(`${err.message}\n${stderr}`, { cause: err })
+            : err,
+          spent()
+        );
+      }
+    }
+
+    if (!result && turn.deadlineReached()) {
+      return stopped();
+    }
+    if (!result) {
+      throw new Error(`Claude Code ended without a result. ${turn.stderrTail().trim()}`.trim());
+    }
+    if (result.subtype !== 'error_max_turns' && (result.is_error || result.subtype !== 'success')) {
+      throw withUsageReport(harnessFailure(result, turn.stderrTail()), spent());
+    }
+
+    return {
+      steps: result.num_turns,
+      // Reaching the turn cap is the Mastra loop's step budget: a stop, not a failure.
+      stoppedReason: result.subtype === 'error_max_turns' ? 'max_steps' : undefined,
+      text: result.subtype === 'success' ? result.result : undefined,
+      toolCallCount: toolCalls,
+      usage: spent(),
+    };
+  }
+
   return {
     capabilities: CLAUDE_CODE_CAPABILITIES,
     decide: (toolName, input, harnessCwd) => decideToolCall(toolName, input, policy, harnessCwd),
@@ -246,208 +466,32 @@ export function claudeCodeAdapter(
       resolveBinary: ({ arch, libc }) => resolveClaudeBinary(arch, libc),
       sha256: binarySha256,
     },
-    async runTurn(turn, { system, user }) {
-      let result: SDKResultMessage | undefined;
-      let toolCalls = 0;
-      const streamed = new Map<string, { model: string; usage: StreamedUsage }>();
-      const spent = (): ClaudeUsageReport =>
-        result ? { modelUsage: result.modelUsage } : { streamed };
-      // The deadline is a stop: end the turn with what it has and what it spent.
-      const stopped = () => ({
-        stoppedReason: 'wall_clock' as const,
-        toolCallCount: toolCalls,
-        usage: spent(),
-      });
-
-      const preToolUse: HookCallback = async (input, toolUseId) => {
-        const { cwd, tool_name: toolName, tool_input: toolInput } = input as PreToolUseHookInput;
-        // A hook the harness gives up on falls back to its own permission rules;
-        // the worker answers first, and a decision it cannot reach is a deny.
-        const verdict = await turn.decide(
-          toolUseId ?? '',
-          toolName,
-          (toolInput ?? {}) as Record<string, unknown>,
-          cwd
-        );
-        if (!verdict.allow) {
-          return {
-            hookSpecificOutput: {
-              hookEventName: 'PreToolUse' as const,
-              permissionDecision: 'deny' as const,
-              permissionDecisionReason: verdict.reason,
-            },
-          };
-        }
-        return {
-          hookSpecificOutput: {
-            hookEventName: 'PreToolUse' as const,
-            permissionDecision: 'allow' as const,
-          },
-        };
-      };
-
-      const postToolUse: HookCallback = async (input, toolUseId) => {
-        const {
-          tool_input: toolInput,
-          tool_name: toolName,
-          tool_response: response,
-        } = input as PostToolUseHookInput;
-        const { warning } = turn.completed(toolUseId ?? '', {
-          inputJson: toolInput,
-          output: response,
-          toolName,
-        });
-        return warning
-          ? {
-              hookSpecificOutput: {
-                additionalContext: warning,
-                hookEventName: 'PostToolUse' as const,
-              },
-            }
-          : {};
-      };
-
-      const postToolUseFailure: HookCallback = async (input, toolUseId) => {
-        const {
-          error,
-          tool_input: toolInput,
-          tool_name: toolName,
-        } = input as PostToolUseFailureHookInput;
-        turn.failed(toolUseId ?? '', { error, inputJson: toolInput, toolName });
-        return {};
-      };
-
-      const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-      // The prompt rides the command line; past the per-argument cap it is staged
-      // as a file the harness is told to read first.
-      let append = system;
-      if (system.length > MAX_INLINE_SYSTEM_CHARS) {
-        await turn.workspace.execStdin(`cat > ${STAGED_PROMPT}`, system);
-        append = `Your operating instructions are in ${STAGED_PROMPT}. Read that file in full before anything else, and follow it as if it were this prompt.`;
-      }
-
-      const stream = query({
-        options: {
-          abortController: turn.abort,
-          // Anything not allowed by the policy hook is refused: nobody is attending.
-          canUseTool: async () => ({
-            behavior: 'deny',
-            message: 'This workspace run is unattended, so no one can approve that action.',
-          }),
-          cwd: WORKSPACE_DIR,
-          hooks: {
-            PostToolUse: [{ hooks: [postToolUse] }],
-            PostToolUseFailure: [{ hooks: [postToolUseFailure] }],
-            PreToolUse: [{ hooks: [preToolUse], timeout: PRE_TOOL_USE_TIMEOUT_S }],
-          },
-          // Should the hook still fail, the harness falls back to its permission
-          // rules. The policy tier makes it ignore every allow rule outside that
-          // tier (a repository's `.claude/settings.json` among them), so the
-          // fallback reaches `canUseTool` above, which refuses.
-          managedSettings: {
-            allowManagedPermissionRulesOnly: true,
-            permissions: { disableBypassPermissionsMode: 'disable' },
-          },
-          maxTurns,
-          model: access.modelId,
-          // Hook decisions grant each call; `bypassPermissions` would skip them,
-          // and the harness refuses it as root anyway.
-          permissionMode: 'default',
-          resume: sessionId,
-          settingSources: loadProjectSettings ? ['project'] : [],
-          // The highest-priority settings layer: a repository's own `.claude/settings.json`
-          // cannot point the harness (and the key it sends) at another host, nor
-          // start it in a mode that grants tool calls without asking.
-          settings: {
-            env: { ANTHROPIC_BASE_URL: baseUrl },
-            permissions: { defaultMode: 'default', disableBypassPermissionsMode: 'disable' },
-          },
-          // With a custom spawn the SDK never reads stderr (its `stderr` option only
-          // serves its own spawn); the shared spawn drains it.
-          spawnClaudeCodeProcess: (spawnOptions) =>
-            turn.spawn({
-              args: spawnOptions.args,
-              env: [
-                `ANTHROPIC_BASE_URL=${baseUrl}`,
-                `HOME=${HARNESS_HOME}`,
-                'SHELL=/bin/bash',
-                'DISABLE_AUTOUPDATER=1',
-                'DISABLE_TELEMETRY=1',
-                'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
-              ],
-              leadingEnvArgs: sdkEnvArgs(spawnOptions.env),
-              secretEnv: { ANTHROPIC_API_KEY: access.apiKey },
-              signal: spawnOptions.signal,
-            }),
-          systemPrompt: { append, preset: 'claude_code', type: 'preset' },
-          tools: [...tools],
-        },
-        prompt: user,
-      });
-
+    async runTurn(turn, input) {
+      // Through the worker's model proxy when the deployment runs one: the
+      // container gets a token good only for this turn's model calls, never the
+      // credential, and every call — the small-model side calls the harness
+      // makes without streaming a message included — is metered as it ends.
+      const proxy = modelProxy === undefined ? workerModelProxy() : modelProxy;
+      const registration = proxy
+        ? await proxy.register({
+            apiKey: access.apiKey,
+            onCall: (call) => turn.callSpent(call.id, `anthropic/${call.model}`, call.usage),
+            signal: turn.abort.signal,
+            upstreamBaseUrl: baseUrl,
+          })
+        : undefined;
       try {
-        for await (const message of stream) {
-          turn.heartbeat();
-          if (message.type === 'system' && message.subtype === 'init') {
-            sessionId = message.session_id;
-          } else if (message.type === 'assistant') {
-            const reply = message.message as AssistantReply;
-            toolCalls += reply.content.filter((b) => b.type === 'tool_use').length;
-            if (reply.id && reply.model && reply.usage) {
-              streamed.set(reply.id, { model: reply.model, usage: reply.usage });
-              // One API call streams a message per content block, each with the
-              // call's usage so far; a new id means the previous call is done.
-              turn.callUsage(reply.id, `anthropic/${reply.model}`, totalsOfStreamed(reply.usage));
-            }
-          } else if (message.type === 'result') {
-            result = message;
-          }
-        }
-      } catch (err) {
-        turn.throwIfCancelled();
-        if (turn.deadlineReached()) {
-          return stopped();
-        }
-        // Reaching the turn cap ends the run with an error result and then a throw. The
-        // Mastra loop stops at its step budget without error, so this does too.
-        if (result?.subtype !== 'error_max_turns') {
-          if (result) {
-            throw withUsageReport(harnessFailure(result, turn.stderrTail()), spent());
-          }
-          // The process died before it could say why: what it wrote to stderr does.
-          // Its streamed messages still say what the calls it made were billed.
-          const stderr = turn.stderrTail().trim();
-          throw withUsageReport(
-            err instanceof Error && stderr
-              ? new Error(`${err.message}\n${stderr}`, { cause: err })
-              : err,
-            spent()
-          );
-        }
+        return await driveTurn(
+          turn,
+          input,
+          registration
+            ? { apiKey: registration.token, baseUrl: registration.baseUrl, proxied: true }
+            : { apiKey: access.apiKey, baseUrl, proxied: false }
+        );
+      } finally {
+        // Every call the turn made is reported before the turn's usage is settled.
+        await registration?.release();
       }
-
-      if (!result && turn.deadlineReached()) {
-        return stopped();
-      }
-      if (!result) {
-        throw new Error(`Claude Code ended without a result. ${turn.stderrTail().trim()}`.trim());
-      }
-      if (
-        result.subtype !== 'error_max_turns' &&
-        (result.is_error || result.subtype !== 'success')
-      ) {
-        throw withUsageReport(harnessFailure(result, turn.stderrTail()), spent());
-      }
-
-      return {
-        steps: result.num_turns,
-        // Reaching the turn cap is the Mastra loop's step budget: a stop, not a failure.
-        stoppedReason: result.subtype === 'error_max_turns' ? 'max_steps' : undefined,
-        text: result.subtype === 'success' ? result.result : undefined,
-        toolCallCount: toolCalls,
-        usage: spent(),
-      };
     },
     usage: {
       normalise: (report) =>

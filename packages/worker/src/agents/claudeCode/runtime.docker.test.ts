@@ -48,6 +48,7 @@ vi.mock('../../lib/execUtils.js', () => ({
 
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import { type MockMessagesApi, startMockMessagesApi } from './mockMessagesApi.js';
+import { createModelProxy, type ModelProxy } from './modelProxy.js';
 import { claudeCodeRuntime } from './runtime.js';
 
 const run = promisify(execFile);
@@ -122,12 +123,15 @@ async function startWorkspace() {
   return { name, shell: async (c: string) => (await exec(c)).stdout.trim(), workspace };
 }
 
-async function makeRuntime(ws: Awaited<ReturnType<typeof startWorkspace>>) {
+async function makeRuntime(
+  ws: Awaited<ReturnType<typeof startWorkspace>>,
+  overrides: { apiBase?: string; modelProxy?: ModelProxy } = {}
+) {
   const toolCalls: Record<string, unknown>[] = [];
   const runtime = claudeCodeRuntime({
     access: {
       // The AI SDK spelling of a base URL, with its /v1: the runtime must normalize it.
-      apiBase: `http://${await hostAddress()}:${api.port}/v1`,
+      apiBase: overrides.apiBase ?? `http://${await hostAddress()}:${api.port}/v1`,
       apiKey: API_KEY,
       modelId: 'claude-sonnet-5-5',
     },
@@ -137,6 +141,7 @@ async function makeRuntime(ws: Awaited<ReturnType<typeof startWorkspace>>) {
       addToolCall: (c: Record<string, unknown>) => toolCalls.push(c),
     } as unknown as AgentTracer,
     workspace: ws.workspace as never,
+    ...(overrides.modelProxy ? { modelProxy: overrides.modelProxy } : {}),
   });
   return { runtime, toolCalls };
 }
@@ -192,6 +197,45 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
       'Write',
     ]);
     expect(main[0]?.system).toContain('You are the implementer.');
+  }, 180_000);
+
+  it('sends every model call through the worker’s proxy: the container holds a turn token, not the key', async () => {
+    const gateway = await hostAddress();
+    const proxy = createModelProxy({
+      advertisedUrl: (port) => `http://${gateway}:${port}`,
+      listenHost: '0.0.0.0',
+      listenPort: 0,
+    });
+    try {
+      const ws = await startWorkspace();
+      // The provider is reached from the worker, so its address is the worker's view of it.
+      const { runtime } = await makeRuntime(ws, {
+        apiBase: `http://127.0.0.1:${api.port}/v1`,
+        modelProxy: proxy,
+      });
+      api.requests.length = 0;
+      const debited: { usage: { inputTokens: number; outputTokens: number } }[][] = [];
+
+      const outcome = await runtime.runTurn({
+        onCallSpent: async (spent) => {
+          debited.push(spent as never);
+        },
+        system: 'S',
+        user: 'write hello',
+      });
+
+      expect(outcome.text).toBe('all done');
+      expect(await ws.shell('cat out.txt')).toBe('hello');
+      // The provider saw the real key; the harness only ever had its turn token.
+      expect(api.requests.length).toBeGreaterThan(0);
+      expect(api.requests.every((r) => r.apiKey === API_KEY)).toBe(true);
+      // Each call was debited as it ended, so the turn owes nothing more.
+      const calls = debited.flat();
+      expect(calls.reduce((n, c) => n + c.usage.inputTokens, 0)).toBe(100 * api.requests.length);
+      expect(outcome.usageByModel).toEqual([]);
+    } finally {
+      await proxy.close();
+    }
   }, 180_000);
 
   it('refuses a command the policy blocks, tells the model, and leaves the container untouched', async () => {

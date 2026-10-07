@@ -69,10 +69,21 @@ services:
       # deploying shell cannot silently take precedence over `.env`.
       AWS_ACCESS_KEY_ID: ${ARTIFACT_S3_ACCESS_KEY:?ARTIFACT_S3_ACCESS_KEY is required in production — do not use the local dev default}
       AWS_SECRET_ACCESS_KEY: ${ARTIFACT_S3_SECRET_KEY:?ARTIFACT_S3_SECRET_KEY is required in production — do not use the local dev default}
+      # The Claude Code harness sends its model calls through a metering proxy
+      # in the worker, so a workspace container never holds the provider key.
+      # Workspaces join the `workspaces` network, where they reach this worker
+      # by its own hostname; nothing is published on the host. Set
+      # HARNESS_MODEL_PROXY_PORT empty to turn the proxy off.
+      HARNESS_MODEL_PROXY_PORT: ${HARNESS_MODEL_PROXY_PORT-8790}
+      HARNESS_MODEL_PROXY_URL: ${HARNESS_MODEL_PROXY_URL:-http://{hostname}:${HARNESS_MODEL_PROXY_PORT:-8790}}
+      WORKSPACE_NETWORK: ${WORKSPACE_NETWORK:-auto-swe-workspaces}
     group_add:
       - "${DOCKER_GID:-999}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - workspaces
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,3 +114,9 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+
+networks:
+  # Agent workspaces and the worker, and nothing else: a workspace reaches the
+  # worker's model proxy here, never the database or Temporal.
+  workspaces:
+    name: ${WORKSPACE_NETWORK:-auto-swe-workspaces}

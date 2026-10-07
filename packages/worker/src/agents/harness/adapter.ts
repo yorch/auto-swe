@@ -111,6 +111,12 @@ export interface HarnessTurn {
    * report every call they see; a turn without `onCallSpent` ignores them.
    */
   callUsage(callId: string, modelSpec: string, usage: UsageTotals): void;
+  /**
+   * One model call that is complete, with what it was billed — for an adapter
+   * that sees each call end (a metering proxy in front of the provider). It is
+   * debited at once; the adapter reports such calls instead of `callUsage`.
+   */
+  callSpent(callId: string, modelSpec: string, usage: UsageTotals): void;
 }
 
 /** What the adapter's turn reports, before its usage is normalised. */
