@@ -9,7 +9,9 @@ import { BUILTIN_MODELS } from '@auto-swe/shared/lib/builtinModels';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
   discoverProviderModels,
+  isPrivateHostListed,
   listProviderModels,
+  modelListRequest,
   parseModelListPage,
 } from './modelDiscovery.js';
 
@@ -402,5 +404,50 @@ describe('discoverProviderModels secrecy', () => {
     const results = await discoverProviderModels(prisma);
     expect(results[0]).toMatchObject({ error: 'request failed (TypeError)', ok: false });
     expect(JSON.stringify(results)).not.toContain('TOPSECRET');
+  });
+});
+
+describe('private-network provider hosts', () => {
+  const base = { apiKey: 'k', provider: 'internal-llm' };
+
+  it('refuses a private apiBase unless its host is listed', () => {
+    const refused = modelListRequest({ ...base, apiBase: 'https://10.1.2.3/v1' });
+    expect(refused).toEqual({ error: expect.stringMatching(/private network/) });
+
+    const allowed = modelListRequest({
+      ...base,
+      apiBase: 'https://10.1.2.3/v1',
+      privateHosts: ['10.1.2.3'],
+    });
+    expect(allowed).toMatchObject({ url: 'https://10.1.2.3/v1/models' });
+  });
+
+  it('matches host and port exactly, case-insensitively', () => {
+    expect(isPrivateHostListed('https://Internal.Example.com/v1', ['internal.example.com'])).toBe(
+      true
+    );
+    expect(isPrivateHostListed('http://10.0.0.5:8000/v1', ['10.0.0.5'])).toBe(false);
+    expect(isPrivateHostListed('http://10.0.0.5:8000/v1', ['10.0.0.5:8000'])).toBe(true);
+    expect(isPrivateHostListed('not a url', ['10.0.0.5'])).toBe(false);
+  });
+
+  it.each([
+    'http://127.0.0.1:8000/v1',
+    'http://localhost:8000/v1',
+    'http://169.254.169.254/v1',
+    'http://[::1]:8000/v1',
+  ])('still refuses %s when listed', (apiBase) => {
+    const host = new URL(apiBase).host;
+    const result = modelListRequest({ ...base, apiBase, privateHosts: [host] });
+    expect(result).toEqual({ error: expect.stringMatching(/never allowed/) });
+  });
+
+  it('does not let a listed host waive other refusals', () => {
+    const result = modelListRequest({
+      ...base,
+      apiBase: 'ftp://10.1.2.3/v1',
+      privateHosts: ['10.1.2.3'],
+    });
+    expect(result).toEqual({ error: expect.stringMatching(/protocol/) });
   });
 });

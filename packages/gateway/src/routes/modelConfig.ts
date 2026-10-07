@@ -1,4 +1,5 @@
-import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { isPrivateHostListed, resolvePrivateModelHosts } from '@auto-swe/shared/lib/modelDiscovery';
+import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -88,7 +89,9 @@ async function createCredentialAndAudit(
     return reply.status(400).send({ error: { code: 'INVALID_CREDENTIAL', message: problem } });
   }
   if (input.apiBase) {
-    const safety = isSafeProbeUrl(input.apiBase);
+    const safety = checkProbeUrl(input.apiBase, {
+      allowPrivate: isPrivateHostListed(input.apiBase, await resolvePrivateModelHosts()),
+    });
     if (!safety.ok) {
       return reply.status(400).send({
         error: { code: 'UNSAFE_API_BASE', message: `apiBase rejected: ${safety.reason}` },
@@ -136,7 +139,9 @@ async function updateCredentialAndAudit(
     return reply.status(400).send({ error: { code: 'INVALID_CREDENTIAL', message: problem } });
   }
   if (body.apiBase) {
-    const safety = isSafeProbeUrl(body.apiBase);
+    const safety = checkProbeUrl(body.apiBase, {
+      allowPrivate: isPrivateHostListed(body.apiBase, await resolvePrivateModelHosts()),
+    });
     if (!safety.ok) {
       return reply.status(400).send({
         error: { code: 'UNSAFE_API_BASE', message: `apiBase rejected: ${safety.reason}` },

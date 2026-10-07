@@ -43,6 +43,12 @@ The `mcp` group holds the switches and bounds of the MCP server: `mcp.enabled`,
 per request, so they take effect within the settings cache's ~30 s with no restart; see
 [mcp-server.md](./mcp-server.md#settings).
 
+The `models` group holds `models.privateNetworkHosts` (ADMIN-only, GLOBAL only, default empty): hosts a
+provider credential's `apiBase` may name even though they are, or resolve to, a private address. It lifts
+the refusal on saving a credential, on its **Test** button, and on model discovery; loopback and
+link-local / cloud-metadata addresses stay refused whatever is listed. See
+[model-configuration.md](./model-configuration.md#troubleshooting).
+
 The `skills` group holds two settings, both ADMIN-only and GLOBAL only. `skills.import.privateNetworkHosts`
 (default empty) names hosts a skill source may live on even though they are, or are spelled as, a private
 address; a host qualifies only if it is also an approved repository host, and cloud metadata and loopback
