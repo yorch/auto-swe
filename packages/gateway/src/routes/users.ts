@@ -284,6 +284,8 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
 
       const user = await fastify.prisma.user.create({
         data: {
+          approvalSource: 'admin',
+          approvedAt: new Date(),
           email,
           emailVerified: true, // Admin vouched for this email
           isActive: true, // Admin-invited → skip the approval queue
@@ -394,8 +396,14 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
+        // Any admin decision about whether the account is active counts as the account
+        // having been reviewed: it stamps `approvedAt` the first time, so a deactivated
+        // account can never be mistaken for one still waiting for the GitHub org rule.
+        const stampApproval = request.body.isActive !== undefined && !user.approvedAt;
         const updateArgs = {
-          data: request.body,
+          data: stampApproval
+            ? { ...request.body, approvalSource: 'admin', approvedAt: new Date() }
+            : request.body,
           select: { email: true, id: true, isActive: true, role: true, slackId: true },
           where: { id: request.params.id },
         } as const;

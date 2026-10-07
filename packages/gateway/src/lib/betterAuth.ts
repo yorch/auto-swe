@@ -32,6 +32,7 @@ import { APIError } from 'better-auth/api';
 import { jwt, magicLink } from 'better-auth/plugins';
 import { type GenericOAuthConfig, genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import { authEmailAvailable, deliverAuthEmail } from './authEmail.js';
+import { autoApproveGithubUser } from './githubAutoApprove.js';
 import { type GithubSignIn, resolveGithubSignIn } from './githubEnterpriseAuth.js';
 import { syncGithubLoginForAccount } from './githubIdentity.js';
 import {
@@ -310,6 +311,35 @@ function buildAuth() {
     }
   };
 
+  /**
+   * Approve a new GitHub sign-in whose user belongs to a listed organization
+   * (`github.signInAutoApproveOrgs`). Runs after `refreshGithubLogin`, which records the
+   * login the membership is asked about. Fails closed and never throws: a user it cannot
+   * approve stays in the approval queue, and sign-in is unaffected.
+   */
+  const approveGithubSignIn = async (account: {
+    providerId: string;
+    userId: string;
+  }): Promise<void> => {
+    if (account.providerId !== 'github') {
+      return;
+    }
+    try {
+      const outcome = await autoApproveGithubUser(prisma, account.userId);
+      if (outcome.approved) {
+        console.info(
+          `[better-auth] auto-approved user ${account.userId} (member of GitHub organization ${outcome.org}).`
+        );
+      } else if (outcome.reason === 'unavailable' || outcome.reason === 'no-credential') {
+        console.warn(
+          `[better-auth] could not confirm GitHub organization membership for user ${account.userId} (${outcome.reason}); they remain in the approval queue.`
+        );
+      }
+    } catch (err) {
+      console.error(`[better-auth] GitHub auto-approval failed for user ${account.userId}:`, err);
+    }
+  };
+
   return betterAuth({
     // Link sign-ins by verified email so a user who's already in the system
     // via GitHub and then signs in with Google (same verified email) ends up
@@ -370,7 +400,12 @@ function buildAuth() {
       // projection needs this login, but a GitHub outage must not stop someone
       // signing in. An unresolved user shows up in the advisory-mode logs.
       account: {
-        create: { after: async (account) => refreshGithubLogin(account) },
+        create: {
+          after: async (account) => {
+            await refreshGithubLogin(account);
+            await approveGithubSignIn(account);
+          },
+        },
         // Unlinking must forget the identity. A login left behind keeps
         // resolving repository permissions for an account that is no longer
         // connected to this user at all.
