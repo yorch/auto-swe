@@ -324,6 +324,8 @@ export async function listProviderModels(args: {
   const listedIds = new Set<string>();
   let unfollowable = false;
   let query: Record<string, string> | null = firstPageQuery(args.provider);
+  // Every page shares the first page's origin, so one fetch serves them all.
+  let fetchPage: typeof fetch | undefined;
   for (let page = 0; query && page < MAX_PAGES; page++) {
     const request = modelListRequest({ ...args, query });
     if ('error' in request) {
@@ -331,7 +333,8 @@ export async function listProviderModels(args: {
     }
     let res: Response;
     try {
-      res = await modelListFetch(request.url, args.allowPrivateNetwork === true)(request.url, {
+      fetchPage ??= modelListFetch(request.url, args.allowPrivateNetwork === true);
+      res = await fetchPage(request.url, {
         ...request.init,
         signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
       });
