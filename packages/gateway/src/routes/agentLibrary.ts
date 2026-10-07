@@ -10,9 +10,11 @@ import {
   type AgentScopeKey,
   createAgent,
   deactivateAgentLineage,
+  defaultOverrideRuntime,
+  inheritingHarnessWarnings,
   listAgents,
   mergedRuntimeAndModel,
-  runtimeModelError,
+  runtimeSaveError,
   updateAgent,
   validateAgentScopeRefs,
   validateMcpConnectionRef,
@@ -193,7 +195,15 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
-      const runtimeError = runtimeModelError(body.runtime, body.modelSpec);
+      const named = {
+        inheritsModelFrom: body.inheritsModelFrom ?? null,
+        modelSpec: body.modelSpec ?? null,
+      };
+      const runtime =
+        body.runtime !== undefined
+          ? body.runtime
+          : await defaultOverrideRuntime(fastify.prisma, body, named);
+      const runtimeError = await runtimeSaveError(fastify.prisma, { ...named, runtime });
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
@@ -209,7 +219,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         const { agent, catalogWarnings, scanWarnings } = await createAgent(
           fastify.prisma,
           key,
-          body,
+          { ...body, runtime },
           actor.sub
         );
         await writeAuditLog(fastify, {
@@ -256,7 +266,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
       const merged = mergedRuntimeAndModel(current, request.body);
-      const runtimeError = runtimeModelError(merged.runtime, merged.modelSpec);
+      const runtimeError = await runtimeSaveError(fastify.prisma, merged);
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
@@ -266,6 +276,11 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         request.body,
         actor.sub
       );
+      // A new model can strand harness agents that inherit it: say so, refuse nothing.
+      const runtimeWarnings =
+        request.body.modelSpec !== undefined
+          ? await inheritingHarnessWarnings(fastify.prisma, agent.key, agent.modelSpec)
+          : [];
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
@@ -282,6 +297,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
         ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        ...(runtimeWarnings.length > 0 ? { runtimeWarnings } : {}),
       });
     }
   );
@@ -395,10 +411,22 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: teamAdmin, schema: { body: TeamCreate, params: TeamParams } },
     async (request, reply) => {
       const actor = requireUser(request);
-      if (runtimeChangeForbidden(actor.role, request.body.runtime, null)) {
+      const named = {
+        inheritsModelFrom: request.body.inheritsModelFrom ?? null,
+        modelSpec: request.body.modelSpec ?? null,
+      };
+      // A new TEAM override starts on the platform-wide row's runtime; only an
+      // ADMIN may name another.
+      const inherited = await defaultOverrideRuntime(
+        fastify.prisma,
+        { key: request.body.key, scope: 'TEAM' },
+        named
+      );
+      if (runtimeChangeForbidden(actor.role, request.body.runtime, inherited)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
-      const runtimeError = runtimeModelError(request.body.runtime, request.body.modelSpec);
+      const runtime = request.body.runtime !== undefined ? request.body.runtime : inherited;
+      const runtimeError = await runtimeSaveError(fastify.prisma, { ...named, runtime });
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
@@ -424,7 +452,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         const { agent, catalogWarnings, scanWarnings } = await createAgent(
           fastify.prisma,
           key,
-          request.body,
+          { ...request.body, runtime },
           actor.sub
         );
         await writeAuditLog(fastify, {
@@ -473,7 +501,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
       const merged = mergedRuntimeAndModel(current, request.body);
-      const runtimeError = runtimeModelError(merged.runtime, merged.modelSpec);
+      const runtimeError = await runtimeSaveError(fastify.prisma, merged);
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
@@ -496,6 +524,17 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         request.body,
         actor.sub
       );
+      // A new model can strand harness agents that inherit it: say so, refuse nothing.
+      const runtimeWarnings =
+        request.body.modelSpec !== undefined
+          ? await inheritingHarnessWarnings(
+              fastify.prisma,
+              agent.key,
+              agent.modelSpec,
+              // A team admin is not told about other teams' agents.
+              actor.role === 'ADMIN' ? undefined : request.params.id
+            )
+          : [];
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
@@ -515,6 +554,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
         ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        ...(runtimeWarnings.length > 0 ? { runtimeWarnings } : {}),
       });
     }
   );

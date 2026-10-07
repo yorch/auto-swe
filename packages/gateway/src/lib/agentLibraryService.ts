@@ -1,6 +1,11 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
-import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import {
+  type ImplementerRuntimeKind,
+  runtimeModelError,
+  toImplementerRuntime,
+} from '@auto-swe/shared/types/api';
 import { catalogWarnings } from './modelCatalogService.js';
 
 /**
@@ -52,17 +57,166 @@ export interface AgentBaseInput {
   runtime?: ImplementerRuntimeKind | null;
 }
 
-export { runtimeModelError } from '@auto-swe/shared/types/api';
+export { runtimeModelError };
 
 /** The runtime and model a version would end up with after merging `base` over `current`. */
 export function mergedRuntimeAndModel(
-  current: { modelSpec: string | null; runtime: string | null } | null,
-  base: Pick<AgentBaseInput, 'modelSpec' | 'runtime'>
-): { modelSpec: string | null; runtime: string | null } {
+  current: {
+    inheritsModelFrom?: string | null;
+    modelSpec: string | null;
+    runtime: string | null;
+  } | null,
+  base: Pick<AgentBaseInput, 'inheritsModelFrom' | 'modelSpec' | 'runtime'>
+): { inheritsModelFrom: string | null; modelSpec: string | null; runtime: string | null } {
   return {
+    inheritsModelFrom:
+      base.inheritsModelFrom === undefined
+        ? (current?.inheritsModelFrom ?? null)
+        : base.inheritsModelFrom,
     modelSpec: base.modelSpec === undefined ? (current?.modelSpec ?? null) : base.modelSpec,
     runtime: base.runtime === undefined ? (current?.runtime ?? null) : base.runtime,
   };
+}
+
+type AgentReader = Pick<PrismaClient, 'agent'>;
+
+/**
+ * The model an agent that names none resolves to platform-wide: the active
+ * GLOBAL rows along `inheritsModelFrom`, from `from`. `null` when the chain is
+ * broken or loops — a run fails on that where it resolves the agent.
+ */
+export async function inheritedModelSpec(
+  prisma: AgentReader,
+  from: string | null
+): Promise<string | null> {
+  const seen = new Set<string>();
+  let key = from;
+  while (key && !seen.has(key)) {
+    seen.add(key);
+    const row = await prisma.agent.findFirst({
+      orderBy: { version: 'desc' },
+      select: { inheritsModelFrom: true, modelSpec: true },
+      where: { isActive: true, key, scope: 'GLOBAL' },
+    });
+    if (!row) {
+      return null;
+    }
+    if (row.modelSpec) {
+      return row.modelSpec;
+    }
+    key = row.inheritsModelFrom;
+  }
+  return null;
+}
+
+/**
+ * Why a version may not be saved with its runtime, or `null`: the harness
+ * drives only an Anthropic model, so its own model must be one — and when it
+ * names none, the model it inherits along the platform-wide chain. A scoped
+ * override of the parent, which only a run's scope selects, is checked when a
+ * run resolves it (`HARNESS_UNSUPPORTED_MODEL`).
+ */
+export async function runtimeSaveError(
+  prisma: AgentReader,
+  version: { inheritsModelFrom: string | null; modelSpec: string | null; runtime: string | null }
+): Promise<string | null> {
+  const own = runtimeModelError(version.runtime, version.modelSpec);
+  if (own || version.runtime !== 'claude-code' || version.modelSpec || !version.inheritsModelFrom) {
+    return own;
+  }
+  const inherited = await inheritedModelSpec(prisma, version.inheritsModelFrom);
+  if (!inherited || inherited.startsWith('anthropic/')) {
+    return null;
+  }
+  return `The claude-code runtime needs an Anthropic model, but this agent inherits '${inherited}' from '${version.inheritsModelFrom}'. Give it an anthropic/<model> of its own, or set the runtime to mastra.`;
+}
+
+/**
+ * The runtime a new scoped override starts with when its writer names none:
+ * the platform-wide row's, so an override of an agent an ADMIN put on the
+ * harness stays on it — a team admin, who cannot set a runtime, would
+ * otherwise move it back to the default without meaning to. An override whose
+ * own model the harness cannot drive starts with none instead.
+ */
+export async function defaultOverrideRuntime(
+  prisma: AgentReader,
+  key: Pick<AgentScopeKey, 'key' | 'scope'>,
+  version: { inheritsModelFrom: string | null; modelSpec: string | null }
+): Promise<ImplementerRuntimeKind | null> {
+  if (key.scope === 'GLOBAL') {
+    return null;
+  }
+  const global = await prisma.agent.findFirst({
+    orderBy: { version: 'desc' },
+    select: { runtime: true },
+    where: { isActive: true, key: key.key, scope: 'GLOBAL' },
+  });
+  const runtime = toImplementerRuntime(global?.runtime);
+  if (!runtime || (await runtimeSaveError(prisma, { ...version, runtime }))) {
+    return null;
+  }
+  return runtime;
+}
+
+/**
+ * Advisory notes for saving `key` with `modelSpec`: the active agents, at any
+ * scope, that run on the harness and would inherit that model through it
+ * (directly, or through agents that name no model of their own). A model the
+ * harness cannot drive breaks them where a run resolves them; nothing is
+ * refused here, because the agent being saved is valid on its own.
+ */
+export async function inheritingHarnessWarnings(
+  prisma: AgentReader,
+  key: string,
+  modelSpec: string | null,
+  /**
+   * Whose agents the caller may see named: a team admin's save lists only the
+   * platform-wide agents and their own team's. Omitted for a platform ADMIN.
+   */
+  visibleToTeam?: string
+): Promise<string[]> {
+  if (!modelSpec || modelSpec.startsWith('anthropic/')) {
+    return [];
+  }
+  const warnings: string[] = [];
+  const seen = new Set<string>([key]);
+  let frontier = [key];
+  while (frontier.length > 0) {
+    const heirs = await runUnscoped(
+      'heirs at every scope inherit the model; a team admin sees only GLOBAL rows and their own team’s',
+      ['Agent'],
+      () =>
+        prisma.agent.findMany({
+          select: { key: true, runtime: true, scope: true },
+          where: {
+            inheritsModelFrom: { in: frontier },
+            isActive: true,
+            modelSpec: null,
+            ...(visibleToTeam
+              ? {
+                  OR: [
+                    { scope: 'GLOBAL' as const },
+                    { scope: 'TEAM' as const, teamId: visibleToTeam },
+                  ],
+                }
+              : {}),
+          },
+        })
+    );
+    frontier = [];
+    for (const heir of heirs) {
+      if (heir.runtime === 'claude-code') {
+        warnings.push(
+          `agent '${heir.key}' (${heir.scope}) runs on claude-code and would inherit '${modelSpec}' from '${key}', which the harness cannot drive.`
+        );
+      }
+      if (!seen.has(heir.key)) {
+        seen.add(heir.key);
+        frontier.push(heir.key);
+      }
+    }
+  }
+  return warnings;
 }
 
 function scopeWhere(key: AgentScopeKey) {

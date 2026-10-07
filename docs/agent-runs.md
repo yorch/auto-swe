@@ -128,7 +128,8 @@ exfiltration channel.
 `runtime: claude-code`; the run-wide `workspace.implementerRuntime` setting does not apply to agent
 runs. On the Claude Code harness the agent runs as one harness turn inside its container, granted the
 harness tools that stand in for exactly the workspace tools above (`null` → `Read`, `Glob`, `Grep`;
-`[]` → none), behind the same worker-side tool policy as the implementer, and with no MCP server bound.
+`[]` → none), behind the same worker-side tool policy as the implementer, and with the agent's MCP
+connection relayed from the worker, as it would bind on the Mastra loop.
 The choice is pinned on the run before the clone, when the step first resolves its agent (agent
 runs skip the run-start snapshot other runs take), and recorded as an `agent.runtime` trace event. See
 [agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness).
@@ -235,10 +236,11 @@ budget stops the loop with `BUDGET_EXCEEDED`. A run that hits its wall-clock dea
 fails mid-loop has already recorded every step that completed. (The generic `runAgent` call keeps its
 single record at the end unless it is asked for per-step accounting, which agent runs are.)
 
-An agent on the Claude Code harness is debited per model call instead of per step: each call the
-harness streams is debited once the next call begins, and the budget is re-checked after every
-debit, so an exhausted budget stops the run with `BUDGET_EXCEEDED` one call late. What the harness
-did not stream is charged when the turn ends (see Limitations).
+An agent on the Claude Code harness is debited per model call instead of per step, and the budget
+is re-checked after every debit, so an exhausted budget stops the run with `BUDGET_EXCEEDED` one call
+late. Through the worker's model proxy every call is debited as its response ends; without it, each
+call the harness streams is debited once the next call begins, and what the harness did not stream is
+charged when the turn ends (see Limitations).
 
 ---
 
@@ -396,12 +398,13 @@ hidden template's own link is not shown.
 - **Usage of the step in flight at a deadline abort is unrecorded.** Each completed model step is
   debited as it lands, but when the wall-clock deadline or a cancellation aborts a step mid-flight,
   that step's tokens are not recorded, so spend can exceed the ledger by at most one step.
-- **An agent on the Claude Code harness is debited per streamed call.** A call is debited once the
-  next begins, so the budget stops the run one call late and the call in flight is charged when the
-  turn ends. A call the harness makes without streaming a message (a small-model side task) is
-  charged only with the turn's totals and never triggers the check; a turn stopped at the deadline
-  has no totals, so those calls are missed. The harness also holds the model credential inside
-  the agent's container ([agents.md, Limitations](./agents.md#11-limitations)).
+- **Without the model proxy, a harness agent is metered from what it streams.** A call is debited
+  once the next begins, so the call in flight is charged when the turn ends. A call the harness makes
+  without streaming a message (a small-model side task) is charged only with the turn's totals and
+  never triggers the check; a turn stopped at the deadline has no totals, so those calls are missed.
+  The harness then also holds the model credential inside the agent's container. The worker's model
+  proxy (`HARNESS_MODEL_PROXY_PORT`) closes both
+  ([agents.md, Limitations](./agents.md#11-limitations)).
 - **MCP next to a workspace is an exfiltration channel.** An agent with an MCP connection and a
   readable repository can send source anywhere that connection reaches, steered by text in the
   repository. MCP binds per the agent's own configuration; it is not switched off for agent runs. The

@@ -56,13 +56,28 @@ export function spentUsageOf(err: unknown): SpentByModel | undefined {
   return typeof err === 'object' && err !== null ? spentBeforeFailure.get(err) : undefined;
 }
 
+/** One turn's prompt, and how the caller meters it. */
+export interface ImplementerTurnInput {
+  system: string;
+  user: string;
+  /**
+   * Per-call accounting: called, one at a time, with each model call's usage
+   * once the call is complete, while the turn runs. It debits the call and may
+   * then throw (the run's budget is exhausted); the turn is aborted and fails
+   * with that error. A call handed here is not reported again in the turn's
+   * usage. A runtime that cannot see its calls one by one (the Mastra loop
+   * reports a turn's usage when it ends) ignores it.
+   */
+  onCallSpent?: (spent: SpentByModel) => Promise<void>;
+}
+
 /**
  * Drives one model turn against the workspace the implementer is bound to. It
  * only runs the loop; usage, scanning and tracing belong to `runImplementerTurn`
  * so every runtime is governed the same way.
  */
 export interface ImplementerRuntime {
-  runTurn(input: { system: string; user: string }): Promise<ImplementerTurnOutcome>;
+  runTurn(input: ImplementerTurnInput): Promise<ImplementerTurnOutcome>;
 }
 
 /**
@@ -110,13 +125,6 @@ export interface ImplementerTurn {
   /** The span name `recordLlmUsage` records the call under. */
   usageEvent: string;
   user: string;
-  /**
-   * What the runtime already debited while the turn ran, through per-call
-   * accounting ({@link perCallAccounting}). Added to what the turn reports, so
-   * the trace row and the returned attribution cover the whole turn; the turn's
-   * own report excludes it, so nothing is charged twice.
-   */
-  debited?: () => LlmAttribution;
 }
 
 const NO_SPEND: LlmAttribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
@@ -155,13 +163,13 @@ async function accrue(
 }
 
 /**
- * Per-call accounting for a harness turn (`HarnessRuntimeOptions.onCallSpent`):
- * each model call is debited to the run's ledger as soon as the harness has
- * finished it, then the budget is re-checked, so a long harness run cannot
- * overshoot its tier by more than the call in flight — the guarantee the Mastra
- * loop's per-step accounting gives an agent run. A check that fails throws
- * (`BUDGET_EXCEEDED`), and the runtime ends the turn with that error. Pass
- * `debited` to {@link runImplementerTurn} so the turn's row covers these calls.
+ * Per-call accounting for one turn (`ImplementerTurnInput.onCallSpent`): each
+ * model call is debited to the run's ledger as soon as the runtime has finished
+ * it, then the budget is re-checked, so a long harness turn cannot overshoot its
+ * tier by more than the call in flight — the guarantee the Mastra loop's
+ * per-step accounting gives an agent run. A check that fails throws
+ * (`BUDGET_EXCEEDED`), and the runtime ends the turn with that error.
+ * `debited` is what the turn has been charged this way so far.
  */
 export function perCallAccounting(turn: Pick<ImplementerTurn, 'role' | 'usageEvent'>): {
   onCallSpent: (spent: { modelSpec: string; usage: TokenUsage }[]) => Promise<void>;
@@ -197,9 +205,15 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
   stoppedReason?: ImplementerTurnOutcome['stoppedReason'];
 }> {
   const start = Date.now();
+  // Every turn is metered per call where the runtime can see its calls.
+  const accounting = perCallAccounting(turn);
   let outcome: ImplementerTurnOutcome;
   try {
-    outcome = await turn.runtime.runTurn({ system: turn.system, user: turn.user });
+    outcome = await turn.runtime.runTurn({
+      onCallSpent: accounting.onCallSpent,
+      system: turn.system,
+      user: turn.user,
+    });
   } catch (err) {
     const spent = spentUsageOf(err);
     if (spent) {
@@ -218,7 +232,7 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
     (outcome.usage ? [{ modelSpec: turn.boundModelSpec, usage: outcome.usage }] : []);
   const owed = await accrue(turn, spent);
   // The calls debited as the turn ran come first, so the row is named for them.
-  const attribution = turn.debited ? combine(turn.debited(), owed) : owed;
+  const attribution = combine(accounting.debited(), owed);
 
   // LLM output scanner — advisory, non-blocking (the helper never throws).
   await recordSuspiciousLlmOutput(turn.tracer, outcome.text ?? '', { inputJson: turn.context });

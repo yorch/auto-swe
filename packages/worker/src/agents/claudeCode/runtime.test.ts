@@ -57,6 +57,12 @@ vi.mock('./policy.js', async (importOriginal) => ({
   decideToolCall: h.decideToolCall,
 }));
 // One scripted run per `query()` call: the messages it yields, then optionally a throw.
+const relay = vi.hoisted(() => ({
+  close: vi.fn(async () => {}),
+  open: vi.fn(),
+  serverClose: vi.fn(async () => {}),
+}));
+vi.mock('../harness/mcpRelay.js', () => ({ openMcpRelay: relay.open }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: ({ options, prompt }: { options: QueryOptions; prompt: string }) => {
     h.queryCalls.push({ options, prompt });
@@ -834,11 +840,10 @@ describe('the outcome of a turn', () => {
 describe('per-call accounting', () => {
   it('debits each API call it streams once the next begins, and reports the rest', async () => {
     const debited: unknown[] = [];
-    const { runtime } = setup({
-      onCallSpent: async (spent: unknown) => {
-        debited.push(spent);
-      },
-    });
+    const onCallSpent = async (spent: unknown) => {
+      debited.push(spent);
+    };
+    const { runtime } = setup();
     h.script.push([
       [
         init('s'),
@@ -850,7 +855,7 @@ describe('per-call accounting', () => {
       ],
     ]);
 
-    const outcome = await runtime.runTurn({ system: 'S', user: 'U' });
+    const outcome = await runtime.runTurn({ onCallSpent, system: 'S', user: 'U' });
 
     expect(debited).toEqual([
       [
@@ -1000,5 +1005,181 @@ describe('cancellation and cleanup', () => {
 
     await expect(turn).rejects.toBe(cancelled);
     expect(h.queryCalls[0]?.options.abortController.signal.aborted).toBe(true);
+  });
+});
+
+describe('through the worker’s model proxy', () => {
+  const PROXY_URL = 'http://host.docker.internal:8790';
+  const TOKEN = 'sk-ant-proxy-turn-token';
+
+  function fakeProxy(onRegistered?: (reg: { onCall: (call: unknown) => void }) => void) {
+    const release = vi.fn(async () => {});
+    const register = vi.fn(async (reg: { onCall: (call: unknown) => void }) => {
+      onRegistered?.(reg);
+      return { baseUrl: PROXY_URL, release, token: TOKEN };
+    });
+    return { proxy: { close: vi.fn(), listen: vi.fn(), register }, register, release };
+  }
+
+  it('gives the container a turn token and the proxy’s address, never the credential', async () => {
+    const { proxy, register, release } = fakeProxy();
+    const { runtime } = setup({ modelProxy: proxy });
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    // The real key and the provider's host are handed to the proxy, in the worker.
+    expect(register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: API_KEY,
+        upstreamBaseUrl: 'https://kong.example/anthropic',
+      })
+    );
+    expect(release).toHaveBeenCalledTimes(1);
+
+    const call = h.queryCalls[0] as (typeof h.queryCalls)[number];
+    expect((call.options.settings as { env: unknown }).env).toEqual({
+      ANTHROPIC_BASE_URL: PROXY_URL,
+    });
+    call.options.spawnClaudeCodeProcess({
+      args: [],
+      env: {},
+      signal: new AbortController().signal,
+    });
+    const [, args, spawnOptions] = h.spawn.mock.calls[0] as [
+      string,
+      string[],
+      { env: Record<string, string> },
+    ];
+    expect(args).toContain(`ANTHROPIC_BASE_URL=${PROXY_URL}`);
+    expect(spawnOptions.env.ANTHROPIC_API_KEY).toBe(TOKEN);
+    expect(JSON.stringify([args, spawnOptions.env.ANTHROPIC_API_KEY])).not.toContain(API_KEY);
+  });
+
+  it('debits each call the proxy saw end — side calls included — and not the streamed reports', async () => {
+    let report: ((call: unknown) => void) | undefined;
+    const { proxy } = fakeProxy((reg) => {
+      report = reg.onCall;
+    });
+    const { runtime } = setup({ modelProxy: proxy });
+    const debited: unknown[] = [];
+    let proxySaw: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      proxySaw = resolve;
+    });
+    h.script.push([
+      [
+        init('s'),
+        assistantReply('msg_1', 'claude-opus-5-5', streamed(100, 5)),
+        assistantReply('msg_2', 'claude-opus-5-5', streamed(200, 10)),
+      ],
+      undefined,
+      gate,
+    ]);
+    h.script[0]?.[0]?.push(
+      success('done', {
+        'claude-haiku-4-5-20251001': usage(7, 3),
+        'claude-opus-5-5': usage(300, 15),
+      })
+    );
+
+    const turn = runtime.runTurn({
+      onCallSpent: async (spent: unknown) => {
+        debited.push(spent);
+      },
+      system: 'S',
+      user: 'U',
+    });
+    // While the turn runs the proxy reports each call as its response ends.
+    await vi.waitFor(() => expect(report).toBeDefined());
+    report?.({
+      id: 'msg_1',
+      model: 'claude-opus-5-5',
+      usage: { cacheRead: 0, cacheWrite: 0, input: 100, output: 5 },
+    });
+    report?.({
+      id: 'msg_side',
+      model: 'claude-haiku-4-5-20251001',
+      usage: { cacheRead: 0, cacheWrite: 0, input: 7, output: 3 },
+    });
+    report?.({
+      id: 'msg_2',
+      model: 'claude-opus-5-5',
+      usage: { cacheRead: 0, cacheWrite: 0, input: 200, output: 10 },
+    });
+    proxySaw();
+    const outcome = await turn;
+
+    expect(debited.map((d) => (d as { modelSpec: string }[])[0]?.modelSpec)).toEqual([
+      'anthropic/claude-opus-5-5',
+      'anthropic/claude-haiku-4-5-20251001',
+      'anthropic/claude-opus-5-5',
+    ]);
+    // Every call was debited as it ended, so the turn owes nothing more.
+    expect(outcome.usageByModel).toEqual([]);
+  });
+});
+
+describe('the Agent’s MCP connection', () => {
+  beforeEach(() => {
+    relay.open.mockResolvedValue({
+      callTimeoutMs: 1234,
+      close: relay.close,
+      createServer: () => ({ close: relay.serverClose, marker: 'in-process server' }),
+      tools: [{ inputSchema: { type: 'object' }, name: 'search' }],
+    });
+  });
+
+  it('is relayed from the worker as an in-process server, and no other MCP server is loaded', async () => {
+    const target = { url: 'https://mcp.example/mcp' };
+    const { runtime } = setup({ mcp: target });
+    h.script.push([[init('s1'), success('ok')]], [[init('s1'), success('again')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    // One remote connection for the runtime, a fresh in-process server per turn.
+    expect(relay.open).toHaveBeenCalledTimes(1);
+    expect(relay.open.mock.calls[0]?.[0]).toBe(target);
+    expect(relay.serverClose).toHaveBeenCalledTimes(2);
+    const options = h.queryCalls[0]?.options as Record<string, unknown>;
+    expect(options.strictMcpConfig).toBe(true);
+    expect(options.mcpServers).toEqual({
+      connection: {
+        instance: expect.objectContaining({ marker: 'in-process server' }),
+        name: 'connection',
+        timeout: 1234,
+        type: 'sdk',
+      },
+    });
+
+    // The policy allows the relayed tools by their harness names.
+    const hooks = (options as QueryOptions).hooks;
+    await hooks.PreToolUse[0]?.hooks[0]?.(
+      {
+        cwd: '/workspace/target-repo',
+        tool_input: { q: 'x' },
+        tool_name: 'mcp__connection__search',
+      },
+      't'
+    );
+    expect(h.decideToolCall).toHaveBeenCalledWith(
+      'mcp__connection__search',
+      { q: 'x' },
+      expect.objectContaining({ mcpTools: ['mcp__connection__search'] }),
+      '/workspace/target-repo'
+    );
+
+    await runtime.close?.();
+    expect(relay.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads no MCP server at all without a connection, a repository’s own included', async () => {
+    const { runtime } = setup();
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const options = h.queryCalls[0]?.options as Record<string, unknown>;
+    expect(options.mcpServers).toBeUndefined();
+    expect(options.strictMcpConfig).toBe(true);
+    expect(relay.open).not.toHaveBeenCalled();
   });
 });

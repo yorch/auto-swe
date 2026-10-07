@@ -61,7 +61,11 @@ describe('runImplementerTurn', () => {
 
     const result = await runImplementerTurn(turn(runtime, { iteration: 2 }));
 
-    expect(runtime.runTurn).toHaveBeenCalledWith({ system: 'SYS', user: 'USER' });
+    expect(runtime.runTurn).toHaveBeenCalledWith({
+      onCallSpent: expect.any(Function),
+      system: 'SYS',
+      user: 'USER',
+    });
     expect(recordLlmUsage).toHaveBeenCalledWith(
       'wf-1',
       'implementer',
@@ -323,36 +327,53 @@ describe('perCallAccounting', () => {
     expect(accounting.debited().costUsd).toBe(0.5);
   });
 
-  it('lets the turn row cover what was debited as well as what the turn still owed', async () => {
+  it('meters every turn per call: the row covers what was debited and what the turn still owed', async () => {
     const runtime: ImplementerRuntime = {
-      runTurn: async () => ({
-        text: 'done',
-        toolCallCount: 1,
-        usageByModel: [
-          { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 10, outputTokens: 4 } },
-        ],
-      }),
+      runTurn: async ({ onCallSpent }) => {
+        // The runtime hands over a finished call while the turn runs…
+        await onCallSpent?.([
+          { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 100, outputTokens: 40 } },
+        ]);
+        // …and reports only what it did not hand over.
+        return {
+          text: 'done',
+          toolCallCount: 1,
+          usageByModel: [
+            { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 10, outputTokens: 4 } },
+          ],
+        };
+      },
     };
-    const debited = () => ({
-      costUsd: 1,
-      inputTokens: 100,
-      modelSpec: 'anthropic/claude-opus-5-5',
-      outputTokens: 40,
-    });
 
-    const { attribution } = await runImplementerTurn({ ...turn(runtime), debited });
+    const { attribution } = await runImplementerTurn(turn(runtime));
 
-    // Only the remainder reaches the ledger here; the debited calls already did.
-    expect(recordLlmUsage).toHaveBeenCalledTimes(1);
+    // The debited call, then the remainder; the budget is re-checked after the debit.
+    expect(recordLlmUsage).toHaveBeenCalledTimes(2);
+    expect(assertBudgetAvailable).toHaveBeenCalledWith('agent.implementer');
     expect(attribution).toEqual({
-      costUsd: 1.5,
-      inputTokens: 110,
+      costUsd: 1,
+      inputTokens: 20,
       modelSpec: 'anthropic/claude-opus-5-5',
-      outputTokens: 44,
+      outputTokens: 8,
     });
     expect(addLlmResponse).toHaveBeenCalledWith(
-      expect.objectContaining({ costUsd: 1.5, inputTokens: 110, outputTokens: 44 })
+      expect.objectContaining({ costUsd: 1, inputTokens: 20, outputTokens: 8 })
     );
+  });
+
+  it('fails the turn with the budget error a per-call debit raised', async () => {
+    const budget = new Error('BUDGET_EXCEEDED');
+    assertBudgetAvailable.mockRejectedValueOnce(budget);
+    const runtime: ImplementerRuntime = {
+      runTurn: async ({ onCallSpent }) => {
+        await onCallSpent?.([
+          { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 1, outputTokens: 1 } },
+        ]);
+        return { toolCallCount: 0 };
+      },
+    };
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(budget);
+    expect(addLlmResponse).not.toHaveBeenCalled();
   });
 });
 

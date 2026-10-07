@@ -83,6 +83,9 @@ export async function snapshotAgentRuntimes(
   if (ctx.workflowTemplateId) {
     visible.push({ scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: ctx.workflowTemplateId });
   }
+  if (ctx.channelId) {
+    visible.push({ channelId: ctx.channelId, scope: 'CHANNEL' });
+  }
   if (ctx.teamId) {
     visible.push({ scope: 'TEAM', teamId: ctx.teamId });
   }
@@ -90,7 +93,7 @@ export async function snapshotAgentRuntimes(
     visible.push({ orgId: ctx.orgId, scope: 'ORGANIZATION' });
   }
   const rows = await runUnscoped(
-    'GLOBAL agents have no tenant by definition; the team, org and template rows are the run’s own',
+    'GLOBAL agents have no tenant by definition; the template, channel, team and org rows are the run’s own',
     ['Agent'],
     () =>
       prisma.agent.findMany({

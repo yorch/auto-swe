@@ -189,6 +189,13 @@ WEB_URL=https://app.example.com      # base URL for the "Open inbox" link in Sla
 # WORKSPACE_METADATA_BLOCK_IMAGE=alpine:3.20
 # WORKSPACE_BLOCK_METADATA=true        # only the literal `false` disables the metadata blackhole
 # SCANNER_REGEX_BUDGET_MS=250          # per-pattern scanner wall-clock budget
+# The Claude Code harness's model proxy (the compose files turn it on): the worker holds the model
+# key and meters every call; a workspace gets a per-turn token. Unset the port to turn it off.
+# HARNESS_MODEL_PROXY_PORT=8790
+# HARNESS_MODEL_PROXY_URL=http://{hostname}:8790   # how a workspace reaches this worker; {hostname}
+#                                                  # is the worker's own (default http://host.docker.internal:<port>)
+# HARNESS_MODEL_PROXY_BIND=0.0.0.0
+# WORKSPACE_NETWORK=auto-swe-workspaces            # a Docker network workspaces join instead of the default bridge
 ```
 
 > **Magic-link transport gotcha.** `nodemailer.sendMail()` resolves on SMTP `2xx` (relay accepted) — *not* delivery. Always test end-to-end against a real inbox after configuring SMTP/Resend, and check the audit log for `accepted` vs `rejected` arrays.

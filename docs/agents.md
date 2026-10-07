@@ -167,7 +167,7 @@ Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is fo
 
 Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present whenever an MCP server was contacted (including a connect that returned zero tools) and **must** be called in a `finally` block.
 
-Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for a harness it takes the one the harness registry holds for that runtime ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)), loads the same `toolKeys`, skills and step budget, binds the Agent's model and credential through that harness, and never opens the MCP client or binds a Mastra model. It returns `{ kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
+Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for a harness it takes the one the harness registry holds for that runtime ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)), loads the same `toolKeys`, skills and step budget, binds the Agent's model and credential through that harness, hands it the same MCP connection to relay from the worker, and never binds a Mastra model. It returns `{ kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client (or the harness's relay) and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
 
 **Running a turn:** activities do not call `agent.generate` themselves. `runImplementerTurn` (`agents/implementerRuntime.ts`) runs one turn through an `ImplementerRuntime` — the Mastra tool loop (`mastraRuntime(agent, maxSteps)`) or the Claude Code harness, chosen per agent ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) — then accrues usage through `recordLlmUsage`, runs the advisory output scan, and records the LLM call on the tracer. `executeImplementation`, `implementerSession`, the eval harness, and the merge-conflict resolver all take this path, so a turn is metered and traced identically wherever it runs. The runtime only drives the loop and reports text, tool-call count, and usage; the caller still calls `assertBudgetAvailable` first and owns any failure row.
 
@@ -380,7 +380,8 @@ Claude Code harness running inside the workspace container. Which one drives an 
 agent, by `resolveAgentRuntime(key, ctx, default)`:
 
 1. **The run's pin.** `WorkflowRun.agentRuntimes` (`{ agentKey: runtime | null }`) is written at run
-   start by `createWorkflowRun` (`snapshotAgentRuntimes`): every agent the run can resolve, with the
+   start by `createWorkflowRun`, or by `startChannelRun` for a channel-assistant turn
+   (`snapshotAgentRuntimes`): every agent the run can resolve, with the
    runtime its Agent asks for — or `null`, meaning it had no opinion and the caller's default
    decides — resolved in the scope and under the agent-version pins the run's activities use. Every
    resolution in the run — another activity, a retry, a parallel branch — reads it, so an edit to an
@@ -419,10 +420,18 @@ Where the runtime applies:
 
 Both the setting and the `runtime` column are ADMIN-only because they decide what runs inside the
 trust boundary and which credential enters the workspace. A team admin's edit of a TEAM agent keeps
-the runtime an ADMIN chose and is refused (`403`) if it would change it. Saving `claude-code` on a
-version whose own model is not `anthropic/…` is refused (`400 RUNTIME_MODEL_MISMATCH`); a version that
-inherits its model is checked when a run resolves it (`HARNESS_UNSUPPORTED_MODEL`). The column carries
-a CHECK constraint, and the worker reads an unknown value as no opinion, with a warning.
+the runtime an ADMIN chose and is refused (`403`) if it would change it. A new scoped override whose
+writer names no runtime starts on the platform-wide row's (`defaultOverrideRuntime`), so a team admin
+who overrides a harness agent's prompt keeps it on the harness; a team admin may restate that runtime
+but not name another. An override whose own model the harness cannot drive starts with none.
+
+Saving `claude-code` on a version the harness cannot drive is refused (`400 RUNTIME_MODEL_MISMATCH`):
+its own model must be `anthropic/…`, and a version that names none is checked against the model it
+inherits along the platform-wide `inheritsModelFrom` chain (`runtimeSaveError`). Saving a model the
+harness cannot drive on an agent that harness agents inherit from is allowed, and the response lists
+them (`runtimeWarnings`; the library page shows them), because the saved agent is valid on its own.
+The column carries a CHECK constraint, and the worker reads an unknown value as no opinion, with a
+warning.
 
 **Agent runs on the harness.** An agent run whose agent asks for `claude-code` runs one harness turn in
 its own container in place of the Mastra loop. The run's step ceiling is the harness's turn cap and its
@@ -430,8 +439,8 @@ wall-clock deadline stops the turn as it stops the Mastra loop: the run ends wit
 `stoppedReason: 'wall_clock'` and is still gated and published. The harness is granted exactly the
 harness tools that stand in for the workspace tools the agent-run rule grants (`null` → `Read`, `Glob`,
 `Grep`; a list → only what it names; `[]` and `["mcp"]` → no tools), never the implementer's "no
-opinion means everything". It binds no MCP server; an agent with one gets an
-`agent.runtime_mcp_skipped` event. The budget is checked before the turn, and each model call is
+opinion means everything". The Agent's MCP connection binds as it would on the Mastra loop, relayed
+from the worker (below). The budget is checked before the turn, and each model call is
 debited as soon as the harness has finished it (`perCallAccounting`, through the runtime's
 `onCallSpent`), with the budget re-checked after every debit, as the Mastra loop debits every step: an
 exhausted budget aborts the turn and the run fails `BUDGET_EXCEEDED` after the call in flight. When
@@ -455,7 +464,7 @@ wrong, against what is one harness's own:
 | Cancellation and a caller's deadline, wired to one abort controller; a cancelled turn reports the cancellation | `usage`: a normaliser from what the harness reports to per-model usage |
 | Each decision bounded by the 60 s deadline, a throw turned into a deny, a refusal traced with its tag | `capabilities`: whether it can enforce the per-call policy |
 | Tool results bounded to 20 000 characters in the trace; a failed turn's usage accrued | `close`: anything held beyond a turn (optional) |
-| Per-call metering for a caller that asks (`onCallSpent`): each call debited once the next begins, a throw aborting the turn, the turn's report reconciled against what was debited | Reporting each model call's usage as it streams (`turn.callUsage`) |
+| Per-call metering for every turn (`onCallSpent` on the turn's input): each call debited once the next begins, a throw aborting the turn, the turn's report reconciled against what was debited | Reporting each model call's usage as it streams (`turn.callUsage`) |
 
 The canonical vocabulary (`harness/policy.ts`) is the four capabilities of the Mastra workspace
 tools, and `decideCanonicalCall` applies their scanners to it: `shell` gets the audit line and
@@ -518,10 +527,36 @@ call reaches the runtime's `canUseTool`, which denies everything. The flag setti
 have used for the same Agent, and only for `anthropic/<model>` specs — Claude Code speaks the
 Anthropic Messages API. A credential's `apiBase` is how a deployment sends the harness through its
 own gateway (for example Kong); a trailing `/v1`, which the AI SDK spelling includes, is stripped
-because the harness appends it. The credential reaches the container as `ANTHROPIC_API_KEY`, named on
-the `docker exec` command line without a value so it never appears in `ps`. The base URL is also
-pinned through the SDK's highest-priority settings layer, so a repository's own `.claude/settings.json`
-cannot redirect the key to another host.
+because the harness appends it.
+
+With the worker's **model proxy** on (`HARNESS_MODEL_PROXY_PORT`, [configuration.md](./configuration.md)),
+the credential never enters the container. Each turn registers with the proxy
+(`agents/claudeCode/modelProxy.ts`) and the harness gets a random token in place of the key and the
+proxy's address in place of the provider's. The proxy accepts only `POST /v1/messages` and
+`/v1/messages/count_tokens`, only with a token whose turn is still running, sends the call on to the
+credential's host with the real key, and streams the answer back unchanged. A token read out of the
+container is good for that turn's model calls, at the proxy, until the turn ends, and spends against
+the run's budget like any other call. A workspace reaches the proxy at `HARNESS_MODEL_PROXY_URL`: by
+default `host.docker.internal`, which `createWorkspace` maps to the Docker host gateway, or a worker
+that shares `WORKSPACE_NETWORK` with its workspaces, as the shipped compose files run it.
+
+Without the proxy the credential reaches the container as `ANTHROPIC_API_KEY`, named on the
+`docker exec` command line without a value so it never appears in `ps`. Either way the base URL is
+pinned through the SDK's highest-priority settings layer, so a repository's own
+`.claude/settings.json` cannot redirect the harness, and the key or token it sends, to another host.
+
+**MCP.** An Agent whose tool keys enable `'mcp'` and that references an `mcp` Connection — the same
+binding the Mastra loop uses (`resolveAgentMcpUrl`; a persona falls back to the implementer's) — has
+it relayed to the harness from the worker (`agents/harness/mcpRelay.ts`). The worker connects to the
+server through the same guarded fetch, credential and private-network rules as the Mastra binding,
+lists its tools with their own schemas, and serves them to each turn through an in-process MCP server
+the Agent SDK carries over its existing pipe, named `connection` (the harness calls a tool
+`mcp__connection__<tool>`). Each call runs in the worker, under the connection's call timeout, and is
+audit-logged (`[mcp:audit] … via=harness`) and traced like any harness tool call; the connection's
+token and headers never enter the container. The policy allows exactly the relayed tools by name, and
+the harness loads no other MCP server: `strictMcpConfig` makes it ignore a repository's `.mcp.json`
+and its own settings. A server that cannot be reached is traced (`mcp.connect_failed`) and the turn
+runs without it, as on the Mastra loop.
 
 **Repository configuration.** The repository's `CLAUDE.md` and `.claude` settings apply
 (`settingSources: ['project']`), so a flow ported from a developer machine behaves as it did there.
@@ -535,13 +570,18 @@ a file in the container, because it travels on a command line capped at 128 KiB 
 is `/workspace/.harness/home/.claude/system-prompt.md`, inside the one directory outside the checkout
 the policy lets `Read` reach.
 
-**Usage.** The harness reports usage per model as running totals, and a resumed session starts from
-its saved totals, so a turn records the change since the last. A turn that ends without a result — a
-deadline stopped it, or the process died — is metered from the assistant messages it streamed, each of
-which carries its API call's usage (the last report per message id counts). The adapter hands those
-reports to the shared runtime as they stream (`turn.callUsage`); a caller that meters per call
-(`onCallSpent`, an agent run) is debited for a call once the next one begins, and the turn's own
-report is then reconciled against what was debited (`subtractSpent`), so nothing is charged twice.
+**Usage.** Every turn is metered per call: `runImplementerTurn` hands the runtime the turn's
+`onCallSpent` (`perCallAccounting`), each model call is debited and the budget re-checked as the call
+ends, and an exhausted budget aborts the turn with `BUDGET_EXCEEDED`. Through the model proxy the calls
+are exact: the proxy reads each response's usage as it streams past and reports the call when its
+response ends (`turn.callSpent`) — the small-model side calls the harness makes without streaming a
+message included — and once the turn is aborted its in-flight calls are cut off and new ones refused.
+Without the proxy the adapter reports the usage each streamed assistant message carries
+(`turn.callUsage`), and a call is debited once the next one begins. The harness itself reports usage
+per model as running totals (a resumed session starts from its saved totals, so a turn records the
+change since the last); a turn that ends without a result — a deadline stopped it, or the process
+died — falls back to its streamed messages. Whichever report the turn ends with is reconciled against
+what was debited call by call (`subtractSpent`), so nothing is charged twice.
 Each model is priced at its own spec
 (a harness may delegate small tasks to a cheaper model). Cache reads and writes count as input
 tokens toward the budget and are priced at the model's cache rates. A turn that ends in an error
@@ -1142,8 +1182,9 @@ template override is never badged, because it may use a different model or crede
   also its only one. An epic's children are runs of their own and pin at their own start, so an edit
   between the epic's start and a child's start reaches that child. A run created before the
   `skillRevisions` column existed has no pin. A channel-resident run started by the channel assistant
-  (`startChannelRun`) writes its own `WorkflowRun` and pins the latest active GLOBAL Agent versions
-  and the skills visible to the channel's team and organization; a channel task run through
+  (`startChannelRun`) writes its own `WorkflowRun` and pins the latest active GLOBAL Agent versions,
+  each agent's runtime at the channel's scope, and the skills visible to the channel's team and
+  organization; a channel task run through
   `createWorkflowRun` with no repository pins GLOBAL skills plus those of the team and organization
   of the Slack channel its request came from (matched on Slack's channel id). Eval-harness cases are not runs and always read current text.
 - **The token budget is a soft cap under fan-out.** The budget gate runs before a call and usage is
@@ -1234,50 +1275,59 @@ template override is never badged, because it may use a different model or crede
 - **A call that never reaches a tool has no duration.** `runAgent` times the calls that execute;
   one that failed input validation or named no tool is read from the steps of a `generate` that
   returned, with `durationMs` 0, so a `generate` that throws loses those and keeps the rest.
-- **The Claude Code harness holds a model credential inside the workspace container.** The agent
-  runs as root on a network with unrestricted egress, so anything it runs can read the key and send
-  it elsewhere; a repository's settings cannot move where the harness itself sends it, but the
-  agent's own commands can. The blast radius is whatever the key can spend. Point the credential at
-  a gateway key scoped to that run's budget, and enable `workspace.implementerRuntime`, or an
-  agent's `runtime`, only where that is acceptable. Minting a key per run is not built.
+- **Without the model proxy, the Claude Code harness holds a model credential inside the workspace
+  container.** The agent runs as root on a network with unrestricted egress, so anything it runs can
+  read the key and send it elsewhere; a repository's settings cannot move where the harness itself
+  sends it, but the agent's own commands can. The blast radius is whatever the key can spend. Turn
+  the proxy on (`HARNESS_MODEL_PROXY_PORT`; the shipped compose files do), or point the credential
+  at a gateway key scoped to that run's budget.
+- **The model proxy's token is still a bearer token inside the container.** Anything the agent runs
+  can read it and spend through the proxy until the turn ends — but only on the Messages API, only
+  against the run's budget, and only at the credential's own host. The proxy listens on
+  `HARNESS_MODEL_PROXY_BIND` (every interface by default), so any host that can reach that port can
+  try a token; tokens are 256-bit random values that die with their turn. A workspace that cannot
+  reach the proxy fails its turn with the harness's connection error; nothing falls back to handing
+  it the key. A call cut off mid-stream (an aborted turn) is charged the input it was billed and the
+  output the provider had reported, which is less than it may have spent.
 - **A repository's own hooks and settings run inside the container.** With project settings
   loaded, a repository can ship shell hooks and permission rules. They execute in the untrusted
   container and cannot override the worker-side decision on a tool call (a deny wins), but they
   can run code at session start and shape what the model is told.
 - **Some runtimes are still pinned at first use, not at the run's start.** An agent created after a
-  run started, an agent run's agent, and the agents of a channel-assistant run (`startChannelRun`
-  writes its own run row) are pinned the first time the run resolves them, so an edit made before
-  that reaches the run. An agent whose `inheritsModelFrom` chain was broken at run start is left out
+  run started, and an agent run's agent (it resolves in a narrower scope than the run), are pinned
+  the first time the run resolves them, so an edit made before that reaches the run. An agent whose `inheritsModelFrom` chain was broken at run start is left out
   of the snapshot and fails where it is used, as before. The snapshot costs a lookup per agent key at
   run start (a cascade walk of scalar columns, no credential).
 - **Generic `agent` nodes never run on the harness.** They have no workspace, so an Agent asking for
   `claude-code` runs on Mastra there, with a trace event saying so; a node that needs the harness has
   to be an implementer-family step or an agent run.
-- **Harness agent runs are metered per streamed call.** A call is debited once the next one begins, so
-  an exhausted budget stops the run one call late, as the Mastra loop stops one step late, and the
-  call that was streaming when the budget ran out is charged when the turn ends. Calls the harness
-  makes without streaming a message (a small-model side task) are not seen until the turn's totals
-  arrive, so they are charged at the end and never trigger the check. A turn stopped by its
-  deadline, or whose process died, has no totals and is metered from its streamed messages alone, so
-  it can undercount by those side calls. Implementer-family turns on the harness are still metered
-  per turn (below).
+- **A harness turn stops one call late.** The budget is re-checked after each call is debited, so
+  an exhausted budget stops the turn after the call that exhausted it (and any running beside it),
+  as the Mastra loop stops one step late. Without the model proxy the gap is wider: a streamed call
+  is debited only once the next one begins, the calls the harness makes without streaming a message
+  (a small-model side task) are charged only from the turn's final totals and never trigger the
+  check, and a turn stopped by its deadline or whose process died has no totals, so it is metered
+  from its streamed messages and can undercount by those side calls.
 - **The seeded agents carry no runtime.** Built-in agents seed with none, so the implementer family
   follows `workspace.implementerRuntime` until an ADMIN sets one; a seeded default-model move keeps
   that choice. A bundle can carry an agent's `runtime` ([bundles.md](./bundles.md)); one that omits
   it leaves an installed agent's runtime as it is.
 - **A persona inherits a runtime only through `inheritsModelFrom`.** A persona that names its own model
-  does not follow its parent's runtime, and the save-time model check covers only a version's own
-  model; an inherited non-Anthropic model is refused when a run resolves it.
-- **The harness ignores the `mcp` binding.** It gets at most the six tools the Agent's `toolKeys`
-  grant; MCP servers an Agent references are not passed to it, and there is no sub-agent, web or
-  plugin tool.
+  does not follow its parent's runtime. The save-time check of an inherited model follows the
+  platform-wide chain only: a team or organization override of the parent, which only a run's scope
+  selects, is checked when a run resolves it (`HARNESS_UNSUPPORTED_MODEL`), and so is a parent edited
+  after the persona was saved (the parent's save lists the personas it strands, but does not refuse).
+  A new override inherits the platform-wide runtime only when it is created; a later change to the
+  platform-wide row's runtime does not reach existing overrides.
+- **The harness gets no sub-agent, web or plugin tool,** and no MCP server but the Agent's own
+  connection, relayed from the worker: a repository's `.mcp.json` and the harness's own MCP settings
+  are ignored (`strictMcpConfig`). A relayed MCP tool is allowed by name and runs in the worker; like
+  the Mastra loop's MCP tools, its arguments and results are not scanned, only audit-logged and traced.
 - **`Edit` is content-checked on the inserted text only,** not on the whole resulting file, and
   `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
   evade them.
 - **Harness usage is metered conservatively and priced by the model it names.** Cache reads and
-  writes count in full against the token budget, though they are priced at the cache rates. For an
-  implementer-family turn the budget is checked before the turn and accrued after it, so one turn can
-  overshoot by up to its step budget (agent runs debit per call, above); the
+  writes count in full against the token budget, though they are priced at the cache rates. The
   SDK's own cost cap is not used because it is a client-side estimate. A model the harness picks that
   has no catalog price records $0 with a warning; the organization-USD-cap guard checks only the
   Agent's configured model.

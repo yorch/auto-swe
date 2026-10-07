@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { hostname } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({
@@ -397,6 +398,10 @@ describe('systemConfig resolvers', () => {
       'WORKSPACE_BLOCK_METADATA',
       'WORKER_MAX_CONCURRENT_ACTIVITIES',
       'SCANNER_REGEX_BUDGET_MS',
+      'HARNESS_MODEL_PROXY_PORT',
+      'HARNESS_MODEL_PROXY_URL',
+      'HARNESS_MODEL_PROXY_BIND',
+      'WORKSPACE_NETWORK',
     ];
     beforeEach(() => {
       for (const key of KEYS) {
@@ -408,13 +413,50 @@ describe('systemConfig resolvers', () => {
       expect(resolveWorkspaceInfra()).toEqual({
         blockMetadata: true,
         cpus: 2,
+        harnessModelProxy: null,
         image: 'node:24-alpine',
         maxConcurrentActivities: 10,
         memory: '4g',
         metadataBlockImage: 'alpine:3.20',
+        network: null,
         pidsLimit: 512,
         regexScanBudgetMs: 250,
       });
+    });
+
+    it('turns the harness model proxy on with a port, advertised at the Docker host alias by default', () => {
+      vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+      expect(resolveWorkspaceInfra().harnessModelProxy).toEqual({
+        bindHost: '0.0.0.0',
+        port: 8790,
+        url: 'http://host.docker.internal:8790',
+      });
+      vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://10.0.0.5:8790/');
+      vi.stubEnv('HARNESS_MODEL_PROXY_BIND', '10.0.0.5');
+      expect(resolveWorkspaceInfra().harnessModelProxy).toEqual({
+        bindHost: '10.0.0.5',
+        port: 8790,
+        url: 'http://10.0.0.5:8790',
+      });
+    });
+
+    it('advertises this worker by its own hostname, and joins workspaces to a named network', () => {
+      vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+      vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://{hostname}:8790');
+      vi.stubEnv('WORKSPACE_NETWORK', 'auto-swe-workspaces');
+      const infra = resolveWorkspaceInfra();
+      expect(infra.harnessModelProxy?.url).toBe(`http://${hostname()}:8790`);
+      expect(infra.network).toBe('auto-swe-workspaces');
+    });
+
+    it('leaves the proxy off for a port that is not one, and ignores an unusable URL', () => {
+      vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '99999');
+      expect(resolveWorkspaceInfra().harnessModelProxy).toBeNull();
+      vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+      vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://user:pass@proxy:8790');
+      expect(resolveWorkspaceInfra().harnessModelProxy?.url).toBe(
+        'http://host.docker.internal:8790'
+      );
     });
 
     it('reads each variable', () => {
@@ -462,7 +504,20 @@ describe('systemConfig resolvers', () => {
         vi.stubEnv('WORKSPACE_BLOCK_METADATA', 'false');
         vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', '20');
         vi.stubEnv('SCANNER_REGEX_BUDGET_MS', '500');
+        vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+        vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://172.17.0.1:8790');
         expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
+      it('fails the boot on a proxy port or URL the resolver would ignore', () => {
+        vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '0');
+        vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'ftp://proxy');
+        vi.stubEnv('WORKSPACE_NETWORK', 'bad network;rm');
+        expect(validateWorkspaceInfraEnv()).toEqual([
+          'HARNESS_MODEL_PROXY_PORT="0" is not a port number (1-65535)',
+          'HARNESS_MODEL_PROXY_URL="ftp://proxy" is not an http(s) URL with no credentials',
+          'WORKSPACE_NETWORK="bad network;rm" is not a Docker network name',
+        ]);
       });
 
       it('does not treat an oversized number as a problem — the resolver clamps it', () => {
