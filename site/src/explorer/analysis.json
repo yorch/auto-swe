@@ -1792,7 +1792,7 @@
     {
       "body": "Agent identity, model, runtime, prompt, skills, tool keys and optional MCP connection are data.",
       "category": "Agents",
-      "detail": "Template → channel → team → organization → global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live. Skill text is pinned separately, by revision. A team member can list only the keys, names and models an override may name, without prompts, tools or connections; the full team library stays team-admin or ADMIN. In the library table an admin sees a No credential badge on a platform-wide agent that is not pinned to its own credential and whose provider has no usable credential (a sub-role persona takes its parent’s status); team, organization and template overrides are never badged. A version may set its runtime (the Mastra loop or the Claude Code harness); only a platform ADMIN can set or change it, and the library form shows the picker only on the platform-admin page. Saving the harness runtime with the version’s own non-Anthropic model is refused; an inherited model is checked when a run resolves it. Restoring a version restores its runtime, and a seeded default-model move keeps it. An agent pinned to its own credential shows that credential’s provider and last four characters instead.",
+      "detail": "Template → channel → team → organization → global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live. Skill text is pinned separately, by revision. A team member can list only the keys, names and models an override may name, without prompts, tools or connections; the full team library stays team-admin or ADMIN. In the library table an admin sees a No credential badge on a platform-wide agent that is not pinned to its own credential and whose provider has no usable credential (a sub-role persona takes its parent’s status); team, organization and template overrides are never badged. A version may set its runtime (the Mastra loop or the Claude Code harness); only a platform ADMIN can set or change it, and the library form shows the picker only on the platform-admin page. Saving the harness runtime is refused when the version’s own model, or the model it inherits along the platform-wide chain, is not Anthropic; saving a model that harness agents inherit is allowed and lists them. A new scoped override that names no runtime starts on the platform-wide row’s, which a team admin may restate but not change, unless the harness cannot drive the override’s own model. Restoring a version restores its runtime, and a seeded default-model move keeps it. An agent pinned to its own credential shows that credential’s provider and last four characters instead.",
       "id": "agentLibrary",
       "refs": [
         "agents",
@@ -1801,7 +1801,9 @@
         "agentOptions",
         "agentBadge",
         "runtimeAdminOnly",
-        "runtimeModelCheck"
+        "runtimeModelCheck",
+        "inheritedModelCheck",
+        "overrideRuntime"
       ],
       "status": "Implemented",
       "title": "Versioned agent library"
@@ -1809,9 +1811,17 @@
     {
       "body": "Run a launchable library agent in a throwaway repository workspace, optionally publishing a branch or draft PR.",
       "category": "Engineering",
-      "detail": "Separate from the engineering template. The agent runs on the Mastra loop unless its own runtime is claude-code. Step and wall-clock caps and admission limits apply. On Mastra the run is debited per step. On the harness it is one turn capped at the step ceiling: the budget is checked before the turn, each streamed model call is debited once the next begins with the budget re-checked after every debit, the wall-clock deadline stops the turn rather than failing it, toolKeys grant only the named workspace tools (none set gives the read-only tools, an empty list gives none), and an MCP connection is not bound. A runtime no harness serves, or a model the harness cannot drive, is refused before any container is created. Delivery uses a fresh trusted container. A draft pull request it opens is recorded as a PullRequest row on the run’s own ledger row; a failed write appears as a pr.record_failed event on the run. No-delivery diffs are explicitly unverified.",
+      "detail": "Separate from the engineering template. The agent runs on the Mastra loop unless its own runtime is claude-code. Step and wall-clock caps and admission limits apply. On Mastra the run is debited per step. On the harness it is one turn capped at the step ceiling: the budget is checked before the turn, each model call is debited with the budget re-checked after every debit, the wall-clock deadline stops the turn rather than failing it, toolKeys grant only the named workspace tools (none set gives the read-only tools, an empty list gives none), and its MCP connection, if it binds one, is relayed from the worker. A runtime no harness serves, or a model the harness cannot drive, is refused before any container is created. Delivery uses a fresh trusted container. A draft pull request it opens is recorded as a PullRequest row on the run’s own ledger row; a failed write appears as a pr.record_failed event on the run. No-delivery diffs are explicitly unverified.",
       "id": "agentRun",
-      "refs": ["agentRun", "trace", "cli", "agentRunLoop", "agentRunHarness", "harnessPerCall"],
+      "refs": [
+        "agentRun",
+        "trace",
+        "cli",
+        "agentRunLoop",
+        "agentRunHarness",
+        "harnessPerCall",
+        "mcpRelay"
+      ],
       "status": "Implemented",
       "title": "One-off repository agent runs"
     },
@@ -1910,7 +1920,7 @@
     {
       "body": "Call a named remote tool from a workflow or attach an MCP server toolset to an enabled agent.",
       "category": "Integrations",
-      "detail": "Generic agent nodes do not acquire local workspace tools; they may receive MCP tools. Enabling a connection type in the generic registry does not imply readSource/writeOutcome implements it. A connection may carry one bearer token, stored in the connection’s encrypted envelope columns and write-only: responses say only whether one is set, and audit rows record a boolean. With a token, the Authorization: Bearer header is attached only to requests for the server’s own origin and stripped from any other, the client is also pinned to the connection’s host, a redirect is refused, and the token is removed from connect error text. A connection may also carry up to five custom request headers (an API-gateway key, a tenant id): sealed together as one encrypted envelope that key rotation also covers, and write-only like the token, since responses list the header names and whether the set is unreadable and audit rows record names only. Names must be HTTP tokens and unique ignoring case, values visible ASCII (inner spaces allowed) with no line breaks and at most 2,048 characters. Authorization (the bearer token is where that credential lives), hop-by-hop headers, Host, Content-Length, Content-Type, Accept, Cookie, Set-Cookie, proxy-* headers and the MCP protocol headers are refused. Headers follow the token’s origin-only path on both transports, never overwrite a header the transport sets, and are removed from a request aimed at another origin. The connection test sends them too, with protocol and token headers taking precedence, and when headers are set its 401/403 message names the credentials in general rather than only the token. A stored set is re-validated when it is opened, so a row written by anything but the gateway route cannot put a forbidden header on the wire. A token or header set that cannot be decrypted yields no agent tools and makes an mcp workflow node fail, rather than connecting without what the server expects. Pointing a connection at another origin while keeping its stored token is refused with 409 TOKEN_ORIGIN_CHANGE, and keeping stored header values while changing the origin is refused with 409 HEADERS_ORIGIN_CHANGE. An unreadable header set can only be replaced or removed (409 HEADERS_UNREADABLE otherwise). The token and headers belong to the connection, so every run that uses it presents the same credentials, not the launching user’s. An ADMIN may also turn on allowPrivateNetwork for a connection. It uses the same guard as the tracker and knowledge-base connectors: with it on, a server on a private address is accepted when the connection is saved, when it is tested, and each time the worker loads its tools. Loopback, link-local, cloud-metadata addresses and names, unspecified and malformed addresses and non-http(s) schemes are refused whatever the flag says. The flag is part of the connection’s saved configuration and every save re-checks the URL against the flag sent with it, so an update to a private-address server that does not send the flag is refused with 400 UNSAFE_URL. Every request the worker makes to an MCP server, with or without credentials, is resolved and pinned, and the opt-in covers only the connection’s own origin, so an SSE endpoint or redirect on another origin is strict. With a token or headers a redirect is refused; without them redirects are followed by hand, at most three hops, each hop text-checked and pinned, with MCP session headers kept for the server’s own origin and only a benign allowlist crossing to another. The admin connection test resolves and pins with the connection’s opt-in, never follows a redirect, and reports a refused resolution as an address on a network the connection may not reach. The admin connection test lists tools with the stored token, using streamable HTTP and falling back to the legacy SSE transport after a failure that another transport might fix; a URL ending /sse goes straight to SSE. Under the Claude Code harness no MCP server binds: an agent run records agent.runtime_mcp_skipped, while an implementer-family session records only its agent.runtime event. The worker policy refuses any harness tool call outside the six tools it maps, MCP tools included.",
+      "detail": "Generic agent nodes do not acquire local workspace tools; they may receive MCP tools. Enabling a connection type in the generic registry does not imply readSource/writeOutcome implements it. A connection may carry one bearer token, stored in the connection’s encrypted envelope columns and write-only: responses say only whether one is set, and audit rows record a boolean. With a token, the Authorization: Bearer header is attached only to requests for the server’s own origin and stripped from any other, the client is also pinned to the connection’s host, a redirect is refused, and the token is removed from connect error text. A connection may also carry up to five custom request headers (an API-gateway key, a tenant id): sealed together as one encrypted envelope that key rotation also covers, and write-only like the token, since responses list the header names and whether the set is unreadable and audit rows record names only. Names must be HTTP tokens and unique ignoring case, values visible ASCII (inner spaces allowed) with no line breaks and at most 2,048 characters. Authorization (the bearer token is where that credential lives), hop-by-hop headers, Host, Content-Length, Content-Type, Accept, Cookie, Set-Cookie, proxy-* headers and the MCP protocol headers are refused. Headers follow the token’s origin-only path on both transports, never overwrite a header the transport sets, and are removed from a request aimed at another origin. The connection test sends them too, with protocol and token headers taking precedence, and when headers are set its 401/403 message names the credentials in general rather than only the token. A stored set is re-validated when it is opened, so a row written by anything but the gateway route cannot put a forbidden header on the wire. A token or header set that cannot be decrypted yields no agent tools and makes an mcp workflow node fail, rather than connecting without what the server expects. Pointing a connection at another origin while keeping its stored token is refused with 409 TOKEN_ORIGIN_CHANGE, and keeping stored header values while changing the origin is refused with 409 HEADERS_ORIGIN_CHANGE. An unreadable header set can only be replaced or removed (409 HEADERS_UNREADABLE otherwise). The token and headers belong to the connection, so every run that uses it presents the same credentials, not the launching user’s. An ADMIN may also turn on allowPrivateNetwork for a connection. It uses the same guard as the tracker and knowledge-base connectors: with it on, a server on a private address is accepted when the connection is saved, when it is tested, and each time the worker loads its tools. Loopback, link-local, cloud-metadata addresses and names, unspecified and malformed addresses and non-http(s) schemes are refused whatever the flag says. The flag is part of the connection’s saved configuration and every save re-checks the URL against the flag sent with it, so an update to a private-address server that does not send the flag is refused with 400 UNSAFE_URL. Every request the worker makes to an MCP server, with or without credentials, is resolved and pinned, and the opt-in covers only the connection’s own origin, so an SSE endpoint or redirect on another origin is strict. With a token or headers a redirect is refused; without them redirects are followed by hand, at most three hops, each hop text-checked and pinned, with MCP session headers kept for the server’s own origin and only a benign allowlist crossing to another. The admin connection test resolves and pins with the connection’s opt-in, never follows a redirect, and reports a refused resolution as an address on a network the connection may not reach. The admin connection test lists tools with the stored token, using streamable HTTP and falling back to the legacy SSE transport after a failure that another transport might fix; a URL ending /sse goes straight to SSE. Under the Claude Code harness the agent’s connection is relayed from the worker: the worker connects with the connection’s credentials and guard and serves its tools to the harness through an in-process MCP server over the SDK’s pipe, so the credentials never enter the container. The policy allows exactly those tools, and the harness loads no other MCP server (a repository’s .mcp.json included).",
       "id": "mcp",
       "refs": [
         "agentNode",
@@ -1936,7 +1946,8 @@
         "mcpProbeGuard",
         "mcpProbeBlocked",
         "agentRunHarness",
-        "harnessDecide"
+        "harnessDecide",
+        "mcpRelay"
       ],
       "status": "Implemented",
       "title": "MCP as nodes and agent tools"
@@ -2382,7 +2393,7 @@
     {
       "body": "Each agent runs on the platform’s Mastra tool loop or the Claude Code harness, and a run never switches an agent’s loop partway through.",
       "category": "Agents",
-      "detail": "Resolution order: a caller-supplied pin (an eval side’s override), then the run’s own pin in WorkflowRun.agentRuntimes (an empty pin means the default, without reading the Agent), then the Agent version’s runtime (inherited along inheritsModelFrom, through the usual scope cascade and GLOBAL version pin), then the caller’s default. The implementer family and eval cases default to the run-pinned workspace.implementerRuntime setting; agent runs default to Mastra. A run snapshots every visible agent’s own runtime at start, resolved in the run’s scope under its version pins; an agent the snapshot lacks (one created later, an agent run’s, a channel-assistant run’s) is pinned at its first resolution with a compare-and-set, so parallel activities agree on whichever pinned first; code outside an activity, and an eval, which has no run, pin nothing. The run page shows what each agent ran on. Generic agent nodes have no workspace and always run on Mastra, tracing agent.runtime_not_applicable when their agent asks for the harness. Every runtime other than Mastra is served by a registered harness: a runtime value no harness serves fails non-retryably with HARNESS_UNAVAILABLE, and both the implementer family and agent runs select the harness and bind the agent’s model before building it.",
+      "detail": "Resolution order: a caller-supplied pin (an eval side’s override), then the run’s own pin in WorkflowRun.agentRuntimes (an empty pin means the default, without reading the Agent), then the Agent version’s runtime (inherited along inheritsModelFrom, through the usual scope cascade and GLOBAL version pin), then the caller’s default. The implementer family and eval cases default to the run-pinned workspace.implementerRuntime setting; agent runs default to Mastra. A run, a channel-assistant turn included, snapshots every visible agent’s own runtime at start, resolved in the run’s scope under its version pins; an agent the snapshot lacks (one created later, or an agent run’s) is pinned at its first resolution with a compare-and-set, so parallel activities agree on whichever pinned first; code outside an activity, and an eval, which has no run, pin nothing. The run page shows what each agent ran on. Generic agent nodes have no workspace and always run on Mastra, tracing agent.runtime_not_applicable when their agent asks for the harness. Every runtime other than Mastra is served by a registered harness: a runtime value no harness serves fails non-retryably with HARNESS_UNAVAILABLE, and both the implementer family and agent runs select the harness and bind the agent’s model before building it.",
       "id": "agentRuntime",
       "refs": [
         "agentRuntimeResolve",
@@ -2392,7 +2403,8 @@
         "harness",
         "agentRunLoop",
         "runtimeNodeMastra",
-        "harnessRegistry"
+        "harnessRegistry",
+        "channelRuntimeSnapshot"
       ],
       "status": "Implemented",
       "title": "Per-agent runtime, pinned per run"
@@ -2400,7 +2412,7 @@
     {
       "body": "The worker decides every harness tool call, verifies the harness binary before each turn and treats an undecided call as a refusal.",
       "category": "Security",
-      "detail": "Each harness tool call is translated into a canonical vocabulary (read, search, write, shell) and decided in the worker by the same checks that guard the Mastra workspace tools: the shell-command scanner and audit line for shell, the sensitive-file block and pre-write content check for writes. File paths must be absolute; writes stay inside the checkout, reads and searches inside the checkout or the harness’s own .claude home directory, and search patterns may not be absolute or contain “..”. Tools the agent’s grant leaves out are left off the harness’s tool list and refused by the policy, as is any tool outside the six the harness maps. A harness is selectable only if it declares that the worker decides each of its tool calls; the registry refuses one that does not. A tool call the worker does not answer within the decision deadline, or whose decision throws, is refused, and writes to the harness’s own configuration (.claude/, CLAUDE.md, CLAUDE.local.md, .mcp.json) are refused. Managed settings make the harness ignore the repository’s permission allow rules and disable bypass mode. Before every turn the container’s copy of the binary is compared by SHA-256 with the worker’s, re-copied on a mismatch, and a turn whose copy still differs fails with HARNESS_BINARY_UNVERIFIED.",
+      "detail": "Each harness tool call is translated into a canonical vocabulary (read, search, write, shell) and decided in the worker by the same checks that guard the Mastra workspace tools: the shell-command scanner and audit line for shell, the sensitive-file block and pre-write content check for writes. File paths must be absolute; writes stay inside the checkout, reads and searches inside the checkout or the harness’s own .claude home directory, and search patterns may not be absolute or contain “..”. Tools the agent’s grant leaves out are left off the harness’s tool list and refused by the policy, as is any tool outside the six the harness maps, except the agent’s relayed MCP tools, which run in the worker. A harness is selectable only if it declares that the worker decides each of its tool calls; the registry refuses one that does not. A tool call the worker does not answer within the decision deadline, or whose decision throws, is refused, and writes to the harness’s own configuration (.claude/, CLAUDE.md, CLAUDE.local.md, .mcp.json) are refused. Managed settings make the harness ignore the repository’s permission allow rules and disable bypass mode. Before every turn the container’s copy of the binary is compared by SHA-256 with the worker’s, re-copied on a mismatch, and a turn whose copy still differs fails with HARNESS_BINARY_UNVERIFIED.",
       "id": "harnessConfinement",
       "refs": [
         "harnessPolicy",
@@ -2412,7 +2424,8 @@
         "harnessRegistry",
         "harnessDecide",
         "harnessVocabulary",
-        "harnessCanonical"
+        "harnessCanonical",
+        "mcpRelay"
       ],
       "status": "Implemented",
       "title": "Claude Code harness confinement"
@@ -2510,9 +2523,9 @@
       "title": "Release-gate templates do not perform deployments"
     },
     {
-      "body": "A Mastra Agent Run debits per step and a harness Agent Run per streamed model call; harness turns and ordinary multi-step generate loops debit at completion.",
+      "body": "A Mastra Agent Run debits per step and every harness turn per model call; Mastra implementer turns and ordinary multi-step generate loops debit at completion.",
       "category": "Cost control",
-      "detail": "A model call can overshoot a checked budget before returning, and a harness agent run debits a call only once the next begins, so an exhausted budget stops it one call late; calls the harness makes without streaming a message are charged when the turn ends and never trigger the check. Implementer-family harness turns are still checked once before the turn and debited after it. A harness turn stopped by its deadline, or whose process dies, is metered from its streamed messages, which miss calls the harness makes without streaming one; a turn that ends at its turn cap is metered from the harness’s own totals. A harness turn that fails while its activity is cancelled reports the cancellation, and what that turn spent is not accrued. Workflows with no run have no ActiveWorkflow ledger; a per-execution token cap summed from their trace rows and this worker’s unpersisted calls bounds them instead. It cannot see calls still in flight on another worker, and a failed budget read lets the call through.",
+      "detail": "A model call can overshoot a checked budget before returning, and a harness turn re-checks the budget only after each call, so an exhausted budget stops it one call late. Through the worker’s model proxy every call, side calls included, is debited as its response ends, and a call cut off mid-stream is charged the input and output the provider had reported. Without the proxy a call is debited only once the next begins, calls the harness makes without streaming a message are charged when the turn ends and never trigger the check, and a turn stopped by its deadline, or whose process dies, is metered from its streamed messages, which miss those calls; a turn that ends at its turn cap is metered from the harness’s own totals. A harness turn that fails while its activity is cancelled reports the cancellation, and what that turn spent is not accrued. Workflows with no run have no ActiveWorkflow ledger; a per-execution token cap summed from their trace rows and this worker’s unpersisted calls bounds them instead. It cannot see calls still in flight on another worker, and a failed budget read lets the call through.",
       "id": "budgetGranularity",
       "refs": [
         "trace",
@@ -2524,7 +2537,8 @@
         "harnessPerCall",
         "harnessStreamedUsage",
         "harnessUsageSelect",
-        "harnessCancel"
+        "harnessCancel",
+        "modelProxy"
       ],
       "status": "Code-derived caveat",
       "title": "Budget precision differs by execution path"
@@ -2532,7 +2546,7 @@
     {
       "body": "Launches and each later model call are refused once cached spend has reached the cap, so spend can still land after it is crossed, and some spend is outside it.",
       "category": "Cost control",
-      "detail": "The guard runs before each budgeted model call and refuses only when the cached organization spend has already reached the cap. Up to one cache window of new calls from every run of the organization at once, plus the full cost of every call or harness turn already admitted, can land after the cap is crossed: an admitted call completes and bills in full, its cost accrues to the ledger only after it returns, and a Claude Code harness turn reports usage only when the turn ends. Concurrent launches see the same total. A spend or cap read that fails lets the call through. Spend with no derivable organization is outside the cap, and a repo-less channel task bills its channel, so the organization cap never refuses it. An epic’s planning is attributed to the first repository it names even when the epic spans organizations; each child is billed to its own repository’s. An unpriced model is refused when the run’s billed organization (the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection) has a cap, or when a runless workflow’s spend owner does, and under a channel cap; a repo-less channel task bills its channel, so it is not refused on the organization’s account.",
+      "detail": "The guard runs before each budgeted model call and refuses only when the cached organization spend has already reached the cap. Up to one cache window of new calls from every run of the organization at once, plus the full cost of every call or harness turn already admitted, can land after the cap is crossed: an admitted call completes and bills in full, its cost accrues to the ledger only after it returns, and a Claude Code harness call accrues only once it ends. Concurrent launches see the same total. A spend or cap read that fails lets the call through. Spend with no derivable organization is outside the cap, and a repo-less channel task bills its channel, so the organization cap never refuses it. An epic’s planning is attributed to the first repository it names even when the epic spans organizations; each child is billed to its own repository’s. An unpriced model is refused when the run’s billed organization (the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection) has a cap, or when a runless workflow’s spend owner does, and under a channel cap; a repo-less channel task bills its channel, so it is not refused on the organization’s account.",
       "id": "orgCap",
       "refs": [
         "orgCap",
@@ -2597,9 +2611,9 @@
       "title": "Tracing and log export have deliberate gaps"
     },
     {
-      "body": "With the claude-code runtime, the harness receives the model key inside the container the agent controls.",
+      "body": "With the claude-code runtime and no model proxy, the harness receives the model key inside the container the agent controls; through the proxy it holds a token good only for its own turn’s model calls.",
       "category": "Isolation",
-      "detail": "The key stays off command lines and every tool call passes the worker-side policy, but what the agent runs in that container can read it. This applies to implementer-family sessions and to agent runs whose agent selects the harness; an agent run’s diff is still judged and published from a fresh container. The repository’s own CLAUDE.md, .claude settings and hooks load, but managed settings make the harness ignore the repository’s permission allow rules, so a tool call the policy does not approve is refused, and writes to .claude/, CLAUDE.md, CLAUDE.local.md and .mcp.json are refused. Only anthropic/<model> specs are supported; any other fails non-retryably with HARNESS_UNSUPPORTED_MODEL. A credential base URL can route through a gateway.",
+      "detail": "The key, or the proxy’s turn token, stays off command lines and every tool call passes the worker-side policy, but what the agent runs in that container can read it. The token spends only on the Messages API, against the run’s budget, at the credential’s own host, until the turn ends. The shipped compose files run the proxy (HARNESS_MODEL_PROXY_PORT); a deployment that sets no port hands the harness the key. This applies to implementer-family sessions and to agent runs whose agent selects the harness; an agent run’s diff is still judged and published from a fresh container. The repository’s own CLAUDE.md, .claude settings and hooks load, but managed settings make the harness ignore the repository’s permission allow rules, so a tool call the policy does not approve is refused, and writes to .claude/, CLAUDE.md, CLAUDE.local.md and .mcp.json are refused. Only anthropic/<model> specs are supported; any other fails non-retryably with HARNESS_UNSUPPORTED_MODEL. A credential base URL can route through a gateway.",
       "id": "harnessKey",
       "refs": [
         "harnessKey",
@@ -2609,10 +2623,11 @@
         "harnessConfigGuard",
         "harnessUnsupported",
         "agentRunHarness",
-        "harnessKeySource"
+        "harnessKeySource",
+        "modelProxy"
       ],
       "status": "Confirmed boundary",
-      "title": "The Claude Code runtime puts a model key in the workspace"
+      "title": "Without the model proxy, the Claude Code runtime puts a model key in the workspace"
     },
     {
       "body": "An Idempotency-Key binds permanently to its first ticket, repository, description and budget tier.",
@@ -2799,7 +2814,7 @@
     {
       "body": "Agents a run’s start snapshot lacks are pinned at first use, so an edit made before then reaches the run.",
       "category": "Reproducibility",
-      "detail": "An agent created after the run started, an agent run’s agent (resolved in a narrower scope than the run’s) and a channel-assistant run’s agents (that run writes its own row) are pinned where first resolved; an agent whose inheritsModelFrom chain was broken at start is left out of the snapshot and fails where it is used. The save-time model check sees only a version’s own model; an inherited non-Anthropic model fails with HARNESS_UNSUPPORTED_MODEL when a run resolves it. A team admin cannot set a runtime, so a TEAM override they create has none and falls back to the default, whatever runtime the GLOBAL row chose.",
+      "detail": "An agent created after the run started, and an agent run’s agent (resolved in a narrower scope than the run’s), are pinned where first resolved; an agent whose inheritsModelFrom chain was broken at start is left out of the snapshot and fails where it is used. The save-time model check follows the platform-wide inheritsModelFrom chain only; a scoped override of the parent, or a parent edited later, fails with HARNESS_UNSUPPORTED_MODEL when a run resolves it. A new override starts on the platform-wide row’s runtime, but a later change to that row’s runtime does not reach existing overrides.",
       "id": "runtimePinFirstUse",
       "refs": [
         "agentRuntimeSnapshot",
@@ -2807,7 +2822,9 @@
         "agentRuntimePin",
         "runtimeModelCheck",
         "runtimeAdminOnly",
-        "harnessUnsupported"
+        "harnessUnsupported",
+        "inheritedModelCheck",
+        "overrideRuntime"
       ],
       "status": "Confirmed boundary",
       "title": "Some runtimes pin at first use, not at run start"
@@ -3229,6 +3246,46 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "export function createModelProxy(",
+      "before": 16,
+      "id": "modelProxy",
+      "lines": 50,
+      "path": "packages/worker/src/agents/claudeCode/modelProxy.ts",
+      "title": "A metering proxy in the worker holds the model key and meters every harness call"
+    },
+    {
+      "anchor": "export async function openMcpRelay(",
+      "before": 6,
+      "id": "mcpRelay",
+      "lines": 40,
+      "path": "packages/worker/src/agents/harness/mcpRelay.ts",
+      "title": "An agent's MCP connection is relayed to the harness from the worker"
+    },
+    {
+      "anchor": "export async function runtimeSaveError(",
+      "before": 7,
+      "id": "inheritedModelCheck",
+      "lines": 21,
+      "path": "packages/gateway/src/lib/agentLibraryService.ts",
+      "title": "Saving the harness runtime checks the model a version inherits"
+    },
+    {
+      "anchor": "export async function defaultOverrideRuntime(",
+      "before": 7,
+      "id": "overrideRuntime",
+      "lines": 26,
+      "path": "packages/gateway/src/lib/agentLibraryService.ts",
+      "title": "A new override starts on the platform-wide runtime"
+    },
+    {
+      "anchor": "const agentRuntimes = await snapshotAgentRuntimes({",
+      "before": 3,
+      "id": "channelRuntimeSnapshot",
+      "lines": 10,
+      "path": "packages/worker/src/activities/channelRun.ts",
+      "title": "A channel turn pins its agents' runtimes at start"
+    },
     {
       "anchor": "await app.register(workRequestRoutes,",
       "before": 0,
@@ -5975,14 +6032,14 @@
     },
     {
       "anchor": "export async function decideToolCall(",
-      "before": 12,
+      "before": 13,
       "id": "harnessDecide",
-      "lines": 39,
+      "lines": 43,
       "path": "packages/worker/src/agents/claudeCode/policy.ts",
       "title": "The worker decides each Claude Code tool call within the granted tools"
     },
     {
-      "anchor": "secretEnv: { ANTHROPIC_API_KEY: access.apiKey },",
+      "anchor": "secretEnv: { ANTHROPIC_API_KEY: endpoint.apiKey },",
       "before": 8,
       "id": "harnessKeySource",
       "lines": 11,
