@@ -8,7 +8,11 @@ import {
 import { logError } from '../lib/activityLog.js';
 import { endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
-import { snapshotAgentVersions, snapshotSkillRevisions } from '../lib/runPins.js';
+import {
+  snapshotAgentRuntimes,
+  snapshotAgentVersions,
+  snapshotSkillRevisions,
+} from '../lib/runPins.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
 
 /**
@@ -221,10 +225,21 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
       workflowTemplateId: templateId,
     }),
   ]);
+  // Which loop drives each agent, frozen as the versions are, and resolved at
+  // the turn's own scope under those version pins — so a later edit of an agent
+  // or of a channel, team or org override cannot switch it mid-turn.
+  const agentRuntimes = await snapshotAgentRuntimes({
+    agentVersions,
+    channelId: channel?.id,
+    orgId,
+    teamId,
+    workflowTemplateId: templateId,
+  });
 
   try {
     await prisma.workflowRun.create({
       data: {
+        agentRuntimes: agentRuntimes as Prisma.InputJsonObject,
         agentVersions,
         channelId: channel?.id ?? null,
         pinnedSettings: pinnedSettings as Prisma.InputJsonObject,

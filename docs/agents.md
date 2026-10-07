@@ -380,7 +380,8 @@ Claude Code harness running inside the workspace container. Which one drives an 
 agent, by `resolveAgentRuntime(key, ctx, default)`:
 
 1. **The run's pin.** `WorkflowRun.agentRuntimes` (`{ agentKey: runtime | null }`) is written at run
-   start by `createWorkflowRun` (`snapshotAgentRuntimes`): every agent the run can resolve, with the
+   start by `createWorkflowRun`, or by `startChannelRun` for a channel-assistant turn
+   (`snapshotAgentRuntimes`): every agent the run can resolve, with the
    runtime its Agent asks for — or `null`, meaning it had no opinion and the caller's default
    decides — resolved in the scope and under the agent-version pins the run's activities use. Every
    resolution in the run — another activity, a retry, a parallel branch — reads it, so an edit to an
@@ -1142,8 +1143,9 @@ template override is never badged, because it may use a different model or crede
   also its only one. An epic's children are runs of their own and pin at their own start, so an edit
   between the epic's start and a child's start reaches that child. A run created before the
   `skillRevisions` column existed has no pin. A channel-resident run started by the channel assistant
-  (`startChannelRun`) writes its own `WorkflowRun` and pins the latest active GLOBAL Agent versions
-  and the skills visible to the channel's team and organization; a channel task run through
+  (`startChannelRun`) writes its own `WorkflowRun` and pins the latest active GLOBAL Agent versions,
+  each agent's runtime at the channel's scope, and the skills visible to the channel's team and
+  organization; a channel task run through
   `createWorkflowRun` with no repository pins GLOBAL skills plus those of the team and organization
   of the Slack channel its request came from (matched on Slack's channel id). Eval-harness cases are not runs and always read current text.
 - **The token budget is a soft cap under fan-out.** The budget gate runs before a call and usage is
@@ -1245,9 +1247,8 @@ template override is never badged, because it may use a different model or crede
   container and cannot override the worker-side decision on a tool call (a deny wins), but they
   can run code at session start and shape what the model is told.
 - **Some runtimes are still pinned at first use, not at the run's start.** An agent created after a
-  run started, an agent run's agent, and the agents of a channel-assistant run (`startChannelRun`
-  writes its own run row) are pinned the first time the run resolves them, so an edit made before
-  that reaches the run. An agent whose `inheritsModelFrom` chain was broken at run start is left out
+  run started, and an agent run's agent (it resolves in a narrower scope than the run), are pinned
+  the first time the run resolves them, so an edit made before that reaches the run. An agent whose `inheritsModelFrom` chain was broken at run start is left out
   of the snapshot and fails where it is used, as before. The snapshot costs a lookup per agent key at
   run start (a cascade walk of scalar columns, no credential).
 - **Generic `agent` nodes never run on the harness.** They have no workspace, so an Agent asking for

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
-    agent: { findMany: vi.fn() },
+    agent: { findFirst: vi.fn(), findMany: vi.fn() },
     agentTrace: { aggregate: vi.fn() },
     channelThreadSession: { deleteMany: vi.fn(), upsert: vi.fn() },
     skill: { findMany: vi.fn() },
@@ -56,6 +56,7 @@ beforeEach(() => {
   p.workflowTemplate.findFirst.mockResolvedValue(TEMPLATE);
   p.slackChannel.findUnique.mockResolvedValue({ id: 'chan-1', orgId: 'org-1', teamId: 'team-1' });
   p.agent.findMany.mockResolvedValue([]);
+  p.agent.findFirst.mockResolvedValue(null);
   p.skill.findMany.mockResolvedValue([]);
 });
 
@@ -114,6 +115,35 @@ describe('startChannelRun', () => {
         { orgId: 'org-1', scope: 'ORGANIZATION' },
       ],
     });
+  });
+
+  it('pins each agent’s runtime at the turn’s scope, channel overrides included', async () => {
+    p.agent.findMany.mockResolvedValue([{ key: 'channelAssistant', version: 3 }]);
+    p.agent.findFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where.scope === 'CHANNEL'
+        ? {
+            inheritsModelFrom: null,
+            key: 'channelAssistant',
+            modelSpec: 'a/m',
+            runtime: 'mastra',
+            version: 1,
+          }
+        : null
+    );
+
+    await startChannelRun({ channelId: 'chan-1', kind: 'mention', label: 'C1', workflowId: 'w' });
+
+    const data = p.workflowRun.create.mock.calls[0][0].data;
+    expect(data.agentRuntimes).toEqual({ channelAssistant: 'mastra' });
+    // The keys the turn can resolve include the channel's own overrides.
+    const runtimeKeysQuery = p.agent.findMany.mock.calls.find(([args]: [{ distinct?: string[] }]) =>
+      args.distinct?.includes('key')
+    )?.[0];
+    expect(runtimeKeysQuery.where.OR).toContainEqual({ channelId: 'chan-1', scope: 'CHANNEL' });
+    // The lookup walks the same cascade the turn does: template first, then the channel.
+    expect(
+      p.agent.findFirst.mock.calls.map(([a]: [{ where: { scope: string } }]) => a.where.scope)
+    ).toEqual(['WORKFLOW_TEMPLATE', 'CHANNEL']);
   });
 
   it('pins the run-pinned settings at the scope the turn reads them with', async () => {
