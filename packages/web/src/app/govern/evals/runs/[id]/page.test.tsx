@@ -120,8 +120,10 @@ describe('EvalRunPage', () => {
         /Candidate is 10\.0 points worse than the baseline, but the difference is within the margin of error/
       )
     ).toBeTruthy();
-    expect(screen.getByText('Likely range')).toBeTruthy();
-    expect(screen.getByRole('link', { name: '← Dataset' }).getAttribute('href')).toBe(
+    // A column header (narrow screens also repeat it as each stacked cell's caption).
+    expect(screen.getByRole('columnheader', { name: 'Likely range' })).toBeTruthy();
+    // The back link names the dataset it returns to ("Dataset" when the run has no name for it).
+    expect(screen.getByRole('link', { name: 'Dataset' }).getAttribute('href')).toBe(
       '/govern/evals/datasets/ds-1'
     );
     await waitFor(() =>

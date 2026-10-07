@@ -18,8 +18,8 @@ type Tab = 'github' | 'slack' | 'tracker' | 'knowledge-base' | 'figma' | 'audit-
 const TABS: { id: Tab; label: string }[] = [
   { id: 'github', label: 'GitHub' },
   { id: 'slack', label: 'Slack' },
-  { id: 'tracker', label: 'Issue Tracker' },
-  { id: 'knowledge-base', label: 'Knowledge Base' },
+  { id: 'tracker', label: 'Issue tracker' },
+  { id: 'knowledge-base', label: 'Knowledge base' },
   { id: 'figma', label: 'Figma' },
   { id: 'audit-log', label: 'Audit log' },
 ];
@@ -62,15 +62,14 @@ function StudioIntegrationsPageInner() {
     ) : null;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         subtitle={
           <>
-            Configure GitHub, Slack, issue tracker, knowledge base, and Figma credentials. Masked
-            fields show only the last four characters — enter a new value to rotate. An{' '}
-            <SourceBadge source="env" /> badge means the value is currently read from an environment
-            variable. Sign-in providers (Google, Okta, GitHub OAuth) and artifact storage are set
-            through environment variables only, not here.
+            Credentials for GitHub, Slack, your issue tracker, knowledge base and Figma. Stored
+            secrets show only their last four characters; enter a new value to rotate one. A{' '}
+            <SourceBadge source="env" /> badge means the value is read from an environment variable.
+            Sign-in providers and artifact storage are configured in the environment only.
           </>
         }
         title="Integrations"

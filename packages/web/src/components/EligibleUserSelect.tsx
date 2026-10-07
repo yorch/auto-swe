@@ -27,7 +27,7 @@ export function EligibleUserSelect({
   if (eligible.length === 0) {
     return (
       <EmptyState
-        className="py-0 text-left"
+        className="items-start px-0 py-2 text-left"
         hint={
           <>
             Invite one from{' '}
@@ -37,7 +37,8 @@ export function EligibleUserSelect({
             first.
           </>
         }
-        title="No active users left to add."
+        icon={null}
+        title="No active users left to add"
       />
     );
   }

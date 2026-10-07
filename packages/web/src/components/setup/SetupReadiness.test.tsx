@@ -49,11 +49,14 @@ describe('SetupReadiness', () => {
     expect(screen.queryByTestId('setup-readiness-loading')).toBeNull();
   });
 
-  it('lists only what is missing, each linking to its fix', async () => {
+  it('lists every step with its progress, linking only the missing ones to their fix', async () => {
     gateway();
     render(withQuery(<SetupReadiness />));
     expect(await screen.findByText('Model provider credentials')).toBeTruthy();
-    expect(screen.queryByText('GitHub access')).toBeNull();
+    // A finished step stays on the checklist, marked done, so the progress reads true.
+    expect(screen.getByText('GitHub access')).toBeTruthy();
+    expect(screen.getByText('1 of 3 done')).toBeTruthy();
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('1');
     const links = screen.getAllByRole('link', { name: /Fix this/ });
     expect(links.map((l) => l.getAttribute('href'))).toEqual([
       '/studio/models?tab=credentials',

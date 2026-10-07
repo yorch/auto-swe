@@ -59,7 +59,7 @@ describe('AddMemberModal', () => {
     // accessible name resolves to "Team role" — match exactly to avoid the
     // /role/i regex also catching the "Role" column in any other render.
     fireEvent.click(screen.getByRole('button', { name: /team role/i }));
-    fireEvent.click(screen.getByRole('option', { name: 'LEAD' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Lead' }));
     fireEvent.click(screen.getByRole('button', { name: /add member/i }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));

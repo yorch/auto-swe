@@ -1,14 +1,17 @@
 import type { TicketGroup } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useId, useState } from 'react';
+import { Button } from '@/components/ui/Button';
+import { Icon } from '@/components/ui/Icon';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { requestHref } from '@/lib/requestDisplay';
 import { safeHttpUrl } from '@/lib/safeUrl';
-import { cn, FOCUS_RING, formatCost, formatRelativeTime } from '@/lib/utils';
+import { cn, FOCUS_RING, formatCost } from '@/lib/utils';
 import { PullRequestStateBadge } from './PullRequestBadges';
+import { RelativeTime } from './RelativeTime';
 
-const LINK = 'text-ember-400 hover:underline';
+const LINK = cn('rounded-sm text-ember-400 hover:underline', FOCUS_RING);
 
 /** "2 succeeded, 1 failed": counts in words, in the order a reader cares about. */
 export function runSummary(counts: TicketGroup['runCounts']): string {
@@ -27,23 +30,27 @@ function TicketRow({ group }: { group: TicketGroup }) {
     <>
       <TRow hover>
         <Td className="px-4 py-3" primary>
-          <div className="break-all font-medium text-paper-100">
+          <div className="break-all font-mono text-[13px] font-medium text-paper-100">
             {url ? (
               <a className={LINK} href={url} rel="noopener noreferrer" target="_blank">
                 {group.ticketId}
                 <span className="sr-only"> (opens in the tracker, new tab)</span>
-                <span aria-hidden="true"> ↗</span>
+                <Icon className="ml-1 inline align-[-1px]" name="external" size={11} />
               </a>
             ) : (
               group.ticketId
             )}
           </div>
-          {group.title && <div className="break-words text-xs text-paper-400">{group.title}</div>}
+          {group.title && (
+            <div className="mt-0.5 break-words text-xs font-normal text-paper-400">
+              {group.title}
+            </div>
+          )}
         </Td>
         <Td className="px-4 py-3 text-paper-300" label="Tracker status">
           {group.status ?? <span className="text-paper-500">—</span>}
         </Td>
-        <Td className="px-4 py-3" label="Requests">
+        <Td align="right" className="tabular px-4 py-3 text-paper-200" label="Requests">
           {group.requestCount}
         </Td>
         <Td className="px-4 py-3" label="Runs">
@@ -62,34 +69,43 @@ function TicketRow({ group }: { group: TicketGroup }) {
             <span className="text-paper-500">No runs</span>
           )}
         </Td>
-        <Td className="px-4 py-3" label="Pull requests">
+        <Td align="right" className="tabular px-4 py-3 text-paper-200" label="Pull requests">
           {group.pullRequests.length || <span className="text-paper-500">—</span>}
         </Td>
-        <Td align="right" className="px-4 py-3 tabular-nums" label="Cost">
+        <Td align="right" className="tabular px-4 py-3 text-paper-200" label="Cost">
           {formatCost(group.costUsd)}
         </Td>
-        <Td className="px-4 py-3 text-paper-400" label="Last activity">
-          {formatRelativeTime(group.lastActivityAt)}
+        <Td className="whitespace-nowrap px-4 py-3 text-paper-400" label="Last activity">
+          <RelativeTime date={group.lastActivityAt} />
         </Td>
         <Td align="right" className="px-4 py-3">
-          <button
+          <Button
             aria-controls={open ? detailsId : undefined}
             aria-expanded={open}
-            className={cn('rounded px-2 py-1 text-xs text-ember-400 hover:underline', FOCUS_RING)}
             onClick={() => setOpen((value) => !value)}
-            type="button"
+            size="sm"
+            variant="ghost"
           >
             {open ? 'Hide' : 'Show'} details
             <span className="sr-only"> for {group.ticketId}</span>
-          </button>
+            <Icon
+              className={cn('transition-transform', open && 'rotate-180')}
+              name="chevronDown"
+              size={14}
+            />
+          </Button>
         </Td>
       </TRow>
       {open && (
         <tr id={detailsId}>
-          <td className="bg-ink-800 px-4 py-3" colSpan={8}>
+          <td className="border-b border-ink-600 bg-ink-800/60 px-4 py-3" colSpan={8}>
             <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-              <Link className={LINK} href={requestHref(group.latestWorkRequestId)}>
+              <Link
+                className={cn(LINK, 'inline-flex items-center gap-1')}
+                href={requestHref(group.latestWorkRequestId)}
+              >
                 Open latest request
+                <Icon name="arrowRight" size={13} />
               </Link>
             </div>
             {group.pullRequests.length > 0 && (
@@ -104,7 +120,7 @@ function TicketRow({ group }: { group: TicketGroup }) {
                         <a className={LINK} href={prUrl} rel="noopener noreferrer" target="_blank">
                           {label}
                           <span className="sr-only"> (opens on the host, new tab)</span>
-                          <span aria-hidden="true"> ↗</span>
+                          <Icon className="ml-1 inline align-[-1px]" name="external" size={11} />
                         </a>
                       ) : (
                         <span>{label}</span>
@@ -128,9 +144,13 @@ export function TicketTable({ groups }: { groups: TicketGroup[] }) {
       <THead>
         <Th variant="plain">Ticket</Th>
         <Th variant="plain">Tracker status</Th>
-        <Th variant="plain">Requests</Th>
+        <Th align="right" variant="plain">
+          Requests
+        </Th>
         <Th variant="plain">Runs</Th>
-        <Th variant="plain">PRs</Th>
+        <Th align="right" variant="plain">
+          PRs
+        </Th>
         <Th align="right" variant="plain">
           Cost
         </Th>

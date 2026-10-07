@@ -2,13 +2,16 @@
 
 import { Suspense, use } from 'react';
 import { RunListItem } from '@/components/runs/RunListItem';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { Toolbar } from '@/components/ui/Toolbar';
 import {
   TemplateBackLink,
   TemplateNotFound,
@@ -20,7 +23,6 @@ import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { nodeTitlesOf } from '@/lib/nodeTitles';
 import { validateRouteParam } from '@/lib/routeParams';
 import { isRunStatus, runStatusOptions } from '@/lib/runStatusOptions';
-import { cn, FOCUS_RING } from '@/lib/utils';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -73,12 +75,27 @@ function TemplateRuns({ id: rawId }: { id: string }) {
     return <TemplateNotFound />;
   }
 
+  const filtering = Boolean(statusFilter || versionFilter || failedNodeId);
+  const runnable = template?.status === 'ACTIVE' && template.activeVersion !== null;
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
         <TemplateBackLink href={`/workflows/library/${id}`} label={template?.name ?? 'Workflow'} />
         <PageHeader
-          className="mb-0 mt-4"
+          actions={
+            runnable ? (
+              <ButtonLink
+                href={`/start?template=${encodeURIComponent(id)}`}
+                size="sm"
+                variant="primary"
+              >
+                Run
+                <Icon name="arrowRight" size={13} />
+              </ButtonLink>
+            ) : undefined
+          }
+          className="mt-3 mb-0"
           subtitle="Every run of this workflow, newest first. Open one to see its request; use Diagnostics for the full trace."
           title="Run history"
         />
@@ -86,95 +103,131 @@ function TemplateRuns({ id: rawId }: { id: string }) {
 
       <TemplateSubNav active="runs" templateId={id} />
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-end gap-3">
-        <Select
-          className="w-auto"
-          compact
-          id="run-status-filter"
-          label="Status"
-          onChange={(v) => update({ offset: null, status: v })}
-          options={RUN_STATUSES.map((s) => ({ label: s.label, value: s.value }))}
-          value={statusFilter}
-        />
-        {versions.length > 1 && (
+      <Card className="p-0">
+        <Toolbar
+          className="mb-0 border-b border-ink-600 px-4 py-3 sm:px-5"
+          end={
+            data ? (
+              <span className="text-xs text-paper-500 tabular-nums">
+                {total === 1 ? '1 run' : `${total} runs`}
+              </span>
+            ) : null
+          }
+        >
           <Select
-            className="w-auto"
+            aria-label="Filter by status"
+            className="h-8 w-full text-[13px] sm:w-44"
             compact
-            id="run-version-filter"
-            label="Version"
-            onChange={(v) => update({ offset: null, version: v })}
-            options={[
-              { label: 'All versions', value: '' },
-              ...versions.map((v) => ({ label: `v${v}`, value: String(v) })),
-            ]}
-            value={versionFilter}
+            id="run-status-filter"
+            onChange={(v) => update({ offset: null, status: v })}
+            options={RUN_STATUSES.map((s) => ({ label: s.label, value: s.value }))}
+            value={statusFilter}
           />
-        )}
-        {failedNodeId && (
-          <span className="flex items-center gap-2 rounded-md border border-ink-400 px-3 py-1.5 text-xs text-paper-300">
-            Runs where “{nodeTitles.get(failedNodeId) ?? failedNodeId}” failed
-            <button
-              className={cn('text-ember-400 hover:underline', FOCUS_RING)}
-              onClick={() => update({ failedStep: null, offset: null })}
-              type="button"
+          {versions.length > 1 && (
+            <Select
+              aria-label="Filter by version"
+              className="h-8 w-full text-[13px] sm:w-36"
+              compact
+              id="run-version-filter"
+              onChange={(v) => update({ offset: null, version: v })}
+              options={[
+                { label: 'All versions', value: '' },
+                ...versions.map((v) => ({ label: `v${v}`, value: String(v) })),
+              ]}
+              value={versionFilter}
+            />
+          )}
+          {failedNodeId && (
+            <span className="inline-flex h-8 items-center gap-2 rounded-md border border-brick-400/30 bg-brick-400/5 pr-1 pl-2.5 text-[13px] text-paper-200">
+              <Icon className="text-brick-400" name="filter" size={13} />
+              <span className="max-w-[16rem] truncate">
+                Failed at “{nodeTitles.get(failedNodeId) ?? failedNodeId}”
+              </span>
+              <Button
+                className="h-6 px-2"
+                onClick={() => update({ failedStep: null, offset: null })}
+                size="sm"
+                variant="ghost"
+              >
+                Clear
+              </Button>
+            </span>
+          )}
+          {(statusFilter || versionFilter) && (
+            <Button
+              onClick={() => update({ offset: null, status: null, version: null })}
+              size="sm"
+              variant="ghost"
             >
-              Clear
-            </button>
-          </span>
-        )}
-        {(statusFilter || versionFilter) && (
-          <Button
-            onClick={() => update({ offset: null, status: null, version: null })}
-            size="sm"
-            variant="ghost"
-          >
-            Clear filters
-          </Button>
-        )}
-      </div>
+              Clear filters
+            </Button>
+          )}
+        </Toolbar>
 
-      <QueryBoundary
-        error={error}
-        isError={isError}
-        isFetching={isFetching}
-        isLoading={isLoading}
-        label="runs"
-        loadingMessage="loading runs…"
-        onRetry={() => void refetch()}
-      >
-        {rows.length === 0 ? (
-          <EmptyState
-            title={
-              statusFilter || versionFilter
-                ? 'No runs match the current filters.'
-                : 'No runs yet — start work with this workflow to trigger one.'
-            }
-          />
-        ) : (
-          <Card className="overflow-hidden p-0" variant="inset">
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={false}
+          label="runs"
+          onRetry={() => void refetch()}
+        >
+          {isLoading ? (
+            <SkeletonRows className="px-5 py-4" rows={6} />
+          ) : rows.length === 0 ? (
+            filtering ? (
+              <EmptyState
+                action={
+                  <Button
+                    onClick={() =>
+                      update({ failedStep: null, offset: null, status: null, version: null })
+                    }
+                    size="sm"
+                  >
+                    Clear all filters
+                  </Button>
+                }
+                hint="Try another status or version."
+                icon="filter"
+                title="No runs match these filters"
+              />
+            ) : (
+              <EmptyState
+                action={
+                  runnable ? (
+                    <ButtonLink href={`/start?template=${encodeURIComponent(id)}`} size="sm">
+                      Run this workflow
+                    </ButtonLink>
+                  ) : undefined
+                }
+                hint="Each run of this workflow shows up here with its status, cost and request."
+                icon="runs"
+                title="No runs yet"
+              />
+            )
+          ) : (
             <ul className="divide-y divide-ink-600">
               {rows.map((r) => (
                 <RunListItem key={r.id} run={r} />
               ))}
             </ul>
-          </Card>
-        )}
+          )}
 
-        {total > PAGE_SIZE && (
-          <div>
-            <Pagination
-              hasNext={offset + PAGE_SIZE < total}
-              hasPrev={offset > 0}
-              onNext={handleNext}
-              onPrev={handlePrev}
-              rangeEnd={Math.min(offset + PAGE_SIZE, total)}
-              rangeStart={offset + 1}
-              total={total}
-            />
-          </div>
-        )}
-      </QueryBoundary>
+          {total > PAGE_SIZE && (
+            <div className="border-t border-ink-600 px-4 py-3 sm:px-5">
+              <Pagination
+                hasNext={offset + PAGE_SIZE < total}
+                hasPrev={offset > 0}
+                onNext={handleNext}
+                onPrev={handlePrev}
+                rangeEnd={Math.min(offset + PAGE_SIZE, total)}
+                rangeStart={offset + 1}
+                total={total}
+              />
+            </div>
+          )}
+        </QueryBoundary>
+      </Card>
     </div>
   );
 }

@@ -38,8 +38,9 @@ import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
+import { Icon } from '@/components/ui/Icon';
 import { TOKEN } from '@/lib/palette';
-import { cn, formatCost } from '@/lib/utils';
+import { cn, FOCUS_RING, formatCost, plural } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
 import { useFitFlow } from './fitFlow';
@@ -487,30 +488,36 @@ function EditorInner({
     selectedNode && selectedNode.type === 'step' ? stepRegistryByName.get(selectedNode.step) : null;
 
   return (
-    <div className="flex h-[calc(100vh-180px)] min-h-[560px] flex-col overflow-hidden rounded-sm border border-ink-600 bg-ink-900">
+    <div className="flex h-[calc(100vh-180px)] min-h-[560px] flex-col overflow-hidden border-y border-ink-600 bg-ink-900">
       {/* Action bar */}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-ink-600 px-4 py-2">
-        <div className="label-mono flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span>nodes</span>
-          <span className="tabular text-paper-200">{Object.keys(spec.nodes).length}</span>
-          <span className="text-ink-500">·</span>
-          <span>first step</span>
-          <span className="tabular text-ember-400">{spec.entry}</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-ink-600 bg-ink-950/60 px-4 py-2">
+        <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+          <div className="flex items-baseline gap-1.5">
+            <dt className="sr-only">Nodes</dt>
+            <dd className="text-paper-200 tabular-nums">
+              {plural(Object.keys(spec.nodes).length, 'node')}
+            </dd>
+          </div>
+          <div className="flex min-w-0 items-baseline gap-1.5">
+            <dt className="text-paper-500">Starts at</dt>
+            <dd className="truncate font-mono text-xs text-ember-300">{spec.entry}</dd>
+          </div>
           {costEstimateUsd != null && costEstimateUsd > 0 && (
-            <>
-              <span className="text-ink-500">·</span>
-              <span>est</span>
-              <span className="tabular text-paper-200">{formatCost(costEstimateUsd)}/run</span>
-            </>
+            <div
+              className="flex items-baseline gap-1.5"
+              title="Estimated from each agent's model price"
+            >
+              <dt className="text-paper-500">Est.</dt>
+              <dd className="text-paper-200 tabular-nums">{formatCost(costEstimateUsd)}/run</dd>
+            </div>
           )}
           {observedCostUsd != null && (
-            <>
-              <span className="text-ink-500">·</span>
-              <span>observed</span>
-              <span className="tabular text-paper-200">{formatCost(observedCostUsd)}/run</span>
-            </>
+            <div className="flex items-baseline gap-1.5" title="Average over the last 30 days">
+              <dt className="text-paper-500">Observed</dt>
+              <dd className="text-paper-200 tabular-nums">{formatCost(observedCostUsd)}/run</dd>
+            </div>
           )}
-        </div>
+        </dl>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             aria-expanded={paletteOpen}
@@ -521,19 +528,22 @@ function EditorInner({
               setShowOutline(false);
             }}
             size="sm"
-            variant={paletteOpen ? 'primary' : 'ghost'}
+            variant="secondary"
           >
-            Add step
+            <Icon name="plus" size={13} />
+            Add node
           </Button>
           <Button
             aria-pressed={showOutline}
+            className={cn(showOutline && 'border-ember-400/50 bg-ember-400/10 text-ember-300')}
             onClick={() => {
               setShowOutline((v) => !v);
               setPaletteOpen(false);
             }}
             size="sm"
-            variant={showOutline ? 'primary' : 'ghost'}
+            variant="ghost"
           >
+            <Icon name="list" size={13} />
             Outline
           </Button>
           {actions}
@@ -541,17 +551,34 @@ function EditorInner({
       </div>
 
       {parseError && (
-        <Alert className="rounded-none border-x-0 border-t-0 font-mono text-[11px]">
-          {parseError}
-        </Alert>
+        <Alert className="rounded-none border-x-0 border-t-0 font-mono text-xs">{parseError}</Alert>
       )}
 
       {(issues.length > 0 || serverIssues.length > 0) && (
         <details
-          className="border-b border-ink-600/40 bg-ink-800/60 px-4 py-1.5 font-mono text-[11px]"
+          className="group border-b border-ink-600 bg-ink-800/60 px-4 py-2 text-xs"
           open={lint.errors.length > 0 || serverIssues.length > 0}
         >
-          <summary className="cursor-pointer select-none text-paper-400">
+          <summary
+            className={cn(
+              'flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-paper-300 select-none [&::-webkit-details-marker]:hidden',
+              FOCUS_RING
+            )}
+          >
+            <Icon
+              className="text-paper-500 transition-transform group-open:rotate-90"
+              name="chevronRight"
+              size={12}
+            />
+            <Icon
+              className={
+                lint.errors.length > 0 || serverIssues.length > 0
+                  ? 'text-brick-400'
+                  : 'text-amber-400'
+              }
+              name="warning"
+              size={13}
+            />
             {serverIssues.length > 0 && (
               <span className="text-brick-400">
                 Save rejected: {serverIssues.length} problem{serverIssues.length === 1 ? '' : 's'}
@@ -570,22 +597,28 @@ function EditorInner({
               </span>
             )}
           </summary>
-          <ul className="mt-1.5 max-h-32 space-y-0.5 overflow-y-auto">
+          <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto pl-5">
             {serverIssues.map((message) => (
               <li className="text-paper-300" key={`server:${message}`}>
-                <span className="text-brick-400">server</span> {message}
+                <span className="font-medium text-brick-400">Server:</span> {message}
               </li>
             ))}
             {issues.map((issue) => (
               <li key={`${issue.code}:${issue.nodeId ?? ''}:${issue.field ?? ''}:${issue.message}`}>
                 <button
-                  className="text-left text-paper-300 hover:text-paper-100"
+                  className={cn(
+                    'rounded-sm text-left text-paper-300 hover:text-paper-100 disabled:hover:text-paper-300',
+                    FOCUS_RING
+                  )}
                   disabled={!issue.nodeId || !spec.nodes[issue.nodeId]}
                   onClick={() => issue.nodeId && onSelect(issue.nodeId)}
                   type="button"
                 >
                   <span
-                    className={issue.severity === 'error' ? 'text-brick-400' : 'text-amber-400'}
+                    className={cn(
+                      'font-mono text-[11px]',
+                      issue.severity === 'error' ? 'text-brick-400' : 'text-amber-400'
+                    )}
                   >
                     {issue.code}
                   </span>{' '}
@@ -677,8 +710,9 @@ function EditorInner({
           ref={inspectorRef}
         >
           {selectedNode && (
-            <div className="flex justify-end border-b border-ink-600 bg-ink-950 px-3 py-1.5 lg:hidden">
+            <div className="flex justify-end border-b border-ink-600 border-l bg-ink-950 px-3 py-1.5 lg:hidden">
               <Button onClick={() => onSelect(null)} size="sm" variant="ghost">
+                <Icon name="close" size={13} />
                 Close inspector
               </Button>
             </div>

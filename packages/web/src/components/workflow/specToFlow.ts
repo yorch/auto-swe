@@ -178,11 +178,9 @@ export function specToFlow(
         labelBgStyle: { fill: TOKEN.ink900, fillOpacity: 0.85 },
         labelStyle: {
           fill: color,
-          fontFamily: 'monospace',
-          fontSize: 10,
+          fontFamily: 'inherit',
+          fontSize: 11,
           fontWeight: 500,
-          letterSpacing: '0.06em',
-          textTransform: 'uppercase',
         },
       }),
       markerEnd: {

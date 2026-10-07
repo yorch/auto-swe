@@ -1,12 +1,15 @@
 'use client';
 
 import { useState } from 'react';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
@@ -32,7 +35,14 @@ const STATUS_TONE: Record<SourceStatus, BadgeTone> = {
   UPDATE_AVAILABLE: 'amber',
 };
 
-const SCRIPT_MODE_LABEL = { REJECT: 'reject scripts', TEXT_ONLY: 'text only' } as const;
+const STATUS_LABEL: Record<SourceStatus, string> = {
+  DISABLED: 'Disabled',
+  ERROR: 'Error',
+  OK: 'Up to date',
+  UPDATE_AVAILABLE: 'Update available',
+};
+
+const SCRIPT_MODE_LABEL = { REJECT: 'Reject scripts', TEXT_ONLY: 'Text only' } as const;
 
 /**
  * Skills imported from an external GitHub repository, pinned to a commit. The
@@ -80,139 +90,184 @@ export function SkillSourcesTab() {
       'Failed to check the source'
     );
 
+  const toggleStatus = (s: SkillSource) =>
+    run(
+      s.id,
+      () =>
+        patch
+          .mutateAsync({ id: s.id, status: s.status === 'DISABLED' ? 'OK' : 'DISABLED' })
+          .then(() => undefined),
+      'Failed to update the source'
+    );
+
+  const toggleScripts = (s: SkillSource) =>
+    run(
+      s.id,
+      () =>
+        patch
+          .mutateAsync({
+            id: s.id,
+            scriptMode: s.scriptMode === 'REJECT' ? 'TEXT_ONLY' : 'REJECT',
+          })
+          .then(() => undefined),
+      'Failed to update the source'
+    );
+
   return (
     <>
-      <Card>
+      <Card className="p-4 sm:p-6">
         <CardHeader>
-          <CardTitle>External sources</CardTitle>
-          <Button onClick={() => setAddOpen(true)} variant="primary">
-            Add source
-          </Button>
+          <CardTitle eyebrow="GitHub repositories">External sources</CardTitle>
+          {sources && sources.length > 0 && (
+            <Button onClick={() => setAddOpen(true)} variant="primary">
+              <Icon name="plus" size={14} />
+              Add source
+            </Button>
+          )}
         </CardHeader>
-        <p className="mb-3 text-xs text-paper-500">
+        <p className="-mt-2 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
           Skills imported from a GitHub repository, each pinned to a commit. A newer commit is only
           flagged; you review the per-skill diff and accept it. Imported skills start unverified.
         </p>
         {notice && (
-          <Alert variant={notice.tone === 'error' ? 'error' : 'info'}>{notice.text}</Alert>
+          <Alert className="mb-4" variant={notice.tone === 'error' ? 'error' : 'info'}>
+            {notice.text}
+          </Alert>
         )}
         <QueryBoundary
           error={error}
           isError={isError}
           isFetching={isFetching}
-          isLoading={isLoading}
+          isLoading={false}
           label="skill sources"
           onRetry={() => void refetch()}
         >
-          {!sources?.length ? (
-            <EmptyState title="No external sources yet. Add one with the button above." />
+          {isLoading ? (
+            <SkeletonRows rows={3} />
+          ) : !sources?.length ? (
+            <EmptyState
+              action={
+                <Button onClick={() => setAddOpen(true)} size="sm" variant="primary">
+                  Add source
+                </Button>
+              }
+              bordered
+              hint="Point at a GitHub repository of skill files to import them, pinned to a commit."
+              icon="github"
+              title="No external sources yet"
+            />
           ) : (
-            <Table>
+            <Table stacked>
               <THead>
-                <Th variant="compact">Source</Th>
-                <Th variant="compact">Pinned / latest</Th>
-                <Th variant="compact">Status</Th>
-                <Th variant="compact">Scripts</Th>
-                <Th variant="compact" />
+                <Th className="pl-0" variant="plain">
+                  Source
+                </Th>
+                <Th variant="plain">Pinned / latest</Th>
+                <Th variant="plain">Status</Th>
+                <Th variant="plain">Scripts</Th>
+                <Th className="pr-0" variant="plain">
+                  <span className="sr-only">Actions</span>
+                </Th>
               </THead>
               <tbody>
-                {sources.map((s) => (
-                  <TRow key={s.id}>
-                    <Td className="py-2 pr-4">
-                      <div className="font-medium text-paper-100">{sourceLabel(s)}</div>
-                      <div className="text-xs text-paper-500">
-                        ref {visibleText(s.ref)} · {s.skillCount} skill
-                        {s.skillCount === 1 ? '' : 's'}
-                      </div>
-                    </Td>
-                    <Td className="py-2 pr-4 font-mono text-xs text-paper-400">
-                      <span title={s.pinnedSha}>{shortSha(s.pinnedSha)}</span>
-                      {' / '}
-                      <span title={s.latestSha ?? undefined}>{shortSha(s.latestSha)}</span>
-                    </Td>
-                    <Td className="py-2 pr-4">
-                      <Badge tone={STATUS_TONE[s.status]}>{s.status}</Badge>
-                      <div className="mt-0.5 text-xs text-paper-500">
-                        {s.lastCheckedAt
-                          ? `checked ${formatDate(s.lastCheckedAt)}`
-                          : 'never checked'}
-                      </div>
-                      {s.lastError && (
-                        <div className="mt-0.5 text-xs text-brick-400">
-                          {visibleText(s.lastError)}
+                {sources.map((s) => {
+                  const label = sourceLabel(s);
+                  return (
+                    <TRow key={s.id}>
+                      <Td className="py-2.5 pr-4" primary>
+                        <div className="font-mono text-[13px] font-medium break-all text-paper-100">
+                          {label}
                         </div>
-                      )}
-                    </Td>
-                    <Td className="py-2 pr-4 text-xs text-paper-400">
-                      {SCRIPT_MODE_LABEL[s.scriptMode]}
-                    </Td>
-                    <Td className="py-2 text-right">
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Button
-                          disabled={busyId === s.id || s.status === 'DISABLED'}
-                          onClick={() => checkNow(s)}
-                          size="sm"
-                          variant="ghost"
+                        <div className="mt-0.5 text-xs text-paper-500">
+                          ref {visibleText(s.ref)} · {s.skillCount} skill
+                          {s.skillCount === 1 ? '' : 's'}
+                        </div>
+                      </Td>
+                      <Td
+                        className="px-4 py-2.5 font-mono text-xs text-paper-400"
+                        label="Pinned / latest"
+                      >
+                        <span title={s.pinnedSha}>{shortSha(s.pinnedSha)}</span>
+                        {' / '}
+                        <span title={s.latestSha ?? undefined}>{shortSha(s.latestSha)}</span>
+                      </Td>
+                      <Td className="px-4 py-2.5" label="Status">
+                        <Badge dot tone={STATUS_TONE[s.status]}>
+                          {STATUS_LABEL[s.status]}
+                        </Badge>
+                        <div
+                          className="mt-1 text-xs text-paper-500"
+                          title={s.lastCheckedAt ?? undefined}
                         >
-                          Check now
-                        </Button>
-                        {s.status === 'UPDATE_AVAILABLE' && (
-                          <Button onClick={() => setReviewId(s.id)} size="sm" variant="primary">
-                            Review update
-                          </Button>
+                          {s.lastCheckedAt
+                            ? `Checked ${formatDate(s.lastCheckedAt)}`
+                            : 'Never checked'}
+                        </div>
+                        {s.lastError && (
+                          <div className="mt-0.5 text-xs text-brick-400">
+                            {visibleText(s.lastError)}
+                          </div>
                         )}
-                        {(s.status === 'OK' || s.status === 'UPDATE_AVAILABLE') && (
-                          <Button onClick={() => setInstallFor(s.id)} size="sm" variant="ghost">
-                            Install more skills
+                      </Td>
+                      <Td className="px-4 py-2.5 text-xs text-paper-300" label="Scripts">
+                        {SCRIPT_MODE_LABEL[s.scriptMode]}
+                      </Td>
+                      <Td align="right" className="py-2.5 pl-4">
+                        <div className="flex items-center justify-end gap-1">
+                          {s.status === 'UPDATE_AVAILABLE' && (
+                            <Button onClick={() => setReviewId(s.id)} size="sm" variant="primary">
+                              Review update
+                            </Button>
+                          )}
+                          <Button
+                            disabled={busyId === s.id || s.status === 'DISABLED'}
+                            onClick={() => checkNow(s)}
+                            size="sm"
+                          >
+                            {busyId === s.id ? 'Working…' : 'Check now'}
                           </Button>
-                        )}
-                        <Button
-                          disabled={busyId === s.id}
-                          onClick={() =>
-                            run(
-                              s.id,
-                              () =>
-                                patch
-                                  .mutateAsync({
-                                    id: s.id,
-                                    status: s.status === 'DISABLED' ? 'OK' : 'DISABLED',
-                                  })
-                                  .then(() => undefined),
-                              'Failed to update the source'
-                            )
-                          }
-                          size="sm"
-                          variant="ghost"
-                        >
-                          {s.status === 'DISABLED' ? 'Enable' : 'Disable'}
-                        </Button>
-                        <Button
-                          disabled={busyId === s.id}
-                          onClick={() =>
-                            run(
-                              s.id,
-                              () =>
-                                patch
-                                  .mutateAsync({
-                                    id: s.id,
-                                    scriptMode: s.scriptMode === 'REJECT' ? 'TEXT_ONLY' : 'REJECT',
-                                  })
-                                  .then(() => undefined),
-                              'Failed to update the source'
-                            )
-                          }
-                          size="sm"
-                          variant="ghost"
-                        >
-                          {s.scriptMode === 'REJECT' ? 'Allow text files' : 'Reject scripts'}
-                        </Button>
-                        <Button onClick={() => setDeleteTarget(s)} size="sm" variant="danger">
-                          Delete
-                        </Button>
-                      </div>
-                    </Td>
-                  </TRow>
-                ))}
+                          <ActionMenu
+                            items={[
+                              ...(s.status === 'OK' || s.status === 'UPDATE_AVAILABLE'
+                                ? [
+                                    {
+                                      icon: 'plus' as const,
+                                      id: 'install',
+                                      label: 'Install more skills',
+                                      onAction: () => setInstallFor(s.id),
+                                    },
+                                  ]
+                                : []),
+                              {
+                                disabled: busyId === s.id,
+                                icon: s.status === 'DISABLED' ? 'check' : 'close',
+                                id: 'status',
+                                label: s.status === 'DISABLED' ? 'Enable' : 'Disable',
+                                onAction: () => void toggleStatus(s),
+                              },
+                              {
+                                disabled: busyId === s.id,
+                                icon: 'security',
+                                id: 'scripts',
+                                label:
+                                  s.scriptMode === 'REJECT' ? 'Allow text files' : 'Reject scripts',
+                                onAction: () => void toggleScripts(s),
+                              },
+                              {
+                                icon: 'trash',
+                                id: 'delete',
+                                label: 'Delete',
+                                onAction: () => setDeleteTarget(s),
+                                tone: 'danger',
+                              },
+                            ]}
+                            label={`More actions for ${label}`}
+                          />
+                        </div>
+                      </Td>
+                    </TRow>
+                  );
+                })}
               </tbody>
             </Table>
           )}

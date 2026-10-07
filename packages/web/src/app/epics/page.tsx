@@ -1,9 +1,11 @@
 'use client';
 
-import Link from 'next/link';
 import { EpicList } from '@/components/epics/EpicList';
 import { ButtonLink } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useEpics } from '@/hooks/useEpics';
@@ -17,14 +19,16 @@ export default function EpicsPage() {
 
   return (
     <div className="space-y-6">
-      <Link className="label-mono hover:text-paper-200" href="/workflows">
-        ← Requests
-      </Link>
+      <ButtonLink className="-ml-3" href="/workflows" size="sm" variant="ghost">
+        <Icon name="arrowLeft" size={14} />
+        Requests
+      </ButtonLink>
       <PageHeader
         actions={
           canCreate &&
           epics.length > 0 && (
             <ButtonLink href="/start?mode=epic" variant="primary">
+              <Icon name="plus" size={14} />
               Start an epic
             </ButtonLink>
           )
@@ -33,30 +37,42 @@ export default function EpicsPage() {
         title="Epics"
       />
 
-      <QueryBoundary
-        error={epicsQuery.error}
-        isError={epicsQuery.isError}
-        isFetching={epicsQuery.isFetching}
-        isLoading={epicsQuery.isLoading}
-        label="epics"
-        onRetry={() => void epicsQuery.refetch()}
-      >
-        {epics.length === 0 ? (
-          <EmptyState
-            action={
-              canCreate ? (
-                <ButtonLink href="/start?mode=epic" variant="primary">
-                  Start an epic
-                </ButtonLink>
-              ) : undefined
-            }
-            hint="Start one to fan work out across repositories."
-            title="No epics yet"
-          />
-        ) : (
-          <EpicList epics={epics} />
-        )}
-      </QueryBoundary>
+      {epicsQuery.isLoading ? (
+        <Card className="px-5 py-3">
+          <SkeletonRows rows={5} />
+        </Card>
+      ) : (
+        <QueryBoundary
+          error={epicsQuery.error}
+          isError={epicsQuery.isError}
+          isFetching={epicsQuery.isFetching}
+          isLoading={false}
+          label="epics"
+          onRetry={() => void epicsQuery.refetch()}
+        >
+          {epics.length === 0 ? (
+            <EmptyState
+              action={
+                canCreate ? (
+                  <ButtonLink href="/start?mode=epic" variant="primary">
+                    Start an epic
+                  </ButtonLink>
+                ) : undefined
+              }
+              bordered
+              hint={
+                canCreate
+                  ? 'Describe one change once and the planner fans it out across your repositories.'
+                  : 'A team lead or administrator can start one to fan work out across repositories.'
+              }
+              icon="epics"
+              title="No epics yet"
+            />
+          ) : (
+            <EpicList epics={epics} />
+          )}
+        </QueryBoundary>
+      )}
     </div>
   );
 }

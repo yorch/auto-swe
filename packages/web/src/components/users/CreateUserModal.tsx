@@ -9,6 +9,7 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { type CreatedUser, useCreateUser } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
+import { platformRoleLabel } from '@/lib/govLabels';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
@@ -62,7 +63,7 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
       <Modal
         onClose={onClose}
         open={open && revealed === null}
-        subtitle="Skips the invite/magic-link dance — useful for service accounts or when SMTP/Resend isn't configured. Pre-active, pre-membered to the default team."
+        subtitle="No invite email: the account is active at once and joins the default team. Useful for service accounts, or when email delivery is not configured."
         title="Create a user directly"
       >
         <form className="space-y-5" onSubmit={handleSubmit}>
@@ -79,15 +80,14 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
             id="new-user-role"
             label="Role"
             onChange={(v) => setRole(v as Role)}
-            options={[
-              { label: 'ENGINEER', value: 'ENGINEER' },
-              { label: 'LEAD', value: 'LEAD' },
-              { label: 'ADMIN', value: 'ADMIN' },
-            ]}
+            options={(['ENGINEER', 'LEAD', 'ADMIN'] as const).map((r) => ({
+              label: platformRoleLabel(r),
+              value: r,
+            }))}
             value={role}
           />
           <Input
-            hint="Min 8 chars. Leave blank to auto-generate one (shown once)."
+            hint="At least 8 characters. Leave blank to generate one, shown once."
             label="Password (optional)"
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
@@ -95,7 +95,7 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
             value={password}
           />
           <Input
-            hint="Optional — link a Slack user ID now or via the user's settings later."
+            hint="Link a Slack user now, or later from the user's settings."
             label="Slack user ID (optional)"
             onChange={(e) => setSlackId(e.target.value)}
             placeholder="U01ABCDEFGH"
@@ -113,22 +113,22 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
 
       <Modal
         closeOnBackdropClick={false}
-        eyebrow="§ Copy now — shown only once"
+        eyebrow="Shown only once"
         onClose={handleRevealClose}
         open={revealed !== null}
-        subtitle="The user can sign in via email + password and rotate it from the login page's password-reset flow."
+        subtitle="Copy it now and pass it on securely. The user signs in with email and password, and can change it through the password reset on the sign-in page."
         title={revealed ? `Temporary password for ${revealed.email}` : ''}
       >
         {revealed?.temporaryPassword && (
           <div className="space-y-4">
-            <div className="rounded-sm border border-ember-400/60 bg-ember-400/5 p-4">
-              <code className="block break-all font-mono text-sm text-ember-200">
+            <div className="flex items-center gap-3 rounded-lg border border-ember-400/40 bg-ember-400/5 p-4">
+              <code className="min-w-0 flex-1 break-all font-mono text-sm text-ember-200">
                 {revealed.temporaryPassword}
               </code>
+              <CopyButton value={revealed.temporaryPassword} />
             </div>
-            <CopyButton value={revealed.temporaryPassword} />
             <div className="flex items-center justify-end border-t border-ink-600 pt-4">
-              <Button onClick={handleRevealClose} type="button" variant="ghost">
+              <Button onClick={handleRevealClose} type="button" variant="primary">
                 I have it
               </Button>
             </div>

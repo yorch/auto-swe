@@ -1,6 +1,7 @@
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import type { TestResult } from '@/hooks/useIntegrationConfigForm';
+import { cn } from '@/lib/utils';
 
 /** Outcome of a tab's "Test connection" button, shown under that button. */
 export function TestResultAlert({ result }: { result: TestResult | null }) {
@@ -17,7 +18,8 @@ export function TestResultAlert({ result }: { result: TestResult | null }) {
 
 /**
  * The end of every integration tab's form: the saved / error outcome and the
- * submit button. Render it as the last child of the tab's `<form>`.
+ * submit button, kept in view at the bottom of the screen while the form is.
+ * Render it as the last child of the tab's `<form>`.
  */
 export function IntegrationFormFooter({
   dirtyCount,
@@ -31,18 +33,29 @@ export function IntegrationFormFooter({
   isPending: boolean;
   saved: boolean;
 }) {
+  const dirty = dirtyCount > 0;
   return (
     <>
-      {saved && <Alert variant="success">Settings saved.</Alert>}
       {error && <Alert>{error}</Alert>}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-400 bg-ink-800/95 px-4 py-3">
-        <p className="min-w-0 text-xs text-paper-500">
-          {dirtyCount === 0
-            ? 'No unsaved changes'
-            : `${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}`}
-          . Blank secret fields keep their current value.
+      <div
+        className={cn(
+          'sticky bottom-0 z-10 flex flex-nowrap items-center justify-between gap-3 rounded-lg border bg-ink-800/95 px-4 py-3 backdrop-blur',
+          dirty ? 'border-amber-400/50' : 'border-ink-400'
+        )}
+      >
+        <p aria-live="polite" className="min-w-0 text-[13px]" role="status">
+          {saved && !dirty && <span className="mr-1 text-moss-400">Settings saved.</span>}
+          <span className={dirty ? 'text-amber-400' : 'text-paper-500'}>
+            {dirty
+              ? `${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}`
+              : 'No unsaved changes'}
+            .
+          </span>{' '}
+          <span className="hidden text-paper-500 sm:inline">
+            Blank secret fields keep their current value.
+          </span>
         </p>
-        <Button disabled={isPending || dirtyCount === 0} type="submit" variant="primary">
+        <Button disabled={isPending || !dirty} type="submit" variant="primary">
           {isPending ? 'Saving…' : 'Save changes'}
         </Button>
       </div>

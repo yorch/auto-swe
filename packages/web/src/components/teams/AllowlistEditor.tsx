@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Textarea } from '@/components/ui/Textarea';
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
@@ -16,7 +16,7 @@ import { errMsg } from '@/lib/errors';
  */
 export function AllowlistEditor({
   description,
-  eyebrow = 'security · per team',
+  eyebrow = 'Sandbox',
   isLoading,
   items,
   onSave,
@@ -65,18 +65,25 @@ export function AllowlistEditor({
   }
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="flex flex-col">
+      <CardHeader className="mb-1">
         <CardTitle eyebrow={eyebrow}>{title}</CardTitle>
+        {items && (
+          <span className="text-xs text-paper-500 tabular-nums">
+            {items.length === 0
+              ? 'Empty'
+              : `${items.length} ${items.length === 1 ? 'entry' : 'entries'}`}
+          </span>
+        )}
       </CardHeader>
-      <p className="mb-3 text-xs text-paper-500">{description}</p>
+      <p className="mb-4 text-[13px] leading-relaxed text-paper-400">{description}</p>
       {isLoading ? (
-        <LoadingState compact />
+        <SkeletonRows rows={3} />
       ) : (
         <>
           <Textarea
             aria-label={title}
-            className="min-h-[120px]"
+            className="min-h-[140px] font-mono text-[13px]"
             onChange={(e) => {
               isDirtyRef.current = true;
               setText(e.target.value);
@@ -84,15 +91,16 @@ export function AllowlistEditor({
             placeholder={placeholder}
             value={text}
           />
-          <div className="mt-3 flex items-center justify-between gap-3">
+          <p className="mt-1.5 text-xs text-paper-500">One entry per line.</p>
+          <div className="mt-auto flex flex-wrap items-center justify-end gap-3 pt-4">
             {error ? (
-              <Alert>{error}</Alert>
+              <Alert className="flex-1">{error}</Alert>
             ) : saved ? (
-              <Alert variant="success">Saved</Alert>
-            ) : (
-              <span />
-            )}
-            <Button disabled={saving} onClick={handleSave} size="sm" variant="primary">
+              <Alert className="flex-1" variant="success">
+                Saved
+              </Alert>
+            ) : null}
+            <Button disabled={saving} onClick={handleSave} variant="secondary">
               {saving ? 'Saving…' : 'Save allowlist'}
             </Button>
           </div>

@@ -2,19 +2,25 @@
 
 import { useState } from 'react';
 import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
-import { Badge } from '@/components/ui/Badge';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import {
   type ScannerPattern,
   useCreateScannerPattern,
@@ -28,7 +34,7 @@ import {
   SCANNER_PATTERN_TYPE_ORDER,
   type ScannerPatternType,
 } from '@/lib/scannerPatternTypes';
-import { formatDate } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate } from '@/lib/utils';
 
 type PatternType = ScannerPatternType;
 
@@ -88,6 +94,8 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
           value={form.type}
         />
         <Input
+          className="font-mono"
+          hint="JavaScript regex source, without the surrounding slashes"
           id="scanner-new-pattern"
           label="Pattern (regex source)"
           onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
@@ -96,7 +104,8 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
           value={form.pattern}
         />
         <Input
-          hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
+          className="font-mono"
+          hint="Leave blank for no flags. Allowed: i (case-insensitive), m, s, u, v"
           id="scanner-new-flags"
           label="Flags"
           maxLength={10}
@@ -118,41 +127,45 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
 
 // ── Pattern Detail / Edit Modal ───────────────────────────────────────────────
 
+function formOf(pattern: ScannerPattern): PatternForm {
+  return {
+    flags: pattern.flags,
+    label: pattern.label,
+    pattern: pattern.pattern,
+    type: pattern.type as PatternType,
+  };
+}
+
 function PatternDetailModal({
+  initialEditing = false,
   onClose,
   pattern,
 }: {
+  /** Open straight into the edit form (a custom pattern's "Edit" row action). */
+  initialEditing?: boolean;
   onClose: () => void;
-  pattern: ScannerPattern | null;
+  pattern: ScannerPattern;
 }) {
   const update = useUpdateScannerPattern();
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({
-    flags: '',
-    label: '',
-    pattern: '',
-    type: 'INJECTION' as PatternType,
-  });
+  const canEdit = !pattern.isBuiltIn;
+  const [editing, setEditing] = useState(initialEditing && canEdit);
+  const [form, setForm] = useState<PatternForm>(() => formOf(pattern));
   const [error, setError] = useState<string | null>(null);
-
-  if (!pattern) {
-    return null;
-  }
 
   const pat = pattern;
 
   function startEdit() {
-    setForm({
-      flags: pat.flags,
-      label: pat.label,
-      pattern: pat.pattern,
-      type: pat.type as PatternType,
-    });
+    setForm(formOf(pat));
     setError(null);
     setEditing(true);
   }
 
   function cancelEdit() {
+    // Opened straight into the form: cancelling closes, as there is no detail view behind it.
+    if (initialEditing) {
+      onClose();
+      return;
+    }
     setEditing(false);
     setError(null);
   }
@@ -177,7 +190,7 @@ function PatternDetailModal({
         setEditing(false);
         onClose();
       }}
-      open={!!pattern}
+      open
       size="lg"
       title={title}
     >
@@ -198,6 +211,7 @@ function PatternDetailModal({
             value={form.type}
           />
           <Input
+            className="font-mono"
             id="scanner-edit-pattern"
             label="Pattern (regex source)"
             onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
@@ -205,7 +219,8 @@ function PatternDetailModal({
             value={form.pattern}
           />
           <Input
-            hint="Leave blank for no flags. Common: i (case-insensitive), m (multiline)"
+            className="font-mono"
+            hint="Leave blank for no flags. Allowed: i (case-insensitive), m, s, u, v"
             id="scanner-edit-flags"
             label="Flags"
             maxLength={10}
@@ -230,24 +245,42 @@ function PatternDetailModal({
             <Badge tone="neutral">
               {patternTypeOptions.find((o) => o.value === pattern.type)?.label ?? pattern.type}
             </Badge>
+            <EnforcementBadge type={pattern.type} />
           </EntityMetaBadges>
 
+          <p className="text-[13px] leading-relaxed text-paper-400">
+            {SCANNER_PATTERN_TYPE_INFO[pattern.type].description}
+          </p>
+
           <div>
-            <div className="label-mono mb-1.5">Regex pattern</div>
-            <pre className="overflow-x-auto rounded-sm border border-ink-600 bg-ink-900 p-3 font-mono text-sm text-paper-200 whitespace-pre-wrap break-all">
-              /{pattern.pattern}/{pattern.flags}
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-paper-400">Regex pattern</span>
+              <CopyButton value={pattern.pattern} />
+            </div>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-ink-500 bg-ink-900/70 p-3 font-mono text-[13px] leading-relaxed text-paper-100">
+              <span className="text-paper-500">/</span>
+              {pattern.pattern}
+              <span className="text-paper-500">/</span>
+              <span className="text-ember-300">{pattern.flags}</span>
             </pre>
           </div>
 
-          <div className="flex items-center justify-between border-t border-ink-600 pt-4">
-            <div className="space-y-0.5 text-xs text-paper-500">
-              <div>Created {formatDate(pattern.createdAt)}</div>
-              <div>Updated {formatDate(pattern.updatedAt)}</div>
-            </div>
-            {!pattern.isBuiltIn && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-600 pt-4">
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+              <dt className="text-paper-500">Created</dt>
+              <dd className="text-paper-300">{formatDate(pattern.createdAt)}</dd>
+              <dt className="text-paper-500">Updated</dt>
+              <dd className="text-paper-300">{formatDate(pattern.updatedAt)}</dd>
+            </dl>
+            {canEdit ? (
               <Button onClick={startEdit} variant="secondary">
+                <Icon name="edit" size={14} />
                 Edit
               </Button>
+            ) : (
+              <span className="text-xs text-paper-500">
+                Built-in patterns can be toggled, not edited
+              </span>
             )}
           </div>
         </div>
@@ -256,10 +289,32 @@ function PatternDetailModal({
   );
 }
 
+// ── Enforcement ──────────────────────────────────────────────────────────────
+
+/** What a match in each category does, so a row's weight is visible at a glance. */
+const ENFORCEMENT: Record<PatternType, { label: string; tone: BadgeTone }> = {
+  CODE_SECURITY: { label: 'Advisory', tone: 'dust' },
+  EXFILTRATION: { label: 'Advisory', tone: 'dust' },
+  INJECTION: { label: 'Advisory', tone: 'dust' },
+  PII: { label: 'Eval scorer', tone: 'violet' },
+  SENSITIVE_FILE: { label: 'Hard block', tone: 'brick' },
+  SHELL_COMMAND: { label: 'Soft block', tone: 'amber' },
+};
+
+function EnforcementBadge({ type }: { type: PatternType }) {
+  const { label, tone } = ENFORCEMENT[type];
+  return (
+    <Badge dot tone={tone} variant="outline">
+      {label}
+    </Badge>
+  );
+}
+
 // ── Pattern Row ───────────────────────────────────────────────────────────────
 
 interface RowActions {
   onView: (pattern: ScannerPattern) => void;
+  onEdit: (pattern: ScannerPattern) => void;
   onDelete: (pattern: ScannerPattern) => void;
   onError: (message: string | null) => void;
 }
@@ -267,6 +322,7 @@ interface RowActions {
 function PatternRow({
   pattern,
   onView,
+  onEdit,
   onDelete,
   onError,
 }: { pattern: ScannerPattern } & RowActions) {
@@ -296,33 +352,55 @@ function PatternRow({
     );
   }
 
+  const regex = `/${pattern.pattern}/${pattern.flags}`;
+
   return (
-    <TRow>
-      <Td className="py-2 pr-4" primary>
-        <button
-          className="text-left font-mono text-xs text-paper-100 hover:underline"
-          onClick={() => onView(pattern)}
-          type="button"
+    <TRow hover>
+      <Td className="py-3 pr-4 sm:max-w-0 sm:w-full" primary>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <button
+            className={cn(
+              'truncate rounded-sm text-left font-medium hover:text-ember-300 hover:underline',
+              pattern.isActive ? 'text-paper-100' : 'text-paper-400',
+              FOCUS_RING
+            )}
+            onClick={() => onView(pattern)}
+            type="button"
+          >
+            {pattern.label}
+          </button>
+          {!pattern.isActive && (
+            <Badge tone="muted" variant="outline">
+              Off
+            </Badge>
+          )}
+        </div>
+        <code
+          className="mt-1 block truncate font-mono text-xs font-normal text-paper-400"
+          title={regex}
         >
-          {pattern.label}
-        </button>
-        {pattern.isBuiltIn && (
-          <Badge className="ml-1.5" tone="muted" uppercase variant="text">
-            built-in
-          </Badge>
-        )}
-        {pattern.origin && (
-          <Badge className="ml-1.5" tone="neutral">
-            {pattern.origin}
-          </Badge>
-        )}
-      </Td>
-      <Td className="max-w-xs py-2 pr-4" label="Pattern / Flags">
-        <code className="block truncate font-mono text-[11px] text-paper-300">
-          /{pattern.pattern}/{pattern.flags}
+          {regex}
         </code>
       </Td>
-      <Td className="py-2 pr-4" label="Active">
+      <Td className="px-4 py-3" label="Source">
+        <div className="flex flex-wrap items-center gap-1">
+          {pattern.isBuiltIn ? (
+            <Badge tone="neutral" variant="outline">
+              Built-in
+            </Badge>
+          ) : (
+            <Badge tone="ember" variant="outline">
+              Custom
+            </Badge>
+          )}
+          {pattern.origin && (
+            <Badge title={`Installed by the ${pattern.origin} bundle`} tone="neutral">
+              {pattern.origin}
+            </Badge>
+          )}
+        </div>
+      </Td>
+      <Td className="px-4 py-3" label="Active">
         <ToggleSwitch
           ariaLabel={`Active: ${pattern.label}`}
           checked={pattern.isActive}
@@ -346,17 +424,30 @@ function PatternRow({
           />
         )}
       </Td>
-      <Td className="py-2 text-right">
-        <div className="flex items-center justify-end gap-2">
-          <Button onClick={() => onView(pattern)} size="sm" variant="ghost">
-            View
-          </Button>
-          {!pattern.isBuiltIn && (
-            <Button onClick={() => onDelete(pattern)} size="sm" variant="danger">
-              Delete
-            </Button>
-          )}
-        </div>
+      <Td align="right" className="py-3 pl-4">
+        <ActionMenu
+          items={[
+            { icon: 'info', id: 'view', label: 'View details', onAction: () => onView(pattern) },
+            ...(pattern.isBuiltIn
+              ? []
+              : [
+                  {
+                    icon: 'edit' as const,
+                    id: 'edit',
+                    label: 'Edit',
+                    onAction: () => onEdit(pattern),
+                  },
+                  {
+                    icon: 'trash' as const,
+                    id: 'delete',
+                    label: 'Delete',
+                    onAction: () => onDelete(pattern),
+                    tone: 'danger' as const,
+                  },
+                ]),
+          ]}
+          label={`Actions for ${pattern.label}`}
+        />
       </Td>
     </TRow>
   );
@@ -365,33 +456,54 @@ function PatternRow({
 // ── Pattern Section ───────────────────────────────────────────────────────────
 
 function PatternSection({
-  description,
-  id,
-  patterns,
-  title,
   actions,
+  filtered,
+  patterns,
+  total,
+  type,
 }: {
-  description?: string;
-  id: string;
-  patterns: ScannerPattern[];
-  title: string;
   actions: RowActions;
+  /** True while a search or status filter narrows the list. */
+  filtered: boolean;
+  patterns: ScannerPattern[];
+  /** Patterns in the category before filtering. */
+  total: number;
+  type: PatternType;
 }) {
+  const info = SCANNER_PATTERN_TYPE_INFO[type];
+  const activeCount = patterns.filter((p) => p.isActive).length;
   return (
-    <Card className="scroll-mt-4" id={id}>
-      <CardHeader className={description ? 'mb-1' : undefined}>
-        <CardTitle>{title}</CardTitle>
+    <Card className="scroll-mt-4 p-4 sm:p-6" id={`scanner-${type}`}>
+      <CardHeader className="mb-1">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <h2 className="text-[17px] font-semibold tracking-tight text-paper-50">{info.title}</h2>
+          <EnforcementBadge type={type} />
+        </div>
+        <span className="text-xs text-paper-500 tabular-nums">
+          {filtered ? `${patterns.length} of ${total}` : `${activeCount} of ${total} active`}
+        </span>
       </CardHeader>
-      {description && <p className="mb-4 text-xs text-paper-400">{description}</p>}
+      <p className="mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        {info.description}
+      </p>
       {patterns.length === 0 ? (
-        <EmptyState className="py-4" title="No patterns in this category." />
+        <EmptyState
+          className="py-6"
+          hint={filtered ? undefined : 'Create a pattern of this type to start checking for it.'}
+          icon={null}
+          title={filtered ? 'No patterns in this category match' : 'No patterns in this category'}
+        />
       ) : (
         <Table stacked>
           <THead>
-            <Th variant="compact">Label</Th>
-            <Th variant="compact">Pattern / Flags</Th>
-            <Th variant="compact">Active</Th>
-            <Th variant="compact" />
+            <Th className="pl-0" variant="plain">
+              Rule
+            </Th>
+            <Th variant="plain">Source</Th>
+            <Th variant="plain">Active</Th>
+            <Th className="pr-0" variant="plain">
+              <span className="sr-only">Actions</span>
+            </Th>
           </THead>
           <tbody>
             {patterns.map((p) => (
@@ -406,6 +518,8 @@ function PatternSection({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+type StatusFilter = '' | 'active' | 'inactive';
+
 export default function GovernScannerPage() {
   const [newOpen, setNewOpen] = useState(false);
   const {
@@ -418,22 +532,56 @@ export default function GovernScannerPage() {
   } = useScannerPatterns();
   // One detail modal and one delete confirmation for the page, bound to the
   // selected row — not one of each mounted per row.
-  const [viewTarget, setViewTarget] = useState<ScannerPattern | null>(null);
+  const [viewTarget, setViewTarget] = useState<{
+    editing: boolean;
+    pattern: ScannerPattern;
+  } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScannerPattern | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [category, setCategory] = useState<'' | PatternType>('');
+  const [status, setStatus] = useState<StatusFilter>('');
   const deletePattern = useDeleteScannerPattern();
   const rowActions: RowActions = {
     onDelete: setDeleteTarget,
+    onEdit: (pattern) => setViewTarget({ editing: true, pattern }),
     onError: setActionError,
-    onView: setViewTarget,
+    onView: (pattern) => setViewTarget({ editing: false, pattern }),
+  };
+
+  const all = patterns ?? [];
+  const query = search.trim().toLowerCase();
+  const matches = (p: ScannerPattern) =>
+    (!status || (status === 'active' ? p.isActive : !p.isActive)) &&
+    (!query ||
+      p.label.toLowerCase().includes(query) ||
+      p.pattern.toLowerCase().includes(query) ||
+      (p.origin ?? '').toLowerCase().includes(query));
+  const filtering = query !== '' || status !== '';
+  const types = category ? [category] : SCANNER_PATTERN_TYPE_ORDER;
+  const sections = types
+    .map((type) => {
+      const inType = all.filter((p) => p.type === type);
+      return { patterns: inType.filter(matches), total: inType.length, type };
+    })
+    // While filtering, a category with no match drops out instead of showing an empty card.
+    .filter((sec) => !filtering || category !== '' || sec.patterns.length > 0);
+  const shown = sections.reduce((n, sec) => n + sec.patterns.length, 0);
+  const activeTotal = all.filter((p) => p.isActive).length;
+  const countOf = (type: PatternType) => all.filter((p) => p.type === type).length;
+  const clearFilters = () => {
+    setSearch('');
+    setStatus('');
+    setCategory('');
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
-            Create pattern
+            <Icon name="plus" size={14} />
+            New pattern
           </Button>
         }
         subtitle="Regex patterns behind the runtime scanners: skill-content and LLM-output injection/exfiltration checks, shell command and sensitive-file blocking, advisory code security findings, and the PII eval scorer. Built-in patterns can be toggled but not deleted."
@@ -444,42 +592,110 @@ export default function GovernScannerPage() {
         error={loadError}
         isError={isError}
         isFetching={isFetching}
-        isLoading={isLoading}
+        isLoading={false}
         label="scanner patterns"
         onRetry={() => void refetch()}
       >
-        {actionError && <Alert variant="error">{actionError}</Alert>}
-        <nav aria-label="Jump to a category" className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-paper-500">Jump to</span>
-          {SCANNER_PATTERN_TYPE_ORDER.map((type) => (
-            <a
-              className="rounded-md border border-ink-400 px-2 py-1 text-paper-300 hover:border-ink-300 hover:text-paper-100"
-              href={`#scanner-${type}`}
-              key={type}
+        {isLoading ? (
+          <Card>
+            <SkeletonRows rows={8} />
+          </Card>
+        ) : (
+          <>
+            <Toolbar
+              className="mb-0"
+              end={
+                <span className="text-xs text-paper-500 tabular-nums">
+                  {filtering || category
+                    ? `${shown} of ${all.length} patterns`
+                    : `${activeTotal} of ${all.length} active`}
+                </span>
+              }
             >
-              {SCANNER_PATTERN_TYPE_INFO[type].title}
-            </a>
-          ))}
-        </nav>
-        {SCANNER_PATTERN_TYPE_ORDER.map((type) => (
-          <PatternSection
-            actions={rowActions}
-            description={SCANNER_PATTERN_TYPE_INFO[type].description}
-            id={`scanner-${type}`}
-            key={type}
-            patterns={patterns?.filter((p) => p.type === type) ?? []}
-            title={SCANNER_PATTERN_TYPE_INFO[type].title}
-          />
-        ))}
+              <SearchInput
+                label="Search patterns"
+                onChange={setSearch}
+                placeholder="Search label or regex…"
+                value={search}
+              />
+              <Select
+                aria-label="Filter by category"
+                className="h-8 w-full text-[13px] sm:w-60"
+                onChange={(v) => setCategory(v as '' | PatternType)}
+                options={[
+                  { label: 'All categories', value: '' },
+                  ...SCANNER_PATTERN_TYPE_ORDER.map((type) => ({
+                    label: `${SCANNER_PATTERN_TYPE_INFO[type].title} (${countOf(type)})`,
+                    value: type,
+                  })),
+                ]}
+                value={category}
+              />
+              <SegmentedControl<StatusFilter>
+                ariaLabel="Filter by state"
+                onChange={setStatus}
+                options={[
+                  { label: 'All', value: '' },
+                  { label: 'Active', value: 'active' },
+                  { label: 'Off', value: 'inactive' },
+                ]}
+                value={status}
+              />
+              {(filtering || category) && (
+                <Button onClick={clearFilters} size="sm" variant="ghost">
+                  Clear filters
+                </Button>
+              )}
+            </Toolbar>
+            {actionError && <Alert variant="error">{actionError}</Alert>}
+            {all.length === 0 ? (
+              <EmptyState
+                action={
+                  <Button onClick={() => setNewOpen(true)} size="sm" variant="primary">
+                    New pattern
+                  </Button>
+                }
+                bordered
+                hint="Built-in patterns sync when the gateway starts. Restart it, or create a custom pattern."
+                icon="scan"
+                title="No scanner patterns"
+              />
+            ) : sections.length === 0 ? (
+              <EmptyState
+                action={
+                  <Button onClick={clearFilters} size="sm">
+                    Clear filters
+                  </Button>
+                }
+                bordered
+                hint="Try a different search or state."
+                icon="search"
+                title="No patterns match these filters"
+              />
+            ) : (
+              sections.map((sec) => (
+                <PatternSection
+                  actions={rowActions}
+                  filtered={filtering}
+                  key={sec.type}
+                  patterns={sec.patterns}
+                  total={sec.total}
+                  type={sec.type}
+                />
+              ))
+            )}
+          </>
+        )}
       </QueryBoundary>
 
       <CreatePatternModal onClose={() => setNewOpen(false)} open={newOpen} />
       {viewTarget && (
         // Keyed so the modal's edit state starts fresh for each pattern opened.
         <PatternDetailModal
-          key={viewTarget.id}
+          initialEditing={viewTarget.editing}
+          key={`${viewTarget.pattern.id}-${viewTarget.editing}`}
           onClose={() => setViewTarget(null)}
-          pattern={viewTarget}
+          pattern={viewTarget.pattern}
         />
       )}
       {deleteTarget && (

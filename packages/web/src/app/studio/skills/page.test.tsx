@@ -28,6 +28,7 @@ const { state, verify } = vi.hoisted(() => ({
   state: { admin: true, skills: [] as unknown[] },
   verify: vi.fn(),
 }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
 vi.mock('@/hooks/useSkills', () => ({
   useCreateSkill: () => ({ isPending: false, mutateAsync: vi.fn() }),
@@ -98,12 +99,12 @@ describe('Skills studio page', () => {
     render(<StudioSkillsPage />);
     const row = rowOf('imported');
     expect(within(row).getByText('external: acme/pack@abcdef0')).toBeTruthy();
-    expect(within(row).getByText('unverified')).toBeTruthy();
-    expect(within(row).getByText('rev 4')).toBeTruthy();
-    expect(within(rowOf('trusted')).getByText('verified')).toBeTruthy();
+    expect(within(row).getByText('Unverified')).toBeTruthy();
+    expect(within(row).getByText('Rev 4')).toBeTruthy();
+    expect(within(rowOf('trusted')).getByText('Verified')).toBeTruthy();
   });
 
-  const open = (name: string) => fireEvent.click(within(rowOf(name)).getByText('View / Edit'));
+  const open = (name: string) => fireEvent.click(within(rowOf(name)).getByText('Open'));
 
   it('offers no Verify in the list: only after opening the skill and its text', () => {
     render(<StudioSkillsPage />);

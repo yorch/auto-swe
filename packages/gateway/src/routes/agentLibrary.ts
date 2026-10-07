@@ -269,8 +269,12 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: { runtime: agent.runtime, version: agent.version },
-        before: { runtime: current.runtime, version: current.version },
+        after: { modelSpec: agent.modelSpec, runtime: agent.runtime, version: agent.version },
+        before: {
+          modelSpec: current.modelSpec,
+          runtime: current.runtime,
+          version: current.version,
+        },
         entityId: agent.id,
         entityType: 'Agent',
       });
@@ -492,6 +496,21 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         request.body,
         actor.sub
       );
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: { modelSpec: agent.modelSpec, runtime: agent.runtime, version: agent.version },
+        before: {
+          key: current.key,
+          modelSpec: current.modelSpec,
+          runtime: current.runtime,
+          scope: 'TEAM',
+          teamId: current.teamId,
+          version: current.version,
+        },
+        entityId: agent.id,
+        entityType: 'Agent',
+      });
       return reply.send({
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),

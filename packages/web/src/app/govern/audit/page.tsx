@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
+import { RelativeTime } from '@/components/govern/RelativeTime';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -9,12 +10,14 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import {
   type AuditAction,
   type AuditLogFilters,
@@ -33,7 +36,7 @@ import {
   parseDateRange,
 } from '@/lib/dateRange';
 import { errMsg } from '@/lib/errors';
-import { cn, FOCUS_RING, formatDate } from '@/lib/utils';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 const LIMIT = 50;
 
@@ -156,37 +159,61 @@ function AuditWorkspace() {
     }
   }
 
-  return (
-    <div className="space-y-8">
-      <div className="fade-up">
-        <PageHeader
-          actions={
-            <Button disabled={exporting || total === 0} onClick={handleExport} variant="secondary">
-              {exporting ? 'Exporting…' : 'Export CSV'}
-            </Button>
-          }
-          subtitle="Lifecycle changes to users, access tokens, sessions, and configuration, newest first. Secret values and credential hashes are never stored here."
-          title="Audit log"
-        />
-      </div>
+  const clearFilters = () => {
+    setSearchDraft('');
+    update({
+      action: null,
+      actor: null,
+      entity: null,
+      from: null,
+      offset: null,
+      range: null,
+      search: null,
+      to: null,
+    });
+  };
 
-      <section className="fade-up stagger-1 space-y-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Input
-            aria-label="Search by person or entity"
-            onChange={(e) => setSearchDraft(e.target.value)}
-            placeholder="Search by person, entity type or id…"
-            type="search"
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        actions={
+          <Button disabled={exporting || total === 0} onClick={handleExport} variant="secondary">
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </Button>
+        }
+        subtitle="Lifecycle changes to users, access tokens, sessions, and configuration, newest first. Secret values and credential hashes are never stored here."
+        title="Audit log"
+      />
+
+      {exportError && <Alert variant="error">{exportError}</Alert>}
+      {exportNotice && <Alert variant="warning">{exportNotice}</Alert>}
+
+      <Card className="fade-up stagger-1 p-4 sm:p-6">
+        <Toolbar
+          end={
+            total > 0 && (
+              <span className="text-xs text-paper-500 tabular-nums">
+                {total} {total === 1 ? 'entry' : 'entries'}
+              </span>
+            )
+          }
+        >
+          <SearchInput
+            label="Search by person or entity"
+            onChange={setSearchDraft}
+            placeholder="Search person or entity…"
             value={searchDraft}
           />
           <Select
             aria-label="Filter by action"
+            className="h-8 w-full text-[13px] sm:w-36"
             onChange={(v) => setFilter({ action: v || null })}
             options={ACTION_OPTIONS}
             value={filters.action ?? ''}
           />
           <Select
             aria-label="Filter by entity type"
+            className="h-8 w-full text-[13px] sm:w-48"
             onChange={(v) => setFilter({ entity: v || null })}
             options={[
               { label: 'All entity types', value: '' },
@@ -194,109 +221,115 @@ function AuditWorkspace() {
             ]}
             value={filters.entityType ?? ''}
           />
-        </div>
-        <DateRangeControl
-          allowAll
-          onChange={(r) =>
-            // No range in the URL means all time, so a preset is always written out.
-            setFilter(r ? dateRangePatch(r, -1) : { from: null, range: null, to: null })
-          }
-          rangeIgnored={customRangeIgnored(params)}
-          value={range}
-        />
-        {hasFilters && (
-          <div className="flex flex-wrap items-center gap-2">
-            {filteredActor && (
-              <span className="font-mono text-[11px] text-paper-300" title={filters.actorId}>
-                actor: {filteredActor}
-              </span>
-            )}
-            <Button
-              onClick={() => {
-                setSearchDraft('');
-                update({
-                  action: null,
-                  actor: null,
-                  entity: null,
-                  from: null,
-                  offset: null,
-                  range: null,
-                  search: null,
-                  to: null,
-                });
-              }}
-              size="sm"
-              variant="ghost"
+        </Toolbar>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <DateRangeControl
+            allowAll
+            onChange={(r) =>
+              // No range in the URL means all time, so a preset is always written out.
+              setFilter(r ? dateRangePatch(r, -1) : { from: null, range: null, to: null })
+            }
+            rangeIgnored={customRangeIgnored(params)}
+            value={range}
+          />
+          {filteredActor && (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-md border border-ink-400 bg-ink-700 py-0.5 pr-1 pl-2 text-xs text-paper-200"
+              title={filters.actorId}
             >
+              Actor: {filteredActor}
+              <button
+                aria-label="Remove the actor filter"
+                className={cn('rounded-sm p-0.5 text-paper-500 hover:text-paper-100', FOCUS_RING)}
+                onClick={() => setFilter({ actor: null })}
+                type="button"
+              >
+                <Icon name="close" size={12} />
+              </button>
+            </span>
+          )}
+          {hasFilters && (
+            <Button onClick={clearFilters} size="sm" variant="ghost">
               Clear filters
             </Button>
+          )}
+        </div>
+
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={false}
+          label="audit log"
+          onRetry={() => void refetch()}
+        >
+          {isLoading ? (
+            <SkeletonRows rows={8} />
+          ) : rows.length === 0 ? (
+            hasFilters ? (
+              <EmptyState
+                action={
+                  <Button onClick={clearFilters} size="sm">
+                    Clear filters
+                  </Button>
+                }
+                hint="Try a wider date range or fewer filters."
+                icon="search"
+                title="No audit entries match these filters"
+              />
+            ) : (
+              <EmptyState
+                hint="Entries appear when someone changes a user, token, session or setting."
+                icon="list"
+                title="No audit entries yet"
+              />
+            )
+          ) : (
+            <Table stacked>
+              <THead>
+                <Th className="pl-0" variant="plain">
+                  Entity
+                </Th>
+                <Th variant="plain">Action</Th>
+                <Th variant="plain">Actor</Th>
+                <Th variant="plain">Change</Th>
+                <Th className="pr-0" variant="plain">
+                  When
+                </Th>
+              </THead>
+              <tbody>
+                {rows.map((row) => (
+                  <AuditRow
+                    key={row.id}
+                    onFilterActor={(id) => setFilter({ actor: id })}
+                    row={row}
+                  />
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </QueryBoundary>
+        {total > 0 && (
+          <div className="mt-4 border-t border-ink-600 pt-4">
+            <Pagination
+              hasNext={offset + rows.length < total}
+              hasPrev={offset > 0}
+              onNext={() => update({ offset: String(offset + LIMIT) })}
+              onPrev={() => update({ offset: offset - LIMIT > 0 ? String(offset - LIMIT) : null })}
+              rangeEnd={Math.min(offset + LIMIT, total)}
+              rangeStart={offset + 1}
+              total={total}
+            />
           </div>
         )}
-        {exportError && <Alert variant="error">{exportError}</Alert>}
-        {exportNotice && <Alert variant="warning">{exportNotice}</Alert>}
-      </section>
+      </Card>
 
-      <section className="fade-up stagger-2 space-y-3">
-        <Card className="overflow-hidden p-0" variant="inset">
-          <QueryBoundary
-            error={error}
-            isError={isError}
-            isFetching={isFetching}
-            isLoading={isLoading}
-            label="audit log"
-            loadingMessage="loading audit log…"
-            onRetry={() => void refetch()}
-          >
-            {rows.length === 0 && (
-              <EmptyState
-                title={
-                  hasFilters ? 'No audit entries match these filters.' : 'No audit entries yet.'
-                }
-              />
-            )}
-            {rows.length > 0 && (
-              <div className="overflow-x-auto">
-                <Table stacked>
-                  <THead>
-                    <Th>Time</Th>
-                    <Th>Action</Th>
-                    <Th>Actor</Th>
-                    <Th>Entity</Th>
-                    <Th>Change</Th>
-                  </THead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <AuditRow
-                        key={row.id}
-                        onFilterActor={(id) => setFilter({ actor: id })}
-                        row={row}
-                      />
-                    ))}
-                  </tbody>
-                </Table>
-              </div>
-            )}
-          </QueryBoundary>
-        </Card>
-        {total > 0 && (
-          <Pagination
-            hasNext={offset + rows.length < total}
-            hasPrev={offset > 0}
-            onNext={() => update({ offset: String(offset + LIMIT) })}
-            onPrev={() => update({ offset: offset - LIMIT > 0 ? String(offset - LIMIT) : null })}
-            rangeEnd={Math.min(offset + LIMIT, total)}
-            rangeStart={offset + 1}
-            total={total}
-          />
-        )}
-      </section>
-
-      <section className="fade-up stagger-3">
+      <section className="fade-up stagger-2">
         <Card variant="inset">
-          <CardHeader>
+          <CardHeader className="mb-1">
             <CardTitle eyebrow="Housekeeping">Shell command history</CardTitle>
           </CardHeader>
-          <p className="mb-3 max-w-prose text-sm text-paper-400">
+          <p className="mb-4 max-w-prose text-[13px] text-paper-400">
             Every command an agent runs in a workspace is recorded separately from this log. Delete
             entries older than {SHELL_AUDIT_KEEP_DAYS} days to keep that history small.
           </p>
@@ -310,7 +343,7 @@ function AuditWorkspace() {
             disabled={pruneShellAudit.isPending}
             onClick={() => setPruneOpen(true)}
             size="sm"
-            variant="secondary"
+            variant="danger"
           >
             {pruneShellAudit.isPending
               ? 'Deleting…'
@@ -335,7 +368,7 @@ function AuditWorkspace() {
           }
         }}
         open={pruneOpen}
-        title="Delete old shell command history"
+        title="Delete old shell command history?"
       />
     </div>
   );
@@ -355,13 +388,13 @@ export default function GovernAuditPage() {
  */
 function AuditActor({ row, onFilter }: { row: AuditLogRow; onFilter: (id: string) => void }) {
   if (!row.actorId) {
-    return <span className="font-mono text-[11px] text-paper-500">system</span>;
+    return <span className="text-[13px] text-paper-500">System</span>;
   }
   const actorId = row.actorId;
   return (
     <button
       className={cn(
-        'font-mono text-[11px] text-paper-300 hover:text-ember-400 hover:underline',
+        'rounded-sm text-left text-[13px] text-paper-200 hover:text-ember-400 hover:underline',
         FOCUS_RING
       )}
       onClick={() => onFilter(actorId)}
@@ -428,7 +461,7 @@ function AuditExpanded({ row }: { row: AuditLogRow }) {
   return (
     <div className="space-y-3 px-4 py-3">
       {changes.length > 0 && (
-        <ul className="space-y-1 font-mono text-[11px] text-paper-300">
+        <ul className="space-y-1 font-mono text-xs text-paper-300">
           {changes.map((c) => (
             <li className="break-words" key={c}>
               {c}
@@ -444,10 +477,8 @@ function AuditExpanded({ row }: { row: AuditLogRow }) {
           ] as const
         ).map(([label, value]) => (
           <div key={label}>
-            <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-paper-500">
-              {label}
-            </div>
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-ink-400 bg-ink-900/60 p-2 font-mono text-[10px] text-paper-300">
+            <div className="mb-1 text-xs font-medium text-paper-400">{label}</div>
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-ink-400 bg-ink-900/60 p-2.5 font-mono text-xs text-paper-300">
               {value == null ? 'Nothing stored' : JSON.stringify(value, null, 2)}
             </pre>
           </div>
@@ -467,11 +498,27 @@ function AuditRow({
 }) {
   const [open, setOpen] = useState(false);
   const href = entityHref(row.entityType, row.entityId, row.workRequestId);
+  const shortId = row.entityId.length > 12 ? `${row.entityId.slice(0, 8)}…` : row.entityId;
   return (
     <>
-      <TRow>
-        <Td className="px-4 py-3 font-mono text-[11px] text-paper-400" primary>
-          {formatDate(row.createdAt, { showSeconds: true })}
+      <TRow hover>
+        <Td className="py-3 pr-4" primary>
+          <div className="text-sm font-medium text-paper-100">
+            {entityTypeLabel(row.entityType)}
+          </div>
+          {href ? (
+            <Link
+              className="font-mono text-xs font-normal text-ember-400 hover:underline"
+              href={href}
+              title={row.entityId}
+            >
+              {shortId}
+            </Link>
+          ) : (
+            <span className="font-mono text-xs font-normal text-paper-500" title={row.entityId}>
+              {shortId}
+            </span>
+          )}
         </Td>
         <Td className="px-4 py-3" label="Action">
           <AuditActionBadge action={row.action} />
@@ -479,36 +526,31 @@ function AuditRow({
         <Td className="px-4 py-3" label="Actor">
           <AuditActor onFilter={onFilterActor} row={row} />
         </Td>
-        <Td className="px-4 py-3" label="Entity">
-          <span className="text-xs text-paper-200">{entityTypeLabel(row.entityType)}</span>
-          {href ? (
-            <Link
-              className="block font-mono text-[10px] text-ember-400 hover:underline"
-              href={href}
-              title={row.entityId}
-            >
-              {row.entityId.length > 12 ? `${row.entityId.slice(0, 8)}…` : row.entityId}
-            </Link>
-          ) : (
-            <span className="block font-mono text-[10px] text-paper-500" title={row.entityId}>
-              {row.entityId.length > 12 ? `${row.entityId.slice(0, 8)}…` : row.entityId}
-            </span>
-          )}
-        </Td>
-        <Td className="px-4 py-3 font-mono text-[10px] text-paper-400" label="Change">
+        <Td className="px-4 py-3 sm:max-w-md" label="Change">
           <button
             aria-expanded={open}
-            className={cn('w-full text-left hover:text-paper-200', FOCUS_RING)}
+            className={cn(
+              'w-full rounded-sm text-left font-mono text-xs text-paper-300 hover:text-paper-100',
+              FOCUS_RING
+            )}
             onClick={() => setOpen((v) => !v)}
             type="button"
           >
-            <span className={open ? 'block break-words' : 'line-clamp-2 block'}>
+            <span className={open ? 'block break-words' : 'line-clamp-2 block break-all'}>
               <AuditDetail after={row.afterJson} before={row.beforeJson} />
             </span>
-            <span className="mt-1 block text-ember-400">
+            <span className="mt-1 inline-flex items-center gap-1 font-sans text-ember-400">
+              <Icon
+                className={cn('transition-transform', open && 'rotate-90')}
+                name="chevronRight"
+                size={12}
+              />
               {open ? 'Hide details' : 'Show details'}
             </span>
           </button>
+        </Td>
+        <Td className="py-3 pl-4 text-[13px] text-paper-400" label="When">
+          <RelativeTime value={row.createdAt} />
         </Td>
       </TRow>
       {/* Below sm the stacked table makes every row a card; pull this one up against its row. */}

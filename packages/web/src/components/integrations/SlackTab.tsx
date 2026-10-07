@@ -4,10 +4,10 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type SlackConfigInput,
@@ -21,6 +21,8 @@ import { useSlackWorkspaces } from '@/hooks/useSlackChannels';
 import { API_BASE } from '@/lib/config';
 import { clearableField, countChanges } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
+import { ConfigStatusBadge, fieldState, groupState } from './ConfigStatusBadge';
+import { FieldGrid, IntegrationCard } from './IntegrationCard';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput } from './SecretInput';
 import { UrlRow } from './UrlRow';
@@ -100,16 +102,40 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
     );
   }
 
+  const credentialsState = groupState([
+    fieldState(data?.clientId, sources.clientId),
+    fieldState(data?.clientSecret, sources.clientSecret),
+    fieldState(data?.signingSecret, sources.signingSecret),
+    fieldState(data?.botToken, sources.botToken),
+  ]);
+
   return (
     <form className="space-y-6" onSubmit={handleSubmit}>
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow="Slack">App credentials</CardTitle>
-        </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
-          Changes apply immediately — these are read on every request, not at startup.
-        </p>
-        <div className="space-y-4">
+      <IntegrationCard
+        description="Changes apply immediately: these are read on every request, not at startup."
+        eyebrow="Slack"
+        footer={
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-paper-500">
+                Checks the bot token on screen, or the saved one if the field is blank.
+              </p>
+              <Button
+                disabled={testing || (!data?.botToken && !botToken)}
+                onClick={handleTest}
+                type="button"
+                variant="secondary"
+              >
+                {testing ? 'Testing…' : 'Test connection'}
+              </Button>
+            </div>
+            <TestResultAlert result={testResult} />
+          </>
+        }
+        status={<ConfigStatusBadge state={credentialsState} />}
+        title="App credentials"
+      >
+        <FieldGrid>
           <ConfigField
             current={data?.clientId || undefined}
             id="slack-client-id"
@@ -117,6 +143,7 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
             source={sources.clientId}
           >
             <Input
+              className="font-mono"
               compact
               id="slack-client-id"
               onChange={(e) => setClientId(e.target.value)}
@@ -152,38 +179,22 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
             source={sources.botToken}
             value={botToken}
           />
-        </div>
-
-        <div className="mt-4 flex justify-end">
-          <Button
-            disabled={testing || (!data?.botToken && !botToken)}
-            onClick={handleTest}
-            size="sm"
-            type="button"
-            variant="secondary"
-          >
-            {testing ? 'Testing…' : 'Test connection'}
-          </Button>
-        </div>
-
-        <TestResultAlert result={testResult} />
-      </Card>
+        </FieldGrid>
+      </IntegrationCard>
 
       <WorkspaceInstallCard installedTeamId={installedTeamId} />
 
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow="Slack App">URLs to register</CardTitle>
-        </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
-          Add these in your Slack App settings under OAuth &amp; Permissions / Event Subscriptions.
-        </p>
+      <IntegrationCard
+        description="Add these in your Slack App settings under OAuth & Permissions and Event Subscriptions."
+        eyebrow="Slack App"
+        title="URLs to register"
+      >
         <div className="space-y-3">
           <UrlRow label="OAuth redirect URI" url={slackRedirectUri} />
           <UrlRow label="Event subscriptions" url={slackEventUrl} />
           <UrlRow label="Interactivity" url={slackInteractivityUrl} />
         </div>
-      </Card>
+      </IntegrationCard>
 
       <IntegrationFormFooter
         dirtyCount={dirtyCount}
@@ -212,30 +223,28 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
     refetch,
   } = useSlackWorkspaces();
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle eyebrow="Slack App">Workspaces</CardTitle>
-      </CardHeader>
-      <p className="mb-4 text-xs text-paper-500">
-        Install the app into each Slack workspace to give it its own bot token. Workspaces without
-        their own token fall back to the singleton bot token above.
-      </p>
+  const addButton = (
+    <ButtonLink href={`${API_BASE}/api/v1/auth/slack/install`} size="sm" variant="secondary">
+      <Icon name="plus" size={14} />
+      Add to Slack
+    </ButtonLink>
+  );
 
+  return (
+    <IntegrationCard
+      description="Install the app into each Slack workspace to give it its own bot token. Workspaces without their own token fall back to the singleton bot token above."
+      eyebrow="Slack App"
+      headerAction={addButton}
+      title="Workspaces"
+    >
       {installedTeamId && (
         <Alert className="mb-4" variant="success">
           Installed into workspace <span className="font-mono">{installedTeamId}</span>.
         </Alert>
       )}
 
-      <div className="mb-4">
-        <ButtonLink href={`${API_BASE}/api/v1/auth/slack/install`} variant="primary">
-          Add to Slack
-        </ButtonLink>
-      </div>
-
       {isLoading ? (
-        <LoadingState compact message="loading workspaces…" />
+        <SkeletonRows rows={2} />
       ) : workspacesIsError ? (
         <QueryBoundary
           error={workspacesError}
@@ -246,32 +255,40 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
           onRetry={() => void refetch()}
         />
       ) : !workspaces || workspaces.length === 0 ? (
-        <EmptyState className="py-0 text-left text-paper-500" title="No workspaces yet." />
+        <EmptyState
+          bordered
+          className="py-6"
+          hint="Use Add to Slack to install the app into a workspace."
+          icon="chat"
+          title="No workspaces yet"
+        />
       ) : (
-        <div className="space-y-2">
+        <ul className="divide-y divide-ink-600 rounded-lg border border-ink-500/60">
           {workspaces.map((w) => (
-            <Card
-              className="flex items-center justify-between px-3 py-2 text-xs"
+            <li
+              className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5"
               key={w.workspaceId}
-              variant="inset"
             >
-              <div className="flex flex-col">
-                <span className="font-mono text-paper-300">{w.name ?? w.slackTeamId}</span>
-                <span className="font-mono text-[10px] text-paper-500">
-                  {w.slackTeamId} · {w.channelCount} channel{w.channelCount === 1 ? '' : 's'}
-                </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-paper-100">
+                  {w.name ?? w.slackTeamId}
+                </div>
+                <div className="text-xs text-paper-500">
+                  <span className="font-mono">{w.slackTeamId}</span> · {w.channelCount} channel
+                  {w.channelCount === 1 ? '' : 's'}
+                </div>
               </div>
               {w.installed ? (
-                <Badge tone="moss">
+                <Badge dot tone="moss">
                   Installed{w.tokenLastFour ? ` · …${w.tokenLastFour}` : ''}
                 </Badge>
               ) : (
                 <Badge tone="muted">Singleton fallback</Badge>
               )}
-            </Card>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
-    </Card>
+    </IntegrationCard>
   );
 }

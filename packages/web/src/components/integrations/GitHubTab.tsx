@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -20,8 +20,10 @@ import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { API_BASE } from '@/lib/config';
 import { clearableField, countChanges } from '@/lib/configFieldPatch';
 import { ConfigField } from './ConfigField';
+import { ConfigStatusBadge, fieldState, groupState } from './ConfigStatusBadge';
 import { GitHubHostCredentialsCard } from './GitHubHostCredentialsCard';
 import { GitHubHostSecretsCard } from './GitHubHostSecretsCard';
+import { FieldGrid, IntegrationCard } from './IntegrationCard';
 import { IntegrationFormFooter, TestResultAlert } from './IntegrationFormFooter';
 import { SecretInput, SecretStatus } from './SecretInput';
 import { UrlRow } from './UrlRow';
@@ -130,73 +132,95 @@ export function GitHubTab() {
     );
   }
 
+  const tokenState = fieldState(data?.token, sources.token);
+  const appState = groupState([
+    fieldState(data?.appId, sources.appId),
+    fieldState(data?.appPrivateKey, sources.appPrivateKey),
+    fieldState(data?.appInstallationId, sources.appInstallationId),
+  ]);
+  const enterpriseState = groupState([
+    fieldState(data?.baseUrl, sources.baseUrl),
+    fieldState(data?.apiUrl, sources.apiUrl),
+  ]);
+
   return (
     <div className="space-y-6">
       <form className="space-y-6" onSubmit={handleSubmit}>
-        <Card>
-          <CardHeader>
-            <CardTitle eyebrow="GitHub">Access token &amp; webhook</CardTitle>
-          </CardHeader>
-          <div className="space-y-4">
-            <SecretInput
-              clear={{ field: 'token', integration: 'github' }}
-              current={data?.token ?? null}
-              id="gh-token"
-              label="Personal access token"
-              onChange={setToken}
-              placeholder="ghp_..."
-              source={sources.token}
-              value={token}
-            />
-            <SecretInput
-              clear={{ field: 'webhookSecret', integration: 'github' }}
-              current={data?.webhookSecret ?? null}
-              id="gh-webhook-secret"
-              label="Webhook secret"
-              onChange={setWebhookSecret}
-              source={sources.webhookSecret}
-              value={webhookSecret}
-            />
+        <IntegrationCard
+          description="The token the platform uses to clone, push and open pull requests, and the secret that signs the webhooks GitHub sends back."
+          eyebrow="GitHub"
+          footer={
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-paper-500">
+                  Checks the token on screen, or the saved one if the field is blank.
+                </p>
+                <Button
+                  disabled={testing || (!data?.token && !token)}
+                  onClick={handleTest}
+                  type="button"
+                  variant="secondary"
+                >
+                  {testing ? 'Testing…' : 'Test connection'}
+                </Button>
+              </div>
+              <TestResultAlert result={testResult} />
+            </>
+          }
+          status={<ConfigStatusBadge state={tokenState} />}
+          title="Access token and webhook"
+        >
+          <div className="space-y-5">
+            <FieldGrid>
+              <SecretInput
+                clear={{ field: 'token', integration: 'github' }}
+                current={data?.token ?? null}
+                id="gh-token"
+                label="Personal access token"
+                onChange={setToken}
+                placeholder="ghp_..."
+                source={sources.token}
+                value={token}
+              />
+              <SecretInput
+                clear={{ field: 'webhookSecret', integration: 'github' }}
+                current={data?.webhookSecret ?? null}
+                id="gh-webhook-secret"
+                label="Webhook secret"
+                onChange={setWebhookSecret}
+                source={sources.webhookSecret}
+                value={webhookSecret}
+              />
+            </FieldGrid>
 
-            <div className="space-y-2 pt-1">
-              <div className="label-mono">Webhook endpoints</div>
-              <UrlRow label="PR / merge events" url={webhookUrl} />
+            <div className="space-y-2.5 rounded-lg border border-ink-500/60 bg-ink-900/30 p-4">
+              <div className="text-[13px] font-medium text-paper-200">Webhook endpoints</div>
+              <UrlRow label="PR and merge events" url={webhookUrl} />
               <UrlRow
-                help="Register both URLs in your GitHub repository or organization webhook settings. Use Content-Type: application/json."
+                help="Register both URLs in your GitHub repository or organization webhook settings, with Content-Type: application/json."
                 label="CI check runs"
                 url={ciWebhookUrl}
               />
             </div>
           </div>
+        </IntegrationCard>
 
-          <div className="mt-4 flex justify-end">
-            <Button
-              disabled={testing || (!data?.token && !token)}
-              onClick={handleTest}
-              size="sm"
-              type="button"
-              variant="secondary"
-            >
-              {testing ? 'Testing…' : 'Test connection'}
-            </Button>
-          </div>
-
-          <TestResultAlert result={testResult} />
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle eyebrow="GitHub App">App authentication (optional)</CardTitle>
-          </CardHeader>
-          <p className="mb-4 text-xs text-paper-500">
-            GitHub App installation tokens are short-lived and scoped. Configure all four fields to
-            enable App auth. See the{' '}
-            <Link className="text-ember-400 hover:underline" href="/docs/github-app-setup">
-              GitHub App setup guide
-            </Link>{' '}
-            for instructions.
-          </p>
-          <div className="space-y-4">
+        <IntegrationCard
+          description={
+            <>
+              GitHub App installation tokens are short-lived and scoped. Fill in the App ID, private
+              key and installation ID to enable App auth. See the{' '}
+              <Link className="text-ember-400 hover:underline" href="/docs/github-app-setup">
+                GitHub App setup guide
+              </Link>
+              .
+            </>
+          }
+          eyebrow="GitHub App"
+          status={<ConfigStatusBadge state={appState} />}
+          title="App authentication (optional)"
+        >
+          <FieldGrid>
             <ConfigField
               current={data?.appId || undefined}
               id="gh-app-id"
@@ -204,11 +228,27 @@ export function GitHubTab() {
               source={sources.appId}
             >
               <Input
+                className="font-mono"
                 compact
                 id="gh-app-id"
                 onChange={(e) => setAppId(e.target.value)}
                 placeholder="12345678"
                 value={appId}
+              />
+            </ConfigField>
+            <ConfigField
+              current={data?.appInstallationId || undefined}
+              id="gh-app-installation-id"
+              label="Installation ID"
+              source={sources.appInstallationId}
+            >
+              <Input
+                className="font-mono"
+                compact
+                id="gh-app-installation-id"
+                onChange={(e) => setAppInstallationId(e.target.value)}
+                placeholder="12345678"
+                value={appInstallationId}
               />
             </ConfigField>
             <ConfigField
@@ -218,6 +258,7 @@ export function GitHubTab() {
               source={sources.appClientId}
             >
               <Input
+                className="font-mono"
                 compact
                 id="gh-app-client-id"
                 onChange={(e) => setAppClientId(e.target.value)}
@@ -234,70 +275,70 @@ export function GitHubTab() {
               source={sources.appClientSecret}
               value={appClientSecret}
             />
-            <ConfigField
-              current={data?.appPrivateKey ? `****${data.appPrivateKey.lastFour}` : undefined}
-              id="gh-app-private-key"
-              label="Private key (PEM)"
-              source={sources.appPrivateKey}
-            >
-              <Textarea
-                className="resize-none"
-                compact
+            <div className="sm:col-span-2">
+              <ConfigField
+                current={data?.appPrivateKey ? `****${data.appPrivateKey.lastFour}` : undefined}
                 id="gh-app-private-key"
-                onChange={(e) => setAppPrivateKey(e.target.value)}
-                placeholder={'-----BEGIN RSA PRIVATE KEY-----\n...'}
-                rows={4}
-                value={appPrivateKey}
-              />
-              <SecretStatus
-                clear={{ field: 'appPrivateKey', integration: 'github' }}
-                current={data?.appPrivateKey}
-                label="Private key"
+                label="Private key (PEM)"
                 source={sources.appPrivateKey}
-              />
-            </ConfigField>
-            <ConfigField
-              current={data?.appInstallationId || undefined}
-              id="gh-app-installation-id"
-              label="Installation ID"
-              source={sources.appInstallationId}
-            >
-              <Input
-                compact
-                id="gh-app-installation-id"
-                onChange={(e) => setAppInstallationId(e.target.value)}
-                placeholder="12345678"
-                value={appInstallationId}
-              />
-            </ConfigField>
-            <ConfigField
-              current={data?.authMode || undefined}
-              id="gh-auth-mode"
-              label="Auth mode"
-              source={sources.authMode}
-            >
-              <Select
-                aria-label="Auth mode"
-                compact
+              >
+                <Textarea
+                  className="resize-none"
+                  compact
+                  id="gh-app-private-key"
+                  onChange={(e) => setAppPrivateKey(e.target.value)}
+                  placeholder={'-----BEGIN RSA PRIVATE KEY-----\n...'}
+                  rows={4}
+                  value={appPrivateKey}
+                />
+                <SecretStatus
+                  clear={{ field: 'appPrivateKey', integration: 'github' }}
+                  current={data?.appPrivateKey}
+                  label="Private key"
+                  source={sources.appPrivateKey}
+                />
+              </ConfigField>
+            </div>
+            <div className="sm:col-span-2">
+              <ConfigField
+                current={data?.authMode || undefined}
+                hint="Which credential the worker uses when both a token and an App are configured."
                 id="gh-auth-mode"
-                onChange={(v) => setAuthMode(v)}
-                options={[
-                  { label: 'Automatic: GitHub App if configured, else token', value: 'auto' },
-                  { label: 'Token: always use the personal access token', value: 'pat' },
-                  { label: 'App: always use the GitHub App', value: 'app' },
-                ]}
-                value={authMode}
-              />
-            </ConfigField>
-          </div>
-        </Card>
+                label="Auth mode"
+                source={sources.authMode}
+              >
+                <Select
+                  aria-label="Auth mode"
+                  compact
+                  id="gh-auth-mode"
+                  onChange={(v) => setAuthMode(v)}
+                  options={[
+                    { label: 'Automatic: GitHub App if configured, else token', value: 'auto' },
+                    { label: 'Token: always use the personal access token', value: 'pat' },
+                    { label: 'App: always use the GitHub App', value: 'app' },
+                  ]}
+                  value={authMode}
+                />
+              </ConfigField>
+            </div>
+          </FieldGrid>
+        </IntegrationCard>
 
-        <Card>
-          <CardHeader>
-            <CardTitle eyebrow="GitHub Enterprise">Custom API &amp; base URLs</CardTitle>
-          </CardHeader>
-          <p className="mb-4 text-xs text-paper-500">Leave blank to use github.com defaults.</p>
-          <div className="space-y-4">
+        <IntegrationCard
+          description="Only for GitHub Enterprise Server. Leave both blank to use github.com."
+          eyebrow="GitHub Enterprise"
+          status={
+            enterpriseState === 'unset' ? (
+              <Badge tone="muted" variant="outline">
+                Using github.com
+              </Badge>
+            ) : (
+              <ConfigStatusBadge state={enterpriseState} />
+            )
+          }
+          title="Custom API and base URLs"
+        >
+          <FieldGrid>
             <ConfigField
               current={data?.baseUrl || undefined}
               id="gh-base-url"
@@ -305,6 +346,7 @@ export function GitHubTab() {
               source={sources.baseUrl}
             >
               <Input
+                className="font-mono"
                 compact
                 id="gh-base-url"
                 onChange={(e) => setBaseUrl(e.target.value)}
@@ -319,6 +361,7 @@ export function GitHubTab() {
               source={sources.apiUrl}
             >
               <Input
+                className="font-mono"
                 compact
                 id="gh-api-url"
                 onChange={(e) => setApiUrl(e.target.value)}
@@ -326,8 +369,8 @@ export function GitHubTab() {
                 value={apiUrl}
               />
             </ConfigField>
-          </div>
-        </Card>
+          </FieldGrid>
+        </IntegrationCard>
 
         <IntegrationFormFooter
           dirtyCount={dirtyCount}

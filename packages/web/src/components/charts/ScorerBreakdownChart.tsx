@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 import {
+  ACTIVE_DOT_PROPS,
   AXIS_COMMON_PROPS,
   axisLabel,
   CHART_HEIGHT,
@@ -17,11 +18,14 @@ import {
   type ChartGranularity,
   ChartTooltip,
   chartAriaLabel,
+  DOT_PROPS,
   EmptyChart,
   formatDateLabel,
-  GRID_STROKE,
+  GRID_PROPS,
   granularityWords,
   LEGEND_STYLE,
+  LINE_WIDTH,
+  legendText,
 } from './chartChrome';
 import { CHART_PALETTE, OTHER_LABEL, seriesColor, seriesDash, topNWithOther } from './colors';
 
@@ -123,7 +127,7 @@ export function ScorerBreakdownChart({
     >
       <ResponsiveContainer height={CHART_HEIGHT} width="100%">
         <LineChart accessibilityLayer={false} data={rows}>
-          <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
+          <CartesianGrid {...GRID_PROPS} vertical={false} />
           <XAxis
             dataKey="date"
             interval="preserveStartEnd"
@@ -143,18 +147,24 @@ export function ScorerBreakdownChart({
               `${granularity === 'week' ? 'Week of ' : ''}${formatDateLabel(label)} (UTC)`
             }
           />
-          <Legend wrapperStyle={LEGEND_STYLE} />
+          <Legend
+            formatter={legendText}
+            iconSize={14}
+            iconType="plainline"
+            wrapperStyle={LEGEND_STYLE}
+          />
           {series.map((s, i) => (
             <Line
+              activeDot={ACTIVE_DOT_PROPS}
               connectNulls={false}
               dataKey={seriesKey(i)}
-              dot={{ r: 2.5 }}
+              dot={DOT_PROPS}
               isAnimationActive={false}
               key={seriesKey(i)}
               name={s.label}
               stroke={seriesColor(i, s.label)}
               strokeDasharray={seriesDash(i, s.label)}
-              strokeWidth={1.5}
+              strokeWidth={LINE_WIDTH}
               type="monotone"
             />
           ))}

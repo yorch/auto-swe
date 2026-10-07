@@ -9,6 +9,7 @@ import { RunSummary } from '@/components/runs/RunSummary';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Icon } from '@/components/ui/Icon';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -22,7 +23,10 @@ import { useRetriedRun, useRetryWorkRequest, useWorkflowRun } from '@/hooks/useR
 import { agentRunDeliver, describeLaunchError, rerunConsequence } from '@/lib/agentRun';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { findFailedStep } from '@/lib/runFailure';
-import { formatRelativeTime } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
+
+const SUMMARY =
+  'flex cursor-pointer list-none items-center gap-2 rounded-sm text-sm font-medium text-paper-200 [&::-webkit-details-marker]:hidden';
 
 export function RequestPanel({ requestId, onClose }: { requestId: string; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -44,14 +48,15 @@ export function RequestPanel({ requestId, onClose }: { requestId: string; onClos
       ref={dialog}
     >
       <div className="flex h-full flex-col">
-        <header className="flex shrink-0 items-center justify-between border-b border-ink-400 px-6 py-4">
-          <h2 className="text-lg font-semibold">Request details</h2>
+        <header className="flex shrink-0 items-center justify-between border-b border-ink-500 px-6 py-3.5">
+          <h2 className="text-[15px] font-semibold text-paper-100">Request details</h2>
           <Button
             aria-label="Close request details"
+            className="h-8 w-8 px-0"
             onClick={() => dialog.current?.close()}
             variant="ghost"
           >
-            Close ×
+            <Icon name="close" size={18} />
           </Button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
@@ -115,7 +120,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
             {run && (
               <>
                 <div className="space-y-3">
-                  <h3 className="break-words text-xl font-semibold">
+                  <h3 className="break-words text-xl font-semibold leading-snug tracking-tight text-paper-50">
                     {run.workRequest?.title ||
                       run.workRequest?.description.split('\n')[0].slice(0, 200) ||
                       run.workRequest?.externalTicketId ||
@@ -123,7 +128,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
                   </h3>
                   <div className="flex flex-wrap items-center gap-3">
                     <StatusBadge status={run.status} />
-                    <span className="text-xs text-paper-400">
+                    <span className="text-[13px] text-paper-400">
                       {isCrossRepo
                         ? 'Repository execution'
                         : runId === latestId
@@ -132,22 +137,27 @@ function RequestDetail({ requestId }: { requestId: string }) {
                       · {formatRelativeTime(run.startedAt)}
                     </span>
                   </div>
-                  <ButtonLink href={`/runs/${run.id}`} size="sm">
-                    Open full diagnostics ↗
-                  </ButtonLink>
-                </div>
-                {run.id === (summary.data?.data[0]?.id ?? latestId) &&
-                  run.result == null &&
-                  summary.data?.data[0]?.reviewUrl && (
-                    <ButtonLink
-                      href={summary.data.data[0].reviewUrl}
-                      rel="noopener noreferrer"
-                      target="_blank"
-                      variant="primary"
-                    >
-                      Review pull request ↗
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {run.id === (summary.data?.data[0]?.id ?? latestId) &&
+                      run.result == null &&
+                      summary.data?.data[0]?.reviewUrl && (
+                        <ButtonLink
+                          href={summary.data.data[0].reviewUrl}
+                          rel="noopener noreferrer"
+                          target="_blank"
+                          variant="primary"
+                        >
+                          <Icon name="pullRequest" size={14} />
+                          Review pull request
+                          <Icon name="external" size={13} />
+                        </ButtonLink>
+                      )}
+                    <ButtonLink href={`/runs/${run.id}`}>
+                      Open full diagnostics
+                      <Icon name="arrowRight" size={14} />
                     </ButtonLink>
-                  )}
+                  </div>
+                </div>
                 <AttemptContent
                   isLatest={!isCrossRepo && run.id === latestId}
                   key={run.id}
@@ -160,9 +170,14 @@ function RequestDetail({ requestId }: { requestId: string }) {
         )}
       </QueryBoundary>
       {latestId && (
-        <section className="space-y-3">
-          <h3 className="text-base font-semibold">
+        <section className="space-y-3 border-t border-ink-600 pt-6">
+          <h3 className="flex items-center gap-2 text-[15px] font-semibold text-paper-100">
             {isCrossRepo ? 'Repository executions' : 'Attempts'}
+            {total > 0 && (
+              <span className="tabular rounded-full bg-ink-600 px-2 text-xs font-medium text-paper-300">
+                {total}
+              </span>
+            )}
           </h3>
           {isCrossRepo && (
             <p className="text-sm text-paper-400">
@@ -185,13 +200,24 @@ function RequestDetail({ requestId }: { requestId: string }) {
                 <li key={attempt.id}>
                   <button
                     aria-pressed={runId === attempt.id}
-                    className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-left ${runId === attempt.id ? 'border-ember-400 bg-ink-700' : 'border-ink-400 hover:bg-ink-700'}`}
+                    className={cn(
+                      'flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3.5 py-2.5 text-left transition-colors',
+                      FOCUS_RING,
+                      runId === attempt.id
+                        ? 'border-ember-400/70 bg-ember-400/[0.06]'
+                        : 'border-ink-500 hover:border-ink-300 hover:bg-ink-700/60'
+                    )}
                     onClick={() => setSelected(attempt.id)}
                     type="button"
                   >
-                    <span className="text-sm">
-                      {formatRelativeTime(attempt.startedAt)} ·{' '}
-                      {attempt.id === latestId ? 'Latest' : 'Previous'}
+                    <span className="text-sm text-paper-200">
+                      <span className="font-medium text-paper-100">
+                        {attempt.id === latestId ? 'Latest' : 'Previous'}
+                      </span>
+                      <span className="text-paper-500"> · </span>
+                      <span title={formatDate(attempt.startedAt)}>
+                        {formatRelativeTime(attempt.startedAt)}
+                      </span>
                     </span>
                     <StatusBadge status={attempt.status} />
                   </button>
@@ -298,11 +324,14 @@ function AttemptContent({
         variant="compact"
       />
       {canRetry && !retryOpen && (
-        <Button onClick={() => setRetryOpen(true)}>Retry with instructions</Button>
+        <Button onClick={() => setRetryOpen(true)}>
+          <Icon name="refresh" size={14} />
+          Retry with instructions
+        </Button>
       )}
       {retryOpen && (
-        <Card className="space-y-4">
-          <h3 className="font-semibold">Start another attempt</h3>
+        <Card className="space-y-4 p-5">
+          <h3 className="text-[15px] font-semibold text-paper-100">Start another attempt</h3>
           <p className="text-sm text-paper-400">
             {consequence ??
               'This starts another agent attempt without publishing a branch or pull request.'}
@@ -323,7 +352,7 @@ function AttemptContent({
                 : 'Waiting for execution to begin…'}
             </Alert>
           ) : (
-            <div className="flex justify-end gap-3">
+            <div className="flex flex-wrap justify-end gap-3">
               <Button
                 disabled={retry.isPending}
                 onClick={() => setRetryOpen(false)}
@@ -338,10 +367,10 @@ function AttemptContent({
           )}
         </Card>
       )}
-      <section className="space-y-3">
-        <h3 className="font-semibold">Progress</h3>
+      <section className="space-y-2">
+        <h3 className="text-[15px] font-semibold text-paper-100">Progress</h3>
         {run.status === 'RUNNING' && (
-          <p className="text-sm text-paper-400">
+          <p className="text-sm text-paper-300">
             {pending.length
               ? 'Waiting for the response above.'
               : activeSteps.length
@@ -349,15 +378,32 @@ function AttemptContent({
                 : 'Execution is running. Waiting for the next step update.'}
           </p>
         )}
-        <p className="text-sm text-paper-400">
-          {currentSteps.filter((step) => step.status === 'PASSED').length} of {currentSteps.length}{' '}
-          recorded steps passed.
-        </p>
+        <div className="flex items-center gap-3">
+          <div aria-hidden="true" className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink-600">
+            <div
+              className="h-full rounded-full bg-moss-400"
+              style={{
+                width: `${currentSteps.length ? (currentSteps.filter((step) => step.status === 'PASSED').length / currentSteps.length) * 100 : 0}%`,
+              }}
+            />
+          </div>
+          <p className="tabular shrink-0 text-[13px] text-paper-400">
+            {currentSteps.filter((step) => step.status === 'PASSED').length} of{' '}
+            {currentSteps.length} recorded steps passed.
+          </p>
+        </div>
       </section>
       {run.workRequest?.description && (
-        <details className="rounded-lg border border-ink-400 p-4">
-          <summary className="cursor-pointer text-sm font-semibold">Original task</summary>
-          <p className="mt-3 whitespace-pre-wrap break-words text-sm text-paper-400">
+        <details className="group rounded-lg border border-ink-500 bg-ink-800/40 px-4 py-3">
+          <summary className={cn(SUMMARY, FOCUS_RING)}>
+            <Icon
+              className="text-paper-500 transition-transform group-open:rotate-90"
+              name="chevronRight"
+              size={14}
+            />
+            Original task
+          </summary>
+          <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-paper-300">
             {run.workRequest.description}
           </p>
         </details>
@@ -379,10 +425,17 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
   }, [run.specSnapshot]);
   return (
     <details
-      className="rounded-lg border border-ink-400 p-4"
+      className="group rounded-lg border border-ink-500 bg-ink-800/40 px-4 py-3"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="cursor-pointer text-sm font-semibold">Technical details</summary>
+      <summary className={cn(SUMMARY, FOCUS_RING)}>
+        <Icon
+          className="text-paper-500 transition-transform group-open:rotate-90"
+          name="chevronRight"
+          size={14}
+        />
+        Technical details
+      </summary>
       {open && (
         <div className="mt-4 space-y-4">
           {spec ? (
@@ -390,12 +443,14 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
           ) : (
             <p className="text-sm text-paper-400">No readable workflow diagram is available.</p>
           )}
-          <h4 className="font-semibold">Step log</h4>
-          <ul className="space-y-2">
+          <h4 className="text-sm font-semibold text-paper-200">Step log</h4>
+          <ul className="divide-y divide-ink-600 rounded-md border border-ink-600">
             {run.steps.map((step) => (
-              <li className="text-sm" key={step.id}>
-                <span>
-                  {step.nodeId} · attempt {step.attempt} · {step.status.toLowerCase()}
+              <li className="px-3 py-2 text-[13px]" key={step.id}>
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-mono text-paper-100">{step.nodeId}</span>
+                  <span className="text-paper-500">attempt {step.attempt}</span>
+                  <StatusBadge showDot={false} status={step.status} />
                 </span>
                 {step.error && (
                   <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-brick-400">
@@ -405,7 +460,7 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
               </li>
             ))}
           </ul>
-          <h4 className="font-semibold">Traces</h4>
+          <h4 className="text-sm font-semibold text-paper-200">Traces</h4>
           <QueryBoundary
             error={traces.error}
             isError={traces.isError}
@@ -420,7 +475,8 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
             </p>
             {traces.data?.traces.slice(-20).map((trace) => (
               <div className="border-t border-ink-600 pt-2 text-xs text-paper-400" key={trace.id}>
-                {trace.agentKey} · {trace.toolName ?? trace.type}
+                <span className="font-mono text-paper-300">{trace.agentKey}</span> ·{' '}
+                <span className="font-mono">{trace.toolName ?? trace.type}</span>
                 {trace.error && <p className="break-words text-brick-400">{trace.error}</p>}
               </div>
             ))}

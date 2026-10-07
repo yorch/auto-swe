@@ -24,7 +24,7 @@ export function ConfigAuditLogTab({ initialGroup }: { initialGroup: AuditGroup }
     <div className="space-y-3">
       <Select
         aria-label="Filter changes"
-        className="h-9 w-auto max-w-full"
+        className="h-8 w-full text-[13px] sm:w-56"
         onChange={(v) => setGroup(v as AuditGroup)}
         options={AUDIT_GROUP_OPTIONS}
         value={group}

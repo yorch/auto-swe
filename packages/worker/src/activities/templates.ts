@@ -663,9 +663,12 @@ export async function finalizeRun(
   // advance currentStatus through happy-path states, so without this a
   // failed/timed-out/cancelled run leaves its row "active" forever and the
   // dashboard KPIs drift. SUCCESS maps to COMPLETED (a no-op on specs that
-  // already set it); SKIPPED has no ActiveWorkflow equivalent and is left as-is.
+  // already set it). SKIPPED, a terminate node ending the run without work, has
+  // no ledger value of its own and maps to COMPLETED too: the execution ended
+  // as designed, and a row left non-terminal would block a retry or a scheduled
+  // fire of the request for ever. The run row keeps SKIPPED.
   const activeWorkflowStatus = (s: typeof status) =>
-    s === 'SUCCESS' ? 'COMPLETED' : s === 'SKIPPED' ? null : s;
+    s === 'SUCCESS' || s === 'SKIPPED' ? 'COMPLETED' : s;
 
   const terminalUpdate = {
     contextSnapshot: contextSnapshot as object | undefined,

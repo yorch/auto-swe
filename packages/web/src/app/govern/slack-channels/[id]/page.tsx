@@ -1,7 +1,7 @@
 'use client';
 
-import Link from 'next/link';
 import { use } from 'react';
+import { BackLink } from '@/components/govern/BackLink';
 import { ChannelActivityTab } from '@/components/slackChannels/ChannelActivityTab';
 import { ChannelMemoryTab } from '@/components/slackChannels/ChannelMemoryTab';
 import { ChannelOpenItemsTab } from '@/components/slackChannels/ChannelOpenItemsTab';
@@ -39,9 +39,7 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
 
   return (
     <div className="space-y-6">
-      <Link className="label-mono hover:text-paper-200" href="/govern/slack-channels">
-        ← Slack channels
-      </Link>
+      <BackLink href="/govern/slack-channels" label="Slack channels" />
       <QueryBoundary
         error={error}
         isError={isError}
@@ -53,19 +51,22 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
         {!channel ? (
           <EmptyState
             action={<ButtonLink href="/govern/slack-channels">Back to Slack channels</ButtonLink>}
+            bordered
+            hint="It may have been removed, or the link is wrong."
+            icon="chat"
             title="Slack channel not found"
           />
         ) : (
           <>
             <PageHeader
               actions={
-                <Badge dot tone={channel.isActive ? 'moss' : 'muted'} variant="text">
+                <Badge dot tone={channel.isActive ? 'moss' : 'muted'} variant="outline">
                   {channel.isActive ? 'Active' : 'Inactive'}
                 </Badge>
               }
               className="mb-4"
               subtitle={`${channel.workspace.name ? `${channel.workspace.name} · ` : ''}Each channel belongs to a team and can set its own agent, schedules and monthly spend cap.`}
-              title={channel.name ?? 'Unnamed channel'}
+              title={channel.name ? `#${channel.name}` : 'Unnamed channel'}
             />
             <TabBar
               active={tab}

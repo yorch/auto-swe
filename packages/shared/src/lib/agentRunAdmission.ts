@@ -186,6 +186,33 @@ export function isWorkflowStatusFinished(statusName: string | undefined): boolea
   return statusName !== undefined && FINISHED_WORKFLOW_STATUSES.has(statusName);
 }
 
+/** The terminal `ActiveWorkflow` statuses a finished execution can leave behind. */
+export type ClosedLedgerStatus = 'COMPLETED' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED';
+
+/**
+ * The ledger status a Temporal execution state closes a row with, or null while
+ * it has not finished (`isWorkflowStatusFinished`). The same mapping the run
+ * reaper applies to a run (`reapedStatusFor`, where COMPLETED reads SUCCESS):
+ * a stop on purpose is CANCELLED, not a failure; anything else that finished
+ * without an outcome of its own is FAILED.
+ */
+export function closedLedgerStatusFor(statusName: string | undefined): ClosedLedgerStatus | null {
+  if (!isWorkflowStatusFinished(statusName)) {
+    return null;
+  }
+  switch (statusName) {
+    case 'COMPLETED':
+      return 'COMPLETED';
+    case 'TIMED_OUT':
+      return 'TIMED_OUT';
+    case 'CANCELLED':
+    case 'TERMINATED':
+      return 'CANCELLED';
+    default:
+      return 'FAILED';
+  }
+}
+
 export interface ReconcileOptions {
   /**
    * Whether the run's workflow is still executing in Temporal: `true` while it

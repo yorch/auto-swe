@@ -2,13 +2,18 @@
 
 import { KNOWN_RISK_CLASSES } from '@auto-swe/shared/lib/autonomyPolicy';
 import { useEffect, useMemo, useState } from 'react';
+import { RelativeTime } from '@/components/govern/RelativeTime';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -25,7 +30,6 @@ import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { riskClassLabel } from '@/lib/autonomyEvents';
 import { errMsg } from '@/lib/errors';
-import { formatDate } from '@/lib/utils';
 
 type RuleRow = {
   action: 'auto' | 'require_approval';
@@ -186,7 +190,7 @@ function PolicyModal({
   }, [editing]);
 
   const title = editing ? 'Edit autonomy policy' : 'New autonomy policy';
-  const eyebrow = 'Govern / Autonomy Policies';
+  const eyebrow = 'Autonomy policy';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -354,20 +358,24 @@ function PolicyModal({
                 />
                 <Button
                   aria-label={`Remove rule ${i + 1}`}
+                  className="h-9 px-0"
                   onClick={() => removeRule(i)}
+                  title="Remove rule"
                   type="button"
-                  variant="danger"
+                  variant="ghost"
                 >
-                  ×
+                  <Icon name="close" size={14} />
                 </Button>
               </div>
             ))}
             <Button
               disabled={unusedClasses.length === 0}
               onClick={addRule}
+              size="sm"
               type="button"
               variant="secondary"
             >
+              <Icon name="plus" size={14} />
               Add risk class
             </Button>
             <p className="text-xs text-paper-500">
@@ -412,7 +420,7 @@ export default function AutonomyPoliciesPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         actions={
           <>
@@ -420,6 +428,7 @@ export default function AutonomyPoliciesPage() {
               Review decisions
             </ButtonLink>
             <Button onClick={startCreate} variant="primary">
+              <Icon name="plus" size={14} />
               New policy
             </Button>
           </>
@@ -432,44 +441,103 @@ export default function AutonomyPoliciesPage() {
         error={error}
         isError={isError}
         isFetching={isFetching}
-        isLoading={isLoading}
+        isLoading={false}
         label="policies"
-        loadingMessage="loading policies…"
         onRetry={() => void refetch()}
       >
-        <Card className="p-0" variant="inset">
-          <div className="divide-y divide-ink-600">
-            {sorted.map((p) => (
-              <div className="flex flex-wrap items-start justify-between gap-3 p-4" key={p.id}>
-                <div className="min-w-0 space-y-1">
-                  <p className="text-sm font-medium">{p.name}</p>
-                  <p className="text-xs text-paper-400">{scopeLabel(p)}</p>
-                  {p.description && <p className="text-xs text-paper-500">{p.description}</p>}
-                  <ul className="space-y-0.5 pt-1 text-xs text-paper-300">
-                    {ruleSummary(p.rules).map((line) => (
-                      <li key={line}>{line}</li>
-                    ))}
-                  </ul>
-                  <p className="pt-1 text-xs text-paper-500">Updated {formatDate(p.updatedAt)}</p>
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <Button onClick={() => startEdit(p)} size="sm" variant="secondary">
-                    Edit
-                  </Button>
-                  <Button
-                    disabled={deletePolicy.isPending}
-                    onClick={() => setDeleteTarget(p)}
-                    size="sm"
-                    variant="danger"
-                  >
-                    Delete
-                  </Button>
-                </div>
-              </div>
-            ))}
-            {sorted.length === 0 && <EmptyState title="No autonomy policies yet." />}
-          </div>
-        </Card>
+        {isLoading ? (
+          <Card>
+            <SkeletonRows rows={3} />
+          </Card>
+        ) : sorted.length === 0 ? (
+          <EmptyState
+            action={
+              <Button onClick={startCreate} size="sm" variant="primary">
+                <Icon name="plus" size={14} />
+                New policy
+              </Button>
+            }
+            bordered
+            hint="Without a policy every risk class needs human approval. A policy lets low-risk actions run automatically."
+            icon="gavel"
+            title="No autonomy policies yet"
+          />
+        ) : (
+          <ul className="space-y-3">
+            {sorted.map((p) => {
+              const rules = Object.entries(p.rules);
+              return (
+                <li key={p.id}>
+                  <Card className="p-4 sm:p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="text-base font-semibold text-paper-50">{p.name}</h2>
+                          <Badge
+                            tone={p.template ? 'violet' : p.team ? 'dust' : 'neutral'}
+                            variant="outline"
+                          >
+                            {scopeLabel(p)}
+                          </Badge>
+                        </div>
+                        {p.description && (
+                          <p className="text-[13px] text-paper-400">{p.description}</p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button onClick={() => startEdit(p)} size="sm" variant="secondary">
+                          Edit
+                        </Button>
+                        <ActionMenu
+                          items={[
+                            {
+                              disabled: deletePolicy.isPending,
+                              icon: 'trash',
+                              id: 'delete',
+                              label: 'Delete policy',
+                              onAction: () => setDeleteTarget(p),
+                              tone: 'danger',
+                            },
+                          ]}
+                          label={`More actions for ${p.name}`}
+                        />
+                      </div>
+                    </div>
+                    {rules.length > 0 ? (
+                      <ul aria-label="Rules" className="mt-3 flex flex-wrap gap-2">
+                        {rules.map(([riskClass, rule]) => (
+                          <li
+                            className="inline-flex items-center gap-2 rounded-md border border-ink-500 bg-ink-900/50 py-1 pr-1.5 pl-2.5 text-xs"
+                            key={riskClass}
+                            title={ruleSummary({ [riskClass]: rule })[0]}
+                          >
+                            <span className="text-paper-200">{riskClassLabel(riskClass)}</span>
+                            {rule.action === 'auto' ? (
+                              <Badge tone="moss">Automatic</Badge>
+                            ) : (
+                              <Badge tone="amber">
+                                {(rule.approverCount ?? 1) === 1
+                                  ? '1 approver'
+                                  : `${rule.approverCount} approvers`}
+                              </Badge>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-3 text-xs text-paper-500">
+                        No rules — every risk class requires approval.
+                      </p>
+                    )}
+                    <p className="mt-3 text-xs text-paper-500">
+                      Updated <RelativeTime value={p.updatedAt} />
+                    </p>
+                  </Card>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </QueryBoundary>
 
       <PolicyModal

@@ -42,7 +42,7 @@ function StudioModelConfigPageInner() {
   const active: Tab = isTab(requested) ? requested : 'credentials';
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         subtitle={
           <>

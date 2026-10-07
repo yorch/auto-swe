@@ -5,14 +5,17 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import { EpicList } from '@/components/epics/EpicList';
 import { RequestList } from '@/components/requests/RequestList';
 import { RequestPanel } from '@/components/requests/RequestPanel';
-import { ButtonLink } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useEpics } from '@/hooks/useEpics';
 import { type RequestState, useRequests } from '@/hooks/useRequests';
 import { parseOffset } from '@/hooks/useUrlFilters';
@@ -43,6 +46,7 @@ function RequestsWorkspace() {
   const offset = parseOffset(params.get('offset'));
   const type = params.get('type') === 'epics' ? 'epics' : 'all';
   const showEpics = type === 'epics';
+  const filtered = !showEpics && (!!search || state !== 'all');
   const query = useRequests(
     { limit: PAGE_SIZE, offset, scope, search, state },
     { enabled: !showEpics }
@@ -89,6 +93,7 @@ function RequestsWorkspace() {
               Multi-repo epics
             </ButtonLink>
             <ButtonLink href="/start" variant="primary">
+              <Icon name="plus" size={14} />
               Start work
             </ButtonLink>
           </>
@@ -96,94 +101,133 @@ function RequestsWorkspace() {
         subtitle="Everything you asked for, with retries kept together."
         title="Requests"
       />
-      {/* items-start: the segmented control is shorter than the fields, so bottom alignment dropped its label below theirs. */}
-      <div className="flex flex-wrap items-start gap-4">
-        <Select
-          label="Type"
-          onChange={(value) => update({ offset: null, type: value === 'epics' ? 'epics' : null })}
-          options={TYPES}
-          value={type}
-        />
-        <div className="flex flex-col gap-1.5">
-          <span className="label-mono" id="request-scope-label">
-            Scope
-          </span>
-          <SegmentedControl
-            ariaLabel="Request scope"
-            onChange={(value) => update({ offset: null, scope: value })}
-            options={[
-              { label: 'My requests', value: 'MINE' },
-              { label: 'Team requests', value: 'TEAM' },
-            ]}
-            value={scope}
+      <div>
+        <Toolbar
+          end={
+            <SegmentedControl
+              ariaLabel="Request scope"
+              onChange={(value) => update({ offset: null, scope: value })}
+              options={[
+                { label: 'My requests', value: 'MINE' },
+                { label: 'Team requests', value: 'TEAM' },
+              ]}
+              value={scope}
+            />
+          }
+        >
+          {!showEpics && (
+            <SearchInput
+              label="Search requests"
+              onChange={(value) => setSearchDraft(value.slice(0, 200))}
+              placeholder="Search by task or ticket…"
+              value={searchDraft}
+            />
+          )}
+          <Select
+            appearance="pill"
+            aria-label="Request type"
+            onChange={(value) => update({ offset: null, type: value === 'epics' ? 'epics' : null })}
+            options={TYPES}
+            prefix="Type:"
+            value={type}
           />
-        </div>
-        {!showEpics && (
-          <>
-            <div className="min-w-48 flex-1">
-              <Input
-                label="Search requests"
-                maxLength={200}
-                onChange={(event) => setSearchDraft(event.target.value)}
-                placeholder="Task or ticket…"
-                value={searchDraft}
-              />
-            </div>
+          {!showEpics && (
             <Select
-              label="Status"
+              appearance="pill"
+              aria-label="Status"
               onChange={(value) => update({ offset: null, state: value })}
               options={STATES}
+              prefix="Status:"
               value={state}
             />
-          </>
+          )}
+          {filtered && (
+            <Button
+              onClick={() => {
+                setSearchDraft('');
+                update({ offset: null, search: null, state: null });
+              }}
+              size="sm"
+              variant="ghost"
+            >
+              Clear filters
+            </Button>
+          )}
+        </Toolbar>
+        {active.isLoading ? (
+          <Card className="px-5 py-3">
+            <SkeletonRows rows={6} />
+          </Card>
+        ) : (
+          <QueryBoundary
+            error={active.error}
+            isError={active.isError}
+            isFetching={active.isFetching}
+            isLoading={false}
+            label={showEpics ? 'epics' : 'requests'}
+            onRetry={() => void active.refetch()}
+          >
+            <div className="space-y-4">
+              {showEpics ? (
+                epics.length ? (
+                  <EpicList epics={epics} />
+                ) : (
+                  <EmptyState
+                    action={
+                      <ButtonLink href="/start?mode=epic" size="sm" variant="secondary">
+                        Start an epic
+                      </ButtonLink>
+                    }
+                    bordered
+                    hint="An epic fans one brief out across several repositories."
+                    icon="epics"
+                    title="No epics yet"
+                  />
+                )
+              ) : requests.length ? (
+                <RequestList hrefFor={(id) => urlFor({ request: id })} requests={requests} />
+              ) : (
+                <EmptyState
+                  action={
+                    filtered ? (
+                      <Button
+                        onClick={() => {
+                          setSearchDraft('');
+                          update({ offset: null, search: null, state: null });
+                        }}
+                        size="sm"
+                      >
+                        Clear filters
+                      </Button>
+                    ) : (
+                      <ButtonLink href="/start" size="sm" variant="primary">
+                        Start work
+                      </ButtonLink>
+                    )
+                  }
+                  bordered
+                  hint={
+                    filtered
+                      ? 'Try another search or status.'
+                      : 'Run a workflow or give an agent a task. Its progress and results collect here.'
+                  }
+                  icon={filtered ? 'search' : 'inbox'}
+                  title={filtered ? 'No requests match these filters' : 'No requests yet'}
+                />
+              )}
+              <Pagination
+                hasNext={offset + PAGE_SIZE < total}
+                hasPrev={offset > 0}
+                onNext={() => update({ offset: String(offset + PAGE_SIZE) })}
+                onPrev={() => update({ offset: String(Math.max(0, offset - PAGE_SIZE)) })}
+                rangeEnd={Math.min(offset + PAGE_SIZE, total)}
+                rangeStart={total ? offset + 1 : 0}
+                total={total}
+              />
+            </div>
+          </QueryBoundary>
         )}
       </div>
-      <QueryBoundary
-        error={active.error}
-        isError={active.isError}
-        isFetching={active.isFetching}
-        isLoading={active.isLoading}
-        label={showEpics ? 'epics' : 'requests'}
-        onRetry={() => void active.refetch()}
-      >
-        {showEpics ? (
-          epics.length ? (
-            <EpicList epics={epics} />
-          ) : (
-            <EmptyState
-              hint="An epic fans one brief out across several repositories."
-              title="No epics yet"
-            />
-          )
-        ) : requests.length ? (
-          <RequestList hrefFor={(id) => urlFor({ request: id })} requests={requests} />
-        ) : (
-          <EmptyState
-            action={
-              <ButtonLink href="/start" variant="primary">
-                Start work
-              </ButtonLink>
-            }
-            hint={
-              search || state !== 'all'
-                ? 'Try another search or status.'
-                : 'Start a workflow or give an agent a task.'
-            }
-            title={
-              search || state !== 'all' ? 'No requests match these filters' : 'No requests yet'
-            }
-          />
-        )}
-        <Pagination
-          hasNext={offset + PAGE_SIZE < total}
-          hasPrev={offset > 0}
-          onNext={() => update({ offset: String(offset + PAGE_SIZE) })}
-          onPrev={() => update({ offset: String(Math.max(0, offset - PAGE_SIZE)) })}
-          rangeEnd={Math.min(offset + PAGE_SIZE, total)}
-          rangeStart={total ? offset + 1 : 0}
-          total={total}
-        />
-      </QueryBoundary>
       {requestId && (
         <RequestPanel
           key={requestId}

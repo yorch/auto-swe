@@ -242,7 +242,7 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
   }
 
   if (diffQuery.isLoading) {
-    return <LoadingState message="reading the repository…" />;
+    return <LoadingState message="Reading the repository…" />;
   }
   if (!diff) {
     return (

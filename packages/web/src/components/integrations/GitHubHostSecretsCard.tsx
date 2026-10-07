@@ -3,9 +3,9 @@
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -18,6 +18,7 @@ import {
   useRotateGithubWebhookSecret,
 } from '@/hooks/useGithubWebhookSecrets';
 import { errMsg } from '@/lib/errors';
+import { IntegrationCard } from './IntegrationCard';
 
 /** Adds a host's secret, or — given `rotate` — replaces the one it has. */
 function SecretModal({
@@ -57,6 +58,7 @@ function SecretModal({
       <form className="space-y-4" onSubmit={submit}>
         {!rotate && (
           <Input
+            className="font-mono"
             hint="The GitHub Enterprise host as it appears in X-GitHub-Enterprise-Host, e.g. ghe.corp or ghe.corp:8443. It must be the GitHub integration's host or listed in Additional repository hosts."
             id="gh-host-secret-host"
             label="Host"
@@ -67,6 +69,7 @@ function SecretModal({
         )}
         <Input
           autoComplete="off"
+          className="font-mono"
           hint="The secret configured on that host's webhooks. Deliveries naming this host are verified with it alone."
           id="gh-host-secret-secret"
           label="Webhook secret"
@@ -106,17 +109,22 @@ export function GitHubHostSecretsCard() {
   const [modal, setModal] = useState<GithubWebhookSecretRow | null | false>(false);
   const [deleteTarget, setDeleteTarget] = useState<GithubWebhookSecretRow | null>(null);
 
+  const addButton = (
+    <Button onClick={() => setModal(null)} size="sm" type="button">
+      <Icon name="plus" size={14} />
+      Add host secret
+    </Button>
+  );
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle eyebrow="Webhooks">Per-host webhook secrets</CardTitle>
-      </CardHeader>
-      <p className="mb-4 text-xs text-paper-500">
-        A GitHub Enterprise Server host names itself in each delivery. When it has a secret here,
-        its deliveries are verified with that secret instead of the one above. A host with none uses
-        the one above, and github.com always does.
-      </p>
+    <IntegrationCard
+      description="A GitHub Enterprise Server host names itself in each delivery. When it has a secret here, its deliveries are verified with that secret instead of the one above. A host with none uses the one above, and github.com always does."
+      eyebrow="Webhooks"
+      headerAction={secrets && secrets.length > 0 ? addButton : undefined}
+      title="Per-host webhook secrets"
+    >
       <QueryBoundary
+        compact
         error={loadError}
         isError={isError}
         isFetching={isFetching}
@@ -125,28 +133,42 @@ export function GitHubHostSecretsCard() {
         onRetry={() => void refetch()}
       >
         {!secrets || secrets.length === 0 ? (
-          <EmptyState className="py-4" title="No per-host secrets." />
+          <EmptyState
+            action={addButton}
+            bordered
+            className="py-6"
+            hint="Only needed when a second GitHub Enterprise host signs its webhooks with its own secret."
+            icon="lock"
+            title="No per-host secrets"
+          />
         ) : (
           <Table>
             <THead>
-              <Th variant="compact">Host</Th>
-              <Th variant="compact">Secret</Th>
-              <Th variant="compact" />
+              <Th className="pl-0" variant="plain">
+                Host
+              </Th>
+              <Th variant="plain">Secret</Th>
+              <Th className="pr-0" variant="plain">
+                <span className="sr-only">Actions</span>
+              </Th>
             </THead>
             <tbody>
               {secrets.map((s) => (
                 <TRow key={s.id}>
-                  <Td className="py-2 pr-4 font-mono text-xs text-paper-100">{s.host}</Td>
-                  <Td className="py-2 pr-4 font-mono text-[11px] text-paper-300">
-                    ••••{s.lastFour}
-                  </Td>
-                  <Td className="py-2 text-right">
-                    <div className="flex justify-end gap-2">
+                  <Td className="py-2.5 pr-4 font-mono text-[13px] text-paper-100">{s.host}</Td>
+                  <Td className="px-4 py-2.5 font-mono text-xs text-paper-300">••••{s.lastFour}</Td>
+                  <Td className="py-2.5 pl-4 text-right">
+                    <div className="flex justify-end gap-1">
                       <Button onClick={() => setModal(s)} size="sm" variant="secondary">
                         Rotate
                       </Button>
-                      <Button onClick={() => setDeleteTarget(s)} size="sm" variant="danger">
-                        Delete
+                      <Button
+                        aria-label={`Delete the secret for ${s.host}`}
+                        onClick={() => setDeleteTarget(s)}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        <Icon className="text-brick-400" name="trash" size={14} />
                       </Button>
                     </div>
                   </Td>
@@ -156,11 +178,6 @@ export function GitHubHostSecretsCard() {
           </Table>
         )}
       </QueryBoundary>
-      <div className="mt-4 flex justify-end">
-        <Button onClick={() => setModal(null)} size="sm" type="button" variant="secondary">
-          Add host secret
-        </Button>
-      </div>
 
       {modal !== false && (
         <SecretModal key={modal?.id ?? 'new'} onClose={() => setModal(false)} rotate={modal} />
@@ -179,6 +196,6 @@ export function GitHubHostSecretsCard() {
         pendingLabel="Deleting…"
         title={`Delete the secret for ${deleteTarget?.host ?? ''}?`}
       />
-    </Card>
+    </IntegrationCard>
   );
 }

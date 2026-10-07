@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { use, useState } from 'react';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
+import { BackLink } from '@/components/govern/BackLink';
+import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -12,7 +14,7 @@ import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Tabl
 import { useEvalDataset, useEvalRuns } from '@/hooks/useAdmin';
 import { formatArm } from '@/lib/evalRuntime';
 import { validateRouteParam } from '@/lib/routeParams';
-import { formatDate } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 
 const RUNS_LIMIT = 20;
 const CASES_PAGE_SIZE = 25;
@@ -28,10 +30,8 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
   const runsTotal = runs.data?.meta.total ?? 0;
 
   return (
-    <div className="space-y-8">
-      <Link className="label-mono hover:text-paper-200" href="/govern/evals">
-        ← Evals
-      </Link>
+    <div className="space-y-6">
+      <BackLink href="/govern/evals" label="Evals" />
       <QueryBoundary
         error={dataset.error}
         isError={dataset.isError}
@@ -42,7 +42,29 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
       >
         {ds && (
           <>
-            <PageHeader subtitle={ds.description ?? undefined} title={ds.name} />
+            <PageHeader className="mb-2" subtitle={ds.description ?? undefined} title={ds.name} />
+            <dl className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
+              <div>
+                <dt className="text-xs text-paper-500">Slug</dt>
+                <dd className="mt-0.5 font-mono text-[13px] text-paper-200">{ds.slug}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-paper-500">Cases</dt>
+                <dd className="mt-0.5 text-paper-200 tabular-nums">{ds.caseCount}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-paper-500">Runs</dt>
+                <dd className="mt-0.5 text-paper-200 tabular-nums">
+                  {runs.isLoading ? '…' : runsTotal}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-paper-500">Stability-checked</dt>
+                <dd className="mt-0.5 text-paper-200 tabular-nums">
+                  {ds.cases.filter((c) => c.flakeScreened).length} of {ds.cases.length}
+                </dd>
+              </div>
+            </dl>
 
             <Card>
               <CardHeader>
@@ -56,53 +78,66 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                 label="eval runs"
                 onRetry={() => void runs.refetch()}
               >
-                <Table>
-                  <THead>
-                    <Th variant="dense">Started</Th>
-                    <Th variant="dense">Status</Th>
-                    <Th variant="dense">Candidate</Th>
-                    <Th variant="dense">Baseline</Th>
-                  </THead>
-                  <tbody>
-                    {runRows.map((r) => (
-                      <TRow hover key={r.id}>
-                        <Td className="px-4 py-2 font-mono text-[11px]">
-                          <Link
-                            className="text-ember-400 hover:underline"
-                            href={`/govern/evals/runs/${r.id}`}
+                <div className="-mx-4">
+                  <Table className="max-sm:px-4" stacked>
+                    <THead>
+                      <Th variant="plain">Started</Th>
+                      <Th variant="plain">Status</Th>
+                      <Th variant="plain">Candidate</Th>
+                      <Th variant="plain">Baseline</Th>
+                    </THead>
+                    <tbody>
+                      {runRows.map((r) => (
+                        <TRow hover key={r.id}>
+                          <Td className="px-4 py-2.5" primary>
+                            <Link
+                              className={cn(
+                                'rounded-sm font-medium text-paper-100 hover:text-ember-300',
+                                FOCUS_RING
+                              )}
+                              href={`/govern/evals/runs/${r.id}`}
+                              title={formatDate(r.startedAt)}
+                            >
+                              {formatRelativeTime(r.startedAt)}
+                            </Link>
+                          </Td>
+                          <Td className="px-4 py-2.5" label="Status">
+                            <EvalRunStatusBadge partial={r.partial} status={r.status} />
+                          </Td>
+                          <Td
+                            className="px-4 py-2.5 font-mono text-xs text-paper-200"
+                            label="Candidate"
                           >
-                            {formatDate(r.startedAt)}
-                          </Link>
-                        </Td>
-                        <Td className="px-4 py-2">
-                          <EvalRunStatusBadge partial={r.partial} status={r.status} />
-                        </Td>
-                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-300">
-                          {formatArm(r.candidateRef, r.candidateRuntime)}
-                        </Td>
-                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
-                          {formatArm(r.baselineRef, r.baselineRuntime)}
-                        </Td>
-                      </TRow>
-                    ))}
-                    {runRows.length === 0 && (
-                      <TableStatusRow colSpan={4}>
-                        <EmptyState
-                          hint={
-                            <>
-                              Start one with{' '}
-                              <code>
-                                auto-swe evals run {ds.slug} --candidate=&lt;ref&gt;
-                                --against=&lt;ref&gt;
-                              </code>
-                            </>
-                          }
-                          title="No runs yet."
-                        />
-                      </TableStatusRow>
-                    )}
-                  </tbody>
-                </Table>
+                            {formatArm(r.candidateRef, r.candidateRuntime)}
+                          </Td>
+                          <Td
+                            className="px-4 py-2.5 font-mono text-xs text-paper-400"
+                            label="Baseline"
+                          >
+                            {formatArm(r.baselineRef, r.baselineRuntime)}
+                          </Td>
+                        </TRow>
+                      ))}
+                      {runRows.length === 0 && (
+                        <TableStatusRow colSpan={4}>
+                          <EmptyState
+                            hint={
+                              <>
+                                Start one with{' '}
+                                <code className="font-mono text-paper-300">
+                                  auto-swe evals run {ds.slug} --candidate=&lt;ref&gt;
+                                  --against=&lt;ref&gt;
+                                </code>
+                              </>
+                            }
+                            icon="flask"
+                            title="No runs yet"
+                          />
+                        </TableStatusRow>
+                      )}
+                    </tbody>
+                  </Table>
+                </div>
               </QueryBoundary>
               {runsTotal > RUNS_LIMIT && (
                 <div className="mt-3">
@@ -121,52 +156,82 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
 
             <Card>
               <CardHeader>
-                <CardTitle>Cases ({ds.caseCount})</CardTitle>
+                <CardTitle eyebrow="Golden cases">Cases</CardTitle>
+                <span className="text-xs text-paper-500 tabular-nums">
+                  {ds.caseCount} case{ds.caseCount === 1 ? '' : 's'}
+                </span>
               </CardHeader>
-              <Table>
-                <THead>
-                  <Th variant="dense">Repository</Th>
-                  <Th variant="dense">Baseline</Th>
-                  <Th variant="dense">Golden test</Th>
-                  <Th variant="dense">Tags</Th>
-                  <Th variant="dense">
-                    <span title="Each case is re-run several times on the baseline; cases that pass only some of the time are flaky and get quarantined so they cannot skew a verdict.">
-                      Stability check
-                    </span>
-                  </Th>
-                </THead>
-                <tbody>
-                  {ds.cases
-                    .slice(casesPage * CASES_PAGE_SIZE, (casesPage + 1) * CASES_PAGE_SIZE)
-                    .map((c) => (
-                      <TRow key={c.id}>
-                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-300">
-                          <span title={c.id}>{c.repoUrl}</span>
-                        </Td>
-                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
-                          <span title={c.baselineSha}>{c.baselineSha.slice(0, 10)}</span>
-                        </Td>
-                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-400">
-                          <span className="line-clamp-2">{c.goldenTest}</span>
-                        </Td>
-                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-500">
-                          {c.tags.length ? c.tags.join(', ') : '—'}
-                        </Td>
-                        <Td className="px-4 py-2 font-mono text-[11px] text-paper-500">
-                          {c.flakeScreened ? `Checked (${c.flakeRuns} runs)` : 'Not checked yet'}
-                        </Td>
-                      </TRow>
-                    ))}
-                  {ds.cases.length === 0 && (
-                    <TableStatusRow colSpan={5}>
-                      <EmptyState
-                        hint="Cases are added through the platform API when the dataset is created."
-                        title="This dataset has no cases."
-                      />
-                    </TableStatusRow>
-                  )}
-                </tbody>
-              </Table>
+              <div className="-mx-4">
+                <Table className="max-sm:px-4" stacked>
+                  <THead>
+                    <Th variant="plain">Repository</Th>
+                    <Th variant="plain">Baseline</Th>
+                    <Th variant="plain">Golden test</Th>
+                    <Th variant="plain">Tags</Th>
+                    <Th variant="plain">
+                      <span title="Each case is re-run several times on the baseline; cases that pass only some of the time are flaky and get quarantined so they cannot skew a verdict.">
+                        Stability check
+                      </span>
+                    </Th>
+                  </THead>
+                  <tbody>
+                    {ds.cases
+                      .slice(casesPage * CASES_PAGE_SIZE, (casesPage + 1) * CASES_PAGE_SIZE)
+                      .map((c) => (
+                        <TRow key={c.id}>
+                          <Td className="px-4 py-2.5 font-mono text-xs text-paper-200" primary>
+                            <span className="break-all" title={c.id}>
+                              {c.repoUrl}
+                            </span>
+                          </Td>
+                          <Td
+                            className="px-4 py-2.5 font-mono text-xs text-paper-400"
+                            label="Baseline"
+                          >
+                            <span title={c.baselineSha}>{c.baselineSha.slice(0, 10)}</span>
+                          </Td>
+                          <Td
+                            className="px-4 py-2.5 font-mono text-xs text-paper-400"
+                            label="Golden test"
+                          >
+                            <span className="line-clamp-2" title={c.goldenTest}>
+                              {c.goldenTest}
+                            </span>
+                          </Td>
+                          <Td className="px-4 py-2.5" label="Tags">
+                            {c.tags.length ? (
+                              <span className="flex flex-wrap gap-1">
+                                {c.tags.map((t) => (
+                                  <Badge key={t} tone="muted" variant="outline">
+                                    {t}
+                                  </Badge>
+                                ))}
+                              </span>
+                            ) : (
+                              <span className="text-paper-500">—</span>
+                            )}
+                          </Td>
+                          <Td className="px-4 py-2.5" label="Stability check">
+                            <Badge dot tone={c.flakeScreened ? 'moss' : 'muted'} variant="text">
+                              {c.flakeScreened
+                                ? `Checked (${c.flakeRuns} runs)`
+                                : 'Not checked yet'}
+                            </Badge>
+                          </Td>
+                        </TRow>
+                      ))}
+                    {ds.cases.length === 0 && (
+                      <TableStatusRow colSpan={5}>
+                        <EmptyState
+                          hint="Cases are added through the platform API when the dataset is created."
+                          icon="layers"
+                          title="This dataset has no cases"
+                        />
+                      </TableStatusRow>
+                    )}
+                  </tbody>
+                </Table>
+              </div>
               {ds.cases.length > CASES_PAGE_SIZE && (
                 <div className="mt-3">
                   <Pagination

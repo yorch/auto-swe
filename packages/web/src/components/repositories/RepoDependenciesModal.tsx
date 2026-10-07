@@ -3,13 +3,14 @@
 import { EDGE_KINDS } from '@auto-swe/shared/lib/repoDependency';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useMemo, useState } from 'react';
+import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import {
@@ -37,9 +38,7 @@ function ConfidenceNote({ edge }: { edge: DepEdgeView }) {
   if (edge.source !== 'inferred') {
     return null;
   }
-  return (
-    <span className="ml-2 text-paper-400 text-xs">{formatPercent(edge.confidence)} confidence</span>
-  );
+  return <span> · {formatPercent(edge.confidence)} confidence</span>;
 }
 
 function EdgeRow({
@@ -67,43 +66,41 @@ function EdgeRow({
   onReactivate: () => void;
   onRemove: () => void;
 }) {
+  const items: ActionMenuItem[] = [];
+  if (canManage && canVeto && edge.status === 'proposed') {
+    items.push({ icon: 'check', id: 'confirm', label: 'Confirm', onAction: onConfirm });
+  }
+  if (canManage && canVeto && (edge.status === 'active' || edge.status === 'proposed')) {
+    items.push({ icon: 'close', id: 'dismiss', label: 'Dismiss', onAction: onDismiss });
+  }
+  if (canManage && canVeto && edge.status === 'dismissed') {
+    items.push({ icon: 'refresh', id: 'reactivate', label: 'Reactivate', onAction: onReactivate });
+  }
+  if (canManage) {
+    items.push({
+      icon: 'trash',
+      id: 'remove',
+      label: 'Remove',
+      onAction: onRemove,
+      tone: 'danger',
+    });
+  }
+  const status = edge.status.charAt(0).toUpperCase() + edge.status.slice(1);
   return (
-    <li className="flex items-center justify-between gap-2 border-ink-600 border-b py-1.5 text-sm">
+    <li className="flex items-center justify-between gap-3 px-3.5 py-2.5 text-sm">
       <div className="min-w-0">
-        <span className="truncate font-medium">{neighborLabel(edge)}</span>
-        <span className="ml-2 text-paper-400 text-xs">
+        <div className="truncate font-medium text-paper-100">{neighborLabel(edge)}</div>
+        <div className="mt-0.5 text-xs text-paper-500">
           {edge.kind} · {edge.source}
-        </span>
-        <ConfidenceNote edge={edge} />
+          <ConfidenceNote edge={edge} />
+        </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Badge tone={EDGE_STATUS_TONE[edge.status] ?? 'amber'} uppercase variant="text">
-          {edge.status}
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Badge tone={EDGE_STATUS_TONE[edge.status] ?? 'amber'} variant="outline">
+          {status}
         </Badge>
-        {canManage && canVeto && edge.status === 'active' && (
-          <Button onClick={onDismiss} size="sm" variant="ghost">
-            Dismiss
-          </Button>
-        )}
-        {canManage && canVeto && edge.status === 'dismissed' && (
-          <Button onClick={onReactivate} size="sm" variant="ghost">
-            Reactivate
-          </Button>
-        )}
-        {canManage && canVeto && edge.status === 'proposed' && (
-          <>
-            <Button onClick={onConfirm} size="sm" variant="ghost">
-              Confirm
-            </Button>
-            <Button onClick={onDismiss} size="sm" variant="ghost">
-              Dismiss
-            </Button>
-          </>
-        )}
-        {canManage && (
-          <Button onClick={onRemove} size="sm" variant="danger">
-            Remove
-          </Button>
+        {items.length > 0 && (
+          <ActionMenu items={items} label={`Actions for ${neighborLabel(edge)}`} />
         )}
       </div>
     </li>
@@ -133,10 +130,15 @@ function DepSection({
 }) {
   return (
     <section>
-      <h4 className="mb-1 font-semibold text-sm">{title}</h4>
-      {subtitle && <p className="mb-1 text-paper-500 text-xs">{subtitle}</p>}
+      <h4 className="font-semibold text-paper-100 text-sm">
+        {title}
+        {edges && edges.length > 0 && (
+          <span className="tabular ml-2 font-normal text-paper-500">{edges.length}</span>
+        )}
+      </h4>
+      {subtitle && <p className="mt-0.5 text-paper-500 text-xs">{subtitle}</p>}
       {edges && edges.length > 0 ? (
-        <ul>
+        <ul className="mt-2 divide-y divide-ink-600 rounded-lg border border-ink-500/70 bg-ink-900/40">
           {edges.map((e) => (
             <EdgeRow
               canManage={canManage}
@@ -154,7 +156,9 @@ function DepSection({
           ))}
         </ul>
       ) : (
-        <EmptyState className="py-2 text-left" title={emptyText} />
+        <p className="mt-2 rounded-lg border border-ink-500/60 border-dashed px-3.5 py-3 text-paper-500 text-[13px]">
+          {emptyText}
+        </p>
       )}
     </section>
   );
@@ -204,15 +208,15 @@ export function RepoDependenciesModal({
   return (
     <>
       <Modal
-        eyebrow="§ Connection"
+        eyebrow="Repository dependencies"
         onClose={onClose}
         open={open}
         size="lg"
-        subtitle={connectionLabel(repo)}
-        title="Dependencies"
+        subtitle="What this repository depends on, and what depends on it. Agents use these edges as context."
+        title={connectionLabel(repo)}
       >
         {isLoading ? (
-          <LoadingState message="Loading dependencies…" />
+          <SkeletonRows rows={4} />
         ) : isError ? (
           <Alert>
             {errMsg(
@@ -251,10 +255,10 @@ export function RepoDependenciesModal({
 
             {canManage && candidates.length > 0 && (
               <section className="border-ink-600 border-t pt-4">
-                <h4 className="mb-2 font-semibold text-sm">Add a dependency</h4>
-                <div className="flex items-end gap-2">
+                <h4 className="mb-3 font-semibold text-paper-100 text-sm">Add a dependency</h4>
+                <div className="flex flex-wrap items-end gap-3">
                   <Combobox
-                    className="flex-1"
+                    className="min-w-56 flex-1"
                     label="This repo depends on"
                     onChange={setToRepoId}
                     options={candidates.map((r) => ({ label: connectionLabel(r), value: r.id }))}
@@ -274,6 +278,7 @@ export function RepoDependenciesModal({
                     }
                     variant="primary"
                   >
+                    <Icon name="plus" size={14} />
                     Add
                   </Button>
                 </div>

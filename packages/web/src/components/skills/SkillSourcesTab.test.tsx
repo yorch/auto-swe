@@ -33,6 +33,7 @@ const { check, patch, remove, state } = vi.hoisted(() => ({
   remove: vi.fn(),
   state: { rows: [] as unknown[] },
 }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/hooks/useSkillSources', () => ({
   useCheckSource: () => ({ isPending: false, mutateAsync: check }),
   useDeleteSource: () => ({ isPending: false, mutateAsync: remove }),
@@ -81,17 +82,25 @@ beforeEach(() => {
 
 const rowOf = (text: string) => screen.getByText(text).closest('tr') as HTMLElement;
 
+/** Opens a row's overflow menu and chooses one item from it. */
+function menuAction(row: HTMLElement, item: string) {
+  fireEvent.click(within(row).getByRole('button', { name: /^More actions for/ }));
+  fireEvent.click(screen.getByRole('menuitem', { name: item }));
+}
+
 describe('SkillSourcesTab', () => {
   it('lists location, ref, short pinned and latest sha, status, last error and script mode', () => {
     render(<SkillSourcesTab />);
     const row = rowOf('github.com/zed/agent-skills/skills');
-    expect(within(row).getByText('UPDATE_AVAILABLE')).toBeTruthy();
+    expect(within(row).getByText('Update available')).toBeTruthy();
     expect(row.textContent).toContain('aaaaaaa / bbbbbbb');
     expect(within(row).getByText('The host refused the request')).toBeTruthy();
-    expect(within(row).getByText('reject scripts')).toBeTruthy();
+    expect(within(row).getByText('Reject scripts')).toBeTruthy();
     expect(within(row).getByText(/ref main · 3 skills/)).toBeTruthy();
-    expect(within(rowOf('github.com/acme/agent-skills/skills')).getByText('OK')).toBeTruthy();
-    expect(within(rowOf('github.com/off/agent-skills/skills')).getByText('DISABLED')).toBeTruthy();
+    expect(
+      within(rowOf('github.com/acme/agent-skills/skills')).getByText('Up to date')
+    ).toBeTruthy();
+    expect(within(rowOf('github.com/off/agent-skills/skills')).getByText('Disabled')).toBeTruthy();
   });
 
   it('offers Review update only for a source with an update', () => {
@@ -113,20 +122,18 @@ describe('SkillSourcesTab', () => {
     render(<SkillSourcesTab />);
     const row = rowOf('github.com/off/agent-skills/skills');
     expect((within(row).getByText('Check now') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(within(row).getByText('Enable'));
+    menuAction(row, 'Enable');
     await waitFor(() => expect(patch).toHaveBeenCalledWith({ id: 'src-3', status: 'OK' }));
   });
 
   it('disables a source and switches the script mode', async () => {
     render(<SkillSourcesTab />);
     const row = rowOf('github.com/acme/agent-skills/skills');
-    fireEvent.click(within(row).getByText('Disable'));
+    menuAction(row, 'Disable');
     await waitFor(() => expect(patch).toHaveBeenCalledWith({ id: 'src-1', status: 'DISABLED' }));
-    fireEvent.click(within(row).getByText('Reject scripts'));
+    menuAction(row, 'Reject scripts');
     await waitFor(() => expect(patch).toHaveBeenCalledWith({ id: 'src-1', scriptMode: 'REJECT' }));
-    fireEvent.click(
-      within(rowOf('github.com/zed/agent-skills/skills')).getByText('Allow text files')
-    );
+    menuAction(rowOf('github.com/zed/agent-skills/skills'), 'Allow text files');
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith({ id: 'src-2', scriptMode: 'TEXT_ONLY' })
     );
@@ -134,7 +141,7 @@ describe('SkillSourcesTab', () => {
 
   it('confirms a delete, saying the skills are detached and kept', async () => {
     render(<SkillSourcesTab />);
-    fireEvent.click(within(rowOf('github.com/acme/agent-skills/skills')).getByText('Delete'));
+    menuAction(rowOf('github.com/acme/agent-skills/skills'), 'Delete');
     expect(screen.getByText(/detached and kept as ordinary custom skills/)).toBeTruthy();
     expect(remove).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('Delete source'));

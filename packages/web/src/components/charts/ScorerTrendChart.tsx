@@ -3,6 +3,7 @@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import { TOKEN } from '@/lib/palette';
 import {
+  ACTIVE_DOT_PROPS,
   AXIS_COMMON_PROPS,
   axisLabel,
   CHART_HEIGHT,
@@ -10,10 +11,12 @@ import {
   type ChartGranularity,
   ChartTooltip,
   chartAriaLabel,
+  DOT_PROPS,
   EmptyChart,
   formatDateLabel,
-  GRID_STROKE,
+  GRID_PROPS,
   granularityWords,
+  LINE_WIDTH,
 } from './chartChrome';
 
 interface Props {
@@ -55,7 +58,7 @@ export function ScorerTrendChart({ data, granularity = 'day', title }: Props) {
     >
       <ResponsiveContainer height={CHART_HEIGHT} width="100%">
         <LineChart accessibilityLayer={false} data={data}>
-          <CartesianGrid stroke={GRID_STROKE} strokeDasharray="2 4" vertical={false} />
+          <CartesianGrid {...GRID_PROPS} vertical={false} />
           <XAxis
             dataKey="date"
             interval="preserveStartEnd"
@@ -79,12 +82,13 @@ export function ScorerTrendChart({ data, granularity = 'day', title }: Props) {
             }
           />
           <Line
+            activeDot={ACTIVE_DOT_PROPS}
             connectNulls={false}
             dataKey="mean"
-            dot={{ r: 2.5 }}
+            dot={DOT_PROPS}
             isAnimationActive={false}
             stroke={TOKEN.ember400}
-            strokeWidth={1.5}
+            strokeWidth={LINE_WIDTH}
             type="monotone"
           />
         </LineChart>

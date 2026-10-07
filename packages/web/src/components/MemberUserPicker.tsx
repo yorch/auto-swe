@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { EligibleUserSelect } from '@/components/EligibleUserSelect';
 import { Button } from '@/components/ui/Button';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { useHasRole } from '@/hooks/useHasRole';
 import { lookupUserByEmail, useEligibleUsers } from '@/hooks/useUsers';
@@ -83,34 +84,51 @@ export function MemberUserPicker({
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1.5">
       <div className="flex items-end gap-2">
-        <Input
-          id={id}
-          label={label}
-          onChange={(e) => {
-            setEmail(e.target.value);
-            if (value) {
-              onChange('');
-              setFound(null);
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              handleLookup();
-            }
-          }}
-          placeholder="colleague@example.com"
-          type="email"
-          value={email}
-        />
-        <Button disabled={looking} onClick={handleLookup} type="button" variant="secondary">
+        <div className="min-w-0 flex-1">
+          <Input
+            id={id}
+            label={label}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (value) {
+                onChange('');
+                setFound(null);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleLookup();
+              }
+            }}
+            placeholder="colleague@example.com"
+            type="email"
+            value={email}
+          />
+        </div>
+        <Button
+          className="h-9"
+          disabled={looking}
+          onClick={handleLookup}
+          type="button"
+          variant="secondary"
+        >
           {looking ? 'Finding…' : 'Find'}
         </Button>
       </div>
-      {found && value && <p className="text-xs text-moss-400">✓ {found}</p>}
-      {lookupError && <p className="text-xs text-brick-400">{lookupError}</p>}
+      {found && value && (
+        <p className="flex items-center gap-1.5 text-xs text-moss-400">
+          <Icon name="checkCircle" size={13} />
+          {found}
+        </p>
+      )}
+      {lookupError && (
+        <p className="text-xs text-brick-400" role="alert">
+          {lookupError}
+        </p>
+      )}
     </div>
   );
 }

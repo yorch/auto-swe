@@ -93,7 +93,7 @@ const docCode: Components['code'] = ({ children, className, node: _node, ...rest
   return (
     <code className={className} {...rest}>
       {language === 'mermaid' ? (
-        <span className="block mb-2 pb-2 border-b border-ink-600 text-[0.9em] not-italic text-paper-400">
+        <span className="mb-3 flex items-center gap-1.5 border-b border-ink-600 pb-2 font-sans text-xs text-paper-500">
           Mermaid diagram source — renders as a diagram in the repository
         </span>
       ) : null}
@@ -101,6 +101,13 @@ const docCode: Components['code'] = ({ children, className, node: _node, ...rest
     </code>
   );
 };
+
+/** Tables scroll inside their own framed wrapper, so a wide one never widens the page. */
+const docTable: Components['table'] = ({ children, node: _node, ...rest }) => (
+  <div className="my-6 overflow-x-auto rounded-lg border border-ink-500/70">
+    <table {...rest}>{children}</table>
+  </div>
+);
 
 export function Markdown({
   children,
@@ -118,34 +125,49 @@ export function Markdown({
   return (
     <div
       className={cn(
-        'max-w-none text-sm leading-relaxed text-paper-100',
-        '[&_h1]:text-3xl [&_h1]:font-bold [&_h1]:mt-0 [&_h1]:mb-6',
-        '[&_h2]:scroll-mt-4 [&_h3]:scroll-mt-4 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-ink-600 [&_h2]:pb-2',
-        '[&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-3',
-        '[&_h4]:text-base [&_h4]:font-semibold [&_h4]:mt-4 [&_h4]:mb-2',
-        '[&_p]:my-3',
-        '[&_a]:text-ember-400 [&_a]:underline [&_a]:underline-offset-2 hover:[&_a]:no-underline',
-        '[&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:space-y-1',
-        '[&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:space-y-1',
-        '[&_li]:leading-relaxed',
-        '[&_blockquote]:border-l-4 [&_blockquote]:border-ink-600 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-paper-400 [&_blockquote]:my-4',
-        '[&_code]:font-mono [&_code]:text-[0.85em] [&_code]:bg-ink-700 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded',
-        '[&_pre]:bg-ink-900 [&_pre]:text-paper-200 [&_pre]:p-4 [&_pre]:rounded-md [&_pre]:overflow-x-auto [&_pre]:my-4 [&_pre]:text-xs',
-        '[&_pre_code]:bg-transparent [&_pre_code]:text-inherit [&_pre_code]:p-0',
-        '[&_table]:w-full [&_table]:my-4 [&_table]:border-collapse [&_table]:text-xs',
-        '[&_th]:border [&_th]:border-ink-600 [&_th]:bg-ink-700 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold',
-        '[&_td]:border [&_td]:border-ink-600 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top',
-        '[&_hr]:my-6 [&_hr]:border-ink-600',
-        '[&_img]:max-w-full [&_img]:rounded-md [&_img]:my-4',
-        '[&_strong]:font-semibold',
+        'max-w-none text-[15px] leading-7 text-paper-300',
+        // Headings
+        '[&_h1]:mt-0 [&_h1]:mb-6 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:leading-tight [&_h1]:tracking-[-0.02em] [&_h1]:text-paper-50 md:[&_h1]:text-[34px]',
+        '[&_h2]:scroll-mt-20 [&_h2]:mt-12 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-ink-600 [&_h2]:pb-2.5 [&_h2]:text-[22px] [&_h2]:font-semibold [&_h2]:leading-snug [&_h2]:tracking-tight [&_h2]:text-paper-50',
+        '[&_h3]:scroll-mt-20 [&_h3]:mt-9 [&_h3]:mb-3 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:tracking-tight [&_h3]:text-paper-100',
+        '[&_h4]:mt-7 [&_h4]:mb-2 [&_h4]:text-base [&_h4]:font-semibold [&_h4]:text-paper-100',
+        '[&_h2+*]:mt-0 [&_h3+*]:mt-0',
+        // Body
+        '[&_p]:my-4',
+        '[&_strong]:font-semibold [&_strong]:text-paper-100',
+        '[&_a]:font-medium [&_a]:text-ember-300 [&_a]:underline [&_a]:decoration-ember-400/40 [&_a]:underline-offset-[3px] [&_a]:transition-colors hover:[&_a]:text-ember-200 hover:[&_a]:decoration-ember-300',
+        // Lists
+        '[&_ul]:my-4 [&_ul]:list-disc [&_ul]:space-y-1.5 [&_ul]:pl-6',
+        '[&_ol]:my-4 [&_ol]:list-decimal [&_ol]:space-y-1.5 [&_ol]:pl-6',
+        '[&_li]:pl-1 [&_li]:marker:text-paper-600 [&_li>ul]:my-1.5 [&_li>ol]:my-1.5',
+        // Quotes and rules
+        '[&_blockquote]:my-6 [&_blockquote]:rounded-r-lg [&_blockquote]:border-l-[3px] [&_blockquote]:border-ember-400/60 [&_blockquote]:bg-ink-700/50 [&_blockquote]:px-4 [&_blockquote]:py-1 [&_blockquote]:text-paper-400',
+        '[&_hr]:my-10 [&_hr]:border-ink-600',
+        // Code
+        '[&_code]:rounded-md [&_code]:border [&_code]:border-ink-500/70 [&_code]:bg-ink-700 [&_code]:px-1.5 [&_code]:py-px [&_code]:font-mono [&_code]:text-[0.85em] [&_code]:text-paper-100',
+        '[&_pre]:my-6 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-ink-500/70 [&_pre]:bg-ink-950 [&_pre]:p-4 [&_pre]:text-[13px] [&_pre]:leading-6 [&_pre]:text-paper-200',
+        '[&_pre_code]:border-0 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-inherit',
+        // Tables — the wrapper (see `docTable`) scrolls a wide one sideways
+        '[&_table]:w-full [&_table]:border-collapse [&_table]:text-[13.5px] [&_table]:leading-6',
+        '[&_thead]:bg-ink-700/70',
+        '[&_th]:border-b [&_th]:border-ink-500 [&_th]:px-3.5 [&_th]:py-2.5 [&_th]:text-left [&_th]:font-semibold [&_th]:whitespace-nowrap [&_th]:text-paper-100',
+        '[&_td]:border-t [&_td]:border-ink-600 [&_td]:px-3.5 [&_td]:py-2.5 [&_td]:align-top [&_td_code]:whitespace-nowrap',
+        '[&_tbody_tr:hover]:bg-ink-700/40',
+        // Media
+        '[&_img]:my-6 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:border [&_img]:border-ink-500/60',
         className
       )}
     >
       <ReactMarkdown
         components={
           servedSlugs
-            ? { a: docAnchor(servedSlugs), code: docCode, ...headingComponents() }
-            : undefined
+            ? {
+                a: docAnchor(servedSlugs),
+                code: docCode,
+                table: docTable,
+                ...headingComponents(),
+              }
+            : { table: docTable }
         }
         remarkPlugins={[remarkGfm]}
       >

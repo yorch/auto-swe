@@ -11,18 +11,21 @@ import { AgentHistoryModal } from '@/components/agents/AgentHistoryModal';
 import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
 import { broaderFallbacks } from '@/components/agents/agentFallback';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import {
   type AgentRow,
@@ -311,42 +314,53 @@ export default function AgentLibraryPage() {
     setEditing({ ...editing, ...rest });
   }
 
+  const openCreate = () => {
+    setCreateError(null);
+    setCreateOpen(true);
+  };
+
   const rowActions = (a: AgentRow) => (
-    <div className="flex flex-wrap items-center justify-end gap-1">
+    <div className="flex items-center justify-end gap-1">
       <Button
-        aria-label={`History of ${a.key}`}
-        onClick={() => setHistory(a)}
+        aria-label={`Edit ${a.key}`}
+        onClick={() => openEdit(a)}
         size="sm"
-        variant="ghost"
+        variant="secondary"
       >
-        History
-      </Button>
-      <Button aria-label={`Edit ${a.key}`} onClick={() => openEdit(a)} size="sm" variant="ghost">
         Edit
       </Button>
-      <Button
-        aria-label={`Deactivate ${a.key}`}
-        className="text-brick-400 hover:text-brick-600"
-        onClick={() => setDeleting(a)}
-        size="sm"
-        variant="ghost"
-      >
-        Deactivate
-      </Button>
+      <ActionMenu
+        items={[
+          {
+            icon: 'clock',
+            id: 'history',
+            label: 'Version history',
+            onAction: () => setHistory(a),
+          },
+          {
+            icon: 'trash',
+            id: 'deactivate',
+            label: 'Deactivate',
+            onAction: () => setDeleting(a),
+            tone: 'danger',
+          },
+        ]}
+        label={`More actions for ${a.key}`}
+      />
     </div>
   );
 
+  const scopeCounts = new Map<AgentScope, number>();
+  for (const a of agents ?? []) {
+    scopeCounts.set(a.scope, (scopeCounts.get(a.scope) ?? 0) + 1);
+  }
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         actions={
-          <Button
-            onClick={() => {
-              setCreateError(null);
-              setCreateOpen(true);
-            }}
-            variant="primary"
-          >
+          <Button onClick={openCreate} variant="primary">
+            <Icon name="plus" size={14} />
             New agent
           </Button>
         }
@@ -355,129 +369,209 @@ export default function AgentLibraryPage() {
       />
       <SetupBanner items={['credentials']} />
 
-      <Card>
-        <CardHeader>
-          <CardTitle eyebrow={scopeFilter ? scopeLabel(scopeFilter) : 'All scopes'}>
-            Agents
-          </CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              aria-label="Search agents"
-              className="h-9 w-full sm:w-48"
-              onChange={(e) => setTextFilter(e.target.value)}
-              placeholder="Search agents…"
-              type="search"
-              value={textFilter}
-            />
-            <Select
-              aria-label="Filter by scope"
-              className="h-9 w-auto px-2 text-xs"
-              onChange={(v) => setScopeFilter(v as '' | AgentScope)}
-              options={[
-                { label: 'All scopes', value: '' },
-                ...SCOPE_ORDER.map((sc) => ({ label: scopeLabel(sc), value: sc })),
-              ]}
-              value={scopeFilter}
-            />
-          </div>
-        </CardHeader>
+      <Card className="p-4 sm:p-6">
+        <Toolbar
+          end={
+            agents && agents.length > 0 ? (
+              <span className="text-xs text-paper-500 tabular-nums">
+                {filtering
+                  ? `${visibleAgents.length} of ${agents.length} agents`
+                  : `${agents.length} agents`}
+              </span>
+            ) : null
+          }
+        >
+          <SearchInput
+            label="Search agents"
+            onChange={setTextFilter}
+            placeholder="Search agents…"
+            value={textFilter}
+          />
+          <Select
+            aria-label="Filter by scope"
+            className="h-8 w-full text-[13px] sm:w-44"
+            onChange={(v) => setScopeFilter(v as '' | AgentScope)}
+            options={[
+              { label: 'All scopes', value: '' },
+              ...SCOPE_ORDER.map((sc) => ({
+                label: scopeCounts.has(sc)
+                  ? `${scopeLabel(sc)} (${scopeCounts.get(sc)})`
+                  : scopeLabel(sc),
+                value: sc,
+              })),
+            ]}
+            value={scopeFilter}
+          />
+          {filtering && (
+            <Button
+              onClick={() => {
+                setTextFilter('');
+                setScopeFilter('');
+              }}
+              size="sm"
+              variant="ghost"
+            >
+              Clear filters
+            </Button>
+          )}
+        </Toolbar>
         <QueryBoundary
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={isLoading}
+          isLoading={false}
           label="agents"
           onRetry={() => void refetch()}
         >
-          {visibleAgents.length === 0 ? (
-            <EmptyState
-              hint={
-                filtering
-                  ? 'Try a different search or scope.'
-                  : 'Create one with the New agent button.'
-              }
-              title={filtering ? 'No agents match these filters.' : 'No agents yet.'}
-            />
+          {isLoading ? (
+            <SkeletonRows rows={8} />
+          ) : visibleAgents.length === 0 ? (
+            filtering ? (
+              <EmptyState
+                action={
+                  <Button
+                    onClick={() => {
+                      setTextFilter('');
+                      setScopeFilter('');
+                    }}
+                    size="sm"
+                  >
+                    Clear filters
+                  </Button>
+                }
+                hint="Try a different search or scope."
+                icon="search"
+                title="No agents match these filters"
+              />
+            ) : (
+              <EmptyState
+                action={
+                  <Button onClick={openCreate} size="sm" variant="primary">
+                    New agent
+                  </Button>
+                }
+                hint="An agent pairs a model with a prompt, skills and tools. Workflow steps call agents by key."
+                icon="agents"
+                title="No agents yet"
+              />
+            )
           ) : (
             <Table stacked>
               <THead>
-                <Th className="pr-3" variant="compact">
+                <Th className="pl-0" variant="plain">
                   Agent
                 </Th>
-                <Th className="pr-3" variant="compact">
-                  Model
+                <Th variant="plain">Model</Th>
+                <Th variant="plain">Scope</Th>
+                <Th variant="plain">Skills and tools</Th>
+                <Th variant="plain">Version</Th>
+                <Th className="pr-0" variant="plain">
+                  <span className="sr-only">Actions</span>
                 </Th>
-                <Th className="pr-3" variant="compact">
-                  Applies to
-                </Th>
-                <Th className="pr-3" variant="compact">
-                  Skills and tools
-                </Th>
-                <Th className="pr-3" variant="compact">
-                  Version
-                </Th>
-                <Th variant="compact" />
               </THead>
               <tbody>
                 {visibleAgents.map((a, i) => {
                   const sameKeyAsAbove = i > 0 && visibleAgents[i - 1].key === a.key;
+                  const missingProvider = missingCredentialProvider(
+                    a,
+                    agents ?? [],
+                    readiness?.providers ?? []
+                  );
+                  const target = scopeTarget(a, names);
+                  const tools = toolKeysLabel(a.toolKeys);
                   return (
-                    <TRow key={a.id}>
-                      <Td className="py-3 pr-3" primary>
-                        <span className="text-paper-100">{a.name}</span>
-                        <div className="mt-0.5 font-mono text-[11px] text-paper-500">
-                          {sameKeyAsAbove ? `↳ override of ${a.key}` : a.key}
+                    <TRow hover key={a.id}>
+                      <Td className="py-3 pr-4 align-top sm:max-w-[22rem]" primary>
+                        <div className="flex min-w-0 items-baseline gap-2">
+                          {sameKeyAsAbove && (
+                            <span aria-hidden className="text-paper-600">
+                              ↳
+                            </span>
+                          )}
+                          <span className="truncate font-medium text-paper-100">{a.name}</span>
+                          <span className="truncate font-mono text-xs text-paper-500">{a.key}</span>
                         </div>
-                        {a.description && (
-                          <div
-                            className="mt-0.5 line-clamp-2 max-w-xs text-xs text-paper-500"
-                            title={a.description}
-                          >
-                            {a.description}
+                        {sameKeyAsAbove ? (
+                          <div className="mt-0.5 text-xs text-paper-500">
+                            Override of {keyNames.get(a.key) ?? a.key}
                           </div>
+                        ) : (
+                          a.description && (
+                            <div
+                              className="mt-0.5 line-clamp-1 text-xs text-paper-500"
+                              title={a.description}
+                            >
+                              {a.description}
+                            </div>
+                          )
                         )}
                       </Td>
-                      <Td className="py-3 pr-3 font-mono text-[11px] text-paper-400" label="Model">
-                        {modelLabel(a)}
-                        {missingCredentialProvider(a, agents ?? [], readiness?.providers ?? []) && (
-                          <div className="mt-1">
+                      <Td className="px-4 py-3 align-top" label="Model">
+                        {a.modelSpec ? (
+                          <span className="font-mono text-xs break-all text-paper-300">
+                            {a.modelSpec}
+                          </span>
+                        ) : a.inheritsModelFrom ? (
+                          <span className="text-xs text-paper-400">
+                            Inherits{' '}
+                            <span className="font-mono text-paper-300">{a.inheritsModelFrom}</span>
+                          </span>
+                        ) : (
+                          <span className="text-xs text-paper-500">{modelLabel(a)}</span>
+                        )}
+                        <div className="mt-1 flex flex-wrap gap-1 max-sm:justify-end">
+                          {missingProvider ? (
                             <Badge
-                              className="whitespace-nowrap normal-case"
-                              title="Runs that use this agent fail at their first model call. Add a credential under Models."
+                              dot
+                              title={`No ${missingProvider} credential. Runs that use this agent fail at their first model call. Add one under Model configuration.`}
                               tone="brick"
-                              variant="text"
                             >
                               No credential
                             </Badge>
-                          </div>
-                        )}
+                          ) : a.credentialId ? (
+                            <Badge title="Pinned to a specific provider credential" tone="neutral">
+                              {credentialNames.get(a.credentialId) ?? 'Pinned credential'}
+                            </Badge>
+                          ) : null}
+                        </div>
                       </Td>
-                      <Td className="py-3 pr-3" label="Applies to">
-                        <Badge className="whitespace-nowrap" tone="muted" variant="text">
+                      <Td className="px-4 py-3 align-top" label="Scope">
+                        <Badge tone={a.scope === 'GLOBAL' ? 'neutral' : 'dust'}>
                           {scopeLabel(a.scope)}
                         </Badge>
-                        {scopeTarget(a, names) && (
-                          <div className="mt-0.5 text-[11px] text-paper-400">
-                            {scopeTarget(a, names)}
-                          </div>
+                        {target && (
+                          <div className="mt-1 truncate text-xs text-paper-400">{target}</div>
                         )}
                       </Td>
-                      <Td className="py-3 pr-3 text-xs text-paper-400" label="Skills and tools">
-                        {a.skillRefs.length > 0
-                          ? `${a.skillRefs.length} ${a.skillRefs.length === 1 ? 'skill' : 'skills'}`
-                          : 'No skills'}
-                        <div className="text-paper-500">{toolKeysLabel(a.toolKeys)}</div>
+                      <Td className="px-4 py-3 align-top text-xs" label="Skills and tools">
+                        <div className="text-paper-300">
+                          {a.skillRefs.length > 0
+                            ? `${a.skillRefs.length} ${a.skillRefs.length === 1 ? 'skill' : 'skills'}`
+                            : 'No skills'}
+                        </div>
+                        <div className="mt-0.5 truncate text-paper-500 sm:max-w-48" title={tools}>
+                          {a.toolKeys && a.toolKeys.length > 0
+                            ? `${a.toolKeys.length} ${a.toolKeys.length === 1 ? 'tool' : 'tools'}`
+                            : tools}
+                        </div>
                       </Td>
-                      <Td className="py-3 pr-3 text-xs text-paper-400" label="Version">
-                        <span className="tabular-nums">v{a.version}</span>
-                        <div>
-                          <Badge tone={a.isVerified ? 'moss' : 'muted'} variant="text">
+                      <Td className="px-4 py-3 align-top" label="Version">
+                        <div className="flex flex-wrap items-center gap-1 max-sm:justify-end">
+                          <Badge className="tabular-nums" tone="neutral" variant="outline">
+                            v{a.version}
+                          </Badge>
+                          <Badge
+                            title={originLabel(a.origin)}
+                            tone={a.isVerified ? 'moss' : 'amber'}
+                          >
                             {a.isVerified ? 'Verified' : 'Unverified'}
                           </Badge>
                         </div>
-                        <div className="text-paper-500">{originLabel(a.origin)}</div>
+                        <div className="mt-1 text-xs text-paper-500">{originLabel(a.origin)}</div>
                       </Td>
-                      <Td className="py-3">{rowActions(a)}</Td>
+                      <Td align="right" className="py-3 pl-4 align-top">
+                        {rowActions(a)}
+                      </Td>
                     </TRow>
                   );
                 })}

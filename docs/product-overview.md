@@ -167,6 +167,8 @@ Teams author their own workflow DAGs on a visual canvas without code changes, ve
 
 Admins configure standing automations backed by Temporal Schedules (nightly dependency checks, recurring lint sweeps, periodic doc generation) at `/govern/schedules`.
 
+A schedule's runs share one branch, so a fire is skipped while a retry of its request is running, and a retry is refused while a fire is running ([work-views.md](./work-views.md)).
+
 ### 5.8 Team-scoped configuration
 
 Each team overrides at TEAM scope (falling back to GLOBAL): model-per-role, provider credentials, assigned skills, enabled implementer tools, per-repo gate commands, shell-image and egress allowlists, and Slack notification channels.

@@ -12,16 +12,16 @@ interface UrlRowProps {
 export function UrlRow({ label, url, help }: UrlRowProps) {
   return (
     <div className="space-y-1">
-      <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
-        <span className="label-mono sm:w-40 sm:shrink-0">{label}</span>
-        <code className="min-w-0 flex-1 break-all rounded-sm sm:truncate border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-[11px] text-paper-300">
-          {url}
-        </code>
-        <div className="self-start sm:self-auto">
+      <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+        <span className="text-[13px] text-paper-300 sm:w-44 sm:shrink-0">{label}</span>
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-ink-500 bg-ink-900/60 py-1 pr-1 pl-2.5">
+          <code className="min-w-0 flex-1 truncate font-mono text-xs text-paper-200" title={url}>
+            {url}
+          </code>
           <CopyButton value={url} />
         </div>
       </div>
-      {help && <p className="text-[11px] text-paper-600">{help}</p>}
+      {help && <p className="text-xs leading-relaxed text-paper-500">{help}</p>}
     </div>
   );
 }

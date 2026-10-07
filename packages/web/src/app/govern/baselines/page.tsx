@@ -7,17 +7,21 @@ import {
 } from '@auto-swe/shared/lib/workspaceProviders';
 import { useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Toolbar } from '@/components/ui/Toolbar';
 import {
   useCreateHumanErrorBaseline,
   useDeleteHumanErrorBaseline,
@@ -26,11 +30,14 @@ import {
 } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
-import { formatDate, formatPercent } from '@/lib/utils';
+import { formatDate, formatPercent, formatRelativeTime } from '@/lib/utils';
 
 // Analytics groups a run by the workspace type of its template, so a baseline's domain must be one
 // of those to be compared against anything.
 const DOMAIN_OPTIONS = listWorkspaceProviderTypes().map((p) => ({ label: p.label, value: p.key }));
+
+/** Analytics needs at least this many baseline cases before it compares (matches the analytics page). */
+const MIN_BASELINE_SAMPLE = 30;
 
 function domainLabel(domain: string): string {
   return isWorkspaceProviderType(domain) ? getWorkspaceProviderMetadata(domain).label : domain;
@@ -66,6 +73,12 @@ function CreateBaselineModal({
   const orgId = form.orgId || (orgs[0]?.id ?? '');
   const [error, setError] = useState<string | null>(null);
   const create = useCreateHumanErrorBaseline();
+  const sampleN = Number(form.sampleSize);
+  const errorN = Number(form.errorCount);
+  const previewRate =
+    form.sampleSize && form.errorCount && sampleN > 0 && errorN >= 0 && errorN <= sampleN
+      ? errorN / sampleN
+      : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -110,12 +123,7 @@ function CreateBaselineModal({
   }
 
   return (
-    <Modal
-      eyebrow="Admin / Baselines"
-      onClose={onClose}
-      open={open}
-      title="New human error baseline"
-    >
+    <Modal eyebrow="Baselines" onClose={onClose} open={open} title="New human error baseline">
       <form className="space-y-4" onSubmit={handleSubmit}>
         {error && <Alert>{error}</Alert>}
         <Combobox
@@ -142,26 +150,38 @@ function CreateBaselineModal({
           onChange={(e) => setForm((f) => ({ ...f, outcomeType: e.target.value }))}
           value={form.outcomeType}
         />
-        <Input
-          id="baseline-sample-size"
-          label="Sample size"
-          min={1}
-          onChange={(e) => setForm((f) => ({ ...f, sampleSize: e.target.value }))}
-          required
-          step={1}
-          type="number"
-          value={form.sampleSize}
-        />
-        <Input
-          id="baseline-error-count"
-          label="Errors found"
-          min={0}
-          onChange={(e) => setForm((f) => ({ ...f, errorCount: e.target.value }))}
-          required
-          step={1}
-          type="number"
-          value={form.errorCount}
-        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Input
+            hint={`Cases a person handled. Analytics compares only from ${MIN_BASELINE_SAMPLE}.`}
+            id="baseline-sample-size"
+            label="Sample size"
+            min={1}
+            onChange={(e) => setForm((f) => ({ ...f, sampleSize: e.target.value }))}
+            required
+            step={1}
+            type="number"
+            value={form.sampleSize}
+          />
+          <Input
+            hint="How many of those cases had an error."
+            id="baseline-error-count"
+            label="Errors found"
+            min={0}
+            onChange={(e) => setForm((f) => ({ ...f, errorCount: e.target.value }))}
+            required
+            step={1}
+            type="number"
+            value={form.errorCount}
+          />
+        </div>
+        {previewRate !== null && (
+          <p className="text-[13px] text-paper-400" role="status">
+            Human error rate:{' '}
+            <span className="font-medium text-paper-100 tabular-nums">
+              {formatPercent(previewRate)}
+            </span>
+          </p>
+        )}
         <ModalFooter
           isPending={create.isPending}
           onCancel={onClose}
@@ -201,10 +221,11 @@ export default function GovernBaselinesPage() {
   );
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         actions={
           <Button onClick={() => setNewOpen(true)} variant="primary">
+            <Icon name="plus" size={14} />
             New baseline
           </Button>
         }
@@ -212,77 +233,140 @@ export default function GovernBaselinesPage() {
         title={navLabel('/govern/baselines')}
       />
 
-      <div className="max-w-xs">
-        <Combobox
-          disabled={orgsLoading}
-          id="org-filter"
-          label="Organization"
-          onChange={setSelectedOrgId}
-          options={orgOptions.map((o) => ({ label: o.name, value: o.id }))}
-          value={selectedOrgId}
-        />
-      </div>
-
-      <QueryBoundary
-        error={orgsIsError ? orgsError : baselinesError}
-        isError={orgsIsError || baselinesIsError}
-        isFetching={orgsIsFetching || baselinesIsFetching}
-        isLoading={orgsLoading || baselinesLoading}
-        label="baselines"
-        onRetry={() => void (orgsIsError ? refetchOrgs() : refetch())}
-      >
-        <Card>
-          <CardHeader>
-            <CardTitle>Recorded baselines</CardTitle>
-          </CardHeader>
-          {baselines?.length === 0 ? (
-            <EmptyState title="No baselines recorded yet." />
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <THead className="text-left text-xs text-paper-400">
-                  <Th variant="dense">Domain</Th>
-                  <Th variant="dense">Outcome</Th>
-                  <Th align="right" variant="dense">
-                    Sample
-                  </Th>
-                  <Th align="right" variant="dense">
-                    Errors
-                  </Th>
-                  <Th align="right" variant="dense">
-                    Rate
-                  </Th>
-                  <Th align="right" variant="dense">
-                    Recorded
-                  </Th>
-                  <Th variant="dense" />
-                </THead>
-                <tbody>
-                  {(baselines ?? []).map((b) => (
-                    <TRow key={b.id}>
-                      <Td className="px-4 py-2">{domainLabel(b.domain)}</Td>
-                      <Td className="px-4 py-2 text-paper-400">{b.outcomeType ?? '—'}</Td>
-                      <Td className="px-4 py-2 text-right tabular-nums">{b.sampleSize}</Td>
-                      <Td className="px-4 py-2 text-right tabular-nums">{b.errorCount}</Td>
-                      <Td className="px-4 py-2 text-right tabular-nums">
-                        {formatPercent(b.errorRate)}
-                      </Td>
-                      <Td className="px-4 py-2 text-right tabular-nums">
-                        {formatDate(b.recordedAt)}
-                      </Td>
-                      <Td className="px-4 py-2 text-right">
-                        <Button onClick={() => setDeleteTarget(b)} size="sm" variant="danger">
-                          Delete
-                        </Button>
-                      </Td>
-                    </TRow>
-                  ))}
-                </tbody>
-              </Table>
-            </div>
-          )}
-        </Card>
-      </QueryBoundary>
+      <Card>
+        <CardHeader>
+          <CardTitle eyebrow="Baselines">Recorded baselines</CardTitle>
+        </CardHeader>
+        <Toolbar
+          end={
+            baselines && baselines.length > 0 ? (
+              <span className="text-xs text-paper-500 tabular-nums">
+                {baselines.length} baseline{baselines.length === 1 ? '' : 's'}
+              </span>
+            ) : undefined
+          }
+        >
+          <Select
+            appearance="pill"
+            aria-label="Organization"
+            disabled={orgsLoading}
+            id="org-filter"
+            onChange={setSelectedOrgId}
+            options={orgOptions.map((o) => ({ label: o.name, value: o.id }))}
+            value={selectedOrgId}
+          />
+        </Toolbar>
+        {orgsLoading || baselinesLoading ? (
+          <SkeletonRows rows={3} />
+        ) : (
+          <QueryBoundary
+            error={orgsIsError ? orgsError : baselinesError}
+            isError={orgsIsError || baselinesIsError}
+            isFetching={orgsIsFetching || baselinesIsFetching}
+            isLoading={false}
+            label="baselines"
+            onRetry={() => void (orgsIsError ? refetchOrgs() : refetch())}
+          >
+            {!baselines || baselines.length === 0 ? (
+              <EmptyState
+                action={
+                  <Button onClick={() => setNewOpen(true)} size="sm">
+                    New baseline
+                  </Button>
+                }
+                hint="Record how often people get a kind of work wrong, so analytics can show whether agents do better or worse."
+                icon="target"
+                title="No baselines recorded yet"
+              />
+            ) : (
+              <div className="-mx-4">
+                <Table className="max-sm:px-4" stacked>
+                  <THead>
+                    <Th variant="plain">Domain</Th>
+                    <Th variant="plain">Outcome</Th>
+                    <Th align="right" variant="plain">
+                      Sample
+                    </Th>
+                    <Th align="right" variant="plain">
+                      Errors
+                    </Th>
+                    <Th align="right" variant="plain">
+                      Error rate
+                    </Th>
+                    <Th align="right" variant="plain">
+                      Recorded
+                    </Th>
+                    <Th variant="plain">
+                      <span className="sr-only">Actions</span>
+                    </Th>
+                  </THead>
+                  <tbody>
+                    {baselines.map((b) => (
+                      <TRow hover key={b.id}>
+                        <Td className="px-4 py-3 font-medium text-paper-100" primary>
+                          {domainLabel(b.domain)}
+                        </Td>
+                        <Td className="px-4 py-3 text-paper-400" label="Outcome">
+                          {b.outcomeType ?? '—'}
+                        </Td>
+                        <Td align="right" className="px-4 py-3 tabular-nums" label="Sample">
+                          <span className="inline-flex items-center justify-end gap-2">
+                            {b.sampleSize < MIN_BASELINE_SAMPLE && (
+                              <Badge
+                                title={`Analytics compares only from ${MIN_BASELINE_SAMPLE} cases`}
+                                tone="amber"
+                                variant="outline"
+                              >
+                                Too small to compare
+                              </Badge>
+                            )}
+                            {b.sampleSize}
+                          </span>
+                        </Td>
+                        <Td align="right" className="px-4 py-3 tabular-nums" label="Errors">
+                          {b.errorCount}
+                        </Td>
+                        <Td
+                          align="right"
+                          className="px-4 py-3 font-medium text-paper-100 tabular-nums"
+                          label="Error rate"
+                        >
+                          {formatPercent(b.errorRate)}
+                        </Td>
+                        <Td
+                          align="right"
+                          className="px-4 py-3 text-[13px] text-paper-400"
+                          label="Recorded"
+                        >
+                          <time
+                            className="whitespace-nowrap"
+                            dateTime={b.recordedAt}
+                            title={formatDate(b.recordedAt)}
+                          >
+                            {formatRelativeTime(b.recordedAt)}
+                          </time>
+                        </Td>
+                        <Td align="right" className="px-4 py-3">
+                          <Button
+                            aria-label={`Delete ${domainLabel(b.domain)} baseline`}
+                            className="px-2 text-paper-500 hover:text-brick-400"
+                            onClick={() => setDeleteTarget(b)}
+                            size="sm"
+                            title="Delete baseline"
+                            variant="ghost"
+                          >
+                            <Icon name="trash" size={14} />
+                          </Button>
+                        </Td>
+                      </TRow>
+                    ))}
+                  </tbody>
+                </Table>
+              </div>
+            )}
+          </QueryBoundary>
+        )}
+      </Card>
 
       <CreateBaselineModal
         onClose={() => setNewOpen(false)}

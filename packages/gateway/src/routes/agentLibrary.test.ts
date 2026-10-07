@@ -719,6 +719,11 @@ describe('agent runtime', () => {
     expect(res.statusCode).toBe(200);
     expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.runtime).toBe('claude-code');
     expect(mockPrisma.configAuditLog.create).toHaveBeenCalled();
+    const { data } = mockPrisma.configAuditLog.create.mock.calls[0]?.[0] ?? {};
+    expect(data).toMatchObject({
+      afterJson: { modelSpec: 'anthropic/claude-opus-4-8', runtime: 'claude-code', version: 2 },
+      beforeJson: { modelSpec: 'anthropic/claude-opus-5-5', runtime: 'claude-code', version: 1 },
+    });
     await app.close();
   });
 
@@ -767,6 +772,59 @@ describe('agent runtime', () => {
       expect(res.statusCode, JSON.stringify(body)).toBe(200);
       expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.runtime).toBe('claude-code');
     }
+    await app.close();
+  });
+
+  it('audits a team admin edit like the platform route does', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ runtime: 'claude-code' }));
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'v2',
+      modelSpec: 'anthropic/claude-sonnet-5-5',
+      runtime: 'claude-code',
+      skillRefs: [],
+      version: 2,
+    });
+    const res = await app.inject({
+      body: { modelSpec: 'anthropic/claude-sonnet-5-5' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockPrisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+    const { data } = mockPrisma.configAuditLog.create.mock.calls[0]?.[0] ?? {};
+    expect(data).toMatchObject({
+      action: 'UPDATE',
+      // The model is what a team admin most often changes here, so the row must show it.
+      afterJson: { modelSpec: 'anthropic/claude-sonnet-5-5', runtime: 'claude-code', version: 2 },
+      beforeJson: {
+        key: 'teamAgent',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        runtime: 'claude-code',
+        scope: 'TEAM',
+        teamId: TEAM,
+        version: 1,
+      },
+      entityId: 'v2',
+      entityType: 'Agent',
+    });
+    await app.close();
+  });
+
+  it('writes no audit row when a team admin edit is refused', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ runtime: 'claude-code' }));
+    const res = await app.inject({
+      body: { runtime: 'mastra' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
     await app.close();
   });
 });

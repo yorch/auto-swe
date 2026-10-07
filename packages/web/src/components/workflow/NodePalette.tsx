@@ -12,9 +12,10 @@ import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
-import { cn } from '@/lib/utils';
-import { NODE_TYPE_TONE } from './nodeTypeTone';
+import { Icon } from '@/components/ui/Icon';
+import { SearchInput } from '@/components/ui/Toolbar';
+import { cn, FOCUS_RING } from '@/lib/utils';
+import { NODE_TYPE_LABEL, NODE_TYPE_TONE } from './nodeTypeTone';
 
 export const PaletteDragSchema = z.union([
   z.object({ kind: z.literal('primitive'), nodeType: z.string() }),
@@ -30,7 +31,6 @@ const GROUP_ORDER = ['Execution', 'Control flow', 'Human-in-loop', 'Advanced'] a
 type GroupLabel = (typeof GROUP_ORDER)[number];
 
 type PrimitiveDef = {
-  label: string;
   hint: string;
   group: GroupLabel;
   elevated?: boolean;
@@ -38,7 +38,7 @@ type PrimitiveDef = {
 
 type PrimitiveGroup = {
   label: GroupLabel;
-  items: (PrimitiveDef & { type: SpecNode['type'] })[];
+  items: (PrimitiveDef & { label: string; type: SpecNode['type'] })[];
 };
 
 /**
@@ -53,75 +53,61 @@ const PRIMITIVES: Record<SpecNode['type'], PrimitiveDef> = {
   agent: {
     group: 'Execution',
     hint: 'Run a library Agent by reference',
-    label: 'Agent',
   },
   cond: {
     group: 'Control flow',
     hint: 'Branch on an expression',
-    label: 'Conditional',
   },
   containerStep: {
     elevated: true,
     group: 'Advanced',
-    hint: 'Coded capability container — JSON in/out (⚠ elevated)',
-    label: 'Container step',
+    hint: 'Coded capability container, JSON in and out',
   },
   eval: {
     group: 'Execution',
     hint: 'Score a value with a scorer',
-    label: 'Eval',
   },
   fanOut: {
     group: 'Control flow',
     hint: 'Fan out into parallel subtasks',
-    label: 'Fan-out',
   },
   humanApproval: {
     group: 'Human-in-loop',
     hint: 'Pause for human approval',
-    label: 'Approval',
   },
   humanDecision: {
     group: 'Human-in-loop',
     hint: 'Pause for human decision',
-    label: 'Decision',
   },
   humanInput: {
     group: 'Human-in-loop',
     hint: 'Pause for human input',
-    label: 'Input',
   },
   humanReview: {
     group: 'Human-in-loop',
     hint: 'Pause for human review',
-    label: 'Review',
   },
   mcp: {
     group: 'Execution',
     hint: 'Call one tool on an MCP server',
-    label: 'MCP tool',
   },
-  set: { group: 'Control flow', hint: 'Set spec values', label: 'Set' },
+  set: { group: 'Control flow', hint: 'Set spec values' },
   shell: {
     elevated: true,
     group: 'Advanced',
-    hint: 'Run a shell command (⚠ elevated)',
-    label: 'Shell',
+    hint: 'Run a shell command in a container',
   },
   signal: {
     group: 'Control flow',
     hint: 'Wait for an external signal',
-    label: 'Signal',
   },
   step: {
     group: 'Execution',
     hint: 'Run a registered step',
-    label: 'Step',
   },
   terminate: {
     group: 'Control flow',
     hint: 'End the workflow',
-    label: 'Terminate',
   },
 };
 
@@ -130,6 +116,7 @@ const PRIMITIVE_TYPES = Object.keys(PRIMITIVES) as SpecNode['type'][];
 export const PRIMITIVE_GROUPS: PrimitiveGroup[] = GROUP_ORDER.map((label) => ({
   items: PRIMITIVE_TYPES.filter((type) => PRIMITIVES[type].group === label).map((type) => ({
     ...PRIMITIVES[type],
+    label: NODE_TYPE_LABEL[type],
     type,
   })),
   label,
@@ -160,15 +147,23 @@ function PrimitiveGroup({
     <div className="mb-1">
       <button
         aria-expanded={open}
-        className="flex w-full items-center justify-between px-1 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600 hover:text-paper-400"
+        className={cn(
+          'flex w-full items-center gap-1.5 rounded-md px-1 py-1.5 text-xs font-medium text-paper-400 transition-colors hover:text-paper-100',
+          FOCUS_RING
+        )}
         onClick={() => setOpen((v) => !v)}
         type="button"
       >
+        <Icon
+          className={cn('text-paper-500 transition-transform', open && 'rotate-90')}
+          name="chevronRight"
+          size={12}
+        />
         <span>{group.label}</span>
-        <span className="text-[10px]">{open ? '▾' : '▸'}</span>
+        <span className="ml-auto text-paper-500 tabular-nums">{group.items.length}</span>
       </button>
       {open && (
-        <ul className="space-y-1">
+        <ul className="space-y-1 pb-1">
           {group.items.map((p) => (
             <PaletteItem
               dragPayload={{ kind: 'primitive', nodeType: p.type }}
@@ -213,51 +208,60 @@ export function NodePalette({ steps, onAdd }: Props) {
   }, [filteredSteps]);
 
   return (
-    <aside className="flex h-full w-64 flex-col border-r border-ink-600 bg-ink-950/40">
+    <aside
+      aria-label="Add a node"
+      className="flex h-full w-64 flex-col overflow-y-auto border-r border-ink-600 bg-ink-950"
+    >
       <div className="border-b border-ink-600 px-4 py-3">
-        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-paper-500">
-          ¶ Palette
-        </div>
-        <p className="mt-1 text-[11px] leading-snug text-paper-400">
-          Drag onto the canvas, or press Enter, to add a node.
+        <h2 className="text-sm font-semibold text-paper-100">Add a node</h2>
+        <p className="mt-0.5 text-xs leading-snug text-paper-500">
+          Drag onto the canvas, or focus and press Enter
         </p>
       </div>
 
       {/* Primitives — grouped */}
       <div className="border-b border-ink-600 px-3 py-3">
-        <div className="label-mono mb-1 px-1">Primitives</div>
+        <h3 className="mb-1 px-1 text-[13px] font-semibold text-paper-200">Node types</h3>
         {PRIMITIVE_GROUPS.map((g) => (
           <PrimitiveGroup group={g} key={g.label} onAdd={onAdd} />
         ))}
       </div>
 
       {/* Steps */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="border-b border-ink-600 px-3 py-3">
-          <div className="label-mono mb-2 px-1">Step registry</div>
-          <Input
-            aria-label="Filter the step registry"
-            compact
-            onChange={(e) => setQuery(e.target.value)}
+      <div className="flex flex-col">
+        <div className="sticky top-0 z-10 border-b border-ink-600 bg-ink-950 px-3 py-3">
+          <h3 className="mb-2 px-1 text-[13px] font-semibold text-paper-200">
+            Registered steps
+            <span className="ml-1.5 font-normal text-paper-500 tabular-nums">{steps.length}</span>
+          </h3>
+          <SearchInput
+            className="sm:w-full"
+            label="Filter the step registry"
+            onChange={setQuery}
             placeholder="Filter steps…"
-            type="search"
             value={query}
           />
         </div>
-        <div className="flex-1 overflow-y-auto px-3 py-3">
-          {groupedSteps.length === 0 && <EmptyState className="py-3 text-xs" title="No matches." />}
+        <div className="px-3 py-3">
+          {groupedSteps.length === 0 && (
+            <EmptyState
+              className="py-4"
+              hint="Try a step name or category."
+              icon={null}
+              title="No steps match"
+            />
+          )}
           {groupedSteps.map(([category, items]) => (
-            <div className="mb-4" key={category}>
-              <div className="mb-1 px-1 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-600">
-                {category}
-              </div>
-              <ul className="space-y-px">
+            <div className="mb-4 last:mb-0" key={category}>
+              <div className="mb-1 px-1 text-xs font-medium text-paper-500">{category}</div>
+              <ul className="space-y-1">
                 {items.map((s) => (
                   <PaletteItem
                     dragPayload={{ kind: 'step', step: s.name }}
                     hint={s.label}
                     key={s.name}
                     label={s.name}
+                    mono
                     onAdd={onAdd}
                     swatch={NODE_TYPE_TONE.step.swatch}
                     title={s.description}
@@ -279,6 +283,7 @@ function PaletteItem({
   dragPayload,
   title,
   elevated,
+  mono = false,
   onAdd,
 }: {
   label: string;
@@ -287,6 +292,8 @@ function PaletteItem({
   dragPayload: PaletteDragKind;
   title?: string;
   elevated?: boolean;
+  /** The label is an identifier (a registered step name), shown in mono. */
+  mono?: boolean;
   onAdd: (payload: PaletteDragKind) => void;
 }) {
   return (
@@ -296,8 +303,9 @@ function PaletteItem({
         aria-label={`Add ${label} node`}
         aria-roledescription="draggable palette item"
         className={cn(
-          'group flex cursor-grab items-center gap-2 rounded-sm border px-2 py-1.5 text-xs transition-colors hover:border-ember-400 hover:bg-ink-700 focus:border-ember-400 focus:bg-ink-700 focus:outline-none active:cursor-grabbing',
-          elevated ? 'border-brick-400/40 bg-brick-400/5' : 'border-ink-600 bg-ink-800/50'
+          'group flex cursor-grab items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors hover:border-ink-300 hover:bg-ink-700 focus-visible:border-ember-400 focus-visible:bg-ink-700 active:cursor-grabbing',
+          FOCUS_RING,
+          elevated ? 'border-brick-400/30 bg-brick-400/5' : 'border-ink-600 bg-ink-800/50'
         )}
         draggable
         onDragStart={(e) => {
@@ -316,12 +324,23 @@ function PaletteItem({
       >
         <span aria-hidden className={cn('h-2 w-2 shrink-0 rounded-full', swatch)} />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-[11px] text-paper-100">{label}</div>
-          {hint && <div className="truncate text-[10px] text-paper-500">{hint}</div>}
+          <div
+            className={cn(
+              'truncate text-paper-100',
+              mono ? 'font-mono text-xs' : 'text-[13px] font-medium'
+            )}
+          >
+            {label}
+          </div>
+          {hint && <div className="truncate text-[11px] text-paper-500">{hint}</div>}
         </div>
         {elevated && (
-          <span className="text-[10px] text-brick-400" title="Requires team-admin authoring">
-            ⚠
+          <span
+            className="shrink-0 text-brick-400"
+            title="Elevated: only team leads and admins can author it"
+          >
+            <Icon name="lock" size={13} />
+            <span className="sr-only">Elevated: only team leads and admins can author it</span>
           </span>
         )}
       </div>

@@ -93,11 +93,11 @@ describe('NodeInspector outgoing edges', () => {
   it('still offers "none" for an optional edge, and clears it', () => {
     const onChangeNode = renderInspector(STEP, 'work');
     expect(openSelect('Next').map((o) => o.textContent?.replace('✓', ''))).toEqual([
-      '— none —',
+      'Not connected',
       'a',
       'b',
     ]);
-    fireEvent.click(screen.getByRole('option', { name: '— none —' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Not connected' }));
 
     expect(onChangeNode).toHaveBeenCalledWith({ step: 'doThing', type: 'step' });
   });

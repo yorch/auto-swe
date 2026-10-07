@@ -854,14 +854,18 @@ describe('finalizeWorkflowRun', () => {
     updateActive.mockReset();
   });
 
-  it('leaves the ActiveWorkflow row untouched for SKIPPED runs', async () => {
+  it('closes the ActiveWorkflow row of a SKIPPED run as COMPLETED', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const updateActive = vi.mocked(prisma.activeWorkflow.updateMany);
     findRun.mockResolvedValue({ workflowId: 'eng-acme-repo-T-2', workRequest: null } as never);
     updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    updateActive.mockResolvedValue({ count: 1 } as never);
 
     await finalizeWorkflowRun('run-4', 'SKIPPED');
-    expect(updateActive).not.toHaveBeenCalled();
+    expect(updateActive).toHaveBeenCalledWith({
+      data: { currentStatus: 'COMPLETED' },
+      where: { temporalWorkflowId: 'eng-acme-repo-T-2' },
+    });
 
     findRun.mockReset();
     updateActive.mockReset();

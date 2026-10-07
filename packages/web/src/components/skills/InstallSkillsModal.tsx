@@ -57,7 +57,7 @@ function AddedSkill({
     <li className="space-y-1 rounded-md border border-ink-600 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-paper-100">{label}</span>
-        <span className="font-mono text-[11px] text-paper-500">{visibleText(a.folder)}</span>
+        <span className="font-mono text-xs text-paper-500">{visibleText(a.folder)}</span>
         <span className="text-xs text-paper-500">{a.textLength} chars</span>
         {reason && <Badge tone="muted">{reason}</Badge>}
         <Button
@@ -119,7 +119,7 @@ function InstallBody({ onClose, sourceId }: { onClose: () => void; sourceId: str
     return (
       <div className="space-y-4">
         {sources.isLoading ? (
-          <LoadingState message="loading…" />
+          <LoadingState message="Loading…" />
         ) : (
           <Alert>This source no longer exists.</Alert>
         )}
@@ -228,7 +228,7 @@ function InstallList({
   }
 
   if (diffQuery.isLoading) {
-    return <LoadingState message="reading the repository…" />;
+    return <LoadingState message="Reading the repository…" />;
   }
   if (!diff) {
     return (

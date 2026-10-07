@@ -109,6 +109,7 @@ export function SecretInput({
     <ConfigField id={id} label={label}>
       <Input
         autoComplete="off"
+        className="font-mono"
         compact
         id={id}
         onChange={(e) => onChange(e.target.value)}

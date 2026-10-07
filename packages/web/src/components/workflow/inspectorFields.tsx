@@ -8,15 +8,59 @@
  */
 
 import type { OnFailMode, StepFieldDef } from '@auto-swe/shared/workflow';
+import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
+import { cn } from '@/lib/utils';
 
 export type OnFailValue = OnFailMode;
 export type Binding = { from: string } | string | number | boolean | null;
+
+/**
+ * One titled block of the inspector rail ("Details", "Configuration", "Outgoing
+ * edges"…), divided from the block above it. Every block in the rail goes
+ * through here so the headings and spacing stay identical.
+ */
+export function InspectorSection({
+  action,
+  children,
+  className,
+  title,
+}: {
+  action?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  title: string;
+}) {
+  return (
+    <section className={cn('space-y-3 border-t border-ink-600 px-4 py-4', className)}>
+      <div className="flex min-h-7 items-center justify-between gap-2">
+        <h3 className="text-[13px] font-semibold text-paper-100">{title}</h3>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** A labelled group inside an `InspectorSection` — lighter, with no divider. */
+export function InspectorSubsection({ children, title }: { children: ReactNode; title: string }) {
+  return (
+    <div className="space-y-3 pt-2">
+      <h4 className="text-xs font-medium text-paper-400">{title}</h4>
+      {children}
+    </div>
+  );
+}
+
+/** A one-line note in the rail where a list or form would otherwise be. */
+export function InspectorNote({ children }: { children: ReactNode }) {
+  return <p className="text-xs leading-relaxed text-paper-500">{children}</p>;
+}
 
 export function SchemaAwareForm({
   fields,
@@ -28,15 +72,14 @@ export function SchemaAwareForm({
   onChange: (key: string, value: unknown) => void;
 }) {
   return (
-    <div className="space-y-3 border-t border-ink-600 pt-4">
-      <div className="label-mono">Config</div>
+    <InspectorSubsection title="Step settings">
       {fields.map((f) => {
         const current = values[f.key];
         return (
           <SchemaField field={f} key={f.key} onChange={(v) => onChange(f.key, v)} value={current} />
         );
       })}
-    </div>
+    </InspectorSubsection>
   );
 }
 
@@ -50,7 +93,8 @@ function SchemaField({
   onChange: (v: unknown) => void;
 }) {
   const id = `cfg-${field.key}`;
-  const label = `${field.key} — ${field.label}`;
+  // The label reads as prose; the config key is in the raw JSON below.
+  const label = field.label || field.key;
   const required = field.required;
   const hint = field.description;
 
@@ -58,7 +102,7 @@ function SchemaField({
     return (
       <Checkbox
         checked={Boolean(value)}
-        className="text-xs"
+        className="text-[13px]"
         hint={hint}
         id={id}
         label={label}
@@ -93,7 +137,7 @@ function SchemaField({
         label={label}
         onChange={(v) => onChange(v || undefined)}
         options={[
-          { label: '— none —', value: '' },
+          { label: 'Not set', value: '' },
           ...(field.enumValues ?? []).map((v) => ({ label: v, value: v })),
         ]}
         required={required}
@@ -104,7 +148,7 @@ function SchemaField({
   if (field.type === 'json') {
     return (
       <Textarea
-        className="h-20"
+        className="h-20 font-mono text-xs"
         compact
         hint={hint}
         id={id}
@@ -160,11 +204,11 @@ export function OnFailSection({
   const retryCount = typeof value === 'object' ? value.retry : 1;
 
   return (
-    <div className="mt-4 space-y-2 border-t border-ink-600 pt-4">
+    <InspectorSubsection title="On failure">
       <Select
         compact
         id="onfail-mode"
-        label="On fail"
+        label="When this node fails"
         onChange={(v) => {
           if (v === 'block') {
             onChange(undefined);
@@ -175,8 +219,8 @@ export function OnFailSection({
           }
         }}
         options={[
-          { label: 'Block (default) — abort run on failure', value: 'block' },
-          { label: 'Warn — record failure and continue', value: 'warn' },
+          { label: 'Stop the run (default)', value: 'block' },
+          { label: 'Record it and continue', value: 'warn' },
           { label: 'Retry', value: 'retry' },
         ]}
         value={mode}
@@ -184,8 +228,9 @@ export function OnFailSection({
       {mode === 'retry' && (
         <Input
           compact
+          hint="Up to 10"
           id="onfail-retry-count"
-          label="Retry attempts (max 10)"
+          label="Retry attempts"
           max={10}
           min={1}
           onChange={(e) => onChange({ retry: Math.max(1, Math.min(10, Number(e.target.value))) })}
@@ -193,7 +238,7 @@ export function OnFailSection({
           value={retryCount}
         />
       )}
-    </div>
+    </InspectorSubsection>
   );
 }
 
@@ -225,26 +270,31 @@ export function InputsBindingsSection({
   };
 
   return (
-    <div className="mt-4 space-y-3 border-t border-ink-600 pt-4">
-      <div className="flex items-center justify-between">
-        <div className="label-mono">Input bindings</div>
+    <InspectorSection
+      action={
         <Button onClick={addEntry} size="sm" variant="ghost">
-          Add binding
+          <Icon name="plus" size={13} />
+          Add
         </Button>
-      </div>
+      }
+      title="Input bindings"
+    >
       {entries.length === 0 && (
-        <EmptyState className="py-0 text-left text-xs" title="No input bindings." />
+        <InspectorNote>
+          No bindings. Add one to pass a context path or a literal value into this node.
+        </InspectorNote>
       )}
       {entries.map(([key, val]) => {
         const isFrom = typeof val === 'object' && val !== null && 'from' in val;
         const displayVal = isFrom ? (val as { from: string }).from : String(val ?? '');
 
         return (
-          <div className="space-y-1" key={key}>
-            <div className="flex items-center gap-1">
+          <div className="space-y-1.5 rounded-md border border-ink-600 bg-ink-900/40 p-2" key={key}>
+            <div className="flex items-center gap-1.5">
               <div className="min-w-0 flex-1">
                 <Input
                   aria-label="Binding key"
+                  className="font-mono text-xs"
                   compact
                   defaultValue={key}
                   onBlur={(e) => {
@@ -272,23 +322,25 @@ export function InputsBindingsSection({
                   }
                 }}
                 options={[
-                  { label: 'path', value: 'from' },
-                  { label: 'literal', value: 'literal' },
+                  { label: 'Path', value: 'from' },
+                  { label: 'Literal', value: 'literal' },
                 ]}
                 value={isFrom ? 'from' : 'literal'}
               />
               <Button
-                aria-label="Remove binding"
-                className="px-2"
+                aria-label={`Remove binding ${key}`}
+                className="px-2 hover:text-brick-400"
                 onClick={() => removeEntry(key)}
                 size="sm"
-                variant="danger"
+                title="Remove binding"
+                variant="ghost"
               >
-                ×
+                <Icon name="close" size={14} />
               </Button>
             </div>
             <Input
               aria-label="Binding value"
+              className={isFrom ? 'font-mono text-xs' : undefined}
               compact
               onChange={(e) => {
                 const v = e.target.value;
@@ -300,6 +352,6 @@ export function InputsBindingsSection({
           </div>
         );
       })}
-    </div>
+    </InspectorSection>
   );
 }

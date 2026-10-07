@@ -14,11 +14,12 @@ import { TOKEN } from '@/lib/palette';
 import {
   AXIS_COMMON_PROPS,
   axisLabel,
+  BAR_MAX_SIZE,
   ChartFrame,
   ChartTooltip,
   chartAriaLabel,
   EmptyChart,
-  GRID_STROKE,
+  GRID_PROPS,
   TOOLTIP_CURSOR_FILL,
 } from './chartChrome';
 
@@ -53,6 +54,12 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
     return <EmptyChart label="No eval datasets yet." />;
   }
   const max = Math.max(maxStaleRate, ...datasets.map((d) => d.staleRate), 0.1);
+  // Round the axis to clean percentages (0 / 10 / 20 / 30%), never 8% or 23%.
+  const step = max <= 0.2 ? 0.05 : max <= 0.5 ? 0.1 : 0.2;
+  const top = Math.min(1, Math.ceil((max * 1.1) / step) * step);
+  const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, i) =>
+    Number((i * step).toFixed(2))
+  );
 
   const over = datasets.filter((d) => d.staleRate > maxStaleRate).length;
   const summary = `Share of cases quarantined as stale for ${datasets.length} datasets against a ${percent(
@@ -73,18 +80,19 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
         ]),
       }}
     >
-      <ResponsiveContainer height={datasets.length * ROW_HEIGHT + 56} width="100%">
+      <ResponsiveContainer height={datasets.length * ROW_HEIGHT + 76} width="100%">
         <BarChart
           accessibilityLayer={false}
           data={datasets}
           layout="vertical"
-          margin={{ bottom: 16, left: 8, right: 24 }}
+          margin={{ bottom: 16, left: 8, right: 24, top: 20 }}
         >
-          <CartesianGrid horizontal={false} stroke={GRID_STROKE} strokeDasharray="2 4" />
+          <CartesianGrid {...GRID_PROPS} horizontal={false} />
           <XAxis
-            domain={[0, Math.min(1, max * 1.2)]}
+            domain={[0, top]}
             label={axisLabel('Stale cases (% of dataset)')}
             tickFormatter={percent}
+            ticks={ticks}
             type="number"
             {...AXIS_COMMON_PROPS}
           />
@@ -106,7 +114,8 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
           <ReferenceLine
             label={{
               fill: TOKEN.paper400,
-              fontSize: 10,
+              fontFamily: 'var(--font-sans)',
+              fontSize: 11,
               position: 'top',
               value: `max ${percent(maxStaleRate)}`,
             }}
@@ -114,7 +123,12 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
             strokeDasharray="4 3"
             x={maxStaleRate}
           />
-          <Bar dataKey="staleRate" isAnimationActive={false} radius={[0, 2, 2, 0]}>
+          <Bar
+            dataKey="staleRate"
+            isAnimationActive={false}
+            maxBarSize={BAR_MAX_SIZE}
+            radius={[0, 4, 4, 0]}
+          >
             {datasets.map((d) => (
               <Cell
                 fill={d.staleRate > maxStaleRate ? TOKEN.brick400 : TOKEN.ember400}

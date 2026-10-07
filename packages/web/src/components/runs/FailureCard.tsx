@@ -2,8 +2,9 @@
 
 import type { WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Icon } from '@/components/ui/Icon';
 import { cn } from '@/lib/utils';
 
 interface FailureCardProps {
@@ -53,60 +54,69 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
   return (
     <div
       className={cn(
-        'relative rounded border border-brick-400/40 bg-brick-400/10',
+        'relative rounded-lg border border-brick-400/35 bg-brick-400/[0.06]',
         size === 'full' ? 'p-4' : 'p-3'
       )}
     >
-      {/* Header row */}
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <StatusBadge status="FAILED" />
-        <span className="font-mono text-[10px] tracking-[0.1em] text-brick-400">{errorCode}</span>
-      </div>
+      <div className="flex items-start gap-3">
+        <Icon className="mt-0.5 text-brick-400" name="error" size={18} />
+        <div className="min-w-0 flex-1">
+          {/* Title, then where it failed and the error class */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h4
+              className={cn(
+                'font-semibold tracking-[-0.01em] text-paper-50',
+                size === 'full' ? 'text-[15px]' : 'text-sm'
+              )}
+            >
+              {errorTitle}
+            </h4>
+            <Badge className="font-mono" tone="brick" variant="outline">
+              {errorCode}
+            </Badge>
+          </div>
+          <div className="mt-1 text-xs text-paper-500 max-lg:break-all">
+            at step <span className="font-mono text-paper-300">{step.nodeId}</span>
+          </div>
 
-      {/* Serif title */}
-      <h4
-        className={cn(
-          'mb-1 font-display font-medium tracking-[-0.01em] text-paper-100',
-          size === 'full' ? 'text-base' : 'text-sm'
-        )}
-      >
-        {errorTitle}
-      </h4>
-
-      {/* Mono locator */}
-      <div className="mb-2 font-mono max-lg:break-all text-[10px] tracking-[0.08em] text-brick-400">
-        at {step.nodeId}
-      </div>
-
-      {/* Error summary */}
-      {step.error && (
-        <p className="mb-3 break-words text-paper-400 text-[12px] leading-relaxed">
-          {step.error.length > 200 ? `${step.error.slice(0, 200)}…` : step.error}
-        </p>
-      )}
-
-      {/* Suggested fix (full size only) */}
-      {suggestedFix && (
-        <Alert className="mb-3" title="Suggested fix" variant="warning">
-          {suggestedFix}
-        </Alert>
-      )}
-
-      {/* Actions */}
-      {(onJumpToFailure || onReRun) && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {onJumpToFailure && (
-            <Button className="h-[40px] lg:h-7" onClick={onJumpToFailure} size="sm" variant="ghost">
-              ↳ Jump to failure
-            </Button>
+          {/* Error summary: the raw message, so it reads as output */}
+          {step.error && (
+            <p className="mt-3 break-words rounded-md border border-ink-500/60 bg-ink-950/50 px-3 py-2 font-mono text-xs leading-relaxed text-paper-300">
+              {step.error.length > 200 ? `${step.error.slice(0, 200)}…` : step.error}
+            </p>
           )}
-          {onReRun && (
-            <Button className="h-[40px] lg:h-7" onClick={onReRun} size="sm" variant="primary">
-              Re-run
-            </Button>
+
+          {/* Suggested fix (full size only) */}
+          {suggestedFix && (
+            <Alert className="mt-3" title="Suggested fix" variant="warning">
+              {suggestedFix}
+            </Alert>
+          )}
+
+          {/* Actions */}
+          {(onJumpToFailure || onReRun) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {onReRun && (
+                <Button className="h-[40px] lg:h-7" onClick={onReRun} size="sm" variant="primary">
+                  <Icon name="refresh" size={13} />
+                  Re-run
+                </Button>
+              )}
+              {onJumpToFailure && (
+                <Button
+                  className="h-[40px] lg:h-7"
+                  onClick={onJumpToFailure}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Jump to failure
+                  <Icon name="arrowRight" size={13} />
+                </Button>
+              )}
+            </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

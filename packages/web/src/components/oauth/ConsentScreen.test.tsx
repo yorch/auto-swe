@@ -47,7 +47,7 @@ describe('ConsentScreen', () => {
     render(withQuery(<ConsentScreen search={signed('mcp:read offline_access')} />));
 
     await waitFor(() => expect(screen.getAllByText('Claude Code').length).toBeGreaterThan(0));
-    expect(screen.getByText('unverified')).toBeTruthy();
+    expect(screen.getByText('Unverified')).toBeTruthy();
     expect(screen.getByText('127.0.0.1:33333')).toBeTruthy();
     // The path and query of the redirect are not shown.
     expect(screen.queryByText(/\/cb/)).toBeNull();

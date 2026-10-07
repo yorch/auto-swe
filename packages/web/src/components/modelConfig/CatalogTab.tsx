@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -48,6 +49,10 @@ interface NewEntryDraft {
 
 const STATUS_TONE = { ACTIVE: 'moss', DEPRECATED: 'amber', RETIRED: 'muted' } as const;
 
+/** `DEPRECATED` → `Deprecated`, for an enum value shown as a label. */
+const sentence = (v: string) => v.charAt(0) + v.slice(1).toLowerCase();
+const kindLabel = (kind: ModelKind) => (kind === 'EMBEDDING' ? 'Embedding' : sentence(kind));
+
 /// The model catalog: the per-MTok prices every LLM and embedding call is
 /// costed at. A model with no entry is recorded at $0, which USD budgets never
 /// see — the unpriced panel lists the ones in use.
@@ -73,7 +78,7 @@ export function CatalogTab() {
     <div className="space-y-6">
       <UnpricedPanel onAdd={(spec) => setCreating(splitSpec(spec))} />
       <DiscoveryPanel cataloged={entries ?? []} onAdd={setCreating} onEdit={setEditing} />
-      <Card>
+      <Card className="p-5 sm:p-6">
         <CardHeader>
           <CardTitle eyebrow="Model catalog">Prices per million tokens</CardTitle>
           <div className="flex items-center gap-4">
@@ -82,12 +87,17 @@ export function CatalogTab() {
               label="Show retired"
               onChange={() => setShowRetired((v) => !v)}
             />
-            <Button onClick={() => setCreating({ modelId: '', provider: '' })} size="sm">
+            <Button
+              onClick={() => setCreating({ modelId: '', provider: '' })}
+              size="sm"
+              variant="primary"
+            >
+              <Icon name="plus" size={14} />
               Add model
             </Button>
           </div>
         </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
+        <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
           Built-in models follow the prices code ships until edited; an edit marks the row
           customized and keeps it. Edits reach the worker within the config cache window, and never
           reprice calls already recorded.
@@ -115,32 +125,30 @@ export function CatalogTab() {
               {(entries ?? []).map((e) => (
                 <TRow key={e.id}>
                   <Td className="py-2">
-                    <div className="font-mono text-xs">{entrySpec(e)}</div>
-                    {e.displayName && (
-                      <div className="text-[11px] text-paper-500">{e.displayName}</div>
-                    )}
-                    {e.notes && <div className="text-[11px] text-paper-500">{e.notes}</div>}
+                    <div className="font-mono text-xs text-paper-100">{entrySpec(e)}</div>
+                    {e.displayName && <div className="text-xs text-paper-500">{e.displayName}</div>}
+                    {e.notes && <div className="text-xs text-paper-500">{e.notes}</div>}
                   </Td>
-                  <Td className="py-2 text-xs">{e.kind.toLowerCase()}</Td>
-                  <Td className="py-2 font-mono text-xs">
+                  <Td className="py-2 text-xs text-paper-300">{kindLabel(e.kind)}</Td>
+                  <Td className="py-2 text-xs text-paper-300 tabular-nums">
                     {formatPrice(e)}
                     {divergesFromBuiltin(e) && e.builtin && (
-                      <div className="text-[11px] text-amber-400">
+                      <div className="text-xs text-amber-400">
                         built-in is now {formatPrice({ ...e.builtin })}
                         {e.builtin.status !== e.status && `, ${e.builtin.status.toLowerCase()}`}
                       </div>
                     )}
                   </Td>
                   <Td className="py-2">
-                    <Badge tone={STATUS_TONE[e.status]} variant="text">
-                      {e.status.toLowerCase()}
+                    <Badge dot tone={STATUS_TONE[e.status]}>
+                      {sentence(e.status)}
                     </Badge>
                   </Td>
                   <Td className="py-2">
                     <SourceBadge entry={e} />
                   </Td>
-                  <Td className="py-2 text-right">
-                    <Button onClick={() => setEditing(e)} size="sm" variant="ghost">
+                  <Td className="py-2 text-right whitespace-nowrap">
+                    <Button onClick={() => setEditing(e)} size="sm" variant="secondary">
                       Edit
                     </Button>
                     {e.isBuiltIn && e.isCustomized && (
@@ -154,7 +162,12 @@ export function CatalogTab() {
                       </Button>
                     )}
                     {!e.isBuiltIn && (
-                      <Button onClick={() => setDeleting(e)} size="sm" variant="danger">
+                      <Button
+                        className="text-brick-400 hover:text-brick-400"
+                        onClick={() => setDeleting(e)}
+                        size="sm"
+                        variant="ghost"
+                      >
                         Delete
                       </Button>
                     )}
@@ -164,7 +177,17 @@ export function CatalogTab() {
               {(entries ?? []).length === 0 && (
                 <TableStatusRow colSpan={6}>
                   <EmptyState
+                    action={
+                      <Button
+                        onClick={() => setCreating({ modelId: '', provider: '' })}
+                        size="sm"
+                        variant="primary"
+                      >
+                        Add model
+                      </Button>
+                    }
                     hint="The gateway seeds the built-in models at startup."
+                    icon="coin"
                     title="The catalog is empty"
                   />
                 </TableStatusRow>
@@ -210,20 +233,12 @@ function splitSpec(spec: string): { provider: string; modelId: string } {
 
 function SourceBadge({ entry }: { entry: ModelCatalogEntry }) {
   if (!entry.isBuiltIn) {
-    return (
-      <Badge tone="violet" variant="text">
-        custom
-      </Badge>
-    );
+    return <Badge tone="violet">Custom</Badge>;
   }
   return entry.isCustomized ? (
-    <Badge tone="amber" variant="text">
-      customized
-    </Badge>
+    <Badge tone="amber">Customized</Badge>
   ) : (
-    <Badge tone="neutral" variant="text">
-      built-in
-    </Badge>
+    <Badge tone="neutral">Built-in</Badge>
   );
 }
 
@@ -233,12 +248,12 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
     return null;
   }
   return (
-    <Card>
+    <Card className="p-5 sm:p-6">
       <CardHeader>
         <CardTitle eyebrow="Unpriced in use">Recorded at $0</CardTitle>
       </CardHeader>
-      <p className="mb-4 text-xs text-paper-500">
-        These models are configured or were called in the last 30 days, but nothing prices them —
+      <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        These models are configured or were called in the last 30 days, but nothing prices them, so
         their spend never reaches a USD budget. Add each one, or fix a misspelled spec.
       </p>
       <Table>
@@ -257,7 +272,7 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
               <Td className="py-2 text-xs">{u.usedBy.join(', ')}</Td>
               <Td className="py-2 font-mono text-xs">{u.suggestion ?? '—'}</Td>
               <Td className="py-2 text-right">
-                <Button onClick={() => onAdd(u.spec)} size="sm" variant="ghost">
+                <Button onClick={() => onAdd(u.spec)} size="sm" variant="secondary">
                   Add to catalog
                 </Button>
               </Td>
@@ -325,7 +340,7 @@ function DiscoveryPanel({
 
   return (
     <>
-      <Card>
+      <Card className="p-5 sm:p-6">
         <CardHeader>
           <CardTitle eyebrow="New from providers">Models the catalog lacks</CardTitle>
           <div className="flex items-center gap-4">
@@ -339,7 +354,7 @@ function DiscoveryPanel({
             </Button>
           </div>
         </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
+        <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
           Providers are asked on a schedule, through each global provider credential. Nothing is
           added to the catalog until you add it — with its price.{' '}
           {lastChecked
@@ -357,7 +372,9 @@ function DiscoveryPanel({
           </p>
         ))}
         {data && fresh.length === 0 ? (
-          <p className="text-xs text-paper-500">{emptyMessage}</p>
+          <p className="rounded-lg border border-dashed border-ink-400 px-4 py-3 text-[13px] text-paper-400">
+            {emptyMessage}
+          </p>
         ) : (
           <Table>
             <tbody>
@@ -367,13 +384,11 @@ function DiscoveryPanel({
                     <div className={`font-mono text-xs ${m.dismissedAt ? 'text-paper-500' : ''}`}>
                       {m.spec}
                     </div>
-                    {m.displayName && (
-                      <div className="text-[11px] text-paper-500">{m.displayName}</div>
-                    )}
+                    {m.displayName && <div className="text-xs text-paper-500">{m.displayName}</div>}
                   </Td>
-                  <Td className="py-1.5 text-xs">{m.kind.toLowerCase()}</Td>
+                  <Td className="py-1.5 text-xs text-paper-300">{kindLabel(m.kind)}</Td>
                   <Td className="py-1.5 text-xs text-paper-500">
-                    first seen {formatDate(m.firstSeenAt)}
+                    First seen {formatDate(m.firstSeenAt)}
                   </Td>
                   <Td className="py-1.5 text-right">
                     <Button
@@ -400,11 +415,11 @@ function DiscoveryPanel({
       </Card>
 
       {retired.length > 0 && (
-        <Card>
+        <Card className="p-5 sm:p-6">
           <CardHeader>
             <CardTitle eyebrow="Possibly retired">Priced, but no longer listed</CardTitle>
           </CardHeader>
-          <p className="mb-4 text-xs text-paper-500">
+          <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
             A provider whose listing succeeded no longer lists these. Nothing is retired for you: a
             pinned agent version may still bill against one, and a provider may serve an alias it
             does not list. Edit the row to mark it deprecated or retired, or dismiss the flag.
@@ -415,7 +430,7 @@ function DiscoveryPanel({
                 <TRow key={m.id}>
                   <Td className="py-1.5 font-mono text-xs">{m.spec}</Td>
                   <Td className="py-1.5 text-xs text-paper-500">
-                    not listed since {formatDate(m.firstSeenAt)}
+                    Not listed since {formatDate(m.firstSeenAt)}
                   </Td>
                   <Td className="py-1.5 text-right">
                     <Button

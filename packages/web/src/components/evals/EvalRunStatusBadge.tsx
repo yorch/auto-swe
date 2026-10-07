@@ -39,8 +39,9 @@ export function EvalRunStatusBadge({ status, partial }: { status: string; partia
       }
     >
       <Badge
-        dot={status === 'RUNNING' ? 'pulse' : false}
+        dot={status === 'RUNNING' ? 'pulse' : true}
         tone={isPartial ? 'amber' : (TONE[status] ?? 'dust')}
+        variant="outline"
       >
         {isPartial ? `${label} (partial)` : label}
       </Badge>

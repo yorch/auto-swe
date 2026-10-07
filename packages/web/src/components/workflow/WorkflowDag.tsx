@@ -40,7 +40,7 @@ import {
 } from 'react';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
-import { cn } from '@/lib/utils';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData } from './dagNode';
 import { shouldFit, useFitFlow } from './fitFlow';
@@ -98,8 +98,10 @@ const VIEW_OPTIONS = [
   { label: 'Outline', value: 'outline' },
 ] as const;
 
-const TOOLBAR_BUTTON =
-  'min-h-[40px] rounded-sm border border-ink-600 bg-ink-800/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-paper-400 hover:text-paper-100 lg:min-h-0';
+const TOOLBAR_BUTTON = cn(
+  'min-h-[40px] rounded-md border border-ink-500 bg-ink-800/90 px-2.5 py-1 text-xs font-medium text-paper-400 transition-colors hover:border-ink-300 hover:text-paper-100 lg:min-h-0',
+  FOCUS_RING
+);
 
 function InnerDag({
   spec: fullSpec,
@@ -372,13 +374,13 @@ function InnerDag({
 
   return (
     <div
-      className="relative flex flex-col rounded-sm border border-ink-600 bg-ink-900"
+      className="relative flex flex-col rounded-lg border border-ink-600 bg-ink-900"
       style={{ height: height ?? 480 }}
     >
       {showToolbar && (
         <div
           className={cn(
-            'flex items-center gap-2 border-b border-ink-600/60 bg-ink-900 px-2 py-1.5',
+            'flex items-center gap-2 rounded-t-lg border-b border-ink-600 bg-ink-950/60 px-2 py-1.5',
             narrowScrollSafe
               ? 'flex-nowrap overflow-x-auto lg:flex-wrap lg:overflow-visible'
               : 'flex-wrap'

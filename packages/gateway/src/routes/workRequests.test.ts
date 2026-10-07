@@ -237,6 +237,7 @@ describe('POST /api/v1/work-requests', () => {
       triggerRepoDependencyScanNow: async () => {},
       triggerRevalidationNow: async () => {},
       triggerWorkRequestSchedule: async () => {},
+      workflowSettledStatus: async () => null,
     });
 
     await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });

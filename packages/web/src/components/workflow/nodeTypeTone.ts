@@ -22,3 +22,22 @@ export const NODE_TYPE_TONE: Record<SpecNode['type'], { border: string; swatch: 
   step: { border: 'border-l-ember-400', swatch: 'bg-ember-400' },
   terminate: { border: 'border-l-paper-500', swatch: 'bg-paper-500' },
 };
+
+/** The human name of each node type, shared by the palette, the inspector and the outline. */
+export const NODE_TYPE_LABEL: Record<SpecNode['type'], string> = {
+  agent: 'Agent',
+  cond: 'Condition',
+  containerStep: 'Container step',
+  eval: 'Eval',
+  fanOut: 'Fan-out',
+  humanApproval: 'Approval',
+  humanDecision: 'Decision',
+  humanInput: 'Input',
+  humanReview: 'Review',
+  mcp: 'MCP tool',
+  set: 'Set',
+  shell: 'Shell',
+  signal: 'Signal',
+  step: 'Step',
+  terminate: 'Terminate',
+};

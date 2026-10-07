@@ -5,7 +5,7 @@ interface SourceBadgeProps {
   source: ConfigSource | undefined;
 }
 
-/// Shows a small "env" badge when a config value is coming from an environment
+/// Shows a small "From env" badge when a config value is coming from an environment
 /// variable rather than the database. No badge is rendered for db-sourced or
 /// absent values.
 export function SourceBadge({ source }: SourceBadgeProps) {
@@ -14,12 +14,11 @@ export function SourceBadge({ source }: SourceBadgeProps) {
   }
   return (
     <Badge
-      className="rounded-sm text-[10px] tracking-widest"
       title="Value comes from an environment variable. Saving here will override it."
       tone="amber"
-      uppercase
+      variant="outline"
     >
-      env
+      From env
     </Badge>
   );
 }

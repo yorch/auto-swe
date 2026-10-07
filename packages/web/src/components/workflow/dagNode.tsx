@@ -7,12 +7,13 @@
  * terminate/set/shell) — the type determines which output handles to expose
  * (e.g. cond renders `onTrue` + `onFalse` ports, fanOut renders `subgraph` +
  * `join`). Visual styling follows the Workshop Telemetry design system:
- * dark surface, ember accent on selection, mono micro-labels, optional status
+ * dark surface, ember accent on selection, small sans labels, optional status
  * stripe down the left for run viewers, optional diff border for diff viewers.
  */
 
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { Handle, type NodeProps, Position } from '@xyflow/react';
+import { Icon } from '@/components/ui/Icon';
 import { cn } from '@/lib/utils';
 import { type DiffKind, type EdgeKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
 import type { FoldedGroup } from './foldGroups';
@@ -43,22 +44,25 @@ export interface DagNodeData {
 }
 
 const CATEGORY_LABEL: Record<SpecNode['type'], string> = {
-  agent: 'agent',
-  cond: 'cond',
-  containerStep: 'container ⚠',
-  eval: 'eval',
-  fanOut: 'fan-out',
-  humanApproval: 'approval',
-  humanDecision: 'decision',
-  humanInput: 'input',
-  humanReview: 'review',
-  mcp: 'mcp',
-  set: 'set',
-  shell: 'shell ⚠',
-  signal: 'signal',
-  step: 'step',
-  terminate: 'terminate',
+  agent: 'Agent',
+  cond: 'Condition',
+  containerStep: 'Container',
+  eval: 'Eval',
+  fanOut: 'Fan-out',
+  humanApproval: 'Approval',
+  humanDecision: 'Decision',
+  humanInput: 'Input',
+  humanReview: 'Review',
+  mcp: 'MCP',
+  set: 'Set',
+  shell: 'Shell',
+  signal: 'Signal',
+  step: 'Step',
+  terminate: 'Terminate',
 };
+
+/** Node types that run arbitrary code and need elevated authoring rights. */
+const ELEVATED = new Set<SpecNode['type']>(['containerStep', 'shell']);
 
 const STATUS_STRIPE: Record<string, string> = {
   FAILED: 'bg-brick-400',
@@ -173,7 +177,7 @@ const HANDLE_LABEL: Record<HandleKind, string> = {
 function GroupBadge({ group }: { group: string }) {
   return (
     <div className="flex">
-      <span className="max-w-full truncate rounded-sm border border-ink-500 px-1 font-mono text-[10px] uppercase leading-[14px] tracking-[0.12em] text-paper-400">
+      <span className="max-w-full truncate rounded border border-ink-500 px-1.5 text-[11px] leading-4 text-paper-400">
         {group}
       </span>
     </div>
@@ -195,7 +199,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
   return (
     <div
       className={cn(
-        'group relative flex flex-col rounded-sm border bg-ink-800 transition-colors',
+        'group relative flex flex-col rounded-md border bg-ink-800 transition-colors',
         'border-l-[3px]',
         folded && 'border-dashed',
         NODE_TYPE_TONE[d.node.type].border,
@@ -238,12 +242,17 @@ export function DagNode({ id, data, selected }: NodeProps) {
           <span className="truncate font-display text-[15px] font-medium leading-none text-paper-50">
             {name}
           </span>
-          <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-paper-500">
-            {folded ? 'group' : CATEGORY_LABEL[d.node.type]}
+          <span className="flex shrink-0 items-center gap-1 text-[11px] text-paper-500">
+            {!folded && ELEVATED.has(d.node.type) && (
+              <span className="text-brick-400" title="Elevated: runs code in a container">
+                <Icon name="lock" size={11} />
+              </span>
+            )}
+            {folded ? 'Group' : CATEGORY_LABEL[d.node.type]}
           </span>
         </div>
         {folded && (
-          <div className="truncate font-mono text-[11px] text-paper-400">
+          <div className="truncate text-[11px] text-paper-400">
             {folded.memberIds.length} steps
             {folded.ran !== undefined && ` · ${folded.ran} ran`}
           </div>
@@ -252,16 +261,19 @@ export function DagNode({ id, data, selected }: NodeProps) {
           <div className="truncate font-mono text-[11px] text-paper-400">{d.subLabel}</div>
         )}
         {folded && (
-          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500">
-            ▸ expand
+          <div className="flex items-center gap-0.5 text-[11px] text-paper-500">
+            <Icon name="chevronRight" size={11} />
+            Expand
           </div>
         )}
         {group && !d.status && <GroupBadge group={group} />}
         {d.status && (
-          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-ember-400">
-            {d.status.status.toLowerCase()}
+          <div className="text-[11px] font-medium text-ember-300">
+            <span className="inline-block first-letter:uppercase">
+              {d.status.status.replace(/_/g, ' ').toLowerCase()}
+            </span>
             {d.status.attempt > 1 && (
-              <span className="text-paper-500"> · att {d.status.attempt}</span>
+              <span className="font-normal text-paper-500"> · attempt {d.status.attempt}</span>
             )}
           </div>
         )}
@@ -300,10 +312,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
       {selected && handles.length > 1 && (
         <div className="pointer-events-none absolute -right-1 top-0 bottom-0 flex flex-col justify-evenly pr-3 text-right">
           {handles.map((h) => (
-            <span
-              className="translate-x-full pl-2 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-500"
-              key={h.id}
-            >
+            <span className="translate-x-full pl-2 text-[11px] text-paper-400" key={h.id}>
               {h.label}
             </span>
           ))}

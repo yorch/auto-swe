@@ -215,7 +215,7 @@ export function ConnectionFormModal({
 
   return (
     <Modal
-      eyebrow={isEdit ? '§ Edit connection' : '§ Add connection'}
+      eyebrow={isEdit ? 'Edit connection' : 'New connection'}
       onClose={onClose}
       open={open}
       subtitle={
@@ -243,7 +243,7 @@ export function ConnectionFormModal({
 
         {isGit ? (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input
                 disabled={isEdit}
                 label="Organization"
@@ -261,7 +261,7 @@ export function ConnectionFormModal({
                 value={repoName}
               />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input
                 label="Default branch"
                 onChange={(e) => setDefaultBranch(e.target.value)}
@@ -278,19 +278,22 @@ export function ConnectionFormModal({
                 value={teamId}
               />
             </div>
-            <Input
-              hint="The image each run starts from. Blank uses the deployment's default workspace image."
-              label="Executor image"
-              onChange={(e) => setExecutorImage(e.target.value)}
-              placeholder="Deployment default"
-              value={executorImage}
-            />
-            <Input
-              label="Language (optional)"
-              onChange={(e) => setLanguage(e.target.value)}
-              placeholder="typescript / python / ruby"
-              value={language}
-            />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input
+                hint="Blank uses the deployment's default workspace image."
+                label="Executor image"
+                onChange={(e) => setExecutorImage(e.target.value)}
+                placeholder="Deployment default"
+                value={executorImage}
+              />
+              <Input
+                hint="Optional. Helps agents pick the right tooling."
+                label="Language"
+                onChange={(e) => setLanguage(e.target.value)}
+                placeholder="typescript, python, ruby…"
+                value={language}
+              />
+            </div>
           </>
         ) : (
           <>
@@ -334,14 +337,15 @@ export function ConnectionFormModal({
         )}
 
         <Input
-          label="Description (optional)"
+          hint="Optional. Helps people pick the right connection."
+          label="Description"
           onChange={(e) => setDescription(e.target.value)}
           placeholder="What this connection is used for"
           value={description}
         />
 
         {isEdit && (
-          <div className="space-y-2">
+          <div className="space-y-3 rounded-lg border border-ink-500/60 bg-ink-800/40 p-4">
             <ToggleSwitch
               checked={isActive}
               label="Active — accept new work requests"

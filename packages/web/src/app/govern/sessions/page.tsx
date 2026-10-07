@@ -1,16 +1,21 @@
 'use client';
 
 import { useState } from 'react';
+import { RelativeTime } from '@/components/govern/RelativeTime';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { Icon } from '@/components/ui/Icon';
+import { SkeletonRows } from '@/components/ui/LoadingState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Toolbar } from '@/components/ui/Toolbar';
 import {
   useAdminRevokeSession,
   useAdminRevokeUserSessions,
@@ -18,7 +23,7 @@ import {
 } from '@/hooks/useAdmin';
 import { navLabel } from '@/lib/navigation';
 import { describeUserAgent } from '@/lib/userAgent';
-import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { plural } from '@/lib/utils';
 
 export default function GovernSessionsPage() {
   const {
@@ -45,17 +50,20 @@ export default function GovernSessionsPage() {
 
   if (isLoading || isError) {
     return (
-      <div className="space-y-8">
+      <div className="space-y-6">
         {header}
         <QueryBoundary
           error={loadError}
           isError={isError}
           isFetching={isFetching}
-          isLoading={isLoading}
+          isLoading={false}
           label="sessions"
-          loadingMessage="loading sessions…"
           onRetry={() => void refetch()}
-        />
+        >
+          <Card>
+            <SkeletonRows rows={5} />
+          </Card>
+        </QueryBoundary>
       </div>
     );
   }
@@ -69,20 +77,31 @@ export default function GovernSessionsPage() {
   // The caller's own session is kept by a bulk revoke, so the count excludes it.
   const revokableForUser = rows.filter((s) => !s.current).length;
 
+  const selectUser = (id: string) => {
+    setUserFilter(id);
+    setNotice(null);
+  };
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {header}
 
-      <section className="fade-up stagger-1">
-        <SectionHeader hint={`${rows.length} active · newest first`} number="01" title="Sessions" />
-        <div className="mb-3 flex flex-wrap items-end gap-3">
+      {notice && <Alert variant="success">{notice}</Alert>}
+
+      <Card className="fade-up stagger-1 p-4 sm:p-6">
+        <Toolbar
+          end={
+            <span className="text-xs text-paper-500 tabular-nums">
+              {userFilter
+                ? `${rows.length} of ${plural(all.length, 'active session')}`
+                : `${plural(all.length, 'active session')} · newest first`}
+            </span>
+          }
+        >
           <Select
             aria-label="Filter by user"
-            className="w-64 max-w-full"
-            onChange={(v) => {
-              setUserFilter(v);
-              setNotice(null);
-            }}
+            className="h-8 w-full text-[13px] sm:w-64"
+            onChange={selectUser}
             options={[
               { label: 'All users', value: '' },
               ...users.map(([id, email]) => ({ label: email, value: id })),
@@ -90,89 +109,125 @@ export default function GovernSessionsPage() {
             value={userFilter}
           />
           {userFilter && (
-            <Button
-              disabled={revokableForUser === 0 || revokeUser.isPending}
-              onClick={() => setRevokeAllOpen(true)}
-              size="sm"
-              variant="danger"
-            >
-              Revoke all for {filteredEmail ?? 'this user'}
-            </Button>
+            <>
+              <Button onClick={() => selectUser('')} size="sm" variant="ghost">
+                Show everyone
+              </Button>
+              <Button
+                disabled={revokableForUser === 0 || revokeUser.isPending}
+                onClick={() => setRevokeAllOpen(true)}
+                size="sm"
+                variant="danger"
+              >
+                Revoke all for {filteredEmail ?? 'this user'}
+              </Button>
+            </>
           )}
-        </div>
-        {notice && (
-          <Alert className="mb-3" variant="success">
-            {notice}
-          </Alert>
-        )}
-        <Card className="overflow-x-auto p-0" variant="inset">
-          <Table stacked>
-            <THead>
-              <Th>User</Th>
-              <Th>Started</Th>
-              <Th>Last active</Th>
-              <Th>Expires</Th>
-              <Th>Device</Th>
-              <Th>Session ID</Th>
-              <Th align="right">Actions</Th>
-            </THead>
-            <tbody>
-              {rows.map((s) => (
-                <TRow key={s.id}>
-                  <Td className="px-4 py-3 text-sm text-paper-100" primary>
-                    {s.user.email}
+        </Toolbar>
+        <Table stacked>
+          <THead>
+            <Th className="pl-0" variant="plain">
+              User and device
+            </Th>
+            <Th variant="plain">Last active</Th>
+            <Th variant="plain">Started</Th>
+            <Th variant="plain">Expires</Th>
+            <Th variant="plain">Session ID</Th>
+            <Th className="pr-0" variant="plain">
+              <span className="sr-only">Actions</span>
+            </Th>
+          </THead>
+          <tbody>
+            {rows.map((s) => (
+              <TRow hover key={s.id}>
+                <Td className="py-3 pr-4" primary>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="truncate font-medium text-paper-100">{s.user.email}</span>
                     {s.current && (
-                      <Badge className="ml-2" tone="ember" variant="outline">
+                      <Badge dot tone="ember" variant="outline">
                         This session
                       </Badge>
                     )}
-                  </Td>
-                  <Td className="px-4 py-3 font-mono text-[11px] text-paper-400" label="Started">
-                    {formatDate(s.createdAt)}
-                  </Td>
-                  <Td
-                    className="px-4 py-3 font-mono text-[11px] text-paper-400"
-                    label="Last active"
-                  >
-                    {formatRelativeTime(s.updatedAt)}
-                  </Td>
-                  <Td className="px-4 py-3 font-mono text-[11px] text-paper-400" label="Expires">
-                    {formatRelativeTime(s.expiresAt)}
-                  </Td>
-                  <Td className="px-4 py-3 text-xs text-paper-400" label="Device">
-                    <span title={s.userAgent ?? undefined}>
+                  </div>
+                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs font-normal text-paper-500">
+                    <Icon className="shrink-0" name="monitor" size={12} />
+                    <span className="truncate" title={s.userAgent ?? undefined}>
                       {s.userAgent ? describeUserAgent(s.userAgent) : 'Unknown device'}
                     </span>
-                    <span className="block font-mono text-[11px] text-paper-500">
-                      {s.ipAddress ?? '—'}
-                    </span>
-                  </Td>
-                  <Td className="px-4 py-3 font-mono text-[11px] text-paper-500" label="Session ID">
+                    {s.ipAddress && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="font-mono">{s.ipAddress}</span>
+                      </>
+                    )}
+                  </div>
+                </Td>
+                <Td className="px-4 py-3 text-[13px] text-paper-300" label="Last active">
+                  <RelativeTime value={s.updatedAt} />
+                </Td>
+                <Td className="px-4 py-3 text-[13px] text-paper-400" label="Started">
+                  <RelativeTime value={s.createdAt} />
+                </Td>
+                <Td className="px-4 py-3 text-[13px] text-paper-400" label="Expires">
+                  <RelativeTime value={s.expiresAt} />
+                </Td>
+                <Td className="px-4 py-3" label="Session ID">
+                  <span
+                    className="block max-w-[10rem] truncate font-mono text-xs text-paper-500"
+                    title={s.token}
+                  >
                     {s.token}
-                  </Td>
-                  <Td align="right" className="px-4 py-3">
-                    <Button
-                      onClick={() => setRevokeTarget({ email: s.user.email, id: s.id })}
-                      size="sm"
-                      title={s.current ? 'This is the session you are using now' : undefined}
-                      variant="danger"
-                    >
-                      {s.current ? 'Revoke (you)' : 'Revoke'}
-                    </Button>
-                  </Td>
-                </TRow>
-              ))}
-              {rows.length === 0 && (
-                <TableStatusRow colSpan={7}>
-                  <EmptyState
-                    title={userFilter ? 'No active sessions for this user.' : 'No active sessions'}
+                  </span>
+                </Td>
+                <Td align="right" className="py-3 pl-4">
+                  <ActionMenu
+                    items={[
+                      ...(userFilter
+                        ? []
+                        : [
+                            {
+                              icon: 'filter' as const,
+                              id: 'filter',
+                              label: 'Only this user',
+                              onAction: () => selectUser(s.user.id),
+                            },
+                          ]),
+                      {
+                        icon: 'lock',
+                        id: 'revoke',
+                        label: s.current ? 'Revoke (signs you out)' : 'Revoke session',
+                        onAction: () => setRevokeTarget({ email: s.user.email, id: s.id }),
+                        tone: 'danger',
+                      },
+                    ]}
+                    label={`Actions for ${s.user.email}'s session`}
                   />
-                </TableStatusRow>
-              )}
-            </tbody>
-          </Table>
-        </Card>
-      </section>
+                </Td>
+              </TRow>
+            ))}
+            {rows.length === 0 && (
+              <TableStatusRow colSpan={6}>
+                <EmptyState
+                  action={
+                    userFilter ? (
+                      <Button onClick={() => selectUser('')} size="sm">
+                        Show everyone
+                      </Button>
+                    ) : undefined
+                  }
+                  hint={
+                    userFilter
+                      ? 'This user is signed out everywhere.'
+                      : 'Sessions appear here when people sign in to the dashboard.'
+                  }
+                  icon="monitor"
+                  title={userFilter ? 'No active sessions for this user' : 'No active sessions'}
+                />
+              </TableStatusRow>
+            )}
+          </tbody>
+        </Table>
+      </Card>
 
       <ConfirmModal
         confirmLabel="Revoke"

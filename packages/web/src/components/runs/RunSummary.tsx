@@ -1,12 +1,15 @@
 'use client';
 
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { Alert } from '@/components/ui/Alert';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Icon } from '@/components/ui/Icon';
 import type { useApprovals } from '@/hooks/useApprovals';
 import { classifyAgentRunFailure } from '@/lib/agentRun';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import { AgentRunFailureNote } from './AgentRunOutcomeCard';
 import { FailureCard } from './FailureCard';
 import { RunOutcomeCard } from './RunOutcomeCard';
@@ -27,6 +30,26 @@ export interface RunSummaryProps {
   variant: 'compact' | 'full';
   onJumpToFailure?: () => void;
   onReRun?: () => void;
+}
+
+/** A section title with its item count beside it. */
+function SummaryHeading({
+  children,
+  count,
+  tone = 'muted',
+}: {
+  children: ReactNode;
+  count: number;
+  tone?: BadgeTone;
+}) {
+  return (
+    <h3 className="flex items-center gap-2 text-sm font-semibold text-paper-100">
+      <span>{children}</span>
+      <Badge className="tabular" tone={tone}>
+        {count}
+      </Badge>
+    </h3>
+  );
 }
 
 export function hasRunResult(result: unknown): boolean {
@@ -68,10 +91,12 @@ export function RunSummary({
 
   const foldClass = full && folded ? 'max-lg:hidden' : undefined;
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {pendingSteps.length > 0 && (
         <section aria-label="Needs a response" className="space-y-3">
-          <h3 className="font-semibold">Needs a response</h3>
+          <SummaryHeading count={pendingSteps.length} tone="amber">
+            Needs a response
+          </SummaryHeading>
           {pendingSteps.map((step) => (
             <HumanStepCard key={step.id} showRunLink={false} step={step} />
           ))}
@@ -79,7 +104,7 @@ export function RunSummary({
       )}
       {answeredSteps.length > 0 && (
         <section aria-label="Approver responses" className="space-y-3">
-          <h3 className="font-semibold">Responses</h3>
+          <SummaryHeading count={answeredSteps.length}>Responses</SummaryHeading>
           {answeredSteps.map((step) => (
             <HumanStepCard key={step.id} showRunLink={false} step={step} />
           ))}
@@ -93,6 +118,11 @@ export function RunSummary({
           size="sm"
           variant="ghost"
         >
+          <Icon
+            className={cn('transition-transform', !folded && 'rotate-90')}
+            name="chevronRight"
+            size={13}
+          />
           {folded ? (failedStep ? 'Show failure details' : 'Show result') : 'Hide details'}
         </Button>
       )}
@@ -111,9 +141,21 @@ export function RunSummary({
         </div>
       )}
       {!full && run.result != null && (
-        <details className="rounded-lg border border-ink-400 p-4">
-          <summary className="cursor-pointer text-sm font-semibold">Recorded output</summary>
-          <pre className="mt-3 whitespace-pre-wrap break-words text-xs text-paper-400">
+        <details className="group rounded-lg border border-ink-400/60 bg-ink-900/40 px-4 py-3">
+          <summary
+            className={cn(
+              'flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-sm font-medium text-paper-200 [&::-webkit-details-marker]:hidden',
+              FOCUS_RING
+            )}
+          >
+            <Icon
+              className="text-paper-500 transition-transform group-open:rotate-90"
+              name="chevronRight"
+              size={14}
+            />
+            Recorded output
+          </summary>
+          <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-ink-500/50 bg-ink-950/50 p-3 font-mono text-xs leading-relaxed text-paper-300">
             {typeof run.result === 'string' ? run.result : JSON.stringify(run.result, null, 2)}
           </pre>
         </details>

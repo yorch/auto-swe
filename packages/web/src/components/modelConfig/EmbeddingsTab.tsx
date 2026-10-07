@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
@@ -85,11 +86,14 @@ export function EmbeddingsTab() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
+      <Card className="max-w-3xl p-5 sm:p-6">
+        <CardHeader className="items-start">
           <CardTitle eyebrow="Embeddings">System-wide model</CardTitle>
+          <Badge dot tone={noCredential ? 'brick' : 'moss'} variant="outline">
+            {noCredential ? 'No credential' : 'Ready'}
+          </Badge>
         </CardHeader>
-        <p className="mb-4 text-xs text-paper-500">
+        <p className="-mt-1 mb-5 text-[13px] leading-relaxed text-paper-400">
           Turns lessons and memory into vectors so the platform can find similar ones later. One
           model serves the whole platform; teams and workflows cannot override it. The model must
           produce 1536-dimensional vectors, because stored memory has a fixed width.
@@ -108,6 +112,7 @@ export function EmbeddingsTab() {
             value={modelSpec}
           />
           <Combobox
+            hint="Leave unset to use the platform-wide credential for the model's provider."
             id="embedCred"
             label="Pinned credential (optional)"
             onChange={(v) => {
@@ -115,7 +120,7 @@ export function EmbeddingsTab() {
               setDirty(true);
             }}
             options={[
-              { label: '— Resolve by provider name —', value: '' },
+              { label: 'Resolve by provider name', value: '' },
               ...(credentials ?? []).map((c) => ({
                 label: `${c.scope} · ${c.provider}/****${c.lastFour}`,
                 value: c.id,
@@ -125,8 +130,8 @@ export function EmbeddingsTab() {
           />
           {noCredential && (
             <Alert variant="warning">
-              No credential is stored for {embeddingProvider}. Add one on the Credentials tab, or
-              memory and lesson search will fail.
+              No credential is stored for <span className="font-mono">{embeddingProvider}</span>.
+              Add one on the Credentials tab, or memory and lesson search will fail.
             </Alert>
           )}
           {error && <Alert>{error}</Alert>}
@@ -134,7 +139,7 @@ export function EmbeddingsTab() {
           {catalogWarnings.length > 0 && (
             <Alert variant="warning">Model catalog: {catalogWarnings.join(' ')}</Alert>
           )}
-          <div className="flex justify-end pt-2">
+          <div className="flex justify-end border-t border-ink-600 pt-4">
             <Button disabled={!dirty || update.isPending} type="submit" variant="primary">
               {update.isPending ? 'Saving…' : 'Save changes'}
             </Button>
@@ -160,11 +165,11 @@ function ReembedMemoryCard() {
   }
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="max-w-3xl p-5 sm:p-6">
+      <CardHeader className="items-start">
         <CardTitle eyebrow="Memory">Re-embed older memory</CardTitle>
       </CardHeader>
-      <p className="mb-4 text-xs text-paper-500">
+      <p className="-mt-1 mb-5 text-[13px] leading-relaxed text-paper-400">
         {status.stale.toLocaleString()} of {status.total.toLocaleString()} memory items were
         embedded by a different model than {status.modelSpec ?? 'the configured one'}. Lesson and
         channel-memory search skips them until they are re-embedded.
