@@ -2,6 +2,7 @@ import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { type ChannelMemoryItem, retrieveChannelMemory } from '../lib/channelMemory.js';
 import { resolvePersonaPrompt } from '../lib/channelPersona.js';
+import { fenceRecalledMemory } from '../lib/memoryGuard.js';
 import {
   fetchChannelHistory,
   postSlackChannelMessage,
@@ -76,12 +77,14 @@ export function buildReactivePrompt(
     })
     .join('\n');
 
+  // The same reference-data fence as a mention turn's memory: the notes were
+  // written from earlier messages and model output, so they are quoted, not obeyed.
   const memoryBlock =
     memory.length > 0
-      ? `\nRelevant context from this channel's memory:\n${memory
-          .slice(0, memoryItemLimit)
-          .map((m) => `- ${m.summary}`)
-          .join('\n')}\n`
+      ? `\n${fenceRecalledMemory(
+          "Relevant context from this channel's memory:",
+          memory.slice(0, memoryItemLimit).map((m) => `- ${m.summary}`)
+        )}\n`
       : '';
 
   return [

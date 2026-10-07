@@ -190,5 +190,8 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
   of an eval comparison see the same context.
 - **A failed channel summary stores the raw exchange.** When the summariser fails for a reason
   other than the memory gate or a refusal to spend (a malformed answer, a provider error), the
-  turn's text and reply are stored undistilled, and that embedding is not covered by the channel's
-  budget hold.
+  turn's text and reply are stored undistilled, truncated to the summary and rationale lengths.
+- **Channel-memory embeddings are outside the channel's budget.** Every embedding a channel makes —
+  a summary, a raw-exchange fallback, a passive fact, a consolidated row, an org-flagging query — is
+  priced onto the run that made it and its trace, never onto the channel's monthly ledger or a
+  turn's hold, so the cap does not bind it.

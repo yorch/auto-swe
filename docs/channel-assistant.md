@@ -178,7 +178,8 @@ by the same pgvector search as everything else.
   [agents.md §6.4](./agents.md#64-custom-skill-security-scanning)) refuses a write whose text matches
   an `INJECTION` pattern and drops a matching item on recall. A summary the gate refuses is not
   retried as the raw exchange. Recalled items reach the model inside a `<recalled_memory>` fence that
-  says they are reference data, not instructions.
+  says they are reference data, not instructions — in a mention turn, a reactive interjection, an
+  ambient digest, and both lists of an org-flagging check.
 
 Admins can view, edit, and delete channel memory from the admin surface. Editing an item's text
 kicks off `ReembedMemoryWorkflow` so its pgvector embedding catches up to the new text — started
