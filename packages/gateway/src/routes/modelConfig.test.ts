@@ -512,6 +512,87 @@ describe('modelConfigRoutes — team-scoped credentials', () => {
     await app.close();
   });
 
+  describe('private-network opt-in is platform-admin only', () => {
+    const teamId = '99999999-9999-4999-8999-999999999999';
+    const credId = '33333333-3333-4333-8333-333333333333';
+    const storedPrivate = {
+      allowPrivateNetwork: true,
+      apiBase: 'http://10.0.0.5:8000/v1',
+      createdAt: new Date(),
+      createdById: null,
+      id: credId,
+      keyVersion: 1,
+      lastFour: '1234',
+      orgId: null,
+      provider: 'vllm',
+      scope: 'TEAM',
+      teamId,
+      updatedAt: new Date(),
+    };
+
+    it.each([true, false])('refuses a team create carrying allowPrivateNetwork=%s', async (v) => {
+      const { app, mockPrisma } = await buildTeamApp({ teamMembership: { role: 'ADMIN' } });
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: {
+          allowPrivateNetwork: v,
+          apiBase: 'https://opencode.ai/zen/go/v1',
+          apiKey: 'sk-team-secret-5678',
+          provider: 'opencodego',
+        },
+        url: `/api/v1/teams/${teamId}/credentials`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error.code).toBe('FORBIDDEN');
+      expect(mockPrisma.providerCredential.create).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('refuses a team update carrying allowPrivateNetwork', async () => {
+      const { app, mockPrisma } = await buildTeamApp({ teamMembership: { role: 'ADMIN' } });
+      mockPrisma.providerCredential.findUnique.mockResolvedValueOnce(storedPrivate);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { allowPrivateNetwork: true },
+        url: `/api/v1/teams/${teamId}/credentials/${credId}`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(mockPrisma.providerCredential.update).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('clears the opt-in when a team admin changes the apiBase, and checks it strictly', async () => {
+      const { app, mockPrisma } = await buildTeamApp({ teamMembership: { role: 'ADMIN' } });
+      mockPrisma.providerCredential.findUnique.mockResolvedValue(storedPrivate);
+      mockPrisma.providerCredential.update.mockImplementationOnce(
+        async (args: { data: Record<string, unknown> }) => ({ ...storedPrivate, ...args.data })
+      );
+      const ok = await app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { apiBase: 'https://opencode.ai/zen/go/v1' },
+        url: `/api/v1/teams/${teamId}/credentials/${credId}`,
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(mockPrisma.providerCredential.update.mock.calls[0][0].data).toMatchObject({
+        allowPrivateNetwork: false,
+      });
+      expect(JSON.parse(ok.payload).data.allowPrivateNetwork).toBe(false);
+
+      const refused = await app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { apiBase: 'http://10.0.0.6:8000/v1' },
+        url: `/api/v1/teams/${teamId}/credentials/${credId}`,
+      });
+      expect(refused.statusCode).toBe(400);
+      expect(JSON.parse(refused.payload).error.code).toBe('UNSAFE_API_BASE');
+      await app.close();
+    });
+  });
+
   it('rejects a team engineer (insufficient role)', async () => {
     const { app } = await buildTeamApp({
       role: 'ENGINEER',

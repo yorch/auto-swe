@@ -456,11 +456,27 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
 
 // ── Team-scoped credential routes (exported for `teams.ts` to mount) ───────
 
+// `allowPrivateNetwork` is platform-admin only. The team schemas declare it as `unknown` purely so
+// the handler sees it and refuses: Zod strips an undeclared key, which would drop it silently.
 const TeamCredentialCreate = z.object({
+  allowPrivateNetwork: z.unknown().optional(),
   apiBase: z.string().trim().url().max(500).optional(),
   apiKey: z.string().trim().min(1).max(10_000),
   provider: ProviderSchema,
 });
+
+const TeamCredentialUpdate = CredentialUpdateSchema.extend({
+  allowPrivateNetwork: z.unknown().optional(),
+});
+
+function refuseTeamPrivateNetwork(reply: import('fastify').FastifyReply): unknown {
+  return reply.status(403).send({
+    error: {
+      code: 'FORBIDDEN',
+      message: 'Only a platform admin may allow a credential to reach private networks',
+    },
+  });
+}
 
 const TeamCredParams = z.object({ credId: z.string().uuid(), id: z.string().uuid() });
 
@@ -511,6 +527,9 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply): Promise<unknown> => {
       const actor = requireUser(request);
       const { provider, apiBase, apiKey } = request.body;
+      if (request.body.allowPrivateNetwork !== undefined) {
+        return refuseTeamPrivateNetwork(reply);
+      }
       return createCredentialAndAudit(
         fastify,
         actor,
@@ -526,9 +545,12 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.put(
     '/:id/credentials/:credId',
-    { onRequest: teamAdmin, schema: { body: CredentialUpdateSchema, params: TeamCredParams } },
+    { onRequest: teamAdmin, schema: { body: TeamCredentialUpdate, params: TeamCredParams } },
     async (request, reply): Promise<unknown> => {
       const actor = requireUser(request);
+      if (request.body.allowPrivateNetwork !== undefined) {
+        return refuseTeamPrivateNetwork(reply);
+      }
       const existing = await fastify.prisma.providerCredential.findUnique({
         where: { id: request.params.credId },
       });
@@ -537,7 +559,14 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Credential not found for this team' } });
       }
-      return updateCredentialAndAudit(fastify, actor, reply, existing, request.body);
+      const { apiBase, apiKey } = request.body;
+      // An admin's opt-in trusted the host it was granted for, not the next one a team admin types.
+      const movesHost = apiBase !== undefined && apiBase !== existing.apiBase;
+      return updateCredentialAndAudit(fastify, actor, reply, existing, {
+        apiBase,
+        apiKey,
+        ...(movesHost ? { allowPrivateNetwork: false } : {}),
+      });
     }
   );
 
