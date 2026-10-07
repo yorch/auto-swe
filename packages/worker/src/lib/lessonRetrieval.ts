@@ -1,4 +1,5 @@
 import { resolveSetting } from '@auto-swe/shared/config';
+import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import type { LessonSummary } from '@auto-swe/shared/types/workflow';
 import { withoutFlaggedMemory } from './memoryGuard.js';
 import { searchMemoryItemsByVector } from './memoryStore.js';
@@ -18,9 +19,26 @@ interface RetrievedLesson {
  * longer recalled or consolidated. Resolved at the repository's owning team and
  * its organization, because lessons belong to the repository, not to whichever
  * run reads them — so recall, `searchLessons` and consolidation agree. 0 is off.
+ *
+ * The owning team is cached for the config-cache window, like the run's spend
+ * owner, since every recall and tool call asks. A lookup that fails is logged
+ * and treated as off: aging is a preference, and a DB error must not cost the
+ * agent its lessons or stop consolidation.
  */
 export async function lessonMaxAgeDays(repoId: string): Promise<number> {
-  return resolveSetting('memory.lessonMaxAgeDays', await ownerOfConnection(repoId));
+  try {
+    const owner = await withCache(`lesson-age-owner:${repoId}`, configCacheTtlMs(), () =>
+      ownerOfConnection(repoId)
+    );
+    return await resolveSetting('memory.lessonMaxAgeDays', owner);
+  } catch (err) {
+    console.warn(
+      `[lessonRetrieval] memory.lessonMaxAgeDays unavailable for ${repoId}; lessons of every age are used: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return 0;
+  }
 }
 
 /**

@@ -2,6 +2,7 @@ import type { prisma as Prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type {
+  createdWithinDays as CreatedWithin,
   listStaleMemoryIds as ListStale,
   searchMemoryItemsByVector as Search,
 } from './memoryStore.js';
@@ -33,6 +34,7 @@ const enabled = process.env.MEMORY_PG_TEST === '1';
 let prisma: typeof Prisma;
 let searchMemoryItemsByVector: typeof Search;
 let listStaleMemoryIds: typeof ListStale;
+let createdWithinDays: typeof CreatedWithin;
 
 const ORG = '7a000000-0000-4000-8000-000000000001';
 const TEAM = '7a000000-0000-4000-8000-000000000002';
@@ -74,7 +76,9 @@ describe.skipIf(!enabled)('scoped vector search against pgvector', () => {
     url.searchParams.set('options', '-c enable_sort=off');
     process.env.DATABASE_URL = url.toString();
     ({ prisma } = await import('@auto-swe/shared/db'));
-    ({ listStaleMemoryIds, searchMemoryItemsByVector } = await import('./memoryStore.js'));
+    ({ createdWithinDays, listStaleMemoryIds, searchMemoryItemsByVector } = await import(
+      './memoryStore.js'
+    ));
 
     await cleanup();
     await prisma.organization.create({ data: { id: ORG, name: 'mem-pg', slug: 'mem-pg' } });
@@ -166,6 +170,21 @@ describe.skipIf(!enabled)('scoped vector search against pgvector', () => {
     // Without the filter the old lessons win every slot.
     const unfiltered = await search(AGED_REPO, 5);
     expect(unfiltered.some((r) => fresh.some((f) => f.id === r.id))).toBe(false);
+
+    // Lesson consolidation's form of the same predicate: 0 keeps every age.
+    const count = async (days: number) =>
+      Number(
+        (
+          await prisma.$queryRawUnsafe<{ n: bigint }[]>(
+            `SELECT count(*) AS n FROM memory_items
+              WHERE repo_id = $1::uuid AND ($2::int = 0 OR ${createdWithinDays(2)})`,
+            AGED_REPO,
+            days
+          )
+        )[0]?.n
+      );
+    expect(await count(30)).toBe(5);
+    expect(await count(0)).toBe(15);
   });
 
   it('returns the crowded repository its own lessons too', async () => {

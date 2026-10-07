@@ -99,6 +99,15 @@ export function _resetIterativeScanSupportForTests(): void {
 }
 
 /**
+ * The SQL predicate "created within the last `$n` days", for a bind parameter
+ * `$n` holding a positive day count. One spelling for recall and lesson
+ * consolidation, so the two agree on what has aged out.
+ */
+export function createdWithinDays(param: number): string {
+  return `created_at >= now() - make_interval(days => $${param}::int)`;
+}
+
+/**
  * Cosine-similarity search over `memory_items`, scoped to a single owning row
  * (`repo_id` or `channel_id`). Embeds `queryText`, then ranks by pgvector cosine
  * distance (`<=>`) — lower distance = higher similarity. Rows are filtered to
@@ -145,8 +154,7 @@ export async function searchMemoryItemsByVector(opts: {
   // In the WHERE clause rather than after the query, so LIMIT still counts
   // only rows that may be returned.
   const maxAgeDays = opts.maxAgeDays ?? 0;
-  const ageFilter =
-    maxAgeDays > 0 ? '\n      AND created_at >= now() - make_interval(days => $6::int)' : '';
+  const ageFilter = maxAgeDays > 0 ? `\n      AND ${createdWithinDays(6)}` : '';
 
   return scopedVectorQuery<Record<string, unknown>>(
     `SELECT

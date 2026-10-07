@@ -18,6 +18,7 @@ import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { lessonMaxAgeDays } from '../lib/lessonRetrieval.js';
 import { CONSOLIDATION_SCAN_UNAVAILABLE, memoryInjectionMatches } from '../lib/memoryGuard.js';
+import { createdWithinDays } from '../lib/memoryStore.js';
 import { getBoundModel, resolveSystemPrompt } from '../lib/models.js';
 import { ownerOfConnection, withSpendOwner } from '../lib/spendOwner.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -99,7 +100,7 @@ async function consolidateLessonsImpl(
        AND consolidated_at IS NULL
        AND superseded_at IS NULL
        AND (embedding_model IS NULL OR embedding_model = $2)
-       AND ($3::int = 0 OR created_at >= now() - make_interval(days => $3::int))
+       AND ($3::int = 0 OR ${createdWithinDays(3)})
      ORDER BY created_at DESC`,
     repoId,
     embeddingSpec,

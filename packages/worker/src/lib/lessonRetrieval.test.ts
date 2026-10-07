@@ -17,6 +17,7 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
 import { resolveSetting } from '@auto-swe/shared/config';
 import { retrieveSimilarLessons } from './lessonRetrieval.js';
 import { searchMemoryItemsByVector } from './memoryStore.js';
+import { ownerOfConnection } from './spendOwner.js';
 
 const mockSearch = vi.mocked(searchMemoryItemsByVector);
 const mockResolveSetting = vi.mocked(resolveSetting);
@@ -78,6 +79,23 @@ describe('retrieveSimilarLessons', () => {
       teamId: 'team-1',
     });
     expect(mockSearch).toHaveBeenCalledWith(expect.objectContaining({ limit: 5, maxAgeDays: 90 }));
+  });
+
+  it('treats aging as off, and still recalls, when the setting cannot be read', async () => {
+    mockResolveSetting.mockRejectedValueOnce(new Error('db down'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await retrieveSimilarLessons('q', 'repo-1');
+    expect(mockSearch).toHaveBeenCalledWith(expect.objectContaining({ maxAgeDays: 0 }));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('memory.lessonMaxAgeDays'));
+    warn.mockRestore();
+  });
+
+  it("caches the repository's owning team between recalls", async () => {
+    await retrieveSimilarLessons('q', 'repo-cache');
+    await retrieveSimilarLessons('q', 'repo-cache');
+    expect(
+      vi.mocked(ownerOfConnection).mock.calls.filter((c) => c[0] === 'repo-cache')
+    ).toHaveLength(1);
   });
 
   it('passes 0, keeping every age, when the setting is off', async () => {
