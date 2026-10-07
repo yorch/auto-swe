@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
-import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import {
+  modelListFetch,
   modelListRequest,
   safeFetchError,
   safeRequestError,
@@ -64,24 +64,24 @@ export function redactCredential(row: {
 
 const PROBE_TIMEOUT_MS = 5_000;
 
-// A credential's apiBase is checked at save time as text; the probe also checks what it resolves to.
-const guardedFetch = createGuardedFetch();
-
 /// Issues a minimal HTTP probe against the configured provider to verify the
 /// credential works. Returns `{ ok, status, error? }`. Best-effort — not all
 /// providers expose a cheap "list models" endpoint, so failures here are not
-/// authoritative.
+/// authoritative. A credential's apiBase is checked at save time as text; the
+/// probe also checks what it resolves to, waiving only its own origin's
+/// private-network refusal when the credential opts in.
 export async function probeCredential(args: {
   provider: string;
   apiKey: string;
   apiBase?: string | null;
+  allowPrivateNetwork?: boolean;
 }): Promise<{ ok: boolean; status?: number; error?: string }> {
   const request = modelListRequest(args);
   if ('error' in request) {
     return { error: safeRequestError(request.error), ok: false };
   }
   try {
-    const res = await guardedFetch(request.url, {
+    const res = await modelListFetch(request.url, args.allowPrivateNetwork === true)(request.url, {
       ...request.init,
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
@@ -127,6 +127,7 @@ export function credentialInputProblem(input: {
 export async function testStoredCredential(cred: {
   provider: string;
   apiBase: string | null;
+  allowPrivateNetwork: boolean;
   apiKeyAuthTag: Buffer | Uint8Array;
   apiKeyCiphertext: Buffer | Uint8Array;
   apiKeyNonce: Buffer | Uint8Array;
@@ -141,7 +142,12 @@ export async function testStoredCredential(cred: {
     keyVersion: cred.keyVersion,
     nonce: cred.apiKeyNonce,
   });
-  return probeCredential({ apiBase: cred.apiBase, apiKey, provider: cred.provider });
+  return probeCredential({
+    allowPrivateNetwork: cred.allowPrivateNetwork,
+    apiBase: cred.apiBase,
+    apiKey,
+    provider: cred.provider,
+  });
 }
 
 export type CreateCredentialInput = {

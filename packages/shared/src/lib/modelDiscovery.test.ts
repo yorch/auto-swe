@@ -7,9 +7,11 @@ process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
 
 import { BUILTIN_MODELS } from '@auto-swe/shared/lib/builtinModels';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { SSRF_BLOCKED_CODE } from './guardedDispatcher.js';
 import {
   discoverProviderModels,
   listProviderModels,
+  modelListFetch,
   parseModelListPage,
 } from './modelDiscovery.js';
 
@@ -146,6 +148,58 @@ describe('listProviderModels', () => {
     });
     expect(blocked.ok).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('private-network opt-in', () => {
+  it('lists through a private apiBase only when the credential opts in', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ data: [{ id: 'llama-5' }] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const args = { apiBase: 'http://10.0.0.5:8000/v1', apiKey: 'k', provider: 'vllm' };
+
+    expect(await listProviderModels(args)).toEqual({ error: 'blocked address', ok: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const allowed = await listProviderModels({ ...args, allowPrivateNetwork: true });
+    expect(allowed.ok && allowed.models.map((m) => m.modelId)).toEqual(['llama-5']);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('http://10.0.0.5:8000/v1/models');
+  });
+
+  it.each([
+    'http://127.0.0.1:11434/v1',
+    'http://169.254.169.254/v1',
+  ])('still refuses %s with the opt-in', async (apiBase) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    expect(
+      await listProviderModels({
+        allowPrivateNetwork: true,
+        apiBase,
+        apiKey: 'k',
+        provider: 'vllm',
+      })
+    ).toEqual({ error: 'blocked address', ok: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a name resolving to loopback even with the opt-in', async () => {
+    const url = 'http://models.example.test/v1/models';
+    const fetch = modelListFetch(url, true, {
+      resolver: async () => [{ address: '127.0.0.1', family: 4 }],
+    });
+    await expect(fetch(url)).rejects.toMatchObject({ code: SSRF_BLOCKED_CODE });
+  });
+
+  it('waives the private-network refusal for the request origin only', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const fetch = modelListFetch('http://10.0.0.5:8000/v1/models', true);
+    await fetch('http://10.0.0.5:8000/v1/models');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(fetch('http://10.0.0.6:8000/v1/models')).rejects.toMatchObject({
+      code: SSRF_BLOCKED_CODE,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

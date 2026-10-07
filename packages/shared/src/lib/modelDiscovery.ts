@@ -1,7 +1,11 @@
 import type { PrismaClient } from '../index.js';
 import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
-import { createGuardedFetch, SSRF_BLOCKED_CODE } from './guardedDispatcher.js';
-import { isSafeProbeUrl } from './ssrfGuard.js';
+import {
+  createOriginScopedFetch,
+  type GuardedFetchOptions,
+  SSRF_BLOCKED_CODE,
+} from './guardedDispatcher.js';
+import { checkProbeUrl } from './ssrfGuard.js';
 import { runUnscoped } from './tenantGuard.js';
 
 /**
@@ -26,9 +30,11 @@ export function modelListRequest(args: {
   provider: string;
   apiKey: string;
   apiBase?: string | null;
+  /** The credential's opt-in: waives the private-network refusal, never loopback or metadata. */
+  allowPrivateNetwork?: boolean;
   query?: Record<string, string>;
 }): { url: string; init: RequestInit } | { error: string } {
-  const { provider, apiKey, apiBase, query = {} } = args;
+  const { provider, apiKey, apiBase, allowPrivateNetwork, query = {} } = args;
   const withQuery = (base: string, extra: Record<string, string> = {}) => {
     const params = new URLSearchParams({ ...extra, ...query });
     return params.size ? `${base}?${params}` : base;
@@ -55,7 +61,7 @@ export function modelListRequest(args: {
   if (!apiBase) {
     return { error: 'apiBase required to list models from an OpenAI-compatible provider' };
   }
-  const safety = isSafeProbeUrl(apiBase);
+  const safety = checkProbeUrl(apiBase, { allowPrivate: allowPrivateNetwork });
   if (!safety.ok) {
     return { error: `apiBase rejected: ${safety.reason}` };
   }
@@ -84,8 +90,18 @@ export const DISCOVERY_ERRORS = {
   unrecognised: 'unrecognised response',
 } as const;
 
-// Provider list requests: no private-network opt-in exists here, so the guard is strict.
-const guardedFetch = createGuardedFetch();
+/**
+ * The fetch for one list-models request. A credential's private-network opt-in
+ * is waived for that request's origin only; any other origin is checked
+ * strictly. `opts` is a test seam (an injected resolver).
+ */
+export function modelListFetch(
+  url: string,
+  allowPrivateNetwork: boolean,
+  opts: Omit<GuardedFetchOptions, 'allowPrivate'> = {}
+): typeof fetch {
+  return createOriginScopedFetch(allowPrivateNetwork ? [new URL(url).origin] : [], opts);
+}
 
 const SAFE_TOKEN = /^[A-Za-z0-9_]{1,40}$/;
 
@@ -302,6 +318,7 @@ export async function listProviderModels(args: {
   provider: string;
   apiKey: string;
   apiBase?: string | null;
+  allowPrivateNetwork?: boolean;
 }): Promise<ProviderListing> {
   const models: DiscoveredModel[] = [];
   const listedIds = new Set<string>();
@@ -314,7 +331,7 @@ export async function listProviderModels(args: {
     }
     let res: Response;
     try {
-      res = await guardedFetch(request.url, {
+      res = await modelListFetch(request.url, args.allowPrivateNetwork === true)(request.url, {
         ...request.init,
         signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
       });
