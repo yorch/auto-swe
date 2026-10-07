@@ -33,12 +33,16 @@ export function buildLessonEvidence(input: {
       : 'COMPLETED';
   const evidence: LessonEvidence = { outcome };
 
+  // Nothing clears the other loop's context, so a failed loop's lesson carries only its own
+  // evidence: a rejection the review got past is not why CI failed. Any other outcome keeps
+  // both, as what earlier attempts hit on the way.
   // A fan-out review keeps its per-branch results here rather than one summary.
-  const rejection = head(rejectionText(input.rejectionSummary));
+  const rejection =
+    outcome === 'CI_FAILED' ? undefined : head(rejectionText(input.rejectionSummary));
   if (rejection) {
     evidence.rejectionSummary = rejection;
   }
-  const ci = tail(input.ciLogs);
+  const ci = outcome === 'REVIEW_FAILED' ? undefined : tail(input.ciLogs);
   if (ci) {
     evidence.ciFailure = ci;
   }

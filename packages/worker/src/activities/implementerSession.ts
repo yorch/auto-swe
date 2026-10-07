@@ -87,9 +87,11 @@ export interface FixSessionInput {
    */
   lessonQuery?: string;
   /**
-   * A trace event recorded when the session starts, before anything can fail,
-   * so it is persisted with the session's trace whatever happens next. The CI
-   * fixer records the failure it was handed here (`lib/attemptTrace.ts`).
+   * A trace event recorded as soon as the session's tracer exists — once the
+   * workspace is created — so it is persisted with the session's trace however
+   * the session ends from there. A failure before that (resolving the
+   * repository, cloning) records nothing. The CI fixer records the failure it
+   * was handed here (`lib/attemptTrace.ts`).
    */
   startEvent?: { name: string; outputJson: Record<string, unknown> };
 }

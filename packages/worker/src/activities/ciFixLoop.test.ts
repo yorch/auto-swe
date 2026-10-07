@@ -6,6 +6,7 @@ vi.mock('./implementerSession.js', () => ({
   runImplementerFixSession: (...args: unknown[]) => sessionMock(...args),
 }));
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
+vi.mock('@temporalio/activity', () => ({ activityInfo: () => ({ activityId: '7' }) }));
 
 import { CI_FAILURE_TRACE_CHARS, CI_FAILURE_TRACE_EVENT } from '../lib/attemptTrace.js';
 import { executeCIFixImplementation, executeReviewFixImplementation } from './ciFixLoop.js';
@@ -17,7 +18,7 @@ const previous = {
 
 type SessionInput = {
   lessonQuery: string;
-  startEvent?: { name: string; outputJson: { logTail: string } };
+  startEvent?: { name: string; outputJson: { logTail: string; activityId?: string } };
   notes: (t: { passed: boolean }) => string;
   userPayload: { reviewFindings: unknown };
 };
@@ -58,5 +59,7 @@ describe('executeCIFixImplementation', () => {
     expect(event?.name).toBe(CI_FAILURE_TRACE_EVENT);
     expect(event?.outputJson.logTail).toHaveLength(CI_FAILURE_TRACE_CHARS);
     expect(event?.outputJson.logTail.endsWith('Error: expected 2 to be 3')).toBe(true);
+    // Stable across Temporal's retries of this fix, so a retry is never read as another failure.
+    expect(event?.outputJson).toMatchObject({ activityId: '7' });
   });
 });

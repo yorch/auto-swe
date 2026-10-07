@@ -1,3 +1,7 @@
+/** What a rejection says when the stored shape carries no written reason. */
+export const UNWORDED_REJECTION =
+  'One or more reviewers rejected the change without a written reason.';
+
 /**
  * The text of a review rejection, whatever shape the template stored it in.
  *
@@ -8,15 +12,23 @@
  * as-is, that array is not text at all, so a fix session handed it fails and a
  * lesson built from it has no rejection.
  *
- * Approving branches are skipped. Pure and import-free, so the workflow isolate
- * can call it as well as an activity.
+ * Approving branches are skipped. A review result object gives its
+ * `rejectionSummary`. Any other value that was stored (an array or object with
+ * no text in it) still records that a rejection happened, as
+ * {@link UNWORDED_REJECTION}; only nothing stored (`undefined`, `null`) is no
+ * rejection, `''`. Pure and import-free, so the workflow isolate can call it as
+ * well as an activity.
  */
 export function rejectionText(value: unknown): string {
   if (typeof value === 'string') {
     return value;
   }
-  if (!Array.isArray(value)) {
+  if (value === undefined || value === null) {
     return '';
+  }
+  if (!Array.isArray(value)) {
+    const summary = (value as { rejectionSummary?: unknown }).rejectionSummary;
+    return typeof summary === 'string' && summary.trim() !== '' ? summary : UNWORDED_REJECTION;
   }
   const parts: string[] = [];
   for (const entry of value) {
@@ -44,5 +56,5 @@ export function rejectionText(value: unknown): string {
       parts.push(`A reviewer failed: ${branch.error}`);
     }
   }
-  return parts.join('\n\n');
+  return parts.length > 0 ? parts.join('\n\n') : UNWORDED_REJECTION;
 }

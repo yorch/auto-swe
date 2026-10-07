@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rejectionText } from './rejectionText.js';
+import { rejectionText, UNWORDED_REJECTION } from './rejectionText.js';
 
 describe('rejectionText', () => {
   it('passes a review network summary through unchanged', () => {
@@ -23,10 +23,21 @@ describe('rejectionText', () => {
     );
   });
 
-  it('reads nothing else as text', () => {
+  it("reads a review result's summary", () => {
+    expect(rejectionText({ approved: false, rejectionSummary: 'needs tests' })).toBe('needs tests');
+  });
+
+  it('records a stored rejection with no text as one without a written reason', () => {
+    expect(rejectionText({ rejectionSummary: '' })).toBe(UNWORDED_REJECTION);
+    expect(rejectionText({ other: 1 })).toBe(UNWORDED_REJECTION);
+    expect(rejectionText([])).toBe(UNWORDED_REJECTION);
+    expect(rejectionText([{ exports: { a: 3 }, status: 'FAILED' }, 7, null])).toBe(
+      UNWORDED_REJECTION
+    );
+  });
+
+  it('reads nothing stored as no rejection', () => {
     expect(rejectionText(undefined)).toBe('');
     expect(rejectionText(null)).toBe('');
-    expect(rejectionText({ rejectionSummary: 'x' })).toBe('');
-    expect(rejectionText([{ exports: { a: 3 }, status: 'FAILED' }, 7, null])).toBe('');
   });
 });

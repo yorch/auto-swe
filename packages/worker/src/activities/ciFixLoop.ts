@@ -1,7 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { CI_FAILURE_TRACE_CHARS, CI_FAILURE_TRACE_EVENT } from '../lib/attemptTrace.js';
+import {
+  CI_FAILURE_TRACE_CHARS,
+  CI_FAILURE_TRACE_EVENT,
+  currentActivityId,
+} from '../lib/attemptTrace.js';
 import { rejectionText } from '../lib/rejectionText.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
@@ -53,7 +57,10 @@ export async function executeCIFixImplementation(
     // Each failure the loop fixes, kept for a lesson about the run (`lib/attemptTrace.ts`).
     startEvent: {
       name: CI_FAILURE_TRACE_EVENT,
-      outputJson: { logTail: failureContext.slice(-CI_FAILURE_TRACE_CHARS) },
+      outputJson: {
+        ...(currentActivityId() ? { activityId: currentActivityId() } : {}),
+        logTail: failureContext.slice(-CI_FAILURE_TRACE_CHARS),
+      },
     },
     systemPromptOverride,
     usageEventName: 'llm.ci_fix',

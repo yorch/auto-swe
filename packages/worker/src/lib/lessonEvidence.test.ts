@@ -17,11 +17,11 @@ const codeResult = (files: number) => ({
 });
 
 describe('buildLessonEvidence', () => {
-  it('carries the outcome, rejection, CI failure and a summary of the change', () => {
+  it('carries the outcome, an earlier rejection and CI failure, and a summary of the change', () => {
     const evidence = buildLessonEvidence({
       ciLogs: 'npm test\nFAIL src/a.test.ts',
       codeResult: codeResult(2),
-      outcome: 'CI_FAILED',
+      outcome: 'MERGED',
       rejectionSummary: 'Missing input validation',
     });
     expect(evidence).toEqual({
@@ -36,7 +36,31 @@ describe('buildLessonEvidence', () => {
         tests: { failing: 1, passed: false, passing: 9, total: 10 },
       },
       ciFailure: 'npm test\nFAIL src/a.test.ts',
+      outcome: 'MERGED',
+      rejectionSummary: 'Missing input validation',
+    });
+  });
+
+  it('gives a CI failure only its CI log, not a rejection the review already got past', () => {
+    // Nothing clears `context.lastRejectionSummary` once the review approves.
+    const evidence = buildLessonEvidence({
+      ciLogs: 'FAIL src/a.test.ts',
+      codeResult: undefined,
       outcome: 'CI_FAILED',
+      rejectionSummary: 'Missing input validation',
+    });
+    expect(evidence).toEqual({ ciFailure: 'FAIL src/a.test.ts', outcome: 'CI_FAILED' });
+  });
+
+  it('gives a review failure only its rejection, not an earlier CI log', () => {
+    const evidence = buildLessonEvidence({
+      ciLogs: 'FAIL src/a.test.ts',
+      codeResult: undefined,
+      outcome: 'REVIEW_FAILED',
+      rejectionSummary: 'Missing input validation',
+    });
+    expect(evidence).toEqual({
+      outcome: 'REVIEW_FAILED',
       rejectionSummary: 'Missing input validation',
     });
   });

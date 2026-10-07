@@ -9,6 +9,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
+import { currentActivityId } from '../lib/attemptTrace.js';
 import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
 import { ConfigMissingError } from '../lib/config/resolver.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
@@ -120,7 +121,9 @@ async function runReviewerAgent(
           inputJson: { systemPrompt: prompt, userMessage: llmUserMessage },
           inputTokens: attribution.inputTokens,
           model: attribution.modelSpec || undefined,
-          outputJson: verdictWithType,
+          // The activity id groups this dispatch's verdicts, across Temporal retries, for a
+          // lesson's attempt history (`lib/lessonAttemptHistory.ts`).
+          outputJson: { ...verdictWithType, ...activityIdField() },
           outputTokens: attribution.outputTokens,
           role: reviewerType,
         });
@@ -132,6 +135,7 @@ async function runReviewerAgent(
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt: prompt, userMessage: llmUserMessage },
+          ...(currentActivityId() ? { outputJson: activityIdField() } : {}),
           role: reviewerType,
         });
         span.recordException(e as Error);
@@ -141,6 +145,12 @@ async function runReviewerAgent(
       }
     }
   );
+}
+
+/** `{ activityId }` inside an activity, else nothing. */
+function activityIdField(): { activityId?: string } {
+  const activityId = currentActivityId();
+  return activityId ? { activityId } : {};
 }
 
 // ── Review Network Orchestrator ──
