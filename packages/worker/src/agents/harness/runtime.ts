@@ -19,6 +19,7 @@ import {
 } from './adapter.js';
 import { PLATFORM_PROBE, parseContainerPlatform } from './binary.js';
 import { decideWithinDeadline, type ToolDecision } from './policy.js';
+import { type SpentByModel, subtractSpent, summedCallsUsage, type UsageTotals } from './usage.js';
 
 /** The stderr kept for an error message. */
 const STDERR_TAIL_CHARS = 4000;
@@ -108,11 +109,23 @@ export interface HarnessRuntime extends ImplementerRuntime {
  * stop. Every tool call is decided by the worker, through `turn.decide`,
  * within {@link POLICY_DECISION_MS} and failing closed.
  *
+ * With `onCallSpent`, each model call is debited as soon as it is complete
+ * (the next call has begun), in order, one at a time; a throw from it aborts the
+ * turn, which then fails with that error. The turn's own report is reconciled
+ * against what was debited, so nothing is counted twice: only the remainder —
+ * the last call, and any the harness made without reporting — is returned or
+ * carried on a failure.
+ *
  * Refuses an adapter that does not declare it enforces that per-call policy.
  */
 export function harnessRuntime<Report>(
   adapter: HarnessAdapter<Report>,
-  options: { deadline?: AbortSignal; tracer: AgentTracer; workspace: Workspace }
+  options: {
+    deadline?: AbortSignal;
+    onCallSpent?: (spent: SpentByModel) => Promise<void>;
+    tracer: AgentTracer;
+    workspace: Workspace;
+  }
 ): HarnessRuntime {
   if (!adapter.capabilities.enforcesPerCallPolicyInWorker) {
     throw ApplicationFailure.nonRetryable(
@@ -120,7 +133,7 @@ export function harnessRuntime<Report>(
       'HARNESS_POLICY_UNENFORCEABLE'
     );
   }
-  const { deadline, tracer, workspace } = options;
+  const { deadline, onCallSpent, tracer, workspace } = options;
   let prepared: Promise<string> | undefined;
 
   async function runTurn(input: { system: string; user: string }) {
@@ -147,12 +160,52 @@ export function harnessRuntime<Report>(
     }
 
     let stderrTail = '';
+    // Per-call accounting: the call still streaming, the calls already debited,
+    // what they came to, and the first error a debit threw.
+    let openCall: { id: string; modelSpec: string; usage: UsageTotals } | undefined;
+    const debitedCalls = new Set<string>();
+    const accrued: SpentByModel = [];
+    let debits: Promise<void> = Promise.resolve();
+    let debitError: { error: unknown } | undefined;
+    const debit = (call: { modelSpec: string; usage: UsageTotals }) => {
+      const spent = summedCallsUsage('', [{ model: call.modelSpec, usage: call.usage }]);
+      if (!onCallSpent || spent.length === 0) {
+        return;
+      }
+      debits = debits.then(async () => {
+        if (debitError) {
+          return;
+        }
+        // Counted as debited before the callback runs: a callback that throws after
+        // recording the spend (an exhausted budget) must not have it charged again.
+        accrued.push(...spent);
+        try {
+          await onCallSpent(spent);
+        } catch (error) {
+          debitError = { error };
+          abort.abort();
+        }
+      });
+    };
+    // What the turn still owes once its report is in: the report less what was
+    // debited call by call.
+    const owed = (spent: SpentByModel) => (onCallSpent ? subtractSpent(spent, accrued) : spent);
     const startedAt = new Map<string, number>();
     const warnings = new Map<string, { tag?: string; text: string }>();
     const elapsed = (id: string) => Date.now() - (startedAt.get(id) ?? Date.now());
 
     const turn: HarnessTurn = {
       abort,
+      callUsage(callId, modelSpec, usage) {
+        if (!onCallSpent || debitedCalls.has(callId)) {
+          return;
+        }
+        if (openCall && openCall.id !== callId) {
+          debitedCalls.add(openCall.id);
+          debit(openCall);
+        }
+        openCall = { id: callId, modelSpec, usage };
+      },
       completed(callId, { inputJson, output, toolName }) {
         const warning = warnings.get(callId);
         tracer.addToolCall({
@@ -231,20 +284,34 @@ export function harnessRuntime<Report>(
     };
 
     try {
-      const result = await adapter.runTurn(turn, input);
+      let result: Awaited<ReturnType<typeof adapter.runTurn>>;
+      try {
+        result = await adapter.runTurn(turn, input);
+      } catch (err) {
+        await debits;
+        // A cancelled activity surfaces as a killed process: report the cancellation.
+        throwIfActivityCancelled();
+        const billed = usageReportOf(err);
+        const spent = billed ? owed(adapter.usage.normalise(billed.report as Report)) : undefined;
+        // A debit that threw aborted the turn: that error, not the abort, is the failure.
+        const failure = debitError ? debitError.error : err;
+        // The failed run was billed for what it spent: the error carries it.
+        throw spent ? withSpentUsage(failure, spent) : failure;
+      }
+      const spent = adapter.usage.normalise(result.usage);
+      await debits;
+      if (debitError) {
+        // The budget ran out on a call the turn made before it finished: the turn
+        // fails as the Mastra loop's would, carrying what was not yet debited.
+        throw withSpentUsage(debitError.error, owed(spent));
+      }
       return {
         steps: result.steps,
         stoppedReason: result.stoppedReason,
         text: result.text,
         toolCallCount: result.toolCallCount,
-        usageByModel: adapter.usage.normalise(result.usage),
+        usageByModel: owed(spent),
       };
-    } catch (err) {
-      // A cancelled activity surfaces as a killed process: report the cancellation.
-      throwIfActivityCancelled();
-      // The failed run was billed for what it spent: the error carries it.
-      const billed = usageReportOf(err);
-      throw billed ? withSpentUsage(err, adapter.usage.normalise(billed.report as Report)) : err;
     } finally {
       cancellation?.removeEventListener('abort', onCancel);
       deadline?.removeEventListener('abort', onCancel);

@@ -619,9 +619,11 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
    */
   implementerRuntime?: string | null;
   /**
-   * The runtime each agent ran on (`{ agentKey: 'mastra' | 'claude-code' }`),
-   * pinned the first time the run resolved it. An agent's own runtime wins over
-   * `implementerRuntime`, so this is what actually ran.
+   * The runtime the run pinned for each agent that has its own
+   * (`{ agentKey: 'mastra' | 'claude-code' }`): at run start, or the first time
+   * the run resolved an agent created later. An agent's own runtime wins over
+   * `implementerRuntime`. Agents with no runtime of their own are not listed:
+   * they run on `implementerRuntime` (or Mastra, for an agent run).
    */
   agentRuntimes?: Record<string, string>;
   humanSteps?: HumanStepSummary[];
@@ -843,6 +845,24 @@ export function toImplementerRuntime(value: unknown): ImplementerRuntimeKind | n
   return (IMPLEMENTER_RUNTIMES as readonly unknown[]).includes(value)
     ? (value as ImplementerRuntimeKind)
     : null;
+}
+
+/**
+ * Why an Agent version cannot carry this runtime, or null. The `claude-code`
+ * harness speaks only the Anthropic Messages API, so a version that names its
+ * own non-Anthropic model cannot ask for it. A version that inherits its model
+ * is checked when a run resolves it (`HARNESS_UNSUPPORTED_MODEL`), since the
+ * parent can change independently. One rule for the agent-library API, bundle
+ * install and the SDK's bundle validation.
+ */
+export function runtimeModelError(
+  runtime: string | null | undefined,
+  modelSpec: string | null | undefined
+): string | null {
+  if (runtime !== 'claude-code' || !modelSpec || modelSpec.startsWith('anthropic/')) {
+    return null;
+  }
+  return `The claude-code runtime needs an Anthropic model, but this agent's model is '${modelSpec}'. Set the model to anthropic/<model>, or the runtime to mastra.`;
 }
 
 export const EVAL_SIGNAL_SOURCES = [

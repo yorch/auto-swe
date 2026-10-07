@@ -1,21 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { abortSignalOption, recordLlmUsage, recordSuspiciousLlmOutput } = vi.hoisted(() => ({
-  abortSignalOption: vi.fn((): { abortSignal?: AbortSignal } => ({})),
-  recordLlmUsage: vi.fn(),
-  recordSuspiciousLlmOutput: vi.fn(async () => {}),
-}));
+const { abortSignalOption, assertBudgetAvailable, recordLlmUsage, recordSuspiciousLlmOutput } =
+  vi.hoisted(() => ({
+    abortSignalOption: vi.fn((): { abortSignal?: AbortSignal } => ({})),
+    assertBudgetAvailable: vi.fn(async (_label?: string) => {}),
+    recordLlmUsage: vi.fn(),
+    recordSuspiciousLlmOutput: vi.fn(async () => {}),
+  }));
 
 vi.mock('../lib/activityContext.js', () => ({ currentWorkflowId: vi.fn(() => 'wf-1') }));
 vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
 vi.mock('../lib/cancellation.js', () => ({ abortSignalOption }));
-vi.mock('../lib/costTracking.js', () => ({ recordLlmUsage }));
+vi.mock('../lib/costTracking.js', () => ({ assertBudgetAvailable, recordLlmUsage }));
 vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput }));
 
 import type { AgentTracer } from '../lib/agentTracer.js';
 import {
   type ImplementerRuntime,
   mastraRuntime,
+  perCallAccounting,
   runImplementerTurn,
   spentUsageOf,
   withSpentUsage,
@@ -267,6 +270,89 @@ describe('runImplementerTurn', () => {
     await expect(runImplementerTurn(turn(runtime))).rejects.toThrow('BUDGET_EXCEEDED');
 
     expect(addLlmResponse).not.toHaveBeenCalled();
+  });
+});
+
+describe('perCallAccounting', () => {
+  const call = (input: number, output: number) => [
+    { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: input, outputTokens: output } },
+  ];
+
+  it('debits each call to the ledger, then re-checks the budget, keeping a running total', async () => {
+    const order: string[] = [];
+    recordLlmUsage.mockImplementation(async () => {
+      order.push('record');
+      return {
+        costUsd: 0.25,
+        inputTokens: 10,
+        modelSpec: 'anthropic/claude-opus-5-5',
+        outputTokens: 2,
+      };
+    });
+    assertBudgetAvailable.mockImplementation(async () => {
+      order.push('check');
+    });
+    const accounting = perCallAccounting({ role: 'contentWriter', usageEvent: 'llm.agent_run' });
+
+    await accounting.onCallSpent(call(10, 2));
+    await accounting.onCallSpent(call(10, 2));
+
+    expect(order).toEqual(['record', 'check', 'record', 'check']);
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      'wf-1',
+      'contentWriter',
+      { inputTokens: 10, outputTokens: 2 },
+      'llm.agent_run',
+      'anthropic/claude-opus-5-5'
+    );
+    expect(assertBudgetAvailable).toHaveBeenCalledWith('agent.contentWriter');
+    expect(accounting.debited()).toEqual({
+      costUsd: 0.5,
+      inputTokens: 20,
+      modelSpec: 'anthropic/claude-opus-5-5',
+      outputTokens: 4,
+    });
+  });
+
+  it('throws the budget failure after recording the call that exhausted it', async () => {
+    const budget = new Error('BUDGET_EXCEEDED');
+    assertBudgetAvailable.mockRejectedValueOnce(budget);
+    const accounting = perCallAccounting({ role: 'r', usageEvent: 'e' });
+    await expect(accounting.onCallSpent(call(10, 2))).rejects.toBe(budget);
+    expect(recordLlmUsage).toHaveBeenCalledTimes(1);
+    expect(accounting.debited().costUsd).toBe(0.5);
+  });
+
+  it('lets the turn row cover what was debited as well as what the turn still owed', async () => {
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => ({
+        text: 'done',
+        toolCallCount: 1,
+        usageByModel: [
+          { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 10, outputTokens: 4 } },
+        ],
+      }),
+    };
+    const debited = () => ({
+      costUsd: 1,
+      inputTokens: 100,
+      modelSpec: 'anthropic/claude-opus-5-5',
+      outputTokens: 40,
+    });
+
+    const { attribution } = await runImplementerTurn({ ...turn(runtime), debited });
+
+    // Only the remainder reaches the ledger here; the debited calls already did.
+    expect(recordLlmUsage).toHaveBeenCalledTimes(1);
+    expect(attribution).toEqual({
+      costUsd: 1.5,
+      inputTokens: 110,
+      modelSpec: 'anthropic/claude-opus-5-5',
+      outputTokens: 44,
+    });
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ costUsd: 1.5, inputTokens: 110, outputTokens: 44 })
+    );
   });
 });
 

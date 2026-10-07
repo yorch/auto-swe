@@ -124,6 +124,35 @@ describe('exportBundle', () => {
     expect(m.dependencies).toEqual([{ connectionType: 'mcp' }]);
     expect(m.metadata.contentHash).toBe(computeContentHash(m));
   });
+
+  it('carries an agent’s runtime when it has one, and no field when it has none', async () => {
+    const row = (key: string, runtime: string | null) => ({
+      description: null,
+      inheritsModelFrom: null,
+      isVerified: false,
+      key,
+      modelSpec: 'anthropic/claude-opus-5-5',
+      name: key,
+      origin: 'x',
+      runtime,
+      skillRefs: [],
+      systemPrompt: null,
+      toolKeys: null,
+    });
+    const prisma = {
+      agent: {
+        findMany: vi.fn().mockResolvedValue([row('a', 'claude-code'), row('b', null)]),
+      },
+      scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
+      skill: { findMany: vi.fn().mockResolvedValue([]) },
+      workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    } as unknown as Parameters<typeof exportBundle>[0];
+
+    const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+
+    expect(m.entities.agents[0]).toMatchObject({ key: 'a', runtime: 'claude-code' });
+    expect(m.entities.agents[1]).not.toHaveProperty('runtime');
+  });
 });
 
 describe('installBundle', () => {
@@ -568,6 +597,57 @@ describe('installBundle', () => {
     const res = await installBundle(asArg(), m, { allowUnverified: true });
     expect(res.counts.agents).toBe(1);
     expect(prisma.agent.update).toHaveBeenCalledTimes(1);
+  });
+
+  describe('agent runtime', () => {
+    const agentManifest = (agent: Record<string, unknown>) =>
+      manifestFor({
+        ...EMPTY,
+        agents: [{ key: 'test.coder', name: 'Coder', ...agent }],
+      } as unknown as BundleEntities);
+
+    it('creates an agent on the runtime the bundle names, and says so', async () => {
+      const res = await installBundle(
+        asArg(),
+        agentManifest({ modelSpec: 'anthropic/claude-opus-5-5', runtime: 'claude-code' }),
+        { allowUnverified: true }
+      );
+      expect(prisma.agent.create.mock.calls[0]?.[0].data.runtime).toBe('claude-code');
+      expect(res.warnings).toEqual([
+        expect.stringContaining("agent 'test.coder': runs on the claude-code runtime"),
+      ]);
+    });
+
+    it('leaves an installed agent’s runtime alone when the bundle does not name one', async () => {
+      prisma.agent.findFirst.mockResolvedValue({ id: 'mine', origin: 'bundle:test' });
+      const res = await installBundle(asArg(), agentManifest({}), { allowUnverified: true });
+      expect(prisma.agent.update.mock.calls[0]?.[0].data).not.toHaveProperty('runtime');
+      expect(res.warnings).toEqual([]);
+    });
+
+    it('clears it when the bundle says null', async () => {
+      prisma.agent.findFirst.mockResolvedValue({ id: 'mine', origin: 'bundle:test' });
+      await installBundle(asArg(), agentManifest({ runtime: null }), { allowUnverified: true });
+      expect(prisma.agent.update.mock.calls[0]?.[0].data.runtime).toBeNull();
+    });
+
+    it('refuses the harness on a non-Anthropic model before any write', async () => {
+      await expect(
+        installBundle(
+          asArg(),
+          agentManifest({ modelSpec: 'openai/gpt-6.1-sol', runtime: 'claude-code' }),
+          { allowUnverified: true }
+        )
+      ).rejects.toThrow(/invalid agent\(s\):[\s\S]*test\.coder.*Anthropic model/);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('refuses a runtime it does not know', async () => {
+      await expect(
+        installBundle(asArg(), agentManifest({ runtime: 'codex' }), { allowUnverified: true })
+      ).rejects.toBeTruthy();
+      expect(prisma.agent.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('skill revisions and the content scan', () => {

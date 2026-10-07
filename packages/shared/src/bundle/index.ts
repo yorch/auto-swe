@@ -16,6 +16,7 @@ import {
   SAFE_FLAGS_RE,
 } from '../lib/regexSafety.js';
 import { SCANNER_PATTERN_TYPES } from '../lib/scannerPatternTypes.js';
+import { IMPLEMENTER_RUNTIMES, runtimeModelError } from '../types/api.js';
 import { WorkflowSpecSchema } from '../workflow/spec.js';
 import { formatValidationIssue, validateSpec } from '../workflow/validateSpec.js';
 
@@ -77,6 +78,13 @@ export const BundleAgentSchema = z.object({
   modelSpec: z.string().nullable().optional(),
   name: z.string().min(1),
   origin: z.string().nullable().optional(),
+  /**
+   * The loop that drives the agent in a workspace (`mastra` | `claude-code`).
+   * Absent leaves an installed agent's runtime as it is; `null` clears it (no
+   * opinion). The same field the agent library sets, and the same ADMIN floor:
+   * only an admin installs a bundle.
+   */
+  runtime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   skills: z.array(BundleAgentSkillSchema).optional(),
   systemPrompt: z.string().nullable().optional(),
   toolKeys: z.array(z.string()).nullable().optional(),
@@ -392,6 +400,39 @@ export function validateBundleScannerPatterns(manifest: BundleManifest): string[
     }
   }
   return errors;
+}
+
+/**
+ * Check every agent's runtime against its own model, with the rule the agent
+ * library applies on save (`runtimeModelError`): a bundle must not install a
+ * version the API would refuse. Pure and synchronous, so the SDK shares it.
+ *
+ * Returns one message per offending agent; empty means all are acceptable.
+ */
+export function validateBundleAgents(manifest: BundleManifest): string[] {
+  const errors: string[] = [];
+  for (const a of manifest.entities.agents) {
+    const issue = runtimeModelError(a.runtime, a.modelSpec);
+    if (issue) {
+      errors.push(`agent '${a.key}': ${issue}`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * Advisory notes on the agents a bundle would put on a harness. A harness runs
+ * with a model credential inside the workspace container, so an admin should
+ * see which agents a bundle moves onto one before it installs; nothing is
+ * refused for it.
+ */
+export function bundleAgentRuntimeWarnings(manifest: BundleManifest): string[] {
+  return manifest.entities.agents
+    .filter((a) => a.runtime && a.runtime !== 'mastra')
+    .map(
+      (a) =>
+        `agent '${a.key}': runs on the ${a.runtime} runtime, which holds a model credential inside the workspace container (docs/agents.md §3.7)`
+    );
 }
 
 /**

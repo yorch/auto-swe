@@ -82,9 +82,10 @@ export function pinnedImplementerRuntime(pinned: unknown): string | null {
 }
 
 /**
- * The runtime each agent ran on in this run (`WorkflowRun.agentRuntimes`, pinned
- * the first time the run resolved it), keeping only well-formed entries. Empty
- * for a run where no agent has resolved one yet.
+ * The runtime the run pinned for each agent with one of its own
+ * (`WorkflowRun.agentRuntimes`), keeping only well-formed entries. A `null` pin —
+ * the Agent had no opinion, so the default decides — is left out, as is anything
+ * malformed.
  */
 export function pinnedAgentRuntimes(value: unknown): Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

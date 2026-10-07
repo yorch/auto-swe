@@ -835,6 +835,55 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
     );
   });
 
+  it('debits each call the harness finishes, and reports the whole turn’s cost', async () => {
+    m.claudeCodeRuntime.mockImplementation(
+      (options: { onCallSpent: (s: unknown) => Promise<void> }) => ({
+        runTurn: async () => {
+          // The runtime hands each completed call to the run's per-call accounting.
+          await options.onCallSpent([
+            { modelSpec: 'anthropic/x', usage: { inputTokens: 100, outputTokens: 20 } },
+          ]);
+          return { steps: 2, text: 'harness done', toolCallCount: 1, usageByModel: [] };
+        },
+      })
+    );
+
+    const result = await runAgentTask({ request: request() });
+
+    expect(m.recordUsage).toHaveBeenCalledWith(
+      'wf-1',
+      'contentWriter',
+      { inputTokens: 100, outputTokens: 20 },
+      'llm.agent_run',
+      'anthropic/x'
+    );
+    // Once before the turn, once after the call.
+    expect(m.assertBudget).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ costUsd: 0.25, text: 'harness done' });
+  });
+
+  it('stops with the budget failure a call’s debit raised, publishing nothing', async () => {
+    const budget = Object.assign(new Error('Budget already exhausted'), {
+      type: 'BUDGET_EXCEEDED',
+    });
+    m.claudeCodeRuntime.mockImplementation(
+      (options: { onCallSpent: (s: unknown) => Promise<void> }) => ({
+        runTurn: () =>
+          options.onCallSpent([
+            { modelSpec: 'anthropic/x', usage: { inputTokens: 1, outputTokens: 1 } },
+          ]),
+      })
+    );
+    m.assertBudget.mockResolvedValueOnce(undefined).mockRejectedValueOnce(budget);
+    await expect(
+      runAgentTask({
+        request: request({ payload: { agentRef: 'contentWriter', deliver: 'branch' } }),
+      })
+    ).rejects.toBe(budget);
+    expect(m.push).not.toHaveBeenCalled();
+    expect(m.agentWs.destroy).toHaveBeenCalled();
+  });
+
   it('a wall-clocked harness run is still gated and published', async () => {
     m.harnessTurn.mockResolvedValue({ stoppedReason: 'wall_clock', toolCallCount: 1 });
     const result = await runAgentTask({

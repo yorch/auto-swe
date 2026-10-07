@@ -126,7 +126,8 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
   with a 409 while the agent is deactivated, so it never switches an agent back on by itself.
 - **Runtime:** an optional `runtime` (`mastra` or `claude-code`; null = no opinion) chooses the loop
   that drives the agent where it works in a workspace. It is resolved with the rest of the version
-  and inherited along `inheritsModelFrom`; setting or changing it takes a platform ADMIN. See
+  and inherited along `inheritsModelFrom`; setting or changing it takes a platform ADMIN, in the
+  agent library or by installing a bundle that carries it ([bundles.md](./bundles.md)). See
   [§3.7](#37-runtimes-mastra-and-the-claude-code-harness).
 - **The `agent` node** carries an `agentRef` (`<key>` or `<key>@<version>`) plus optional
   `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
@@ -361,10 +362,14 @@ Two loops can drive an agent that works in a workspace: the platform's own Mastr
 Claude Code harness running inside the workspace container. Which one drives an agent is decided per
 agent, by `resolveAgentRuntime(key, ctx, default)`:
 
-1. **The run's pin.** `WorkflowRun.agentRuntimes` (`{ agentKey: runtime }`) holds the runtime each
-   agent got the first time the run resolved it. Every later resolution in the run — another
-   activity, a retry, a parallel branch — reads it, so a run that started an agent on one loop never
-   finishes it on the other. A caller can supply the pin instead (`ctx.agentRuntimes`, never written
+1. **The run's pin.** `WorkflowRun.agentRuntimes` (`{ agentKey: runtime | null }`) is written at run
+   start by `createWorkflowRun` (`snapshotAgentRuntimes`): every agent the run can resolve, with the
+   runtime its Agent asks for — or `null`, meaning it had no opinion and the caller's default
+   decides — resolved in the scope and under the agent-version pins the run's activities use. Every
+   resolution in the run — another activity, a retry, a parallel branch — reads it, so an edit to an
+   agent or to a scoped override of it after the run starts cannot move the run's agents onto the
+   other loop, and a `null` pin keeps a runtime added later out too. An agent with no entry (created
+   after the run started) is pinned the first time the run resolves it. A caller can supply the pin instead (`ctx.agentRuntimes`, never written
    back): an eval case does, for a side whose eval run names a runtime
    ([evals.md](./evals.md#comparing-runtimes)), so the override wins over the Agent's own runtime.
 2. **The Agent version's own `runtime`.** Resolved through the same cascade and agent-version pin as
@@ -376,13 +381,16 @@ agent, by `resolveAgentRuntime(key, ctx, default)`:
    `workspace.implementerRuntime` setting (`mastra` by default; `claude-code`). An agent run's default
    is `mastra`, whatever that setting says.
 
-The first resolution writes the pin as a compare-and-set on the whole map, so two activities pinning
-different agents at once keep both entries and two pinning the same agent agree on the first. The
-agent-version pin alone could not promise this: it freezes the GLOBAL row only, so a TEAM or template
+A first-use pin is written as a compare-and-set on the whole map, so two activities pinning
+different agents at once keep both entries and two pinning the same agent agree on the first; it
+never overwrites a pin, a `null` one included. An agent run skips the run-start snapshot: its one
+step resolves its agent in a narrower scope (no team or template override) and pins it there,
+before its clone. The agent-version pin alone could not promise this: it freezes the GLOBAL row only, so a TEAM or template
 override edited mid-run would otherwise move a running agent onto the other loop. Outside a run (eval
 replays) nothing is pinned and the value resolves live. Each session records an `agent.runtime`
 activity event naming the runtime and where it came from (`run`, `agent`, `default`), and the run
-viewer's header shows what each agent ran on (`agentRuntimes` on the run detail).
+viewer's header shows the runtime pinned for each agent that has one of its own (`agentRuntimes` on
+the run detail).
 
 Where the runtime applies:
 
@@ -406,8 +414,11 @@ wall-clock deadline stops the turn as it stops the Mastra loop: the run ends wit
 harness tools that stand in for the workspace tools the agent-run rule grants (`null` → `Read`, `Glob`,
 `Grep`; a list → only what it names; `[]` and `["mcp"]` → no tools), never the implementer's "no
 opinion means everything". It binds no MCP server; an agent with one gets an
-`agent.runtime_mcp_skipped` event. The budget is checked before the turn and the turn is accrued
-after it. Delivery is unchanged: the diff is still judged and pushed from a fresh container the agent
+`agent.runtime_mcp_skipped` event. The budget is checked before the turn, and each model call is
+debited as soon as the harness has finished it (`perCallAccounting`, through the runtime's
+`onCallSpent`), with the budget re-checked after every debit, as the Mastra loop debits every step: an
+exhausted budget aborts the turn and the run fails `BUDGET_EXCEEDED` after the call in flight. When
+the turn ends, only what was not debited call by call is accrued. Delivery is unchanged: the diff is still judged and pushed from a fresh container the agent
 never ran in ([agent-runs.md §4](./agent-runs.md#4-delivery-and-the-trust-boundary)).
 
 Both runtimes sit behind the same `ImplementerRuntime` interface: it drives one turn and reports
@@ -427,6 +438,7 @@ wrong, against what is one harness's own:
 | Cancellation and a caller's deadline, wired to one abort controller; a cancelled turn reports the cancellation | `usage`: a normaliser from what the harness reports to per-model usage |
 | Each decision bounded by the 60 s deadline, a throw turned into a deny, a refusal traced with its tag | `capabilities`: whether it can enforce the per-call policy |
 | Tool results bounded to 20 000 characters in the trace; a failed turn's usage accrued | `close`: anything held beyond a turn (optional) |
+| Per-call metering for a caller that asks (`onCallSpent`): each call debited once the next begins, a throw aborting the turn, the turn's report reconciled against what was debited | Reporting each model call's usage as it streams (`turn.callUsage`) |
 
 The canonical vocabulary (`harness/policy.ts`) is the four capabilities of the Mastra workspace
 tools, and `decideCanonicalCall` applies their scanners to it: `shell` gets the audit line and
@@ -509,7 +521,11 @@ the policy lets `Read` reach.
 **Usage.** The harness reports usage per model as running totals, and a resumed session starts from
 its saved totals, so a turn records the change since the last. A turn that ends without a result — a
 deadline stopped it, or the process died — is metered from the assistant messages it streamed, each of
-which carries its API call's usage (the last report per message id counts). Each model is priced at its own spec
+which carries its API call's usage (the last report per message id counts). The adapter hands those
+reports to the shared runtime as they stream (`turn.callUsage`); a caller that meters per call
+(`onCallSpent`, an agent run) is debited for a call once the next one begins, and the turn's own
+report is then reconciled against what was debited (`subtractSpent`), so nothing is charged twice.
+Each model is priced at its own spec
 (a harness may delegate small tasks to a cheaper model). Cache reads and writes count as input
 tokens toward the budget and are priced at the model's cache rates. A turn that ends in an error
 result has still been billed for what it spent: the runtime attaches that usage to the error
@@ -1211,24 +1227,27 @@ template override is never badged, because it may use a different model or crede
   loaded, a repository can ship shell hooks and permission rules. They execute in the untrusted
   container and cannot override the worker-side decision on a tool call (a deny wins), but they
   can run code at session start and shape what the model is told.
-- **An agent's runtime is pinned at its first use in a run, not at the run's start.** An edit made
-  between the run starting and the run first resolving that agent reaches the run; from then on it
-  cannot. An agent that a run resolves for the first time late (a CI fixer after a long TDD loop) takes
-  the runtime current at that moment. The run-wide `workspace.implementerRuntime` default is still
-  pinned at run start.
+- **Some runtimes are still pinned at first use, not at the run's start.** An agent created after a
+  run started, an agent run's agent, and the agents of a channel-assistant run (`startChannelRun`
+  writes its own run row) are pinned the first time the run resolves them, so an edit made before
+  that reaches the run. An agent whose `inheritsModelFrom` chain was broken at run start is left out
+  of the snapshot and fails where it is used, as before. The snapshot costs a lookup per agent key at
+  run start (a cascade walk of scalar columns, no credential).
 - **Generic `agent` nodes never run on the harness.** They have no workspace, so an Agent asking for
   `claude-code` runs on Mastra there, with a trace event saying so; a node that needs the harness has
   to be an implementer-family step or an agent run.
-- **Harness agent runs are metered per turn, not per step.** The harness reports usage when its run
-  ends, so an agent run on the harness checks the budget once before the turn and accrues it after:
-  it can overshoot its tier by up to the run's step ceiling, where the Mastra loop is debited and
-  re-checked after every step. A turn stopped by its deadline, or whose process died, is metered from
-  its streamed messages, which do not include calls the harness makes without streaming one (a
-  small-model side task), so it can undercount.
-- **A runtime is not carried by bundles or the seeded agents.** Bundle manifests have no `runtime`
-  field: an installed agent starts with none, a re-install leaves an existing one's runtime alone, and
-  an export omits it. Built-in agents seed with none; a seeded default-model move keeps an ADMIN's
-  choice.
+- **Harness agent runs are metered per streamed call.** A call is debited once the next one begins, so
+  an exhausted budget stops the run one call late, as the Mastra loop stops one step late, and the
+  call that was streaming when the budget ran out is charged when the turn ends. Calls the harness
+  makes without streaming a message (a small-model side task) are not seen until the turn's totals
+  arrive, so they are charged at the end and never trigger the check. A turn stopped by its
+  deadline, or whose process died, has no totals and is metered from its streamed messages alone, so
+  it can undercount by those side calls. Implementer-family turns on the harness are still metered
+  per turn (below).
+- **The seeded agents carry no runtime.** Built-in agents seed with none, so the implementer family
+  follows `workspace.implementerRuntime` until an ADMIN sets one; a seeded default-model move keeps
+  that choice. A bundle can carry an agent's `runtime` ([bundles.md](./bundles.md)); one that omits
+  it leaves an installed agent's runtime as it is.
 - **A persona inherits a runtime only through `inheritsModelFrom`.** A persona that names its own model
   does not follow its parent's runtime, and the save-time model check covers only a version's own
   model; an inherited non-Anthropic model is refused when a run resolves it.
@@ -1239,8 +1258,9 @@ template override is never badged, because it may use a different model or crede
   `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
   evade them.
 - **Harness usage is metered conservatively and priced by the model it names.** Cache reads and
-  writes count in full against the token budget, though they are priced at the cache rates. The budget is
-  checked before a turn and accrued after it, so one turn can overshoot by up to its step budget; the
+  writes count in full against the token budget, though they are priced at the cache rates. For an
+  implementer-family turn the budget is checked before the turn and accrued after it, so one turn can
+  overshoot by up to its step budget (agent runs debit per call, above); the
   SDK's own cost cap is not used because it is a client-side estimate. A model the harness picks that
   has no catalog price records $0 with a warning; the organization-USD-cap guard checks only the
   Agent's configured model.

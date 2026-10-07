@@ -12,7 +12,7 @@ Only secret-free, deployment-portable library content is exported:
 
 | Entity | Included |
 |---|---|
-| `Agent` | Global definitions with `modelSpec` or `inheritsModelFrom`, `systemPrompt`, `skillRefs`, `toolKeys` |
+| `Agent` | Global definitions with `modelSpec` or `inheritsModelFrom`, `systemPrompt`, `skillRefs`, `toolKeys`, and `runtime` when the agent has one |
 | `Skill` | Name, description, prompt text, `origin`, `isVerified` |
 | `ScannerPattern` | Label, type, pattern, flags (safe subset only), `origin` |
 | `WorkflowTemplate` | Active version's `WorkflowSpec`, `name`, `description`, `inputSchema`, `origin` |
@@ -122,7 +122,11 @@ On install the gateway:
 3. Validates every scanner pattern for unsafe flags, compile errors, and length limits, and scans
    every skill's text with the injection and exfiltration patterns. The skill scan is advisory:
    findings are returned in the response's `warnings` and recorded on the skill's revision, and
-   never refuse the install.
+   never refuse the install. Every agent's `runtime` is checked against its own model with the
+   agent library's rule: `claude-code` on a version that names a non-Anthropic model refuses the
+   install (and fails `validateBundle` in the SDK). An agent the bundle puts on a harness adds an
+   advisory warning, because a harness holds a model credential inside the workspace container
+   ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness)).
 4. Refuses, with `409 PROTECTED_CONTENT_OVERWRITE`, any bundle entry that would replace GLOBAL
    content the deployment owns — a seeded built-in (`origin = 'swe-starter'`, or a core row with a
    null origin) or an admin-authored row (`origin` null): an agent by key, a skill by name, a
@@ -198,6 +202,11 @@ separately.
   or the node will fail at run time.
 - **Template versions are exported as a single spec.** The active version is frozen into the bundle;
   experiment versions and version history are not carried.
+- **A bundle without a `runtime` leaves an installed agent's runtime as it is.** Absent is not the
+  same as `null`: a manifest written before the field existed must not clear an admin's choice, so
+  only an explicit `null` clears it on re-install, and a new agent starts with none. An export
+  writes the field only for an agent that has a runtime, so a bundle of agents with none hashes as
+  it did before the field existed.
 - **Skill/tool bindings are resolved at install time, not at export.** If a bundle references a tool
   or skill key that does not exist in the target, the install succeeds but the agent may fail when
   the workflow reaches that node.

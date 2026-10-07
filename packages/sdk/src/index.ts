@@ -18,6 +18,7 @@ import {
   parseBundle,
   signContentHash,
   unsupportedBundleDependencies,
+  validateBundleAgents,
   validateBundleScannerPatterns,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
@@ -131,6 +132,11 @@ export function validateBundle(manifest: unknown): ValidateBundleResult {
   const patternErrors = validateBundleScannerPatterns(bundle);
   if (patternErrors.length > 0) {
     return { errors: patternErrors, ok: false };
+  }
+  // Same agent gate as install: a runtime the agent library would refuse.
+  const agentErrors = validateBundleAgents(bundle);
+  if (agentErrors.length > 0) {
+    return { errors: agentErrors, ok: false };
   }
   // The server refuses a dependency on a connection type it cannot run.
   const unsupported = unsupportedBundleDependencies(bundle);

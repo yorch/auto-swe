@@ -155,6 +155,20 @@ describe('resolveAgentRuntime', () => {
     }
   });
 
+  it('runs on the default when the run-start snapshot says the Agent had no opinion', async () => {
+    const row = runRow({ implementer: null });
+    // The Agent has since been given a runtime; the run must not see it.
+    h.resolveAgent.mockResolvedValue({ runtime: 'claude-code' });
+    h.resolveSetting.mockResolvedValue('mastra');
+
+    const r = await resolveAgentRuntime('implementer', ctx, 'implementerSetting');
+
+    expect(r).toEqual({ runtime: 'mastra', source: 'default' });
+    expect(h.resolveAgent).not.toHaveBeenCalled();
+    expect(h.updateMany).not.toHaveBeenCalled();
+    expect(row.agentRuntimes).toEqual({ implementer: null });
+  });
+
   it('pins nothing outside an activity', async () => {
     h.inActivity.value = false;
     h.resolveAgent.mockResolvedValue({ runtime: 'claude-code' });
@@ -173,6 +187,13 @@ describe('resolveAgentRuntime', () => {
 });
 
 describe('pinAgentRuntime', () => {
+  it('never overwrites a no-opinion pin', async () => {
+    const row = runRow({ implementer: null });
+    expect(await pinAgentRuntime('wf-1', 'implementer', 'claude-code')).toBe('claude-code');
+    expect(h.updateMany).not.toHaveBeenCalled();
+    expect(row.agentRuntimes).toEqual({ implementer: null });
+  });
+
   it('gives up, retryably, when the map keeps changing underneath', async () => {
     h.findUnique.mockResolvedValue({ agentRuntimes: null, id: 'run-1' });
     h.updateMany.mockResolvedValue({ count: 0 });

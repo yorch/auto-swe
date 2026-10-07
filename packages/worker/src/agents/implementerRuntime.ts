@@ -3,7 +3,12 @@ import { currentWorkflowId } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { abortSignalOption } from '../lib/cancellation.js';
-import { type LlmAttribution, recordLlmUsage, type TokenUsage } from '../lib/costTracking.js';
+import {
+  assertBudgetAvailable,
+  type LlmAttribution,
+  recordLlmUsage,
+  type TokenUsage,
+} from '../lib/costTracking.js';
 import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 
 /** What the platform reads off one finished model turn, whatever drove the loop. */
@@ -105,6 +110,26 @@ export interface ImplementerTurn {
   /** The span name `recordLlmUsage` records the call under. */
   usageEvent: string;
   user: string;
+  /**
+   * What the runtime already debited while the turn ran, through per-call
+   * accounting ({@link perCallAccounting}). Added to what the turn reports, so
+   * the trace row and the returned attribution cover the whole turn; the turn's
+   * own report excludes it, so nothing is charged twice.
+   */
+  debited?: () => LlmAttribution;
+}
+
+const NO_SPEND: LlmAttribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
+
+/** Two attributions as one, named for `a`'s model unless it has none. */
+function combine(a: LlmAttribution, b: LlmAttribution): LlmAttribution {
+  return {
+    costUsd: a.costUsd + b.costUsd,
+    inputTokens: a.inputTokens + b.inputTokens,
+    modelSpec: a.modelSpec || b.modelSpec,
+    outputTokens: a.outputTokens + b.outputTokens,
+    ...(a.pricingKnown === false || b.pricingKnown === false ? { pricingKnown: false } : {}),
+  };
 }
 
 /**
@@ -112,10 +137,10 @@ export interface ImplementerTurn {
  * return the combined attribution (named for the model that spent the most).
  */
 async function accrue(
-  turn: ImplementerTurn,
+  turn: Pick<ImplementerTurn, 'role' | 'usageEvent'>,
   spent: { modelSpec?: string; usage: TokenUsage }[]
 ): Promise<LlmAttribution> {
-  let attribution: LlmAttribution = { costUsd: 0, inputTokens: 0, modelSpec: '', outputTokens: 0 };
+  let attribution: LlmAttribution = NO_SPEND;
   for (const [i, { modelSpec, usage }] of spent.entries()) {
     const recorded = await recordLlmUsage(
       currentWorkflowId(),
@@ -124,18 +149,33 @@ async function accrue(
       turn.usageEvent,
       modelSpec
     );
-    attribution =
-      i === 0
-        ? recorded
-        : {
-            costUsd: attribution.costUsd + recorded.costUsd,
-            inputTokens: attribution.inputTokens + recorded.inputTokens,
-            modelSpec: attribution.modelSpec,
-            outputTokens: attribution.outputTokens + recorded.outputTokens,
-            pricingKnown: attribution.pricingKnown !== false && recorded.pricingKnown !== false,
-          };
+    attribution = i === 0 ? recorded : combine(attribution, recorded);
   }
   return attribution;
+}
+
+/**
+ * Per-call accounting for a harness turn (`HarnessRuntimeOptions.onCallSpent`):
+ * each model call is debited to the run's ledger as soon as the harness has
+ * finished it, then the budget is re-checked, so a long harness run cannot
+ * overshoot its tier by more than the call in flight — the guarantee the Mastra
+ * loop's per-step accounting gives an agent run. A check that fails throws
+ * (`BUDGET_EXCEEDED`), and the runtime ends the turn with that error. Pass
+ * `debited` to {@link runImplementerTurn} so the turn's row covers these calls.
+ */
+export function perCallAccounting(turn: Pick<ImplementerTurn, 'role' | 'usageEvent'>): {
+  onCallSpent: (spent: { modelSpec: string; usage: TokenUsage }[]) => Promise<void>;
+  debited: () => LlmAttribution;
+} {
+  let total = NO_SPEND;
+  return {
+    debited: () => total,
+    onCallSpent: async (spent) => {
+      total = combine(total, await accrue(turn, spent));
+      // The next call must have something left to spend.
+      await assertBudgetAvailable(`agent.${turn.role}`);
+    },
+  };
 }
 
 /**
@@ -176,7 +216,9 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
   const spent =
     outcome.usageByModel ??
     (outcome.usage ? [{ modelSpec: turn.boundModelSpec, usage: outcome.usage }] : []);
-  const attribution = await accrue(turn, spent);
+  const owed = await accrue(turn, spent);
+  // The calls debited as the turn ran come first, so the row is named for them.
+  const attribution = turn.debited ? combine(turn.debited(), owed) : owed;
 
   // LLM output scanner — advisory, non-blocking (the helper never throws).
   await recordSuspiciousLlmOutput(turn.tracer, outcome.text ?? '', { inputJson: turn.context });
