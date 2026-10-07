@@ -420,10 +420,18 @@ Where the runtime applies:
 
 Both the setting and the `runtime` column are ADMIN-only because they decide what runs inside the
 trust boundary and which credential enters the workspace. A team admin's edit of a TEAM agent keeps
-the runtime an ADMIN chose and is refused (`403`) if it would change it. Saving `claude-code` on a
-version whose own model is not `anthropic/…` is refused (`400 RUNTIME_MODEL_MISMATCH`); a version that
-inherits its model is checked when a run resolves it (`HARNESS_UNSUPPORTED_MODEL`). The column carries
-a CHECK constraint, and the worker reads an unknown value as no opinion, with a warning.
+the runtime an ADMIN chose and is refused (`403`) if it would change it. A new scoped override whose
+writer names no runtime starts on the platform-wide row's (`defaultOverrideRuntime`), so a team admin
+who overrides a harness agent's prompt keeps it on the harness; a team admin may restate that runtime
+but not name another. An override whose own model the harness cannot drive starts with none.
+
+Saving `claude-code` on a version the harness cannot drive is refused (`400 RUNTIME_MODEL_MISMATCH`):
+its own model must be `anthropic/…`, and a version that names none is checked against the model it
+inherits along the platform-wide `inheritsModelFrom` chain (`runtimeSaveError`). Saving a model the
+harness cannot drive on an agent that harness agents inherit from is allowed, and the response lists
+them (`runtimeWarnings`; the library page shows them), because the saved agent is valid on its own.
+The column carries a CHECK constraint, and the worker reads an unknown value as no opinion, with a
+warning.
 
 **Agent runs on the harness.** An agent run whose agent asks for `claude-code` runs one harness turn in
 its own container in place of the Mastra loop. The run's step ceiling is the harness's turn cap and its
@@ -1292,8 +1300,12 @@ template override is never badged, because it may use a different model or crede
   that choice. A bundle can carry an agent's `runtime` ([bundles.md](./bundles.md)); one that omits
   it leaves an installed agent's runtime as it is.
 - **A persona inherits a runtime only through `inheritsModelFrom`.** A persona that names its own model
-  does not follow its parent's runtime, and the save-time model check covers only a version's own
-  model; an inherited non-Anthropic model is refused when a run resolves it.
+  does not follow its parent's runtime. The save-time check of an inherited model follows the
+  platform-wide chain only: a team or organization override of the parent, which only a run's scope
+  selects, is checked when a run resolves it (`HARNESS_UNSUPPORTED_MODEL`), and so is a parent edited
+  after the persona was saved (the parent's save lists the personas it strands, but does not refuse).
+  A new override inherits the platform-wide runtime only when it is created; a later change to the
+  platform-wide row's runtime does not reach existing overrides.
 - **The harness ignores the `mcp` binding.** It gets at most the six tools the Agent's `toolKeys`
   grant; MCP servers an Agent references are not passed to it, and there is no sub-agent, web or
   plugin tool.

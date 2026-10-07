@@ -13,7 +13,7 @@ function newMockPrisma() {
     agent: {
       create: vi.fn(),
       findFirst: vi.fn(),
-      findMany: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ skillRefs: [] }),
       updateMany: vi.fn(),
@@ -724,6 +724,119 @@ describe('agent runtime', () => {
       afterJson: { modelSpec: 'anthropic/claude-opus-4-8', runtime: 'claude-code', version: 2 },
       beforeJson: { modelSpec: 'anthropic/claude-opus-5-5', runtime: 'claude-code', version: 1 },
     });
+    await app.close();
+  });
+
+  /** `findFirst` as the routes use it: the platform-wide rows below, and no lineage yet. */
+  function platformRows(rows: Record<string, Record<string, unknown>>) {
+    return async ({ where }: { where: { key?: string; scope?: string } }) =>
+      where.scope === 'GLOBAL' && where.key && rows[where.key] ? rows[where.key] : null;
+  }
+
+  it('starts a new TEAM override on the platform-wide runtime, which a team admin may restate but not change', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findFirst.mockImplementation(
+      platformRows({ implementer: { runtime: 'claude-code' } })
+    );
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    const create = (body: Record<string, unknown>) =>
+      app.inject({
+        body: { key: 'implementer', name: 'Team implementer', ...body },
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/teams/${TEAM}/agent-library`,
+      });
+
+    expect((await create({})).statusCode).toBe(201);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.runtime).toBe('claude-code');
+    expect((await create({ runtime: 'claude-code' })).statusCode).toBe(201);
+    expect((await create({ runtime: 'mastra' })).statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('starts the override with no runtime when the harness cannot drive its own model', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findFirst.mockImplementation(
+      platformRows({ implementer: { runtime: 'claude-code' } })
+    );
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    const res = await app.inject({
+      body: { key: 'implementer', modelSpec: 'openai/gpt-6.1-sol', name: 'Team implementer' },
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/teams/${TEAM}/agent-library`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.runtime).toBeNull();
+    await app.close();
+  });
+
+  it('refuses the harness for an agent that inherits a model the harness cannot drive', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockImplementation(
+      platformRows({
+        implementer: { inheritsModelFrom: null, modelSpec: 'openai/gpt-6.1-sol' },
+        middle: { inheritsModelFrom: 'implementer', modelSpec: null },
+      })
+    );
+    const res = await app.inject({
+      body: {
+        inheritsModelFrom: 'middle',
+        key: 'myFixer',
+        name: 'My Fixer',
+        runtime: 'claude-code',
+        scope: 'GLOBAL',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({
+      code: 'RUNTIME_MODEL_MISMATCH',
+      message: expect.stringContaining("inherits 'openai/gpt-6.1-sol' from 'middle'"),
+    });
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('warns, without refusing, when a new model would strand harness agents that inherit it', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({ key: 'implementer', scope: 'GLOBAL', teamId: null })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'v2',
+      key: 'implementer',
+      modelSpec: 'openai/gpt-6.1-sol',
+      skillRefs: [],
+      version: 2,
+    });
+    // ciFixer inherits through a persona with no model or runtime of its own.
+    mockPrisma.agent.findMany.mockImplementation(
+      async ({ where }: { where: { inheritsModelFrom?: { in: string[] } } }) => {
+        const from = where.inheritsModelFrom?.in ?? [];
+        if (from.includes('implementer')) {
+          return [{ key: 'persona', runtime: null, scope: 'GLOBAL' }];
+        }
+        if (from.includes('persona')) {
+          return [{ key: 'ciFixer', runtime: 'claude-code', scope: 'TEAM' }];
+        }
+        return [];
+      }
+    );
+    const res = await app.inject({
+      body: { modelSpec: 'openai/gpt-6.1-sol' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().runtimeWarnings).toEqual([
+      expect.stringContaining("agent 'ciFixer' (TEAM) runs on claude-code"),
+    ]);
     await app.close();
   });
 
