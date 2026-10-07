@@ -228,18 +228,17 @@ Integration credentials that an operator rotates during normal use are stored en
 
 ## 3. Database setup
 
-The shipped schema lives in `packages/shared/src/prisma/migrations/` — a consolidated baseline plus
-one hand-written DDL migration, split by what Prisma's DSL can express:
+The shipped schema lives in `packages/shared/src/prisma/migrations/` — a consolidated baseline, one
+hand-written DDL migration, and the ordinary Prisma migrations appended after them:
 
 | Migration | What it adds |
 | --------- | ------------ |
 | `00000000000000_init` | The consolidated baseline, generated from `schema.prisma` via `prisma migrate diff --from-empty --to-schema --script` — the `vector` extension, every enum, table, column, FK and Prisma-expressible index (including the `repo_dependencies` edge table and `connections.package_names`) |
 | `00000000000001_custom_constraints_and_indexes` | Everything the DSL can't express: the HNSW vector index on `memory_items.embedding`, the partial unique indexes for the scope cascade (agents, credentials, [config settings and grants](./configuration.md)), HITL idempotency and the `repo_dependencies` resolved-edge/suggestion pair, singleton/scope and `repo_dependencies` CHECK constraints, array-column `NOT NULL`s, and the embedding-config seed |
+| `00000000000002_user_approval` | `users.approved_at` and `users.approval_source`, which record when and how an account was first approved so the GitHub organization auto-approval never re-approves a deactivated account |
 
-Until the schema is deployed somewhere, a change goes into the baseline by regenerating it with the
-command above rather than by appending a third migration — the split is by *kind* of DDL, not by
-when it was written. Once deployed, new changes append normal Prisma migrations after these;
-`prisma migrate deploy` applies whatever is pending.
+New changes append normal Prisma migrations after these, and the baseline and the hand-written DDL
+migration are not edited. `prisma migrate deploy` applies whatever is pending.
 
 The `oauth_*` and `jwks` tables must exist before MCP clients can use the gateway, so deploy the migration
 first. The gateway does boot without them: it seeds the MCP resource into `oauth_resources` while
