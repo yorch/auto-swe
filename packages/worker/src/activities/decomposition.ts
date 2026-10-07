@@ -318,6 +318,7 @@ export async function resolveMergeConflict(
       // provider can't drag the resolver activity past its timeout once the
       // real work (merge + push) has already succeeded.
       await recordLessonBackground({
+        agentKey: 'mergeConflictResolver',
         failureType: 'MERGE_CONFLICT',
         lessonSummary: `Auto-resolved merge conflicts when merging ${merged.length} branch(es) into ${targetBranch}: ${merged.join(', ')}`,
         metadata: { mergedBranches: merged, targetBranch },

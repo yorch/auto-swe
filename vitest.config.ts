@@ -152,6 +152,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillScanner.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/memoryForget',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/memoryForget.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/skillRevision',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillRevision.ts'),
       },

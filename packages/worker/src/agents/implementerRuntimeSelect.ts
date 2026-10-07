@@ -68,6 +68,11 @@ export async function buildImplementerTurnRunner(input: {
   ctx?: ResolveCtx;
   tracer: AgentTracer;
   workspace: Workspace;
+  /**
+   * The repository the session works on. Under the Mastra loop the agent gets
+   * read-only memory tools over its lessons; the harness has its own tool set.
+   */
+  repoId?: string;
 }): Promise<ImplementerTurnRunner> {
   const agentKey = input.agentKey ?? 'implementer';
   const { runtime: kind, source: kindSource } = await resolveAgentRuntime(
@@ -86,7 +91,8 @@ export async function buildImplementerTurnRunner(input: {
       input.workspace,
       input.tracer,
       input.ctx,
-      agentKey
+      agentKey,
+      input.repoId
     );
     return runner({
       close: built.closeMcp,

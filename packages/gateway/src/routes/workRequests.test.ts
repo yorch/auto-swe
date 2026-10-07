@@ -206,6 +206,7 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
+      isReembedStaleMemoryRunning: async () => false,
       isWorkflowGone: async () => false,
       isWorkflowRunning: async () => false,
       signalWorkflow: async () => {},
@@ -214,6 +215,7 @@ describe('POST /api/v1/work-requests', () => {
       startEpicWorkflow: async () => {},
       startEvalRunWorkflow: async () => {},
       startReembedMemory: async () => {},
+      startReembedStaleMemory: async () => true,
       startRepoDependencyInference: async () => {},
       startRunnableWorkflow: async (id: string) => {
         startedWorkflowIds.push(id);

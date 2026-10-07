@@ -124,3 +124,37 @@ export function useUpdateEmbeddingConfig() {
     },
   });
 }
+
+// ── Memory re-embed after a model change ──
+
+export interface MemoryReembedStatus {
+  modelSpec: string | null;
+  running: boolean;
+  /** Rows the configured model did not embed; recall and consolidation skip them. */
+  stale: number;
+  total: number;
+}
+
+export function useMemoryReembedStatus() {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: MemoryReembedStatus }>('/api/v1/platform/embedding-config/reembed')
+        .then((r) => r.data),
+    queryKey: ['admin-memory-reembed'],
+    // While a walk runs the count falls; poll so the panel shows it.
+    refetchInterval: (query) => (query.state.data?.running ? 5_000 : false),
+  });
+}
+
+export function useStartMemoryReembed() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ data: { staleRows: number; started: boolean } }>(
+        '/api/v1/platform/embedding-config/reembed',
+        {}
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-memory-reembed'] }),
+  });
+}

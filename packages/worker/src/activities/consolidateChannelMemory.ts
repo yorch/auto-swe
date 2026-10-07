@@ -5,6 +5,7 @@ import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { mapWithConcurrency } from '../lib/boundedMap.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
@@ -52,6 +53,9 @@ interface RawMemoryItem {
   teamId: string | null;
   orgId: string | null;
 }
+
+/** Max clusters consolidated concurrently — each is one LLM call plus embeddings. */
+const CLUSTER_CONCURRENCY = 3;
 
 const EMPTY_RESULT: ConsolidateChannelMemoryResult = {
   clustersConsolidated: 0,
@@ -146,6 +150,7 @@ export async function consolidateChannelMemory(
      FROM memory_items
      WHERE channel_id = $1::uuid
        AND consolidated_at IS NULL
+       AND superseded_at IS NULL
        AND (embedding_model IS NULL OR embedding_model = $2)
      ORDER BY created_at DESC`,
     channelId,
@@ -220,8 +225,12 @@ export async function consolidateChannelMemory(
   }
 
   try {
-    const clusterOutcomes = await Promise.all(
-      qualifying.map(async (cluster) => {
+    // Each cluster is one LLM call plus embeddings; on a busy channel there can
+    // be many, so they run through the same bounded pool as lesson clusters.
+    const clusterOutcomes = await mapWithConcurrency(
+      qualifying,
+      CLUSTER_CONCURRENCY,
+      async (cluster) => {
         const clusterItems = cluster.map((idx) => rows[idx]);
         const sourceIds = clusterItems.map((m) => m.id);
 
@@ -300,7 +309,7 @@ export async function consolidateChannelMemory(
             SELECT pg_advisory_xact_lock(hashtextextended(${channelId}, 0))
           `;
           const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(
-            `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
+            `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL AND superseded_at IS NULL`,
             sourceIds
           );
           if (stillActive.length < sourceIds.length) {
@@ -312,10 +321,11 @@ export async function consolidateChannelMemory(
             await tx.$executeRawUnsafe(
               `INSERT INTO memory_items
                (id, channel_id, team_id, org_id, agent_key, rationale, lesson_summary,
-                embedding, embedding_model, scope, metadata, created_at)
+                embedding, embedding_model, scope, metadata, entity_type, entity_id, model,
+                cost_usd, created_at)
              VALUES
                (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, 'channelAssistant', $4, $5,
-                $6::vector, $7, 'channel-memory', $8::jsonb, now())`,
+                $6::vector, $7, 'channel-memory', $8::jsonb, 'channel', $1::uuid, $9, $10, now())`,
               channelId,
               teamId,
               orgId,
@@ -323,7 +333,9 @@ export async function consolidateChannelMemory(
               memory.lessonSummary,
               JSON.stringify(newEmbeddings[i]?.embedding),
               newEmbeddings[i]?.spec ?? null,
-              JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds })
+              JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds }),
+              bound.spec,
+              attribution.costUsd / memories.length
             );
           }
 
@@ -333,7 +345,7 @@ export async function consolidateChannelMemory(
           );
           return { consolidated: cluster.length, created: memories.length };
         });
-      })
+      }
     );
 
     const finalResult: ConsolidateChannelMemoryResult = {

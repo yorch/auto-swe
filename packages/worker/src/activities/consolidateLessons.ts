@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { LESSON_CONSOLIDATOR_PROMPT } from '../agents/prompts.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { mapWithConcurrency } from '../lib/boundedMap.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
@@ -41,6 +42,7 @@ interface RawLesson {
   failureType: string | null;
   rationale: string;
   embeddingJson: string | null;
+  confidence: number | null;
 }
 
 /**
@@ -85,10 +87,12 @@ async function consolidateLessonsImpl(
        lesson_summary   AS "lessonSummary",
        failure_type     AS "failureType",
        rationale,
+       confidence,
        embedding::text  AS "embeddingJson"
      FROM memory_items
      WHERE repo_id = $1::uuid
        AND consolidated_at IS NULL
+       AND superseded_at IS NULL
        AND (embedding_model IS NULL OR embedding_model = $2)
      ORDER BY created_at DESC`,
     repoId,
@@ -212,6 +216,14 @@ async function consolidateLessonsImpl(
         return { consolidated: 0, created: 0 };
       }
 
+      // A merged lesson is as well supported as its sources on average; sources
+      // nobody graded do not count, and a cluster of them leaves it ungraded.
+      const graded = clusterLessons
+        .map((l) => l.confidence)
+        .filter((c): c is number => typeof c === 'number');
+      const clusterConfidence =
+        graded.length > 0 ? graded.reduce((a, b) => a + b, 0) / graded.length : null;
+
       // Determine dominant failureType across the cluster (null if mixed).
       const types = [...new Set(clusterLessons.map((l) => l.failureType))];
       const sharedFailureType = types.length === 1 ? types[0] : null;
@@ -236,7 +248,7 @@ async function consolidateLessonsImpl(
             SELECT pg_advisory_xact_lock(hashtextextended(${repoId}, 0))
           `;
         const stillActive = await tx.$queryRawUnsafe<{ id: string }[]>(
-          `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL`,
+          `SELECT id FROM memory_items WHERE id = ANY($1::uuid[]) AND consolidated_at IS NULL AND superseded_at IS NULL`,
           sourceIds
         );
         if (stillActive.length < sourceIds.length) {
@@ -245,18 +257,29 @@ async function consolidateLessonsImpl(
 
         for (let i = 0; i < lessons.length; i++) {
           const lesson = lessons[i];
+          // A consolidated lesson keeps the provenance a written one has: its
+          // scope and entity (so scope- and entity-filtered reads still see it),
+          // the agent and model that wrote it, its share of the call's cost, and
+          // the sources it came from — which stay in the table, consolidated.
           await tx.$executeRawUnsafe(
             `INSERT INTO memory_items
-               (id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type, metadata, created_at)
+               (id, repo_id, rationale, lesson_summary, embedding, embedding_model, failure_type,
+                metadata, scope, entity_type, entity_id, agent_key, model, cost_usd, confidence,
+                created_at)
              VALUES
-               (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6, $7::jsonb, now())`,
+               (gen_random_uuid(), $1::uuid, $2, $3, $4::vector, $5, $6, $7::jsonb,
+                'swe-lessons', 'connection', $1::uuid, $8, $9, $10, $11, now())`,
             repoId,
             lesson.rationale,
             lesson.lessonSummary,
             JSON.stringify(newEmbeddings[i]?.embedding),
             newEmbeddings[i]?.spec ?? null,
             lesson.failureType ?? sharedFailureType,
-            JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds })
+            JSON.stringify({ clusterSize: cluster.length, consolidatedFrom: sourceIds }),
+            CONSOLIDATOR_AGENT_KEY,
+            bound.spec,
+            attribution.costUsd / lessons.length,
+            clusterConfidence
           );
         }
 
@@ -268,21 +291,10 @@ async function consolidateLessonsImpl(
         return { consolidated: cluster.length, created: lessons.length };
       });
     };
-    const clusterOutcomes: Array<Awaited<ReturnType<typeof processCluster>>> = new Array(
-      qualifying.length
-    );
-    let nextCluster = 0;
-    const poolWorker = async (): Promise<void> => {
-      while (true) {
-        const i = nextCluster++;
-        if (i >= qualifying.length) {
-          return;
-        }
-        clusterOutcomes[i] = await processCluster(qualifying[i] as number[]);
-      }
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(CLUSTER_CONCURRENCY, qualifying.length) }, poolWorker)
+    const clusterOutcomes = await mapWithConcurrency(
+      qualifying,
+      CLUSTER_CONCURRENCY,
+      processCluster
     );
 
     const totalConsolidated = clusterOutcomes.reduce((s, o) => s + o.consolidated, 0);

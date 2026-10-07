@@ -18,6 +18,7 @@ import type { CodeResult, RepoWorkRequest, Subtask } from '@auto-swe/shared/type
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import { workflowInfo } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
+import { buildLessonEvidence } from '../lib/lessonEvidence.js';
 import { lookupPath } from '../lib/workflowEngine.js';
 import {
   agentActivities,
@@ -328,12 +329,21 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'commitToMemory',
-    async ({ request, config, inputs }) => {
+    async ({ ctx, request, config, inputs }) => {
       const repoId = (inputs.repoId as string | undefined) ?? request.repoId;
+      // What the run recorded, so the lesson rests on it rather than on the
+      // ticket alone. Read from context here: the loops already keep it there.
+      const evidence = buildLessonEvidence({
+        ciLogs: lookupPath(ctx, 'context.lastCILogs'),
+        codeResult: lookupPath(ctx, 'context.currentCodeResult'),
+        outcome: inputs.outcome,
+        rejectionSummary: lookupPath(ctx, 'context.lastRejectionSummary'),
+      });
       const lessonId = await memoryActivities.commitToMemory(
         workflowInfo().workflowId,
         repoId,
-        config.systemPrompt as string | undefined
+        config.systemPrompt as string | undefined,
+        evidence
       );
       return { lessonId };
     },

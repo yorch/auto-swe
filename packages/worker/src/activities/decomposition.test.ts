@@ -591,11 +591,13 @@ describe('resolveMergeConflict', () => {
       targetBranch: 'auto/TICK-1',
     });
 
+    // No repository is passed: the resolver gets no memory tools.
     expect(buildImplementerMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.anything(),
-      'mergeConflictResolver'
+      'mergeConflictResolver',
+      undefined
     );
     const [messages, options] = generateMock.mock.calls[0] as [
       Array<{ role: string; content: string }>,

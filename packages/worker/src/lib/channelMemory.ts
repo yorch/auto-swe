@@ -1,7 +1,12 @@
 import { prisma } from '@auto-swe/shared/db';
 import { generateEmbeddingWithSpec } from './embeddings.js';
 import { withoutFlaggedMemory } from './memoryGuard.js';
-import { insertMemoryItem, type QueryEmbedding, searchMemoryItemsByVector } from './memoryStore.js';
+import {
+  insertMemoryItem,
+  type QueryEmbedding,
+  scopedVectorQuery,
+  searchMemoryItemsByVector,
+} from './memoryStore.js';
 
 /** One retrieved channel-memory row with its cosine similarity to the query. */
 export interface ChannelMemoryItem {
@@ -144,6 +149,7 @@ function crossChannelMemorySql(opts: {
        AND sc.is_private = false${opts.extraWhere ? `\n       ${opts.extraWhere}` : ''}
        AND mi.embedding IS NOT NULL
        AND mi.consolidated_at IS NULL
+       AND mi.superseded_at IS NULL
        AND (mi.embedding_model IS NULL OR mi.embedding_model = $6)
        AND 1 - (mi.embedding <=> $1::vector) >= $4
      ORDER BY mi.embedding <=> $1::vector ASC
@@ -174,7 +180,7 @@ function runCrossChannelMemoryQuery<T>(
   }
 ): Promise<T[]> {
   const { embedding: queryEmbedding, spec: embeddingSpec } = opts.precomputed;
-  return prisma.$queryRawUnsafe<T[]>(
+  return scopedVectorQuery<T>(
     sql,
     JSON.stringify(queryEmbedding),
     scopeId,
@@ -249,7 +255,7 @@ export async function recentChannelMemory(
     orderBy: { createdAt: 'desc' },
     select: { createdAt: true, id: true, lessonSummary: true, rationale: true },
     take: limit,
-    where: { channelId, consolidatedAt: null },
+    where: { channelId, consolidatedAt: null, supersededAt: null },
   });
   // The digest prompt reads both fields, so both are scanned.
   return withoutFlaggedMemory(rows, (row) => `${row.lessonSummary}\n${row.rationale}`);

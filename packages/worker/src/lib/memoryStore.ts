@@ -1,4 +1,6 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateEmbeddingWithSpec } from './embeddings.js';
 import { assertMemoryContentAllowed } from './memoryGuard.js';
 
@@ -49,6 +51,54 @@ function assertScopeColumn(column: string): asserts column is ScopeColumn {
 }
 
 /**
+ * Run one scoped similarity query (`WHERE <scope> = … ORDER BY embedding <=> …
+ * LIMIT n`) with pgvector's iterative index scan on.
+ *
+ * Without it, a plan that answers the `ORDER BY` from the HNSW index reads only
+ * the index's first `hnsw.ef_search` (40) candidates — nearest first, from the
+ * whole table — and applies the scope filter afterwards. A repository or
+ * channel whose memories are not among the table's 40 nearest to the query then
+ * gets fewer than exist, or none. `iterative_scan` keeps reading the index
+ * until the filter has passed enough rows; `strict_order` keeps the results in
+ * distance order. `SET LOCAL` confines the setting to this transaction.
+ *
+ * The setting needs pgvector 0.8. On an older server the first query refuses
+ * the parameter, a warning is logged once, and searches run without it.
+ */
+let iterativeScanUnsupported = false;
+
+export async function scopedVectorQuery<T>(sql: string, ...params: unknown[]): Promise<T[]> {
+  if (!iterativeScanUnsupported) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe('SET LOCAL hnsw.iterative_scan = strict_order');
+        return tx.$queryRawUnsafe<T[]>(sql, ...params);
+      });
+    } catch (err) {
+      if (!isUnknownSettingError(err)) {
+        throw err;
+      }
+      iterativeScanUnsupported = true;
+      console.warn(
+        '[memoryStore] hnsw.iterative_scan is unavailable (pgvector < 0.8); scoped memory ' +
+          'searches can return fewer matches than exist. Upgrade pgvector to fix this.'
+      );
+    }
+  }
+  return prisma.$queryRawUnsafe<T[]>(sql, ...params);
+}
+
+function isUnknownSettingError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /unrecognized configuration parameter|invalid configuration parameter/i.test(message);
+}
+
+/** Test seam: forget a previous "unsupported" verdict. */
+export function _resetIterativeScanSupportForTests(): void {
+  iterativeScanUnsupported = false;
+}
+
+/**
  * Cosine-similarity search over `memory_items`, scoped to a single owning row
  * (`repo_id` or `channel_id`). Embeds `queryText`, then ranks by pgvector cosine
  * distance (`<=>`) — lower distance = higher similarity. Rows are filtered to
@@ -90,13 +140,14 @@ export async function searchMemoryItemsByVector(opts: {
     ',\n      '
   );
 
-  return prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+  return scopedVectorQuery<Record<string, unknown>>(
     `SELECT
       ${projection}
     FROM memory_items
     WHERE ${opts.scopeColumn} = $2::uuid
       AND embedding IS NOT NULL
       AND consolidated_at IS NULL
+      AND superseded_at IS NULL
       AND (embedding_model IS NULL OR embedding_model = $5)
       AND 1 - (embedding <=> $1::vector) >= $3
     ORDER BY embedding <=> $1::vector ASC
@@ -135,7 +186,7 @@ export async function searchMemoryItemsByEntity(opts: {
     ',\n      '
   );
 
-  return prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+  return scopedVectorQuery<Record<string, unknown>>(
     `SELECT
       ${projection}
     FROM memory_items
@@ -143,6 +194,7 @@ export async function searchMemoryItemsByEntity(opts: {
       AND entity_id = $3
       AND embedding IS NOT NULL
       AND consolidated_at IS NULL
+      AND superseded_at IS NULL
       AND (embedding_model IS NULL OR embedding_model = $6)
       AND 1 - (embedding <=> $1::vector) >= $4
     ORDER BY embedding <=> $1::vector ASC
@@ -187,6 +239,8 @@ export async function insertMemoryItem(input: {
   skillsActive?: string[];
   entityType?: MemoryEntityType | null;
   entityId?: string | null;
+  /** 0–1, how directly the writer's evidence supports the item; null when no one judged it. */
+  confidence?: number | null;
 }): Promise<string> {
   // Every memory write passes here, so this is where a planted instruction is
   // stopped before it can be recalled into a later prompt. Before the
@@ -206,11 +260,11 @@ export async function insertMemoryItem(input: {
     `INSERT INTO memory_items
        (id, workflow_id, repo_id, channel_id, team_id, org_id, rationale, lesson_summary,
         embedding, embedding_model, failure_type, scope, metadata, skills_active,
-        workflow_run_id, agent_key, model, cost_usd, entity_type, entity_id, created_at)
+        workflow_run_id, agent_key, model, cost_usd, entity_type, entity_id, confidence, created_at)
      VALUES
        (gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7,
         $8::vector, $9, $10, $11, $12::jsonb, $13::text[],
-        $14::uuid, $15, $16, $17, $18, $19, now())
+        $14::uuid, $15, $16, $17, $18, $19, $20, now())
      RETURNING id`,
     input.workflowId ?? null,
     input.repoId ?? null,
@@ -230,10 +284,84 @@ export async function insertMemoryItem(input: {
     input.model ?? null,
     input.costUsd ?? null,
     entityType,
-    entityId
+    entityId,
+    input.confidence ?? null
   );
 
-  return rows[0]?.id ?? '';
+  const id = rows[0]?.id ?? '';
+  if (id) {
+    await supersedeOlderMemory({
+      embedding,
+      id,
+      scope: input.scope ?? 'swe-lessons',
+      scopeColumn: input.repoId ? 'repo_id' : input.channelId ? 'channel_id' : null,
+      scopeId: input.repoId ?? input.channelId ?? null,
+      settingCtx: {
+        ...(input.channelId ? { channelId: input.channelId } : {}),
+        ...(input.orgId ? { orgId: input.orgId } : {}),
+        ...(input.teamId ? { teamId: input.teamId } : {}),
+      },
+      spec,
+    });
+  }
+  return id;
+}
+
+/**
+ * Mark the older items a new one replaces: active rows in the same repository
+ * or channel, embedded by the same model, at or above `memory.supersedeThreshold`
+ * similarity to it. Newer wins — a lesson written from fresher evidence about
+ * the same thing replaces the old one rather than sitting beside it in recall.
+ * The older row is kept, with `superseded_by_id` naming its replacement.
+ *
+ * Best-effort: the new item is already stored, and failing to retire an old
+ * one leaves recall as it was before, so a failure is logged, not thrown.
+ * Returns how many items were superseded.
+ */
+async function supersedeOlderMemory(input: {
+  id: string;
+  embedding: number[];
+  spec: string;
+  scope: string;
+  scopeColumn: 'repo_id' | 'channel_id' | null;
+  scopeId: string | null;
+  settingCtx: { channelId?: string; orgId?: string; teamId?: string };
+}): Promise<number> {
+  if (!input.scopeColumn || !input.scopeId) {
+    return 0;
+  }
+  assertScopeColumn(input.scopeColumn);
+  try {
+    const threshold = await resolveSetting('memory.supersedeThreshold', input.settingCtx);
+    if (threshold >= 1) {
+      return 0;
+    }
+    return await prisma.$executeRawUnsafe(
+      `UPDATE memory_items
+          SET superseded_by_id = $1::uuid, superseded_at = now()
+        WHERE id <> $1::uuid
+          AND ${input.scopeColumn} = $2::uuid
+          AND scope = $3
+          AND consolidated_at IS NULL
+          AND superseded_at IS NULL
+          AND embedding IS NOT NULL
+          AND embedding_model = $4
+          AND 1 - (embedding <=> $5::vector) >= $6`,
+      input.id,
+      input.scopeId,
+      input.scope,
+      input.spec,
+      JSON.stringify(input.embedding),
+      threshold
+    );
+  } catch (err) {
+    console.warn(
+      `[memoryStore] could not supersede older memory for ${input.id}: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return 0;
+  }
 }
 
 /**
@@ -278,4 +406,32 @@ export async function reembedMemoryItem(memoryId: string): Promise<boolean> {
   );
 
   return true;
+}
+
+/**
+ * Ids of up to `limit` memory rows that `spec` did not embed — another model's
+ * rows, and legacy rows that recorded no model — after `afterId`, in id order.
+ * Id order is the cursor a bulk re-embed walks: a row that fails stays stale but
+ * is behind the cursor, so the walk always ends.
+ */
+export async function listStaleMemoryIds(
+  spec: string,
+  afterId: string | null,
+  limit: number
+): Promise<string[]> {
+  const rows = await runUnscoped(
+    'a bulk re-embed covers every memory row, whatever its team',
+    ['MemoryItem'],
+    () =>
+      prisma.memoryItem.findMany({
+        orderBy: { id: 'asc' },
+        select: { id: true },
+        take: limit,
+        where: {
+          OR: [{ embeddingModel: null }, { embeddingModel: { not: spec } }],
+          ...(afterId ? { id: { gt: afterId } } : {}),
+        },
+      })
+  );
+  return rows.map((r) => r.id);
 }

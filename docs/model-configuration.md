@@ -644,7 +644,12 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   ends there; a missing GLOBAL row is a `ConfigMissingError`, not a silent skip.
 - **Embeddings are locked to 1536 dimensions.** `memory_items.embedding` is `vector(1536)`, so a
   model returning any other shape throws. Changing dimension is a migration plus a re-embed of every
-  `MemoryItem`, and there is no tooling for it.
+  `MemoryItem`; the bulk re-embed below handles the second half, but nothing performs the migration.
+- **Changing the embedding model hides memory until it is re-embedded.** Recall and consolidation
+  compare vectors from one model only, so rows embedded by the previous model drop out of both.
+  Nothing re-embeds them on save: the Embeddings tab reports how many there are and starts
+  `ReembedStaleMemoryWorkflow` on request (one embedding call per row), because the cost is the
+  admin's to accept ([memory.md §6](./memory.md#6-administration)).
 - **The boot check reflects install state at boot.** `assertConfigReady` gates on the agents the
   installed templates can reach. Activating a template afterwards is not re-checked, so a newly
   reachable agent with no credential fails at its node instead of at startup. Restart the worker to

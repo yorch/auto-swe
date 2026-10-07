@@ -36,7 +36,11 @@ import {
   type SlackThreadMessage,
   updateSlackMessage,
 } from '../lib/slackNotify.js';
-import { assertModelPricedForUsdCap, findUnpricedModelRefusal } from '../lib/usdCapGuard.js';
+import {
+  assertModelPricedForUsdCap,
+  findUnpricedModelRefusal,
+  isSpendRefusal,
+} from '../lib/usdCapGuard.js';
 import { SKIP_SENTINEL } from './channelConstants.js';
 import { runAgent } from './runAgent.js';
 
@@ -1091,8 +1095,10 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
  *    call on the channel).
  *  - On any failure (summarizer throws, returns no object, or the memory write
  *    fails) we FALL BACK to storing the truncated raw exchange so memory still
- *    accrues. A failure in the fallback path is itself swallowed + logged. The
- *    exception is a write the memory gate refused: nothing is stored.
+ *    accrues. A failure in the fallback path is itself swallowed + logged. Two
+ *    outcomes store nothing instead: a write the memory gate refused, and a
+ *    summary refused for spend (unpriced model, unreadable price, exhausted
+ *    budget) — the fallback's embedding would be spend the refusal disallowed.
  */
 async function summarizeAndStoreChannelMemory(
   input: ChannelAssistantTurnInput,
@@ -1146,6 +1152,15 @@ async function summarizeAndStoreChannelMemory(
     if (err instanceof MemoryContentRefusedError) {
       console.warn(
         `[channelAssistant] channel memory not stored for ${input.channelId}: ${err.message}`
+      );
+      return costUsd;
+    }
+    // A refusal to spend is not a failure to fall back from: storing the raw
+    // exchange would embed it — more spend the refusal did not allow, outside
+    // the channel's hold — and keep text the summary step never distilled.
+    if (isSpendRefusal(err)) {
+      console.warn(
+        `[channelAssistant] channel memory not stored for ${input.channelId}: the summary was refused`
       );
       return costUsd;
     }

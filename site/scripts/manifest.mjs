@@ -116,6 +116,7 @@ export const SIDEBAR = [
       'docs/evals',
       'docs/agent-runs',
       'docs/channel-assistant',
+      'docs/memory',
       'docs/nl-workflow-authoring',
       'docs/figma-integration',
       'docs/repo-dependency-graph',

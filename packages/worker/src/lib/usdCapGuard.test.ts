@@ -30,6 +30,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import {
   assertModelPricedForUsdCap,
   assertRolePricedForUsdCap,
+  isSpendRefusal,
   isUnpricedModelRefusal,
   MODEL_PRICE_UNAVAILABLE,
   MODEL_UNPRICED,
@@ -267,5 +268,21 @@ describe('isUnpricedModelRefusal', () => {
       false
     );
     expect(isUnpricedModelRefusal('nope')).toBe(false);
+  });
+});
+
+describe('isSpendRefusal', () => {
+  it.each(['MODEL_UNPRICED', 'MODEL_PRICE_UNAVAILABLE', 'BUDGET_EXCEEDED'])(
+    'recognises a %s refusal, also when wrapped',
+    (type) => {
+      const refusal = Object.assign(new Error('refused'), { type });
+      expect(isSpendRefusal(refusal)).toBe(true);
+      expect(isSpendRefusal(new Error('wrapped', { cause: refusal }))).toBe(true);
+    }
+  );
+
+  it('does not treat an ordinary failure as a refusal', () => {
+    expect(isSpendRefusal(new Error('no structured output'))).toBe(false);
+    expect(isSpendRefusal('nope')).toBe(false);
   });
 });

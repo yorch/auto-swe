@@ -16,9 +16,16 @@ vi.mock('./embeddings.js', () => ({
 }));
 
 const searchMemoryItemsByVectorMock = vi.fn();
-vi.mock('./memoryStore.js', () => ({
-  searchMemoryItemsByVector: (...args: unknown[]) => searchMemoryItemsByVectorMock(...args),
-}));
+vi.mock('./memoryStore.js', async () => {
+  const { prisma } = await import('@auto-swe/shared/db');
+  return {
+    // The iterative-scan wrapper is covered by memoryStore.pg.test.ts; here it
+    // is the plain query, so the SQL it is handed can be asserted on.
+    scopedVectorQuery: (sql: string, ...params: unknown[]) =>
+      prisma.$queryRawUnsafe(sql, ...params),
+    searchMemoryItemsByVector: (...args: unknown[]) => searchMemoryItemsByVectorMock(...args),
+  };
+});
 
 import { prisma } from '@auto-swe/shared/db';
 import { retrieveChannelMemory } from './channelMemory.js';

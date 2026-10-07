@@ -215,6 +215,23 @@ Use the `loadSkill` tool to load the full guidance for any skill before applying
 - **security-aware-implementation**: ...
 ```
 
+### 3.2.1 Memory tools (`searchLessons`, `explainLesson`)
+
+When the session works on a repository — the implementer, and every fix session (`ciFixer`,
+`reviewFixer`, `gateFixer`) — two read-only tools are added beside the workspace tools, like
+`loadSkill` outside `toolKeys`. Both are bound to the session's repository in code, never by an
+argument the model passes:
+
+```
+searchLessons({ query: string, limit?: 1–10 }) → { lessons: [{ lessonId, summary, failureType, confidence, similarity }] }
+explainLesson({ lessonId: uuid }) → { found, lesson: { outcome, evidence, mergedFrom, replaced, status, … } }
+```
+
+`searchLessons` returns what recall would for the agent's own query; `explainLesson` reads a lesson
+of the same repository (any other id is not found) and withholds any field that matches an injection
+pattern. Recalled lessons carry their ids, so the agent can ask about one. See
+[memory.md §3](./memory.md#3-recalling-lessons).
+
 ### 3.3 Path Safety
 
 `safePath(relPath)` normalises the path and rejects anything that is absolute, starts with `..`, contains null bytes, backslashes, or single quotes. This prevents path-traversal attacks in `readFile`, `writeFile`, and `listDirectory`.
@@ -1073,7 +1090,7 @@ template override is never badged, because it may use a different model or crede
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |
 | `EmbeddingConfig` | `embedding_configs` | Singleton embedding model + credential |
 | `AgentTrace` | `agent_traces` | Per-activity tool-call / LLM-response / event rows |
-| `MemoryItem` | `memory_items` | pgvector semantic memory (1536-dim HNSW); `skillsActive` column records which skills were active during the run. Steps without their own LLM call — the merge-conflict resolver and shell steps — write lessons through `recordLessonBackground`, which does not block the activity |
+| `MemoryItem` | `memory_items` | pgvector semantic memory (1536-dim HNSW); `skillsActive` records the skills the memory agent itself ran with when it wrote the lesson (empty for lessons written without a model call and for consolidated rows) — not the skills of the run being summarised. Steps without their own LLM call — the merge-conflict resolver and shell steps — write lessons through `recordLessonBackground`, which does not block the activity |
 | `ScannerPattern` | `scanner_patterns` | Regex rules for INJECTION, EXFILTRATION, SHELL_COMMAND, CODE_SECURITY, SENSITIVE_FILE scanners |
 
 **Schema file:** `packages/shared/src/prisma/schema.prisma`

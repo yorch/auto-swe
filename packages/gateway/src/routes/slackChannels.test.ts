@@ -3,6 +3,13 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { slackChannelRoutes } from './slackChannels.js';
 
+// The forget walk is covered against real Postgres (memoryForget.pg.test.ts);
+// here it is a stand-in that reports what it was asked to forget.
+const { forgetMock } = vi.hoisted(() => ({
+  forgetMock: vi.fn(async (_tx: unknown, ids: string[]) => ({ deleted: ids, restored: ['r-1'] })),
+}));
+vi.mock('@auto-swe/shared/lib/memoryForget', () => ({ forgetMemoryItems: forgetMock }));
+
 function newMockPrisma() {
   const prisma = {
     // Interactive transactions run against the same mock, as elsewhere in the
@@ -666,7 +673,7 @@ describe('slackChannelRoutes', () => {
     expect(mockPrisma.memoryItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         take: 200,
-        where: { channelId: CHANNEL, consolidatedAt: null },
+        where: { channelId: CHANNEL, consolidatedAt: null, supersededAt: null },
       })
     );
     // The embedding column must never be selected (Unsupported vector field).
@@ -761,8 +768,13 @@ describe('slackChannelRoutes', () => {
       url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
     });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.payload).data.deleted).toBe(true);
-    expect(mockPrisma.memoryItem.delete).toHaveBeenCalledWith({ where: { id: 'mem-1' } });
+    expect(JSON.parse(res.payload).data).toEqual({
+      deleted: true,
+      forgotten: ['mem-1'],
+      restored: ['r-1'],
+    });
+    expect(forgetMock).toHaveBeenCalledWith(expect.anything(), ['mem-1']);
+    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
     await app.close();
   });
 
@@ -776,7 +788,7 @@ describe('slackChannelRoutes', () => {
       url: `/api/v1/platform/slack-channels/${CHANNEL}/memory/44444444-4444-4444-8444-444444444444`,
     });
     expect(res.statusCode).toBe(404);
-    expect(mockPrisma.memoryItem.delete).not.toHaveBeenCalled();
+    expect(forgetMock).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -1088,5 +1100,67 @@ describe('POST /:id/budget/reset', () => {
     };
     expect(audit.data.beforeJson.holdsOutstanding).toBe(2);
     expect(audit.data.afterJson.holdsReleased).toBe(2);
+  });
+});
+
+describe('POST /memory/erase-user', () => {
+  const URL = '/api/v1/platform/slack-channels/memory/erase-user';
+
+  it("forgets every channel memory from one Slack user's turns, auditing counts only", async () => {
+    const { app, mockPrisma } = await buildApp();
+    mockPrisma.memoryItem.findMany.mockResolvedValue([{ id: 'm-1' }, { id: 'm-2' }]);
+
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { slackUserId: 'U012ABCDEF' },
+      url: URL,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual({ forgotten: 2, restored: 1 });
+    expect(mockPrisma.memoryItem.findMany).toHaveBeenCalledWith({
+      select: { id: true },
+      where: {
+        metadata: { equals: 'U012ABCDEF', path: ['userSlackId'] },
+        scope: 'channel-memory',
+      },
+    });
+    expect(forgetMock).toHaveBeenCalledWith(expect.anything(), ['m-1', 'm-2']);
+    const audit = mockPrisma.configAuditLog.create.mock.calls[0]?.[0]?.data;
+    expect(audit.afterJson).toEqual({
+      erasure: 'slack-user',
+      forgotten: 2,
+      restored: 1,
+      slackUserId: 'U012ABCDEF',
+    });
+    // The audit row must not keep the text being erased.
+    expect(audit.beforeJson).toBeNull();
+    await app.close();
+  });
+
+  it('refuses something that is not a Slack member id', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { slackUserId: "x' OR 1=1" },
+      url: URL,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(forgetMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('is admin-only', async () => {
+    const { app } = await buildApp('ENGINEER');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { slackUserId: 'U012ABCDEF' },
+      url: URL,
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
   });
 });

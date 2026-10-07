@@ -181,6 +181,37 @@ export interface LessonSummary {
   summary: string;
   failureType: string | null;
   similarity: number;
+  /** 0–1 as the writer graded it; null when no one did. */
+  confidence: number | null;
+}
+
+/**
+ * How the run a lesson is written about ended. `MERGED` is the default engineering
+ * template's success; the two failures are its loops running out of attempts.
+ * `COMPLETED` is any other template's `commitToMemory` step.
+ */
+export type LessonOutcome = 'MERGED' | 'REVIEW_FAILED' | 'CI_FAILED' | 'COMPLETED';
+
+/**
+ * What the run recorded, handed to the lesson writer so a lesson rests on what
+ * happened rather than on the ticket text alone. Built inside the workflow from
+ * its own context and bounded there, because it travels as an activity argument.
+ */
+export interface LessonEvidence {
+  outcome: LessonOutcome;
+  /** The review network's last rejection, when the review loop rejected at least once. */
+  rejectionSummary?: string;
+  /** The tail of the last failing CI run's logs, when the CI loop saw a failure. */
+  ciFailure?: string;
+  /** The change under review at the end of the run. */
+  change?: {
+    headSha: string;
+    filesChanged: Array<Pick<FileChange, 'path' | 'operation' | 'linesAdded' | 'linesRemoved'>>;
+    /** Files left out of `filesChanged` by the bound. */
+    filesOmitted: number;
+    implementationNotes: string;
+    tests: Pick<TestRunResult, 'passed' | 'total' | 'passing' | 'failing'>;
+  };
 }
 
 export type FailureType =

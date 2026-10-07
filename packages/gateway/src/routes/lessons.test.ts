@@ -3,6 +3,13 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { lessonRoutes } from './lessons.js';
 
+// The forget walk is covered against real Postgres (memoryForget.pg.test.ts);
+// here it is a stand-in that reports what it was asked to forget.
+const { forgetMock } = vi.hoisted(() => ({
+  forgetMock: vi.fn(async (_tx: unknown, ids: string[]) => ({ deleted: ids, restored: ['r-1'] })),
+}));
+vi.mock('@auto-swe/shared/lib/memoryForget', () => ({ forgetMemoryItems: forgetMock }));
+
 function newMockPrisma() {
   const prisma = {
     $transaction: vi.fn(),
@@ -161,7 +168,7 @@ describe('DELETE /lessons/:id', () => {
       id: LESSON_ID,
       scope: 'swe-lessons',
     });
-    expect(prisma.memoryItem.delete).not.toHaveBeenCalled();
+    expect(forgetMock).not.toHaveBeenCalled();
   });
 
   it('deletes and audits the deleted content in one transaction', async () => {
@@ -177,11 +184,13 @@ describe('DELETE /lessons/:id', () => {
 
     expect(res.statusCode).toBe(200);
     expect(prisma.$transaction).toHaveBeenCalledOnce();
-    expect(prisma.memoryItem.delete).toHaveBeenCalledWith({ where: { id: LESSON_ID } });
+    expect(forgetMock).toHaveBeenCalledWith(expect.anything(), [LESSON_ID]);
+    expect(res.json().data).toEqual({ deleted: true, forgotten: [LESSON_ID], restored: ['r-1'] });
     expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: 'DELETE',
         actorId: 'admin-1',
+        afterJson: { deleted: [LESSON_ID], restored: ['r-1'] },
         beforeJson: lesson,
         entityId: LESSON_ID,
         entityType: 'MemoryItem',

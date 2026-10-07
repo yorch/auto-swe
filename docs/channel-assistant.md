@@ -182,7 +182,9 @@ by the same pgvector search as everything else.
 
 Admins can view, edit, and delete channel memory from the admin surface. Editing an item's text
 kicks off `ReembedMemoryWorkflow` so its pgvector embedding catches up to the new text — started
-best-effort, because a Temporal hiccup must not fail the synchronous edit.
+best-effort, because a Temporal hiccup must not fail the synchronous edit. Deleting an item forgets it
+through every merged copy and restores what only those copies were hiding
+([memory.md §6](./memory.md#6-administration)).
 
 Deleting a channel deletes its memory items in the same transaction as the channel row (the
 relation itself is `SetNull`, which would otherwise leave them orphaned), and the audit entry
@@ -229,8 +231,8 @@ text. A background pass (digest, memory, open items, flagging) catches its own e
 the refusal appears only as a logged line (`[<pass>] ... no price in the model catalog`) and the
 feature quietly stops until the model is priced; check the worker log when ambient output, memory or
 flagging goes missing on a capped channel. The memory summarizer inside a mention turn runs under
-the channel scope, so it is guarded too; a refusal there stores the raw exchange instead and spends
-nothing. The same check runs in `runAgent`, so a delegated channel task refuses too (the failure
+the channel scope, so it is guarded too; a refusal there stores no memory for the turn and spends
+nothing — not even the embedding a raw-exchange fallback would need. The same check runs in `runAgent`, so a delegated channel task refuses too (the failure
 surfaces from the task's branch rather than as an empty answer, and the thread's failure line carries the reason). An uncapped channel proceeds and
 records $0 with `llm.cost_pricing_known=false`. While the catalog itself cannot be read the refusal
 is a retryable `MODEL_PRICE_UNAVAILABLE` instead, so a database blip never tells an admin to add a

@@ -336,6 +336,28 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
  * Deliberate departures from the golden, keyed by template name. Anything not
  * listed here must match exactly.
  */
+/**
+ * default-engineering stores a lesson when its review or CI loop runs out of attempts, and
+ * tags each `commitToMemory` step with the outcome it records. The two lesson steps sit on
+ * the loops' exhausted edges and continue to the same terminals on error.
+ */
+function defaultEngineeringFailureLessons(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
+  const lesson = (outcome: string, next: string) => ({
+    inputs: { outcome: { literal: outcome } },
+    next,
+    onError: 'continue',
+    step: 'commitToMemory',
+    type: 'step',
+  });
+  (nodes.checkReviewLimit as Record<string, unknown>).onTrue = 'lessonReviewFailed';
+  (nodes.checkCILimit as Record<string, unknown>).onTrue = 'lessonCIFailed';
+  nodes.lessonReviewFailed = lesson('REVIEW_FAILED', 'terminateReviewFailed');
+  nodes.lessonCIFailed = lesson('CI_FAILED', 'terminateCIFailed');
+  nodes.commitLesson = { inputs: { outcome: { literal: 'MERGED' } }, ...nodes.commitLesson };
+  return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
+}
+
 const INTENDED_CHANGES: Record<
   string,
   { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec }
@@ -358,6 +380,14 @@ const INTENDED_CHANGES: Record<
       },
     ])
   ),
+  'default-engineering': {
+    apply: (g: WorkflowSpec) =>
+      defaultEngineeringFailureLessons(removePassThrough(g, 'setCompleted')),
+    reason:
+      'the finalizer already writes COMPLETED on SUCCESS; a review or CI loop that runs out ' +
+      'of attempts stores a lesson about what blocked it before the run fails, and every ' +
+      'commitToMemory step names the outcome it records',
+  },
   // The two templates that ended the run on the first CI failure now fix and retry like their
   // siblings, with CI ahead of the human / consensus gates (and the setCompleted removal above).
   'consensus-review': {

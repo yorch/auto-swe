@@ -8,7 +8,7 @@ export { ConsolidateLessonsWorkflow } from './consolidateLessons.js';
 export { EpicOrchestratorWorkflow, epicCancelSignal } from './epicOrchestrator.js';
 export { EvalRunWorkflow } from './evalRun.js';
 export { InferRepoDependenciesWorkflow } from './inferRepoDependencies.js';
-export { ReembedMemoryWorkflow } from './reembedMemory.js';
+export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
 export { RunnableWorkflow } from './runnable.js';
 export { ScheduledConsolidationWorkflow } from './scheduledConsolidation.js';
 export { ScheduledEvalWorkflow } from './scheduledEval.js';

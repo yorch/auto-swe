@@ -184,8 +184,12 @@ export {
 export type { ReapStrandedRunsResult } from './reapStrandedRuns.js';
 export { reapStrandedRuns } from './reapStrandedRuns.js';
 // Channel assistant — admin memory edit-with-reembed
-export type { ReembedMemoryInput } from './reembedMemory.js';
-export { reembedMemoryItemActivity } from './reembedMemory.js';
+export type {
+  ReembedMemoryInput,
+  ReembedStaleMemoryBatchInput,
+  ReembedStaleMemoryBatchResult,
+} from './reembedMemory.js';
+export { reembedMemoryItemActivity, reembedStaleMemoryBatch } from './reembedMemory.js';
 export type {
   ResolveWorkspaceInput,
   WorkspaceContext,

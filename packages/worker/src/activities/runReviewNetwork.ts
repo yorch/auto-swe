@@ -13,6 +13,7 @@ import { skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { recordReviewEval } from '../lib/evalCapture.js';
 import { withHeartbeat } from '../lib/execUtils.js';
+import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import {
   type CrossRepoStepOptions,
   loadRepoDependencyContext,
@@ -134,6 +135,18 @@ async function runReviewNetworkImpl(
       });
     }
 
+    // Lessons recalled by the change itself — the implementer's notes and the
+    // files it touched — since the review has no ticket text to recall by.
+    const lessonsContext = await recallLessonsBlock({
+      query: [
+        codeResult.implementationNotes,
+        ...codeResult.filesChanged.slice(0, 40).map((f) => f.path),
+      ].join('\n'),
+      recalledFor: 'reviewer',
+      repoId: codeResult.repoId,
+      tracer,
+    });
+
     const result = await runReview(codeResult, {
       crossRepoContext: crossRepoContext || undefined,
       domainLogicPrompt: reviewerPersonaPrompt(
@@ -142,6 +155,7 @@ async function runReviewNetworkImpl(
         parentPrompt
       ),
       domainSkillSuffix: skillsToPromptSuffix(domainAgent.skills),
+      lessonsContext: lessonsContext || undefined,
       performancePrompt: reviewerPersonaPrompt(
         performanceAgent.model.systemPrompt,
         PERFORMANCE_REVIEWER_PROMPT,

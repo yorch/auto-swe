@@ -538,7 +538,8 @@ or a response body in a message), and nothing from a source is ever executed. Se
 workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS`
 and gated by the resolved Agent's `toolKeys`; `null` means all four are enabled. A fifth tool,
 `loadSkill`, is added automatically when skills are present and is **not** configurable via
-`toolKeys`. A sixth `'mcp'` pseudo-key (in `AGENT_TOOL_KEYS`, not in `IMPLEMENTER_TOOL_IDS`) gates
+`toolKeys`; so are the read-only memory tools `searchLessons` and `explainLesson`, bound in code to
+the session's repository. A sixth `'mcp'` pseudo-key (in `AGENT_TOOL_KEYS`, not in `IMPLEMENTER_TOOL_IDS`) gates
 MCP tool loading: when an Agent lists `'mcp'` **and** references an active `mcp` Connection via
 `Agent.mcpConnectionId`, that server's tools bind at run time for the implementer activities and
 the generic agent node.

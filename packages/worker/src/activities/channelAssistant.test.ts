@@ -976,7 +976,7 @@ describe('runChannelAssistantTurn', () => {
     });
   });
 
-  it('falls back to the raw exchange, spending nothing, when the summarizer model is refused', async () => {
+  it('stores no memory, and embeds nothing, when the summarizer model is refused', async () => {
     findChannel.mockResolvedValue({
       agentKey: 'channelAssistant',
       monthlyBudgetUsdCents: 10000,
@@ -996,10 +996,29 @@ describe('runChannelAssistantTurn', () => {
 
     const result = await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
 
+    // The reply is unaffected; only the memory write is skipped, so the raw
+    // exchange is never embedded outside the channel's hold.
     expect(result.reply).toContain('yarn release');
-    expect(writeChannelMemoryMock).toHaveBeenCalledTimes(1);
-    const written = writeChannelMemoryMock.mock.calls[0]?.[0] as { summary: string } | undefined;
-    expect(written?.summary).toContain('yarn release');
+    expect(writeChannelMemoryMock).not.toHaveBeenCalled();
+  });
+
+  it('stores no memory when the run budget refuses the summary', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    runAgentMock.mockImplementation(
+      async (_spec: unknown, _msg: unknown, opts: { spanName?: string } = {}) => {
+        if (opts.spanName === 'llm.channel_memory_summary') {
+          throw Object.assign(new Error('over budget'), { type: 'BUDGET_EXCEEDED' });
+        }
+        return { costUsd: 0.02, text: 'To deploy, run `yarn release` after CI passes.' };
+      }
+    );
+
+    await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    expect(writeChannelMemoryMock).not.toHaveBeenCalled();
   });
 
   it('writes the DISTILLED SUMMARY (not the raw reply) as memory after a non-trivial turn', async () => {
