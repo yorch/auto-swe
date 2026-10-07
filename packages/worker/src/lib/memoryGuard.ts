@@ -1,4 +1,6 @@
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { recordMemorySecurityEvent } from './memorySecurityEvent.js';
 
 /**
  * Memory is text a model reads on a later, unrelated run — a lesson lands in the
@@ -59,31 +61,41 @@ export async function assertMemoryContentAllowed(texts: ReadonlyArray<string>): 
  * before the write gate existed — or edited in by an admin — never reaches a
  * prompt. Order is preserved. If the scanner fails, nothing is returned: memory
  * is optional context, and an unscanned item is exactly what this guards.
+ *
+ * A drop is recorded as a `memory.recall_dropped` security event naming the
+ * dropped ids (from `idOf`) and the patterns they matched — never their text,
+ * which is the payload.
  */
 export async function withoutFlaggedMemory<T>(
   items: ReadonlyArray<T>,
-  textOf: (item: T) => string
+  textOf: (item: T) => string,
+  idOf?: (item: T) => string
 ): Promise<T[]> {
   if (items.length === 0) {
     return [];
   }
+  let matches: string[][];
   try {
-    const flags = await Promise.all(
-      items.map(async (item) => (await memoryInjectionMatches([textOf(item)])).length > 0)
-    );
-    const kept = items.filter((_, i) => !flags[i]);
-    if (kept.length < items.length) {
-      console.warn(
-        `[memoryGuard] dropped ${items.length - kept.length} recalled memory item(s) matching an injection pattern`
-      );
-    }
-    return kept;
+    matches = await Promise.all(items.map((item) => memoryInjectionMatches([textOf(item)])));
   } catch (err) {
     console.warn(
       `[memoryGuard] memory scan failed; recalling nothing: ${err instanceof Error ? err.message : String(err)}`
     );
     return [];
   }
+  const kept = items.filter((_, i) => matches[i]?.length === 0);
+  if (kept.length < items.length) {
+    const dropped = items.flatMap((item, i) => (matches[i]?.length ? [item] : []));
+    console.warn(
+      `[memoryGuard] dropped ${dropped.length} recalled memory item(s) matching an injection pattern`
+    );
+    await recordMemorySecurityEvent(MEMORY_SECURITY_EVENTS.RECALL_DROPPED, {
+      count: dropped.length,
+      ...(idOf ? { memoryIds: dropped.map(idOf) } : {}),
+      patterns: [...new Set(matches.flat())],
+    });
+  }
+  return kept;
 }
 
 /**

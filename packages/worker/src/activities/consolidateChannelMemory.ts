@@ -1,6 +1,7 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_MEMORY_CONSOLIDATOR_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -280,7 +281,7 @@ export async function consolidateChannelMemory(
         ).catch(() => ['scan unavailable']);
         if (refused.length > 0) {
           tracer.addActivityEvent({
-            name: 'memory.consolidation_refused',
+            name: MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED,
             outputJson: { patterns: refused, sourceIds },
           });
           return { consolidated: 0, created: 0 };

@@ -1,6 +1,10 @@
 'use client';
 
-import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/securityTraceTags';
+import {
+  MEMORY_SECURITY_EVENTS,
+  MEMORY_WRITE_REFUSED_EVENTS,
+  SECURITY_TRACE_ERRORS,
+} from '@auto-swe/shared/lib/securityTraceTags';
 import Link from 'next/link';
 import { type ReactNode, useId, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -28,6 +32,8 @@ export const SECURITY_EVENT_META: Record<
   CONTENT_SECURITY_WARN: { group: 'advisory', label: 'Content warning', tone: 'amber' },
   FILE_BLOCK: { group: 'blocked', label: 'File write blocked', tone: 'brick' },
   LLM_SUSPICIOUS: { group: 'advisory', label: 'Suspicious model output', tone: 'violet' },
+  MEMORY_RECALL_DROPPED: { group: 'blocked', label: 'Memory recall dropped', tone: 'brick' },
+  MEMORY_WRITE_REFUSED: { group: 'blocked', label: 'Memory write refused', tone: 'brick' },
   SHELL_BLOCK: { group: 'blocked', label: 'Command blocked', tone: 'brick' },
 };
 
@@ -96,6 +102,18 @@ function extractDetail(event: SecurityEvent): { primary: string; secondary?: str
       return {
         primary: `${warnings.length} pattern${warnings.length !== 1 ? 's' : ''} matched`,
         secondary: warnings.slice(0, 3).join(', ') || undefined,
+      };
+    }
+    case 'MEMORY_WRITE_REFUSED':
+    case 'MEMORY_RECALL_DROPPED': {
+      const patterns = (output?.patterns as string[]) ?? [];
+      const what =
+        event.eventType === 'MEMORY_RECALL_DROPPED'
+          ? `${Number(output?.count ?? 0)} recalled item(s) dropped`
+          : `${event.toolName ?? 'memory write'} refused`;
+      return {
+        primary: what,
+        secondary: patterns.slice(0, 3).join(', ') || undefined,
       };
     }
   }
@@ -324,6 +342,16 @@ export function classifyTraceAsSecurityEvent(trace: {
   }
   if (trace.type === 'activity_event' && trace.toolName === 'channel.suspicious_input') {
     return 'CHANNEL_SUSPICIOUS';
+  }
+  if (trace.type === 'activity_event' && trace.toolName === MEMORY_SECURITY_EVENTS.RECALL_DROPPED) {
+    return 'MEMORY_RECALL_DROPPED';
+  }
+  if (
+    trace.type === 'activity_event' &&
+    trace.toolName !== null &&
+    MEMORY_WRITE_REFUSED_EVENTS.includes(trace.toolName)
+  ) {
+    return 'MEMORY_WRITE_REFUSED';
   }
   return null;
 }

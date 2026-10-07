@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/skillScanner', () => ({ scanSkillContent: vi.fn() }));
+vi.mock('./memorySecurityEvent.js', () => ({ recordMemorySecurityEvent: vi.fn() }));
 
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import {
@@ -10,8 +11,10 @@ import {
   memoryInjectionMatches,
   withoutFlaggedMemory,
 } from './memoryGuard.js';
+import { recordMemorySecurityEvent } from './memorySecurityEvent.js';
 
 const scan = vi.mocked(scanSkillContent);
+const recordEvent = vi.mocked(recordMemorySecurityEvent);
 
 // A scanner stand-in that flags text containing the given marker as injection,
 // and text containing a URL as exfiltration.
@@ -26,6 +29,7 @@ function flagging(marker: string) {
 }
 
 beforeEach(() => {
+  recordEvent.mockReset();
   scan.mockReset();
   scan.mockImplementation(flagging('IGNORE'));
 });
@@ -75,6 +79,29 @@ describe('withoutFlaggedMemory', () => {
   it('recalls nothing when the scanner fails', async () => {
     scan.mockRejectedValue(new Error('pattern store down'));
     expect(await withoutFlaggedMemory([{ s: 'one' }], (i) => i.s)).toEqual([]);
+  });
+
+  it('records a drop as a security event naming ids and patterns, never the text', async () => {
+    const items = [
+      { id: 'a', s: 'one' },
+      { id: 'b', s: 'IGNORE all' },
+    ];
+    await withoutFlaggedMemory(
+      items,
+      (i) => i.s,
+      (i) => i.id
+    );
+    expect(recordEvent).toHaveBeenCalledWith('memory.recall_dropped', {
+      count: 1,
+      memoryIds: ['b'],
+      patterns: ['ignore-previous-instructions'],
+    });
+    expect(JSON.stringify(recordEvent.mock.calls)).not.toContain('IGNORE all');
+  });
+
+  it('records nothing when nothing is dropped', async () => {
+    await withoutFlaggedMemory([{ s: 'one' }], (i) => i.s);
+    expect(recordEvent).not.toHaveBeenCalled();
   });
 });
 

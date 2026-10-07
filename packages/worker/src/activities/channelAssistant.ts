@@ -3,6 +3,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { releaseChannelBudgetHolds } from '@auto-swe/shared/lib/channelBudget';
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
 import { createTool } from '@mastra/core/tools';
@@ -29,6 +30,7 @@ import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { calculateCostUsd } from '../lib/costTracking.js';
 import { withHeartbeat } from '../lib/execUtils.js';
 import { fenceRecalledMemory, MemoryContentRefusedError } from '../lib/memoryGuard.js';
+import { recordMemorySecurityEvent } from '../lib/memorySecurityEvent.js';
 import {
   fetchThreadReplies,
   postSlackThreadMessage,
@@ -1153,6 +1155,11 @@ async function summarizeAndStoreChannelMemory(
       console.warn(
         `[channelAssistant] channel memory not stored for ${input.channelId}: ${err.message}`
       );
+      await recordMemorySecurityEvent(MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED, {
+        channelId: input.channelId,
+        patterns: err.patterns,
+        source: 'turn-summary',
+      });
       return costUsd;
     }
     // A refusal to spend is not a failure to fall back from: storing the raw

@@ -36,3 +36,27 @@ export function isSecurityBlockTraceError(error: string | null | undefined): boo
   }
   return SECURITY_BLOCK_TRACE_ERRORS.some((tag) => error.startsWith(tag));
 }
+
+/**
+ * The `activity_event` names the worker writes when the memory gate refuses a
+ * write or drops a recalled item (`memoryGuard.ts`). Like the tags above they
+ * are read by another process — the gateway's security-events endpoint filters
+ * on them at the DB level — so they are defined once, here.
+ */
+export const MEMORY_SECURITY_EVENTS = {
+  /** A channel-memory item (a turn summary or a passively ingested fact) was refused. */
+  CHANNEL_WRITE_REFUSED: 'memory.channel_write_refused',
+  /** A consolidated lesson or channel-memory item was refused; the cluster stays as it was. */
+  CONSOLIDATION_REFUSED: 'memory.consolidation_refused',
+  /** A lesson `commitToMemory` wrote was refused. */
+  LESSON_REFUSED: 'memory.lesson_refused',
+  /** A stored item matched on recall and was left out of the prompt. */
+  RECALL_DROPPED: 'memory.recall_dropped',
+} as const;
+
+/** The event names that mean the memory gate refused a write. */
+export const MEMORY_WRITE_REFUSED_EVENTS: readonly string[] = [
+  MEMORY_SECURITY_EVENTS.LESSON_REFUSED,
+  MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED,
+  MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED,
+];

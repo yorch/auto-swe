@@ -35,6 +35,7 @@ vi.mock('../lib/costTracking.js', () => ({
   recordLlmUsage: vi.fn(),
 }));
 vi.mock('../lib/memoryStore.js', () => ({ insertMemoryItem: insertMock }));
+vi.mock('../lib/memorySecurityEvent.js', () => ({ recordMemorySecurityEvent: vi.fn() }));
 vi.mock('../lib/models.js', () => ({
   getModel: vi.fn(async () => ({})),
   getModelSpec: vi.fn(async () => 'anthropic/claude-opus-5-5'),
@@ -42,7 +43,16 @@ vi.mock('../lib/models.js', () => ({
 }));
 vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: vi.fn() }));
 
-import { commitToMemory, lessonCitation, lessonUserMessage } from './commitToMemory.js';
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
+import { AgentTracer } from '../lib/agentTracer.js';
+import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
+import { recordMemorySecurityEvent } from '../lib/memorySecurityEvent.js';
+import {
+  commitToMemory,
+  lessonCitation,
+  lessonUserMessage,
+  recordLessonDirectly,
+} from './commitToMemory.js';
 
 const WORKFLOW = {
   currentStatus: 'IN_REVIEW',
@@ -245,5 +255,38 @@ describe('lessonCitation', () => {
         ]
       )
     ).toEqual({ headSha: 'beef', pullRequests: [{ headSha: 'beef', prNumber: 3 }] });
+  });
+});
+
+describe('memory gate refusals', () => {
+  it('records a refused lesson under the shared security event name and returns no id', async () => {
+    const addEvent = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+    insertMock.mockRejectedValue(new MemoryContentRefusedError(['ignore-previous-instructions']));
+    await expect(commitToMemory('eng-acme-api-T-1', null)).resolves.toBe('');
+    expect(addEvent).toHaveBeenCalledWith({
+      name: MEMORY_SECURITY_EVENTS.LESSON_REFUSED,
+      outputJson: { failureType: 'REVIEW_REJECTION', patterns: ['ignore-previous-instructions'] },
+    });
+    addEvent.mockRestore();
+  });
+
+  it('records a refused model-free lesson and still never throws', async () => {
+    insertMock.mockRejectedValue(new MemoryContentRefusedError(['ignore-previous-instructions']));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await expect(
+      recordLessonDirectly({
+        agentKey: 'shellStep',
+        lessonSummary: 's',
+        rationale: 'r',
+        repoId: 'repo-1',
+        temporalWorkflowId: 'eng-acme-api-T-1',
+      })
+    ).resolves.toBeNull();
+    expect(recordMemorySecurityEvent).toHaveBeenCalledWith(MEMORY_SECURITY_EVENTS.LESSON_REFUSED, {
+      failureType: null,
+      patterns: ['ignore-previous-instructions'],
+      writtenBy: 'shellStep',
+    });
+    warn.mockRestore();
   });
 });

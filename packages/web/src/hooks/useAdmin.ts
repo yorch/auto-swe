@@ -230,7 +230,9 @@ export type SecurityEventType =
   | 'CONTENT_SECURITY_WARN'
   | 'CODE_SECURITY'
   | 'LLM_SUSPICIOUS'
-  | 'CHANNEL_SUSPICIOUS';
+  | 'CHANNEL_SUSPICIOUS'
+  | 'MEMORY_WRITE_REFUSED'
+  | 'MEMORY_RECALL_DROPPED';
 
 export interface SecurityEvent {
   createdAt: string;

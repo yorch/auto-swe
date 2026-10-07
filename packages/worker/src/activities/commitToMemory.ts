@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import type { LessonEvidence } from '@auto-swe/shared/types/workflow';
 import { Agent } from '@mastra/core/agent';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -17,6 +18,7 @@ import {
 } from '../lib/lessonAttemptHistory.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
+import { recordMemorySecurityEvent } from '../lib/memorySecurityEvent.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -356,6 +358,8 @@ export async function commitToMemory(
         throw err;
       }
       agentTracer.addActivityEvent({
+        // `MEMORY_SECURITY_EVENTS.LESSON_REFUSED`, spelled out: the platform
+        // explorer cites this line by its text. A test keeps the two equal.
         name: 'memory.lesson_refused',
         outputJson: { failureType: lesson.failureType, patterns: err.patterns },
       });
@@ -425,6 +429,13 @@ export async function recordLessonDirectly(input: {
     // Log so silent failures stay observable, but never propagate.
     // eslint-disable-next-line no-console
     console.warn(`recordLessonDirectly: ${err instanceof Error ? err.message : String(err)}`);
+    if (err instanceof MemoryContentRefusedError) {
+      await recordMemorySecurityEvent(MEMORY_SECURITY_EVENTS.LESSON_REFUSED, {
+        failureType: input.failureType ?? null,
+        patterns: err.patterns,
+        writtenBy: input.agentKey ?? null,
+      });
+    }
     return null;
   }
 }

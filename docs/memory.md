@@ -143,7 +143,9 @@ consolidated the same way on each ambient fire.
 
 Memory is replayed into every later run that recalls it, so it is held to a blocking rule
 (`packages/worker/src/lib/memoryGuard.ts`): a write whose text matches an `INJECTION` scanner
-pattern is refused, a recalled item that matches is dropped, and a scan that fails refuses. See
+pattern is refused, a recalled item that matches is dropped, and a scan that fails refuses. Each
+refusal and drop is a security event on `/govern/security` — `MEMORY_WRITE_REFUSED` or
+`MEMORY_RECALL_DROPPED` — naming the patterns and, for a drop, the item ids, never the text. See
 [agents.md §6.4](./agents.md#64-custom-skill-security-scanning).
 
 ## 6. Administration

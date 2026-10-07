@@ -1,6 +1,7 @@
 import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_PASSIVE_INGEST_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -9,6 +10,7 @@ import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
+import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import { insertMemoryItem, searchMemoryItemsByVector } from '../lib/memoryStore.js';
 import { getBoundModel } from '../lib/models.js';
 import { fetchChannelHistory } from '../lib/slackNotify.js';
@@ -245,9 +247,16 @@ export async function passiveIngestChannelMemory(
             teamId: channel.teamId,
           });
           factsWritten++;
-        } catch {
+        } catch (err) {
           // Best-effort per-fact: a failed embedding or DB insert skips this fact
-          // but doesn't abort the rest.
+          // but doesn't abort the rest. A fact the memory gate refused is
+          // skipped the same way, but recorded: it is a security event.
+          if (err instanceof MemoryContentRefusedError) {
+            tracer.addActivityEvent({
+              name: MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED,
+              outputJson: { channelId, patterns: err.patterns, source: 'passive-ingest' },
+            });
+          }
         }
       }
 

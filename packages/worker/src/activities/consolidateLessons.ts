@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import type {
   ConsolidateLessonsInput,
@@ -210,7 +211,7 @@ async function consolidateLessonsImpl(
       ).catch(() => ['scan unavailable']);
       if (refused.length > 0) {
         tracer.addActivityEvent({
-          name: 'memory.consolidation_refused',
+          name: MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED,
           outputJson: { patterns: refused, sourceIds },
         });
         return { consolidated: 0, created: 0 };
