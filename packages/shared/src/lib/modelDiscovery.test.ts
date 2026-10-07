@@ -451,3 +451,88 @@ describe('private-network provider hosts', () => {
     expect(result).toEqual({ error: expect.stringMatching(/protocol/) });
   });
 });
+
+describe('built-in providers with a custom apiBase', () => {
+  const proxy = 'https://proxy.example.com/openai_rest/v1/';
+
+  it('lists openai models from the apiBase, not api.openai.com', () => {
+    expect(modelListRequest({ apiBase: proxy, apiKey: 'k', provider: 'openai' })).toEqual({
+      init: { headers: { Authorization: 'Bearer k' }, redirect: 'manual' },
+      url: 'https://proxy.example.com/openai_rest/v1/models',
+    });
+  });
+
+  it('keeps the anthropic auth headers against a custom apiBase', () => {
+    expect(
+      modelListRequest({
+        apiBase: 'https://proxy.example.com/v1',
+        apiKey: 'k',
+        provider: 'anthropic',
+      })
+    ).toEqual({
+      init: {
+        headers: { 'anthropic-version': '2023-06-01', 'x-api-key': 'k' },
+        redirect: 'manual',
+      },
+      url: 'https://proxy.example.com/v1/models',
+    });
+  });
+
+  it('keeps the google key query against a custom apiBase', () => {
+    expect(
+      modelListRequest({
+        apiBase: 'https://proxy.example.com/v1beta',
+        apiKey: 'k',
+        provider: 'google',
+      })
+    ).toEqual({
+      init: { redirect: 'manual' },
+      url: 'https://proxy.example.com/v1beta/models?key=k',
+    });
+  });
+
+  it('passes the query through to the custom base', () => {
+    const result = modelListRequest({
+      apiBase: proxy,
+      apiKey: 'k',
+      provider: 'openai',
+      query: { limit: '5' },
+    });
+    expect(result).toMatchObject({
+      url: 'https://proxy.example.com/openai_rest/v1/models?limit=5',
+    });
+  });
+
+  it('still uses the vendor endpoint when there is no apiBase, or it is empty', () => {
+    for (const apiBase of [undefined, null, '']) {
+      expect(modelListRequest({ apiBase, apiKey: 'k', provider: 'openai' })).toEqual({
+        init: { headers: { Authorization: 'Bearer k' } },
+        url: 'https://api.openai.com/v1/models',
+      });
+    }
+  });
+
+  it('puts a custom apiBase behind the same guard as any other provider', () => {
+    const refused = modelListRequest({
+      apiBase: 'https://10.1.2.3/v1',
+      apiKey: 'k',
+      provider: 'openai',
+    });
+    expect(refused).toEqual({ error: expect.stringMatching(/private network/) });
+    expect(
+      modelListRequest({
+        apiBase: 'https://10.1.2.3/v1',
+        apiKey: 'k',
+        privateHosts: ['10.1.2.3'],
+        provider: 'openai',
+      })
+    ).toMatchObject({ url: 'https://10.1.2.3/v1/models' });
+    expect(
+      modelListRequest({
+        apiBase: 'https://u:p@proxy.example.com/v1',
+        apiKey: 'k',
+        provider: 'openai',
+      })
+    ).toEqual({ error: expect.stringMatching(/credentials in the URL/) });
+  });
+});
