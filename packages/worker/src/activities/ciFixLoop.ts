@@ -42,6 +42,8 @@ export async function executeCIFixImplementation(
     agentKey: 'ciFixer',
     commitMessage: `auto: fix CI for ${previousCodeResult.branch}`,
     defaultSystemPrompt: CI_FIX_SYSTEM_PROMPT,
+    // The end of a CI log is where the failure is.
+    lessonQuery: failureContext.slice(-2_000),
     mode: 'CI_FIX',
     notes: (testResult) =>
       `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
@@ -73,6 +75,7 @@ export async function executeReviewFixImplementation(
     allowedPaths,
     commitMessage: `auto: address review findings for ${previousCodeResult.branch}`,
     defaultSystemPrompt: REVIEW_FIX_SYSTEM_PROMPT,
+    lessonQuery: rejectionSummary,
     mode: 'REVIEW_FIX',
     notes: (testResult) =>
       `Review fix iteration. ${rejectionSummary.split('\n').length} findings addressed. Tests ${testResult.passed ? 'passing' : 'failing'}.`,

@@ -214,6 +214,23 @@ Use the `loadSkill` tool to load the full guidance for any skill before applying
 - **security-aware-implementation**: ...
 ```
 
+### 3.2.1 Memory tools (`searchLessons`, `explainLesson`)
+
+When the session works on a repository — the implementer, and every fix session (`ciFixer`,
+`reviewFixer`, `gateFixer`) — two read-only tools are added beside the workspace tools, like
+`loadSkill` outside `toolKeys`. Both are bound to the session's repository in code, never by an
+argument the model passes:
+
+```
+searchLessons({ query: string, limit?: 1–10 }) → { lessons: [{ lessonId, summary, failureType, confidence, similarity }] }
+explainLesson({ lessonId: uuid }) → { found, lesson: { outcome, evidence, mergedFrom, replaced, status, … } }
+```
+
+`searchLessons` returns what recall would for the agent's own query; `explainLesson` reads a lesson
+of the same repository (any other id is not found) and withholds any field that matches an injection
+pattern. Recalled lessons carry their ids, so the agent can ask about one. See
+[memory.md §3](./memory.md#3-recalling-lessons).
+
 ### 3.3 Path Safety
 
 `safePath(relPath)` normalises the path and rejects anything that is absolute, starts with `..`, contains null bytes, backslashes, or single quotes. This prevents path-traversal attacks in `readFile`, `writeFile`, and `listDirectory`.

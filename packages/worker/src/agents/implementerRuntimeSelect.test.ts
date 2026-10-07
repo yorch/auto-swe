@@ -108,6 +108,18 @@ describe('buildImplementerTurnRunner', () => {
     expect(turns.kind).toBe('mastra');
   });
 
+  it('passes the repository through, so the Mastra agent gets memory tools over its lessons', async () => {
+    const given = { ...input({ agentKey: 'ciFixer' }), repoId: 'repo-9' };
+    await buildImplementerTurnRunner(given);
+    expect(h.buildImplementerForActivity).toHaveBeenCalledWith(
+      given.workspace,
+      given.tracer,
+      given.ctx,
+      'ciFixer',
+      'repo-9'
+    );
+  });
+
   it('builds the Mastra agent, with its skill menu, only for the Mastra loop', async () => {
     const given = input({ agentKey: 'ciFixer' });
     const turns = await buildImplementerTurnRunner(given);
@@ -116,7 +128,8 @@ describe('buildImplementerTurnRunner', () => {
       given.workspace,
       given.tracer,
       given.ctx,
-      'ciFixer'
+      'ciFixer',
+      undefined
     );
     expect(turns.promptSuffix).toBe(MENU);
     expect(turns.systemPrompt('BASE')).toBe(`BASE\n\n${MENU}`);

@@ -397,11 +397,14 @@ describe('runCaseDefault iteration cap', () => {
     // The production builder: persona tool narrowing, MCP headers and private-network
     // opt-in all come with it. Built once, not per iteration.
     expect(buildImplementerForActivity).toHaveBeenCalledTimes(1);
+    // No repository is passed: an eval case gets no memory tools, so both
+    // sides of a comparison see the same tool set.
     expect(buildImplementerForActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       ctx,
-      'ciFixer'
+      'ciFixer',
+      undefined
     );
     expect(resolveAgent).toHaveBeenCalledWith('ciFixer', ctx);
     expect(generate).toHaveBeenCalledTimes(2);

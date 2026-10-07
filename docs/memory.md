@@ -68,12 +68,27 @@ applies the memory gate (§5) before it embeds anything.
 
 ## 3. Recalling lessons
 
-`executeImplementation` embeds the work request's description and searches the repository's
-lessons (`retrieveSimilarLessons`): unconsolidated rows, embedded by the current model, at or above
+Every agent that works on a repository recalls that repository's lessons into its system prompt,
+each by the text that says what it is working on (`recallLessonsBlock`, `lib/lessonRecall.ts`):
+
+| Agent | Recalled by |
+|---|---|
+| Implementer (`executeImplementation`) | The work request's description |
+| CI fixer | The end of the failing CI log |
+| Review fixer | The reviewers' rejection |
+| Gate fixer | The gate's name and the end of its output |
+| Review network (all three personas) | The implementer's notes and the changed files' paths |
+
+Each takes unsuperseded, unconsolidated rows embedded by the current model, at or above
 `lessonRetrievalThreshold` similarity, at most `lessonRetrievalLimit` of them (both on
-`/govern/workflow-defaults`, default 0.7 and 5). Matches are added to the implementer's system
-prompt inside a `<recalled_memory>` fence that marks them as reference data. A retrieval failure is
-logged and the run continues without lessons.
+`/govern/workflow-defaults`, default 0.7 and 5). Matches are added inside a `<recalled_memory>` fence
+that marks them as reference data, each with its id, its failure type and a `low confidence` label
+where it applies. Recall failing is logged and the agent runs without lessons.
+
+The implementer and the fixers also get two read-only tools, `searchLessons` and `explainLesson`,
+bound to the session's repository: one asks for lessons by the agent's own query, the other shows
+where a recalled lesson came from — its run, outcome and evidence, the lessons it was merged from,
+and the ones it replaced ([agents.md §3.2.1](./agents.md#321-memory-tools-searchlessons-explainlesson)).
 
 Every scoped search — lessons by repository, channel memory by channel, team or organization — runs
 with pgvector's iterative index scan (`SET LOCAL hnsw.iterative_scan = strict_order`, in
@@ -169,8 +184,10 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
   channel in a large table can get fewer matches than exist, or none. Even with it, the scan stops
   after `hnsw.max_scan_tuples` (pgvector's default, 20,000) index tuples, so a scope whose nearest
   memories lie beyond that many closer rows from other scopes is still cut short.
-- **Only the implementer recalls lessons**, and only automatically: no agent can search memory or
-  ask why a lesson was recalled, and the reviewer and the fixers get none.
+- **The memory tools exist only under the Mastra loop.** A session on the Claude Code harness gets
+  recalled lessons in its prompt but no `searchLessons` / `explainLesson`; the harness has its own
+  tool set. Eval cases and the merge-conflict resolver get neither tools nor recall, so both sides
+  of an eval comparison see the same context.
 - **A failed channel summary stores the raw exchange.** When the summariser fails for a reason
   other than the memory gate or a refusal to spend (a malformed answer, a provider error), the
   turn's text and reply are stored undistilled, and that embedding is not covered by the channel's

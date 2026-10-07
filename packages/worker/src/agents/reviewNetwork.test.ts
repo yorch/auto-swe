@@ -93,6 +93,21 @@ describe('runReviewNetwork USD-cap guard', () => {
   });
 });
 
+describe('runReviewNetwork recalled lessons', () => {
+  it('appends the lessons to all three reviewer system prompts, after the cross-repo block', async () => {
+    const LESSONS =
+      '\n\n## Lessons from Previous Workflows\n<recalled_memory>\n- x\n</recalled_memory>';
+    await runReviewNetwork(CODE_RESULT, {
+      crossRepoContext: '\n\n## Cross-Repo Dependency Context',
+      lessonsContext: LESSONS,
+    });
+    for (const prompt of Object.values(instructionsById())) {
+      expect(prompt.endsWith(LESSONS)).toBe(true);
+      expect(prompt).toContain('## Cross-Repo Dependency Context');
+    }
+  });
+});
+
 describe('runReviewNetwork cross-repo context', () => {
   const BLOCK = '\n\n## Cross-Repo Dependency Context\n- acme/api — kinds: code';
 

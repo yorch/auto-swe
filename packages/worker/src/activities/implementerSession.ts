@@ -18,6 +18,7 @@ import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
+import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -78,6 +79,13 @@ export interface FixSessionInput {
    * `notes` as `extraNote`. Failures here are informational, never fatal.
    */
   afterGenerate?: (workspace: Workspace, repo: Connection) => Promise<string | null>;
+  /**
+   * What this session is fixing, in words: lessons from past runs on the
+   * repository are recalled by it into the system prompt. A CI failure's log or
+   * the reviewers' rejection finds the lessons about the same failure, which
+   * the ticket text the implementer recalls by would not.
+   */
+  lessonQuery?: string;
 }
 
 /**
@@ -171,6 +179,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     turns = await buildImplementerTurnRunner({
       agentKey: input.agentKey,
       ctx: activityCtx,
+      repoId: repo.id,
       tracer,
       workspace,
     });
@@ -180,7 +189,15 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       input.defaultSystemPrompt,
       input.systemPromptOverride
     );
-    const fullSystemPrompt = turns.systemPrompt(systemPrompt);
+    const lessonsContext = input.lessonQuery
+      ? await recallLessonsBlock({
+          query: input.lessonQuery,
+          recalledFor: input.agentKey,
+          repoId: repo.id,
+          tracer,
+        })
+      : '';
+    const fullSystemPrompt = turns.systemPrompt(systemPrompt) + lessonsContext;
     const userMessage = JSON.stringify({
       mode,
       previousDiff: previousCodeResult.diff.slice(-20_000),

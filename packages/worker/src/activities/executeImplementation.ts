@@ -27,8 +27,7 @@ import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
-import { retrieveSimilarLessons } from '../lib/lessonRetrieval.js';
-import { fenceRecalledMemory } from '../lib/memoryGuard.js';
+import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import {
   type CrossRepoStepOptions,
@@ -184,7 +183,12 @@ export async function executeImplementation(
     // to the workspace so the tracer captures every call. The runtime decides how
     // skills reach the prompt, so the suffix comes back from it.
     const activityCtx = await currentRequestContext();
-    turns = await buildImplementerTurnRunner({ ctx: activityCtx, tracer, workspace });
+    turns = await buildImplementerTurnRunner({
+      ctx: activityCtx,
+      repoId: requireRepoId(request, 'executeImplementation'),
+      tracer,
+      workspace,
+    });
     const { runtime, skills } = turns;
 
     tracer.addActivityEvent({
@@ -192,34 +196,14 @@ export async function executeImplementation(
       outputJson: { count: skills.length, skills: skills.map((s) => s.name) },
     });
 
-    // Retrieve relevant lessons from past workflows for context enrichment
-    let lessonsContext = '';
-    try {
-      const lessons = await retrieveSimilarLessons(
-        request.description,
-        requireRepoId(request, 'executeImplementation'),
-        workflowDefaults.lessonRetrievalLimit,
-        workflowDefaults.lessonRetrievalThreshold
-      );
-      if (lessons.length > 0) {
-        lessonsContext = `\n\n${fenceRecalledMemory(
-          '## Lessons from Previous Workflows',
-          lessons.map(
-            (l) =>
-              `- [${l.failureType ?? 'GENERAL'}${lowConfidence(l.confidence) ? ', low confidence' : ''}] ${l.summary}`
-          )
-        )}`;
-        tracer.addActivityEvent({
-          name: 'lessons.retrieved',
-          outputJson: {
-            count: lessons.length,
-            lessons: lessons.map((l) => ({ failureType: l.failureType, summary: l.summary })),
-          },
-        });
-      }
-    } catch {
-      // Lesson retrieval failure should not block implementation
-    }
+    // Lessons from past runs on this repository, recalled by the ticket text.
+    // Best-effort: recall failing must not block implementation.
+    const lessonsContext = await recallLessonsBlock({
+      query: request.description,
+      recalledFor: 'implementer',
+      repoId: requireRepoId(request, 'executeImplementation'),
+      tracer,
+    });
 
     heartbeat('lessons retrieved');
 
@@ -462,12 +446,4 @@ export async function executeImplementation(
     }
     await workspace.destroy();
   }
-}
-
-/**
- * A lesson its writer graded as resting on little evidence. It is still
- * recalled — it may be the only one — but labelled, so the implementer weighs it.
- */
-function lowConfidence(confidence: number | null | undefined): boolean {
-  return confidence !== null && confidence !== undefined && confidence < 0.5;
 }

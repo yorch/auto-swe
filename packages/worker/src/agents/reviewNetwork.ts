@@ -159,6 +159,12 @@ export interface ReviewNetworkOptions {
    * and a performance judgement needs to know who calls this code.
    */
   crossRepoContext?: string;
+  /**
+   * Fenced lessons from past runs on this repository, recalled by the change
+   * under review — appended to every reviewer's system prompt, so a reviewer
+   * knows what earlier reviews of similar changes caught.
+   */
+  lessonsContext?: string;
   domainSkillSuffix?: string;
   performanceSkillSuffix?: string;
   securitySkillSuffix?: string;
@@ -190,6 +196,7 @@ export async function runReviewNetwork(
 ): Promise<AggregatedReviewResult> {
   const {
     crossRepoContext,
+    lessonsContext,
     domainSkillSuffix,
     performanceSkillSuffix,
     securitySkillSuffix,
@@ -212,11 +219,12 @@ export async function runReviewNetwork(
   // The dependency block already carries its own `\n\n## …` heading (see
   // `lib/repoDependencyContext.ts`); normalize anyway so a hand-built block
   // cannot run into the preceding paragraph.
-  const crossRepoSuffix = crossRepoContext
-    ? crossRepoContext.startsWith('\n')
-      ? crossRepoContext
-      : `\n\n${crossRepoContext}`
-    : '';
+  const crossRepoSuffix =
+    (crossRepoContext
+      ? crossRepoContext.startsWith('\n')
+        ? crossRepoContext
+        : `\n\n${crossRepoContext}`
+      : '') + (lessonsContext ?? '');
   domainLogicPrompt += crossRepoSuffix;
 
   const staticScanSuffix = formatCodeSecurityFindings(codeResult.codeSecurityFindings ?? []);

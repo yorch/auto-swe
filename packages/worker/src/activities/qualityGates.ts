@@ -337,6 +337,8 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     agentKey: 'gateFixer',
     commitMessage: `auto: fix ${gateName} for ${previousCodeResult.branch}`,
     defaultSystemPrompt: GATE_FIX_SYSTEM_PROMPT,
+    // The gate's own output, end first: where a lint or build failure is named.
+    lessonQuery: `${gateName}: ${gateLogs.slice(-2_000)}`,
     mode: 'GATE_FIX',
     notes: (testResult, extraNote) =>
       `Gate fix iteration for ${gateName}. ${extraNote ?? `${gateName} re-run skipped`}. Tests ${testResult.passed ? 'passing' : 'failing'}.`,

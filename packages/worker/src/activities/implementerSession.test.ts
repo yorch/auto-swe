@@ -421,11 +421,13 @@ describe('runImplementerFixSession', () => {
   it("runs as its own persona: the persona's prompt, tools and model, not the implementer's", async () => {
     findRepo.mockResolvedValue(REPO as never);
     await runImplementerFixSession(input());
+    // The session's repository binds the read-only memory tools.
     expect(buildImplementerMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.anything(),
-      'ciFixer'
+      'ciFixer',
+      'repo-1'
     );
     const messages = generateMock.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
     const system = messages.find((m) => m.role === 'system')?.content;

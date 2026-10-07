@@ -16,6 +16,7 @@ import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { skillMenuLine, skillPromptBlock } from '../lib/config/skillPrompt.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getModel, type LanguageModel } from '../lib/models.js';
+import { createLessonTools } from './lessonTools.js';
 import { isMcpToolEnabled, loadMcpTools, type McpToolRecord } from './mcpTools.js';
 import { buildWorkspaceTools } from './workspaceTools.js';
 
@@ -72,6 +73,11 @@ export interface ImplementerAgentOptions {
   agentKey?: string;
   /** Scope for the model lookup; merged over the ambient activity context. */
   resolveCtx?: ResolveCtx;
+  /**
+   * The repository whose lessons the read-only `searchLessons` / `explainLesson`
+   * tools may read. Omitted, the agent gets no memory tools.
+   */
+  lessonRepoId?: string;
 }
 
 export { skillMenuLine };
@@ -169,9 +175,13 @@ export async function createImplementerAgent(
 
   // Always include loadSkill when there are skills to load; this lets the agent
   // fetch full skill guidance on demand without pre-injecting all promptTexts.
-  const resolvedActiveTools = hasSkills
-    ? { ...resolvedWorkspaceTools, loadSkill }
-    : resolvedWorkspaceTools;
+  // The memory tools are read-only and bound to the run's repository, so like
+  // loadSkill they are added rather than configured through `toolKeys`.
+  const resolvedActiveTools = {
+    ...resolvedWorkspaceTools,
+    ...(hasSkills ? { loadSkill } : {}),
+    ...(options?.lessonRepoId ? createLessonTools(options.lessonRepoId, tracer) : {}),
+  };
 
   // MCP tools (Repository.mcpServerRef): opt-in via options, gated by the 'mcp'
   // pseudo-key in AgentToolConfig (a non-empty tool config must explicitly
@@ -324,7 +334,9 @@ export async function buildImplementerForActivity(
   workspace: Workspace,
   tracer: AgentTracer,
   ctx?: ResolveCtx,
-  agentKey = 'implementer'
+  agentKey = 'implementer',
+  /** The repository whose lessons the memory tools read; omitted, there are none. */
+  lessonRepoId?: string
 ): Promise<{
   agent: Agent;
   promptSuffix: string;
@@ -348,6 +360,7 @@ export async function buildImplementerForActivity(
     skills,
     {
       agentKey,
+      ...(lessonRepoId ? { lessonRepoId } : {}),
       maxToolOutputChars,
       mcpAllowPrivateNetwork: mcpTarget?.allowPrivateNetwork,
       mcpBearerToken: mcpTarget?.bearerToken,
