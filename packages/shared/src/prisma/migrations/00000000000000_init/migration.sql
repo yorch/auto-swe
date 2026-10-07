@@ -920,6 +920,7 @@ CREATE TABLE "provider_credentials" (
     "team_id" UUID,
     "org_id" UUID,
     "api_base" TEXT,
+    "allow_private_network" BOOLEAN NOT NULL DEFAULT false,
     "api_key_ciphertext" BYTEA NOT NULL,
     "api_key_nonce" BYTEA NOT NULL,
     "api_key_auth_tag" BYTEA NOT NULL,

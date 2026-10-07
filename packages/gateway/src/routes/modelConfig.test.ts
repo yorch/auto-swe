@@ -315,6 +315,133 @@ describe('modelConfigRoutes — admin', () => {
     });
   });
 
+  describe('private-network opt-in', () => {
+    const CRED_ID = '22222222-2222-4222-8222-222222222222';
+    const storedPrivate = {
+      allowPrivateNetwork: true,
+      apiBase: 'http://10.0.0.5:8000/v1',
+      createdAt: new Date(),
+      createdById: null,
+      id: CRED_ID,
+      keyVersion: 1,
+      lastFour: '1234',
+      orgId: null,
+      provider: 'vllm',
+      scope: 'GLOBAL',
+      teamId: null,
+      updatedAt: new Date(),
+    };
+
+    function echoCreate(ctx: Awaited<ReturnType<typeof buildAdminApp>>) {
+      ctx.mockPrisma.providerCredential.create.mockImplementationOnce(
+        async (args: { data: Record<string, unknown> }) => ({
+          ...args.data,
+          createdAt: new Date(),
+          id: 'cred-p',
+          updatedAt: new Date(),
+        })
+      );
+    }
+
+    it('creates a credential on a private apiBase when the admin opts in', async () => {
+      const ctx = await buildAdminApp('ADMIN');
+      echoCreate(ctx);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: {
+          allowPrivateNetwork: true,
+          apiBase: 'http://10.0.0.5:8000/v1',
+          apiKey: 'sk-abc-1234',
+          provider: 'vllm',
+          scope: 'GLOBAL',
+        },
+        url: '/api/v1/platform/credentials',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(JSON.parse(res.payload).data.allowPrivateNetwork).toBe(true);
+      expect(ctx.mockPrisma.providerCredential.create.mock.calls[0][0].data).toMatchObject({
+        allowPrivateNetwork: true,
+      });
+      await ctx.app.close();
+    });
+
+    it('refuses a private apiBase without the opt-in', async () => {
+      const ctx = await buildAdminApp('ADMIN');
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: {
+          apiBase: 'http://10.0.0.5:8000/v1',
+          apiKey: 'sk-abc-1234',
+          provider: 'vllm',
+          scope: 'GLOBAL',
+        },
+        url: '/api/v1/platform/credentials',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('UNSAFE_API_BASE');
+      expect(ctx.mockPrisma.providerCredential.create).not.toHaveBeenCalled();
+      await ctx.app.close();
+    });
+
+    it.each([
+      'http://127.0.0.1:11434/v1',
+      'http://169.254.169.254/',
+    ])('refuses %s even with the opt-in', async (apiBase) => {
+      const ctx = await buildAdminApp('ADMIN');
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: {
+          allowPrivateNetwork: true,
+          apiBase,
+          apiKey: 'sk-abc-1234',
+          provider: 'vllm',
+          scope: 'GLOBAL',
+        },
+        url: '/api/v1/platform/credentials',
+      });
+      expect(res.statusCode).toBe(400);
+      const error = JSON.parse(res.payload).error;
+      expect(error.code).toBe('UNSAFE_API_BASE');
+      expect(error.message).toMatch(/never allowed/);
+      await ctx.app.close();
+    });
+
+    it('re-checks the stored apiBase when only the opt-in is turned off', async () => {
+      const ctx = await buildAdminApp('ADMIN');
+      ctx.mockPrisma.providerCredential.findUnique.mockResolvedValueOnce(storedPrivate);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { allowPrivateNetwork: false },
+        url: `/api/v1/platform/credentials/${CRED_ID}`,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('UNSAFE_API_BASE');
+      expect(ctx.mockPrisma.providerCredential.update).not.toHaveBeenCalled();
+      await ctx.app.close();
+    });
+
+    it('keeps the stored opt-in when an update changes only the apiBase', async () => {
+      const ctx = await buildAdminApp('ADMIN');
+      ctx.mockPrisma.providerCredential.findUnique.mockResolvedValueOnce(storedPrivate);
+      ctx.mockPrisma.providerCredential.update.mockImplementationOnce(
+        async (args: { data: Record<string, unknown> }) => ({ ...storedPrivate, ...args.data })
+      );
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { apiBase: 'http://192.168.1.20:8000/v1' },
+        url: `/api/v1/platform/credentials/${CRED_ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data.allowPrivateNetwork).toBe(true);
+      await ctx.app.close();
+    });
+  });
+
   describe('audit-log redaction', () => {
     let ctx: Awaited<ReturnType<typeof buildAdminApp>>;
     beforeEach(async () => {

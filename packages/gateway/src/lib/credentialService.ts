@@ -38,6 +38,7 @@ export function redactCredential(row: {
   teamId: string | null;
   orgId: string | null;
   apiBase: string | null;
+  allowPrivateNetwork: boolean;
   lastFour: string;
   keyVersion: number;
   createdById: string | null;
@@ -45,6 +46,7 @@ export function redactCredential(row: {
   updatedAt: Date;
 }) {
   return {
+    allowPrivateNetwork: row.allowPrivateNetwork,
     apiBase: row.apiBase,
     createdAt: row.createdAt,
     createdById: row.createdById,
@@ -144,6 +146,7 @@ export async function testStoredCredential(cred: {
 
 export type CreateCredentialInput = {
   actorId: string;
+  allowPrivateNetwork?: boolean;
   apiBase?: string | null;
   apiKey: string;
   provider: string;
@@ -178,6 +181,7 @@ export async function createCredential(
   try {
     const created = await prisma.providerCredential.create({
       data: {
+        allowPrivateNetwork: input.allowPrivateNetwork === true,
         apiBase: input.apiBase ?? null,
         apiKeyAuthTag: sealed.authTag,
         apiKeyCiphertext: sealed.ciphertext,
@@ -202,20 +206,23 @@ export async function createCredential(
   }
 }
 
-/// Applies a partial credential update: `apiBase` is written when provided
-/// (null clears it); a non-empty `apiKey` re-encrypts the whole AES-GCM
-/// envelope. Shared by the admin and team-scoped PUT routes — ownership /
-/// existence checks stay with the caller.
+/// Applies a partial credential update: `apiBase` and `allowPrivateNetwork` are
+/// written when provided (a null `apiBase` clears it); a non-empty `apiKey`
+/// re-encrypts the whole AES-GCM envelope. Shared by the admin and team-scoped
+/// PUT routes — ownership / existence checks stay with the caller.
 export async function updateCredential(
   prisma: PrismaClient,
   id: string,
-  body: { apiBase?: string | null; apiKey?: string }
+  body: { allowPrivateNetwork?: boolean; apiBase?: string | null; apiKey?: string }
 ): Promise<ProviderCredentialRow> {
-  const { apiBase, apiKey } = body;
+  const { allowPrivateNetwork, apiBase, apiKey } = body;
   // biome-ignore lint/suspicious/noExplicitAny: dynamic update shape
   const data: Record<string, any> = {};
   if (apiBase !== undefined) {
     data.apiBase = apiBase;
+  }
+  if (allowPrivateNetwork !== undefined) {
+    data.allowPrivateNetwork = allowPrivateNetwork;
   }
   if (apiKey) {
     const sealed = encryptSecret(apiKey);

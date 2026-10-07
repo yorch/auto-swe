@@ -1934,23 +1934,26 @@ model WorkflowTemplateVersion {
 /// `lastFour` is the trailing four plaintext chars, stored for UI display
 /// only. `keyVersion` exists for future key-rotation support.
 model ProviderCredential {
-  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  provider         String
-  scope            ConfigScope
-  teamId           String?       @map("team_id") @db.Uuid
-  team             Team?         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider            String
+  scope               ConfigScope
+  teamId              String?       @map("team_id") @db.Uuid
+  team                Team?         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   /// Owning Organization for ORGANIZATION-scoped rows (null otherwise) (P5).
-  orgId            String?       @map("org_id") @db.Uuid
-  organization     Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  apiBase          String?       @map("api_base")
-  apiKeyCiphertext Bytes         @map("api_key_ciphertext")
-  apiKeyNonce      Bytes         @map("api_key_nonce")
-  apiKeyAuthTag    Bytes         @map("api_key_auth_tag")
-  keyVersion       Int           @default(1) @map("key_version")
-  lastFour         String        @map("last_four")
-  createdById      String?       @map("created_by_id") @db.Uuid
-  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  orgId               String?       @map("org_id") @db.Uuid
+  organization        Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  apiBase             String?       @map("api_base")
+  /// SSRF guard opt-in (ADMIN-only): waives the private-network refusal for this
+  /// credential's own host. Loopback, link-local and metadata stay refused.
+  allowPrivateNetwork Boolean       @default(false) @map("allow_private_network")
+  apiKeyCiphertext    Bytes         @map("api_key_ciphertext")
+  apiKeyNonce         Bytes         @map("api_key_nonce")
+  apiKeyAuthTag       Bytes         @map("api_key_auth_tag")
+  keyVersion          Int           @default(1) @map("key_version")
+  lastFour            String        @map("last_four")
+  createdById         String?       @map("created_by_id") @db.Uuid
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   embeddingConfigs EmbeddingConfig[]
   agents           Agent[]

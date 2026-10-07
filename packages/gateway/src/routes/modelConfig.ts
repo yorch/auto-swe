@@ -1,4 +1,4 @@
-import { isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
+import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -41,6 +41,7 @@ const ProviderSchema = z
 
 const CredentialCreateSchema = z
   .object({
+    allowPrivateNetwork: z.boolean().optional(),
     apiBase: z.string().trim().url().max(500).optional(),
     apiKey: z.string().trim().min(1).max(10_000),
     orgId: z.string().uuid().optional(),
@@ -66,6 +67,7 @@ const CredentialCreateSchema = z
   );
 
 const CredentialUpdateSchema = z.object({
+  allowPrivateNetwork: z.boolean().optional(),
   apiBase: z.string().trim().url().max(500).nullable().optional(),
   apiKey: z.string().trim().min(1).max(10_000).optional(),
 });
@@ -88,7 +90,7 @@ async function createCredentialAndAudit(
     return reply.status(400).send({ error: { code: 'INVALID_CREDENTIAL', message: problem } });
   }
   if (input.apiBase) {
-    const safety = isSafeProbeUrl(input.apiBase);
+    const safety = checkProbeUrl(input.apiBase, { allowPrivate: input.allowPrivateNetwork });
     if (!safety.ok) {
       return reply.status(400).send({
         error: { code: 'UNSAFE_API_BASE', message: `apiBase rejected: ${safety.reason}` },
@@ -129,14 +131,18 @@ async function updateCredentialAndAudit(
   actor: JwtPayload,
   reply: import('fastify').FastifyReply,
   existing: Parameters<typeof redactCredential>[0],
-  body: { apiBase?: string | null; apiKey?: string }
+  body: { allowPrivateNetwork?: boolean; apiBase?: string | null; apiKey?: string }
 ): Promise<unknown> {
   const problem = credentialInputProblem(body);
   if (problem) {
     return reply.status(400).send({ error: { code: 'INVALID_CREDENTIAL', message: problem } });
   }
-  if (body.apiBase) {
-    const safety = isSafeProbeUrl(body.apiBase);
+  // A partial update re-checks the URL the row will hold against the opt-in it will hold, so
+  // turning the opt-in off alone cannot leave a private apiBase stored.
+  const apiBase = body.apiBase !== undefined ? body.apiBase : existing.apiBase;
+  const allowPrivate = body.allowPrivateNetwork ?? existing.allowPrivateNetwork;
+  if ((body.apiBase !== undefined || body.allowPrivateNetwork !== undefined) && apiBase) {
+    const safety = checkProbeUrl(apiBase, { allowPrivate });
     if (!safety.ok) {
       return reply.status(400).send({
         error: { code: 'UNSAFE_API_BASE', message: `apiBase rejected: ${safety.reason}` },
@@ -236,12 +242,21 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: CredentialCreateSchema } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const { provider, scope, teamId, orgId, apiBase, apiKey } = request.body;
+      const { provider, scope, teamId, orgId, allowPrivateNetwork, apiBase, apiKey } = request.body;
       return createCredentialAndAudit(
         fastify,
         actor,
         reply,
-        { actorId: actor.sub, apiBase, apiKey, orgId, provider, scope, teamId },
+        {
+          actorId: actor.sub,
+          allowPrivateNetwork,
+          apiBase,
+          apiKey,
+          orgId,
+          provider,
+          scope,
+          teamId,
+        },
         {
           conflict: (existingId) =>
             `Credential for provider '${provider}' at scope '${scope}' already exists. Use PUT /credentials/${existingId} to update.`,
