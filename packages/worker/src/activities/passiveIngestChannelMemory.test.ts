@@ -79,6 +79,8 @@ vi.mock('../lib/memoryStore.js', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { AgentTracer } from '../lib/agentTracer.js';
+import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import { passiveIngestChannelMemory } from './passiveIngestChannelMemory.js';
 
 const prismaMock = prisma as unknown as {
@@ -225,6 +227,36 @@ describe('passiveIngestChannelMemory', () => {
     expect(result.factsExtracted).toBe(1);
     expect(result.factsWritten).toBe(0);
     expect(insertMemoryItemMock).not.toHaveBeenCalled();
+  });
+
+  it('records a fact the memory gate refuses as a security event, and goes on', async () => {
+    fetchChannelHistoryMock.mockResolvedValue([makeMsg('a message', '1700000001.000')]);
+    agentGenerateMock.mockResolvedValue({
+      object: {
+        facts: [
+          { rationale: 'r', summary: 'planted' },
+          { rationale: 'r', summary: 'clean' },
+        ],
+      },
+      usage: null,
+    });
+    insertMemoryItemMock
+      .mockRejectedValueOnce(new MemoryContentRefusedError(['ignore-previous-instructions']))
+      .mockResolvedValueOnce('new-memory-id');
+
+    const result = await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
+    expect(result.factsWritten).toBe(1);
+    const tracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addActivityEvent: ReturnType<typeof vi.fn>;
+    };
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith({
+      name: 'memory.channel_write_refused',
+      outputJson: {
+        channelId: CHANNEL_ID,
+        patterns: ['ignore-previous-instructions'],
+        source: 'passive-ingest',
+      },
+    });
   });
 
   it('prices the call at the model bound at the channel tier', async () => {

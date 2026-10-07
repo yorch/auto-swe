@@ -373,6 +373,21 @@ describe('runImplementerFixSession', () => {
     expect(destroyMock).toHaveBeenCalled();
   });
 
+  it('persists its start event even when the agent throws', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    generateMock.mockRejectedValueOnce(new Error('LLM exploded'));
+    const startEvent = { name: 'ci_fix.failure_logs', outputJson: { logTail: 'FAIL a.test.ts' } };
+    await expect(runImplementerFixSession(input({ startEvent }))).rejects.toThrow('LLM exploded');
+    const tracer = persistMock.mock.calls[0]?.[0] as {
+      records: Array<{ toolName?: string; outputJson?: unknown; seq: number }>;
+    };
+    expect(tracer.records[0]).toMatchObject({
+      outputJson: { logTail: 'FAIL a.test.ts' },
+      seq: 0,
+      toolName: 'ci_fix.failure_logs',
+    });
+  });
+
   it('syncs the workspace to the remote branch before the agent runs', async () => {
     findRepo.mockResolvedValue(REPO as never);
     await runImplementerFixSession(input());

@@ -2,6 +2,7 @@ import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
   ciWaitEntry,
+  failureLesson,
   mergeNodes,
   openPullRequest,
   prResult,
@@ -41,10 +42,13 @@ export const DEPENDENCY_UPDATE_SPEC: WorkflowSpec = {
     // This template has no initCounters, so recording the PR also zeroes the CI counter.
     openPullRequest({ next: ciWaitEntry(), resetCiRetries: true }),
     ciLoop({
+      exhausted: 'lessonCIFailed',
       fix: { handoff: { repush: 'repushAfterFix' } },
       passed: 'done',
     }),
     {
+      // CI that runs out of fix attempts stores what failed before the run fails.
+      lessonCIFailed: failureLesson('CI_FAILED', 'terminateCIFailed', { group: 'CI loop' }),
       done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Done' }),
     }
   ),

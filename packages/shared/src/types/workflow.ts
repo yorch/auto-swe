@@ -190,7 +190,13 @@ export interface LessonSummary {
  * template's success; the two failures are its loops running out of attempts.
  * `COMPLETED` is any other template's `commitToMemory` step.
  */
-export type LessonOutcome = 'MERGED' | 'REVIEW_FAILED' | 'CI_FAILED' | 'COMPLETED';
+export type LessonOutcome =
+  | 'MERGED'
+  | 'REVIEW_FAILED'
+  | 'CI_FAILED'
+  | 'COMPLETED'
+  /** The change passed review and CI, but nobody merged it before the wait timed out. */
+  | 'MERGE_TIMED_OUT';
 
 /**
  * What the run recorded, handed to the lesson writer so a lesson rests on what

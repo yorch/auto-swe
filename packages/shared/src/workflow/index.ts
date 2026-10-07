@@ -119,8 +119,11 @@ export {
   MCP_TOOL_KEY,
 } from './stepRegistry.js';
 // Exported only so the worker's workflow test can run the real specs: the package has no
-// export path for `templates/`, and (like DEFAULT_ENGINEERING_SPEC) both are pure data.
+// export path for `templates/`, and (like DEFAULT_ENGINEERING_SPEC) they are pure data.
+export { AGENT_REVIEWED_PR_SPEC } from './templates/agentReviewedPr.js';
+export { CODE_AND_CI_SPEC } from './templates/codeAndCi.js';
 export { CONSENSUS_REVIEW_SPEC } from './templates/consensusReview.js';
+export { DEPENDENCY_UPDATE_SPEC } from './templates/dependencyUpdate.js';
 export { FOUR_EYES_SPEC } from './templates/fourEyes.js';
 export type {
   ValidateSpecOptions,

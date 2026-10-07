@@ -33,23 +33,53 @@ by the same model, so vectors from different models are never compared.
 
 | Writer | When | Model call |
 |---|---|---|
-| `commitToMemory` step | In the default engineering template: after the pull request is merged (`MERGED`), and when the review loop or the CI loop runs out of attempts (`REVIEW_FAILED`, `CI_FAILED`) before the run fails | Yes — the `commitToMemory` agent writes the lesson from the run's evidence |
+| `commitToMemory` step | When a review loop or a CI loop runs out of attempts (`REVIEW_FAILED`, `CI_FAILED`), before the run fails, in the engineering templates that have one: `default-engineering`, `agent-reviewed-pr`, `code-and-ci`, `consensus-review`, `dependency-update` and `four-eyes`. In `default-engineering` also after the pull request is merged (`MERGED`), and when nobody merges it before the merge wait times out (`MERGE_TIMED_OUT`, only if the review or CI rejected an attempt on the way) | Yes — the `commitToMemory` agent writes the lesson from the run's evidence |
 | Merge-conflict resolver | After it resolves a conflict | No (`recordLessonBackground`) |
 | Shell step | After a step that changed files and pushed them | No; the command is stored with credentials masked |
 
 The step hands the agent the run's evidence, read from the workflow's own context and bounded
-there (`lib/lessonEvidence.ts`): the outcome, the review network's last rejection, the tail of the
-last failing CI run's logs, and the changed files with their line counts, the implementer's notes
-and the test totals — never the diff itself. The user message, built in code rather than in the
+there (`lib/lessonEvidence.ts`): the outcome, the review network's last rejection (in
+`consensus-review`, the last round's rejecting reviewers, joined), the tail of the last CI logs the
+fix loop fetched, and the changed files with their line counts, the implementer's notes and the
+test totals — never the diff itself. Nothing clears one loop's context when the other runs, so the
+evidence follows the outcome: a `CI_FAILED` lesson gets the CI logs and no rejection, a
+`REVIEW_FAILED` lesson the rejection and no CI logs, and a `MERGED` or `COMPLETED` lesson both, as
+what earlier attempts hit before the run got past them.
+
+The user message, built in code rather than in the
 agent's stored prompt, tells the agent to name a root cause only when the evidence shows one and
 fences the evidence as data. The outcome is written into the lesson's `metadata.outcome` by code,
 not by the model. Another template's `commitToMemory` step records `COMPLETED`.
 
+That context holds only each loop's latest rejection and CI logs, and a loop revisit overwrites its
+nodes' `WorkflowStep` rows, so the activity rebuilds a history of the run's failures from its
+`AgentTrace` rows (`lib/lessonAttemptHistory.ts`), every query scoped to the run, whatever the
+outcome — a merged run's lesson gets it too:
+
+- each review network dispatch that rejected, worded as its fix was given it, from the reviewers'
+  verdict rows; a reviewer that crashed counts as a critical rejection, as it does in the review. A
+  `consensus-review` round dispatches once per reviewer, so one round can be two rejections;
+- each CI failure a fix session was handed, from the `ci_fix.failure_logs` event the CI fixer
+  records with the last 4,000 characters of the logs. A failure that repeats the one before it, as
+  after a fix that changed nothing, is listed once.
+
+Both kinds of row carry Temporal's activity id, which is the same on every retry of one scheduled
+activity, so a retried review or fix counts once, by its last attempt. A row written without the id
+is grouped by the batch it was written in instead and is never merged with another, so a retry of
+it can count twice. The latest five entries of each kind are kept and share 4,000 characters, at
+most 1,500 each: a rejection keeps its head, a log its tail. The history reaches the agent, inside
+the same fence, only when some kind has more than one entry, and the agent is told to say so when
+they failed in different ways. Every `<` in the fenced JSON is escaped, so quoted text cannot close
+the fence. A history that cannot be read is traced as `memory.attempt_history_unavailable` and the
+lesson is written from the latest evidence alone.
+
 Each lesson records where it came from. The row's `workflowRunId` names the run (whose traces hold
 the rest), `agentKey` and `model` the writer, and `metadata.evidence` cites the pull requests and
 head commit it was written about plus a 300-character quote of the evidence that drove it — the
-start of the rejection, or the end of the failing CI log. The model-free writers record their run
-and an `agentKey` of `mergeConflictResolver` or `shellStep`.
+start of the rejection, or the end of the failing CI log, whichever the outcome failed on — and,
+when the lesson saw a history, how many rejections and CI failures it was written from
+(`history`). The model-free
+writers record their run and an `agentKey` of `mergeConflictResolver` or `shellStep`.
 
 The agent also grades its confidence by how directly the evidence supports the lesson — `high`
 when a rejection or CI failure states the problem, `medium` when it points to it, `low` when the
@@ -81,9 +111,22 @@ each by the text that says what it is working on (`recallLessonsBlock`, `lib/les
 
 Each takes unsuperseded, unconsolidated rows embedded by the current model, at or above
 `lessonRetrievalThreshold` similarity, at most `lessonRetrievalLimit` of them (both on
-`/govern/workflow-defaults`, default 0.7 and 5). Matches are added inside a `<recalled_memory>` fence
-that marks them as reference data, each with its id, its failure type and a `low confidence` label
-where it applies. Recall failing is logged and the agent runs without lessons.
+`/govern/workflow-defaults`, default 0.7 and 5). Matches are added inside a `<recalled_memory>`
+fence that marks them as reference data, each with its id, its failure type and a
+`low confidence` label where it applies. Recall failing is logged and the agent runs without
+lessons.
+
+**Lessons can age out.** `memory.lessonMaxAgeDays` (setting registry, `/govern/platform-settings`,
+overridable per team and organization) is the age in days past which a lesson is no longer recalled.
+It is 0 by default, which keeps every lesson whatever its age. It is resolved at the repository's
+owning team and its organization, since lessons belong to the repository, and applied as a filter
+on `created_at` inside the similarity query, so `lessonRetrievalLimit` still counts only lessons
+that may be recalled. `searchLessons` applies it too; `explainLesson` explains any lesson of the
+repository whatever its age. An aged-out lesson is not deleted: it stays in the table and on
+`/govern/lessons`, can still be superseded, and comes back into recall if the setting is raised or
+cleared. The owning team is cached for the ~30 s config-cache window; if the setting cannot be
+read, the failure is logged and aging is treated as off rather than failing recall or
+consolidation.
 
 The implementer and the fixers also get two read-only tools, `searchLessons` and `explainLesson`,
 bound to the session's repository: one asks for lessons by the agent's own query, the other shows
@@ -100,7 +143,7 @@ crowded one would get nothing back. The setting needs pgvector 0.8 or later.
 
 A Temporal Schedule (`consolidationCron`, default weekly) starts one `ConsolidateLessonsWorkflow`
 per repository with `Connection.consolidationEnabled`. Admins can also run it from
-`/govern/lessons`. It clusters the repository's active lessons by embedding similarity
+`/govern/lessons`. It clusters the repository's active lessons that have not aged out (§3) by embedding similarity
 (`consolidationSimilarityThreshold`, default 0.85), and for each cluster of at least
 `consolidationMinClusterSize` (default 3) asks the `lessonConsolidator` agent for one or two
 generalised lessons. In one transaction, under a per-repository advisory lock, it inserts those and
@@ -113,7 +156,9 @@ consolidated the same way on each ambient fire.
 
 Memory is replayed into every later run that recalls it, so it is held to a blocking rule
 (`packages/worker/src/lib/memoryGuard.ts`): a write whose text matches an `INJECTION` scanner
-pattern is refused, a recalled item that matches is dropped, and a scan that fails refuses. See
+pattern is refused, a recalled item that matches is dropped, and a scan that fails refuses. Each
+refusal and drop is a security event on `/govern/security` — `MEMORY_WRITE_REFUSED` or
+`MEMORY_RECALL_DROPPED` — naming the patterns and, for a drop, the item ids, never the text. See
 [agents.md §6.4](./agents.md#64-custom-skill-security-scanning).
 
 ## 6. Administration
@@ -152,19 +197,42 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
-- **Only the default engineering template writes failure lessons.** Other templates reach
-  `commitToMemory`, if at all, on their success path; a run that times out waiting for a merge
-  writes no lesson, and neither does one that fails outside the review and CI loops (a security
-  gate, an implementation error).
-- **The evidence is the last attempt's.** A loop keeps only its latest rejection and CI log, so a
-  lesson about a run that failed three different ways sees the third.
+- **Not every loop that fails writes a lesson.** The release templates `canary-rollout` and
+  `signal-gated-rollout` have the same review and CI loops and write none. Nor does the sign-off
+  loop of `four-eyes`, when people reject the change three times: those rejections are people's,
+  often without a written reason, and a `REVIEW_FAILED` lesson is written as the review network's.
+  A run whose CI wait times out writes no lesson, and only `default-engineering` writes one when the
+  merge wait times out.
+- **A step that throws writes no lesson.** The security gate (`SECURITY_GATE_FAILURE`, on the
+  implementation and on every fix path), any other implementation error, and every other failing
+  step end the run where they stand. Such a failure is routable to a lesson only by continuing past
+  it — `onFail: 'warn'`, then a `cond` on `nodes.<id>.error` — which gives up the run's typed
+  failure exit (the run would end at a `terminate` node instead) and leaves only `String(err)`, the
+  SDK wrapper's "Activity task failed", as the evidence the lesson would need.
+- **A merge timeout with nothing rejected writes no lesson.** When the change passed review and CI
+  at the first attempt and then timed out waiting for a merge, `commitToMemory` makes no model call
+  and stores nothing, recording a `memory.lesson_skipped` trace event: nothing in the evidence says
+  why it was not merged.
+- **The failure history is only as complete as the traces.** Trace writes are best-effort, so an
+  attempt whose rows were not written is missing from it, and it holds only the latest five
+  entries of each kind; at most 60 trace rows of each kind are read, and a review dispatch the
+  bound cut short is left out. A `four-eyes` sign-off rejection is a person's answer, not a trace,
+  and is not in it.
+- **The CI run that exhausts the loop is never read.** The loop fetches logs only for a failure it
+  is about to fix, so the latest CI failure a lesson sees is the one before the run that ended the
+  loop.
 - **A citation is a pointer, not a proof.** `metadata.evidence` says what a lesson was written
   from; nothing checks that the lesson's text follows from it, and a consolidated row cites only
   its sources, not their evidence.
 - **Supersession is similarity, not contradiction.** A newer lesson replaces an older one only when
   their summaries embed close together. Two lessons that contradict each other in different words
   both stay active, and a near-duplicate that adds a detail still replaces the original. Nothing
-  un-supersedes a lesson, and lessons never expire.
+  un-supersedes a lesson.
+- **Aging is by date, not by relevance.** `memory.lessonMaxAgeDays` drops a lesson from recall by
+  its `created_at` alone, so advice that is still true ages out with advice that is not, and nothing
+  expires while the setting is 0. A consolidated lesson's date is the day it was merged, so merging
+  restarts the clock for what its sources said; sources that had already aged out are not merged.
+  The setting has no workflow-template scope.
 - **Confidence is the writer's own grade.** It is the model's reading of a fixed rubric, not a
   measurement, and it labels a recalled lesson rather than filtering it.
 - **Forgetting follows provenance links, not content.** A delete reaches the rows

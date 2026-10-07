@@ -17,11 +17,11 @@ const codeResult = (files: number) => ({
 });
 
 describe('buildLessonEvidence', () => {
-  it('carries the outcome, rejection, CI failure and a summary of the change', () => {
+  it('carries the outcome, an earlier rejection and CI failure, and a summary of the change', () => {
     const evidence = buildLessonEvidence({
       ciLogs: 'npm test\nFAIL src/a.test.ts',
       codeResult: codeResult(2),
-      outcome: 'CI_FAILED',
+      outcome: 'MERGED',
       rejectionSummary: 'Missing input validation',
     });
     expect(evidence).toEqual({
@@ -36,9 +36,47 @@ describe('buildLessonEvidence', () => {
         tests: { failing: 1, passed: false, passing: 9, total: 10 },
       },
       ciFailure: 'npm test\nFAIL src/a.test.ts',
+      outcome: 'MERGED',
+      rejectionSummary: 'Missing input validation',
+    });
+  });
+
+  it('gives a CI failure only its CI log, not a rejection the review already got past', () => {
+    // Nothing clears `context.lastRejectionSummary` once the review approves.
+    const evidence = buildLessonEvidence({
+      ciLogs: 'FAIL src/a.test.ts',
+      codeResult: undefined,
       outcome: 'CI_FAILED',
       rejectionSummary: 'Missing input validation',
     });
+    expect(evidence).toEqual({ ciFailure: 'FAIL src/a.test.ts', outcome: 'CI_FAILED' });
+  });
+
+  it('gives a review failure only its rejection, not an earlier CI log', () => {
+    const evidence = buildLessonEvidence({
+      ciLogs: 'FAIL src/a.test.ts',
+      codeResult: undefined,
+      outcome: 'REVIEW_FAILED',
+      rejectionSummary: 'Missing input validation',
+    });
+    expect(evidence).toEqual({
+      outcome: 'REVIEW_FAILED',
+      rejectionSummary: 'Missing input validation',
+    });
+  });
+
+  it("reads a fan-out review's per-branch results as the rejection", () => {
+    // `consensus-review` keeps the fan-out's results at `context.lastRejectionSummary`.
+    const evidence = buildLessonEvidence({
+      ciLogs: undefined,
+      codeResult: undefined,
+      outcome: 'REVIEW_FAILED',
+      rejectionSummary: [
+        { status: 'SUCCESS' },
+        { exports: { 'context.branchRejectionSummary': 'needs tests' }, status: 'FAILED' },
+      ],
+    });
+    expect(evidence.rejectionSummary).toBe('needs tests');
   });
 
   it('never forwards the diff or test stdout, and bounds the file list', () => {
@@ -66,6 +104,17 @@ describe('buildLessonEvidence', () => {
     expect(ci).toMatch(/^\[… \d+ earlier characters\]/);
     expect(ci?.endsWith('Error: expected 2 to be 3')).toBe(true);
     expect(ci?.length).toBeLessThan(EVIDENCE_TEXT_LIMIT + 50);
+  });
+
+  it('carries a merge timeout as its own outcome', () => {
+    expect(
+      buildLessonEvidence({
+        ciLogs: null,
+        codeResult: null,
+        outcome: 'MERGE_TIMED_OUT',
+        rejectionSummary: null,
+      })
+    ).toEqual({ outcome: 'MERGE_TIMED_OUT' });
   });
 
   it('treats an unknown outcome as COMPLETED', () => {

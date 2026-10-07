@@ -24,6 +24,8 @@ export {
 // export is needed.
 export {
   isSecurityBlockTraceError,
+  MEMORY_SECURITY_EVENTS,
+  MEMORY_WRITE_REFUSED_EVENTS,
   SECURITY_BLOCK_TRACE_ERRORS,
   SECURITY_TRACE_ERRORS,
   type SecurityTraceError,

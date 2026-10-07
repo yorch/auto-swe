@@ -7,6 +7,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     agent: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
+vi.mock('../lib/lessonRetrieval.js', () => ({ lessonMaxAgeDays: vi.fn().mockResolvedValue(0) }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveConsolidationConfig: vi.fn().mockResolvedValue({
     cronExpression: '0 3 * * 0',
@@ -65,7 +66,9 @@ import { prisma } from '@auto-swe/shared/db';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { resolveConsolidationConfig } from '@auto-swe/shared/lib/systemConfig';
 import { Agent } from '@mastra/core/agent';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { generateEmbedding } from '../lib/embeddings.js';
+import { lessonMaxAgeDays } from '../lib/lessonRetrieval.js';
 import { getBoundModel, resolveSystemPrompt } from '../lib/models.js';
 import { consolidateLessons } from './consolidateLessons.js';
 
@@ -125,6 +128,17 @@ beforeEach(() => {
 });
 
 describe('consolidateLessons', () => {
+  it('leaves lessons past the maximum age out of the clustering query', async () => {
+    vi.mocked(lessonMaxAgeDays).mockResolvedValueOnce(30);
+    mockQueryRaw.mockResolvedValue([]);
+
+    await consolidateLessons({ minClusterSize: 3, repoId: 'repo-1' });
+
+    const [sql, ...params] = mockQueryRaw.mock.calls[0] as unknown as [string, ...unknown[]];
+    expect(sql).toContain('make_interval(days => $3::int)');
+    expect(params).toEqual(['repo-1', expect.anything(), 30]);
+  });
+
   it('returns zeros when fewer rows than minClusterSize exist', async () => {
     mockQueryRaw.mockResolvedValue([
       makeLessonRow('a', 'lesson a', 0),
@@ -236,6 +250,31 @@ describe('consolidateLessons', () => {
     expect(mockTransaction).not.toHaveBeenCalled();
     expect(result.lessonsCreated).toBe(0);
     expect(result.lessonsConsolidated).toBe(0);
+  });
+
+  it('traces a failed scan as an outage, not as a refusal, and leaves the cluster', async () => {
+    vi.mocked(scanSkillContent).mockRejectedValueOnce(new Error('pattern store down'));
+    mockQueryRaw.mockResolvedValue([
+      makeLessonRow('a', 'Always run db migrate before deploy', 0, 'CI_FAILURE'),
+      makeLessonRow('b', 'Run db migrate before deploying', 0, 'CI_FAILURE'),
+      makeLessonRow('c', 'DB migrations must precede deploy', 0, 'CI_FAILURE'),
+    ]);
+    makeSuccessGenerate();
+
+    const result = await consolidateLessons({
+      minClusterSize: 3,
+      repoId: 'repo-1',
+      similarityThreshold: 0.85,
+    });
+
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(result.lessonsCreated).toBe(0);
+    const tracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addActivityEvent: ReturnType<typeof vi.fn>;
+    };
+    const names = tracer.addActivityEvent.mock.calls.map((c) => (c[0] as { name: string }).name);
+    expect(names).toContain('memory.consolidation_scan_unavailable');
+    expect(names).not.toContain('memory.consolidation_refused');
   });
 
   it('drives consolidation through the lessonConsolidator agent, not commitToMemory', async () => {

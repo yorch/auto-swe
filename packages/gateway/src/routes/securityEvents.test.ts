@@ -106,6 +106,69 @@ describe('securityEventRoutes', () => {
   });
 });
 
+describe('memory gate events', () => {
+  it('pushes every write-refusal event name into one DB predicate', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/security-events?type=MEMORY_WRITE_REFUSED',
+    });
+    expect(res.statusCode).toBe(200);
+    const where = prisma.agentTrace.findMany.mock.calls[0][0].where as { OR: object[] };
+    expect(where.OR).toEqual([
+      {
+        AND: [
+          { type: 'activity_event' },
+          {
+            toolName: {
+              in: [
+                'memory.lesson_refused',
+                'memory.consolidation_refused',
+                'memory.channel_write_refused',
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('pushes the recall-drop predicate into the DB query', async () => {
+    const { app, prisma } = await buildApp();
+    await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/security-events?type=MEMORY_RECALL_DROPPED',
+    });
+    const where = prisma.agentTrace.findMany.mock.calls[0][0].where as { OR: object[] };
+    expect(where.OR).toEqual([
+      { AND: [{ type: 'activity_event' }, { toolName: 'memory.recall_dropped' }] },
+    ]);
+  });
+
+  it('classifies memory gate rows by their event name', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agentTrace.findMany.mockResolvedValue([
+      traceRow({ id: 'a', toolName: 'memory.lesson_refused' }),
+      traceRow({ id: 'b', toolName: 'memory.consolidation_refused' }),
+      traceRow({ id: 'c', toolName: 'memory.channel_write_refused' }),
+      traceRow({ id: 'd', toolName: 'memory.recall_dropped' }),
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/security-events',
+    });
+    expect(res.json().data.map((e: { eventType: string }) => e.eventType)).toEqual([
+      'MEMORY_WRITE_REFUSED',
+      'MEMORY_WRITE_REFUSED',
+      'MEMORY_WRITE_REFUSED',
+      'MEMORY_RECALL_DROPPED',
+    ]);
+  });
+});
+
 describe('GET /security-events/summary', () => {
   it('counts every type across all events with its own DB predicate', async () => {
     const { app, prisma } = await buildApp();
@@ -126,9 +189,11 @@ describe('GET /security-events/summary', () => {
       CONTENT_SECURITY_WARN: 1,
       FILE_BLOCK: 1,
       LLM_SUSPICIOUS: 1,
+      MEMORY_RECALL_DROPPED: 1,
+      MEMORY_WRITE_REFUSED: 1,
       SHELL_BLOCK: 1,
     });
-    expect(prisma.agentTrace.count).toHaveBeenCalledTimes(7);
+    expect(prisma.agentTrace.count).toHaveBeenCalledTimes(9);
     expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
   });
 

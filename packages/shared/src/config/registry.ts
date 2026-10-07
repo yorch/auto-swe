@@ -245,6 +245,19 @@ export const SETTING_DEFINITIONS = {
   }),
 
   // ── Semantic memory ────────────────────────────────────────────────────────
+  'memory.lessonMaxAgeDays': defineSetting({
+    defaultValue: 0,
+    description:
+      'Days after which a lesson is no longer recalled into a prompt, returned by searchLessons, or merged by consolidation. The lesson stays stored and listed. 0 keeps every lesson in recall, whatever its age.',
+    group: 'memory',
+    label: 'Lesson maximum age',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(36_500),
+    unit: 'days',
+  }),
   'memory.orgSimilarityThreshold': defineSetting({
     defaultValue: 0.7,
     description:

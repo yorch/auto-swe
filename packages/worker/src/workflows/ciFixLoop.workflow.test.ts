@@ -24,11 +24,22 @@
  * What this guards: a fix push is followed straight by the re-arm (only a status update
  * runs in between), so the fixed head's verdict finds its row; and a no-op fix never
  * waits for a CI event that cannot come.
+ *
+ * It also runs these two and the other repush engineering templates (`agent-reviewed-pr`,
+ * `code-and-ci`, `dependency-update`) to an exhausted review or CI loop, through the real
+ * `commitToMemory` step executor, to show the lesson is stored with the evidence the loop
+ * kept rather than with none.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { CONSENSUS_REVIEW_SPEC, FOUR_EYES_SPEC } from '@auto-swe/shared/workflow';
+import {
+  AGENT_REVIEWED_PR_SPEC,
+  CODE_AND_CI_SPEC,
+  CONSENSUS_REVIEW_SPEC,
+  DEPENDENCY_UPDATE_SPEC,
+  FOUR_EYES_SPEC,
+} from '@auto-swe/shared/workflow';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, type TestContext } from 'vitest';
@@ -76,6 +87,8 @@ let humanSteps: HumanStep[] = [];
 let fixSummaries: string[] = [];
 /** When set, a re-arm blocks until it resolves. */
 let rearmGate: Promise<void> | null = null;
+/** The evidence each `commitToMemory` call was handed, in call order. */
+let lessons: Array<{ outcome: string; rejectionSummary?: string; ciFailure?: string }> = [];
 
 function reset() {
   events = [];
@@ -92,6 +105,7 @@ function reset() {
   humanSteps = [];
   fixSummaries = [];
   rearmGate = null;
+  lessons = [];
 }
 
 /** The implementation: pushes, and nothing tracks the head before the PR exists. */
@@ -120,6 +134,16 @@ function fixSession(event: string, previous: CodeResultLike) {
 
 const fakeActivities = {
   cancelPendingHumanSteps: async () => {},
+  commitToMemory: async (
+    _workflowId: string,
+    _repoId: string | null,
+    _systemPrompt: string | undefined,
+    evidence: { outcome: string; rejectionSummary?: string; ciFailure?: string }
+  ) => {
+    events.push(`lesson:${evidence.outcome}`);
+    lessons.push(evidence);
+    return 'lesson-1';
+  },
   createHumanStep: async (input: { context?: Record<string, unknown>; nodeId?: string }) => {
     const nodeId = input.nodeId ?? '?';
     events.push(`humanStep:${nodeId}`);
@@ -165,11 +189,15 @@ const fakeActivities = {
   },
   recordWorkflowStep: async () => {},
   resolveHumanStep: async () => {},
+  // The local quality gates of code-and-ci and dependency-update.
+  runLint: async () => ({ passed: true }),
   runReviewNetwork: async () => {
     const approved = reviewVerdicts.shift() ?? true;
     events.push(approved ? 'review' : 'review:reject');
     return { approved, rejectionSummary: approved ? '' : 'needs work', verdicts: [] };
   },
+  runTests: async () => ({ passed: true }),
+  runTypecheck: async () => ({ passed: true }),
   storeContextOverflowBatch: async () => [],
   updateDomainState: async (_workflowId: string, status: string) => {
     statuses.push(status);
@@ -406,6 +434,11 @@ describe('four-eyes: CI first, then two sign-offs on the green code', () => {
     expect(r.prNumber).toBe(42);
     expect(count('ciFix:push')).toBe(2);
     expect(events.some((e) => e.startsWith('humanStep'))).toBe(false);
+    // The exhausted loop stores a lesson from the logs it kept, before the run ends.
+    expect(lessons).toEqual([
+      expect.objectContaining({ ciFailure: 'lint failed', outcome: 'CI_FAILED' }),
+    ]);
+    expect(events.at(-1)).toBe('lesson:CI_FAILED');
     expect(dropped).toEqual([]);
     expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
   }, 120_000);
@@ -590,6 +623,20 @@ describe('four-eyes: CI first, then two sign-offs on the green code', () => {
     expect(r.status).toBe('FAILED');
     expect(r.prNumber).toBe(42);
     expect(count('reviewFix:push')).toBe(2);
+    // People's rejections are not the review network's: the sign-off loop stores no lesson.
+    expect(lessons).toEqual([]);
+    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+  }, 120_000);
+
+  it('stores a lesson when the agent review runs out of attempts, before any PR', async () => {
+    reviewVerdicts = [false, false, false];
+    const h = await run('fe-review-limit');
+    const r = await result(h);
+    expect(r.status).toBe('FAILED');
+    expect(count('openPr')).toBe(0);
+    expect(lessons).toEqual([
+      expect.objectContaining({ outcome: 'REVIEW_FAILED', rejectionSummary: 'needs work' }),
+    ]);
     expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
   }, 120_000);
 
@@ -666,6 +713,9 @@ describe('consensus-review: CI first, then two reviewers on the green code', () 
     expect(r.prNumber).toBe(42);
     expect(count('ciFix:push')).toBe(2);
     expect(count('review')).toBe(0);
+    expect(lessons).toEqual([
+      expect.objectContaining({ ciFailure: 'lint failed', outcome: 'CI_FAILED' }),
+    ]);
     expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
   }, 120_000);
 
@@ -737,7 +787,61 @@ describe('consensus-review: CI first, then two reviewers on the green code', () 
     expect(r.prNumber).toBe(42);
     expect(count('reviewFix:push')).toBe(2);
     expect(count('review') + count('review:reject')).toBe(6);
+    // The consensus keeps its per-branch results, not one summary: the lesson still gets the
+    // rejecting reviewer's text, not nothing.
+    expect(lessons).toEqual([
+      expect.objectContaining({ outcome: 'REVIEW_FAILED', rejectionSummary: 'needs work' }),
+    ]);
     expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+  }, 120_000);
+});
+
+// ── the repush templates: a loop that runs out stores a lesson first ─────────
+
+describe.each([
+  ['agent-reviewed-pr', AGENT_REVIEWED_PR_SPEC],
+  ['code-and-ci', CODE_AND_CI_SPEC],
+  ['dependency-update', DEPENDENCY_UPDATE_SPEC],
+])('%s: failure lessons', (name, spec) => {
+  const run = (id: string) => {
+    currentSpec = spec as unknown as Record<string, unknown>;
+    return start(`${name}-${id}`);
+  };
+
+  it('stores a CI_FAILED lesson from the kept logs when CI runs out of fixes', async () => {
+    ciOutcomes = [false, false, false];
+    const h = await run('ci-limit');
+    await drive(h, ['ci', 'ci', 'ci']);
+    const r = await result(h);
+    expect(r.status).toBe('FAILED');
+    expect(r.prNumber).toBe(42);
+    expect(count('ciFix:push')).toBe(2);
+    expect(lessons).toEqual([
+      expect.objectContaining({ ciFailure: 'lint failed', outcome: 'CI_FAILED' }),
+    ]);
+    expect(events.at(-1)).toBe('lesson:CI_FAILED');
+    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+  }, 120_000);
+
+  it('stores no lesson when the run succeeds', async () => {
+    const h = await run('green');
+    await drive(h, ['ci']);
+    expect((await result(h)).status).toBe('SUCCESS');
+    expect(lessons).toEqual([]);
+  }, 120_000);
+});
+
+describe('agent-reviewed-pr: failure lessons', () => {
+  it('stores a REVIEW_FAILED lesson from the last rejection when the review runs out', async () => {
+    reviewVerdicts = [false, false, false];
+    currentSpec = AGENT_REVIEWED_PR_SPEC as unknown as Record<string, unknown>;
+    const h = await start('agent-reviewed-pr-review-limit');
+    const r = await result(h);
+    expect(r.status).toBe('FAILED');
+    expect(count('openPr')).toBe(0);
+    expect(lessons).toEqual([
+      expect.objectContaining({ outcome: 'REVIEW_FAILED', rejectionSummary: 'needs work' }),
+    ]);
   }, 120_000);
 });
 

@@ -1,4 +1,8 @@
-import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
+import {
+  MEMORY_SECURITY_EVENTS,
+  MEMORY_WRITE_REFUSED_EVENTS,
+  SECURITY_TRACE_ERRORS,
+} from '@auto-swe/shared/lib/scannerCache';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -14,7 +18,9 @@ export type SecurityEventType =
   | 'CONTENT_SECURITY_WARN'
   | 'CODE_SECURITY'
   | 'LLM_SUSPICIOUS'
-  | 'CHANNEL_SUSPICIOUS';
+  | 'CHANNEL_SUSPICIOUS'
+  | 'MEMORY_WRITE_REFUSED'
+  | 'MEMORY_RECALL_DROPPED';
 
 // Maps each SecurityEventType to the Prisma predicate that identifies it.
 // Keeping this inline in the query ensures pagination is correct — the type
@@ -23,7 +29,7 @@ export type SecurityEventType =
 // Activity-event rows are matched by toolName within an AND[type, toolName] clause;
 // block/warn rows are matched by the tag the worker's tools write — the shared
 // `SECURITY_TRACE_ERRORS`, so a reworded tag cannot silently stop matching.
-function activityEvent(toolName: string) {
+function activityEvent(toolName: string | { in: string[] }) {
   return { AND: [{ type: 'activity_event' }, { toolName }] };
 }
 
@@ -34,6 +40,8 @@ const TYPE_PREDICATES: Record<SecurityEventType, object> = {
   CONTENT_SECURITY_WARN: { error: SECURITY_TRACE_ERRORS.CONTENT_WARN },
   FILE_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.FILE_BLOCK } },
   LLM_SUSPICIOUS: activityEvent('llm.suspicious_output'),
+  MEMORY_RECALL_DROPPED: activityEvent(MEMORY_SECURITY_EVENTS.RECALL_DROPPED),
+  MEMORY_WRITE_REFUSED: activityEvent({ in: [...MEMORY_WRITE_REFUSED_EVENTS] }),
   SHELL_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.SHELL_BLOCK } },
 };
 
@@ -59,6 +67,16 @@ function classifyEvent(trace: {
   }
   if (trace.type === 'activity_event' && trace.toolName === 'channel.suspicious_input') {
     return 'CHANNEL_SUSPICIOUS';
+  }
+  if (trace.type === 'activity_event' && trace.toolName === MEMORY_SECURITY_EVENTS.RECALL_DROPPED) {
+    return 'MEMORY_RECALL_DROPPED';
+  }
+  if (
+    trace.type === 'activity_event' &&
+    trace.toolName !== null &&
+    MEMORY_WRITE_REFUSED_EVENTS.includes(trace.toolName)
+  ) {
+    return 'MEMORY_WRITE_REFUSED';
   }
   // Remaining rows that passed the OR filter must be code_security.scan activity events
   return 'CODE_SECURITY';
@@ -101,6 +119,8 @@ const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 })
         'CODE_SECURITY',
         'LLM_SUSPICIOUS',
         'CHANNEL_SUSPICIOUS',
+        'MEMORY_WRITE_REFUSED',
+        'MEMORY_RECALL_DROPPED',
       ])
       .optional(),
   });

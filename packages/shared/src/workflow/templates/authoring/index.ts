@@ -18,6 +18,7 @@ export {
   storeCodeResult,
   terminate,
 } from './common.js';
+export { type FailureLessonOutcome, failureLesson } from './failureLesson.js';
 export { type OpenPullRequestOptions, openPullRequest } from './openPullRequest.js';
 export { type PolicyGatedWriteOptions, policyGatedWrite } from './policyGatedWrite.js';
 export { type ReviewLoopOptions, reviewLoop } from './reviewLoop.js';

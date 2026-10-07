@@ -1,4 +1,6 @@
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { recordMemorySecurityEvent, unreportedRecallDrops } from './memorySecurityEvent.js';
 
 /**
  * Memory is text a model reads on a later, unrelated run — a lesson lands in the
@@ -18,6 +20,13 @@ import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
  */
 
 const INJECTION_KEY_PREFIX = 'injection:';
+
+/**
+ * Traced when a consolidator could not scan its merged rows, and so left the
+ * cluster as it was. The gate failed closed, but nothing matched a pattern, so
+ * this is an outage, not one of the `MEMORY_SECURITY_EVENTS`.
+ */
+export const CONSOLIDATION_SCAN_UNAVAILABLE = 'memory.consolidation_scan_unavailable';
 
 /** Thrown by a memory write whose text matches an injection pattern. */
 export class MemoryContentRefusedError extends Error {
@@ -54,36 +63,81 @@ export async function assertMemoryContentAllowed(texts: ReadonlyArray<string>): 
   }
 }
 
+/** How a reader identifies what it drops, for the `memory.recall_dropped` event. */
+export interface RecallDropReporting<T> {
+  /** The item's memory id: the event is sent once per id per hour per process. */
+  idOf: (item: T) => string;
+  /**
+   * Whether the event names the ids. False for a reader whose items may belong
+   * to another team (the org-wide search), so the current run's trace records
+   * only how many were dropped and why.
+   */
+  recordIds?: boolean;
+}
+
 /**
  * Drop recalled items whose text matches an injection pattern, so a row written
  * before the write gate existed — or edited in by an admin — never reaches a
  * prompt. Order is preserved. If the scanner fails, nothing is returned: memory
  * is optional context, and an unscanned item is exactly what this guards.
+ *
+ * A drop is recorded as a `memory.recall_dropped` security event naming the
+ * patterns matched and, unless `recordIds` is false, the dropped ids — never
+ * their text, which is the payload. A flagged row stays in the table and is
+ * dropped on every recall that reaches it, so an id already reported in the
+ * last hour is not reported again, and the event is written in the background:
+ * the recall does not wait for it, and a failed write is logged.
  */
 export async function withoutFlaggedMemory<T>(
   items: ReadonlyArray<T>,
-  textOf: (item: T) => string
+  textOf: (item: T) => string,
+  reporting?: RecallDropReporting<T>
 ): Promise<T[]> {
   if (items.length === 0) {
     return [];
   }
+  let matches: string[][];
   try {
-    const flags = await Promise.all(
-      items.map(async (item) => (await memoryInjectionMatches([textOf(item)])).length > 0)
-    );
-    const kept = items.filter((_, i) => !flags[i]);
-    if (kept.length < items.length) {
-      console.warn(
-        `[memoryGuard] dropped ${items.length - kept.length} recalled memory item(s) matching an injection pattern`
-      );
-    }
-    return kept;
+    matches = await Promise.all(items.map((item) => memoryInjectionMatches([textOf(item)])));
   } catch (err) {
     console.warn(
       `[memoryGuard] memory scan failed; recalling nothing: ${err instanceof Error ? err.message : String(err)}`
     );
     return [];
   }
+  const kept = items.filter((_, i) => matches[i]?.length === 0);
+  if (kept.length < items.length) {
+    reportDrops(items, matches, reporting);
+  }
+  return kept;
+}
+
+function reportDrops<T>(
+  items: ReadonlyArray<T>,
+  matches: string[][],
+  reporting: RecallDropReporting<T> | undefined
+): void {
+  const droppedAt = items.flatMap((_, i) => (matches[i]?.length ? [i] : []));
+  console.warn(
+    `[memoryGuard] dropped ${droppedAt.length} recalled memory item(s) matching an injection pattern`
+  );
+  let reported = droppedAt;
+  if (reporting) {
+    const fresh = new Set(
+      unreportedRecallDrops(droppedAt.map((i) => reporting.idOf(items[i] as T)))
+    );
+    reported = droppedAt.filter((i) => fresh.has(reporting.idOf(items[i] as T)));
+  }
+  if (reported.length === 0) {
+    return;
+  }
+  const withIds = reporting && reporting.recordIds !== false;
+  // Not awaited: the reader is on a reply path, and the record never throws.
+  void recordMemorySecurityEvent(MEMORY_SECURITY_EVENTS.RECALL_DROPPED, {
+    count: reported.length,
+    ...(withIds ? { memoryIds: reported.map((i) => reporting.idOf(items[i] as T)) } : {}),
+    patterns: [...new Set(reported.flatMap((i) => matches[i] ?? []))],
+  });
 }
 
 /**

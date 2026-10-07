@@ -1,8 +1,9 @@
 import type { CodeResult, LessonEvidence, LessonOutcome } from '@auto-swe/shared/types/workflow';
+import { rejectionText } from './rejectionText.js';
 
 /**
  * Builds the evidence a run's lesson is written from, out of the workflow's own
- * context. Pure and import-free at runtime, so the workflow isolate can call it.
+ * context. Pure, and imports only pure modules, so the workflow isolate can call it.
  *
  * Every field is bounded: the result is an activity argument and lands in
  * workflow history, and CI logs or implementation notes can each run to
@@ -18,6 +19,7 @@ const OUTCOMES: ReadonlySet<string> = new Set<LessonOutcome>([
   'REVIEW_FAILED',
   'CI_FAILED',
   'COMPLETED',
+  'MERGE_TIMED_OUT',
 ]);
 
 export function buildLessonEvidence(input: {
@@ -32,11 +34,16 @@ export function buildLessonEvidence(input: {
       : 'COMPLETED';
   const evidence: LessonEvidence = { outcome };
 
-  const rejection = head(input.rejectionSummary);
+  // Nothing clears the other loop's context, so a failed loop's lesson carries only its own
+  // evidence: a rejection the review got past is not why CI failed. Any other outcome keeps
+  // both, as what earlier attempts hit on the way.
+  // A fan-out review keeps its per-branch results here rather than one summary.
+  const rejection =
+    outcome === 'CI_FAILED' ? undefined : head(rejectionText(input.rejectionSummary));
   if (rejection) {
     evidence.rejectionSummary = rejection;
   }
-  const ci = tail(input.ciLogs);
+  const ci = outcome === 'REVIEW_FAILED' ? undefined : tail(input.ciLogs);
   if (ci) {
     evidence.ciFailure = ci;
   }

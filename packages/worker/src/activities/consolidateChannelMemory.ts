@@ -1,6 +1,7 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_MEMORY_CONSOLIDATOR_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -11,7 +12,7 @@ import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { clusterByEmbedding, vectorNorms } from '../lib/embeddingClustering.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from '../lib/embeddings.js';
-import { memoryInjectionMatches } from '../lib/memoryGuard.js';
+import { CONSOLIDATION_SCAN_UNAVAILABLE, memoryInjectionMatches } from '../lib/memoryGuard.js';
 import { getBoundModel } from '../lib/models.js';
 import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 
@@ -274,13 +275,21 @@ export async function consolidateChannelMemory(
 
         // Consolidated rows are inserted here rather than through `insertMemoryItem`,
         // so the memory gate is applied here: a merged note that reads as an
-        // instruction leaves the cluster as it was. A scan that fails refuses too.
+        // instruction leaves the cluster as it was. A scan that fails refuses too,
+        // but is traced as an outage, not as a security event: no pattern matched.
         const refused = await memoryInjectionMatches(
           memories.flatMap((m) => [m.lessonSummary, m.rationale])
-        ).catch(() => ['scan unavailable']);
+        ).catch(() => null);
+        if (refused === null) {
+          tracer.addActivityEvent({
+            name: CONSOLIDATION_SCAN_UNAVAILABLE,
+            outputJson: { sourceIds },
+          });
+          return { consolidated: 0, created: 0 };
+        }
         if (refused.length > 0) {
           tracer.addActivityEvent({
-            name: 'memory.consolidation_refused',
+            name: MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED,
             outputJson: { patterns: refused, sourceIds },
           });
           return { consolidated: 0, created: 0 };

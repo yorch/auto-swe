@@ -15,6 +15,9 @@ vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue('wf-1'),
 }));
 
+const { activityIdMock } = vi.hoisted(() => ({ activityIdMock: vi.fn((): string | null => null) }));
+vi.mock('../lib/attemptTrace.js', () => ({ currentActivityId: activityIdMock }));
+
 vi.mock('../lib/codeSecurityScanner.js', () => ({
   formatCodeSecurityFindings: vi.fn(() => ''),
 }));
@@ -40,6 +43,7 @@ vi.mock('../lib/models.js', () => ({
 
 import { Agent } from '@mastra/core/agent';
 import { ApplicationFailure } from '@temporalio/activity';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { ConfigMissingError } from '../lib/config/resolver.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getModel } from '../lib/models.js';
@@ -90,6 +94,26 @@ describe('runReviewNetwork USD-cap guard', () => {
       'securityReviewer',
     ]);
     expect(generateMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('runReviewNetwork trace rows', () => {
+  it("stamps each reviewer's row with the activity id, verdict or crash", async () => {
+    activityIdMock.mockReturnValue('5');
+    generateMock
+      .mockImplementationOnce(async () => ({
+        object: { approved: true, findings: [], reviewer: 'SECURITY', severity: 'PASS' },
+        usage: { inputTokens: 1, outputTokens: 1 },
+      }))
+      .mockRejectedValueOnce(new Error('provider timeout'));
+    const tracer = new AgentTracer();
+    await runReviewNetwork(CODE_RESULT, { tracer });
+    const rows = (tracer as unknown as { records: Array<{ outputJson?: unknown }> }).records;
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.outputJson).toMatchObject({ activityId: '5' });
+    }
+    activityIdMock.mockReturnValue(null);
   });
 });
 

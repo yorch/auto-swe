@@ -88,6 +88,11 @@ vi.mock('../lib/channelMemory.js', () => ({
   writeChannelMemory: (...args: unknown[]) => writeChannelMemoryMock(...args),
 }));
 
+const recordMemorySecurityEventMock = vi.fn();
+vi.mock('../lib/memorySecurityEvent.js', () => ({
+  recordMemorySecurityEvent: (...args: unknown[]) => recordMemorySecurityEventMock(...args),
+}));
+
 vi.mock('../lib/channelPersona.js', () => ({
   applyPersona: (systemPrompt: string, persona: string | null) =>
     persona ? `${persona}\n\n${systemPrompt}` : systemPrompt,
@@ -99,6 +104,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import {
   CHANNEL_PLACEHOLDER_TEXT,
   formatMemoryContext,
@@ -1167,6 +1173,34 @@ describe('runChannelAssistantTurn', () => {
     };
     expect(writeArg.summary).toBe(rawReply);
     expect(writeArg.rationale).toBe('how do I deploy?');
+  });
+
+  it('records a raw-exchange fallback the memory gate refuses as a security event', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    const rawReply = 'To deploy, run `yarn release` from the repo root after the CI checks pass.';
+    runAgentMock.mockImplementation(
+      async (_spec: unknown, _msg: unknown, opts: { spanName?: string } = {}) => {
+        if (opts.spanName === 'llm.channel_memory_summary') {
+          throw new Error('summarizer model unavailable');
+        }
+        return { costUsd: 0.02, text: rawReply, usage: { inputTokens: 1, outputTokens: 1 } };
+      }
+    );
+    writeChannelMemoryMock.mockRejectedValueOnce(
+      new MemoryContentRefusedError(['ignore-previous-instructions'])
+    );
+
+    const result = await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    expect(result.reply).toBe(rawReply);
+    expect(recordMemorySecurityEventMock).toHaveBeenCalledWith('memory.channel_write_refused', {
+      channelId: expect.any(String),
+      patterns: ['ignore-previous-instructions'],
+      source: 'turn-raw-exchange',
+    });
   });
 
   it('does not write memory for a trivial reply', async () => {

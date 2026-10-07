@@ -1,6 +1,12 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
+import {
+  CI_FAILURE_TRACE_CHARS,
+  CI_FAILURE_TRACE_EVENT,
+  currentActivityId,
+} from '../lib/attemptTrace.js';
+import { rejectionText } from '../lib/rejectionText.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
 
@@ -48,6 +54,14 @@ export async function executeCIFixImplementation(
     notes: (testResult) =>
       `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
     previousCodeResult,
+    // Each failure the loop fixes, kept for a lesson about the run (`lib/attemptTrace.ts`).
+    startEvent: {
+      name: CI_FAILURE_TRACE_EVENT,
+      outputJson: {
+        ...(currentActivityId() ? { activityId: currentActivityId() } : {}),
+        logTail: failureContext.slice(-CI_FAILURE_TRACE_CHARS),
+      },
+    },
     systemPromptOverride,
     usageEventName: 'llm.ci_fix',
     userPayload: {
@@ -63,13 +77,18 @@ export async function executeCIFixImplementation(
  *
  * Separate from executeCIFixImplementation because review rejections require
  * a different prompt and context shape than CI failures.
+ *
+ * `rejection` is the review network's summary, or a fan-out review's per-branch
+ * results (`consensus-review`), which {@link rejectionText} turns into the same
+ * kind of text.
  */
 export async function executeReviewFixImplementation(
-  rejectionSummary: string,
+  rejection: unknown,
   previousCodeResult: CodeResult,
   systemPromptOverride?: string,
   allowedPaths?: string[]
 ): Promise<CodeResult> {
+  const rejectionSummary = rejectionText(rejection);
   return runImplementerFixSession({
     agentKey: 'reviewFixer',
     allowedPaths,

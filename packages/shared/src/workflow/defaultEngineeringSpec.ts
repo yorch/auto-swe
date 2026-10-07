@@ -21,8 +21,13 @@ import {
  *   start → validate (non-blocking) → implement → review loop → CI loop →
  *   wait-for-human-merge → commit-to-memory → done
  *
- * A review or CI loop that runs out of attempts stores a lesson about what
- * blocked it before the run fails.
+ * A review or CI loop that runs out of attempts, and a merge wait that times
+ * out, stores a lesson about what happened before the run ends. A step that
+ * throws — the security gate's SECURITY_GATE_FAILURE, any other implementation
+ * error — fails the run where it stands, so no lesson is written for it. It
+ * could be routed to one only by continuing past the failure (`onFail: 'warn'`,
+ * then a `cond` on `nodes.<id>.error`), which gives up the run's typed failure
+ * exit and leaves only `String(err)` — the SDK wrapper's message — as evidence.
  *
  * Written with the authoring helpers, which expand at module load into the same
  * flat nodes (and the same node ids) this template has always had.
@@ -96,10 +101,19 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
         group: 'human merge',
         name: 'humanMergeSignal',
         onReceive: 'commitLesson',
-        onTimeout: 'terminateMergeTimedOut',
+        onTimeout: 'lessonMergeTimedOut',
         timeout: '7d',
         title: 'Wait for a person to merge',
         type: 'signal',
+      },
+      lessonMergeTimedOut: {
+        group: 'human merge',
+        inputs: { outcome: { literal: 'MERGE_TIMED_OUT' } },
+        next: 'terminateMergeTimedOut',
+        onError: 'continue',
+        step: 'commitToMemory',
+        title: 'Store that nobody merged it',
+        type: 'step',
       },
       terminateMergeTimedOut: terminate('TIMED_OUT', {
         group: 'human merge',
