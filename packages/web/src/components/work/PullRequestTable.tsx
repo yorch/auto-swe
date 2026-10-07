@@ -1,13 +1,13 @@
 import type { PullRequestListItem } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { Icon } from '@/components/ui/Icon';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { requestHref } from '@/lib/requestDisplay';
 import { safeHttpUrl } from '@/lib/safeUrl';
 import { cn, FOCUS_RING, formatCost } from '@/lib/utils';
 import { CiBadge, PullRequestStateBadge } from './PullRequestBadges';
-import { RelativeTime } from './RelativeTime';
 
 const LINK = cn('rounded-sm text-ember-400 hover:underline', FOCUS_RING);
 
@@ -89,7 +89,7 @@ export function PullRequestTable({ pullRequests }: { pullRequests: PullRequestLi
                 {formatCost(pr.costUsd)}
               </Td>
               <Td className="whitespace-nowrap px-4 py-3 text-paper-400" label="Opened">
-                <RelativeTime date={pr.openedAt} />
+                <RelativeTime value={pr.openedAt} />
               </Td>
             </TRow>
           );

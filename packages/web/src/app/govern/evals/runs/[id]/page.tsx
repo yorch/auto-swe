@@ -3,8 +3,8 @@
 import { use, useState } from 'react';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
-import { BackLink } from '@/components/govern/BackLink';
 import { Alert } from '@/components/ui/Alert';
+import { BackLink } from '@/components/ui/BackLink';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';

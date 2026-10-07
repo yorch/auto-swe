@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { TracesTab } from '@/components/runs/TracesTab';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Icon } from '@/components/ui/Icon';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
@@ -285,18 +286,12 @@ export function FlightRecorder({
             }}
             type="button"
           >
-            {/* Drawn with borders: the icon set has no play or pause glyph. */}
-            {playing ? (
-              <span aria-hidden="true" className="flex gap-[3px]">
-                <span className="h-3 w-[3px] rounded-[1px] bg-current" />
-                <span className="h-3 w-[3px] rounded-[1px] bg-current" />
-              </span>
-            ) : (
-              <span
-                aria-hidden="true"
-                className="ml-0.5 h-0 w-0 border-y-[6px] border-l-[10px] border-y-transparent border-l-current"
-              />
-            )}
+            {/* `fill-current` fills the stroke glyph: a solid shape reads better at this size. */}
+            <Icon
+              className={cn('fill-current', !playing && 'ml-0.5')}
+              name={playing ? 'pause' : 'play'}
+              size={14}
+            />
           </button>
 
           <div className="flex min-w-0 flex-col">

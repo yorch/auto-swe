@@ -3,7 +3,9 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { UNSAFE_PortalProvider } from 'react-aria';
 import { createPortal } from 'react-dom';
+import { cn, FOCUS_RING } from '@/lib/utils';
 import { Button, ButtonLink } from './Button';
+import { Icon } from './Icon';
 
 /**
  * The action row every modal ends with: a `ghost` Cancel on the left of the
@@ -184,25 +186,26 @@ export function Modal({
       <div className="space-y-6 p-6">
         <header className="flex items-start justify-between gap-4">
           <div className="space-y-1">
-            {eyebrow && (
-              <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-paper-500">
-                {eyebrow}
-              </div>
-            )}
-            <h2 className="font-display text-2xl text-paper-50" id={titleId}>
+            {eyebrow && <div className="kicker">{eyebrow.replace(/^§\s*/, '')}</div>}
+            <h2 className="text-xl font-semibold tracking-[-0.01em] text-paper-50" id={titleId}>
               {title}
             </h2>
-            {subtitle && <div className="text-xs text-paper-500">{subtitle}</div>}
+            {subtitle && (
+              <div className="text-[13px] leading-relaxed text-paper-400">{subtitle}</div>
+            )}
           </div>
           {/* close() fires the dialog's close event, which calls onClose once. */}
           <button
             aria-label="Close"
-            className="-mr-1 -mt-1 shrink-0 px-1 text-2xl leading-none text-paper-500 hover:text-paper-100 disabled:cursor-not-allowed disabled:opacity-40"
+            className={cn(
+              '-mt-1 -mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-paper-500 transition-colors hover:bg-ink-600/60 hover:text-paper-100 disabled:cursor-not-allowed disabled:opacity-40',
+              FOCUS_RING
+            )}
             disabled={!dismissible}
             onClick={() => dialogRef.current?.close()}
             type="button"
           >
-            ×
+            <Icon name="close" size={16} />
           </button>
         </header>
         {/* A shown <dialog> sits in the browser's top layer, above everything

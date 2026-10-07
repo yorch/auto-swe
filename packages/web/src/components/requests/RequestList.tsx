@@ -3,8 +3,8 @@ import Link from 'next/link';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Icon } from '@/components/ui/Icon';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { RelativeTime } from '@/components/work/RelativeTime';
 import { attentionReasons, requestHref, requestProgress } from '@/lib/requestDisplay';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
@@ -66,7 +66,7 @@ export function RequestList({
                   </span>
                   <span aria-hidden="true">·</span>
                   <span>
-                    Updated <RelativeTime date={request.endedAt ?? request.startedAt} />
+                    Updated <RelativeTime value={request.endedAt ?? request.startedAt} />
                   </span>
                 </div>
               </Link>

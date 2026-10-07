@@ -2,8 +2,7 @@
 
 import { KNOWN_RISK_CLASSES } from '@auto-swe/shared/lib/autonomyPolicy';
 import Link from 'next/link';
-import { BackLink } from '@/components/govern/BackLink';
-import { RelativeTime } from '@/components/govern/RelativeTime';
+import { BackLink } from '@/components/ui/BackLink';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -14,6 +13,7 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAutonomyDecisions, useAutonomyPolicies } from '@/hooks/useAutonomyPolicies';

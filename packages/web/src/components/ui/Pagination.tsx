@@ -1,4 +1,5 @@
 import { Button } from './Button';
+import { Icon } from './Icon';
 
 export function Pagination({
   hasNext,
@@ -22,15 +23,17 @@ export function Pagination({
   }
   return (
     <nav aria-label="Pagination" className="flex items-center justify-between">
-      <span className="font-mono text-[11px] uppercase tracking-wider text-paper-400">
+      <span className="tabular text-[13px] text-paper-400">
         {rangeStart}–{rangeEnd} of {total}
       </span>
       <div className="flex gap-2">
         <Button aria-label="Previous page" disabled={!hasPrev} onClick={onPrev} size="sm">
-          ← Prev
+          <Icon className="rotate-180" name="chevronRight" size={14} />
+          Previous
         </Button>
         <Button aria-label="Next page" disabled={!hasNext} onClick={onNext} size="sm">
-          Next →
+          Next
+          <Icon name="chevronRight" size={14} />
         </Button>
       </div>
     </nav>

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { type DateRange, isIsoDay, MAX_SPAN_DAYS, utcDay } from '@/lib/dateRange';
-import { cn, FOCUS_RING } from '@/lib/utils';
+import { cn } from '@/lib/utils';
+import { Button } from './Button';
 import { SegmentedControl } from './SegmentedControl';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -71,7 +72,7 @@ export function DateRangeControl({
   const selected =
     customOpen || value?.kind === 'custom' ? 'custom' : value ? String(value.days) : 'all';
   const inputClass =
-    'h-8 rounded-md border border-ink-400 bg-ink-900/60 px-2 font-mono text-xs text-paper-100 outline-none focus:border-ember-400';
+    'h-8 rounded-md border border-ink-400 bg-ink-900/60 px-2.5 text-[13px] text-paper-100 outline-none transition-colors hover:border-ink-300 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20';
 
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>
@@ -107,20 +108,14 @@ export function DateRangeControl({
             type="date"
             value={to}
           />
-          <button
-            className={cn(
-              'h-8 rounded-md border border-ink-400 px-3 font-mono text-[11px] uppercase tracking-[0.14em] text-paper-200 hover:bg-ink-600/50 disabled:opacity-40',
-              FOCUS_RING
-            )}
+          <Button
             disabled={invalid}
             onClick={() => onChange({ from, kind: 'custom', to })}
-            type="button"
+            size="sm"
           >
             Apply
-          </button>
-          <span className="font-mono text-[10px] uppercase tracking-wider text-paper-500">
-            Dates are UTC
-          </span>
+          </Button>
+          <span className="text-xs text-paper-500">Dates are UTC</span>
           {isIsoDay(from) && isIsoDay(to) && (from > to || to > today || tooLong) && (
             <span className="w-full text-xs text-brick-400" role="alert">
               {from > to

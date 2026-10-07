@@ -9,9 +9,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { RelativeTime } from '@/components/work/RelativeTime';
 import { useEpic } from '@/hooks/useEpics';
 import { useRunsForWorkRequest } from '@/hooks/useRuns';
 import { epicChildRunCell } from '@/lib/epicChildRun';
@@ -189,7 +189,7 @@ export default function EpicDetailPage({ params }: PageProps) {
               <div>
                 <dt className="label-mono">Created</dt>
                 <dd className="mt-1 text-paper-200">
-                  <RelativeTime date={epic.createdAt} />
+                  <RelativeTime value={epic.createdAt} />
                 </dd>
               </div>
             )}
