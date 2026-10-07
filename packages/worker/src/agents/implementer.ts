@@ -12,7 +12,7 @@ import {
   loadAgentToolConfig,
   type ResolvedSkill,
 } from '../lib/config/agentSkills.js';
-import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import { type McpConnectionTarget, resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { skillMenuLine, skillPromptBlock } from '../lib/config/skillPrompt.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getModel, type LanguageModel } from '../lib/models.js';
@@ -315,6 +315,21 @@ export async function resolveImplementerConfig(
 }
 
 /**
+ * The MCP connection an implementer-family session binds: the agent's own, else
+ * — for a persona — the implementer's. Shared by both runtimes, so the Mastra
+ * loop and the harness relay the same connection.
+ */
+export async function resolveImplementerMcpTarget(
+  agentKey: string,
+  ctx?: ResolveCtx
+): Promise<McpConnectionTarget | null> {
+  return (
+    (await resolveAgentMcpUrl(agentKey, ctx)) ??
+    (agentKey !== 'implementer' ? await resolveAgentMcpUrl('implementer', ctx) : null)
+  );
+}
+
+/**
  * The Mastra implementer for an activity: resolves the session's config
  * (`resolveImplementerConfig`) and its optional MCP server URL, and builds the
  * agent. Activities reach it through `buildImplementerTurnRunner`, which picks
@@ -345,14 +360,11 @@ export async function buildImplementerForActivity(
   skills: ResolvedSkill[];
   toolKeys: string[] | null;
 }> {
-  const isPersona = agentKey !== 'implementer';
   const { maxSteps, maxToolOutputChars, skills, toolKeys } = await resolveImplementerConfig(
     ctx,
     agentKey
   );
-  const mcpTarget =
-    (await resolveAgentMcpUrl(agentKey, ctx)) ??
-    (isPersona ? await resolveAgentMcpUrl('implementer', ctx) : null);
+  const mcpTarget = await resolveImplementerMcpTarget(agentKey, ctx);
   const { agent, promptSuffix, closeMcp } = await createImplementerAgent(
     workspace,
     tracer,

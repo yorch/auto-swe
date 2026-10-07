@@ -15,6 +15,7 @@ import {
   harnessToolsFor,
   harnessToolsGranting,
   type PolicyContext,
+  relayedToolName,
 } from './policy.js';
 
 const ctx: PolicyContext = {
@@ -44,6 +45,26 @@ describe('the tool allowlist', () => {
       const verdict = await decideToolCall(tool, {}, ctx);
       expect(verdict).toMatchObject({ allow: false });
     }
+  });
+});
+
+describe('relayed MCP tools', () => {
+  it('allows exactly the tools the worker relays, by their harness names', async () => {
+    const withMcp = { ...ctx, mcpTools: [relayedToolName('search')] };
+    await expect(
+      decideToolCall('mcp__connection__search', { q: 'x' }, withMcp)
+    ).resolves.toMatchObject({ allow: true });
+    // Another server's tool, or one the connection did not offer, is still refused.
+    await expect(decideToolCall('mcp__connection__delete', {}, withMcp)).resolves.toMatchObject({
+      allow: false,
+    });
+    await expect(decideToolCall('mcp__repo__search', {}, withMcp)).resolves.toMatchObject({
+      allow: false,
+    });
+    // Without a relay, no MCP tool is allowed.
+    await expect(decideToolCall('mcp__connection__search', {}, ctx)).resolves.toMatchObject({
+      allow: false,
+    });
   });
 });
 

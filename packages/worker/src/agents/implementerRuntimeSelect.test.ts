@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   resolveAgent: vi.fn(),
   resolveAgentRuntime: vi.fn(),
   resolveImplementerConfig: vi.fn(),
+  resolveImplementerMcpTarget: vi.fn(async (..._args: unknown[]) => null as unknown),
   resolveSetting: vi.fn(),
 }));
 
@@ -18,6 +19,7 @@ vi.mock('./claudeCode/runtime.js', () => ({ claudeCodeRuntime: h.claudeCodeRunti
 vi.mock('./implementer.js', () => ({
   buildImplementerForActivity: h.buildImplementerForActivity,
   resolveImplementerConfig: h.resolveImplementerConfig,
+  resolveImplementerMcpTarget: h.resolveImplementerMcpTarget,
 }));
 
 import type { AgentTracer } from '../lib/agentTracer.js';
@@ -181,10 +183,30 @@ describe('buildImplementerTurnRunner', () => {
       access: { apiBase: 'https://gw.example/v1', apiKey: 'k', modelId: 'claude-opus-5-5' },
       loadProjectSettings: true,
       maxTurns: 42,
+      mcp: null,
       toolKeys: null,
       tracer: given.tracer,
       workspace: given.workspace,
     });
+  });
+
+  it('relays the MCP connection the Mastra loop would bind, unless the tool keys leave MCP out', async () => {
+    h.resolveSetting.mockResolvedValue('claude-code');
+    const target = { url: 'https://mcp.example/mcp' };
+    h.resolveImplementerMcpTarget.mockResolvedValue(target);
+
+    await buildImplementerTurnRunner(input({ agentKey: 'ciFixer' }));
+    expect(h.resolveImplementerMcpTarget).toHaveBeenCalledWith('ciFixer', expect.anything());
+    expect(h.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ mcp: target });
+
+    h.resolveImplementerConfig.mockResolvedValue({
+      maxSteps: 42,
+      maxToolOutputChars: 20_000,
+      skills,
+      toolKeys: ['readFile'],
+    });
+    await buildImplementerTurnRunner(input({ agentKey: 'ciFixer' }));
+    expect(h.claudeCodeRuntime.mock.calls[1]?.[0]).toMatchObject({ mcp: null });
   });
 
   it('passes the persona-narrowed tool keys through to the harness', async () => {

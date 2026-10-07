@@ -167,7 +167,7 @@ Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is fo
 
 Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present whenever an MCP server was contacted (including a connect that returned zero tools) and **must** be called in a `finally` block.
 
-Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for a harness it takes the one the harness registry holds for that runtime ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)), loads the same `toolKeys`, skills and step budget, binds the Agent's model and credential through that harness, and never opens the MCP client or binds a Mastra model. It returns `{ kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
+Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for a harness it takes the one the harness registry holds for that runtime ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)), loads the same `toolKeys`, skills and step budget, binds the Agent's model and credential through that harness, hands it the same MCP connection to relay from the worker, and never binds a Mastra model. It returns `{ kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client (or the harness's relay) and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
 
 **Running a turn:** activities do not call `agent.generate` themselves. `runImplementerTurn` (`agents/implementerRuntime.ts`) runs one turn through an `ImplementerRuntime` — the Mastra tool loop (`mastraRuntime(agent, maxSteps)`) or the Claude Code harness, chosen per agent ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) — then accrues usage through `recordLlmUsage`, runs the advisory output scan, and records the LLM call on the tracer. `executeImplementation`, `implementerSession`, the eval harness, and the merge-conflict resolver all take this path, so a turn is metered and traced identically wherever it runs. The runtime only drives the loop and reports text, tool-call count, and usage; the caller still calls `assertBudgetAvailable` first and owns any failure row.
 
@@ -439,8 +439,8 @@ wall-clock deadline stops the turn as it stops the Mastra loop: the run ends wit
 `stoppedReason: 'wall_clock'` and is still gated and published. The harness is granted exactly the
 harness tools that stand in for the workspace tools the agent-run rule grants (`null` → `Read`, `Glob`,
 `Grep`; a list → only what it names; `[]` and `["mcp"]` → no tools), never the implementer's "no
-opinion means everything". It binds no MCP server; an agent with one gets an
-`agent.runtime_mcp_skipped` event. The budget is checked before the turn, and each model call is
+opinion means everything". The Agent's MCP connection binds as it would on the Mastra loop, relayed
+from the worker (below). The budget is checked before the turn, and each model call is
 debited as soon as the harness has finished it (`perCallAccounting`, through the runtime's
 `onCallSpent`), with the budget re-checked after every debit, as the Mastra loop debits every step: an
 exhausted budget aborts the turn and the run fails `BUDGET_EXCEEDED` after the call in flight. When
@@ -544,6 +544,19 @@ Without the proxy the credential reaches the container as `ANTHROPIC_API_KEY`, n
 `docker exec` command line without a value so it never appears in `ps`. Either way the base URL is
 pinned through the SDK's highest-priority settings layer, so a repository's own
 `.claude/settings.json` cannot redirect the harness, and the key or token it sends, to another host.
+
+**MCP.** An Agent whose tool keys enable `'mcp'` and that references an `mcp` Connection — the same
+binding the Mastra loop uses (`resolveAgentMcpUrl`; a persona falls back to the implementer's) — has
+it relayed to the harness from the worker (`agents/harness/mcpRelay.ts`). The worker connects to the
+server through the same guarded fetch, credential and private-network rules as the Mastra binding,
+lists its tools with their own schemas, and serves them to each turn through an in-process MCP server
+the Agent SDK carries over its existing pipe, named `connection` (the harness calls a tool
+`mcp__connection__<tool>`). Each call runs in the worker, under the connection's call timeout, and is
+audit-logged (`[mcp:audit] … via=harness`) and traced like any harness tool call; the connection's
+token and headers never enter the container. The policy allows exactly the relayed tools by name, and
+the harness loads no other MCP server: `strictMcpConfig` makes it ignore a repository's `.mcp.json`
+and its own settings. A server that cannot be reached is traced (`mcp.connect_failed`) and the turn
+runs without it, as on the Mastra loop.
 
 **Repository configuration.** The repository's `CLAUDE.md` and `.claude` settings apply
 (`settingSources: ['project']`), so a flow ported from a developer machine behaves as it did there.
@@ -1306,9 +1319,10 @@ template override is never badged, because it may use a different model or crede
   after the persona was saved (the parent's save lists the personas it strands, but does not refuse).
   A new override inherits the platform-wide runtime only when it is created; a later change to the
   platform-wide row's runtime does not reach existing overrides.
-- **The harness ignores the `mcp` binding.** It gets at most the six tools the Agent's `toolKeys`
-  grant; MCP servers an Agent references are not passed to it, and there is no sub-agent, web or
-  plugin tool.
+- **The harness gets no sub-agent, web or plugin tool,** and no MCP server but the Agent's own
+  connection, relayed from the worker: a repository's `.mcp.json` and the harness's own MCP settings
+  are ignored (`strictMcpConfig`). A relayed MCP tool is allowed by name and runs in the worker; like
+  the Mastra loop's MCP tools, its arguments and results are not scanned, only audit-logged and traced.
 - **`Edit` is content-checked on the inserted text only,** not on the whole resulting file, and
   `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
   evade them.

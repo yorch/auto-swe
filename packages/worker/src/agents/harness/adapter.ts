@@ -2,6 +2,7 @@ import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 import type { Workspace } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
+import type { McpConnectionTarget } from '../../lib/config/mcpConnection.js';
 import type { ContainerPlatform } from './binary.js';
 import type { ToolDecision } from './policy.js';
 import type { UsageNormaliser, UsageTotals } from './usage.js';
@@ -194,6 +195,12 @@ export interface HarnessRuntimeOptions<Access> {
    * spent, as the Mastra loop's deadline does.
    */
   deadline?: AbortSignal;
+  /**
+   * The Agent's MCP connection, when it has one and its tool keys enable it.
+   * A harness that can serve MCP relays it from the worker (`mcpRelay.ts`): the
+   * connection's credential never enters the container. One that cannot ignores it.
+   */
+  mcp?: McpConnectionTarget | null;
   tracer: AgentTracer;
   workspace: Workspace;
 }

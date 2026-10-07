@@ -24,8 +24,11 @@ export interface MockMessagesApi {
 }
 
 type Block =
-  | { id: string; input: { command: string; description: string }; name: string; type: 'tool_use' }
+  | { id: string; input: Record<string, unknown>; name: string; type: 'tool_use' }
   | { text: string; type: 'text' };
+
+/** A task with this word asks for the relayed MCP tool instead of a shell command. */
+const MCP_TOOL = 'mcp__connection__echo';
 
 const COMMANDS = [
   ['HANG', 'sleep 300'],
@@ -35,7 +38,8 @@ const COMMANDS = [
 /**
  * A just-enough Anthropic Messages API, so the Claude Code binary can be driven
  * end to end without a key: a task that carries the word `HANG` or `DENY` asks
- * for that shell command, any other asks for one that writes `out.txt`, and once
+ * for that shell command, one with `MCPCALL` asks for the relayed MCP tool
+ * `echo`, any other asks for one that writes `out.txt`, and once
  * a tool result is in the conversation the next reply is the final text. Every
  * reply reports 100 input and 20 output tokens.
  *
@@ -78,20 +82,23 @@ export function startMockMessagesApi(): Promise<MockMessagesApi> {
         (m) => Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_result')
       );
       const task = JSON.stringify(messages[0] ?? '');
-      const asksForTool = tools.includes('Bash') && !hasToolResult;
+      const asksForMcp = task.includes('MCPCALL') && tools.includes(MCP_TOOL) && !hasToolResult;
+      const asksForTool = asksForMcp || (tools.includes('Bash') && !hasToolResult);
       const command =
         COMMANDS.find(([word]) => task.includes(word))?.[1] ??
         'echo hello > out.txt && cat out.txt';
-      const content: Block[] = asksForTool
-        ? [
-            {
-              id: 'toolu_1',
-              input: { command, description: 'mock' },
-              name: 'Bash',
-              type: 'tool_use',
-            },
-          ]
-        : [{ text: hasToolResult ? 'all done' : 'ok', type: 'text' }];
+      const content: Block[] = asksForMcp
+        ? [{ id: 'toolu_1', input: { text: 'from the harness' }, name: MCP_TOOL, type: 'tool_use' }]
+        : asksForTool
+          ? [
+              {
+                id: 'toolu_1',
+                input: { command, description: 'mock' },
+                name: 'Bash',
+                type: 'tool_use',
+              },
+            ]
+          : [{ text: hasToolResult ? 'all done' : 'ok', type: 'text' }];
       const stop = asksForTool ? 'tool_use' : 'end_turn';
       const message = {
         content,

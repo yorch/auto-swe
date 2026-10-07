@@ -1,4 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -33,6 +35,13 @@ vi.mock('../../lib/shellCommandScanner.js', () => ({
     command.includes('forbidden') ? 'Command blocked by the shell scanner' : null,
 }));
 vi.mock('../../lib/sensitiveFileScanner.js', () => ({ checkSensitiveFilePath: async () => null }));
+// The remote MCP server below listens on loopback, which the worker's SSRF guard
+// refuses in production; only the URL check and the guarded fetch are stubbed.
+vi.mock('../mcpTools.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../mcpTools.js')>()),
+  guardedMcpFetch: () => (input: string | URL, init?: RequestInit) => fetch(input, init),
+  parseMcpServerRef: (ref: string) => new URL(ref),
+}));
 // `docker cp` through the same helper the worker uses, minus the Temporal heartbeat.
 vi.mock('../../lib/execUtils.js', () => ({
   spawnCaptureAsync: async (file: string, args: string[]) => {
@@ -46,6 +55,9 @@ vi.mock('../../lib/execUtils.js', () => ({
   },
 }));
 
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import { type MockMessagesApi, startMockMessagesApi } from './mockMessagesApi.js';
 import { createModelProxy, type ModelProxy } from './modelProxy.js';
@@ -125,7 +137,7 @@ async function startWorkspace() {
 
 async function makeRuntime(
   ws: Awaited<ReturnType<typeof startWorkspace>>,
-  overrides: { apiBase?: string; modelProxy?: ModelProxy } = {}
+  overrides: { apiBase?: string; mcp?: { url: string }; modelProxy?: ModelProxy } = {}
 ) {
   const toolCalls: Record<string, unknown>[] = [];
   const runtime = claudeCodeRuntime({
@@ -138,10 +150,12 @@ async function makeRuntime(
     loadProjectSettings: true,
     maxTurns: 8,
     tracer: {
+      addActivityEvent: () => undefined,
       addToolCall: (c: Record<string, unknown>) => toolCalls.push(c),
     } as unknown as AgentTracer,
     workspace: ws.workspace as never,
     ...(overrides.modelProxy ? { modelProxy: overrides.modelProxy } : {}),
+    ...(overrides.mcp ? { mcp: overrides.mcp } : {}),
   });
   return { runtime, toolCalls };
 }
@@ -235,6 +249,53 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
       expect(outcome.usageByModel).toEqual([]);
     } finally {
       await proxy.close();
+    }
+  }, 180_000);
+
+  it('relays the agent’s MCP connection: the harness calls the tool, the worker runs it', async () => {
+    const calls: string[] = [];
+    const server = http.createServer(async (req, res) => {
+      const mcp = new McpServer({ name: 'remote', version: '1.0.0' });
+      mcp.registerTool(
+        'echo',
+        { description: 'Echo the text back', inputSchema: { text: z.string() } },
+        async ({ text }) => {
+          calls.push(text);
+          return { content: [{ text: `echo: ${text}`, type: 'text' }] };
+        }
+      );
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      res.on('close', () => {
+        void transport.close();
+        void mcp.close();
+      });
+      await mcp.connect(transport);
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+      await transport.handleRequest(req, res, body ? JSON.parse(body) : undefined);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const ws = await startWorkspace();
+      const { port } = server.address() as AddressInfo;
+      const { runtime, toolCalls } = await makeRuntime(ws, {
+        mcp: { url: `http://127.0.0.1:${port}/mcp` },
+      });
+      api.requests.length = 0;
+
+      const outcome = await runtime.runTurn({ system: 'S', user: 'MCPCALL please' });
+      await runtime.close?.();
+
+      expect(outcome.text).toBe('all done');
+      // The model was offered the relayed tool, and the call reached the remote server.
+      expect(api.requests[0]?.tools).toContain('mcp__connection__echo');
+      expect(calls).toEqual(['from the harness']);
+      expect(toolCalls).toEqual([expect.objectContaining({ toolName: 'mcp__connection__echo' })]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   }, 180_000);
 

@@ -6,6 +6,7 @@ import type {
   PreToolUseHookInput,
   SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../../activities/workspace.js';
 import {
@@ -18,9 +19,11 @@ import {
   WORKSPACE_DIR,
   withUsageReport,
 } from '../harness/adapter.js';
+import { type McpRelay, openMcpRelay } from '../harness/mcpRelay.js';
 import { POLICY_DECISION_MS } from '../harness/policy.js';
 import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { runningTotalsUsage, summedCallsUsage, type UsageTotals } from '../harness/usage.js';
+import type { McpTracer } from '../mcpTools.js';
 import { binarySha256, resolveClaudeBinary } from './binary.js';
 import { type ModelProxy, workerModelProxy } from './modelProxy.js';
 import {
@@ -28,7 +31,9 @@ import {
   decideToolCall,
   type HarnessTool,
   harnessToolsFor,
+  MCP_RELAY_SERVER,
   type PolicyContext,
+  relayedToolName,
 } from './policy.js';
 
 export { POLICY_DECISION_MS } from '../harness/policy.js';
@@ -226,9 +231,16 @@ function streamedCalls(streamed: Map<string, { model: string; usage: StreamedUsa
  * context and its prompt cache.
  */
 export function claudeCodeAdapter(
-  options: Omit<ClaudeCodeRuntimeOptions, 'tracer'>
+  options: Omit<ClaudeCodeRuntimeOptions, 'tracer'> & { tracer?: McpTracer }
 ): HarnessAdapter<ClaudeUsageReport> {
-  const { access, loadProjectSettings, maxTurns, modelProxy, workspace } = options;
+  const { access, loadProjectSettings, maxTurns, mcp, modelProxy, workspace } = options;
+  // The Agent's MCP connection, opened once from the worker and served to each
+  // turn; `null` once opening it failed (the agent then works without it).
+  let relay: Promise<McpRelay | null> | undefined;
+  const openRelay = () => {
+    relay ??= mcp ? openMcpRelay(mcp, options.tracer) : Promise.resolve(null);
+    return relay;
+  };
   const baseUrl = normalizeAnthropicBaseUrl(access.apiBase);
   const tools = options.tools ? [...options.tools] : harnessToolsFor(options.toolKeys);
   const policy: PolicyContext = {
@@ -250,7 +262,8 @@ export function claudeCodeAdapter(
   async function driveTurn(
     turn: HarnessTurn,
     { system, user }: { system: string; user: string },
-    endpoint: { baseUrl: string; apiKey: string; proxied: boolean }
+    endpoint: { baseUrl: string; apiKey: string; proxied: boolean },
+    mcpServer: { instance: McpServer; timeout: number } | undefined
   ): Promise<HarnessTurnResult<ClaudeUsageReport>> {
     let result: SDKResultMessage | undefined;
     let toolCalls = 0;
@@ -350,6 +363,20 @@ export function claudeCodeAdapter(
         // rules. The policy tier makes it ignore every allow rule outside that
         // tier (a repository's `.claude/settings.json` among them), so the
         // fallback reaches `canUseTool` above, which refuses.
+        // The Agent's own MCP connection, relayed from the worker, and no other:
+        // a repository's `.mcp.json` or the harness's settings add no server.
+        ...(mcpServer
+          ? {
+              mcpServers: {
+                [MCP_RELAY_SERVER]: {
+                  instance: mcpServer.instance,
+                  name: MCP_RELAY_SERVER,
+                  timeout: mcpServer.timeout,
+                  type: 'sdk' as const,
+                },
+              },
+            }
+          : {}),
         managedSettings: {
           allowManagedPermissionRulesOnly: true,
           permissions: { disableBypassPermissionsMode: 'disable' },
@@ -385,6 +412,7 @@ export function claudeCodeAdapter(
             secretEnv: { ANTHROPIC_API_KEY: endpoint.apiKey },
             signal: spawnOptions.signal,
           }),
+        strictMcpConfig: true,
         systemPrompt: { append, preset: 'claude_code', type: 'preset' },
         tools: [...tools],
       },
@@ -457,6 +485,9 @@ export function claudeCodeAdapter(
 
   return {
     capabilities: CLAUDE_CODE_CAPABILITIES,
+    async close() {
+      await (await relay)?.close();
+    },
     decide: (toolName, input, harnessCwd) => decideToolCall(toolName, input, policy, harnessCwd),
     kind: 'claude-code',
     label: 'Claude Code',
@@ -467,6 +498,11 @@ export function claudeCodeAdapter(
       sha256: binarySha256,
     },
     async runTurn(turn, input) {
+      const mcpRelay = await openRelay();
+      policy.mcpTools = mcpRelay?.tools.map((tool) => relayedToolName(tool.name)) ?? [];
+      const mcpServer = mcpRelay
+        ? { instance: mcpRelay.createServer(), timeout: mcpRelay.callTimeoutMs }
+        : undefined;
       // Through the worker's model proxy when the deployment runs one: the
       // container gets a token good only for this turn's model calls, never the
       // credential, and every call — the small-model side calls the harness
@@ -486,11 +522,13 @@ export function claudeCodeAdapter(
           input,
           registration
             ? { apiKey: registration.token, baseUrl: registration.baseUrl, proxied: true }
-            : { apiKey: access.apiKey, baseUrl, proxied: false }
+            : { apiKey: access.apiKey, baseUrl, proxied: false },
+          mcpServer
         );
       } finally {
         // Every call the turn made is reported before the turn's usage is settled.
         await registration?.release();
+        await mcpServer?.instance.close().catch(() => undefined);
       }
     },
     usage: {

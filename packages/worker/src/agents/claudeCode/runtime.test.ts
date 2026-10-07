@@ -57,6 +57,12 @@ vi.mock('./policy.js', async (importOriginal) => ({
   decideToolCall: h.decideToolCall,
 }));
 // One scripted run per `query()` call: the messages it yields, then optionally a throw.
+const relay = vi.hoisted(() => ({
+  close: vi.fn(async () => {}),
+  open: vi.fn(),
+  serverClose: vi.fn(async () => {}),
+}));
+vi.mock('../harness/mcpRelay.js', () => ({ openMcpRelay: relay.open }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: ({ options, prompt }: { options: QueryOptions; prompt: string }) => {
     h.queryCalls.push({ options, prompt });
@@ -1110,5 +1116,70 @@ describe('through the worker’s model proxy', () => {
     ]);
     // Every call was debited as it ended, so the turn owes nothing more.
     expect(outcome.usageByModel).toEqual([]);
+  });
+});
+
+describe('the Agent’s MCP connection', () => {
+  beforeEach(() => {
+    relay.open.mockResolvedValue({
+      callTimeoutMs: 1234,
+      close: relay.close,
+      createServer: () => ({ close: relay.serverClose, marker: 'in-process server' }),
+      tools: [{ inputSchema: { type: 'object' }, name: 'search' }],
+    });
+  });
+
+  it('is relayed from the worker as an in-process server, and no other MCP server is loaded', async () => {
+    const target = { url: 'https://mcp.example/mcp' };
+    const { runtime } = setup({ mcp: target });
+    h.script.push([[init('s1'), success('ok')]], [[init('s1'), success('again')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    // One remote connection for the runtime, a fresh in-process server per turn.
+    expect(relay.open).toHaveBeenCalledTimes(1);
+    expect(relay.open.mock.calls[0]?.[0]).toBe(target);
+    expect(relay.serverClose).toHaveBeenCalledTimes(2);
+    const options = h.queryCalls[0]?.options as Record<string, unknown>;
+    expect(options.strictMcpConfig).toBe(true);
+    expect(options.mcpServers).toEqual({
+      connection: {
+        instance: expect.objectContaining({ marker: 'in-process server' }),
+        name: 'connection',
+        timeout: 1234,
+        type: 'sdk',
+      },
+    });
+
+    // The policy allows the relayed tools by their harness names.
+    const hooks = (options as QueryOptions).hooks;
+    await hooks.PreToolUse[0]?.hooks[0]?.(
+      {
+        cwd: '/workspace/target-repo',
+        tool_input: { q: 'x' },
+        tool_name: 'mcp__connection__search',
+      },
+      't'
+    );
+    expect(h.decideToolCall).toHaveBeenCalledWith(
+      'mcp__connection__search',
+      { q: 'x' },
+      expect.objectContaining({ mcpTools: ['mcp__connection__search'] }),
+      '/workspace/target-repo'
+    );
+
+    await runtime.close?.();
+    expect(relay.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads no MCP server at all without a connection, a repository’s own included', async () => {
+    const { runtime } = setup();
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const options = h.queryCalls[0]?.options as Record<string, unknown>;
+    expect(options.mcpServers).toBeUndefined();
+    expect(options.strictMcpConfig).toBe(true);
+    expect(relay.open).not.toHaveBeenCalled();
   });
 });

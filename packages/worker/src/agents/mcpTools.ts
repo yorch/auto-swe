@@ -180,11 +180,11 @@ export function guardedMcpFetch(
 }
 
 /** Removes a secret from text that may have been built from a failing request. */
-function scrubToken(text: string, token: string | undefined): string {
+export function scrubToken(text: string, token: string | undefined): string {
   return token ? text.split(token).join('[redacted]') : text;
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+export async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([

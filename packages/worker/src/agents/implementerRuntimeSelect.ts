@@ -6,8 +6,13 @@ import { type AgentRuntimeSource, resolveAgentRuntime } from '../lib/config/agen
 import { type ResolvedSkill, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { HARNESSES } from './harnessRegistry.js';
-import { buildImplementerForActivity, resolveImplementerConfig } from './implementer.js';
+import {
+  buildImplementerForActivity,
+  resolveImplementerConfig,
+  resolveImplementerMcpTarget,
+} from './implementer.js';
 import { type ImplementerRuntime, mastraRuntime } from './implementerRuntime.js';
+import { isMcpToolEnabled } from './mcpTools.js';
 
 /** One implementer session's loop, built for the runtime the agent resolved to. */
 export interface ImplementerTurnRunner {
@@ -46,8 +51,9 @@ export interface ImplementerTurnRunner {
  * and only what that runtime uses is built: the
  * Mastra agent, its model binding and its MCP connection for `mastra`; for any
  * other value, the harness the registry (`harnessRegistry.ts`) holds for it,
- * bound to the Agent's own model and credential. A harness brings its own tools,
- * so it never opens the MCP client or binds a Mastra model. The registry only
+ * bound to the Agent's own model and credential. A harness brings its own tools
+ * and never binds a Mastra model; the Agent's MCP connection is relayed to it
+ * from the worker. The registry only
  * holds harnesses whose every tool call the worker decides, and refuses the rest.
  *
  * Every runtime runs on the same Agent row's config (`resolveImplementerConfig`):
@@ -107,9 +113,10 @@ export async function buildImplementerTurnRunner(input: {
   }
 
   const harness = HARNESSES.select(kind);
-  const [config, { model }] = await Promise.all([
+  const [config, { model }, mcpTarget] = await Promise.all([
     resolveImplementerConfig(input.ctx, agentKey),
     resolveAgent(agentKey, input.ctx),
+    resolveImplementerMcpTarget(agentKey, input.ctx),
   ]);
   const runtime = harness.bind(agentKey, model).build({
     // The repository's own harness configuration (Claude Code's CLAUDE.md and
@@ -118,6 +125,8 @@ export async function buildImplementerTurnRunner(input: {
     // policy still decides every tool call.
     loadProjectSettings: true,
     maxTurns: config.maxSteps,
+    // The same MCP connection the Mastra loop would bind, relayed from the worker.
+    mcp: isMcpToolEnabled(config.toolKeys) ? mcpTarget : null,
     // The Agent row's tools bound the harness as they bound the Mastra loop.
     toolKeys: config.toolKeys,
     tracer: input.tracer,

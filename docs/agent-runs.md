@@ -128,7 +128,8 @@ exfiltration channel.
 `runtime: claude-code`; the run-wide `workspace.implementerRuntime` setting does not apply to agent
 runs. On the Claude Code harness the agent runs as one harness turn inside its container, granted the
 harness tools that stand in for exactly the workspace tools above (`null` → `Read`, `Glob`, `Grep`;
-`[]` → none), behind the same worker-side tool policy as the implementer, and with no MCP server bound.
+`[]` → none), behind the same worker-side tool policy as the implementer, and with the agent's MCP
+connection relayed from the worker, as it would bind on the Mastra loop.
 The choice is pinned on the run before the clone, when the step first resolves its agent (agent
 runs skip the run-start snapshot other runs take), and recorded as an `agent.runtime` trace event. See
 [agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness).

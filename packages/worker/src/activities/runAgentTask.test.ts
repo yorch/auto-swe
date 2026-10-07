@@ -173,6 +173,7 @@ vi.mock('./agentRunFinalize.js', () => ({
 
 import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmission';
 import { resolveAgent } from '../lib/config/agentResolver.js';
+import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
 import { runAgentTask } from './runAgentTask.js';
 import { createWorkspace } from './workspace.js';
@@ -820,19 +821,20 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
     expect(createWorkspace).not.toHaveBeenCalled();
   });
 
-  it('binds no MCP server, and says so on the trace', async () => {
-    m.mcpConnectionId = 'mcp-1';
-    m.toolKeys = ['readFile', 'mcp'];
+  it('relays the agent’s MCP connection to the harness, and closes the runtime after the turn', async () => {
+    const target = { url: 'https://mcp.example/mcp' };
+    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce(target as never);
+    const close = vi.fn(async () => {});
+    m.claudeCodeRuntime.mockImplementation(() => ({
+      close,
+      runTurn: async () => ({ text: 'done', toolCallCount: 0 }),
+    }));
+
     await runAgentTask({ request: request() });
-    const tracer = m.persist.mock.calls[0]?.[0] as {
-      records: Array<{ toolName: string; outputJson?: unknown }>;
-    };
-    expect(tracer.records).toContainEqual(
-      expect.objectContaining({
-        outputJson: { agentKey: 'contentWriter', mcpConnectionId: 'mcp-1' },
-        toolName: 'agent.runtime_mcp_skipped',
-      })
-    );
+
+    expect(resolveAgentMcpUrl).toHaveBeenCalledWith('contentWriter', expect.anything());
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ mcp: target });
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it('debits each call the harness finishes, and reports the whole turn’s cost', async () => {

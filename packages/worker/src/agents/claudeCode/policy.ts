@@ -64,6 +64,14 @@ export function harnessToolsGranting(keys: readonly string[]): HarnessTool[] {
   return nativeTools(CLAUDE_CODE_TOOLS, canonicalToolsGranting(keys));
 }
 
+/** The in-process MCP server an Agent's MCP connection is relayed through. */
+export const MCP_RELAY_SERVER = 'connection';
+
+/** The name the harness calls a relayed MCP tool by: `mcp__<server>__<tool>`. */
+export function relayedToolName(tool: string): string {
+  return `mcp__${MCP_RELAY_SERVER}__${tool}`;
+}
+
 export interface PolicyContext {
   containerId: string;
   /** The repository checkout — the only place the harness may write. */
@@ -77,6 +85,12 @@ export interface PolicyContext {
   projectConfigLoaded: boolean;
   /** The harness tools the Agent's `toolKeys` grant ({@link harnessToolsFor}). */
   tools: readonly HarnessTool[];
+  /**
+   * The relayed MCP tools, by the name the harness calls them
+   * ({@link relayedToolName}). Each runs in the worker, against the Agent's MCP
+   * connection, and is audit-logged there; nothing about it runs in the container.
+   */
+  mcpTools?: readonly string[];
 }
 
 /**
@@ -124,8 +138,9 @@ function toCanonical(tool: HarnessTool, input: Record<string, unknown>): Canonic
  * refused here as well as left out of the harness's tool list; the harness's
  * `.claude` directory under its home is readable (staged prompts and offloaded
  * tool output live there); and its configuration in the checkout is protected
- * while the run loads it ({@link isHarnessConfig}). Any tool outside
- * {@link HARNESS_TOOLS} is refused.
+ * while the run loads it ({@link isHarnessConfig}). A relayed MCP tool
+ * (`ctx.mcpTools`) is allowed: it runs in the worker, not the container. Any
+ * other tool outside {@link HARNESS_TOOLS} is refused.
  */
 export async function decideToolCall(
   toolName: string,
@@ -133,6 +148,9 @@ export async function decideToolCall(
   ctx: PolicyContext,
   harnessCwd?: string
 ): Promise<ToolDecision> {
+  if (ctx.mcpTools?.includes(toolName)) {
+    return { allow: true };
+  }
   if (!(HARNESS_TOOLS as readonly string[]).includes(toolName)) {
     return deny(`The ${toolName} tool is not available in this workspace.`);
   }
