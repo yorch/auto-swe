@@ -527,7 +527,13 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       // A new model can strand harness agents that inherit it: say so, refuse nothing.
       const runtimeWarnings =
         request.body.modelSpec !== undefined
-          ? await inheritingHarnessWarnings(fastify.prisma, agent.key, agent.modelSpec)
+          ? await inheritingHarnessWarnings(
+              fastify.prisma,
+              agent.key,
+              agent.modelSpec,
+              // A team admin is not told about other teams' agents.
+              actor.role === 'ADMIN' ? undefined : request.params.id
+            )
           : [];
       await writeAuditLog(fastify, {
         action: 'UPDATE',

@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   type ImplementerRuntimeKind,
   runtimeModelError,
@@ -167,7 +168,12 @@ export async function defaultOverrideRuntime(
 export async function inheritingHarnessWarnings(
   prisma: AgentReader,
   key: string,
-  modelSpec: string | null
+  modelSpec: string | null,
+  /**
+   * Whose agents the caller may see named: a team admin's save lists only the
+   * platform-wide agents and their own team's. Omitted for a platform ADMIN.
+   */
+  visibleToTeam?: string
 ): Promise<string[]> {
   if (!modelSpec || modelSpec.startsWith('anthropic/')) {
     return [];
@@ -176,10 +182,27 @@ export async function inheritingHarnessWarnings(
   const seen = new Set<string>([key]);
   let frontier = [key];
   while (frontier.length > 0) {
-    const heirs = await prisma.agent.findMany({
-      select: { key: true, runtime: true, scope: true },
-      where: { inheritsModelFrom: { in: frontier }, isActive: true, modelSpec: null },
-    });
+    const heirs = await runUnscoped(
+      'heirs at every scope inherit the model; a team admin sees only GLOBAL rows and their own team’s',
+      ['Agent'],
+      () =>
+        prisma.agent.findMany({
+          select: { key: true, runtime: true, scope: true },
+          where: {
+            inheritsModelFrom: { in: frontier },
+            isActive: true,
+            modelSpec: null,
+            ...(visibleToTeam
+              ? {
+                  OR: [
+                    { scope: 'GLOBAL' as const },
+                    { scope: 'TEAM' as const, teamId: visibleToTeam },
+                  ],
+                }
+              : {}),
+          },
+        })
+    );
     frontier = [];
     for (const heir of heirs) {
       if (heir.runtime === 'claude-code') {

@@ -840,6 +840,32 @@ describe('agent runtime', () => {
     await app.close();
   });
 
+  it('names only platform-wide and own-team heirs to a team admin', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow());
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'v2',
+      key: 'teamAgent',
+      modelSpec: 'openai/gpt-6.1-sol',
+      skillRefs: [],
+      version: 2,
+    });
+    const res = await app.inject({
+      body: { modelSpec: 'openai/gpt-6.1-sol' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockPrisma.agent.findMany.mock.calls[0]?.[0].where.OR).toEqual([
+      { scope: 'GLOBAL' },
+      { scope: 'TEAM', teamId: TEAM },
+    ]);
+    await app.close();
+  });
+
   it('refuses a team admin who sets a runtime on create', async () => {
     const { app, mockPrisma } = await buildTeamApp('ADMIN');
     const res = await app.inject({
