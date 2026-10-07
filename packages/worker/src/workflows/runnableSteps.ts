@@ -23,6 +23,7 @@ import { lookupPath } from '../lib/workflowEngine.js';
 import {
   agentActivities,
   agentNodeActivities,
+  agentNodeWorkspaceActivities,
   agentTaskActivities,
   catalogActivities,
   ciConfigActivities,
@@ -133,8 +134,8 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     // P2 declarative agent node: run a library Agent by reference.
     'runAgentNode',
-    ({ request, config, inputs }) =>
-      agentNodeActivities.runAgentNode({
+    ({ request, ctx, config, inputs }) => {
+      const input = {
         agentRef: config.agentRef as string,
         // Phase A: thread the run's originating channel (if any) so the agent
         // resolves the CHANNEL config tier. Undefined for non-channel runs.
@@ -146,7 +147,21 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         ...(config.steering ? { steering: config.steering as string[] } : {}),
         systemPrompt: config.systemPrompt as string | undefined,
         userMessage: config.userMessage as string | undefined,
-      }),
+      };
+      if (config.workspace !== true) {
+        return agentNodeActivities.runAgentNode(input);
+      }
+      // A node that asks for a checkout gets the run's repository at the branch
+      // its code result names, else the run's own branch, on the longer proxy.
+      return agentNodeWorkspaceActivities.runAgentNode({
+        ...input,
+        workspace: {
+          branch: lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined,
+          repoId: request.repoId,
+          ticketId: request.externalTicketId,
+        },
+      });
+    },
   ],
   [
     // Internal step of the Agent Run system template. The activity re-checks that

@@ -631,6 +631,9 @@ const DISPATCH_PACKERS: {
       if (node.systemPrompt !== undefined) {
         config.systemPrompt = node.systemPrompt;
       }
+      if (node.workspace === true) {
+        config.workspace = true;
+      }
       // Soft steering: drain any out-of-band guidance that arrived since the last
       // agent node and thread it to the activity, which prepends a labeled block to
       // the user message. This is consumed here (drain), so a subsequent agent node

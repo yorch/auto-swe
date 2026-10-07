@@ -131,7 +131,9 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
   [§3.7](#37-runtimes-mastra-and-the-claude-code-harness).
 - **The `agent` node** carries an `agentRef` (`<key>` or `<key>@<version>`) plus optional
   `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
-  and calls `runAgent`.
+  and calls `runAgent`. With `workspace: true` the node runs in a throwaway checkout of the run's
+  repository instead, on the Agent's own runtime ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness),
+  *Agent nodes in a checkout*).
 
 ---
 
@@ -397,8 +399,8 @@ agent, by `resolveAgentRuntime(key, ctx, default)`:
    model from, because the harness can only drive the model that chain resolves. A version that names
    its own model does not inherit a runtime.
 3. **The caller's default.** For the implementer family it is the run-pinned
-   `workspace.implementerRuntime` setting (`mastra` by default; `claude-code`). An agent run's default
-   is `mastra`, whatever that setting says.
+   `workspace.implementerRuntime` setting (`mastra` by default; `claude-code`). An agent run's and a
+   generic `agent` node's default is `mastra`, whatever that setting says.
 
 A first-use pin is written as a compare-and-set on the whole map, so two activities pinning
 different agents at once keep both entries and two pinning the same agent agree on the first; it
@@ -417,7 +419,9 @@ Where the runtime applies:
 |---|---|
 | `executeImplementation`, `implementerSession` (CI / review / gate fixers), `resolveMergeConflict`, eval replays | resolved as above, default `workspace.implementerRuntime` |
 | `runAgentTask` (agent runs) | resolved as above, default `mastra` |
-| `runAgentNode` (generic `agent` nodes), `runAgent` callers | always Mastra: there is no workspace for the harness to run in. An Agent that asks for the harness gets an `agent.runtime_not_applicable` event on the trace |
+| `runAgentNode` with `workspace: true` (an `agent` node in a checkout) | resolved as above, default `mastra` |
+| `runAgentNode` without a workspace | resolved and pinned as above, but always run on Mastra: there is no workspace for the harness to run in. An Agent pinned to the harness gets an `agent.runtime_not_applicable` event on the trace, naming the runtime and where it came from |
+| other `runAgent` callers (channel turns, memory passes, workflow authoring) | always Mastra; the runtime is not resolved |
 
 Both the setting and the `runtime` column are ADMIN-only because they decide what runs inside the
 trust boundary and which credential enters the workspace. A team admin's edit of a TEAM agent keeps
@@ -448,6 +452,26 @@ exhausted budget aborts the turn and the run fails `BUDGET_EXCEEDED` after the c
 the turn ends, only what was not debited call by call is accrued. Delivery is unchanged: the diff is still judged and pushed from a fresh container the agent
 never ran in ([agent-runs.md §4](./agent-runs.md#4-delivery-and-the-trust-boundary)).
 
+**Agent nodes in a checkout.** A generic `agent` node with `workspace: true` clones the run's
+repository into a container of its own and runs the Agent there, on the runtime resolved as above —
+so an Agent that asks for `claude-code` runs one harness turn, and every other runs the Mastra loop
+with workspace tools. The checkout is the run's branch, read the way the quality gates read it: the
+branch `context.currentCodeResult` names, else `<branchPrefix>/<ticketId>`; it is cut from the
+default branch and moved to the run's branch when that has been pushed, so a node placed before any
+code exists reads the default branch. The trace's `agent.runtime` event names the runtime, where it
+came from, and what was checked out (`checkout`). Both loops get the agent-run tool grant (`null` →
+the read tools, a list → exactly what it names; on the harness, through `exactToolKeys`), the Agent's
+MCP connection (relayed to the harness from the worker), and a preamble saying the checkout is
+throwaway. The harness turn runs through `runImplementerTurn`, metered call by call, with
+`workspace.agentMaxSteps` as its turn cap and the budget checked before it starts; the Mastra loop
+runs through `runAgent` as a tool-bearing node always has. The node runs on the implementer's
+activity timeouts (`agentNodeWorkspaceActivities`), not a single-shot node's. Nothing leaves the container: the node
+commits and pushes nothing, its answer is the Agent's final text (`nodes.<id>.output.text`), and the
+container is destroyed when the node ends. The model is checked against a USD cap, and bound to the
+harness, before the clone, so a model the harness cannot drive (`HARNESS_UNSUPPORTED_MODEL`) costs no
+container. A run with no repository (a repo-less channel task) fails the node, without retrying, with
+`AGENT_NODE_NO_REPOSITORY`.
+
 Both runtimes sit behind the same `ImplementerRuntime` interface: it drives one turn and reports
 text, tool-call count and usage. Usage accounting, the advisory output scan and the trace row stay
 in `runImplementerTurn`, so a turn is metered and traced identically whichever loop ran it. Our own
@@ -474,14 +498,15 @@ tools, and `decideCanonicalCall` applies their scanners to it: `shell` gets the 
 checkout and the harness's own read roots. An adapter maps its native tools onto those four (a
 `ToolVocabulary`), and tool keys grant capabilities, not native names: `readFile` and
 `listDirectory` grant `read` and `search`, `writeFile` grants `write`, `bash` grants `shell`. The
-implementer family reads the Agent's `toolKeys` (no opinion grants all four); an agent run passes an
-exact grant (`exactToolKeys`), where nothing named is nothing granted.
+implementer family reads the Agent's `toolKeys` (no opinion grants all four); an agent run and an
+`agent` node in a checkout pass an exact grant (`exactToolKeys`), where nothing named is nothing
+granted.
 
-Both `buildImplementerTurnRunner` and `runAgentTask` pick a harness only through the registry
-(`harnessRegistry.ts`, built with `createHarnessRegistry`), keyed by the runtime `resolveAgentRuntime`
-returned. Selecting binds the Agent's resolved model into the access the harness's client needs, and
-refuses a model it cannot speak to before anything is built — an agent run binds it before its
-container is cloned. A harness declares `enforcesPerCallPolicyInWorker` only when it asks the worker
+`buildImplementerTurnRunner`, `runAgentTask` and `runAgentNode` pick a harness only through the
+registry (`harnessRegistry.ts`, built with `createHarnessRegistry`), keyed by the runtime
+`resolveAgentRuntime` returned. Selecting binds the Agent's resolved model into the access the
+harness's client needs, and refuses a model it cannot speak to before anything is built — an agent
+run and an `agent` node in a checkout bind it before their container is cloned. A harness declares `enforcesPerCallPolicyInWorker` only when it asks the worker
 before **every** tool call, over a channel the worker owns, waits for the answer, and cannot run a
 refused call — and no file in the repository or the container can grant a call without that answer.
 The registry refuses a harness without it when it is registered (at worker start-up) and again when
@@ -1307,9 +1332,21 @@ template override is never badged, because it may use a different model or crede
   the first time the run resolves them, so an edit made before that reaches the run. An agent whose `inheritsModelFrom` chain was broken at run start is left out
   of the snapshot and fails where it is used, as before. The snapshot costs a lookup per agent key at
   run start (a cascade walk of scalar columns, no credential).
-- **Generic `agent` nodes never run on the harness.** They have no workspace, so an Agent asking for
-  `claude-code` runs on Mastra there, with a trace event saying so; a node that needs the harness has
-  to be an implementer-family step or an agent run.
+- **A generic `agent` node runs on the harness only in a checkout.** Without `workspace: true` it
+  has no workspace, so an Agent pinned to `claude-code` runs on Mastra there, with a trace event
+  saying so. With it, the checkout is read-only in effect: nothing the agent changes is committed,
+  pushed or handed to the next node, so a node that should change code has to be an
+  implementer-family step or an agent run. Such a node runs under the implementer's activity limits
+  (30 minutes, two attempts), not a generic node's, and a node's own `startToCloseTimeout` is not read.
+  Each attempt clones afresh and starts a new session. The 30 minutes bound the clone and the turn
+  together, with no separate wall-clock deadline, so a turn that outlasts them is cancelled and
+  retried rather than ending with a `stoppedReason`. A branch fetch that fails for any reason, not
+  only an unpushed branch, leaves the checkout on the default branch; the trace's `checkout` says
+  which it got.
+- **A node's `@version` pin does not choose its runtime.** The runtime is pinned per agent key on
+  the run, so `reviewer@3` runs on the runtime the run pinned for `reviewer`, even when version 3 names
+  another; if that runtime cannot drive version 3's model the node fails with
+  `HARNESS_UNSUPPORTED_MODEL`.
 - **A harness turn stops one call late.** The budget is re-checked after each call is debited, so
   an exhausted budget stops the turn after the call that exhausted it (and any running beside it),
   as the Mastra loop stops one step late. Without the model proxy the gap is wider: a streamed call

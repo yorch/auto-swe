@@ -620,7 +620,7 @@ WORKFLOWSPEC SHAPE
 
 NODE TYPES (set "type" to one of these). Edge fields (next/onTrue/...) must reference an existing node id.
 - step:      { "type":"step", "step":"<registeredStepName>", "inputs"?:{...}, "config"?:{...}, "onFail"?, "next"?:"<id>" }
-- agent:     { "type":"agent", "agentRef":"<agentKey or agentKey@version>", "inputs"?:{...}, "userMessage"?:"...", "systemPrompt"?:"...", "next"?:"<id>" }
+- agent:     { "type":"agent", "agentRef":"<agentKey or agentKey@version>", "inputs"?:{...}, "userMessage"?:"...", "systemPrompt"?:"...", "workspace"?:true, "next"?:"<id>" }
 - mcp:       { "type":"mcp", "connectionRef":"<mcpConnectionId>", "tool":"<toolName>", "inputs"?:{...}, "next"?:"<id>" }
 - eval:      { "type":"eval", "target":{...binding}, "scorers":[{ "kind":"gate"|"assert"|"trajectory"|"judge", ... }], "next"?:"<id>" }
 - set:       { "type":"set", "values":{ "<key>":{...binding} }, "next"?:"<id>" }
@@ -692,7 +692,7 @@ You will be given the WorkflowSpec JSON. Produce a clear, friendly explanation i
 
 NODE TYPES you may encounter (so you can describe them accurately):
 - step: runs a built-in activity (the "step" field names it, e.g. executeImplementation, runReviewNetwork, createOrUpdatePullRequest).
-- agent: runs a library AI agent by reference ("agentRef").
+- agent: runs a library AI agent by reference ("agentRef"); with "workspace": true it works in a throwaway checkout of the run's repository.
 - mcp: calls a single tool on an external MCP connection.
 - eval: scores a value with gates/judges and can branch on the result.
 - cond: branches on a condition ("onTrue"/"onFalse").

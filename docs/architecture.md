@@ -319,7 +319,7 @@ The spec supports 15 node types.
 | Node type | Purpose | Key fields |
 |-----------|---------|-----------|
 | `step` | Dispatch a registered activity | `step`, `inputs`, `next`, `onFail`, `config` |
-| `agent` | Run a library Agent by reference | `agentRef` (`<key>` or `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs` |
+| `agent` | Run a library Agent by reference | `agentRef` (`<key>` or `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs`, `workspace` (run in a throwaway checkout of the run's repository) |
 | `mcp` | Call one tool on an `mcp` Connection | `connectionRef`, `tool`, `inputs` |
 | `eval` | Score a value with floor/judge/trajectory scorers, then gate or branch | `target`, `scorers[]`, `judgeAdvisory` |
 | `set` | Write values into the run context | `values` (path → binding) |
