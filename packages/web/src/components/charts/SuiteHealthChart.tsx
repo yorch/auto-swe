@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { TOKEN } from '@/lib/palette';
+import { useTokens } from '@/hooks/useTokens';
 import {
   AXIS_COMMON_PROPS,
   axisLabel,
@@ -50,6 +50,7 @@ function truncateLabel(label: unknown): string {
  * and a bar past it is drawn in the failure colour as well as sitting past it.
  */
 export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
+  const t = useTokens();
   if (datasets.length === 0) {
     return <EmptyChart label="No eval datasets yet." />;
   }
@@ -113,13 +114,13 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
           />
           <ReferenceLine
             label={{
-              fill: TOKEN.paper400,
+              fill: t.paper400,
               fontFamily: 'var(--font-sans)',
               fontSize: 11,
               position: 'top',
               value: `max ${percent(maxStaleRate)}`,
             }}
-            stroke={TOKEN.amber400}
+            stroke={t.amber400}
             strokeDasharray="4 3"
             x={maxStaleRate}
           />
@@ -130,10 +131,7 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
             radius={[0, 4, 4, 0]}
           >
             {datasets.map((d) => (
-              <Cell
-                fill={d.staleRate > maxStaleRate ? TOKEN.brick400 : TOKEN.ember400}
-                key={d.slug}
-              />
+              <Cell fill={d.staleRate > maxStaleRate ? t.brick400 : t.ember400} key={d.slug} />
             ))}
           </Bar>
         </BarChart>

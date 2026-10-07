@@ -1,10 +1,12 @@
 import type { Metadata } from 'next';
 import { IBM_Plex_Mono, Inter } from 'next/font/google';
 import './globals.css';
-import { AppConfigScript } from '@/components/AppConfigScript';
+import { AppConfigScript, InlineHeadScript } from '@/components/AppConfigScript';
 import { AppShell } from '@/components/layout/AppShell';
 import { Providers } from '@/components/Providers';
+import { ThemeSync } from '@/components/ThemeSync';
 import { publicApiUrl, temporalUiUrl } from '@/lib/env';
+import { THEME_INIT_SCRIPT } from '@/lib/theme';
 
 const inter = Inter({
   display: 'swap',
@@ -47,6 +49,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
     >
       <head suppressHydrationWarning>
+        {/* Applies the saved theme before first paint, so a light-theme user never sees a dark flash. */}
+        <InlineHeadScript id="__THEME__" source={THEME_INIT_SCRIPT} />
         <AppConfigScript appConfig={appConfig} />
         <style>{`
           :root {
@@ -56,6 +60,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         `}</style>
       </head>
       <body className="min-h-dvh">
+        <ThemeSync />
         <Providers>
           <AppShell>{children}</AppShell>
         </Providers>

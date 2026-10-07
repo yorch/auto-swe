@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { useTokens } from '@/hooks/useTokens';
 import {
   AXIS_COMMON_PROPS,
   axisLabel,
@@ -23,7 +24,7 @@ import {
   LINE_WIDTH,
   legendText,
 } from './chartChrome';
-import { TREND_COLORS } from './colors';
+import { trendColors } from './colors';
 
 interface Props {
   data: { date: string; completed: number; failed: number; active: number }[];
@@ -32,6 +33,7 @@ interface Props {
 }
 
 export function WorkflowsOverTimeChart({ data, title }: Props) {
+  const trend = trendColors(useTokens());
   if (data.every((d) => d.completed === 0 && d.failed === 0 && d.active === 0)) {
     return (
       <EmptyChart hint="Try a wider date range, or start work." label="No runs in this range." />
@@ -75,31 +77,31 @@ export function WorkflowsOverTimeChart({ data, title }: Props) {
           />
           <Area
             dataKey="completed"
-            fill={TREND_COLORS.completed}
+            fill={trend.completed}
             fillOpacity={0.15}
             name="Completed"
             stackId="1"
-            stroke={TREND_COLORS.completed}
+            stroke={trend.completed}
             strokeWidth={LINE_WIDTH}
             type="monotone"
           />
           <Area
             dataKey="failed"
-            fill={TREND_COLORS.failed}
+            fill={trend.failed}
             fillOpacity={0.15}
             name="Failed"
             stackId="1"
-            stroke={TREND_COLORS.failed}
+            stroke={trend.failed}
             strokeWidth={LINE_WIDTH}
             type="monotone"
           />
           <Area
             dataKey="active"
-            fill={TREND_COLORS.active}
+            fill={trend.active}
             fillOpacity={0.18}
             name="Active"
             stackId="1"
-            stroke={TREND_COLORS.active}
+            stroke={trend.active}
             strokeWidth={LINE_WIDTH}
             type="monotone"
           />

@@ -1,7 +1,7 @@
 import { globSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { TOKEN, TOKEN_CSS_VAR } from './palette.js';
+import { TOKEN, TOKEN_CSS_VAR, TOKEN_LIGHT } from './palette.js';
 
 /**
  * The reason `lib/palette.ts` is allowed to hold literals at all: this test
@@ -9,13 +9,28 @@ import { TOKEN, TOKEN_CSS_VAR } from './palette.js';
  * literal and this fails, which is exactly what nothing caught when the DAG
  * edges and chart chrome fell a palette behind.
  */
+/** The `{ … }` body following `opener` (which ends with its `{`). */
+function blockAfter(css: string, opener: string): string {
+  const start = css.indexOf(opener);
+  if (start === -1) {
+    throw new Error(`globals.css has no ${opener}`);
+  }
+  return css.slice(start + opener.length, css.indexOf('\n}', start));
+}
+
+function declarations(block: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [, name, value] of block.matchAll(/(--color-[a-z0-9-]+):\s*(#[0-9a-fA-F]{3,8})/g)) {
+    out.set(name, value.toLowerCase());
+  }
+  return out;
+}
+
 describe('TOKEN', () => {
   const css = readFileSync(path.resolve(__dirname, '../app/globals.css'), 'utf8');
-
-  const declared = new Map<string, string>();
-  for (const [, name, value] of css.matchAll(/(--color-[a-z0-9-]+):\s*(#[0-9a-fA-F]{3,8})/g)) {
-    declared.set(name, value.toLowerCase());
-  }
+  // The dark values live in the `@theme` block; the light block re-declares the
+  // same names, so each theme is read from its own block.
+  const declared = declarations(blockAfter(css, '@theme {'));
 
   it('parses the palette out of globals.css', () => {
     expect(declared.size).toBeGreaterThan(20);
@@ -27,6 +42,23 @@ describe('TOKEN', () => {
       const cssVar = TOKEN_CSS_VAR[key];
       expect(declared.get(cssVar), `${cssVar} is not declared in globals.css`).toBeDefined();
       expect(TOKEN[key].toLowerCase()).toBe(declared.get(cssVar));
+    }
+  );
+});
+
+describe('TOKEN_LIGHT', () => {
+  const css = readFileSync(path.resolve(__dirname, '../app/globals.css'), 'utf8');
+  const declared = declarations(blockAfter(css, ":root[data-theme='light'] {"));
+
+  it.each(Object.keys(TOKEN) as (keyof typeof TOKEN)[])(
+    '%s matches its light-theme custom property in globals.css',
+    (key) => {
+      const cssVar = TOKEN_CSS_VAR[key];
+      expect(
+        declared.get(cssVar),
+        `${cssVar} is not re-declared for the light theme`
+      ).toBeDefined();
+      expect(TOKEN_LIGHT[key].toLowerCase()).toBe(declared.get(cssVar));
     }
   );
 });

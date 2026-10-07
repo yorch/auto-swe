@@ -4,11 +4,13 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, isIconName } from '@/components/ui/Icon';
+import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { useApprovalsCount } from '@/hooks/useApprovals';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { activeNavHref, isStartWorkPath, type NavItem, navSections } from '@/lib/navigation';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
+import { type ThemePreference, useThemeStore } from '@/stores/themeStore';
 
 const SECTIONS_KEY = 'auto-swe.nav.sections';
 
@@ -115,6 +117,8 @@ function UserMenu() {
     };
   }, [open]);
 
+  const themePreference = useThemeStore((s) => s.preference);
+  const setThemePreference = useThemeStore((s) => s.setPreference);
   const name = user?.email?.split('@')[0] ?? 'user';
   const handleLogout = async () => {
     // logout() clears the gateway session and local cookies; navigating before
@@ -164,6 +168,17 @@ function UserMenu() {
           <div className="truncate border-b border-ink-400 px-3 py-2 text-xs text-paper-400">
             {user?.email ?? 'guest'}
           </div>
+          <div className="border-b border-ink-400 px-3 py-2">
+            <div className="mb-1.5 text-xs text-paper-500">Theme</div>
+            <SegmentedControl
+              ariaLabel="Theme"
+              className="w-full"
+              onChange={setThemePreference}
+              optionClassName="flex-1"
+              options={THEME_OPTIONS}
+              value={themePreference}
+            />
+          </div>
           <Link
             className={cn(
               'block px-3 py-2 text-[13px] text-paper-200 no-underline hover:bg-ink-700',
@@ -189,6 +204,12 @@ function UserMenu() {
     </div>
   );
 }
+
+const THEME_OPTIONS: SegmentedOption<ThemePreference>[] = [
+  { label: 'System', title: 'Follow your operating system', value: 'system' },
+  { label: 'Light', value: 'light' },
+  { label: 'Dark', value: 'dark' },
+];
 
 /** The user menu is a plain disclosure (links and a button), not an ARIA menu. */
 const MENU_ID = 'user-menu';

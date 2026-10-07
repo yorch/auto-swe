@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { TOKEN } from '@/lib/palette';
-import { CHART_DASHES, CHART_PALETTE, topNWithOther } from './colors';
+import { TOKEN, TOKEN_LIGHT } from '@/lib/palette';
+import { CHART_DASHES, CHART_PALETTE, CHART_PALETTE_LIGHT, topNWithOther } from './colors';
 
 function rgb(hex: string): [number, number, number] {
   const n = Number.parseInt(hex.slice(1), 16);
@@ -76,6 +76,35 @@ describe('CHART_PALETTE', () => {
   it('has a dash pattern for every colour', () => {
     expect(CHART_DASHES).toHaveLength(CHART_PALETTE.length);
     expect(new Set(CHART_DASHES).size).toBe(CHART_DASHES.length);
+  });
+});
+
+describe('CHART_PALETTE_LIGHT', () => {
+  it('keeps the dark palette’s length, so dash patterns and series slots line up', () => {
+    expect(CHART_PALETTE_LIGHT).toHaveLength(CHART_PALETTE.length);
+  });
+
+  it('keeps every pair distinguishable, including under deuteranopia', () => {
+    for (let i = 0; i < CHART_PALETTE_LIGHT.length; i++) {
+      for (let j = i + 1; j < CHART_PALETTE_LIGHT.length; j++) {
+        const a = rgb(CHART_PALETTE_LIGHT[i]);
+        const b = rgb(CHART_PALETTE_LIGHT[j]);
+        expect(
+          deltaE(lab(a), lab(b)),
+          `${CHART_PALETTE_LIGHT[i]} vs ${CHART_PALETTE_LIGHT[j]}`
+        ).toBeGreaterThan(30);
+        expect(
+          deltaE(lab(deuteranopia(a)), lab(deuteranopia(b))),
+          `deuteranopia ${CHART_PALETTE_LIGHT[i]} vs ${CHART_PALETTE_LIGHT[j]}`
+        ).toBeGreaterThan(12);
+      }
+    }
+  });
+
+  it('reads against the light chart background', () => {
+    for (const c of CHART_PALETTE_LIGHT) {
+      expect(contrast(c, TOKEN_LIGHT.ink700), c).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts';
-import { TOKEN } from '@/lib/palette';
+import { useTokens } from '@/hooks/useTokens';
 import {
   ACTIVE_DOT_PROPS,
   AXIS_COMMON_PROPS,
@@ -33,6 +33,7 @@ interface Props {
  * scorer and there is no legend. A day without signals is a gap, not a zero.
  */
 export function ScorerTrendChart({ data, granularity = 'day', title }: Props) {
+  const t = useTokens();
   const words = granularityWords(granularity);
   if (data.every((d) => d.n === 0)) {
     return <EmptyChart label="No signals in this window." />;
@@ -87,7 +88,7 @@ export function ScorerTrendChart({ data, granularity = 'day', title }: Props) {
             dataKey="mean"
             dot={DOT_PROPS}
             isAnimationActive={false}
-            stroke={TOKEN.ember400}
+            stroke={t.ember400}
             strokeWidth={LINE_WIDTH}
             type="monotone"
           />

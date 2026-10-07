@@ -1,7 +1,7 @@
 'use client';
 
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer } from 'recharts';
-import { TOKEN } from '@/lib/palette';
+import { useTokens } from '@/hooks/useTokens';
 import {
   CHART_HEIGHT,
   ChartFrame,
@@ -12,7 +12,7 @@ import {
   legendLabel,
   legendText,
 } from './chartChrome';
-import { STATUS_CHART_COLORS } from './colors';
+import { statusChartColors } from './colors';
 
 interface Props {
   data: { status: string; count: number }[];
@@ -23,6 +23,7 @@ interface Props {
 const statusName = (status: string) => legendLabel(status.replace(/_/g, ' ').toLowerCase());
 
 export function WorkflowStatusChart({ data, title }: Props) {
+  const t = useTokens();
   if (data.length === 0) {
     return <EmptyChart label="No runs in this range." />;
   }
@@ -49,11 +50,11 @@ export function WorkflowStatusChart({ data, title }: Props) {
             nameKey="status"
             outerRadius={102}
             paddingAngle={2}
-            stroke={TOKEN.ink900}
+            stroke={t.ink900}
             strokeWidth={2}
           >
             {data.map((entry) => (
-              <Cell fill={STATUS_CHART_COLORS[entry.status] ?? TOKEN.paper500} key={entry.status} />
+              <Cell fill={statusChartColors(t)[entry.status] ?? t.paper500} key={entry.status} />
             ))}
           </Pie>
           <ChartTooltip formatter={(value, name) => [value, statusName(String(name))]} />

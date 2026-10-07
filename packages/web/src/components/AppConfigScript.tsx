@@ -24,3 +24,22 @@ export function AppConfigScript({ appConfig }: AppConfigScriptProps) {
 
   return null;
 }
+
+/**
+ * A fixed, server-authored script inserted into <head> once, ahead of hydration —
+ * the same mechanism as `AppConfigScript`, for code that must run before first paint.
+ */
+export function InlineHeadScript({ id, source }: { id: string; source: string }) {
+  const inserted = useRef(false);
+
+  useServerInsertedHTML(() => {
+    if (inserted.current) {
+      return null;
+    }
+    inserted.current = true;
+
+    return createElement('script', { dangerouslySetInnerHTML: { __html: source }, id });
+  });
+
+  return null;
+}

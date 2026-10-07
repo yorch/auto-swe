@@ -59,12 +59,14 @@ export function formatDateLabel(label: unknown) {
   return tickDate.format(new Date(`${String(label)}T00:00:00`));
 }
 
+// Tooltips and legends are HTML with inline styles, where `var()` resolves, so they
+// follow the theme directly. The SVG chrome below is re-pointed by globals.css.
 const TOOLTIP_STYLE: React.CSSProperties = {
-  background: TOKEN.ink900,
-  border: `1px solid ${TOKEN.ink500}`,
+  background: 'var(--color-ink-700)',
+  border: '1px solid var(--color-ink-400)',
   borderRadius: 8,
   boxShadow: '0 12px 32px -12px rgba(0,0,0,0.6)',
-  color: TOKEN.paper200,
+  color: 'var(--color-paper-200)',
   fontFamily: 'var(--font-sans)',
   fontSize: 12,
   fontVariantNumeric: 'tabular-nums',
@@ -72,7 +74,7 @@ const TOOLTIP_STYLE: React.CSSProperties = {
 };
 
 const TOOLTIP_LABEL_STYLE: React.CSSProperties = {
-  color: TOKEN.paper400,
+  color: 'var(--color-paper-400)',
   fontSize: 12,
   fontWeight: 500,
   marginBottom: 4,
@@ -80,12 +82,12 @@ const TOOLTIP_LABEL_STYLE: React.CSSProperties = {
 
 // Values wear text tokens; the swatch Recharts draws beside each row carries identity.
 const TOOLTIP_ITEM_STYLE: React.CSSProperties = {
-  color: TOKEN.paper200,
+  color: 'var(--color-paper-200)',
   padding: '1px 0',
 };
 
 export const LEGEND_STYLE: React.CSSProperties = {
-  color: TOKEN.paper400,
+  color: 'var(--color-paper-400)',
   fontFamily: 'var(--font-sans)',
   fontSize: 12,
   paddingTop: 8,
@@ -104,7 +106,7 @@ export function legendLabel(value: unknown): string {
  * The label is shown as given: series names can be data (a model spec).
  */
 export function legendText(value: unknown) {
-  return <span style={{ color: TOKEN.paper300 }}>{String(value)}</span>;
+  return <span style={{ color: 'var(--color-paper-300)' }}>{String(value)}</span>;
 }
 
 /** Tooltip with the shared Workshop Telemetry content/item/label styling baked in. */
