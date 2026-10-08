@@ -51,13 +51,19 @@ vi.mock('./resolver.js', () => ({
       this.name = 'ConfigMissingError';
     }
   },
+  resolvePinnedCredential: vi.fn(),
   resolveProviderCredential: vi.fn().mockResolvedValue({ apiBase: undefined, apiKey: 'sk-cred' }),
 }));
 
 import { resolveAgent, resolveAgentRuntimeChoice } from './agentResolver.js';
-import { ConfigMissingError, resolveProviderCredential } from './resolver.js';
+import {
+  ConfigMissingError,
+  resolvePinnedCredential,
+  resolveProviderCredential,
+} from './resolver.js';
 
 const mockedResolveCred = vi.mocked(resolveProviderCredential);
+const mockedPinnedCred = vi.mocked(resolvePinnedCredential);
 
 function skillRef(name: string, sortOrder: number) {
   return {
@@ -174,6 +180,84 @@ describe('resolveAgent — model inheritance', () => {
         : null
     );
     await expect(resolveAgent('securityReviewer')).rejects.toThrow(ConfigMissingError);
+  });
+});
+
+describe('resolveAgent — pinned credential', () => {
+  it('calls the model with the pinned credential instead of the provider cascade', async () => {
+    agentFindFirst.mockResolvedValue(
+      agentRow({ credentialId: 'cred-pin', modelSpec: 'openrouter/openai/gpt-6-luna' })
+    );
+    mockedPinnedCred.mockResolvedValue({
+      apiBase: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-pinned',
+      ok: true,
+    });
+    const ctx = { teamId: 't-1' };
+
+    const r = await resolveAgent('reviewer', ctx);
+
+    expect(r.model.apiKey).toBe('sk-pinned');
+    expect(r.model.apiBase).toBe('https://openrouter.ai/api/v1');
+    expect(mockedPinnedCred).toHaveBeenCalledWith('cred-pin', 'openrouter', ctx);
+    expect(mockedResolveCred).not.toHaveBeenCalled();
+  });
+
+  it('takes the pin of the row the model was inherited from', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) =>
+      args.where.key === 'securityReviewer'
+        ? agentRow({ inheritsModelFrom: 'reviewer', key: 'securityReviewer', modelSpec: null })
+        : agentRow({ credentialId: 'cred-parent', key: 'reviewer' })
+    );
+    mockedPinnedCred.mockResolvedValue({ apiKey: 'sk-parent', ok: true });
+
+    const r = await resolveAgent('securityReviewer');
+
+    expect(r.model.apiKey).toBe('sk-parent');
+    expect(mockedPinnedCred).toHaveBeenCalledWith('cred-parent', 'anthropic', undefined);
+  });
+
+  it('lets a persona’s own pin win over its parent’s', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) =>
+      args.where.key === 'securityReviewer'
+        ? agentRow({
+            credentialId: 'cred-own',
+            inheritsModelFrom: 'reviewer',
+            key: 'securityReviewer',
+            modelSpec: null,
+          })
+        : agentRow({ credentialId: 'cred-parent', key: 'reviewer' })
+    );
+    mockedPinnedCred.mockResolvedValue({ apiKey: 'sk-own', ok: true });
+
+    await resolveAgent('securityReviewer');
+
+    expect(mockedPinnedCred).toHaveBeenCalledWith('cred-own', 'anthropic', undefined);
+  });
+
+  it.each(['missing', 'provider-mismatch', 'out-of-scope'] as const)(
+    'falls back to the cascade, with a warning, when the pin is %s',
+    async (reason) => {
+      agentFindFirst.mockResolvedValue(agentRow({ credentialId: 'cred-pin' }));
+      mockedPinnedCred.mockResolvedValue({ ok: false, reason });
+
+      const r = await resolveAgent('reviewer');
+
+      expect(r.model.apiKey).toBe('sk-cred');
+      expect(mockedResolveCred).toHaveBeenCalledWith('anthropic', undefined);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('credential pin not usable'),
+        expect.objectContaining({ credentialId: 'cred-pin', reason })
+      );
+    }
+  );
+
+  it('does not look up a pin when the agent has none', async () => {
+    agentFindFirst.mockResolvedValue(agentRow());
+    await resolveAgent('reviewer');
+    expect(mockedPinnedCred).not.toHaveBeenCalled();
   });
 });
 

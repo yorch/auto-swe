@@ -30,6 +30,8 @@ A missing GLOBAL row is a startup error, not a runtime condition — `assertConf
 
 `ProviderCredential` rows are scoped `GLOBAL`, `ORGANIZATION`, or `TEAM` — enforced by a DB CHECK, so there is deliberately no channel- or template-level credential tier. Credential resolution cascades `TEAM → ORGANIZATION → GLOBAL`. Templates and channels that want to pin a specific credential do so via `Agent.credentialId` pointing at one of those rows. The singleton `EmbeddingConfig` row covers the system-wide embedding model — no scope cascade (only one embedding role in the system).
 
+**Pinned credentials.** When an agent version carries `Agent.credentialId`, its model is called with that credential instead of the provider-name cascade. A persona with no pin of its own takes the pin of the row it inherits its model from, as it takes the model. Pinning is what lets two agents call the same provider with different keys — two OpenAI accounts, say — without renaming one provider and giving up its native client. A pin is used only when the credential still exists, belongs to the provider the model spec routes to, and sits at a scope the run can reach (GLOBAL, the run's organization, or the run's team). Otherwise the worker logs `agent credential pin not usable` with the reason (`missing`, `provider-mismatch`, `out-of-scope`) and falls back to the cascade.
+
 ## Per-scope system prompts
 
 `Agent` has an optional `systemPrompt` field. When set, it replaces the agent's hardcoded system prompt for that scope. The cascade works identically to model selection:
@@ -532,7 +534,7 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 
 ### What happens when you delete a pinned credential
 
-`Agent.credentialId` is `ON DELETE SET NULL`. Deleting a credential row leaves any rows that pinned it pointing at NULL, so the resolver falls back to the standard provider-name credential cascade on the next call. No data loss; just a silent demotion. The audit log captures the credential's removal but not the implicit fallback.
+`Agent.credentialId` is `ON DELETE SET NULL`. Deleting a credential row leaves any rows that pinned it pointing at NULL, so the resolver falls back to the standard provider-name credential cascade on the next call. No data loss; just a silent demotion. The audit log captures the credential's removal but not the implicit fallback. A pin that is set but unusable — another provider after a model change, or a team credential resolved for another team's run — falls back the same way, with a worker warning.
 
 ---
 
