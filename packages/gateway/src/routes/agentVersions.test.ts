@@ -58,6 +58,8 @@ function newMockPrisma() {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
     },
+    // A GLOBAL credential for every provider, so no restore warns about coverage.
+    providerCredential: { findMany: vi.fn().mockResolvedValue([{ apiBase: null }]) },
     skill: { findMany: vi.fn().mockResolvedValue([]) },
     user: { findMany: vi.fn().mockResolvedValue([{ email: 'a@x.dev', id: 'u1' }]) },
   };

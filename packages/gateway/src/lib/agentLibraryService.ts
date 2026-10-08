@@ -7,6 +7,7 @@ import {
   runtimeModelError,
   toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
+import { BUILTIN_PROVIDERS } from './credentialService.js';
 import { catalogWarnings } from './modelCatalogService.js';
 
 /**
@@ -427,6 +428,76 @@ async function agentCatalogWarnings(
 }
 
 /**
+ * Advisory warnings for an agent version whose own model no run could call: no
+ * credential for its provider is reachable from the agent's scope, or the only
+ * ones there lack the apiBase a non-built-in provider needs. Without them the
+ * save succeeds and every run fails at its first model call, after retries.
+ * Never blocks the save — the credential may be added next. A pinned agent is
+ * covered by the pin check; an inheriting one names no provider of its own.
+ *
+ * Reachable is what the worker's cascade could reach: GLOBAL, plus the team's
+ * own and its organization's for a TEAM agent, plus the org's own for an
+ * ORGANIZATION agent. CHANNEL and WORKFLOW_TEMPLATE agents run for whichever
+ * team owns the run, so any credential for the provider counts.
+ */
+export async function agentCredentialWarnings(
+  prisma: PrismaClient,
+  agent: {
+    credentialId: string | null;
+    modelSpec: string | null;
+    orgId: string | null;
+    scope: string;
+    teamId: string | null;
+  }
+): Promise<string[]> {
+  if (!agent.modelSpec || agent.credentialId) {
+    return [];
+  }
+  let provider: string;
+  try {
+    provider = parseProviderModelSpec(agent.modelSpec).provider;
+  } catch {
+    return [];
+  }
+  const reachable: Array<Record<string, unknown>> = [{ scope: 'GLOBAL' }];
+  if (agent.scope === 'TEAM' && agent.teamId) {
+    reachable.push({ scope: 'TEAM', teamId: agent.teamId });
+    const team = await prisma.team.findUnique({
+      select: { orgId: true },
+      where: { id: agent.teamId },
+    });
+    if (team?.orgId) {
+      reachable.push({ orgId: team.orgId, scope: 'ORGANIZATION' });
+    }
+  } else if (agent.scope === 'ORGANIZATION' && agent.orgId) {
+    reachable.push({ orgId: agent.orgId, scope: 'ORGANIZATION' });
+  }
+  const anyScope = agent.scope === 'CHANNEL' || agent.scope === 'WORKFLOW_TEMPLATE';
+  const creds = await runUnscoped(
+    'checks which credentials an agent version could be run with, across the scopes it may reach',
+    ['ProviderCredential'],
+    () =>
+      prisma.providerCredential.findMany({
+        select: { apiBase: true },
+        where: { provider, ...(anyScope ? {} : { OR: reachable }) },
+      })
+  );
+  if (creds.length === 0) {
+    return [
+      agent.scope === 'GLOBAL'
+        ? `No GLOBAL credential exists for provider '${provider}', so '${agent.modelSpec}' runs only for teams or organizations with their own. Add one at /studio/models.`
+        : `No credential for provider '${provider}' is reachable from this agent's scope, so runs of '${agent.modelSpec}' will fail until one is added at /studio/models.`,
+    ];
+  }
+  if (!BUILTIN_PROVIDERS.includes(provider) && creds.every((c) => !c.apiBase)) {
+    return [
+      `Provider '${provider}' is not built in, so its credential needs an apiBase (the OpenAI-compatible endpoint), and none reachable here has one.`,
+    ];
+  }
+  return [];
+}
+
+/**
  * Create the first version of a new Agent lineage. Scans the system prompt
  * (custom content) and starts unverified. Throws if the lineage already exists
  * (the caller should 409) — overriding an existing lineage is {@link updateAgent}.
@@ -436,7 +507,12 @@ export async function createAgent(
   key: AgentScopeKey,
   base: AgentBaseInput & { name: string },
   actorId: string
-): Promise<{ agent: AgentRow; catalogWarnings: string[]; scanWarnings: string[] }> {
+): Promise<{
+  agent: AgentRow;
+  catalogWarnings: string[];
+  credentialWarnings: string[];
+  scanWarnings: string[];
+}> {
   if ((await maxVersion(prisma, key)) > 0) {
     throw new AgentLineageExistsError(key.key, key.scope);
   }
@@ -486,6 +562,7 @@ export async function createAgent(
   return {
     agent,
     catalogWarnings: await agentCatalogWarnings(prisma, agent),
+    credentialWarnings: await agentCredentialWarnings(prisma, agent),
     scanWarnings: scan.warnings,
   };
 }
@@ -500,7 +577,12 @@ export async function updateAgent(
   current: AgentRow,
   base: AgentBaseInput,
   actorId: string
-): Promise<{ agent: AgentRow; catalogWarnings: string[]; scanWarnings: string[] }> {
+): Promise<{
+  agent: AgentRow;
+  catalogWarnings: string[];
+  credentialWarnings: string[];
+  scanWarnings: string[];
+}> {
   const key: AgentScopeKey = {
     channelId: current.channelId,
     key: current.key,
@@ -579,6 +661,7 @@ export async function updateAgent(
   return {
     agent,
     catalogWarnings: await agentCatalogWarnings(prisma, agent),
+    credentialWarnings: await agentCredentialWarnings(prisma, agent),
     scanWarnings: scan.warnings,
   };
 }

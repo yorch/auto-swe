@@ -163,7 +163,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
                 })
             )
           : [];
-      const { agent, catalogWarnings, scanWarnings } = await updateAgent(
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
         latest,
         {
@@ -196,6 +196,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
         ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
         ...(inactiveSkills.length > 0
           ? {
               skillWarnings: inactiveSkills.map(

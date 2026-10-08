@@ -262,7 +262,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         workflowTemplateId: body.workflowTemplateId,
       };
       try {
-        const { agent, catalogWarnings, scanWarnings } = await createAgent(
+        const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await createAgent(
           fastify.prisma,
           key,
           { ...body, runtime },
@@ -279,6 +279,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           data: agent,
           ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
           ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+          ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
         });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
@@ -327,7 +328,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
       }
-      const { agent, catalogWarnings, scanWarnings } = await updateAgent(
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
         current,
         request.body,
@@ -354,6 +355,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
         ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
         ...(runtimeWarnings.length > 0 ? { runtimeWarnings } : {}),
       });
     }
@@ -517,7 +519,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         teamId: request.params.id,
       };
       try {
-        const { agent, catalogWarnings, scanWarnings } = await createAgent(
+        const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await createAgent(
           fastify.prisma,
           key,
           { ...request.body, runtime },
@@ -534,6 +536,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           data: agent,
           ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
           ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+          ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
         });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
@@ -597,7 +600,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
-      const { agent, catalogWarnings, scanWarnings } = await updateAgent(
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
         current,
         request.body,
@@ -633,6 +636,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
         ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
         ...(runtimeWarnings.length > 0 ? { runtimeWarnings } : {}),
       });
     }
