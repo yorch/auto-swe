@@ -2138,7 +2138,7 @@
     {
       "body": "Launch scheduled repository work, template webhooks, GitHub event handling and maintenance sweeps.",
       "category": "Operations",
-      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration (repository access sync, eval regression and revalidation); lesson consolidation, repository dependency scans, provider model discovery, the run reaper and the skill-source update check, by contrast, are on by default. The schedule settings are read at gateway startup. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. The skill-source check is one system-wide schedule (daily by default) that asks each tracked source’s host which commit its ref names and only flags a different one; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow. While a re-run (or any other non-fire run) of a schedule’s standing request is in flight, each fire is skipped as a refused execution with reason request-in-flight, logged at info and audited (event fire-skipped, action UPDATE) at most once an hour, and the schedule resumes on the first tick after the run ends. A re-run is refused with 409 WORKFLOW_ALREADY_EXISTS while any live ledger row of the request exists: a fire’s, an earlier run’s, or a child run that carries the request’s id. Both read the request’s non-terminal ledger rows, the schedule’s anchor excluded, and confirm each with Temporal before refusing: a finished or absent workflow has its stale row closed with the status Temporal reports (COMPLETED, TIMED_OUT, CANCELLED for terminated or cancelled, else FAILED) and does not block (closing the row is best-effort: a failed close is ignored and the next check asks again), a row written in the last five minutes is trusted, and when Temporal cannot be asked or does not answer within three seconds the row blocks and the refusal says so. The re-run also confirms the row its workflow id allocator refuses on, which reads only the ticket’s eng- family and never asks Temporal itself, and allocates again once that row is closed. A run ended by a SKIPPED terminate node closes its ledger row as COMPLETED, so it never reads as in flight. Between the read and the start there is no lock.",
+      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration (repository access sync, eval regression and revalidation); lesson consolidation, repository dependency scans, provider model discovery, the run reaper and the skill-source update check, by contrast, are on by default. The schedule settings are read at gateway startup, and the system-wide schedules are synchronized once the gateway’s Temporal connection is up, which may be later than boot (see the gateway-without-Temporal card). Schedules of a Slack channel or a scheduled work request are reconciled when their own rows are written, not at startup, and a write that needs one is refused with 503 TEMPORAL_UNAVAILABLE while Temporal is not connected. The scheduled-work list reports exists: null with unavailable: true for a schedule whose live state could not be asked, which differs from exists: false. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. The skill-source check is one system-wide schedule (daily by default) that asks each tracked source’s host which commit its ref names and only flags a different one; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow. While a re-run (or any other non-fire run) of a schedule’s standing request is in flight, each fire is skipped as a refused execution with reason request-in-flight, logged at info and audited (event fire-skipped, action UPDATE) at most once an hour, and the schedule resumes on the first tick after the run ends. A re-run is refused with 409 WORKFLOW_ALREADY_EXISTS while any live ledger row of the request exists: a fire’s, an earlier run’s, or a child run that carries the request’s id. Both read the request’s non-terminal ledger rows, the schedule’s anchor excluded, and confirm each with Temporal before refusing: a finished or absent workflow has its stale row closed with the status Temporal reports (COMPLETED, TIMED_OUT, CANCELLED for terminated or cancelled, else FAILED) and does not block (closing the row is best-effort: a failed close is ignored and the next check asks again), a row written in the last five minutes is trusted, and when Temporal cannot be asked or does not answer within three seconds the row blocks and the refusal says so. The re-run also confirms the row its workflow id allocator refuses on, which reads only the ticket’s eng- family and never asks Temporal itself, and allocates again once that row is closed. A run ended by a SKIPPED terminate node closes its ledger row as COMPLETED, so it never reads as in flight. Between the read and the start there is no lock.",
       "id": "schedules",
       "refs": [
         "gateway",
@@ -2162,10 +2162,30 @@
         "inFlightConfirm",
         "fireSkipAudit",
         "closeStatus",
-        "skippedClose"
+        "skippedClose",
+        "startupScheduleSync",
+        "slackChannelScheduleRefusal",
+        "scheduledUnknownStatus"
       ],
       "status": "Implemented",
       "title": "Scheduled automation & webhooks"
+    },
+    {
+      "body": "The gateway starts and serves while Temporal is unreachable, connecting in the background; routes that need a workflow client answer a retryable 503.",
+      "category": "Operations",
+      "detail": "The Temporal plugin registers at once and retries the connection with a doubling delay from one second up to thirty, logging the first attempts at warn and later ones at debug. Until the first connection succeeds, every call through the gateway’s Temporal helpers raises a dedicated error that the global handler answers with 503, the code TEMPORAL_UNAVAILABLE and a Retry-After of five seconds (logged at warn, not error). That error is not a workflow-not-found error: callers that signal or look up a workflow treat it as could-not-confirm, roll back and ask for a retry. Routes that would persist a row whose consistency depends on a Temporal call check the connection first and refuse before writing: eval launches (so an outage is not recorded as a failed eval), Slack channel registration with a digest or poll, a change to a Slack channel’s active flag, digest or poll enablement or cron, and channel deletion (an edit that leaves those values as stored goes through), and the saves of system settings that synchronize a schedule. The Slack approval path answers a temporarily-unavailable message. A knowledge edit’s re-embedding is deliberately not gated on Temporal. System-wide Temporal schedules (lesson consolidation, repository dependency scan, permission sync, model discovery, run reaper, skill-source check, eval regression and revalidation) are synchronized once the connection comes up, each best-effort: a failure is logged and an admin can re-save. GET /health always answers 200 with status ok while the process serves requests and adds temporal: connecting or connected, so a container healthcheck keyed on it does not depend on Temporal. The per-client request limit is read once at boot from RATE_LIMIT_MAX (default 200) and RATE_LIMIT_WINDOW_SECONDS (default 60); a value that is not a positive integer fails the boot instead of falling back to the default.",
+      "id": "gatewayWithoutTemporal",
+      "refs": [
+        "temporalBackgroundConnect",
+        "temporalUnavailableError",
+        "healthBody",
+        "startupScheduleSync",
+        "slackChannelScheduleRefusal",
+        "scheduledUnknownStatus",
+        "rateLimitConfig"
+      ],
+      "status": "Implemented",
+      "title": "Gateway boots without Temporal"
     },
     {
       "body": "The dashboard lists work by request, with the latest visible attempt standing for each, and retries a request without losing its identity.",
@@ -2265,7 +2285,7 @@
     {
       "body": "Price models from a catalog, and on a schedule ask each provider which models it lists, storing unreviewed suggestions instead of catalog rows.",
       "category": "Operations",
-      "detail": "The gateway upserts one Temporal schedule, auto-swe-model-discovery, at startup; it runs ScheduledModelDiscoveryWorkflow, a single discoverModels activity that lists models through every GLOBAL provider credential. It is on by default (MODEL_DISCOVERY_ENABLED, MODEL_DISCOVERY_CRON, read at startup); disabling pauses the schedule rather than deleting it. Results go to model_suggestions (NEW: listed but priced nowhere; RETIREMENT_CANDIDATE: a priced model missing from a complete listing) and model_discovery_provider_status, never to catalog rows, so a suggestion cannot make a model known at $0. A failed provider changes only its status row; an incomplete listing (page cap, empty result, an unfollowable continuation) still records new suggestions but deletes nothing and flags no retirement candidates; a dismissal survives refreshes; deleting a provider’s GLOBAL credential removes only the credential: the next discovery pass, scheduled or on demand, removes that provider’s suggestion and status rows, and until then the suggestions endpoint still serves them. Every failure is reduced to a fixed string (HTTP <status>, timed out, request failed (<name>, <code>; the code is omitted when absent), credential could not be decrypted, blocked address, apiBase required, unrecognised response), so no fetch or provider text reaches the status row, logs or Temporal history, and a credential save rejects a key with whitespace or control characters and an apiBase carrying a username or password. Admins read the suggestions in the Catalog tab, where the on-demand discover route refreshes the same rows. Nothing is added to the catalog or retired automatically.",
+      "detail": "The gateway upserts one Temporal schedule, auto-swe-model-discovery, at startup; it runs ScheduledModelDiscoveryWorkflow, a single discoverModels activity that lists models through every GLOBAL provider credential. It is on by default (MODEL_DISCOVERY_ENABLED, MODEL_DISCOVERY_CRON, read at startup); disabling pauses the schedule rather than deleting it. Results go to model_suggestions (NEW: listed but priced nowhere; RETIREMENT_CANDIDATE: a priced model missing from a complete listing) and model_discovery_provider_status, never to catalog rows, so a suggestion cannot make a model known at $0. A failed provider changes only its status row; an incomplete listing (page cap, empty result, an unfollowable continuation) still records new suggestions but deletes nothing and flags no retirement candidates; a dismissal survives refreshes; deleting a provider’s GLOBAL credential removes only the credential: the next discovery pass, scheduled or on demand, removes that provider’s suggestion and status rows, and until then the suggestions endpoint still serves them. Every failure is reduced to a fixed string (HTTP <status>, timed out, request failed (<name>, <code>; the code is omitted when absent), credential could not be decrypted, blocked address, apiBase required, unrecognised response), so no fetch or provider text reaches the status row, logs or Temporal history, and a credential save rejects a key with whitespace or control characters and an apiBase carrying a username or password. An OpenAI-compatible apiBase on a private network is refused on the credential Test button, model discovery, the catalog refresh and credential save unless its host (or host:port, as the URL spells it) is listed in the ADMIN-only, GLOBAL-only setting models.privateNetworkHosts; the listing waives only the private-range refusal, and loopback, localhost, link-local and cloud-metadata addresses stay refused whatever is listed. A setting that cannot be read leaves the list empty, so the strict guard applies. Admins read the suggestions in the Catalog tab, where the on-demand discover route refreshes the same rows. Nothing is added to the catalog or retired automatically.",
       "id": "modelCatalog",
       "refs": [
         "modelDiscoverySchedule",
@@ -2275,7 +2295,11 @@
         "discoveryErrors",
         "credInput",
         "suggestionsRoute",
-        "catalogTab"
+        "catalogTab",
+        "privateModelHostsSetting",
+        "privateHostListed",
+        "modelListFetch",
+        "credentialApiBaseCheck"
       ],
       "status": "Implemented",
       "title": "Model catalog & scheduled discovery"
@@ -2671,11 +2695,31 @@
     {
       "body": "Discovery lists ids from the keys the platform holds; it supplies no prices and judges retirement by what one key can see.",
       "category": "Coverage",
-      "detail": "Discovery reads no price from a listing, so an admin still enters every number that feeds USD budgets. Only GLOBAL credentials are asked, so a model reachable through a team or organization key is not found. Listings follow a bounded number of pages and drop non-text models by a name filter; a listing past the cap, empty, or with a continuation it cannot follow is incomplete: it still records new suggestions but deletes nothing and flags no retirement candidates. A retirement flag is a hint measured against one key’s view, and an OpenAI-compatible apiBase on a private address is refused as blocked address. The schedule’s cron and enabled flag take effect only after a gateway restart.",
+      "detail": "Discovery reads no price from a listing, so an admin still enters every number that feeds USD budgets. Only GLOBAL credentials are asked, so a model reachable through a team or organization key is not found. Listings follow a bounded number of pages and drop non-text models by a name filter; a listing past the cap, empty, or with a continuation it cannot follow is incomplete: it still records new suggestions but deletes nothing and flags no retirement candidates. A retirement flag is a hint measured against one key’s view, and an OpenAI-compatible apiBase on a private address is refused as blocked address unless its host is listed in models.privateNetworkHosts. The list matches the host text of the apiBase, and the fetch resolves and pins the name it connects to without verifying that it is the server intended, so a listed name is trusted: with it listed, a request to that host may reach any private-range address it resolves to, while loopback, link-local and metadata answers stay refused. The list applies to every provider credential, not to one. The schedule’s cron and enabled flag take effect only after a gateway restart.",
       "id": "modelDiscoveryBounds",
-      "refs": ["discoveryAll", "discoveryList", "modelDiscoveryEnv"],
+      "refs": [
+        "discoveryAll",
+        "discoveryList",
+        "modelDiscoveryEnv",
+        "privateModelHostsSetting",
+        "modelListFetch"
+      ],
       "status": "Confirmed boundary",
       "title": "Model discovery finds ids, not prices"
+    },
+    {
+      "body": "Connected means the first connection was made, not that Temporal is reachable now, and while it is pending workflow operations are refused.",
+      "category": "Operations",
+      "detail": "The health body reports connecting until the first connection succeeds and connected afterwards; after that the SDK’s channel reconnects on its own and the gateway does not probe, so connected does not mean reachable at this moment. While the state is connecting no workflow start, signal, cancel or schedule operation can run, and nothing queues them: the caller gets 503 and retries. Per-channel and per-work-request schedules are not re-synchronized at startup, so a schedule that diverged while Temporal was down is corrected only by the next write to its row. Read paths that cannot ask the scheduler report an unknown state rather than a missing schedule, but reads that need a workflow client other than that list are not made to degrade by this: they surface the same 503.",
+      "id": "temporalConnectionBounds",
+      "refs": [
+        "temporalBackgroundConnect",
+        "healthBody",
+        "startupScheduleSync",
+        "scheduledUnknownStatus"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Temporal health is the first connection, not live reachability"
     },
     {
       "body": "The refresh agent reads untrusted pricing pages; the guards confine where it can write, not whether it can be wrong.",
@@ -3864,6 +3908,94 @@
       "lines": 9,
       "path": "packages/gateway/src/plugins/temporal.ts",
       "title": "Model-discovery schedule upsert (paused when disabled)"
+    },
+    {
+      "anchor": "async function connectWithRetry(): Promise<void> {",
+      "before": 0,
+      "id": "temporalBackgroundConnect",
+      "lines": 48,
+      "path": "packages/gateway/src/plugins/temporal.ts",
+      "title": "Temporal connects in the background with backoff"
+    },
+    {
+      "anchor": "export class TemporalUnavailableError extends Error {",
+      "before": 0,
+      "id": "temporalUnavailableError",
+      "lines": 10,
+      "path": "packages/gateway/src/lib/temporalErrors.ts",
+      "title": "The 503 error raised while Temporal is not connected"
+    },
+    {
+      "anchor": "export function healthBody(",
+      "before": 0,
+      "id": "healthBody",
+      "lines": 9,
+      "path": "packages/gateway/src/lib/temporalErrors.ts",
+      "title": "Health body reports the first-connection state"
+    },
+    {
+      "anchor": "export async function syncSchedulesOnceConnected(",
+      "before": 0,
+      "id": "startupScheduleSync",
+      "lines": 12,
+      "path": "packages/gateway/src/lib/startupScheduleSync.ts",
+      "title": "System schedules sync once the connection is up"
+    },
+    {
+      "anchor": "const scheduleChanged =",
+      "before": 2,
+      "id": "slackChannelScheduleRefusal",
+      "lines": 12,
+      "path": "packages/gateway/src/routes/slackChannels.ts",
+      "title": "A channel schedule change is refused before it persists"
+    },
+    {
+      "anchor": "const unknownStatus = {",
+      "before": 3,
+      "id": "scheduledUnknownStatus",
+      "lines": 10,
+      "path": "packages/gateway/src/routes/scheduledWorkRequests.ts",
+      "title": "Unknown schedule state when Temporal is not connected"
+    },
+    {
+      "anchor": "export function parseRateLimitConfig(",
+      "before": 0,
+      "id": "rateLimitConfig",
+      "lines": 15,
+      "path": "packages/gateway/src/lib/rateLimitConfig.ts",
+      "title": "Rate limit read from the environment at boot"
+    },
+    {
+      "anchor": "'models.privateNetworkHosts': defineSetting({",
+      "before": 0,
+      "id": "privateModelHostsSetting",
+      "lines": 14,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "Setting listing private-network model provider hosts"
+    },
+    {
+      "anchor": "export function isPrivateHostListed(",
+      "before": 5,
+      "id": "privateHostListed",
+      "lines": 12,
+      "path": "packages/shared/src/lib/modelDiscovery.ts",
+      "title": "A listed host waives only the private-address refusal"
+    },
+    {
+      "anchor": "export function modelListFetch(",
+      "before": 5,
+      "id": "modelListFetch",
+      "lines": 10,
+      "path": "packages/shared/src/lib/modelDiscovery.ts",
+      "title": "Provider list fetch resolves and pins, permissive only for listed hosts"
+    },
+    {
+      "anchor": "const safety = checkProbeUrl(input.apiBase, {",
+      "before": 0,
+      "id": "credentialApiBaseCheck",
+      "lines": 8,
+      "path": "packages/gateway/src/routes/modelConfig.ts",
+      "title": "Credential create checks apiBase against the listed hosts"
     },
     {
       "anchor": "cronExpression: envCron('MODEL_DISCOVERY_CRON', '17 3 * * *'),",
