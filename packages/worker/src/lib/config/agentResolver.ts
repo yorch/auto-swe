@@ -7,7 +7,11 @@ import { asyncLocalStorage } from '@temporalio/activity';
 import { persistActivityTrace } from '../activityContext.js';
 import { logWarn } from '../activityLog.js';
 import { AgentTracer } from '../agentTracer.js';
-import { ConfigMissingError, resolveProviderCredential } from './resolver.js';
+import {
+  ConfigMissingError,
+  resolvePinnedCredential,
+  resolveProviderCredential,
+} from './resolver.js';
 import { parseToolKeys } from './toolKeys.js';
 import type { ResolveCtx, ResolvedModelConfig, ResolvedSkill } from './types.js';
 
@@ -251,7 +255,7 @@ async function resolveModelForAgent(
   }
   const spec = source.modelSpec;
   const { provider } = parseProviderModelSpec(spec);
-  const cred = await resolveProviderCredential(provider, ctx);
+  const cred = await credentialForModel(agent, source, provider, ctx);
   return {
     model: {
       apiBase: cred.apiBase,
@@ -262,6 +266,37 @@ async function resolveModelForAgent(
     },
     runtime,
   };
+}
+
+/**
+ * The credential a resolved model is called with. A pin (`Agent.credentialId`)
+ * wins over the provider-name cascade: the agent's own pin first, then the pin
+ * on the row its model was inherited from — the credential travels with the
+ * model, as the runtime does. A pin that cannot be used here (deleted, another
+ * provider, or a scope this run cannot reach) falls back to the cascade with a
+ * warning, the same outcome as a pin cleared by `ON DELETE SET NULL`.
+ */
+async function credentialForModel(
+  agent: AgentRow,
+  source: AgentRow,
+  provider: string,
+  ctx?: ResolveCtx
+): Promise<{ apiBase?: string; apiKey: string }> {
+  const pinned = agent.credentialId ?? source.credentialId;
+  if (pinned) {
+    const result = await resolvePinnedCredential(pinned, provider, ctx);
+    if (result.ok) {
+      return { apiBase: result.apiBase, apiKey: result.apiKey };
+    }
+    logWarn('agent credential pin not usable; using the provider credential cascade', {
+      agentKey: agent.key,
+      credentialId: pinned,
+      provider,
+      reason: result.reason,
+      version: agent.version,
+    });
+  }
+  return resolveProviderCredential(provider, ctx);
 }
 
 /** The scalars the model chain reads off each row it visits. */

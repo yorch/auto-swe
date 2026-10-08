@@ -1,4 +1,5 @@
 import type { InputSchema } from '../lib/inputSchema.js';
+import { isAnthropicSpec } from '../lib/modelSpec.js';
 import type { PullRequestState } from '../lib/pullRequest.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
@@ -862,7 +863,7 @@ export function runtimeModelError(
   runtime: string | null | undefined,
   modelSpec: string | null | undefined
 ): string | null {
-  if (runtime !== 'claude-code' || !modelSpec || modelSpec.startsWith('anthropic/')) {
+  if (runtime !== 'claude-code' || !modelSpec || isAnthropicSpec(modelSpec)) {
     return null;
   }
   return `The claude-code runtime needs an Anthropic model, but this agent's model is '${modelSpec}'. Set the model to anthropic/<model>, or the runtime to mastra.`;

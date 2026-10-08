@@ -1,9 +1,8 @@
+import { isAnthropicSpec, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { ApplicationFailure } from '@temporalio/activity';
 import { defineHarness } from '../harness/registry.js';
 import { CLAUDE_CODE_CAPABILITIES, harnessToolsGranting } from './policy.js';
 import { type ClaudeCodeAccess, claudeCodeRuntime } from './runtime.js';
-
-const ANTHROPIC_PREFIX = 'anthropic/';
 
 /**
  * Claude Code in the harness registry.
@@ -16,7 +15,7 @@ const ANTHROPIC_PREFIX = 'anthropic/';
  */
 export const claudeCodeHarness = defineHarness<ClaudeCodeAccess>({
   bindModel(agentKey, model) {
-    if (!model.spec.startsWith(ANTHROPIC_PREFIX)) {
+    if (!isAnthropicSpec(model.spec)) {
       throw ApplicationFailure.nonRetryable(
         `The claude-code runtime needs an Anthropic model, but agent '${agentKey}' resolves to '${model.spec}'. Set the agent's model to anthropic/<model>, or set its runtime (or workspace.implementerRuntime) back to mastra.`,
         'HARNESS_UNSUPPORTED_MODEL'
@@ -25,7 +24,7 @@ export const claudeCodeHarness = defineHarness<ClaudeCodeAccess>({
     return {
       apiBase: model.apiBase ?? undefined,
       apiKey: model.apiKey,
-      modelId: model.spec.slice(ANTHROPIC_PREFIX.length),
+      modelId: parseProviderModelSpec(model.spec).modelId,
     };
   },
   capabilities: CLAUDE_CODE_CAPABILITIES,

@@ -1,4 +1,5 @@
 import { isPrivateHostListed, resolvePrivateModelHosts } from '@auto-swe/shared/lib/modelDiscovery';
+import { embeddingProviderProblem, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -15,6 +16,7 @@ import {
 } from '../lib/credentialService.js';
 import { catalogWarnings } from '../lib/modelCatalogService.js';
 import { upsertEmbeddingConfig } from '../lib/modelConfigService.js';
+import { ModelSpecSchema } from '../lib/modelSpecSchema.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -27,12 +29,6 @@ import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
  */
 
 // ── Validation schemas ──
-
-const ModelSpecSchema = z
-  .string()
-  .min(3)
-  .max(200)
-  .regex(/^[^/\s]+\/.+$/, 'must be <provider>/<model-id>');
 
 const ProviderSchema = z
   .string()
@@ -336,6 +332,12 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const { modelSpec, credentialId } = request.body;
+      const embedProblem = embeddingProviderProblem(parseProviderModelSpec(modelSpec).provider);
+      if (embedProblem) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'EMBEDDING_PROVIDER_UNSUPPORTED', message: embedProblem } });
+      }
 
       if (credentialId) {
         const cred = await fastify.prisma.providerCredential.findUnique({

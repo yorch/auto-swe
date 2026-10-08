@@ -32,6 +32,7 @@ function newMockPrisma() {
     },
     // P5: org-scoped agent creation validates the org exists via this lookup.
     organization: { findUnique: vi.fn() },
+    providerCredential: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     // Channel assistant Phase 1: CHANNEL-scoped agent creation validates the channel exists.
     slackChannel: { findUnique: vi.fn() },
     team: { findUnique: vi.fn() },
@@ -542,6 +543,315 @@ describe('teamAgentLibraryRoutes — team owner', () => {
       url: `/api/v1/teams/${TEAM}/agent-library`,
     });
     expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+});
+
+describe('agent model spec', () => {
+  async function create(modelSpec: unknown) {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'a-1', key: 'spec', version: 1 });
+    const res = await app.inject({
+      body: { key: 'spec', modelSpec, name: 'Spec', scope: 'GLOBAL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    await app.close();
+    return { mockPrisma, res };
+  }
+
+  it('refuses a spec that names no provider', async () => {
+    const { mockPrisma, res } = await create('gpt-6-luna');
+    expect(res.statusCode).toBe(400);
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+  });
+
+  it('stores the spec with its provider lowercased', async () => {
+    const { mockPrisma, res } = await create(' OpenRouter/openai/gpt-6-luna ');
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ modelSpec: 'openrouter/openai/gpt-6-luna' }),
+      })
+    );
+  });
+
+  it('reads an empty spec as no model of its own', async () => {
+    const { mockPrisma, res } = await create('');
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ modelSpec: null }) })
+    );
+  });
+});
+
+describe('agent credential coverage warnings', () => {
+  function savedRow(over: Record<string, unknown>) {
+    return {
+      credentialId: null,
+      id: 'a-1',
+      key: 'cov',
+      modelSpec: 'openrouter/openai/gpt-6-luna',
+      orgId: null,
+      scope: 'GLOBAL',
+      skillRefs: [],
+      teamId: null,
+      version: 1,
+      ...over,
+    };
+  }
+
+  async function adminCreate(creds: Array<{ apiBase: string | null }>, body = {}) {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'a-1', key: 'cov', version: 1 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue(savedRow(body));
+    mockPrisma.providerCredential.findMany.mockResolvedValue(creds);
+    const res = await app.inject({
+      body: {
+        key: 'cov',
+        modelSpec: 'openrouter/openai/gpt-6-luna',
+        name: 'Cov',
+        scope: 'GLOBAL',
+        ...body,
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    await app.close();
+    return { body: JSON.parse(res.payload), mockPrisma, statusCode: res.statusCode };
+  }
+
+  it('saves, but warns, when no GLOBAL credential exists for the provider', async () => {
+    const r = await adminCreate([]);
+    expect(r.statusCode).toBe(201);
+    expect(r.body.credentialWarnings).toEqual([
+      expect.stringContaining("No GLOBAL credential exists for provider 'openrouter'"),
+    ]);
+    expect(r.mockPrisma.providerCredential.findMany).toHaveBeenCalledWith({
+      select: { apiBase: true },
+      where: { OR: [{ scope: 'GLOBAL' }], provider: 'openrouter' },
+    });
+  });
+
+  it('warns when a custom provider’s only credentials lack an apiBase', async () => {
+    const r = await adminCreate([{ apiBase: null }]);
+    expect(r.body.credentialWarnings).toEqual([expect.stringContaining('needs an apiBase')]);
+  });
+
+  it('says nothing when a usable credential is reachable', async () => {
+    const r = await adminCreate([{ apiBase: 'https://openrouter.ai/api/v1' }]);
+    expect(r.body.credentialWarnings).toBeUndefined();
+  });
+
+  it('checks a TEAM agent against GLOBAL, its team’s and its organization’s credentials', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, orgId: 'org-1' });
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'a-1', key: 'cov', version: 1 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue(savedRow({ scope: 'TEAM', teamId: TEAM }));
+    mockPrisma.providerCredential.findMany.mockResolvedValue([]);
+    const res = await app.inject({
+      body: { key: 'cov', modelSpec: 'openrouter/openai/gpt-6-luna', name: 'Cov' },
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/teams/${TEAM}/agent-library`,
+    });
+    await app.close();
+    expect(JSON.parse(res.payload).credentialWarnings).toEqual([
+      expect.stringContaining('is reachable from this agent'),
+    ]);
+    expect(mockPrisma.providerCredential.findMany).toHaveBeenCalledWith({
+      select: { apiBase: true },
+      where: {
+        OR: [
+          { scope: 'GLOBAL' },
+          { scope: 'TEAM', teamId: TEAM },
+          { orgId: 'org-1', scope: 'ORGANIZATION' },
+        ],
+        provider: 'openrouter',
+      },
+    });
+  });
+
+  it('does not look for coverage on a pinned agent', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.providerCredential.findUnique.mockResolvedValue({
+      orgId: null,
+      provider: 'openrouter',
+      scope: 'GLOBAL',
+      teamId: null,
+    });
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'a-1', key: 'cov', version: 1 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue(savedRow({ credentialId: 'c-1' }));
+    await app.inject({
+      body: {
+        credentialId: '33333333-3333-4333-8333-333333333333',
+        key: 'cov',
+        modelSpec: 'openrouter/openai/gpt-6-luna',
+        name: 'Cov',
+        scope: 'GLOBAL',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    await app.close();
+    expect(mockPrisma.providerCredential.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('agent credential pin', () => {
+  const CRED = '33333333-3333-4333-8333-333333333333';
+  const OTHER_TEAM = '44444444-4444-4444-8444-444444444444';
+
+  async function teamCreate(cred: Record<string, unknown> | null, teamOrgId: string | null = null) {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.providerCredential.findUnique.mockResolvedValue(cred);
+    mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, orgId: teamOrgId });
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({
+      id: 't-1',
+      key: 'pinned',
+      scope: 'TEAM',
+      version: 1,
+    });
+    const res = await app.inject({
+      body: {
+        credentialId: CRED,
+        key: 'pinned',
+        modelSpec: 'openrouter/openai/gpt-6-luna',
+        name: 'Pinned',
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/teams/${TEAM}/agent-library`,
+    });
+    await app.close();
+    return { body: JSON.parse(res.payload), mockPrisma, statusCode: res.statusCode };
+  }
+
+  it('lets a team pin its own credential', async () => {
+    const r = await teamCreate({
+      orgId: null,
+      provider: 'openrouter',
+      scope: 'TEAM',
+      teamId: TEAM,
+    });
+    expect(r.statusCode).toBe(201);
+  });
+
+  it('lets a team pin a GLOBAL credential', async () => {
+    const r = await teamCreate({
+      orgId: null,
+      provider: 'openrouter',
+      scope: 'GLOBAL',
+      teamId: null,
+    });
+    expect(r.statusCode).toBe(201);
+  });
+
+  it('lets a team pin its organization’s credential, and no other organization’s', async () => {
+    const own = await teamCreate(
+      { orgId: 'org-1', provider: 'openrouter', scope: 'ORGANIZATION', teamId: null },
+      'org-1'
+    );
+    expect(own.statusCode).toBe(201);
+    const other = await teamCreate(
+      { orgId: 'org-2', provider: 'openrouter', scope: 'ORGANIZATION', teamId: null },
+      'org-1'
+    );
+    expect(other.statusCode).toBe(400);
+    expect(other.body.error.code).toBe('INVALID_CREDENTIAL');
+  });
+
+  it('refuses another team’s credential', async () => {
+    const r = await teamCreate({
+      orgId: null,
+      provider: 'openrouter',
+      scope: 'TEAM',
+      teamId: OTHER_TEAM,
+    });
+    expect(r.statusCode).toBe(400);
+    expect(r.body.error).toEqual({
+      code: 'INVALID_CREDENTIAL',
+      message: 'Credential belongs to a different team',
+    });
+    expect(r.mockPrisma.agent.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a credential of another provider than the model spec', async () => {
+    const r = await teamCreate({ orgId: null, provider: 'openai', scope: 'GLOBAL', teamId: null });
+    expect(r.statusCode).toBe(400);
+    expect(r.body.error.message).toContain("routes to 'openrouter'");
+  });
+
+  it('refuses a credential that does not exist', async () => {
+    const r = await teamCreate(null);
+    expect(r.statusCode).toBe(400);
+    expect(r.body.error.message).toBe('Credential not found');
+  });
+
+  it('checks an edit that changes only the model against the pin it keeps', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue({
+      credentialId: CRED,
+      id: 'a-1',
+      inheritsModelFrom: null,
+      key: 'pinned',
+      modelSpec: 'openrouter/openai/gpt-6-luna',
+      orgId: null,
+      runtime: null,
+      scope: 'TEAM',
+      skillRefs: [],
+      teamId: TEAM,
+      version: 1,
+    });
+    mockPrisma.providerCredential.findUnique.mockResolvedValue({
+      orgId: null,
+      provider: 'openrouter',
+      scope: 'GLOBAL',
+      teamId: null,
+    });
+    const res = await app.inject({
+      body: { modelSpec: 'opencode-go/glm-5.2' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/11111111-1111-4111-8111-111111111111`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('INVALID_CREDENTIAL');
+    await app.close();
+  });
+
+  it('does not re-check a pin on an edit that touches neither pin nor model', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue({
+      credentialId: CRED,
+      id: 'a-1',
+      inheritsModelFrom: null,
+      key: 'pinned',
+      modelSpec: 'openrouter/openai/gpt-6-luna',
+      orgId: null,
+      runtime: null,
+      scope: 'GLOBAL',
+      skillRefs: [],
+      teamId: null,
+      version: 1,
+    });
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'a-2', key: 'pinned', version: 2 });
+    await app.inject({
+      body: { description: 'new words' },
+      headers: AUTH,
+      method: 'PUT',
+      url: '/api/v1/platform/agent-library/11111111-1111-4111-8111-111111111111',
+    });
+    expect(mockPrisma.providerCredential.findUnique).not.toHaveBeenCalled();
     await app.close();
   });
 });

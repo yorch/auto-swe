@@ -8,6 +8,7 @@ import {
 import { z } from 'zod';
 import { AGENT_RUN_TEMPLATE_NAME, isReservedTemplateOrigin } from '../lib/agentRun.js';
 import { isInputSchema } from '../lib/inputSchema.js';
+import { parseProviderModelSpec } from '../lib/modelSpec.js';
 import {
   checkRegexSafety,
   MAX_PATTERN_SOURCE_LENGTH,
@@ -403,15 +404,23 @@ export function validateBundleScannerPatterns(manifest: BundleManifest): string[
 }
 
 /**
- * Check every agent's runtime against its own model, with the rule the agent
- * library applies on save (`runtimeModelError`): a bundle must not install a
- * version the API would refuse. Pure and synchronous, so the SDK shares it.
+ * Check every agent's model spec is `<provider>/<model-id>`, and its runtime
+ * against that model with the rule the agent library applies on save
+ * (`runtimeModelError`): a bundle must not install a version the API would refuse. Pure and synchronous, so the SDK shares it.
  *
  * Returns one message per offending agent; empty means all are acceptable.
  */
 export function validateBundleAgents(manifest: BundleManifest): string[] {
   const errors: string[] = [];
   for (const a of manifest.entities.agents) {
+    if (a.modelSpec) {
+      try {
+        parseProviderModelSpec(a.modelSpec);
+      } catch (err) {
+        errors.push(`agent '${a.key}': ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+    }
     const issue = runtimeModelError(a.runtime, a.modelSpec);
     if (issue) {
       errors.push(`agent '${a.key}': ${issue}`);

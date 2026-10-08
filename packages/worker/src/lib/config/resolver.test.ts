@@ -1,15 +1,16 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { credFindFirstMock, embeddingFindUniqueMock } = vi.hoisted(() => ({
+const { credFindFirstMock, credFindUniqueMock, embeddingFindUniqueMock } = vi.hoisted(() => ({
   credFindFirstMock: vi.fn(),
+  credFindUniqueMock: vi.fn(),
   embeddingFindUniqueMock: vi.fn(),
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     embeddingConfig: { findUnique: embeddingFindUniqueMock },
-    providerCredential: { findFirst: credFindFirstMock },
+    providerCredential: { findFirst: credFindFirstMock, findUnique: credFindUniqueMock },
   },
 }));
 
@@ -18,6 +19,7 @@ import { _resetKeyCacheForTests, encryptSecret } from '@auto-swe/shared/lib/cryp
 import {
   ConfigMissingError,
   resolveEmbeddingConfig,
+  resolvePinnedCredential,
   resolveProviderCredential,
 } from './resolver.js';
 
@@ -33,6 +35,7 @@ beforeEach(() => {
   _resetKeyCacheForTests();
   _resetConfigCacheForTests();
   credFindFirstMock.mockReset();
+  credFindUniqueMock.mockReset();
   embeddingFindUniqueMock.mockReset();
 });
 
@@ -167,5 +170,78 @@ describe('provider-credential cache', () => {
     await resolveProviderCredential('anthropic', { teamId: 't1' });
     const teamCalls = credFindFirstMock.mock.calls.filter((c) => c[0].where.scope === 'TEAM');
     expect(teamCalls).toHaveLength(1);
+  });
+});
+
+describe('resolvePinnedCredential', () => {
+  function pinnedRow(overrides: Record<string, unknown> = {}) {
+    return {
+      ...credRow('sk-pinned', 'https://openrouter.ai/api/v1'),
+      id: 'cred-pin',
+      orgId: null,
+      provider: 'openrouter',
+      scope: 'GLOBAL',
+      teamId: null,
+      ...overrides,
+    };
+  }
+
+  it('returns the decrypted GLOBAL credential for its own provider', async () => {
+    credFindUniqueMock.mockResolvedValue(pinnedRow());
+    await expect(resolvePinnedCredential('cred-pin', 'openrouter')).resolves.toEqual({
+      apiBase: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-pinned',
+      ok: true,
+    });
+    expect(credFindUniqueMock).toHaveBeenCalledWith({ where: { id: 'cred-pin' } });
+  });
+
+  it('matches the provider case-insensitively, as the spec parser does', async () => {
+    credFindUniqueMock.mockResolvedValue(pinnedRow({ provider: 'OpenRouter' }));
+    const r = await resolvePinnedCredential('cred-pin', 'openrouter');
+    expect(r.ok).toBe(true);
+  });
+
+  it('reports a deleted pin as missing', async () => {
+    credFindUniqueMock.mockResolvedValue(null);
+    await expect(resolvePinnedCredential('cred-pin', 'openrouter')).resolves.toEqual({
+      ok: false,
+      reason: 'missing',
+    });
+  });
+
+  it('refuses a credential of another provider', async () => {
+    credFindUniqueMock.mockResolvedValue(pinnedRow({ provider: 'openai' }));
+    await expect(resolvePinnedCredential('cred-pin', 'openrouter')).resolves.toEqual({
+      ok: false,
+      reason: 'provider-mismatch',
+    });
+  });
+
+  it('honours a TEAM credential only for a run of that team', async () => {
+    credFindUniqueMock.mockResolvedValue(pinnedRow({ scope: 'TEAM', teamId: 't-1' }));
+    expect((await resolvePinnedCredential('cred-pin', 'openrouter', { teamId: 't-1' })).ok).toBe(
+      true
+    );
+    _resetConfigCacheForTests();
+    await expect(
+      resolvePinnedCredential('cred-pin', 'openrouter', { teamId: 't-2' })
+    ).resolves.toEqual({ ok: false, reason: 'out-of-scope' });
+    _resetConfigCacheForTests();
+    await expect(resolvePinnedCredential('cred-pin', 'openrouter')).resolves.toEqual({
+      ok: false,
+      reason: 'out-of-scope',
+    });
+  });
+
+  it('honours an ORGANIZATION credential only for a run in that org', async () => {
+    credFindUniqueMock.mockResolvedValue(pinnedRow({ orgId: 'o-1', scope: 'ORGANIZATION' }));
+    expect((await resolvePinnedCredential('cred-pin', 'openrouter', { orgId: 'o-1' })).ok).toBe(
+      true
+    );
+    _resetConfigCacheForTests();
+    await expect(
+      resolvePinnedCredential('cred-pin', 'openrouter', { orgId: 'o-2' })
+    ).resolves.toEqual({ ok: false, reason: 'out-of-scope' });
   });
 });
