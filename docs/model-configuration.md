@@ -385,6 +385,12 @@ Pick a name (`opencodego`, `groq`, `bedrock`, …). If the provider speaks the O
 
 A built-in provider (`anthropic`, `openai`, `google`) with an API base set — a proxy or gateway in front of the vendor — is probed and discovered at `<base>/models` with that provider's own auth style, behind the same SSRF guard. With no API base, the vendor's endpoint is used.
 
+Agents name the provider by that same lowercase name in their model spec: `opencodego/glm-5.2`, `openrouter/openai/gpt-6-luna`. Specs are stored with the provider lowercased and the model id as written, and a spec without a provider is refused on save. Saving an agent whose provider has no credential reachable from its scope — or whose reachable credentials for a non-built-in provider all lack an API base — succeeds but returns `credentialWarnings`.
+
+Structured output differs by client. The built-in providers enforce a response schema natively. An OpenAI-compatible endpoint is sent JSON mode (`response_format: json_object`) with the schema written into the system prompt, so a reviewer verdict, a plan or a lesson comes back in the shape its caller validates on any endpoint that supports JSON mode — but conformance rests on the model following the prompt, not on the endpoint enforcing a schema.
+
+A built-in `openai` credential with an API base is called through Chat Completions, which most proxies and gateways serve; without one, OpenAI's Responses API is used.
+
 If the provider speaks a different API (e.g. Anthropic-style `/v1/messages`), you need a code change in `packages/worker/src/lib/models.ts` `buildModelUncached()` to construct the right SDK client. The current built-ins are `anthropic`, `openai`, `google`; everything else routes through `@ai-sdk/openai-compatible`.
 
 ### Overriding a model for one team
@@ -559,9 +565,9 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 
 **Worker exits at boot with `"LLM configuration incomplete"`**: the `assertConfigReady()` startup check found missing GLOBAL rows. The full error lists everything missing. Bring up the gateway + web, sign in as admin, add the required `ProviderCredential` rows (the agents themselves are seeded), then restart the worker.
 
-**`"Provider credential for '<name>' has an apiKey but no apiBase"`** (thrown from `buildModelUncached` or `buildEmbeddingModel`): an OpenAI-compatible credential row exists with an `apiKey` but no `apiBase`. Set the `apiBase` from the dashboard.
+**`"Provider '<name>' is not built-in and requires an apiBase on its credential"`** (thrown from `buildModelUncached`, or with the `Embedding provider` prefix from `buildEmbeddingModel`): the credential resolved for a non-built-in provider has no `apiBase`. Set the `apiBase` from the dashboard.
 
-**`"Agent for '<role>' pins a credential for a different provider"`**: caught at worker boot by `assertConfigReady`. Either unpin the credential (so the resolver looks one up by provider name) or pick a credential whose `provider` matches the spec.
+**Worker logs `agent credential pin not usable`**: an agent's pinned credential was deleted, is for a different provider than its model spec (`reason: provider-mismatch`, typically after the model was changed), or sits at a team or organization the run does not belong to (`out-of-scope`). The call proceeds on the provider-name cascade. Re-pin a matching credential or clear the pin.
 
 **Test button returns `"apiBase rejected: host '…' is on a private network"`, or discovery and Test report `blocked address`**: the gateway's SSRF guard blocks loopback / RFC1918 / link-local / `.local` / `.internal` hosts, and refuses a name that resolves to one. For an internal provider (vLLM, Ollama, an internal gateway), an ADMIN lists its host in `models.privateNetworkHosts` at `/govern/platform-settings` (`internal.example.com`, or `10.0.0.5:8000` when it has a port), then saves or tests the credential again; the change applies within the settings cache's ~30 s. Loopback, `localhost` and link-local / cloud-metadata addresses stay refused whatever is listed, so a service on the gateway's own host needs a routable name (`host.docker.internal`, a Compose service name). `blocked address` also appears when the gateway container cannot resolve the name at all.
 
@@ -583,8 +589,8 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 - **The editor's cost estimate prices GLOBAL defaults.** It uses the model each role's GLOBAL agent
   runs, so a team, organization or template override of that agent's model is not reflected, and
   token counts come from each step's static `costHint`, not from measured runs.
-- **Discovery finds ids, not prices.** No provider's list-models endpoint exposes prices, so an admin
-  still enters every number that feeds USD budgets. It reaches only models listed through a GLOBAL
+- **Discovery finds ids, not prices.** It reads no price from a listing, even where one carries
+  prices (OpenRouter's does), so an admin still enters every number that feeds USD budgets. It reaches only models listed through a GLOBAL
   credential; one reachable only through a team or organization credential is not found. It suggests
   by name, not by capability: speech, transcription, image, video and moderation models are dropped
   by a name filter that can miss one or drop one it should not, and outside Google — which says which
@@ -649,6 +655,17 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 - **No batch pricing.** Nothing calls a provider's batch API, so the batch discount never applies.
 - **Credential resolution has no fallback past GLOBAL.** The TEAM → ORGANIZATION → GLOBAL cascade
   ends there; a missing GLOBAL row is a `ConfigMissingError`, not a silent skip.
+- **Embedding providers are OpenAI, Google and OpenAI-compatible endpoints.** Anthropic has no
+  embedding model and is refused at save and at worker boot. OpenAI and Google models are asked to
+  truncate to 1536 dimensions; an OpenAI-compatible endpoint is sent `dimensions: 1536`, and one that
+  answers 400 to it is retried without the field, so its model must then be natively 1536-wide.
+- **Structured output from an OpenAI-compatible endpoint is prompt-guided.** The schema reaches the
+  model in its system prompt, not as an enforced `json_schema` response format, so a model that
+  ignores instructions can still return JSON its caller rejects, and an endpoint that refuses
+  `response_format: json_object` fails those calls outright.
+- **Credential coverage is advised, not enforced.** `credentialWarnings` on an agent save, and the
+  setup readiness check, both look only at whether a credential exists where the agent could reach
+  it. Neither tests the key, and readiness covers GLOBAL agents only.
 - **Embeddings are locked to 1536 dimensions.** `memory_items.embedding` is `vector(1536)`, so a
   model returning any other shape throws. Changing dimension is a migration plus a re-embed of every
   `MemoryItem`; the bulk re-embed below handles the second half, but nothing performs the migration.
