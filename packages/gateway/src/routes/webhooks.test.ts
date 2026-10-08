@@ -189,10 +189,16 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+vi.mock('../lib/ciFailureTriggers.js', async (orig) => ({
+  ...(await orig<typeof import('../lib/ciFailureTriggers.js')>()),
+  handleWorkflowRunFailure: vi.fn(async () => ({ outcome: 'STARTED', triggerId: 'trigger-1' })),
+}));
+
 import { prisma } from '@auto-swe/shared/db';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import { CiTriggerStartError, handleWorkflowRunFailure } from '../lib/ciFailureTriggers.js';
 import { webhookRoutes } from './webhooks.js';
 
 const SECRET = 'hook-secret';
@@ -881,6 +887,63 @@ describe('webhook routes', () => {
   });
 
   // ── POST /api/v1/webhooks/ci ──
+
+  describe('workflow_run deliveries', () => {
+    const failedRun = JSON.stringify({
+      action: 'completed',
+      repository: { full_name: 'acme/payments-api', id: 1 },
+      workflow_run: {
+        conclusion: 'failure',
+        event: 'push',
+        head_branch: 'main',
+        head_repository: { full_name: 'acme/payments-api', id: 1 },
+        head_sha: 'abc',
+        id: 99,
+        path: '.github/workflows/ci.yml',
+        run_attempt: 1,
+        status: 'completed',
+      },
+    });
+    const RUN = { 'x-github-event': 'workflow_run' };
+
+    beforeEach(() => {
+      vi.mocked(handleWorkflowRunFailure).mockClear();
+    });
+
+    it.each(['/api/v1/webhooks/ci', '/api/v1/webhooks/git'])(
+      'hands a signed failed run to the CI-failure triggers at %s',
+      async (url) => {
+        const res = await inject(url, failedRun, sign(failedRun), RUN);
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data).toEqual({ outcome: 'STARTED', triggerId: 'trigger-1' });
+        expect(vi.mocked(handleWorkflowRunFailure).mock.calls[0]?.[1]).toMatchObject({
+          headBranch: 'main',
+          runId: '99',
+        });
+      }
+    );
+
+    it('refuses an unsigned delivery before looking at it', async () => {
+      const res = await inject('/api/v1/webhooks/ci', failedRun, undefined, RUN);
+      expect(res.statusCode).toBe(401);
+      expect(handleWorkflowRunFailure).not.toHaveBeenCalled();
+    });
+
+    it('acknowledges a run that did not fail without acting on it', async () => {
+      const passed = failedRun.replace('"failure"', '"success"');
+      const res = await inject('/api/v1/webhooks/ci', passed, sign(passed), RUN);
+      expect(res.json().data).toMatchObject({ ignored: true });
+      expect(handleWorkflowRunFailure).not.toHaveBeenCalled();
+    });
+
+    it('answers 503 when the run could not be started, so the delivery can be retried', async () => {
+      vi.mocked(handleWorkflowRunFailure).mockRejectedValueOnce(
+        new CiTriggerStartError('could not start')
+      );
+      const res = await inject('/api/v1/webhooks/ci', failedRun, sign(failedRun), RUN);
+      expect(res.statusCode).toBe(503);
+    });
+  });
 
   describe('POST /ci', () => {
     const HEAD_SHA = 'abc123def456';

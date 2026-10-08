@@ -160,6 +160,18 @@ export const SETTING_DEFINITIONS = {
   // and ADMIN-only: each host list is an SSRF decision — it is what lets a
   // credential reach a private-network GitHub Enterprise server — and every
   // other connector reserves that decision for an admin.
+  'github.ciFailureTriggersEnabled': defineSetting({
+    defaultValue: true,
+    description:
+      "Whether a repository's CI-failure triggers may start runs. Each trigger is opt-in on its repository already; this is the switch that stops every one of them at once — a webhook for a failed workflow run is then acknowledged and recorded nowhere. Turning it off does not stop runs already started.",
+    group: 'github',
+    label: 'CI-failure triggers enabled',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'github.repositoryHosts': defineSetting({
     defaultValue: [],
     description:

@@ -1,6 +1,7 @@
 # CI failure triage and fix
 
-When a GitHub Actions workflow fails, the `ci-triage-and-fix` template diagnoses the failure from its
+When a GitHub Actions workflow fails on a repository with a matching **CI-failure trigger**, the
+platform starts the `ci-triage-and-fix` template. It diagnoses the failure from its
 logs and, when the diagnosis says a code change can fix it, opens a **draft** pull request into the
 branch that failed. It never pushes to an existing branch, never changes workflow files, and never
 merges.
@@ -11,7 +12,89 @@ requests the platform did not open: `main`, release branches, and people's pull 
 
 ---
 
-## 1. The template
+## 1. Triggers
+
+A **CI-failure trigger** is a rule on one repository (`CiFailureTrigger`). When a GitHub Actions
+run on that repository fails and a trigger matches it, the platform starts the triage template.
+Triggers are opt-in per repository; there are none until someone creates one.
+
+| Field | Meaning | Default |
+|---|---|---|
+| `name` | A label | — |
+| `branchPatterns` | Globs over the failing branch (`main`, `release/*`, `!release/legacy`). Required, with at least one pattern that is not a `!` exclusion | — |
+| `workflowPatterns` | Globs over the workflow **file path** (`.github/workflows/ci.yml`), never its display name, which a pull request can change | `.github/workflows/**` |
+| `events` | `push` and/or `pull_request` | `push` |
+| `mode` | `TRIAGE_ONLY` (diagnose and report) or `FIX` (also open a draft fix) | `TRIAGE_ONLY` |
+| `commentOnPullRequest` | Post the diagnosis on the failing pull request | `true` |
+| `cooldownMinutes` | No new run for the same branch within this many minutes of the last one started (0–10080) | 30 |
+| `maxRunsPerDay` | Most runs the trigger starts in any 24 hours (1–500) | 10 |
+| `templateId` | A template to start instead of the built-in `ci-triage-and-fix`: active, and global or the repository team's own. It must accept the payload in §2 | the built-in |
+| `enabled` | — | `true` |
+
+In globs, `*` matches within one path segment, `**` matches across them, and `?` matches one
+character. A later pattern overrides an earlier one, so `!` exclusions go after what they exclude.
+An empty list never means "everything".
+
+### The API
+
+| Route | Who |
+|---|---|
+| `GET /api/v1/repositories/:id/ci-triggers` | A member of the owning team or of a team the repository is shared with, or ADMIN. The response says whether the caller may manage them (`canManage`) |
+| `POST /api/v1/repositories/:id/ci-triggers` | ADMIN, or a LEAD of the repository's **owning** team |
+| `PATCH` / `DELETE /api/v1/repositories/:id/ci-triggers/:triggerId` | The same |
+| `GET /api/v1/repositories/:id/ci-triggers/:triggerId/fires?limit=` | A member, as for the list |
+
+A trigger in `FIX` mode opens pull requests on the repository with the platform credential. That
+is why managing triggers stays with the owning team, like every other repository setting, and a
+shared team can read them but not create one. Every create, update and delete is written to the
+audit log.
+
+### From webhook to run
+
+GitHub sends a `workflow_run` event when a run completes. It is accepted at `/api/v1/webhooks/git`
+and at `/api/v1/webhooks/ci`, because a GitHub App has a single webhook URL. The delivery is
+verified and bound to its host exactly like the other GitHub deliveries
+([repositories.md](./repositories.md)). Then, without calling GitHub:
+
+1. **Ignored outright**, with nothing recorded:
+   - a run that is not `completed` with `failure` or `timed_out`;
+   - an event other than `push` or `pull_request`;
+   - a run whose head repository is not this repository (compared by id, so a fork renamed to
+     the same name is still a fork);
+   - a branch name that is not a valid branch;
+   - one of the platform's own `<branchPrefix>/…` branches, which have their own CI loop. This
+     also stops a draft fix whose CI fails from triggering a fix of the fix;
+   - a failure no enabled trigger matches;
+   - a deployment, organization or team with `github.ciFailureTriggersEnabled` off.
+2. **The first matching trigger acts.** Repository rows are taken oldest first, and triggers
+   oldest first within each. One failed run attempt starts at most one run, however many triggers
+   or repository rows match it.
+3. **The decision is recorded** as a `CiFailureTriggerFire`, keyed by the run attempt on its host.
+   A redelivered webhook therefore answers `duplicate` and starts nothing. Under a per-trigger
+   transaction lock, so concurrent deliveries see each other, a run is **suppressed** when:
+
+   | Outcome | When |
+   |---|---|
+   | `SUPPRESSED_SAME_COMMIT` | This trigger already started a run for this commit: another workflow failing on it, or a re-run |
+   | `SUPPRESSED_COOLDOWN` | It started one for this branch within `cooldownMinutes` |
+   | `SUPPRESSED_IN_FLIGHT` | A run it started for this branch in the last 7 days is still in progress |
+   | `SUPPRESSED_DAILY_CAP` | It started `maxRunsPerDay` runs in the last 24 hours |
+   | `SUPPRESSED_NO_PULL_REQUEST` | A `pull_request` failure with no open pull request from this branch of this repository |
+   | `SUPPRESSED_BUDGET` | The repository's organization is over its monthly budget |
+   | `FAILED_TO_START` | The trigger's template is missing or inactive, or does not accept the payload |
+
+4. Otherwise the run starts (`STARTED`) as a synthetic ticket `ci-<runId>-<attempt>`. Its branch is
+   `<branchPrefix>/ci-<runId>-<attempt>`. It has no requesting user, so it uses the platform
+   credential and never a person's saved token. If the workflow cannot be started (Temporal is
+   unreachable), the recorded decision is removed and the delivery answers `503`, so it can be
+   redelivered.
+
+The payload carries `mode` from the trigger (`FIX` → `fix`, `TRIAGE_ONLY` → `triage`). For a push
+the base branch is the pushed branch. For a pull request it is the pull request's head branch, so a
+fix is a draft **into the author's branch**, which they can merge into their own pull request. Nothing
+is ever pushed to their branch.
+
+## 2. The template
 
 `ci-triage-and-fix` is a built-in template. Its run payload names the failing run **by id**:
 
@@ -31,15 +114,15 @@ platform's credential at another repository.
 The run goes through these nodes:
 
 1. **`triage`** (`triageCiFailure`) reads the run from GitHub and decides whether it may act on it
-   at all (§2). It then gives the failed jobs' log tails to the `ciTriager` agent, which returns a
+   at all (§3). It then gives the failed jobs' log tails to the `ciTriager` agent, which returns a
    typed verdict: a category, whether code can fix it, a confidence, a summary, the root cause and
    a suggested fix.
 2. **Code decides**, from the verdict and the facts around it, whether the run goes on to `fix`,
-   `report` or `skip` (§3). The model can rule a fix out, but it cannot start one the rules refuse.
+   `report` or `skip` (§4). The model can rule a fix out, but it cannot start one the rules refuse.
 3. **`report`** posts the diagnosis on the pull request (when asked) and ends the run `SUCCESS`.
    **`skip`** ends it `SKIPPED` with the reason. Both results carry the diagnosis.
 4. **`fix`** runs the implementer on the failing branch's current tip. The diagnosis reaches it
-   fenced as untrusted data (§4). Lint, typecheck and tests run, and a draft pull request is opened
+   fenced as untrusted data (§5). Lint, typecheck and tests run, and a draft pull request is opened
    into the failing branch. A fix that changed no files opens nothing and is reported instead.
    The draft's own CI is then watched, and fixed up to twice, by the usual CI loop. It can poll
    instead of waiting for the webhook when the CI wait strategy at `/govern/workflow-defaults` says
@@ -58,7 +141,7 @@ clones uses it: the implementation, the three fix sessions, the quality gates, s
 nodes. They clone it, diff against it, and open the pull request into it. See
 [product-overview.md](./product-overview.md) for how a launch sets it.
 
-## 2. When a run is not acted on
+## 3. When a run is not acted on
 
 `triageCiFailure` skips the run (`decision: skip`), without calling the model, when GitHub's record
 of the run says any of these:
@@ -72,7 +155,7 @@ of the run says any of these:
 - for a `pull_request` failure, that pull request is closed, or its head is no longer this branch
   in this repository.
 
-## 3. Fix or report
+## 4. Fix or report
 
 A run goes on to a fix only when all of these hold. Otherwise it reports the diagnosis with the
 reason:
@@ -87,7 +170,7 @@ reason:
   `fixable`. `flaky`, `infrastructure` and `unknown` are never fixed;
 - the confidence is at least 0.6.
 
-## 4. What reaches the model, and what reaches the PR
+## 5. What reaches the model, and what reaches the PR
 
 - **Logs are redacted** before the triager, the trace or the brief sees them. `redactString`, plus
   GitHub, AWS, Slack, OpenAI-style, JWT and private-key token shapes. GitHub masks only the secrets
@@ -101,20 +184,36 @@ reason:
   edits one comment per pull request, found by a hidden marker, rather than adding one per
   failure. A comment that cannot be posted is reported in the step output and does not fail the run.
 
-## 5. The `ciTriager` agent
+## 6. The `ciTriager` agent
 
 A sub-role persona on the `planner` model ([agents.md](./agents.md)). It has no tools and returns a
 structured verdict. It cannot be launched as an agent run: its output routes a workflow, so it is on
 the non-launchable list. A step `systemPrompt` override applies to it like any agent step.
 
-## 6. GitHub permissions
+## 7. GitHub permissions
 
-Reading a run's jobs and logs needs **Actions: Read**, which the GitHub App setup does not request
-by default ([github-app-setup.md](./github-app-setup.md)). Without it, `triageCiFailure` fails
-non-retryably with `CI_RUN_FORBIDDEN`. Commenting on a pull request uses the existing
-**Pull requests: Read and write**.
+- **Workflow run** must be among the App's subscribed events (or the repository webhook's), or no
+  failure ever reaches the platform.
+- **Actions: Read** lets the worker read a run's jobs and logs. An installation created before the
+  App asked for it must accept the new permission; until then `triageCiFailure` fails
+  non-retryably with `CI_RUN_FORBIDDEN`.
+- Commenting on a pull request uses the existing **Pull requests: Read and write**.
+
+See [github-app-setup.md](./github-app-setup.md).
 
 ## Limitations
+
+- **Only `push` and `pull_request` runs.** A nightly `schedule` failure on `main`, a
+  `workflow_dispatch` run, a merge-queue run and anything a fork's code produced are never acted on.
+  Neither is a `startup_failure` (an invalid workflow file), which has no logs.
+- **One run per commit per trigger.** When several workflows fail on one commit, only the first
+  to finish is diagnosed. A re-run that fails again on the same commit is not diagnosed again.
+- **Triggers are managed through the API only.** There is no dashboard page for them yet.
+- **The fire history is kept.** Suppressed decisions are recorded too, and nothing prunes them;
+  deleting a trigger deletes its history.
+- **A template that is missing when a failure arrives is recorded as `FAILED_TO_START`** under
+  that run's key. A redelivery after the template is installed does not retry it; start the
+  template by hand with the run id.
 
 - **Only GitHub Actions.** A failure reported by another CI system (commit statuses, third-party
   check runs) is not read. The run is looked up through the Actions API.

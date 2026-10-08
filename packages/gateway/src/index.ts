@@ -46,6 +46,7 @@ import { agentRunRoutes } from './routes/agentRuns.js';
 import { agentVersionRoutes } from './routes/agentVersions.js';
 import { autonomyPolicyRoutes } from './routes/autonomyPolicies.js';
 import { bundleRoutes } from './routes/bundles.js';
+import { ciTriggerRoutes } from './routes/ciTriggers.js';
 import { configSettingsRoutes } from './routes/configSettings.js';
 import { connectionCredentialRoutes } from './routes/connectionCredentials.js';
 import { epicRoutes } from './routes/epics.js';
@@ -300,6 +301,7 @@ async function start() {
   await app.register(meRoutes, { prefix: '/api/v1/me' });
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
   await app.register(repoDependencyRoutes, { prefix: '/api/v1/repositories' });
+  await app.register(ciTriggerRoutes, { prefix: '/api/v1/repositories' });
   await app.register(connectionCredentialRoutes, { prefix: '/api/v1/repositories' });
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });

@@ -381,6 +381,7 @@ model Connection {
   /// Further teams whose members may see and launch on this repository. The
   /// owning team (`teamId`) keeps management, budgets and settings.
   shares                ConnectionTeamShare[]
+  ciFailureTriggers     CiFailureTrigger[]
 
   @@index([teamId])
   @@index([installationId])
@@ -1066,17 +1067,17 @@ model ChannelBudgetHold {
 }
 
 model User {
-  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email                String   @unique
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                String    @unique
   /// Legacy bcrypt hash. Optional because OAuth-only / magic-link-only
   /// users have no password; better-auth stores its own credential hash
   /// in the `accounts` table.
-  passwordHash         String?  @map("password_hash")
+  passwordHash         String?   @map("password_hash")
   /// Better-auth canonical fields.
   name                 String?
-  emailVerified        Boolean  @default(false) @map("email_verified")
+  emailVerified        Boolean   @default(false) @map("email_verified")
   image                String?
-  slackId              String?  @unique @map("slack_id")
+  slackId              String?   @unique @map("slack_id")
   /// GitHub username (the `login`, not the numeric id), captured when the user
   /// links a GitHub identity. The repo-permission projection is keyed on this:
   /// GitHub's collaborator-permission endpoint addresses a user by login, and
@@ -1086,25 +1087,25 @@ model User {
   ///
   /// Unique because one GitHub identity must not map to two platform users —
   /// the projection would then grant one user's access to the other.
-  githubLogin          String?  @unique @map("github_login")
+  githubLogin          String?   @unique @map("github_login")
   /// The `Account.accountId` the login was read from (`{host}:{id}`, or a bare
   /// github.com id). A user can link several GitHub accounts, and a login is
   /// only comparable with the id space of the host that issued it, so ownership
   /// verification needs to know which account to check. Null on a row written
   /// before this was recorded; cleared together with `githubLogin`.
-  githubLoginAccountId String?  @map("github_login_account_id")
-  role                 Role     @default(ENGINEER)
-  isActive             Boolean  @default(true) @map("is_active")
+  githubLoginAccountId String?   @map("github_login_account_id")
+  role                 Role      @default(ENGINEER)
+  isActive             Boolean   @default(true) @map("is_active")
   /// When an account was first made active, by an admin or by the GitHub org
   /// auto-approval rule. Never cleared, so it separates a deactivated account
   /// (set) from one still waiting in the approval queue (null): auto-approval
   /// only ever acts on the second, and deactivation therefore sticks.
   approvedAt           DateTime? @map("approved_at") @db.Timestamptz
   /// Who approved: `admin`, or `github-org:<org>` for the auto-approval rule.
-  approvalSource       String?  @map("approval_source")
-  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-  preferences          Json     @default("{}") @map("preferences")
+  approvalSource       String?   @map("approval_source")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  preferences          Json      @default("{}") @map("preferences")
 
   memberships           TeamMembership[]
   orgMemberships        OrganizationMembership[]
@@ -1124,6 +1125,7 @@ model User {
   skillRevisions        SkillRevision[]          @relation("SkillRevisionCreator")
   skillSources          SkillSource[]            @relation("SkillSourceCreator")
   schedulesActingAs     ScheduledWorkRequest[]   @relation("ScheduleActsAs")
+  ciFailureTriggers     CiFailureTrigger[]       @relation("CiFailureTriggerCreator")
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
   connectionCredentials ConnectionCredential[]
@@ -1321,6 +1323,81 @@ model ScheduledWorkRequest {
   @@index([workRequestId])
   @@index([teamId])
   @@map("scheduled_work_requests")
+}
+
+/// What a CI-failure trigger may do with a failed run.
+enum CiTriggerMode {
+  /// Diagnose and report only.
+  TRIAGE_ONLY
+  /// Also open a draft fix pull request into the failing branch when the diagnosis allows.
+  FIX
+}
+
+/// A rule on one repository: when a GitHub Actions workflow run on it fails, start the CI
+/// triage template (docs/ci-failure-triggers.md). Matched against the host's `workflow_run`
+/// webhook. Managed by the owning team, like schedules. Every list is non-empty; nothing
+/// matches "everything" by default.
+model CiFailureTrigger {
+  id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  connectionId         String            @map("connection_id") @db.Uuid
+  connection           Connection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  name                 String
+  enabled              Boolean           @default(true)
+  mode                 CiTriggerMode     @default(TRIAGE_ONLY)
+  /// `push` and/or `pull_request`. No other event is ever acted on.
+  events               String[]
+  /// Globs over the failing branch (`main`, `release/*`, `!release/legacy`).
+  branchPatterns       String[]          @map("branch_patterns")
+  /// Globs over the workflow FILE path (`.github/workflows/ci.yml`), never its display name.
+  workflowPatterns     String[]          @map("workflow_patterns")
+  /// Post the diagnosis on the pull request a `pull_request` failure came from.
+  commentOnPullRequest Boolean           @default(true) @map("comment_on_pull_request")
+  /// No new run for the same branch within this many minutes of the last one started.
+  cooldownMinutes      Int               @default(30) @map("cooldown_minutes")
+  /// At most this many runs started by this trigger in any 24 hours.
+  maxRunsPerDay        Int               @default(10) @map("max_runs_per_day")
+  /// The template a fire starts; null means the built-in `ci-triage-and-fix`.
+  templateId           String?           @map("template_id") @db.Uuid
+  template             WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  createdById          String?           @map("created_by_id") @db.Uuid
+  createdBy            User?             @relation("CiFailureTriggerCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  fires CiFailureTriggerFire[]
+
+  @@index([connectionId])
+  @@map("ci_failure_triggers")
+}
+
+/// One decision a CI-failure trigger made about one failed workflow run: started a run, or
+/// suppressed it and why. Also the deduplication record: `dedupeKey` names the run attempt
+/// on its host, so a redelivered webhook, or a second trigger or repository row matching the
+/// same run, never starts a second run.
+model CiFailureTriggerFire {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  triggerId          String           @map("trigger_id") @db.Uuid
+  trigger            CiFailureTrigger @relation(fields: [triggerId], references: [id], onDelete: Cascade)
+  /// `<host>/<owner>/<repo>#<runId>/<attempt>`, lowercased.
+  dedupeKey          String           @unique @map("dedupe_key")
+  githubRunId        String           @map("github_run_id")
+  runAttempt         Int              @map("run_attempt")
+  workflowPath       String           @map("workflow_path")
+  event              String
+  headBranch         String           @map("head_branch")
+  headSha            String           @map("head_sha")
+  pullRequestNumber  Int?             @map("pull_request_number")
+  /// STARTED, SUPPRESSED_* (see `CI_FIRE_OUTCOMES`), or FAILED_TO_START.
+  outcome            String
+  reason             String?
+  temporalWorkflowId String?          @map("temporal_workflow_id")
+  workRequestId      String?          @map("work_request_id") @db.Uuid
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([triggerId, createdAt])
+  @@index([triggerId, headBranch, createdAt])
+  @@index([triggerId, headSha])
+  @@map("ci_failure_trigger_fires")
 }
 
 /// Large step outputs (diffs, logs, scan artifacts) are kept out of the
@@ -1876,6 +1953,7 @@ model WorkflowTemplate {
   agents                Agent[]
   scheduledWorkRequests ScheduledWorkRequest[]
   configSettings        ConfigSetting[]
+  ciFailureTriggers     CiFailureTrigger[]
   autonomyPolicies      AutonomyPolicy[]
 
   @@unique([teamId, name])
