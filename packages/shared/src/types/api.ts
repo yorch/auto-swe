@@ -790,7 +790,10 @@ export interface CreateEpicResponse {
 
 /** Live Temporal Schedule status for a scheduled work request. */
 export interface ScheduledWorkRequestScheduleStatus {
-  exists: boolean;
+  /** `null` when the scheduler could not be asked (`unavailable`): not the same as "no schedule". */
+  exists: boolean | null;
+  /** True when Temporal was not connected, so the live fields below are unknown. */
+  unavailable?: boolean;
   paused: boolean;
   nextRunAt: string | null;
   lastRunAt: string | null;

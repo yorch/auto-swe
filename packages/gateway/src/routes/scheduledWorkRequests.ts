@@ -9,6 +9,11 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
+import {
+  isTemporalUnavailable,
+  sendTemporalUnavailable,
+  temporalConnected,
+} from '../lib/temporalErrors.js';
 import { memberTeams, reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import type { WorkRequestScheduleInput } from '../plugins/temporal.js';
@@ -684,12 +689,27 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
               : { repository: reachableConnections(user, request.repoAccessGate) },
         })
     );
+    // Not connected: the live state is unknown, which is not the same as "no schedule".
+    // `exists: null` + `unavailable: true` lets a client say so instead of showing an
+    // unscheduled row for a schedule that is firing.
+    const unknownStatus = {
+      exists: null,
+      lastRunAt: null,
+      nextRunAt: null,
+      paused: false,
+      unavailable: true,
+    };
     const statuses = await Promise.all(
       rows.map(async (row) => {
+        if (!temporalConnected(fastify)) {
+          return unknownStatus;
+        }
         try {
           return await fastify.temporal.getWorkRequestScheduleStatus(row.id);
         } catch {
-          return { exists: false, lastRunAt: null, nextRunAt: null, paused: false };
+          // "No such schedule" is already `exists: false` from the status call; anything
+          // that throws here means the scheduler could not be asked, which is unknown.
+          return unknownStatus;
         }
       })
     );
@@ -838,6 +858,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           }),
           fastify.prisma.runInput.delete({ where: { id: workRequestId } }),
         ]);
+        if (isTemporalUnavailable(err)) {
+          return sendTemporalUnavailable(reply);
+        }
         return reply.status(502).send({
           error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not create Temporal schedule' },
         });
@@ -997,6 +1020,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           );
         } catch (err) {
           request.log.error({ err }, 'failed to sync Temporal schedule after update');
+          if (isTemporalUnavailable(err)) {
+            return sendTemporalUnavailable(reply);
+          }
           return reply.status(502).send({
             error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
           });
@@ -1224,6 +1250,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           );
         } catch (err) {
           request.log.error({ err }, 'failed to re-bind Temporal schedule before fire');
+          if (isTemporalUnavailable(err)) {
+            return sendTemporalUnavailable(reply);
+          }
           return reply.status(502).send({
             error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
           });
@@ -1362,6 +1391,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             );
           }
         }
+        if (isTemporalUnavailable(err)) {
+          return sendTemporalUnavailable(reply);
+        }
         return reply.status(502).send({
           error: {
             code: 'SCHEDULE_TRIGGER_FAILED',
@@ -1409,6 +1441,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         await fastify.temporal.deleteWorkRequestSchedule(existing.id);
       } catch (err) {
         request.log.error({ err, scheduleId: existing.id }, 'failed to delete Temporal schedule');
+        if (isTemporalUnavailable(err)) {
+          return sendTemporalUnavailable(reply);
+        }
         return reply.status(502).send({
           error: {
             code: 'SCHEDULE_SYNC_FAILED',

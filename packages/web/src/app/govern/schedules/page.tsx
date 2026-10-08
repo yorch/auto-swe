@@ -349,7 +349,16 @@ function ScheduleRow({
                 Out of sync
               </Badge>
             )}
-            {!schedule.schedule.exists && (
+            {schedule.schedule.unavailable && (
+              <Badge
+                title="The scheduler cannot be reached right now, so the live state of this schedule is unknown. The dates shown may be out of date."
+                tone="muted"
+                variant="outline"
+              >
+                Scheduler unavailable
+              </Badge>
+            )}
+            {schedule.schedule.exists === false && (
               <Badge
                 title="The scheduler has no trigger for this schedule. Edit and save it to create the trigger again."
                 tone="brick"

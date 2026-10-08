@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { type HitlResolveDeps, resolveHitlStep } from './hitlResolve.js';
+import { TemporalUnavailableError } from './temporalErrors.js';
 
 /**
  * Value validation is the one chokepoint between a human's answer (inbox or
@@ -16,6 +17,7 @@ function makeDeps(step: Record<string, unknown>) {
   const prisma = {
     autonomyDecision: {
       create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     workflowHumanStep: {
@@ -75,5 +77,19 @@ describe('resolveHitlStep — DECISION value validation', () => {
     expect(signalWorkflow).toHaveBeenCalledWith('wf-1', 'hitl_pick', [
       { action: 'select', resolvedBy: 'user-1', value: 'abort' },
     ]);
+  });
+});
+
+describe('resolveHitlStep — Temporal not connected', () => {
+  it('rolls the step back to PENDING and answers TEMPORAL_UNAVAILABLE, not a terminal signal', async () => {
+    const { deps, signalWorkflow, updateMany } = makeDeps(decisionStep);
+    signalWorkflow.mockRejectedValue(new TemporalUnavailableError());
+    const result = await resolveHitlStep(deps, 'step-1', 'select', 'abort', ADMIN);
+    expect(result).toMatchObject({ code: 'TEMPORAL_UNAVAILABLE', ok: false });
+    // Resolved, then put back so the human can answer again once Temporal is up.
+    expect(updateMany).toHaveBeenCalledTimes(2);
+    expect(updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'PENDING' }) })
+    );
   });
 });

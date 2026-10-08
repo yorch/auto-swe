@@ -522,6 +522,18 @@ if (settingKeys.size === 0) {
   throw new Error('could not locate any SETTING_DEFINITIONS keys');
 }
 
+/**
+ * Every registered key, for the count the report prints. `settingKeys` above is
+ * the set the prose check matches against and only holds `group.suffix` keys:
+ * a key whose suffix is itself dotted (`skills.import.*`) is not a token the
+ * two-segment prose pattern can name, so it is counted here but not matched.
+ */
+const registeredKeyCount = new Set(
+  [
+    ...registrySrc.matchAll(/^\s*'([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)':\s*defineSetting\(/gm),
+  ].map((m) => m[1])
+).size;
+
 /** suffix → the real key(s) carrying it, for "did you mean" on a wrong group. */
 const settingKeysBySuffix = new Map();
 for (const key of settingKeys) {
@@ -981,7 +993,7 @@ if (clean) {
       `(${GAP_EXEMPT_DOCS.size} exempt: the index, runbooks, and the glossary).`
   );
   console.log(`  no forbidden status prose (${FORBIDDEN_PROSE.length} rules).`);
-  console.log(`  every setting key named in prose resolves (${settingKeys.size} registered).`);
+  console.log(`  every setting key named in prose resolves (${registeredKeyCount} registered).`);
   console.log(`  every dashboard route named in prose exists (${appRoutes.size} rendered).`);
   console.log('  every repository path named in prose exists.');
   console.log(`  the agent roster names all ${seededAgentKeys.length} seeded agents.`);

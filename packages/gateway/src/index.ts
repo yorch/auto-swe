@@ -1,12 +1,6 @@
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
-import {
-  assertScheduledSweepsEnv,
-  resolveConsolidationConfig,
-  resolveEvalScheduleConfig,
-  resolveRevalidationConfig,
-  resolveScheduledSweeps,
-} from '@auto-swe/shared/lib/systemConfig';
+import { assertScheduledSweepsEnv } from '@auto-swe/shared/lib/systemConfig';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
@@ -26,10 +20,17 @@ import { mcpOAuthGate } from './lib/mcpOAuthGate.js';
 import { mcpConsentAuditOptions, mcpOAuthGateOptions } from './lib/mcpOAuthGateOptions.js';
 import { mcpRouteOptions } from './lib/mcpRouteOptions.js';
 import { initMetrics } from './lib/metrics.js';
+import { parseRateLimitConfig } from './lib/rateLimitConfig.js';
 import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
 } from './lib/repoIdentityIndexCheck.js';
+import { syncSchedulesOnceConnected } from './lib/startupScheduleSync.js';
+import {
+  healthBody,
+  isTemporalUnavailable,
+  replyIfTemporalUnavailable,
+} from './lib/temporalErrors.js';
 import { parseTrustProxy } from './lib/trustProxy.js';
 import authPlugin, {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -138,10 +139,11 @@ async function start() {
   // Rate limiting — keyed per authenticated user where the identity is already
   // verified, else per client IP (see `rateLimitKey`). The credential routes
   // below add a stricter per-route limit.
+  const limit = parseRateLimitConfig(process.env);
   await app.register(rateLimit, {
     keyGenerator: rateLimitKey,
-    max: 200,
-    timeWindow: '1 minute',
+    max: limit.max,
+    timeWindow: limit.timeWindowMs,
   });
 
   // Plugins (decorate app with .temporal, .prisma, .auth)
@@ -156,62 +158,30 @@ async function start() {
   await warnIfGitHubDotComWebhookSecret(app.prisma, app.log);
   await warnIfReposOnUnusableHosts(app.prisma, app.log);
 
-  // Sync the lesson consolidation Temporal Schedule with whatever config is in
-  // the DB. Best-effort — a Temporal connectivity failure at startup shouldn't
-  // crash the gateway; the admin can re-save from the UI once Temporal is up.
-  resolveConsolidationConfig()
-    .then((cfg) => app.temporal.syncConsolidationSchedule(cfg))
-    .catch((err) => app.log.warn({ err }, 'consolidation schedule sync failed at startup'));
-
-  // Same for the repo-dependency scan Schedule. Without this the schedule never
-  // exists, so the on-demand "re-scan" trigger has no handle to fire.
-  const sweeps = resolveScheduledSweeps();
-  app.temporal
-    .syncRepoDependencyScanSchedule(sweeps.repoDependency)
-    .catch((err) => app.log.warn({ err }, 'repo dependency scan schedule sync failed at startup'));
-
-  // Same for the permission sweep that refreshes cached GitHub answers. Paused
-  // unless an admin has enabled it: it spends GitHub quota proportional to team
-  // members times repositories, so it must be a deliberate choice.
-  app.temporal
-    .syncRepoAccessSyncSchedule(sweeps.repoAccess)
-    .catch((err) => app.log.warn({ err }, 'repo access sync schedule sync failed at startup'));
-
-  // Same for provider model discovery: it only lists models, so it is on by
-  // default; disabled, the schedule stays but is paused.
-  app.temporal
-    .syncModelDiscoverySchedule(sweeps.modelDiscovery)
-    .catch((err) => app.log.warn({ err }, 'model discovery schedule sync failed at startup'));
-
-  // Same for the run reaper, which finalizes (and bills) runs whose workflow
-  // ended without finalizing them. It only reads Temporal, so it is on by default.
-  app.temporal
-    .syncRunReaperSchedule(sweeps.runReaper)
-    .catch((err) => app.log.warn({ err }, 'run reaper schedule sync failed at startup'));
-  // Same for the skill-source update check: one cheap request per tracked source,
-  // and it only flags — an admin reviews and accepts. On by default.
-  app.temporal
-    .syncSkillSourceSyncSchedule(sweeps.skillSourceSync)
-    .catch((err) => app.log.warn({ err }, 'skill source sync schedule sync failed at startup'));
-
-  // Same for the eval-regression Temporal Schedule (the nightly benchmark).
-  // Off by default — needs a seeded dataset + a worker that can reach Docker.
-  resolveEvalScheduleConfig()
-    .then((cfg) => app.temporal.syncEvalSchedule(cfg))
-    .catch((err) => app.log.warn({ err }, 'eval schedule sync failed at startup'));
-
-  // Same for the eval re-validation Temporal Schedule (golden-set staleness check).
-  // Off by default — needs seeded EvalDatasets + a Docker-capable worker.
-  resolveRevalidationConfig()
-    .then((cfg) => app.temporal.syncRevalidationSchedule(cfg))
-    .catch((err) => app.log.warn({ err }, 'revalidation schedule sync failed at startup'));
+  // The gateway boots without Temporal: the plugin connects in the background, and the
+  // startup schedule syncs run as soon as it is up, so they are deferred, not lost.
+  void syncSchedulesOnceConnected(app).catch((err) =>
+    app.log.warn({ err }, 'startup schedule sync failed')
+  );
 
   // Global error handler. 4xx messages are intentional (validation, auth);
   // 5xx messages can leak internals (DB constraint text, library errors), so
   // log the detail server-side and return a generic message.
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
-    request.log.error(error);
+    // Temporal not being connected yet is expected and retryable; pollers would flood
+    // the error level during the connect window.
+    if (isTemporalUnavailable(error)) {
+      request.log.warn({ err: error }, 'Temporal not connected');
+    } else {
+      request.log.error(error);
+    }
     const statusCode = error.statusCode ?? 500;
+    // Temporal not being connected yet is an expected, retryable condition with
+    // its own stable code and a message safe to show — not an internal error.
+    const unavailable = replyIfTemporalUnavailable(error, reply);
+    if (unavailable) {
+      return unavailable;
+    }
     return reply.status(statusCode).send({
       error: {
         code: error.code ?? 'INTERNAL_ERROR',
@@ -220,8 +190,10 @@ async function start() {
     });
   });
 
-  // Health check
-  app.get('/health', async () => ({ status: 'ok' }));
+  // Health check — liveness. Always 200 while the process serves requests (the
+  // container healthcheck keys on that); Temporal's state is reported, not gated
+  // on, because the gateway runs without it and recovers when it connects.
+  app.get('/health', async () => healthBody(app.temporalConnection));
 
   // ── Better Auth handler — multi-provider browser sign-in flow.
   // Mounted at /api/auth/* per the better-auth convention. Cookie-based

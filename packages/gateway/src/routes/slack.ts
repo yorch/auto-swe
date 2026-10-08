@@ -1907,6 +1907,8 @@ function hitlErrorText(code: HitlResolveErrorCode, message: string): string {
       return ':warning: The workflow run is no longer running.';
     case 'SIGNAL_FAILED':
       return ':warning: Could not deliver your response to the workflow — please try the button again.';
+    case 'TEMPORAL_UNAVAILABLE':
+      return ':warning: This is temporarily unavailable — please try again in a moment.';
     default:
       return `:warning: ${message}`;
   }

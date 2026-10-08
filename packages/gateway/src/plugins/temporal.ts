@@ -28,6 +28,7 @@ import {
 } from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
+import { TemporalUnavailableError } from '../lib/temporalErrors.js';
 import { getErrorName } from './auth.js';
 
 /**
@@ -211,8 +212,27 @@ export interface SkillSourceSyncScheduleConfig {
   cronExpression: string;
 }
 
+/** `connecting` covers both the first attempt and every retry after a failed one. */
+export type TemporalConnectionState = 'connecting' | 'connected';
+
+export interface TemporalPluginOptions {
+  /** Delay before the first connect retry, doubling up to `maxMs`. Tests shrink it. */
+  connectBackoffMs?: { initial: number; max: number };
+}
+
+/** Retries logged at warn before dropping to debug. */
+const CONNECT_WARN_ATTEMPTS = 5;
+
+const DEFAULT_CONNECT_BACKOFF_MS = { initial: 1000, max: 30_000 };
+
 declare module 'fastify' {
   interface FastifyInstance {
+    /** Whether the background Temporal connection is up. `/health` reports it. */
+    temporalConnection: {
+      state: () => TemporalConnectionState;
+      /** Resolves once connected (immediately if already). Never rejects. */
+      whenConnected: () => Promise<void>;
+    };
     temporal: {
       startRunnableWorkflow: (
         workflowId: string,
@@ -316,17 +336,89 @@ declare module 'fastify' {
   }
 }
 
-const temporalPlugin: FastifyPluginAsync = async (fastify) => {
-  const connection = await Connection.connect({
-    address: resolveTemporalAddress(),
+const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify, opts) => {
+  const address = resolveTemporalAddress();
+  const backoff = opts.connectBackoffMs ?? DEFAULT_CONNECT_BACKOFF_MS;
+
+  // The plugin registers at once and connects in the background: an unreachable
+  // Temporal must not stop the gateway from booting (it would fail plugin
+  // registration with a timeout). Until the first connect succeeds every
+  // `fastify.temporal.*` call rejects with TemporalUnavailableError. After it,
+  // the SDK's gRPC channel reconnects on its own when the server drops.
+  let live: { connection: Connection; client: Client; schedules: ScheduleClient } | null = null;
+  let closing = false;
+  let retryTimer: NodeJS.Timeout | undefined;
+  let markConnected: () => void = () => undefined;
+  const connected = new Promise<void>((resolve) => {
+    markConnected = resolve;
   });
-  // Stamps the request's trace context on every workflow it starts, so the
-  // run's activities join the request's trace (see shared/lib/temporalTracing).
-  const client = new Client({
-    connection,
-    interceptors: { workflow: [traceContextClientInterceptor()] },
+
+  function active() {
+    if (!live) {
+      throw new TemporalUnavailableError();
+    }
+    return live;
+  }
+  // Forward every property access to the live SDK object, so the helpers below
+  // read exactly as they would against a connected client.
+  const client = new Proxy({} as Client, {
+    get: (_target, prop) => Reflect.get(active().client, prop),
   });
-  const schedules = new ScheduleClient({ connection });
+  const schedules = new Proxy({} as ScheduleClient, {
+    get: (_target, prop) => Reflect.get(active().schedules, prop),
+  });
+
+  async function connectWithRetry(): Promise<void> {
+    let delay = backoff.initial;
+    for (let attempt = 1; !closing; attempt++) {
+      let connection: Connection | undefined;
+      try {
+        connection = await Connection.connect({ address });
+        if (closing) {
+          await connection.close().catch(() => undefined);
+          return;
+        }
+        live = {
+          client: new Client({
+            connection,
+            // Stamps the request's trace context on every workflow it starts, so the
+            // run's activities join the request's trace (see shared/lib/temporalTracing).
+            interceptors: { workflow: [traceContextClientInterceptor()] },
+          }),
+          connection,
+          schedules: new ScheduleClient({ connection }),
+        };
+        fastify.log.info({ address, attempt }, 'connected to Temporal');
+        markConnected();
+        return;
+      } catch (err) {
+        // A connection opened but unusable (client construction threw) must not leak.
+        await connection?.close().catch(() => undefined);
+        // Warn with the error for the first attempts, then a one-line debug per retry:
+        // a long outage must not fill the log with the same stack every 30 seconds.
+        const note = { address, attempt, retryInMs: delay };
+        if (attempt <= CONNECT_WARN_ATTEMPTS) {
+          fastify.log.warn(
+            { ...note, err: attempt === 1 ? err : String(err) },
+            'Temporal is unreachable; the gateway keeps running without it and will retry'
+          );
+        } else {
+          fastify.log.debug({ ...note, err: String(err) }, 'Temporal still unreachable');
+        }
+        await new Promise<void>((resolve) => {
+          retryTimer = setTimeout(resolve, delay);
+          retryTimer.unref();
+        });
+        delay = Math.min(delay * 2, backoff.max);
+      }
+    }
+  }
+  void connectWithRetry();
+
+  fastify.decorate('temporalConnection', {
+    state: (): TemporalConnectionState => (live ? 'connected' : 'connecting'),
+    whenConnected: () => connected,
+  });
 
   function makeScheduleAction(input: ScheduledConsolidationInput) {
     return {
@@ -679,7 +771,13 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
       let desc: Awaited<ReturnType<typeof handle.describe>>;
       try {
         desc = await handle.describe();
-      } catch {
+      } catch (err) {
+        // Only "no such execution" means the job is gone. Any other failure (Temporal
+        // unreachable, a timeout) says nothing about the job, so it must not be
+        // reported as failed — the poller would stop and the user would retry a live job.
+        if (getErrorName(err) !== 'WorkflowNotFoundError') {
+          throw err;
+        }
         return { code: 'NOT_FOUND', message: 'Generation job not found', status: 'failed' };
       }
       const name = desc.status.name;
@@ -1102,7 +1200,9 @@ const temporalPlugin: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.addHook('onClose', async () => {
-    await connection.close();
+    closing = true;
+    clearTimeout(retryTimer);
+    await live?.connection.close().catch(() => undefined);
   });
 };
 

@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TemporalUnavailableError } from '../lib/temporalErrors.js';
 import { workflowRunRoutes } from './workflowRuns.js';
 
 const { recordRunFinalized } = vi.hoisted(() => ({ recordRunFinalized: vi.fn() }));
@@ -638,6 +639,24 @@ describe('workflowRunRoutes POST /:id/cancel', () => {
     expect(res.json().error.code).toBe('TEMPORAL_CANCEL_FAILED');
     expect(prisma.workflowRun.updateMany).not.toHaveBeenCalled();
     expect(prisma.activeWorkflow.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 TEMPORAL_UNAVAILABLE and leaves the run RUNNING when Temporal is not connected', async () => {
+    const { app, prisma, temporal } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: runId,
+      status: 'RUNNING',
+      workflowId: 'wf-1',
+    });
+    temporal.cancelWorkflow.mockRejectedValue(new TemporalUnavailableError());
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${runId}/cancel`,
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe('TEMPORAL_UNAVAILABLE');
+    expect(prisma.workflowRun.updateMany).not.toHaveBeenCalled();
   });
 
   it('treats a workflow Temporal no longer knows as cancelled', async () => {

@@ -163,7 +163,7 @@ export const SETTING_DEFINITIONS = {
   'github.repositoryHosts': defineSetting({
     defaultValue: [],
     description:
-      "Hosts a repository's web or API URL override may point at, beyond the GitHub hosts configured on the GitHub integration (comma-separated host or host:port; github.com also covers api.github.com). A team lead may only point a repository at an approved host, and a repository already pointing elsewhere is refused outright until its host is listed. Listing a host does not send it the platform credential: that never leaves the instance's own host, so a repository on a listed host is reachable only with a user's own saved token.",
+      "Hosts a repository's web or API URL override may point at, beyond the GitHub hosts configured on the GitHub integration (comma-separated host or host:port; github.com also covers api.github.com). A team lead may only point a repository at an approved host, and a repository already pointing elsewhere is refused outright until its host is listed. Listing a host approves where a repository may point; it does not by itself send that host any credential. The instance's own platform credential never leaves the instance's host. A repository on a listed host uses that host's own PAT or GitHub App when an admin has saved one under Studio > Integrations > GitHub > Per-host credentials; with none, runs that have no saved user token fail with REPO_CREDENTIAL_HOST_MISMATCH; only a user's own saved token reaches that host.",
     group: 'github',
     label: 'Additional repository hosts',
     overridableAt: [],

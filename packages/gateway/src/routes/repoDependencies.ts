@@ -5,6 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
+import { isTemporalUnavailable, sendTemporalUnavailable } from '../lib/temporalErrors.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 import { canManageTeamRepos } from './repositories.js';
@@ -185,6 +186,9 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         // outage lands here too, and the two are not the same problem for an
         // operator — log the reason rather than flattening both into the message.
         request.log.warn({ err }, 'repo dependency scan trigger failed');
+        if (isTemporalUnavailable(err)) {
+          return sendTemporalUnavailable(reply);
+        }
         return reply.status(503).send({
           error: {
             code: 'SCHEDULE_UNAVAILABLE',

@@ -3,7 +3,11 @@ import { Prisma } from '@auto-swe/shared';
 import { HITL_VALID_ACTIONS, type HitlKind } from '@auto-swe/shared/workflow/interpreter';
 import { z } from 'zod';
 import { buildWorkflowHumanStepControlFilter } from './runVisibility.js';
-import { isTerminalSignalError } from './temporalErrors.js';
+import {
+  isTemporalUnavailable,
+  isTerminalSignalError,
+  TEMPORAL_UNAVAILABLE_BODY,
+} from './temporalErrors.js';
 import type { ConnectionScopeGate } from './tenantScope.js';
 
 /**
@@ -63,7 +67,8 @@ export type HitlResolveErrorCode =
   | 'INVALID_ACTION'
   | 'INVALID_VALUE'
   | 'REASON_REQUIRED'
-  | 'SIGNAL_FAILED';
+  | 'SIGNAL_FAILED'
+  | 'TEMPORAL_UNAVAILABLE';
 
 export type HitlResolveResult =
   | {
@@ -561,6 +566,13 @@ export async function resolveHitlStep(
           { err: rollbackErr, stepId: resolvedStep.id },
           'HITL rollback failed — step stuck RESOLVED without a delivered signal'
         );
+      }
+      if (isTemporalUnavailable(err)) {
+        return {
+          code: 'TEMPORAL_UNAVAILABLE',
+          message: TEMPORAL_UNAVAILABLE_BODY.error.message,
+          ok: false,
+        };
       }
       return {
         code: 'SIGNAL_FAILED',

@@ -48,7 +48,8 @@ function newMockPrisma() {
 
 async function buildApp(
   role: 'ADMIN' | 'ENGINEER' = 'ADMIN',
-  startEvalRunWorkflow: () => Promise<void> = async () => {}
+  startEvalRunWorkflow: () => Promise<void> = async () => {},
+  temporalState: 'connected' | 'connecting' = 'connected'
 ) {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
@@ -59,6 +60,7 @@ async function buildApp(
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
   app.decorate('temporal', { startEvalRunWorkflow } as unknown as never);
+  app.decorate('temporalConnection', { state: () => temporalState } as unknown as never);
   await app.register(evalRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
   return { app, prisma };
@@ -299,6 +301,27 @@ describe('evalRoutes', () => {
       expect.objectContaining({ where: { id: 'run-10' } })
     );
     expect(recordRunFinalized).toHaveBeenCalledExactlyOnceWith('FAILED', 'eval');
+  });
+
+  it('answers 503 TEMPORAL_UNAVAILABLE before creating any row or metric while Temporal is not connected', async () => {
+    const { app, prisma } = await buildApp('ADMIN', async () => {}, 'connecting');
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'd1' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: {
+        baselineRef: 'b',
+        candidateRef: 'c',
+        datasetId: '11111111-1111-4111-8111-111111111111',
+      },
+      url: '/api/v1/platform/evals/runs',
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe('TEMPORAL_UNAVAILABLE');
+    expect(res.headers['retry-after']).toBe('5');
+    expect(prisma.evalRun.create).not.toHaveBeenCalled();
+    expect(prisma.evalRun.update).not.toHaveBeenCalled();
+    expect(recordRunFinalized).not.toHaveBeenCalled();
   });
 
   it('404s starting a run for a missing dataset', async () => {

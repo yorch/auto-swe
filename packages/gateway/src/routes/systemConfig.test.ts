@@ -191,7 +191,7 @@ const auditConfigWriteMock = vi.mocked(auditConfigWrite);
 
 const AUTH_HEADER = { authorization: 'Bearer fake-admin-token' };
 
-async function buildApp() {
+async function buildApp(temporalState: 'connected' | 'connecting' = 'connected') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -209,6 +209,7 @@ async function buildApp() {
   // Minimal prisma on the app instance (used by some route handlers directly).
   app.decorate('prisma', prisma as unknown as never);
 
+  app.decorate('temporalConnection', { state: () => temporalState } as unknown as never);
   // Minimal temporal (used by consolidation routes, not under test here).
   app.decorate('temporal', {
     getConsolidationScheduleStatus: vi.fn(async () => ({
@@ -423,6 +424,21 @@ describe('eval-schedule config', () => {
       enabled: false,
       schedule: { exists: false },
     });
+    await app.close();
+  });
+
+  it('PUT refuses with 503 before persisting while Temporal is not connected', async () => {
+    updateConsolidationConfigMock.mockClear();
+    const app = await buildApp('connecting');
+    const res = await app.inject({
+      body: { enabled: true },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/platform/config/consolidation',
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe('TEMPORAL_UNAVAILABLE');
+    expect(updateConsolidationConfigMock).not.toHaveBeenCalled();
     await app.close();
   });
 
