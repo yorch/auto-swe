@@ -151,7 +151,7 @@
     "packages/gateway/src/lib/specRefValidation.test.ts": "a18dd33be87e5aebfef8c0c4a1a72c3271ee6babf2d34ce4e4660480ab8232b7",
     "packages/gateway/src/lib/specRefValidation.ts": "14dedbdb0aef2bb841c330cc9da1285fdf30d3a753d1a0d88e3b388cdc42befa",
     "packages/gateway/src/lib/startupScheduleSync.test.ts": "1400322130fbbe7bd4d620fd9b74e204abeab60b6a7667d9fcbaa0d42b2b0b46",
-    "packages/gateway/src/lib/startupScheduleSync.ts": "5270d9c56f83183ebfcf5be52ed299779255af558e2f71b49a38b1cd1e6db991",
+    "packages/gateway/src/lib/startupScheduleSync.ts": "6c4b47c8e9d2741060a0955db3985cf8a53aadc740007b4fb5d88a9c0785226f",
     "packages/gateway/src/lib/systemConfigService.test.ts": "941f72ddefa8df2ba333cb6b8317e79a1398d17a8c80a1c910595297c0c166de",
     "packages/gateway/src/lib/systemConfigService.ts": "83a4875d255ab746b570cbe73ddfb955843d3a2a547d37a07f5e79efe4a97bfe",
     "packages/gateway/src/lib/systemTemplate.ts": "513dc2230c6a176194134902b79a3e52a210612d8983179c37f1e2ee972d6b86",
@@ -3112,7 +3112,7 @@
       "WorkflowShellAudit"
     ]
   },
-  "reviewedCommit": "ad15fdc16130db2ffcd69e99d83b9f8b60225396",
+  "reviewedCommit": "ad23270164df39f449efa870a17a5a7cfca7cec5",
   "sourceHashes": {
     "docker-compose.app.yml": "7c84a4f978f697ed6d3eb5dd2d8ae9a578e694621b87a51235eee2eb26909daa",
     "packages/cli/src/commands/evals.ts": "8174a8870f6784e5760c020ef7de01cbfd062bf27e8723ac5f0fbcc04af43e9a",
@@ -3140,7 +3140,7 @@
     "packages/gateway/src/lib/skillSourceService.ts": "a30052cc467a41bfe0ca8b6ed25a8d1eac217d922961670f8ed44132a6c57e3e",
     "packages/gateway/src/lib/skillSourceUpdateService.ts": "e3afdef2bb09dac376d50f90d715d0e9da7891f862ce5d50b62081606de35374",
     "packages/gateway/src/lib/slack.ts": "88a3919ea90ff8557f6de8654f843968ab23490cff58badfdf515a18e3b0d0ac",
-    "packages/gateway/src/lib/startupScheduleSync.ts": "5270d9c56f83183ebfcf5be52ed299779255af558e2f71b49a38b1cd1e6db991",
+    "packages/gateway/src/lib/startupScheduleSync.ts": "6c4b47c8e9d2741060a0955db3985cf8a53aadc740007b4fb5d88a9c0785226f",
     "packages/gateway/src/lib/systemConfigService.ts": "83a4875d255ab746b570cbe73ddfb955843d3a2a547d37a07f5e79efe4a97bfe",
     "packages/gateway/src/lib/telemetry.ts": "1e16475c4f267980dd981c91d4209bda694003bbca1e72b06956977cdc7bf967",
     "packages/gateway/src/lib/templateLaunch.ts": "fe9e78aec2333f472824e2f77e86faa5dd7fd3ccb4a1bdef97c0c569cc5a6ad6",
