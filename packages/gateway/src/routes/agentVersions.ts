@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   type AgentScope,
   updateAgent,
+  validateCredentialRef,
   validateMcpConnectionRef,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -136,6 +137,18 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
         return reply
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
+      }
+      // The pinned credential may have been deleted, or the version may predate the check.
+      const credentialError = await validateCredentialRef(
+        fastify.prisma,
+        source.credentialId,
+        source.modelSpec,
+        { orgId: anchor.orgId, scope: anchor.scope as AgentScope, teamId: anchor.teamId }
+      );
+      if (credentialError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
       }
       // A skill deactivated since then is not injected into the agent; say so rather than refuse.
       const inactiveSkills =

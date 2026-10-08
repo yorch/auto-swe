@@ -1,3 +1,4 @@
+import type { PrismaClient } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { IMPLEMENTER_RUNTIMES } from '@auto-swe/shared/types/api';
 import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
@@ -17,6 +18,7 @@ import {
   runtimeSaveError,
   updateAgent,
   validateAgentScopeRefs,
+  validateCredentialRef,
   validateMcpConnectionRef,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -74,6 +76,34 @@ const RUNTIME_ADMIN_ONLY = {
 
 function runtimeModelMismatch(message: string) {
   return { error: { code: 'RUNTIME_MODEL_MISMATCH', message } };
+}
+
+/**
+ * The credential-pin check for an edit. Only an edit that touches the pin or the
+ * model is checked: a pin a version already carries is not re-litigated when
+ * someone changes only its prompt, and the worker skips an unusable pin at run
+ * time anyway.
+ */
+async function pinnedCredentialError(
+  prisma: PrismaClient,
+  current: {
+    credentialId: string | null;
+    orgId: string | null;
+    scope: string;
+    teamId: string | null;
+  },
+  body: { credentialId?: string | null; modelSpec?: string | null },
+  modelSpec: string | null
+): Promise<string | null> {
+  if (body.credentialId === undefined && body.modelSpec === undefined) {
+    return null;
+  }
+  const credentialId = body.credentialId === undefined ? current.credentialId : body.credentialId;
+  return validateCredentialRef(prisma, credentialId, modelSpec, {
+    orgId: current.orgId,
+    scope: current.scope as AgentScope,
+    teamId: current.teamId,
+  });
 }
 
 const CreateAgentSchema = z
@@ -195,6 +225,17 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
+      const credentialError = await validateCredentialRef(
+        fastify.prisma,
+        body.credentialId,
+        body.modelSpec,
+        { orgId: body.orgId, scope: body.scope, teamId: body.teamId }
+      );
+      if (credentialError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+      }
       const named = {
         inheritsModelFrom: body.inheritsModelFrom ?? null,
         modelSpec: body.modelSpec ?? null,
@@ -269,6 +310,17 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       const runtimeError = await runtimeSaveError(fastify.prisma, merged);
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
+      }
+      const credentialError = await pinnedCredentialError(
+        fastify.prisma,
+        current,
+        request.body,
+        merged.modelSpec
+      );
+      if (credentialError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
       }
       const { agent, catalogWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
@@ -443,6 +495,17 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
+      const credentialError = await validateCredentialRef(
+        fastify.prisma,
+        request.body.credentialId,
+        request.body.modelSpec,
+        { scope: 'TEAM', teamId: request.params.id }
+      );
+      if (credentialError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+      }
       const key: AgentScopeKey = {
         key: request.body.key,
         scope: 'TEAM',
@@ -504,6 +567,17 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       const runtimeError = await runtimeSaveError(fastify.prisma, merged);
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
+      }
+      const credentialError = await pinnedCredentialError(
+        fastify.prisma,
+        current,
+        request.body,
+        merged.modelSpec
+      );
+      if (credentialError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
       }
       const mcpError = await validateMcpConnectionRef(
         fastify.prisma,

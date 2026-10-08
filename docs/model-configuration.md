@@ -391,7 +391,7 @@ If the provider speaks a different API (e.g. Anthropic-style `/v1/messages`), yo
 
 1. **Teams → \<team-slug\> → Team overrides**.
 2. Pick the role row → **Override** → enter a model spec (e.g. `openai/gpt-6.1-sol`).
-3. Optionally pin a specific credential (the picker shows GLOBAL + this team's TEAM-scope creds).
+3. Optionally pin a specific credential (the picker shows GLOBAL + this team's TEAM-scope creds). The API refuses a pin with `400 INVALID_CREDENTIAL` when the credential does not exist, is for a different provider than the model spec, or belongs to another team or to an organization the team is not in.
 
 Removes via the **Reset** button. Resetting causes the next activity call for that role to fall back to GLOBAL.
 

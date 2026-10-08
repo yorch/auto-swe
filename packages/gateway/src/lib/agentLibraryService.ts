@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@auto-swe/shared';
+import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
@@ -315,6 +316,67 @@ export async function validateMcpConnectionRef(
   }
   return null;
 }
+/**
+ * Validate an Agent's `credentialId` pin: the credential must exist, belong to
+ * the provider the agent's model spec routes to (when the agent carries its own
+ * spec — an inheriting persona's provider is only known at run time), and be
+ * one the agent's scope may spend. TEAM agents may pin GLOBAL credentials, their
+ * own team's, or their team's organization's; ORGANIZATION agents GLOBAL or
+ * their own org's. GLOBAL / CHANNEL / WORKFLOW_TEMPLATE agents are admin-owned
+ * and may pin any — the worker still uses a pin only where the run's own team
+ * or org can reach it. Returns an error message or null.
+ */
+export async function validateCredentialRef(
+  prisma: PrismaClient,
+  credentialId: string | null | undefined,
+  modelSpec: string | null | undefined,
+  scopeKey: { scope: AgentScope; teamId?: string | null; orgId?: string | null }
+): Promise<string | null> {
+  if (!credentialId) {
+    return null;
+  }
+  const cred = await prisma.providerCredential.findUnique({
+    select: { orgId: true, provider: true, scope: true, teamId: true },
+    where: { id: credentialId },
+  });
+  if (!cred) {
+    return 'Credential not found';
+  }
+  const provider = modelSpec ? providerOfSpec(modelSpec) : null;
+  if (provider && cred.provider.toLowerCase() !== provider) {
+    return `Credential is for provider '${cred.provider}', but the model spec routes to '${provider}'`;
+  }
+  if (cred.scope === 'GLOBAL') {
+    return null;
+  }
+  if (scopeKey.scope === 'TEAM') {
+    if (cred.scope === 'TEAM') {
+      return cred.teamId === scopeKey.teamId ? null : 'Credential belongs to a different team';
+    }
+    const team = scopeKey.teamId
+      ? await prisma.team.findUnique({ select: { orgId: true }, where: { id: scopeKey.teamId } })
+      : null;
+    return team?.orgId && team.orgId === cred.orgId
+      ? null
+      : 'Credential belongs to an organization this team is not in';
+  }
+  if (scopeKey.scope === 'ORGANIZATION') {
+    return cred.scope === 'ORGANIZATION' && cred.orgId === scopeKey.orgId
+      ? null
+      : 'Credential belongs to a different organization or team';
+  }
+  return null;
+}
+
+/** The provider a spec routes to, as the worker parses it; null for a malformed spec. */
+function providerOfSpec(spec: string): string | null {
+  try {
+    return parseProviderModelSpec(spec).provider;
+  } catch {
+    return null;
+  }
+}
+
 export async function listAgents(
   prisma: PrismaClient,
   filter: {
