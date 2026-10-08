@@ -15,6 +15,7 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
 }));
 
 import { resolveSetting } from '@auto-swe/shared/config';
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { retrieveSimilarLessons } from './lessonRetrieval.js';
 import { searchMemoryItemsByVector } from './memoryStore.js';
 import { ownerOfConnection } from './spendOwner.js';
@@ -62,6 +63,27 @@ describe('retrieveSimilarLessons', () => {
         id: 'b',
         lessonSummary: 'INJECT',
         similarity: 0.8,
+      },
+    ] as never);
+
+    const lessons = await retrieveSimilarLessons('q', 'repo-1');
+
+    expect(lessons.map((l) => l.lessonId)).toEqual(['a']);
+  });
+
+  it('keeps a stored lesson when the scan is incomplete and the rules that ran flag nothing', async () => {
+    vi.mocked(scanSkillContent).mockResolvedValueOnce({
+      incomplete: true,
+      safe: true,
+      warnings: [],
+    });
+    mockSearch.mockResolvedValueOnce([
+      {
+        createdAt: new Date(),
+        failureType: null,
+        id: 'a',
+        lessonSummary: 'run lint',
+        similarity: 0.9,
       },
     ] as never);
 

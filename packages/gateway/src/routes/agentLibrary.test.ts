@@ -6,6 +6,7 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
   scanSkillContent: vi.fn(async () => ({ safe: true, warnings: [] })),
 }));
 
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './agentLibrary.js';
 
 function newMockPrisma() {
@@ -190,6 +191,77 @@ describe('agentLibraryRoutes — admin', () => {
     expect(res.statusCode).toBe(201);
     expect(JSON.parse(res.payload).data.id).toBe('new-1');
     expect(mockPrisma.configAuditLog.create).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('reports scan-incomplete, without refusing, when the prompt scan could not complete on create', async () => {
+    vi.mocked(scanSkillContent).mockResolvedValueOnce({
+      incomplete: true,
+      incompleteReason: 'load-failed',
+      safe: true,
+      warnings: [],
+    });
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'n1', key: 'myAgent', version: 1 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'n1',
+      key: 'myAgent',
+      skillRefs: [],
+      version: 1,
+    });
+    const res = await app.inject({
+      body: { key: 'myAgent', name: 'My Agent', scope: 'GLOBAL', systemPrompt: 'hi' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.payload).scanWarnings).toEqual([
+      expect.stringContaining('scan-incomplete'),
+    ]);
+    await app.close();
+  });
+
+  it('reports scan-incomplete, without refusing, when the prompt scan throws on update', async () => {
+    vi.mocked(scanSkillContent).mockRejectedValueOnce(new Error('db down'));
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue({
+      credentialId: null,
+      description: null,
+      id: '33333333-3333-4333-8333-333333333333',
+      inheritsModelFrom: null,
+      isBuiltIn: true,
+      isVerified: true,
+      key: 'reviewer',
+      modelSpec: null,
+      name: 'Reviewer',
+      origin: 'swe-starter',
+      scope: 'GLOBAL',
+      systemPrompt: null,
+      teamId: null,
+      toolKeys: null,
+      version: 1,
+      workflowTemplateId: null,
+    });
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', key: 'reviewer', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'v2',
+      key: 'reviewer',
+      skillRefs: [],
+      version: 2,
+    });
+    const res = await app.inject({
+      body: { systemPrompt: 'new prompt' },
+      headers: AUTH,
+      method: 'PUT',
+      url: '/api/v1/platform/agent-library/33333333-3333-4333-8333-333333333333',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).scanWarnings).toEqual([
+      expect.stringContaining('scan-incomplete'),
+    ]);
     await app.close();
   });
 

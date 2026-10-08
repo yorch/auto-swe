@@ -156,8 +156,11 @@ consolidated the same way on each ambient fire.
 
 Memory is replayed into every later run that recalls it, so it is held to a blocking rule
 (`packages/worker/src/lib/memoryGuard.ts`): a write whose text matches an `INJECTION` scanner
-pattern is refused, a recalled item that matches is dropped, and a scan that fails refuses. Each
-refusal and drop is a security event on `/govern/security` — `MEMORY_WRITE_REFUSED` or
+pattern is refused, and so is a write whose scan did not complete (an `INJECTION` pattern overran
+its budget or is quarantined); a pattern set that could not be loaded fails the write (only `commitToMemory` is retried; the other
+writers log and drop the note). A recalled item that matches is dropped; a partial scan alone does not
+drop one, while a pattern set that could not be loaded, or a scan that throws, recalls nothing. A write
+refused for a match and a drop are security events on `/govern/security` — `MEMORY_WRITE_REFUSED` or
 `MEMORY_RECALL_DROPPED` — naming the patterns and, for a drop, the item ids, never the text. See
 [agents.md §6.4](./agents.md#64-custom-skill-security-scanning).
 
@@ -197,6 +200,16 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
+- **An incomplete scan refuses writes but not recall.** While an `INJECTION` scanner pattern is
+  quarantined (up to ten minutes in that process), every lesson, channel summary and passively
+  ingested fact written in that process is refused, and consolidation leaves its clusters as they
+  were. A refused write is traced as an outage (`memory.write_scan_unavailable`) and a consolidation
+  as `memory.consolidation_scan_unavailable`; neither is a security event. An unreadable pattern
+  store fails the write instead, with no trace: `commitToMemory` fails for a Temporal retry, while the
+  channel turn summary, passive ingest and `recordLessonDirectly` log and drop the note, and
+  consolidation leaves its cluster. Recall in that case returns nothing. Items already stored are still
+  recalled, checked against the patterns that did run, so a stored item that only a skipped
+  pattern would catch can reach a prompt in that window.
 - **Not every loop that fails writes a lesson.** The release templates `canary-rollout` and
   `signal-gated-rollout` have the same review and CI loops and write none. Nor does the sign-off
   loop of `four-eyes`, when people reject the change three times: those rejections are people's,

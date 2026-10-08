@@ -109,6 +109,25 @@ describe('insertMemoryItem', () => {
     expect(queryRawUnsafeMock).not.toHaveBeenCalled();
   });
 
+  it('refuses a write whose scan is incomplete, before embedding or inserting it', async () => {
+    vi.mocked(scanSkillContent).mockResolvedValueOnce({
+      incomplete: true,
+      safe: true,
+      warnings: [],
+    });
+
+    const err = await insertMemoryItem({
+      lessonSummary: 'clean',
+      rationale: 'r',
+      repoId: 'repo-1',
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(MemoryContentRefusedError);
+    expect((err as MemoryContentRefusedError).reason).toBe('incomplete');
+    expect(generateEmbeddingWithSpecMock).not.toHaveBeenCalled();
+    expect(queryRawUnsafeMock).not.toHaveBeenCalled();
+  });
+
   it('scans the rationale as well as the summary', async () => {
     vi.mocked(scanSkillContent).mockImplementationOnce(flaggingScan);
 

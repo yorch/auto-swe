@@ -45,7 +45,11 @@ vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: vi.fn() }))
 
 import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
+import {
+  MemoryContentRefusedError,
+  MemoryScanUnavailableError,
+  WRITE_SCAN_UNAVAILABLE,
+} from '../lib/memoryGuard.js';
 import { recordMemorySecurityEvent } from '../lib/memorySecurityEvent.js';
 import {
   commitToMemory,
@@ -297,9 +301,52 @@ describe('memory gate refusals', () => {
     await expect(commitToMemory('eng-acme-api-T-1', null)).resolves.toBe('');
     expect(addEvent).toHaveBeenCalledWith({
       name: MEMORY_SECURITY_EVENTS.LESSON_REFUSED,
-      outputJson: { failureType: 'REVIEW_REJECTION', patterns: ['ignore-previous-instructions'] },
+      outputJson: {
+        failureType: 'REVIEW_REJECTION',
+        patterns: ['ignore-previous-instructions'],
+      },
     });
     addEvent.mockRestore();
+  });
+
+  it('traces a lesson refused for an incomplete scan as an outage, not a security event', async () => {
+    const addEvent = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+    insertMock.mockRejectedValue(new MemoryContentRefusedError([], 'incomplete'));
+    await expect(commitToMemory('eng-acme-api-T-1', null)).resolves.toBe('');
+    const names = addEvent.mock.calls.map((c) => (c[0] as { name: string }).name);
+    expect(names).toContain(WRITE_SCAN_UNAVAILABLE);
+    expect(names).not.toContain(MEMORY_SECURITY_EVENTS.LESSON_REFUSED);
+    addEvent.mockRestore();
+  });
+
+  it('fails the step so it is retried when the scan could not run', async () => {
+    insertMock.mockRejectedValue(new MemoryScanUnavailableError());
+    await expect(commitToMemory('eng-acme-api-T-1', null)).rejects.toBeInstanceOf(
+      MemoryScanUnavailableError
+    );
+  });
+
+  it('records a model-free lesson refused for an incomplete scan as an outage', async () => {
+    insertMock.mockRejectedValue(new MemoryContentRefusedError([], 'incomplete'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await expect(
+      recordLessonDirectly({
+        agentKey: 'shellStep',
+        lessonSummary: 's',
+        rationale: 'r',
+        repoId: 'repo-1',
+        temporalWorkflowId: 'eng-acme-api-T-1',
+      })
+    ).resolves.toBeNull();
+    expect(recordMemorySecurityEvent).toHaveBeenCalledWith(WRITE_SCAN_UNAVAILABLE, {
+      reason: 'incomplete',
+      writtenBy: 'shellStep',
+    });
+    expect(recordMemorySecurityEvent).not.toHaveBeenCalledWith(
+      MEMORY_SECURITY_EVENTS.LESSON_REFUSED,
+      expect.anything()
+    );
+    warn.mockRestore();
   });
 
   it('records a refused model-free lesson and still never throws', async () => {

@@ -1,5 +1,6 @@
 import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { logWarn } from './activityLog.js';
 import { recordMemorySecurityEvent, unreportedRecallDrops } from './memorySecurityEvent.js';
 
 /**
@@ -15,8 +16,14 @@ import { recordMemorySecurityEvent, unreportedRecallDrops } from './memorySecuri
  * a command is the normal case, not a threat.
  *
  * Refusing costs one note of optional context; storing a planted instruction
- * costs every later run that recalls it. So the gate fails closed: a scan that
- * throws refuses the write, and drops the item on read.
+ * costs every later run that recalls it. So the gate fails closed on a write: a
+ * scan that comes back incomplete (an INJECTION pattern overran its budget or is
+ * quarantined) refuses the write, because nothing can say the text is clean. A
+ * scan that cannot start (it throws, or the pattern set could not be loaded) is
+ * transient: it fails with {@link MemoryScanUnavailableError} so the caller is
+ * retried rather than losing the note. A read keeps what the patterns that ran
+ * did not flag — an incomplete scan alone does not drop a stored item, but a
+ * scan that throws drops it.
  */
 
 const INJECTION_KEY_PREFIX = 'injection:';
@@ -28,15 +35,74 @@ const INJECTION_KEY_PREFIX = 'injection:';
  */
 export const CONSOLIDATION_SCAN_UNAVAILABLE = 'memory.consolidation_scan_unavailable';
 
-/** Thrown by a memory write whose text matches an injection pattern. */
+/**
+ * Traced when an `insertMemoryItem` writer was refused because the scan did not
+ * complete. Like {@link CONSOLIDATION_SCAN_UNAVAILABLE} it is an outage, not one
+ * of the `MEMORY_SECURITY_EVENTS`: only a real match is a security event.
+ */
+export const WRITE_SCAN_UNAVAILABLE = 'memory.write_scan_unavailable';
+
+/**
+ * Thrown by a memory write when the pattern set could not be loaded, so no rule
+ * ran. A plain error: the activity fails and is retried.
+ */
+export class MemoryScanUnavailableError extends Error {
+  constructor() {
+    super('memory write not attempted: the content scan could not run');
+    this.name = 'MemoryScanUnavailableError';
+  }
+}
+
+/** Why the gate refused: `matched` an injection pattern, or the scan was `incomplete`. */
+export type MemoryRefusalReason = 'matched' | 'incomplete';
+
+/**
+ * Thrown by a memory write whose text matches an injection pattern, or whose
+ * scan could not be completed (`reason: 'incomplete'`, no patterns).
+ */
 export class MemoryContentRefusedError extends Error {
   readonly patterns: string[];
-  constructor(patterns: string[]) {
+  readonly reason: MemoryRefusalReason;
+  constructor(patterns: string[], reason: MemoryRefusalReason = 'matched') {
     // The message names the patterns, never the text: the text is the payload.
-    super(`memory write refused: content matched ${patterns.join(', ')}`);
+    super(
+      reason === 'incomplete'
+        ? 'memory write refused: the content scan did not complete'
+        : `memory write refused: content matched ${patterns.join(', ')}`
+    );
     this.name = 'MemoryContentRefusedError';
     this.patterns = patterns;
+    this.reason = reason;
   }
+}
+
+/**
+ * The event a refused `insertMemoryItem` write is recorded as: `securityEvent`
+ * (naming the patterns) for a match, {@link WRITE_SCAN_UNAVAILABLE} for a scan
+ * that did not complete. Only a match is a security event.
+ */
+export function memoryWriteRefusalEvent(
+  err: MemoryContentRefusedError,
+  securityEvent: string,
+  fields: Record<string, unknown>
+): { name: string; outputJson: Record<string, unknown> } {
+  return err.reason === 'incomplete'
+    ? { name: WRITE_SCAN_UNAVAILABLE, outputJson: { ...fields, reason: 'incomplete' } }
+    : { name: securityEvent, outputJson: { ...fields, patterns: err.patterns } };
+}
+
+/** What scanning memory text found. */
+export interface MemoryScan {
+  /** The injection pattern labels matched. */
+  matches: string[];
+  /**
+   * The scan did not run every INJECTION rule over every character. `matches` is
+   * then what the rules that ran found; a writer must not treat an empty list as
+   * clean.
+   */
+  incomplete: boolean;
+  /** The pattern set could not be loaded, so no rule ran (transient). */
+  loadFailed: boolean;
 }
 
 /**
@@ -44,22 +110,46 @@ export class MemoryContentRefusedError extends Error {
  * character (`full`), because the result is relied on rather than shown.
  * Throws when the scan itself fails — callers decide what failing closed means.
  */
-export async function memoryInjectionMatches(texts: ReadonlyArray<string>): Promise<string[]> {
+export async function memoryInjectionMatches(texts: ReadonlyArray<string>): Promise<MemoryScan> {
   const joined = texts.filter(Boolean).join('\n\n');
   if (!joined) {
-    return [];
+    return { incomplete: false, loadFailed: false, matches: [] };
   }
-  const scan = await scanSkillContent(joined, { full: true });
-  return scan.warnings
-    .filter((key) => key.startsWith(INJECTION_KEY_PREFIX))
-    .map((key) => key.slice(INJECTION_KEY_PREFIX.length));
+  // INJECTION only: the gate never acts on EXFILTRATION, so a slow or quarantined
+  // exfiltration pattern must not make the result incomplete.
+  const scan = await scanSkillContent(joined, { full: true, types: ['INJECTION'] });
+  return {
+    incomplete: scan.incomplete,
+    loadFailed: scan.incompleteReason === 'load-failed',
+    matches: scan.warnings
+      .filter((key) => key.startsWith(INJECTION_KEY_PREFIX))
+      .map((key) => key.slice(INJECTION_KEY_PREFIX.length)),
+  };
 }
 
-/** Throw {@link MemoryContentRefusedError} when `texts` match an injection pattern. */
+/**
+ * Throw {@link MemoryContentRefusedError} when `texts` match an injection
+ * pattern or the scan did not complete. A match wins when both hold. Throws
+ * {@link MemoryScanUnavailableError} (retryable) when no rule could run at all.
+ */
 export async function assertMemoryContentAllowed(texts: ReadonlyArray<string>): Promise<void> {
-  const matches = await memoryInjectionMatches(texts);
+  const { matches, incomplete, loadFailed } = await memoryInjectionMatches(texts);
   if (matches.length > 0) {
+    logWarn('memory write refused: content matched an injection pattern', {
+      patterns: matches,
+      reason: 'matched',
+    });
     throw new MemoryContentRefusedError(matches);
+  }
+  if (loadFailed) {
+    logWarn('memory write not attempted: the content scan could not run', {
+      reason: 'load-failed',
+    });
+    throw new MemoryScanUnavailableError();
+  }
+  if (incomplete) {
+    logWarn('memory write refused: the content scan did not complete', { reason: 'incomplete' });
+    throw new MemoryContentRefusedError([], 'incomplete');
   }
 }
 
@@ -78,7 +168,8 @@ export interface RecallDropReporting<T> {
 /**
  * Drop recalled items whose text matches an injection pattern, so a row written
  * before the write gate existed — or edited in by an admin — never reaches a
- * prompt. Order is preserved. If the scanner fails, nothing is returned: memory
+ * prompt. Order is preserved. If the scanner fails (it throws, or its pattern set
+ * could not be loaded), nothing is returned: memory
  * is optional context, and an unscanned item is exactly what this guards.
  *
  * A drop is recorded as a `memory.recall_dropped` security event naming the
@@ -98,7 +189,18 @@ export async function withoutFlaggedMemory<T>(
   }
   let matches: string[][];
   try {
-    matches = await Promise.all(items.map((item) => memoryInjectionMatches([textOf(item)])));
+    // Recall gates on the patterns that ran: a partial scan (an overrun or a
+    // quarantined pattern) does not drop. A pattern set that could not load means
+    // no rule ran, which is treated like a scan that throws.
+    matches = await Promise.all(
+      items.map(async (item) => {
+        const scan = await memoryInjectionMatches([textOf(item)]);
+        if (scan.loadFailed) {
+          throw new Error('pattern set could not be loaded');
+        }
+        return scan.matches;
+      })
+    );
   } catch (err) {
     console.warn(
       `[memoryGuard] memory scan failed; recalling nothing: ${err instanceof Error ? err.message : String(err)}`

@@ -280,6 +280,71 @@ describe('consolidateLessons', () => {
     expect(names).not.toContain('memory.consolidation_refused');
   });
 
+  it('traces an incomplete scan as an outage, not as a refusal, and leaves the cluster', async () => {
+    vi.mocked(scanSkillContent).mockResolvedValueOnce({
+      incomplete: true,
+      safe: true,
+      warnings: [],
+    });
+    mockQueryRaw.mockResolvedValue([
+      makeLessonRow('a', 'Always run db migrate before deploy', 0, 'CI_FAILURE'),
+      makeLessonRow('b', 'Run db migrate before deploying', 0, 'CI_FAILURE'),
+      makeLessonRow('c', 'DB migrations must precede deploy', 0, 'CI_FAILURE'),
+    ]);
+    makeSuccessGenerate();
+
+    const result = await consolidateLessons({
+      minClusterSize: 3,
+      repoId: 'repo-1',
+      similarityThreshold: 0.85,
+    });
+
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(result.lessonsCreated).toBe(0);
+    const tracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addActivityEvent: ReturnType<typeof vi.fn>;
+    };
+    const events = tracer.addActivityEvent.mock.calls.map(
+      (c) => c[0] as { name: string; outputJson: { reason?: string } }
+    );
+    const unavailable = events.find((e) => e.name === 'memory.consolidation_scan_unavailable');
+    expect(unavailable?.outputJson.reason).toBe('incomplete');
+    expect(events.map((e) => e.name)).not.toContain('memory.consolidation_refused');
+  });
+
+  it('leaves the cluster and traces reason failed when the pattern set could not load', async () => {
+    vi.mocked(scanSkillContent).mockResolvedValueOnce({
+      incomplete: true,
+      incompleteReason: 'load-failed',
+      safe: true,
+      warnings: [],
+    });
+    mockQueryRaw.mockResolvedValue([
+      makeLessonRow('a', 'Always run db migrate before deploy', 0, 'CI_FAILURE'),
+      makeLessonRow('b', 'Run db migrate before deploying', 0, 'CI_FAILURE'),
+      makeLessonRow('c', 'DB migrations must precede deploy', 0, 'CI_FAILURE'),
+    ]);
+    makeSuccessGenerate();
+
+    const result = await consolidateLessons({
+      minClusterSize: 3,
+      repoId: 'repo-1',
+      similarityThreshold: 0.85,
+    });
+
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(result.lessonsCreated).toBe(0);
+    const tracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addActivityEvent: ReturnType<typeof vi.fn>;
+    };
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'memory.consolidation_scan_unavailable',
+        outputJson: expect.objectContaining({ reason: 'failed' }),
+      })
+    );
+  });
+
   it('drives consolidation through the lessonConsolidator agent, not commitToMemory', async () => {
     vi.mocked(resolveSystemPrompt).mockResolvedValueOnce('Admin-edited consolidator prompt');
     mockQueryRaw.mockResolvedValue([

@@ -10,7 +10,7 @@ import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
-import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
+import { MemoryContentRefusedError, memoryWriteRefusalEvent } from '../lib/memoryGuard.js';
 import { insertMemoryItem, searchMemoryItemsByVector } from '../lib/memoryStore.js';
 import { getBoundModel } from '../lib/models.js';
 import { fetchChannelHistory } from '../lib/slackNotify.js';
@@ -250,12 +250,15 @@ export async function passiveIngestChannelMemory(
         } catch (err) {
           // Best-effort per-fact: a failed embedding or DB insert skips this fact
           // but doesn't abort the rest. A fact the memory gate refused is
-          // skipped the same way, but recorded: it is a security event.
+          // skipped the same way, but recorded: a match is a security event, a scan that
+          // did not complete is traced as an outage.
           if (err instanceof MemoryContentRefusedError) {
-            tracer.addActivityEvent({
-              name: MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED,
-              outputJson: { channelId, patterns: err.patterns, source: 'passive-ingest' },
-            });
+            tracer.addActivityEvent(
+              memoryWriteRefusalEvent(err, MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED, {
+                channelId,
+                source: 'passive-ingest',
+              })
+            );
           }
         }
       }

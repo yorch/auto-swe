@@ -1203,6 +1203,35 @@ describe('runChannelAssistantTurn', () => {
     });
   });
 
+  it('records a write refused for an incomplete scan as an outage, not a security event', async () => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+    const rawReply = 'To deploy, run `yarn release` from the repo root after the CI checks pass.';
+    runAgentMock.mockImplementation(
+      async (_spec: unknown, _msg: unknown, opts: { spanName?: string } = {}) => {
+        if (opts.spanName === 'llm.channel_memory_summary') {
+          throw new Error('summarizer model unavailable');
+        }
+        return { costUsd: 0.02, text: rawReply, usage: { inputTokens: 1, outputTokens: 1 } };
+      }
+    );
+    writeChannelMemoryMock.mockRejectedValueOnce(new MemoryContentRefusedError([], 'incomplete'));
+
+    await runChannelAssistantTurn(makeInput({ userText: 'how do I deploy?' }));
+
+    expect(recordMemorySecurityEventMock).toHaveBeenCalledWith('memory.write_scan_unavailable', {
+      channelId: expect.any(String),
+      reason: 'incomplete',
+      source: 'turn-raw-exchange',
+    });
+    expect(recordMemorySecurityEventMock).not.toHaveBeenCalledWith(
+      'memory.channel_write_refused',
+      expect.anything()
+    );
+  });
+
   it('does not write memory for a trivial reply', async () => {
     findChannel.mockResolvedValue({
       agentKey: 'channelAssistant',

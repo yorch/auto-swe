@@ -8,7 +8,6 @@
  * cases, and result/run reads.
  */
 
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
@@ -39,6 +38,7 @@ import {
 import { mapLimited } from '../lib/mapLimited.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { scanSkillAdvisory } from '../lib/skillScan.js';
 import {
   isTemporalUnavailable,
   sendTemporalUnavailable,
@@ -607,7 +607,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const { promptText, scale, scope, slug } = request.body;
-      const scan = await scanSkillContent(promptText);
+      const scanWarnings = await scanSkillAdvisory(null, promptText);
       const rubric = await fastify.prisma.evalRubric.create({
         data: { promptText, scale, scope, slug },
       });
@@ -618,7 +618,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: rubric.id,
         entityType: 'EvalRubric',
       });
-      return reply.status(201).send({ data: toRubricDto(rubric), scanWarnings: scan.warnings });
+      return reply.status(201).send({ data: toRubricDto(rubric), scanWarnings });
     }
   );
 };
