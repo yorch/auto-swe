@@ -58,6 +58,7 @@ export {
   executeReviewFixImplementation,
   fetchCILogs,
 } from './ciFixLoop.js';
+export { type CiTriageResult, reportCiTriage, triageCiFailure } from './ciTriage.js';
 export { commitToMemory } from './commitToMemory.js';
 // Channel assistant (Gap F) — channel memory consolidation (de-dup / summarize / expire)
 export type {

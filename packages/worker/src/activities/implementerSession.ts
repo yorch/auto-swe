@@ -68,6 +68,8 @@ export interface FixSessionInput {
   systemPromptOverride?: string;
   /** When set, the change may touch only these paths; anything else fails before the push. */
   allowedPaths?: string[];
+  /** Refuse, before the push, a change to a GitHub Actions workflow or action. */
+  refuseWorkflowChanges?: boolean;
   /** Conventional commit message for the fix commit. */
   commitMessage: string;
   /** OTel/cost event name, e.g. 'llm.ci_fix'. */
@@ -182,7 +184,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       workspace,
       baseBranch,
       input.allowedPaths,
-      previousCodeResult.baseSha
+      previousCodeResult.baseSha,
+      { refuseWorkflowChanges: input.refuseWorkflowChanges }
     );
 
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');

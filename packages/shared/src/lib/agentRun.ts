@@ -61,6 +61,7 @@ export const NON_LAUNCHABLE_AGENT_KEYS: ReadonlySet<string> = new Set([
   'workflowExplainer',
   'repoDependencyInferrer',
   'channelAssistant',
+  'ciTriager',
 ]);
 
 export function isLaunchableAgentKey(key: string): boolean {

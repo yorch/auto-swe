@@ -38,6 +38,9 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
    - Contents: **Read and write**
    - Pull requests: **Read and write**
    - Checks: **Read**
+   - Actions: **Read** — reading a failed workflow run's jobs and logs for
+     [CI failure triage](./ci-failure-triggers.md). An installation created before this permission
+     was added has to accept it (GitHub asks the installation owner) before those logs can be read
    - Metadata: **Read** (mandatory)
 5. Set **Subscribe to events**:
    - Pull request

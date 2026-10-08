@@ -33,6 +33,11 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
   return getScmProvider(repoRef).fetchCiLogs(logsUrl, repoRef);
 }
 
+/** Pre-push refusals a template step asks of a fix session (`config.refuseWorkflowChanges`). */
+export interface FixSessionOptions {
+  refuseWorkflowChanges?: boolean;
+}
+
 /**
  * Re-provisions a workspace on the existing branch and runs the implementer
  * agent in CI fix mode with the failure logs injected. Thin wrapper around
@@ -42,9 +47,11 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
 export async function executeCIFixImplementation(
   failureContext: string,
   previousCodeResult: CodeResult,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  options: FixSessionOptions = {}
 ): Promise<CodeResult> {
   return runImplementerFixSession({
+    ...(options.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'ciFixer',
     commitMessage: `auto: fix CI for ${previousCodeResult.branch}`,
     defaultSystemPrompt: CI_FIX_SYSTEM_PROMPT,
@@ -86,10 +93,12 @@ export async function executeReviewFixImplementation(
   rejection: unknown,
   previousCodeResult: CodeResult,
   systemPromptOverride?: string,
-  allowedPaths?: string[]
+  allowedPaths?: string[],
+  options: FixSessionOptions = {}
 ): Promise<CodeResult> {
   const rejectionSummary = rejectionText(rejection);
   return runImplementerFixSession({
+    ...(options.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'reviewFixer',
     allowedPaths,
     commitMessage: `auto: address review findings for ${previousCodeResult.branch}`,

@@ -137,6 +137,17 @@ export const githubActivities = proxyActivities<
   startToCloseTimeout: T_2M,
 });
 
+// CI triage: a few GitHub reads, one structured LLM call on the logs, and a PR comment.
+// Retried like any LLM step; the invalid-payload and refused-run failures are
+// non-retryable ApplicationFailures, which the policy does not retry.
+export const ciTriageActivities = proxyActivities<
+  Pick<typeof activitiesType, 'triageCiFailure' | 'reportCiTriage'>
+>({
+  heartbeatTimeout: T_2M,
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_10M,
+});
+
 // Lists provider models through the GLOBAL credentials. Provider calls inside are
 // bounded at 10 s a page, so the timeout is generous; the precondition failures are
 // non-retryable ApplicationFailures, which the policy does not retry.

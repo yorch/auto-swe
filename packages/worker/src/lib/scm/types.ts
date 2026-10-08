@@ -105,6 +105,62 @@ export interface PullRequestRef {
   prUrl: string;
 }
 
+/** One failed job of a CI workflow run, with the tail of its log. */
+export interface WorkflowRunFailedJob {
+  name: string;
+  conclusion: string | null;
+  /** The job's steps that failed, by name. */
+  failedSteps: string[];
+  /** The end of the job's log (where the failure is), or empty when it could not be read. */
+  log: string;
+  /** Why the log could not be read, when it could not. */
+  logUnavailable?: string;
+  htmlUrl: string | null;
+}
+
+/**
+ * A CI workflow run read from the host by its id, never from a webhook payload or a URL a
+ * caller supplied: what ran, on which commit and branch, and why it failed.
+ */
+export interface WorkflowRunFailure {
+  run: {
+    id: string;
+    attempt: number;
+    /** The workflow's display name (set by the workflow file, so by whoever wrote it). */
+    name: string;
+    /** The workflow file's path in the repository (`.github/workflows/ci.yml`). */
+    path: string;
+    /** What triggered it: `push`, `pull_request`, `schedule`, … */
+    event: string;
+    /** The branch (or, for a tag push, the tag) the run is for. */
+    headBranch: string | null;
+    headSha: string;
+    status: string | null;
+    conclusion: string | null;
+    htmlUrl: string;
+    /** `owner/name` of the repository the head commit came from (a fork for a fork PR). */
+    headRepositoryFullName: string | null;
+    /** `owner/name` of the repository the run belongs to. */
+    repositoryFullName: string;
+    /** The pull requests the run is associated with, as the host reports them. */
+    pullRequests: Array<{ number: number; headRef: string; baseRef: string }>;
+  };
+  failedJobs: WorkflowRunFailedJob[];
+}
+
+/** A pull request's current state, as the host reports it. */
+export interface PullRequestInfo {
+  number: number;
+  state: 'open' | 'closed';
+  merged: boolean;
+  headRef: string;
+  headSha: string;
+  /** `owner/name` of the head repository; null when the fork was deleted. */
+  headRepositoryFullName: string | null;
+  baseRef: string;
+  htmlUrl: string;
+}
+
 /** A normalized CI verdict for a ref, plus an optional link to failing logs. */
 export interface CiStatusResult {
   verdict: import('./ciStatus.js').CiVerdict;
@@ -162,6 +218,32 @@ export interface ScmProvider {
   ): Promise<{ branchExists: boolean; aheadBy: number | null; openPr: PullRequestRef | null }>;
   /** Whether an existing PR is still a draft. One API call. */
   isDraftPullRequest(repo: RepoRef, prNumber: number): Promise<boolean>;
+  /**
+   * A CI workflow run of `repo`, by id and attempt, with its failed jobs and the end of each
+   * one's log. The run is looked up in `repo` itself, so an id cannot reach another
+   * repository's logs. Throws non-retryably when the run does not exist in `repo` or the
+   * credential may not read Actions.
+   */
+  fetchWorkflowRunFailure(
+    repo: RepoRef,
+    runId: string,
+    attempt: number
+  ): Promise<WorkflowRunFailure>;
+  /** The commit a BRANCH points at, or null when no branch has that name (a tag, or deleted). */
+  branchHeadSha(repo: RepoRef, branch: string): Promise<string | null>;
+  /** A pull request's current state, or null when it does not exist. */
+  pullRequestInfo(repo: RepoRef, prNumber: number): Promise<PullRequestInfo | null>;
+  /**
+   * Create a comment on an issue or pull request, or update the existing one that carries
+   * `marker` (a hidden HTML comment), so repeated reports on one PR edit one comment rather
+   * than stacking new ones.
+   */
+  upsertMarkedComment(
+    repo: RepoRef,
+    issueNumber: number,
+    marker: string,
+    body: string
+  ): Promise<{ htmlUrl: string; updated: boolean }>;
   /**
    * What access `username` — a host login, not a platform user id — has to
    * `repo`.

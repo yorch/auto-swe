@@ -149,6 +149,16 @@ export const USE_CASES = {
       'review agents and no people inside the run: for low-risk, well-tested codebases.',
     title: 'Code and CI only',
   },
+  'ci-triage-and-fix': {
+    group: 'engineering',
+    maturity: 'composed',
+    source: 'packages/shared/src/workflow/templates/ciTriageAndFix.ts',
+    summary:
+      'Started when a GitHub Actions workflow fails on a watched branch or pull request. The ' +
+      'run is diagnosed from its logs; in fix mode a code-fixable failure gets a draft pull ' +
+      'request into the branch that failed, and the diagnosis is posted on the pull request.',
+    title: 'CI failure triage and fix',
+  },
   'agent-reviewed-pr': {
     group: 'engineering',
     maturity: 'composed',

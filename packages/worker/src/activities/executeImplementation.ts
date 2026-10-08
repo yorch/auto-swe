@@ -41,7 +41,13 @@ import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
-import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
+import {
+  commitStaged,
+  diffForResult,
+  type PathGuardOptions,
+  pushRefspec,
+  startPathGuard,
+} from './allowedPaths.js';
 import {
   detectTestCommand,
   parseDiffToFileChanges,
@@ -109,7 +115,9 @@ export async function executeImplementation(
   systemPromptOverride?: string,
   crossRepoOptions?: CrossRepoStepOptions,
   /** When set, the change may touch only these paths; anything else fails before the push. */
-  allowedPaths?: string[]
+  allowedPaths?: string[],
+  /** Further pre-push refusals (`config.refuseWorkflowChanges`). */
+  guardOptions?: PathGuardOptions
 ): Promise<CodeResult> {
   // First, before a clone or a container exists: an unpriced model under a USD
   // cap is refused here, not after the workspace has been built.
@@ -176,7 +184,7 @@ export async function executeImplementation(
     // After any sync to a previous attempt's pushed branch, and before any agent turn:
     // this session answers for its own changes from here. `baseSha` (the base branch's
     // tip, read before the agent) is what the whole change is reported against.
-    pathGuard = await startPathGuard(workspace, baseBranch, allowedPaths, baseSha);
+    pathGuard = await startPathGuard(workspace, baseBranch, allowedPaths, baseSha, guardOptions);
 
     // Detect test framework
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');

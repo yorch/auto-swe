@@ -293,6 +293,8 @@ export interface GateFixInput {
   previousCodeResult: CodeResult;
   /** Optional system prompt override from workflow step config. */
   systemPromptOverride?: string;
+  /** Refuse, before the push, a change to a GitHub Actions workflow or action. */
+  refuseWorkflowChanges?: boolean;
 }
 
 export async function executeGateFixImplementation(input: GateFixInput): Promise<CodeResult> {
@@ -311,6 +313,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
   }
 
   return runImplementerFixSession({
+    ...(input.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     // Re-run the failed gate against the fixed code (mirrors the system
     // prompt's "Re-run the affected gate locally" instruction). Tests still
     // run afterwards as a regression check so a fix that silences the gate

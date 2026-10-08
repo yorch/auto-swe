@@ -172,6 +172,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/seedPlaceholder.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/ciTrigger',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/ciTrigger.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/gitRef',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/gitRef.ts'),
       },

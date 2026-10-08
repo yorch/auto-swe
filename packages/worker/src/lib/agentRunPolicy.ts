@@ -19,6 +19,15 @@ import {
 /** A path whose change would run with repository secrets or can reach outside the tree. */
 const WORKFLOW_PATH_RE = /^\.github\/(workflows|actions)\//i;
 
+/**
+ * Whether a change to `path` is a change to a GitHub Actions workflow or action, which runs
+ * with the repository's secrets once pushed. Case-insensitive, as a host on a
+ * case-insensitive filesystem may resolve it.
+ */
+export function isWorkflowPath(path: string): boolean {
+  return WORKFLOW_PATH_RE.test(path);
+}
+
 const SYMLINK_MODE = '120000';
 const GITLINK_MODE = '160000';
 const ABSENT_MODE = '000000';

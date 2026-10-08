@@ -501,9 +501,9 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   `workflowAuthor`, `workflowExplainer`, `repoDependencyInferrer`. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
-- **Sub-role personas** (`inheritsModelFrom`), 11 of them: `securityReviewer` /
+- **Sub-role personas** (`inheritsModelFrom`), 12 of them: `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
-  `prdDecomposer` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
+  `prdDecomposer` / `ciTriager` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
   `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
 
 Both lists are complete as written, and `yarn docs:check` fails if one stops being — see

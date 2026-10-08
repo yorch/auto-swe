@@ -43,9 +43,12 @@ import {
   DraftPullRequestUnsupportedError,
   ExistingPullRequestNotDraftError,
   type PermissionLookup,
+  type PullRequestInfo,
   type PullRequestRef,
   type RepoRef,
   type ScmProvider,
+  type WorkflowRunFailedJob,
+  type WorkflowRunFailure,
 } from './types.js';
 
 /**
@@ -298,6 +301,46 @@ export function resolveCiLogsTarget(logsUrl: string, trustedOrigins: string[]): 
   }
   const trusted = safety.url.protocol === 'https:' && trustedOrigins.includes(safety.url.origin);
   return { ok: true, trusted, url: safety.url };
+}
+
+/** Job and step conclusions that count as failed. */
+const FAILED_JOB_CONCLUSIONS = new Set(['failure', 'timed_out']);
+/** At most this many failed jobs have their logs read. */
+const MAX_FAILED_JOBS = 5;
+/** The tail of each failed job's log kept: the failure is at the end. */
+const MAX_JOB_LOG_CHARS = 12_000;
+
+/** A GitHub run id as a number: decimal digits only, and exact as a JavaScript number. */
+export function parseRunId(runId: string): number | null {
+  if (!/^[1-9][0-9]{0,15}$/.test(runId)) {
+    return null;
+  }
+  const n = Number(runId);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/**
+ * A failure to read a workflow run, as a non-retryable failure that says what to do:
+ * a missing run stays missing, and a credential without Actions read access stays so until
+ * an admin changes the App's permissions. Anything else (a 5xx, the network) is retryable.
+ */
+function actionsReadFailure(err: unknown, what: string): Error {
+  const status = (err as { status?: number }).status;
+  if (status === 404) {
+    return ApplicationFailure.nonRetryable(
+      `GitHub has no ${what} in this repository.`,
+      'CI_RUN_NOT_FOUND'
+    );
+  }
+  if (status === 401 || status === 403) {
+    return ApplicationFailure.nonRetryable(
+      `GitHub refused to show ${what} (HTTP ${status}). The platform credential needs ` +
+        'read access to Actions (a GitHub App needs the "Actions: Read" permission, accepted ' +
+        'on the installation).',
+      'CI_RUN_FORBIDDEN'
+    );
+  }
+  return err instanceof Error ? err : new Error(String(err));
 }
 
 export class GitHubScmProvider implements ScmProvider {
@@ -586,6 +629,172 @@ export class GitHubScmProvider implements ScmProvider {
       branchExists,
       openPr: open ? { prNumber: open.number, prUrl: open.html_url } : null,
     };
+  }
+
+  async fetchWorkflowRunFailure(
+    repo: RepoRef,
+    runId: string,
+    attempt: number
+  ): Promise<WorkflowRunFailure> {
+    const runNumber = parseRunId(runId);
+    if (runNumber === null || !Number.isSafeInteger(attempt) || attempt < 1) {
+      throw ApplicationFailure.nonRetryable(
+        `Invalid workflow run reference ${String(runId).slice(0, 40)}#${attempt}`,
+        'CI_RUN_INVALID'
+      );
+    }
+    const octokit = await octokitFor(repo);
+    const where = { owner: repo.organizationName, repo: repo.repoName, run_id: runNumber };
+    let run: Awaited<ReturnType<typeof octokit.actions.getWorkflowRunAttempt>>['data'];
+    try {
+      run = (await octokit.actions.getWorkflowRunAttempt({ ...where, attempt_number: attempt }))
+        .data;
+    } catch (err) {
+      throw actionsReadFailure(err, `workflow run ${runNumber} (attempt ${attempt})`);
+    }
+    let jobs: Awaited<
+      ReturnType<typeof octokit.actions.listJobsForWorkflowRunAttempt>
+    >['data']['jobs'];
+    try {
+      jobs = (
+        await octokit.actions.listJobsForWorkflowRunAttempt({
+          ...where,
+          attempt_number: attempt,
+          per_page: 100,
+        })
+      ).data.jobs;
+    } catch (err) {
+      throw actionsReadFailure(err, `the jobs of workflow run ${runNumber}`);
+    }
+    const failed = jobs
+      .filter((j) => j.conclusion !== null && FAILED_JOB_CONCLUSIONS.has(j.conclusion))
+      .slice(0, MAX_FAILED_JOBS);
+    const failedJobs: WorkflowRunFailedJob[] = [];
+    for (const job of failed) {
+      const base = {
+        conclusion: job.conclusion,
+        failedSteps: (job.steps ?? [])
+          .filter((st) => st.conclusion !== null && FAILED_JOB_CONCLUSIONS.has(st.conclusion))
+          .map((st) => st.name),
+        htmlUrl: job.html_url ?? null,
+        name: job.name,
+      };
+      try {
+        // GitHub answers with a redirect to short-lived plain-text storage. The fetch drops
+        // the Authorization header on that cross-origin hop.
+        const res = await octokit.actions.downloadJobLogsForWorkflowRun({
+          job_id: job.id,
+          owner: repo.organizationName,
+          repo: repo.repoName,
+        });
+        const text = typeof res.data === 'string' ? res.data : String(res.data ?? '');
+        failedJobs.push({ ...base, log: text.slice(-MAX_JOB_LOG_CHARS) });
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        failedJobs.push({
+          ...base,
+          log: '',
+          logUnavailable: status ? `HTTP ${status}` : 'the log could not be downloaded',
+        });
+      }
+    }
+    return {
+      failedJobs,
+      run: {
+        attempt: run.run_attempt ?? attempt,
+        conclusion: run.conclusion ?? null,
+        event: run.event,
+        headBranch: run.head_branch ?? null,
+        headRepositoryFullName: run.head_repository?.full_name ?? null,
+        headSha: run.head_sha,
+        htmlUrl: run.html_url,
+        id: String(run.id),
+        name: run.name ?? '',
+        path: run.path ?? '',
+        pullRequests: (run.pull_requests ?? []).map((pr) => ({
+          baseRef: pr.base.ref,
+          headRef: pr.head.ref,
+          number: pr.number,
+        })),
+        repositoryFullName: run.repository.full_name,
+        status: run.status ?? null,
+      },
+    };
+  }
+
+  async branchHeadSha(repo: RepoRef, branch: string): Promise<string | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.repos.getBranch({
+        branch,
+        owner: repo.organizationName,
+        repo: repo.repoName,
+      });
+      return data.commit.sha;
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async pullRequestInfo(repo: RepoRef, prNumber: number): Promise<PullRequestInfo | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.pulls.get({
+        owner: repo.organizationName,
+        pull_number: prNumber,
+        repo: repo.repoName,
+      });
+      return {
+        baseRef: data.base.ref,
+        headRef: data.head.ref,
+        headRepositoryFullName: data.head.repo?.full_name ?? null,
+        headSha: data.head.sha,
+        htmlUrl: data.html_url,
+        merged: data.merged === true,
+        number: data.number,
+        state: data.state === 'open' ? 'open' : 'closed',
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async upsertMarkedComment(
+    repo: RepoRef,
+    issueNumber: number,
+    marker: string,
+    body: string
+  ): Promise<{ htmlUrl: string; updated: boolean }> {
+    const octokit = await octokitFor(repo);
+    const where = { issue_number: issueNumber, owner: repo.organizationName, repo: repo.repoName };
+    // The most recent page holds the comment in the common case; older ones are not searched,
+    // so a long thread may get a second comment rather than an edit far up the page.
+    const { data: comments } = await octokit.issues.listComments({ ...where, per_page: 100 });
+    const existing = [...comments].reverse().find((c) => c.body?.includes(marker));
+    if (existing) {
+      try {
+        const { data } = await octokit.issues.updateComment({
+          body,
+          comment_id: existing.id,
+          owner: repo.organizationName,
+          repo: repo.repoName,
+        });
+        return { htmlUrl: data.html_url, updated: true };
+      } catch (err) {
+        // Not ours to edit (someone else posted the marker): post our own instead.
+        if ((err as { status?: number }).status !== 403) {
+          throw err;
+        }
+      }
+    }
+    const { data } = await octokit.issues.createComment({ ...where, body });
+    return { htmlUrl: data.html_url, updated: false };
   }
 
   async isDraftPullRequest(repo: RepoRef, prNumber: number): Promise<boolean> {
