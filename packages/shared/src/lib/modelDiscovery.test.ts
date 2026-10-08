@@ -7,10 +7,12 @@ process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
 
 import { BUILTIN_MODELS } from '@auto-swe/shared/lib/builtinModels';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { SsrfBlockedError } from '@auto-swe/shared/lib/guardedDispatcher';
 import {
   discoverProviderModels,
   isPrivateHostListed,
   listProviderModels,
+  modelCallFetch,
   modelListRequest,
   parseModelListPage,
 } from './modelDiscovery.js';
@@ -534,5 +536,34 @@ describe('built-in providers with a custom apiBase', () => {
         provider: 'openai',
       })
     ).toEqual({ error: expect.stringMatching(/credentials in the URL/) });
+  });
+});
+
+describe('modelCallFetch', () => {
+  it('refuses redirects whatever the caller asked for', async () => {
+    const stub = vi.fn().mockResolvedValue(new Response('{}'));
+    vi.stubGlobal('fetch', stub);
+    const f = modelCallFetch(async () => []);
+    await f('https://93.184.216.34/v1/chat/completions', { method: 'POST', redirect: 'follow' });
+    expect(stub.mock.calls[0][1]).toMatchObject({ method: 'POST', redirect: 'error' });
+  });
+
+  it('refuses a private address unless its host is listed, reading the list per call', async () => {
+    const stub = vi.fn().mockResolvedValue(new Response('{}'));
+    vi.stubGlobal('fetch', stub);
+    let listed: string[] = [];
+    const f = modelCallFetch(async () => listed);
+    await expect(f('http://10.0.0.5:8000/v1/models')).rejects.toBeInstanceOf(SsrfBlockedError);
+    expect(stub).not.toHaveBeenCalled();
+    listed = ['10.0.0.5:8000'];
+    await f('http://10.0.0.5:8000/v1/models');
+    expect(stub).toHaveBeenCalledTimes(1);
+  });
+
+  it('never reaches loopback or metadata, listed or not', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const f = modelCallFetch(async () => ['127.0.0.1:11434', '169.254.169.254']);
+    await expect(f('http://127.0.0.1:11434/v1/chat')).rejects.toBeInstanceOf(SsrfBlockedError);
+    await expect(f('http://169.254.169.254/latest')).rejects.toBeInstanceOf(SsrfBlockedError);
   });
 });

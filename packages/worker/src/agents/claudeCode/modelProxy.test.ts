@@ -85,6 +85,8 @@ async function setup(reply: Parameters<typeof upstreamServer>[0]) {
     advertisedUrl: (port) => `http://127.0.0.1:${port}`,
     listenHost: '127.0.0.1',
     listenPort: 0,
+    // The upstream is a local stand-in, which the default guarded fetch refuses.
+    upstreamFetch: globalThis.fetch,
   });
   const calls: ProxiedCall[] = [];
   const abort = new AbortController();
@@ -109,6 +111,29 @@ async function setup(reply: Parameters<typeof upstreamServer>[0]) {
 }
 
 describe('createModelProxy', () => {
+  it('refuses, by default, an upstream that is an internal address', async () => {
+    upstream = await upstreamServer((_req, res) => streamedReply(res));
+    proxy = createModelProxy({
+      advertisedUrl: (port) => `http://127.0.0.1:${port}`,
+      listenHost: '127.0.0.1',
+      listenPort: 0,
+    });
+    const registration = await proxy.register({
+      apiKey: 'sk-ant-real',
+      onCall: () => undefined,
+      signal: new AbortController().signal,
+      upstreamBaseUrl: upstream.baseUrl,
+    });
+    const res = await fetch(`${registration.baseUrl}/v1/messages`, {
+      body: JSON.stringify({ model: 'claude-opus-5-5' }),
+      headers: { 'content-type': 'application/json', 'x-api-key': registration.token },
+      method: 'POST',
+    });
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(upstream.seen).toEqual([]);
+    await registration.release();
+  });
+
   it('relays a streamed call with the real key, unchanged, and meters it once it ends', async () => {
     const { calls, post, registration } = await setup((_req, res) => streamedReply(res));
 
@@ -257,6 +282,7 @@ describe('createModelProxy', () => {
       advertisedUrl: (port) => `http://127.0.0.1:${port}`,
       listenHost: '127.0.0.1',
       listenPort: 0,
+      upstreamFetch: globalThis.fetch,
     });
     const activity = new AsyncLocalStorage<string>();
     const seenIn: (string | undefined)[] = [];

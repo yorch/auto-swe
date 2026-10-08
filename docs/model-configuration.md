@@ -569,7 +569,7 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 
 **Worker logs `agent credential pin not usable`**: an agent's pinned credential was deleted, is for a different provider than its model spec (`reason: provider-mismatch`, typically after the model was changed), or sits at a team or organization the run does not belong to (`out-of-scope`). The call proceeds on the provider-name cascade. Re-pin a matching credential or clear the pin.
 
-**Test button returns `"apiBase rejected: host '…' is on a private network"`, or discovery and Test report `blocked address`**: the gateway's SSRF guard blocks loopback / RFC1918 / link-local / `.local` / `.internal` hosts, and refuses a name that resolves to one. For an internal provider (vLLM, Ollama, an internal gateway), an ADMIN lists its host in `models.privateNetworkHosts` at `/govern/platform-settings` (`internal.example.com`, or `10.0.0.5:8000` when it has a port), then saves or tests the credential again; the change applies within the settings cache's ~30 s. Loopback, `localhost` and link-local / cloud-metadata addresses stay refused whatever is listed, so a service on the gateway's own host needs a routable name (`host.docker.internal`, a Compose service name). `blocked address` also appears when the gateway container cannot resolve the name at all.
+**Test button returns `"apiBase rejected: host '…' is on a private network"`, or discovery and Test report `blocked address`**: the gateway's SSRF guard blocks loopback / RFC1918 / link-local / `.local` / `.internal` hosts, and refuses a name that resolves to one. For an internal provider (vLLM, Ollama, an internal gateway), an ADMIN lists its host in `models.privateNetworkHosts` at `/govern/platform-settings` (`internal.example.com`, or `10.0.0.5:8000` when it has a port), then saves or tests the credential again; the change applies within the settings cache's ~30 s. Loopback, `localhost` and link-local / cloud-metadata addresses stay refused whatever is listed, so a service on the gateway's own host needs a routable name (`host.docker.internal`, a Compose service name). `blocked address` also appears when the gateway container cannot resolve the name at all. The worker applies the same rules to every model and embedding call, so a credential whose host resolves to a private address it was not listed for fails the activity with an `SsrfBlockedError` naming the host — list the host, as above, and the next call (after the ~30 s settings cache) goes through. A provider that answers with a redirect fails the call too: point the `apiBase` at the final URL.
 
 **Model changes don't seem to apply mid-run**: confirm the activity is past the `await getModel(...)` call before you edited. Already-bound `LanguageModel` instances aren't swapped mid-`generate()`; the next call after the cache TTL (default 30s) picks up the new value.
 
@@ -602,7 +602,11 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   lists it. The list is platform-wide (GLOBAL, ADMIN only), not per credential, so every team that
   names a listed host reaches it. Listing a name trusts DNS to mean the server intended, and the
   scheduled run makes these calls from the worker. Loopback, `localhost`, link-local and cloud-metadata
-  addresses stay refused. Inference and embedding calls do not pass through this guard.
+  addresses stay refused. Inference and embedding calls, and the Claude Code model proxy's upstream
+  calls, go through the same guard at connection time, with redirects refused — except a Claude Code
+  harness running without the model proxy, which calls the credential's host from inside the
+  workspace container, outside the worker. Under a process-wide proxy (`NODE_USE_ENV_PROXY`) the host
+  is checked before each request but the connection is not pinned, since the proxy resolves it.
 - **Retirement flags reflect what one key can see.** A key restricted to some models (an OpenAI
   project key, say) flags every other priced model of that provider as possibly retired.
 - **A retirement flag is a hint.** A provider may serve an alias or a pinned id it does not list, so

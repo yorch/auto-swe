@@ -3,6 +3,7 @@ import { anthropic, createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI, google } from '@ai-sdk/google';
 import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { modelCallFetch } from '@auto-swe/shared/lib/modelDiscovery';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { type LanguageModel as AiLanguageModel, wrapLanguageModel } from 'ai';
 import { resolveAgent } from './config/agentResolver.js';
@@ -121,14 +122,24 @@ function buildModel(spec: string, apiKey: string, apiBase?: string): LanguageMod
   return built;
 }
 
+/**
+ * Every model call goes through the SSRF guard: the provider host is resolved,
+ * checked and pinned per connection, a private address is reachable only for a
+ * host listed in `models.privateNetworkHosts`, and redirects are refused. The
+ * apiBase is checked as text when a credential is saved; this closes the gap
+ * between that check and the call (a name that later resolves, or redirects,
+ * to an internal host would otherwise receive the prompt and the API key).
+ */
+const modelFetch = modelCallFetch();
+
 function buildModelUncached(spec: string, apiKey: string, apiBase?: string): LanguageModel {
   const { provider, modelId } = parseProviderModelSpec(spec);
 
   switch (provider) {
     case 'anthropic':
-      return createAnthropic({ apiKey, baseURL: apiBase })(modelId);
+      return createAnthropic({ apiKey, baseURL: apiBase, fetch: modelFetch })(modelId);
     case 'openai': {
-      const openaiProvider = createOpenAI({ apiKey, baseURL: apiBase });
+      const openaiProvider = createOpenAI({ apiKey, baseURL: apiBase, fetch: modelFetch });
       // The default OpenAI model speaks the Responses API. A credential with an
       // apiBase points at a proxy or gateway (LiteLLM, Azure, a corporate
       // relay), and most of those serve only Chat Completions — so a custom
@@ -136,7 +147,7 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
       return apiBase ? openaiProvider.chat(modelId) : openaiProvider(modelId);
     }
     case 'google':
-      return createGoogleGenerativeAI({ apiKey, baseURL: apiBase })(modelId);
+      return createGoogleGenerativeAI({ apiKey, baseURL: apiBase, fetch: modelFetch })(modelId);
     default:
       // OpenAI-compatible providers require an apiBase. Throw a clear error
       // so the operator notices the bad config rather than silently failing
@@ -150,7 +161,12 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
       // prompt so structured-output callers get the shape they validate.
       return wrapLanguageModel({
         middleware: schemaInPromptMiddleware,
-        model: createOpenAICompatible({ apiKey, baseURL: apiBase, name: provider })(modelId),
+        model: createOpenAICompatible({
+          apiKey,
+          baseURL: apiBase,
+          fetch: modelFetch,
+          name: provider,
+        })(modelId),
       });
   }
 }

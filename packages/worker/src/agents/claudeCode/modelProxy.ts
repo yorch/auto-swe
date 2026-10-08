@@ -2,6 +2,7 @@ import { AsyncResource } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { modelCallFetch } from '@auto-swe/shared/lib/modelDiscovery';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import type { UsageTotals } from '../harness/usage.js';
 
@@ -214,9 +215,12 @@ export function createModelProxy(options: {
   listenHost: string;
   listenPort: number;
   advertisedUrl: string | ((port: number) => string);
-  fetch?: typeof fetch;
+  /** Replaces the guarded fetch to the provider. Tests only. */
+  upstreamFetch?: typeof fetch;
 }): ModelProxy {
-  const upstreamFetch = options.fetch ?? fetch;
+  // The upstream is a credential's apiBase: resolved, checked and pinned like
+  // every other model call, so the proxy cannot be pointed at an internal host.
+  const upstreamFetch = options.upstreamFetch ?? modelCallFetch();
   const registrations = new Map<string, Registration>();
   let callSeq = 0;
 
