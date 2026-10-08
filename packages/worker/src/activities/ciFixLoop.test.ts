@@ -88,7 +88,7 @@ describe('executeCIFixImplementation with untrusted CI logs', () => {
     const input = sessionMock.mock.calls[0]?.[0] as
       | { userPayload: unknown; refuseWorkflowChanges?: boolean }
       | undefined;
-    const logs = (input?.userPayload as { ciLogs: string }).ciLogs;
+    const logs = (input?.userPayload as { ciLogs: string } | undefined)?.ciLogs;
     expect(logs).toContain('<ci-logs>');
     expect(logs).not.toContain(`ghp_${'a'.repeat(36)}`);
     expect(input?.refuseWorkflowChanges).toBe(true);
@@ -109,6 +109,6 @@ describe('executeCIFixImplementation with untrusted CI logs', () => {
     const input = sessionMock.mock.calls[0]?.[0] as
       | { userPayload: unknown; refuseWorkflowChanges?: boolean }
       | undefined;
-    expect((input?.userPayload as { ciLogs: string }).ciLogs).toBe('raw logs');
+    expect((input?.userPayload as { ciLogs: string } | undefined)?.ciLogs).toBe('raw logs');
   });
 });
