@@ -1325,14 +1325,6 @@ model ScheduledWorkRequest {
   @@map("scheduled_work_requests")
 }
 
-/// What a CI-failure trigger may do with a failed run.
-enum CiTriggerMode {
-  /// Diagnose and report only.
-  TRIAGE_ONLY
-  /// Also open a draft fix pull request into the failing branch when the diagnosis allows.
-  FIX
-}
-
 /// A rule on one repository: when a GitHub Actions workflow run on it fails, start the CI
 /// triage template (docs/ci-failure-triggers.md). Matched against the host's `workflow_run`
 /// webhook. Managed by the owning team, like schedules. Every list is non-empty; nothing
@@ -1343,15 +1335,16 @@ model CiFailureTrigger {
   connection           Connection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   name                 String
   enabled              Boolean           @default(true)
-  mode                 CiTriggerMode     @default(TRIAGE_ONLY)
   /// `push` and/or `pull_request`. No other event is ever acted on.
   events               String[]
   /// Globs over the failing branch (`main`, `release/*`, `!release/legacy`).
   branchPatterns       String[]          @map("branch_patterns")
   /// Globs over the workflow FILE path (`.github/workflows/ci.yml`), never its display name.
   workflowPatterns     String[]          @map("workflow_patterns")
-  /// Post the diagnosis on the pull request a `pull_request` failure came from.
-  commentOnPullRequest Boolean           @default(true) @map("comment_on_pull_request")
+  /// The template options this trigger sets (mode, confidence floor, …), checked against the
+  /// template's declared input schema on save and again on every fire. Never a key the failing
+  /// run fills (`CI_EVENT_INPUT_KEYS`); an empty object means the template's defaults.
+  inputs               Json              @default("{}")
   /// No new run for the same branch within this many minutes of the last one started.
   cooldownMinutes      Int               @default(30) @map("cooldown_minutes")
   /// At most this many runs started by this trigger in any 24 hours.

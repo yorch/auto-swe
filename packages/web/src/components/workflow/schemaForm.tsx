@@ -95,7 +95,7 @@ export function SchemaFieldInput({
   error?: string;
 }) {
   const fieldId = useId();
-  const base = name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
+  const base = prop.title ?? name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
   const hint = prop.description;
 
   if (prop.type === 'connection') {
@@ -135,6 +135,42 @@ export function SchemaFieldInput({
     );
   }
 
+  // A set of fixed choices: one checkbox per allowed value.
+  const choices = prop.type === 'array' ? prop.items?.enum : undefined;
+  if (choices) {
+    const selected = Array.isArray(value) ? value : [];
+    return (
+      <fieldset aria-describedby={error ? `${fieldId}-error` : undefined} className="space-y-1.5">
+        <legend className="label-mono block">
+          {base}
+          {required && <RequiredMark />}
+        </legend>
+        {hint && <p className="text-paper-500 text-xs">{hint}</p>}
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+          {choices.map((choice) => (
+            <Checkbox
+              checked={selected.includes(choice)}
+              key={String(choice)}
+              label={String(choice).replace(/_/g, ' ')}
+              onChange={(e) =>
+                onChange(
+                  e.target.checked
+                    ? choices.filter((c) => c === choice || selected.includes(c))
+                    : selected.filter((c) => c !== choice)
+                )
+              }
+            />
+          ))}
+        </div>
+        {error && (
+          <div id={`${fieldId}-error`}>
+            <Alert className="text-xs">{error}</Alert>
+          </div>
+        )}
+      </fieldset>
+    );
+  }
+
   if (prop.enum) {
     return (
       <Select
@@ -160,8 +196,11 @@ export function SchemaFieldInput({
         hint={hint}
         id={fieldId}
         label={base}
+        max={prop.maximum}
+        min={prop.minimum}
         onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
         required={required}
+        step="any"
         type="number"
         value={typeof value === 'number' ? String(value) : ''}
       />
@@ -187,7 +226,9 @@ export function SchemaFieldInput({
 export function buildInitialPayload(schema: InputSchema): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   for (const [key, prop] of Object.entries(schema.properties)) {
-    if (prop.type === 'boolean') {
+    if (prop.default !== undefined) {
+      payload[key] = Array.isArray(prop.default) ? [...prop.default] : prop.default;
+    } else if (prop.type === 'boolean') {
       payload[key] = false;
     } else if (prop.enum && prop.enum.length > 0) {
       // Keep enum fields unselected initially so the user makes an explicit choice.
@@ -209,13 +250,20 @@ function validateField(
   if (required && (value === '' || value === undefined || value === null)) {
     return 'This field is required';
   }
-  if (prop.type === 'number') {
-    if (
-      value !== undefined &&
-      value !== '' &&
-      (typeof value !== 'number' || !Number.isFinite(value))
-    ) {
+  if (prop.type === 'number' && value !== undefined && value !== '') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
       return 'Must be a valid number';
+    }
+    if (prop.minimum !== undefined && value < prop.minimum) {
+      return `Must be at least ${prop.minimum}`;
+    }
+    if (prop.maximum !== undefined && value > prop.maximum) {
+      return `Must be at most ${prop.maximum}`;
+    }
+  }
+  if (prop.type === 'array' && Array.isArray(value) && prop.minItems !== undefined) {
+    if (value.length < prop.minItems) {
+      return prop.minItems === 1 ? 'Choose at least one' : `Choose at least ${prop.minItems}`;
     }
   }
   if (prop.type === 'string' && prop.format === 'uuid' && value !== '' && value !== undefined) {

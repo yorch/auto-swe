@@ -1,3 +1,4 @@
+import { CI_TRIAGE_DEFAULTS } from '../../lib/ciTrigger.js';
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
@@ -175,7 +176,14 @@ const nodes: NodeMap = mergeNodes(
   // (`on.pull_request.branches` names only main), and the poll reports that instead
   // of waiting four hours for a webhook that never comes.
   ciLoop({
-    fix: { handoff: { repush: 'repushAfterFix' }, limit: 2, retryIfUnchanged: true },
+    // The trigger's option, with the payload contract's default for a hand-started run. The
+    // loop counts CI failures before checking (`incCIRetries` then `>=`), so N fixes need a
+    // limit of N + 1: with 0 the first failure of the draft ends the run.
+    fix: {
+      handoff: { repush: 'repushAfterFix' },
+      limit: `(request.payload.maxCiFixAttempts ?? ${CI_TRIAGE_DEFAULTS.maxCiFixAttempts}) + 1`,
+      retryIfUnchanged: true,
+    },
     passed: 'done',
     wait: 'pollOrSignal',
   }),
@@ -218,7 +226,8 @@ export const CI_TRIAGE_AND_FIX_SPEC: WorkflowSpec = {
   description:
     'Diagnose a failed GitHub Actions run from its logs and classify it (regression, test bug, ' +
     'configuration, dependency, flaky, infrastructure). In fix mode, when code can fix it, open ' +
-    'a draft pull request into the branch that failed and fix its own CI up to twice. Never ' +
+    'a draft pull request into the branch that failed and revise it while its own CI fails, as ' +
+    'many times as the trigger allows. Never ' +
     'changes workflow files. Started by a CI-failure trigger.',
   entry: 'triage',
   // A literal, not `CI_TRIAGE_TEMPLATE_NAME`: the site's template extraction reads it from

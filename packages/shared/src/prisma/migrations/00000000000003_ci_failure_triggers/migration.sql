@@ -1,17 +1,13 @@
--- CreateEnum
-CREATE TYPE "CiTriggerMode" AS ENUM ('TRIAGE_ONLY', 'FIX');
-
 -- CreateTable
 CREATE TABLE "ci_failure_triggers" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "connection_id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "enabled" BOOLEAN NOT NULL DEFAULT true,
-    "mode" "CiTriggerMode" NOT NULL DEFAULT 'TRIAGE_ONLY',
     "events" TEXT[],
     "branch_patterns" TEXT[],
     "workflow_patterns" TEXT[],
-    "comment_on_pull_request" BOOLEAN NOT NULL DEFAULT true,
+    "inputs" JSONB NOT NULL DEFAULT '{}',
     "cooldown_minutes" INTEGER NOT NULL DEFAULT 30,
     "max_runs_per_day" INTEGER NOT NULL DEFAULT 10,
     "template_id" UUID,
@@ -83,3 +79,6 @@ ALTER TABLE "ci_failure_triggers" ADD CONSTRAINT "ci_failure_triggers_events_kno
   CHECK ("events" <@ ARRAY['push', 'pull_request']::TEXT[]);
 ALTER TABLE "ci_failure_triggers" ADD CONSTRAINT "ci_failure_triggers_bounds"
   CHECK ("cooldown_minutes" BETWEEN 0 AND 10080 AND "max_runs_per_day" BETWEEN 1 AND 500);
+-- A trigger's options are a flat object of template inputs, never another JSON shape.
+ALTER TABLE "ci_failure_triggers" ADD CONSTRAINT "ci_failure_triggers_inputs_object"
+  CHECK (jsonb_typeof("inputs") = 'object');

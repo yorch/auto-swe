@@ -17,13 +17,30 @@ export type InputFieldType = 'string' | 'number' | 'boolean' | 'array' | 'connec
 
 export interface InputSchemaProperty {
   type: InputFieldType;
+  /** A human label for forms; the property name is shown when absent. */
+  title?: string;
   description?: string;
+  /**
+   * The value a form starts from, and the one an automatic launcher (a trigger) fills in for
+   * an option it was not given. Validation never fills it: a payload that omits the key is
+   * checked as it is.
+   */
+  default?: string | number | boolean | (string | number)[];
   /** Allowed values (scalars only). */
   enum?: (string | number)[];
   /** Extra string constraint. */
   format?: 'uuid';
-  /** Element type when `type === 'array'`. */
-  items?: { type: Exclude<InputFieldType, 'array' | 'connection'>; format?: 'uuid' };
+  /** Inclusive bounds for a `number`. */
+  minimum?: number;
+  maximum?: number;
+  /** Fewest elements an `array` may have when present. */
+  minItems?: number;
+  /** Element type when `type === 'array'`, and optionally the values each element may take. */
+  items?: {
+    type: Exclude<InputFieldType, 'array' | 'connection'>;
+    format?: 'uuid';
+    enum?: (string | number)[];
+  };
   /** When `type === 'connection'`, restricts the picker to connections of this type. */
   connectionType?: string;
 }
@@ -65,7 +82,7 @@ function typeOf(value: unknown): InputFieldType | 'null' | 'object' {
 function checkScalar(
   key: string,
   value: unknown,
-  prop: Pick<InputSchemaProperty, 'type' | 'format' | 'enum'>,
+  prop: Pick<InputSchemaProperty, 'type' | 'format' | 'enum' | 'minimum' | 'maximum'>,
   errors: string[]
 ): void {
   const actual = typeOf(value);
@@ -87,6 +104,15 @@ function checkScalar(
   }
   if (prop.enum && !prop.enum.includes(value as string | number)) {
     errors.push(`'${key}' must be one of: ${prop.enum.join(', ')}`);
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      errors.push(`'${key}' must be a finite number`);
+    } else if (prop.minimum !== undefined && value < prop.minimum) {
+      errors.push(`'${key}' must be at least ${prop.minimum}`);
+    } else if (prop.maximum !== undefined && value > prop.maximum) {
+      errors.push(`'${key}' must be at most ${prop.maximum}`);
+    }
   }
 }
 
@@ -117,10 +143,18 @@ export function validateInputPayload(schema: InputSchema, payload: unknown): Inp
         errors.push(`'${key}' must be an array (got ${typeOf(value)})`);
         continue;
       }
+      if (prop.minItems !== undefined && value.length < prop.minItems) {
+        errors.push(`'${key}' must have at least ${prop.minItems} item(s)`);
+      }
       const items = prop.items;
       if (items) {
         value.forEach((el, i) => {
-          checkScalar(`${key}[${i}]`, el, { format: items.format, type: items.type }, errors);
+          checkScalar(
+            `${key}[${i}]`,
+            el,
+            { enum: items.enum, format: items.format, type: items.type },
+            errors
+          );
         });
       }
       continue;

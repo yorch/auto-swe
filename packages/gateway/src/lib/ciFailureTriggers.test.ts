@@ -167,14 +167,13 @@ interface Fire {
 function trigger(over: Record<string, unknown> = {}) {
   return {
     branchPatterns: ['release/*'],
-    commentOnPullRequest: true,
     cooldownMinutes: 30,
     createdAt: new Date(0),
     enabled: true,
     events: ['push'],
     id: 'aaaaaaaa-0000-4000-8000-000000000001',
+    inputs: { mode: 'fix' },
     maxRunsPerDay: 10,
-    mode: 'FIX',
     templateId: null,
     workflowPatterns: ['.github/workflows/**'],
     ...over,
@@ -386,7 +385,7 @@ describe('handleWorkflowRunFailure', () => {
     const h = harness({
       triggers: [
         trigger({ branchPatterns: ['main'], id: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
-        trigger({ id: 'aaaaaaaa-0000-4000-8000-00000000000b', mode: 'TRIAGE_ONLY' }),
+        trigger({ id: 'aaaaaaaa-0000-4000-8000-00000000000b', inputs: {} }),
         trigger({ id: 'aaaaaaaa-0000-4000-8000-00000000000c' }),
       ],
     });
@@ -444,6 +443,31 @@ describe('handleWorkflowRunFailure', () => {
     const h = harness({ triggers: [trigger({ events: ['pull_request'] })] });
     const out = await handle(h, { ...failed, event: 'pull_request', pullRequestNumber: null });
     expect(out).toMatchObject({ outcome: 'SUPPRESSED_NO_PULL_REQUEST' });
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('sends every option explicitly: the trigger’s own over the template defaults', async () => {
+    const h = harness({
+      triggers: [trigger({ inputs: { maxCiFixAttempts: 0, minFixConfidence: 0.9, mode: 'fix' } })],
+    });
+    await handle(h);
+    expect(
+      (h.started[0]?.input.request as { payload: unknown } | undefined)?.payload
+    ).toMatchObject({
+      commentOnPullRequest: true,
+      fixCategories: ['regression', 'test_bug', 'configuration', 'dependency'],
+      maxCiFixAttempts: 0,
+      minFixConfidence: 0.9,
+      mode: 'fix',
+    });
+  });
+
+  it('records FAILED_TO_START when the stored options no longer fit the template', async () => {
+    const h = harness({ triggers: [trigger({ inputs: { mode: 'fix', retired: true } })] });
+    await expect(handle(h)).resolves.toMatchObject({
+      outcome: 'FAILED_TO_START',
+      reason: expect.stringContaining("'retired' is not an option"),
+    });
     expect(h.started).toHaveLength(0);
   });
 

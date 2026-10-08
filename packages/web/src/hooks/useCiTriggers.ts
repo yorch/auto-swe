@@ -1,20 +1,20 @@
 'use client';
 
+import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-export type CiTriggerMode = 'TRIAGE_ONLY' | 'FIX';
 export type CiTriggerEvent = 'push' | 'pull_request';
 
 export interface CiTrigger {
   id: string;
   name: string;
   enabled: boolean;
-  mode: CiTriggerMode;
   events: CiTriggerEvent[];
   branchPatterns: string[];
   workflowPatterns: string[];
-  commentOnPullRequest: boolean;
+  /** The template options this trigger sets; anything absent takes the template default. */
+  inputs: Record<string, unknown>;
   cooldownMinutes: number;
   maxRunsPerDay: number;
   templateId: string | null;
@@ -37,17 +37,27 @@ export interface CiTriggerFire {
   createdAt: string;
 }
 
+/** A template a trigger on this repository may start, with the options it lets one set. */
+export interface CiTriggerTemplate {
+  id: string;
+  name: string;
+  description: string;
+  /** The built-in `ci-triage-and-fix`, which a trigger with no template starts. */
+  builtIn: boolean;
+  options: InputSchema;
+}
+
 export type CiTriggerInput = Pick<
   CiTrigger,
   | 'name'
   | 'enabled'
-  | 'mode'
   | 'events'
   | 'branchPatterns'
   | 'workflowPatterns'
-  | 'commentOnPullRequest'
+  | 'inputs'
   | 'cooldownMinutes'
   | 'maxRunsPerDay'
+  | 'templateId'
 >;
 
 const key = (repoId: string) => ['ci-triggers', repoId];
@@ -60,6 +70,15 @@ export function useCiTriggers(repoId: string) {
         .get<{ data: { canManage: boolean; triggers: CiTrigger[] } }>(base(repoId))
         .then((r) => r.data),
     queryKey: key(repoId),
+  });
+}
+
+export function useCiTriggerTemplates(repoId: string, enabled = true) {
+  return useQuery({
+    enabled,
+    queryFn: () =>
+      api.get<{ data: CiTriggerTemplate[] }>(`${base(repoId)}/templates`).then((r) => r.data),
+    queryKey: [...key(repoId), 'templates'],
   });
 }
 

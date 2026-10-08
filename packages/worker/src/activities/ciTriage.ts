@@ -15,7 +15,12 @@
  * links as the platform.
  */
 import { prisma } from '@auto-swe/shared/db';
-import { type CiTriagePayload, CiTriagePayloadSchema } from '@auto-swe/shared/lib/ciTrigger';
+import {
+  CI_FIXABLE_CATEGORIES,
+  type CiFixableCategory,
+  type CiTriagePayload,
+  CiTriagePayloadSchema,
+} from '@auto-swe/shared/lib/ciTrigger';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
@@ -43,16 +48,8 @@ export const CI_TRIAGE_CATEGORIES = [
 ] as const;
 export type CiTriageCategory = (typeof CI_TRIAGE_CATEGORIES)[number];
 
-/** Categories a code change in the repository can fix. */
-const FIXABLE_CATEGORIES: ReadonlySet<CiTriageCategory> = new Set([
-  'regression',
-  'test_bug',
-  'configuration',
-  'dependency',
-]);
-
-/** Below this the verdict is reported but never acted on. */
-export const MIN_FIX_CONFIDENCE = 0.6;
+/** Categories a code change in the repository can fix; a trigger can only narrow them. */
+const FIXABLE_CATEGORIES: ReadonlySet<CiTriageCategory> = new Set(CI_FIXABLE_CATEGORIES);
 
 const VerdictSchema = z.object({
   category: z.enum(CI_TRIAGE_CATEGORIES),
@@ -159,7 +156,7 @@ function runSummary(failure: WorkflowRunFailure): NonNullable<CiTriageResult['ru
  */
 export function refusalFor(
   failure: WorkflowRunFailure,
-  payload: CiTriagePayload,
+  payload: Pick<CiTriagePayload, 'baseBranch'>,
   repoFullName: string
 ): string | null {
   const r = failure.run;
@@ -211,6 +208,10 @@ function clip(text: string, max: number): string {
  */
 export function decide(input: {
   mode: CiTriagePayload['mode'];
+  /** The trigger's narrowing of {@link FIXABLE_CATEGORIES}. */
+  fixCategories: readonly CiFixableCategory[];
+  /** The trigger's floor on the verdict's confidence. */
+  minFixConfidence: number;
   event: string;
   verdict: Verdict;
   logsRead: boolean;
@@ -239,10 +240,16 @@ export function decide(input: {
   if (!FIXABLE_CATEGORIES.has(verdict.category) || !verdict.fixable) {
     return { decision: 'report', reason: `diagnosed as ${verdict.category}, not fixable in code` };
   }
-  if (verdict.confidence < MIN_FIX_CONFIDENCE) {
+  if (!(input.fixCategories as readonly string[]).includes(verdict.category)) {
     return {
       decision: 'report',
-      reason: `confidence ${verdict.confidence.toFixed(2)} is below ${MIN_FIX_CONFIDENCE}`,
+      reason: `diagnosed as ${verdict.category}, which this trigger does not fix`,
+    };
+  }
+  if (verdict.confidence < input.minFixConfidence) {
+    return {
+      decision: 'report',
+      reason: `confidence ${verdict.confidence.toFixed(2)} is below ${input.minFixConfidence}`,
     };
   }
   return { decision: 'fix', reason: `diagnosed as ${verdict.category}; attempting a fix` };
@@ -376,7 +383,9 @@ async function triageCiFailureImpl(
     };
     const { decision, reason } = decide({
       event: failure.run.event,
+      fixCategories: payload.fixCategories,
       logsRead,
+      minFixConfidence: payload.minFixConfidence,
       mode: payload.mode,
       superseded,
       suspiciousLogs,

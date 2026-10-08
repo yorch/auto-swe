@@ -107,8 +107,8 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
             connectionId: repo.id,
             cooldownMinutes: 0,
             events: ['push'],
+            inputs: { mode: 'fix' },
             maxRunsPerDay: 3,
-            mode: 'FIX',
             name: 'main',
             templateId: tpl.id,
             workflowPatterns: ['.github/workflows/**'],
@@ -204,8 +204,8 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
         connectionId: repoId,
         cooldownMinutes: 0,
         events: ['push'],
+        inputs: { mode: 'fix' },
         maxRunsPerDay: 3,
-        mode: 'FIX',
         name: 'lint',
         templateId,
         workflowPatterns: ['.github/workflows/lint.yml'],
@@ -231,7 +231,7 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
     }
   });
 
-  it('refuses a trigger row with an empty list or an unknown event', async () => {
+  it('refuses a trigger row with an empty list, an unknown event or non-object options', async () => {
     const base = {
       branchPatterns: ['main'],
       connectionId: repoId,
@@ -247,6 +247,9 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
     ).rejects.toThrow();
     await expect(
       prisma.ciFailureTrigger.create({ data: { ...base, maxRunsPerDay: 0 } })
+    ).rejects.toThrow();
+    await expect(
+      prisma.ciFailureTrigger.create({ data: { ...base, inputs: ['fix'] } })
     ).rejects.toThrow();
   });
 });

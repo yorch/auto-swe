@@ -80,7 +80,10 @@ async function buildApp() {
     ciFailureTriggerFire: { findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]) },
     configAuditLog: { create: vi.fn(async (_args: { data: Record<string, unknown> }) => ({})) },
     connection: { findFirst: vi.fn() },
-    workflowTemplate: { findFirst: vi.fn() },
+    workflowTemplate: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(async (_args: unknown) => [] as unknown[]),
+    },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -103,7 +106,15 @@ describe('ciTriggerRoutes', () => {
     gateState.gate = undefined;
     launch.decision = { ok: true };
     vi.clearAllMocks();
+    // The built-in template, unless a test says otherwise.
+    ctx.prisma.workflowTemplate.findFirst.mockResolvedValue(BUILTIN);
   });
+
+  const BUILTIN = {
+    activeVersion: 1,
+    id: 'b0000000-0000-4000-8000-000000000000',
+    inputSchema: CI_TRIAGE_INPUT_SCHEMA,
+  };
 
   const lead = { role: 'LEAD', userId: 'user-1' };
   const member = { role: 'MEMBER', userId: 'user-1' };
@@ -122,6 +133,35 @@ describe('ciTriggerRoutes', () => {
       expect(res.json().data.canManage).toBe(false);
     });
 
+    it('lists the templates a trigger may start with only the options a trigger sets', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
+      ctx.prisma.workflowTemplate.findMany.mockResolvedValue([
+        {
+          description: '',
+          id: BUILTIN.id,
+          inputSchema: CI_TRIAGE_INPUT_SCHEMA,
+          name: 'ci',
+          teamId: null,
+        },
+        { description: '', id: TEMPLATE, inputSchema: null, name: 'not-ci', teamId: null },
+      ]);
+      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: `${URL}/templates` });
+      expect(res.statusCode).toBe(200);
+      const [only, ...rest] = res.json().data;
+      expect(rest).toEqual([]);
+      expect(only).toMatchObject({ builtIn: true, id: BUILTIN.id });
+      expect(Object.keys(only.options.properties).sort()).toEqual([
+        'commentOnPullRequest',
+        'fixCategories',
+        'maxCiFixAttempts',
+        'minFixConfidence',
+        'mode',
+      ]);
+      expect(JSON.stringify(ctx.prisma.workflowTemplate.findMany.mock.calls[0]?.[0])).toContain(
+        'system:'
+      );
+    });
+
     it('404s a repository the caller is not a member of', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null));
       const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: URL });
@@ -135,11 +175,11 @@ describe('ciTriggerRoutes', () => {
       const res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
       expect(res.statusCode).toBe(201);
       expect(ctx.prisma.ciFailureTrigger.create.mock.calls[0]?.[0].data).toMatchObject({
-        commentOnPullRequest: true,
         connectionId: REPO,
         createdById: 'user-1',
         events: ['push'],
-        mode: 'TRIAGE_ONLY',
+        // No options: the template's defaults, which diagnose only.
+        inputs: {},
         workflowPatterns: ['.github/workflows/**'],
       });
       expect(ctx.prisma.configAuditLog.create).toHaveBeenCalled();
@@ -159,7 +199,11 @@ describe('ciTriggerRoutes', () => {
       ['no branch patterns', { ...VALID, branchPatterns: [] }],
       ['only exclusions', { ...VALID, branchPatterns: ['!main'] }],
       ['an event that is never acted on', { ...VALID, events: ['pull_request_target'] }],
-      ['an unknown mode', { ...VALID, mode: 'AUTO_MERGE' }],
+      ['an unknown mode', { ...VALID, inputs: { mode: 'AUTO_MERGE' } }],
+      ['an option the template does not declare', { ...VALID, inputs: { autoMerge: true } }],
+      ['a key the failing run fills', { ...VALID, inputs: { baseBranch: 'main' } }],
+      ['a confidence floor out of range', { ...VALID, inputs: { minFixConfidence: 2 } }],
+      ['no category to fix', { ...VALID, inputs: { fixCategories: [] } }],
       ['a negative cooldown', { ...VALID, cooldownMinutes: -1 }],
       ['a zero daily cap', { ...VALID, maxRunsPerDay: 0 }],
     ])('rejects %s', async (_label, payload) => {
@@ -195,6 +239,7 @@ describe('ciTriggerRoutes', () => {
     it('accepts a team template that takes the CI payload', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
+        activeVersion: 2,
         id: TEMPLATE,
         inputSchema: CI_TRIAGE_INPUT_SCHEMA,
       });
@@ -213,7 +258,11 @@ describe('ciTriggerRoutes', () => {
 
     it('refuses a template that does not take the CI payload', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({ id: TEMPLATE, inputSchema: null });
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
+        activeVersion: 1,
+        id: TEMPLATE,
+        inputSchema: null,
+      });
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'POST',
@@ -247,14 +296,21 @@ describe('ciTriggerRoutes', () => {
   describe('changing and removing', () => {
     it('updates and audits with before and after', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ id: TRIGGER, mode: 'TRIAGE_ONLY' });
+      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
+        id: TRIGGER,
+        inputs: {},
+        templateId: null,
+      });
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'PATCH',
-        payload: { mode: 'FIX' },
+        payload: { inputs: { mode: 'fix' } },
         url: `${URL}/${TRIGGER}`,
       });
       expect(res.statusCode).toBe(200);
+      expect(ctx.prisma.ciFailureTrigger.update.mock.calls[0]?.[0].data).toEqual({
+        inputs: { mode: 'fix' },
+      });
       expect(ctx.prisma.configAuditLog.create.mock.calls[0]?.[0].data).toMatchObject({
         action: 'UPDATE',
         entityType: 'CiFailureTrigger',
@@ -288,7 +344,11 @@ describe('ciTriggerRoutes', () => {
 
     it('re-decides the launch when a change keeps the trigger able to start runs', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ id: TRIGGER, mode: 'TRIAGE_ONLY' });
+      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
+        id: TRIGGER,
+        inputs: {},
+        templateId: null,
+      });
       launch.decision = {
         ok: false,
         refusal: { body: { error: { code: 'REPO_ACCESS_DENIED', message: 'no' } }, status: 403 },
@@ -296,10 +356,43 @@ describe('ciTriggerRoutes', () => {
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'PATCH',
-        payload: { mode: 'FIX' },
+        payload: { inputs: { mode: 'fix' } },
         url: `${URL}/${TRIGGER}`,
       });
       expect(res.statusCode).toBe(403);
+      expect(ctx.prisma.ciFailureTrigger.update).not.toHaveBeenCalled();
+    });
+
+    it('checks the kept options against a new template', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
+        id: TRIGGER,
+        inputs: { minFixConfidence: 0.8 },
+        templateId: null,
+      });
+      // A CI-aware team template that declares no options.
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
+        activeVersion: 1,
+        id: TEMPLATE,
+        inputSchema: {
+          properties: {
+            baseBranch: { type: 'string' },
+            connectionId: { type: 'connection' },
+            githubRunId: { type: 'string' },
+            runAttempt: { type: 'number' },
+          },
+          required: ['githubRunId'],
+          type: 'object',
+        },
+      });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload: { templateId: TEMPLATE },
+        url: `${URL}/${TRIGGER}`,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('INVALID_INPUTS');
       expect(ctx.prisma.ciFailureTrigger.update).not.toHaveBeenCalled();
     });
 

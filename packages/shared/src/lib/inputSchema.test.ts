@@ -95,6 +95,48 @@ describe('validateInputPayload', () => {
     expect(validateInputPayload(schema, { quantity: 3 }).ok).toBe(false);
   });
 
+  it('enforces number bounds, inclusively', () => {
+    const schema: InputSchema = {
+      properties: { n: { maximum: 5, minimum: 1, type: 'number' } },
+      type: 'object',
+    };
+    expect(validateInputPayload(schema, { n: 1 })).toEqual({ ok: true });
+    expect(validateInputPayload(schema, { n: 5 })).toEqual({ ok: true });
+    expect(validateInputPayload(schema, { n: 0 })).toEqual({
+      errors: ["'n' must be at least 1"],
+      ok: false,
+    });
+    expect(validateInputPayload(schema, { n: 6 })).toEqual({
+      errors: ["'n' must be at most 5"],
+      ok: false,
+    });
+    expect(validateInputPayload(schema, { n: Number.NaN }).ok).toBe(false);
+  });
+
+  it('enforces enum membership of array elements', () => {
+    const schema: InputSchema = {
+      properties: { tags: { items: { enum: ['a', 'b'], type: 'string' }, type: 'array' } },
+      type: 'object',
+    };
+    expect(validateInputPayload(schema, { tags: ['a', 'b'] })).toEqual({ ok: true });
+    expect(validateInputPayload(schema, { tags: ['a', 'c'] })).toEqual({
+      errors: ["'tags[1]' must be one of: a, b"],
+      ok: false,
+    });
+  });
+
+  it('enforces minItems on a present array', () => {
+    const schema: InputSchema = {
+      properties: { tags: { items: { type: 'string' }, minItems: 1, type: 'array' } },
+      type: 'object',
+    };
+    expect(validateInputPayload(schema, {})).toEqual({ ok: true });
+    expect(validateInputPayload(schema, { tags: [] })).toEqual({
+      errors: ["'tags' must have at least 1 item(s)"],
+      ok: false,
+    });
+  });
+
   it('treats connection-typed fields as UUID strings', () => {
     const schema: InputSchema = {
       properties: {

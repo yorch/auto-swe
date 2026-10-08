@@ -15,9 +15,11 @@ import crypto from 'node:crypto';
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
 import {
+  buildCiTriggerPayload,
   CI_TRIAGE_TEMPLATE_NAME,
-  type CiTriagePayload,
-  matchesPatterns,
+  type CiTriggerRule,
+  ciTriggerMismatch,
+  SAMPLE_CI_EVENT_FIELDS,
 } from '@auto-swe/shared/lib/ciTrigger';
 import { isPlatformWorkBranch, isSafeGitBranchName } from '@auto-swe/shared/lib/gitRef';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
@@ -165,21 +167,14 @@ export function normalizeWorkflowRunEvent(body: unknown): WorkflowRunEvent {
   };
 }
 
-/** The fields of a trigger the matcher reads. */
-export interface TriggerRule {
-  enabled: boolean;
-  events: string[];
-  branchPatterns: string[];
-  workflowPatterns: string[];
-}
-
 /** Whether `trigger` reacts to `event`. Workflows are matched by FILE path, never display name. */
-export function triggerMatches(trigger: TriggerRule, event: WorkflowRunFailedEvent): boolean {
+export function triggerMatches(trigger: CiTriggerRule, event: WorkflowRunFailedEvent): boolean {
   return (
-    trigger.enabled &&
-    trigger.events.includes(event.event) &&
-    matchesPatterns(trigger.branchPatterns, event.headBranch) &&
-    matchesPatterns(trigger.workflowPatterns, event.workflowPath)
+    ciTriggerMismatch(trigger, {
+      branch: event.headBranch,
+      event: event.event,
+      workflowPath: event.workflowPath,
+    }) === null
   );
 }
 
@@ -361,28 +356,26 @@ export async function handleWorkflowRunFailure(
   const description =
     `Fix the failing ${quotablePath(event.workflowPath)} on ${event.headBranch} ` +
     `(commit ${event.headSha.slice(0, 12)}).`;
-  const payload: CiTriagePayload = {
+  // Built and checked again at fire time: the template may have changed since the trigger
+  // was saved, and a payload the worker would refuse must not spend a run.
+  const built = buildCiTriggerPayload(template.inputSchema, trigger.inputs, {
     baseBranch: event.headBranch,
-    commentOnPullRequest: trigger.commentOnPullRequest,
     connectionId: connection.id,
     description,
     githubRunId: event.runId,
-    mode: trigger.mode === 'FIX' ? 'fix' : 'triage',
-    ...(event.pullRequestNumber !== null ? { pullRequestNumber: event.pullRequestNumber } : {}),
+    pullRequestNumber: event.pullRequestNumber,
     runAttempt: event.runAttempt,
     ticketId,
-  };
-  if (template.inputSchema && isInputSchema(template.inputSchema)) {
-    const valid = validateInputPayload(template.inputSchema, payload);
-    if (!valid.ok) {
-      return recordSuppression(
-        prisma,
-        fireBase,
-        'FAILED_TO_START',
-        `the trigger template does not accept the CI payload: ${valid.errors.join('; ').slice(0, 300)}`
-      );
-    }
+  });
+  if (!built.ok) {
+    return recordSuppression(
+      prisma,
+      fireBase,
+      'FAILED_TO_START',
+      `the trigger's options do not fit its template: ${built.errors.join('; ').slice(0, 300)}`
+    );
   }
+  const payload = built.payload;
 
   const request: RepoWorkRequest = {
     budgetTier: 'STANDARD',
@@ -510,11 +503,11 @@ export async function handleWorkflowRunFailure(
 type TriggerRow = {
   id: string;
   enabled: boolean;
-  mode: 'TRIAGE_ONLY' | 'FIX';
+  /** The template options the trigger sets (`TriggerInputsSchema`). */
+  inputs: Prisma.JsonValue;
   events: string[];
   branchPatterns: string[];
   workflowPatterns: string[];
-  commentOnPullRequest: boolean;
   cooldownMinutes: number;
   maxRunsPerDay: number;
   templateId: string | null;
@@ -635,29 +628,24 @@ async function recordSuppression(
   return { outcome, reason, triggerId: fire.triggerId };
 }
 
-/** A payload of the shape a trigger sends, for checking a template accepts it. */
-const SAMPLE_CI_PAYLOAD: CiTriagePayload = {
-  baseBranch: 'main',
-  commentOnPullRequest: true,
-  connectionId: '00000000-0000-4000-8000-000000000000',
-  description: 'Fix the failing workflow',
-  githubRunId: '1',
-  mode: 'triage',
-  pullRequestNumber: 1,
-  runAttempt: 1,
-  ticketId: 'ci-1-1',
-};
-
 /**
- * Whether a template's declared input schema takes the CI triage payload: it names
- * `githubRunId` (a template that does not is not CI-aware, whatever it accepts) and a full
- * payload validates. A template with no schema accepts anything, so it is refused.
+ * Whether a template is CI-aware: its declared input schema names `githubRunId` (a template
+ * that does not is not, whatever it accepts) and takes what a failing run fills in. A template
+ * with no schema accepts anything, so it is refused. Whether a trigger's options fit it is
+ * `buildCiTriggerPayload`'s question, so an option the template requires is not checked here.
  */
 export function acceptsCiPayload(inputSchema: unknown): boolean {
   if (!isInputSchema(inputSchema) || !('githubRunId' in inputSchema.properties)) {
     return false;
   }
-  return validateInputPayload(inputSchema, SAMPLE_CI_PAYLOAD).ok;
+  const runFields: Record<string, unknown> = { ...SAMPLE_CI_EVENT_FIELDS };
+  return validateInputPayload(
+    {
+      ...inputSchema,
+      required: (inputSchema.required ?? []).filter((k) => k in runFields),
+    },
+    runFields
+  ).ok;
 }
 
 /**
@@ -665,7 +653,7 @@ export function acceptsCiPayload(inputSchema: unknown): boolean {
  * repository team's, not a system template, and accepts the CI payload; otherwise the
  * built-in `ci-triage-and-fix`. Null when there is none to start.
  */
-async function resolveTriggerTemplate(
+export async function resolveTriggerTemplate(
   prisma: PrismaClient,
   templateId: string | null,
   teamId: string

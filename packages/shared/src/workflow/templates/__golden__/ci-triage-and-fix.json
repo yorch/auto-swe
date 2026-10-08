@@ -1,5 +1,5 @@
 {
-  "description": "Diagnose a failed GitHub Actions run from its logs and classify it (regression, test bug, configuration, dependency, flaky, infrastructure). In fix mode, when code can fix it, open a draft pull request into the branch that failed and fix its own CI up to twice. Never changes workflow files. Started by a CI-failure trigger.",
+  "description": "Diagnose a failed GitHub Actions run from its logs and classify it (regression, test bug, configuration, dependency, flaky, infrastructure). In fix mode, when code can fix it, open a draft pull request into the branch that failed and revise it while its own CI fails, as many times as the trigger allows. Never changes workflow files. Started by a CI-failure trigger.",
   "entry": "triage",
   "name": "ci-triage-and-fix",
   "nodes": {
@@ -16,7 +16,7 @@
       "type": "cond"
     },
     "checkCILimit": {
-      "expr": "context.ciRetries >= 2",
+      "expr": "context.ciRetries >= ((request.payload.maxCiFixAttempts ?? 2) + 1)",
       "onFalse": "fetchLogs",
       "onTrue": "terminateCIFailed",
       "type": "cond"

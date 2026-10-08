@@ -158,7 +158,9 @@ describe('refusalFor', () => {
 describe('decide', () => {
   const base = {
     event: 'push',
+    fixCategories: ['regression', 'test_bug', 'configuration', 'dependency'] as const,
     logsRead: true,
+    minFixConfidence: 0.6,
     mode: 'fix' as const,
     superseded: false,
     suspiciousLogs: false,
@@ -187,8 +189,27 @@ describe('decide', () => {
       'low confidence',
       { verdict: { ...verdict, category: 'regression' as const, confidence: 0.3 } },
     ],
+    ['a category the trigger does not fix', { fixCategories: ['test_bug'] as const }],
+    [
+      'confidence under the trigger floor',
+      {
+        minFixConfidence: 0.9,
+        verdict: { ...verdict, category: 'regression' as const, confidence: 0.85 },
+      },
+    ],
   ])('only reports for %s', (_label, over) => {
     expect(decide({ ...base, ...over }).decision).toBe('report');
+  });
+
+  it('fixes at exactly the trigger floor, and below the default when the trigger lowers it', () => {
+    const at = (confidence: number, minFixConfidence: number) =>
+      decide({
+        ...base,
+        minFixConfidence,
+        verdict: { ...verdict, category: 'regression' as const, confidence },
+      }).decision;
+    expect(at(0.9, 0.9)).toBe('fix');
+    expect(at(0.45, 0.4)).toBe('fix');
   });
 
   it('still fixes a push failure on a branch that has moved: the fix is made on its tip', () => {

@@ -117,7 +117,11 @@ export interface CiLoopOptions {
    * to `terminateCIFailed` itself.
    */
   exhausted?: string;
-  fix: false | { limit?: number; handoff: CiFixHandoff; retryIfUnchanged?: boolean };
+  /**
+   * `limit` is a number, or an expression evaluated against the run context each time it is
+   * checked — e.g. a run-input option with a fallback, `request.payload.maxFixes ?? 2`.
+   */
+  fix: false | { limit?: number | string; handoff: CiFixHandoff; retryIfUnchanged?: boolean };
 }
 
 /**
@@ -160,7 +164,7 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
     nodes,
     {
       checkCILimit: {
-        expr: `context.ciRetries >= ${fix.limit ?? 3}`,
+        expr: `context.ciRetries >= ${typeof fix.limit === 'string' ? `(${fix.limit})` : (fix.limit ?? 3)}`,
         group: loop,
         onFalse: 'fetchLogs',
         onTrue: opts.exhausted ?? 'terminateCIFailed',

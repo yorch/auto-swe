@@ -5,21 +5,32 @@
  * Reading a repository's triggers and what they did is open to its members (the owning team
  * and the teams it is shared with). Creating, changing and removing one is management, which
  * stays with the owning team as it does for every other repository setting: ADMIN, or a LEAD
- * of the owning team. A trigger in FIX mode opens pull requests on the team's repository with
+ * of the owning team. A trigger in fix mode opens pull requests on the team's repository with
  * the platform's credential, so a shared team cannot set one up.
+ *
+ * A trigger is WHEN (events, branch and workflow globs), GUARDS (cooldown, daily cap) and WHAT
+ * (a template and its `inputs`). The inputs are the template's own declared options, checked
+ * against its input schema and the CI payload contract on every save — the same check
+ * (`buildCiTriggerPayload`) a fire runs.
  */
+
+import type { Prisma } from '@auto-swe/shared';
 import {
+  buildCiTriggerPayload,
   CI_TRIGGER_EVENTS,
-  CI_TRIGGER_MODES,
   GlobListSchema,
+  SAMPLE_CI_EVENT_FIELDS,
+  TriggerInputsSchema,
+  triggerOptionKeys,
 } from '@auto-swe/shared/lib/ciTrigger';
+import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { isRepoMember, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
-import { acceptsCiPayload } from '../lib/ciFailureTriggers.js';
+import { acceptsCiPayload, resolveTriggerTemplate } from '../lib/ciFailureTriggers.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
@@ -38,12 +49,12 @@ const EventsSchema = z
 const TriggerFields = {
   /** Globs over the failing branch. Required: no trigger reacts to every branch by default. */
   branchPatterns: GlobListSchema,
-  commentOnPullRequest: z.boolean(),
   cooldownMinutes: z.number().int().min(0).max(10_080),
   enabled: z.boolean(),
   events: EventsSchema,
+  /** The template's options this trigger sets; anything left out takes the template default. */
+  inputs: TriggerInputsSchema,
   maxRunsPerDay: z.number().int().min(1).max(500),
-  mode: z.enum(CI_TRIGGER_MODES),
   name: z.string().trim().min(1).max(100),
   templateId: z.string().uuid().nullable(),
   /** Globs over the workflow file path, e.g. `.github/workflows/ci.yml`. */
@@ -52,14 +63,14 @@ const TriggerFields = {
 
 const CreateBody = z.object({
   ...TriggerFields,
-  commentOnPullRequest: TriggerFields.commentOnPullRequest.default(true),
   cooldownMinutes: TriggerFields.cooldownMinutes.default(30),
   enabled: TriggerFields.enabled.default(true),
   // Pushes only by default: a pull request's failure is the author's to look at first.
   events: EventsSchema.default(['push']),
+  // No options: the template's defaults, which for the built-in diagnose only — a fix is an
+  // explicit choice.
+  inputs: TriggerInputsSchema.default({}),
   maxRunsPerDay: TriggerFields.maxRunsPerDay.default(10),
-  // Diagnose only by default; a fix is an explicit choice.
-  mode: TriggerFields.mode.default('TRIAGE_ONLY'),
   templateId: TriggerFields.templateId.default(null),
   workflowPatterns: TriggerFields.workflowPatterns.default(['.github/workflows/**']),
 });
@@ -70,7 +81,6 @@ const FiresQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).def
 
 const triggerSelect = {
   branchPatterns: true,
-  commentOnPullRequest: true,
   connectionId: true,
   cooldownMinutes: true,
   createdAt: true,
@@ -78,8 +88,8 @@ const triggerSelect = {
   enabled: true,
   events: true,
   id: true,
+  inputs: true,
   maxRunsPerDay: true,
-  mode: true,
   name: true,
   template: { select: { id: true, name: true } },
   templateId: true,
@@ -160,21 +170,33 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
   }
 
   /**
-   * A template a trigger may start: active, global or the repository team's own, not a
-   * system template, and declaring an input schema that accepts the CI payload — so a trigger
-   * cannot start a template that would read the payload as something else.
+   * Why a trigger's template and options cannot be saved, or null when they can. The template
+   * must be one a fire could start (`resolveTriggerTemplate`: active, global or the repository
+   * team's own, not a system template, CI-aware; null means the built-in), and the options
+   * must build a payload it and the worker accept.
    */
-  async function templateAllowed(templateId: string, teamId: string): Promise<boolean> {
-    const row = await fastify.prisma.workflowTemplate.findFirst({
-      select: { id: true, inputSchema: true },
-      where: {
-        AND: [
-          { id: templateId, OR: [{ teamId: null }, { teamId }], status: 'ACTIVE' },
-          EXCLUDE_SYSTEM_TEMPLATES,
-        ],
-      },
-    });
-    return row !== null && acceptsCiPayload(row.inputSchema);
+  async function optionsProblem(
+    templateId: string | null,
+    inputs: unknown,
+    teamId: string
+  ): Promise<{ code: string; message: string } | null> {
+    const template = await resolveTriggerTemplate(fastify.prisma, templateId, teamId);
+    if (!template) {
+      return templateId
+        ? {
+            code: 'INVALID_TEMPLATE',
+            message:
+              'templateId must name an active, non-system template, global or owned by the repository team, whose input schema declares the CI triage payload (githubRunId)',
+          }
+        : { code: 'TEMPLATE_MISSING', message: 'The built-in CI triage template is not installed' };
+    }
+    const built = buildCiTriggerPayload(template.inputSchema, inputs, SAMPLE_CI_EVENT_FIELDS);
+    return built.ok
+      ? null
+      : {
+          code: 'INVALID_INPUTS',
+          message: `The options do not fit the template: ${built.errors.join('; ').slice(0, 500)}`,
+        };
   }
 
   const FORBIDDEN = 'Requires ADMIN role, or LEAD membership on the repository owning team';
@@ -198,6 +220,59 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // GET /api/v1/repositories/:id/ci-triggers/templates — what a trigger here may start, and
+  // the options each declares, so the form is rendered from the template's own contract.
+  app.get(
+    '/:id/ci-triggers/templates',
+    { onRequest: signedIn, schema: { params: RepoParams } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const loaded = await loadRepo(request.params.id, user, request.repoAccessGate);
+      if (!loaded) {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      const rows = await fastify.prisma.workflowTemplate.findMany({
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        select: { description: true, id: true, inputSchema: true, name: true, teamId: true },
+        where: {
+          AND: [
+            {
+              activeVersion: { not: null },
+              OR: [{ teamId: null }, { teamId: loaded.repo.teamId }],
+              status: 'ACTIVE',
+            },
+            EXCLUDE_SYSTEM_TEMPLATES,
+          ],
+        },
+      });
+      const builtIn = await resolveTriggerTemplate(fastify.prisma, null, loaded.repo.teamId);
+      const templates = rows.flatMap((t) => {
+        const schema: unknown = t.inputSchema;
+        if (!isInputSchema(schema) || !acceptsCiPayload(schema)) {
+          return [];
+        }
+        const keys = triggerOptionKeys(schema);
+        const options: InputSchema = {
+          properties: Object.fromEntries(
+            keys.flatMap((k) => (schema.properties[k] ? [[k, schema.properties[k]]] : []))
+          ),
+          required: (schema.required ?? []).filter((k) => keys.includes(k)),
+          type: 'object',
+        };
+        return [
+          {
+            builtIn: t.id === builtIn?.id,
+            description: t.description,
+            id: t.id,
+            name: t.name,
+            options,
+          },
+        ];
+      });
+      return { data: templates };
+    }
+  );
+
   // POST /api/v1/repositories/:id/ci-triggers
   app.post(
     '/:id/ci-triggers',
@@ -218,16 +293,17 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
       if (body.enabled && !(await mayLaunch(request, reply, user, loaded.repo))) {
         return;
       }
-      if (body.templateId && !(await templateAllowed(body.templateId, loaded.repo.teamId))) {
-        return sendError(
-          reply,
-          400,
-          'INVALID_TEMPLATE',
-          'templateId must name an active, non-system template, global or owned by the repository team, whose input schema accepts the CI triage payload (githubRunId, runAttempt, baseBranch, mode)'
-        );
+      const problem = await optionsProblem(body.templateId, body.inputs, loaded.repo.teamId);
+      if (problem) {
+        return sendError(reply, 400, problem.code, problem.message);
       }
       const created = await fastify.prisma.ciFailureTrigger.create({
-        data: { ...body, connectionId: loaded.repo.id, createdById: user.sub },
+        data: {
+          ...body,
+          connectionId: loaded.repo.id,
+          createdById: user.sub,
+          inputs: body.inputs as Prisma.InputJsonObject,
+        },
         select: triggerSelect,
       });
       await writeAuditLog(fastify, {
@@ -273,16 +349,21 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
           return;
         }
       }
-      if (body.templateId && !(await templateAllowed(body.templateId, loaded.repo.teamId))) {
-        return sendError(
-          reply,
-          400,
-          'INVALID_TEMPLATE',
-          'templateId must name an active, non-system template, global or owned by the repository team, whose input schema accepts the CI triage payload (githubRunId, runAttempt, baseBranch, mode)'
+      // The options are checked against the template they will run with: a new template is
+      // checked against the options it inherits, and new options against the kept template.
+      if (body.templateId !== undefined || body.inputs !== undefined) {
+        const problem = await optionsProblem(
+          body.templateId === undefined ? existing.templateId : body.templateId,
+          body.inputs ?? existing.inputs,
+          loaded.repo.teamId
         );
+        if (problem) {
+          return sendError(reply, 400, problem.code, problem.message);
+        }
       }
+      const { inputs, ...rest } = body;
       const updated = await fastify.prisma.ciFailureTrigger.update({
-        data: body,
+        data: { ...rest, ...(inputs ? { inputs: inputs as Prisma.InputJsonObject } : {}) },
         select: triggerSelect,
         where: { id: existing.id },
       });

@@ -51,7 +51,7 @@ describe('ci-triage-and-fix', () => {
 describe('ci-triage-and-fix runs', () => {
   type Outputs = Record<string, unknown | (() => unknown)>;
 
-  function dispatcher(outputs: Outputs) {
+  function dispatcher(outputs: Outputs, ciPasses = true) {
     const steps: Array<{ step: string; inputs: Record<string, unknown> }> = [];
     const d: Dispatcher = {
       async dispatchStep({ step, inputs }) {
@@ -61,17 +61,16 @@ describe('ci-triage-and-fix runs', () => {
       },
       async recordStep() {},
       async waitSignal() {
-        // The draft's CI passes.
-        return { passed: true };
+        return ciPasses ? { passed: true } : { logsUrl: 'https://ci/logs', passed: false };
       },
     };
     return { d, steps };
   }
 
-  const base = () => ({
+  const base = (payload: Record<string, unknown> = {}) => ({
     context: {},
     nodes: {},
-    request: { externalTicketId: 'ci-1-1', repoId: 'r' },
+    request: { externalTicketId: 'ci-1-1', payload, repoId: 'r' },
     workflow: { id: 'w' },
   });
   const triage = (decision: string) => ({
@@ -147,5 +146,45 @@ describe('ci-triage-and-fix runs', () => {
     const result = await runSpec(CI_TRIAGE_AND_FIX_SPEC, base(), d);
     expect(result.status).toBe('SUCCESS');
     expect(steps.map((s) => s.step)).not.toContain('createOrUpdatePullRequest');
+  });
+
+  it.each([
+    [0, 0],
+    [1, 1],
+    [2, 2],
+    [undefined, 2],
+  ])('revises a draft whose CI keeps failing maxCiFixAttempts=%s times: %s', async (max, fixes) => {
+    let sha = 0;
+    const { d, steps } = dispatcher(
+      {
+        createOrUpdatePullRequest: { prNumber: 8, prUrl: 'https://github.com/a/b/pull/8' },
+        executeCIFixImplementation: () => ({
+          branch: 'auto/ci-1-1',
+          filesChanged: [{ path: 'src/sum.ts' }],
+          headSha: `fix-${++sha}`,
+        }),
+        executeImplementation: {
+          branch: 'auto/ci-1-1',
+          filesChanged: [{ path: 'src/sum.ts' }],
+          headSha: 'x',
+        },
+        fetchCILogs: 'boom',
+        reportCiTriage: { commented: true },
+        resolveCiWaitConfig: { deadlineSec: 60, graceSec: 5, intervalSec: 5, mode: 'signal' },
+        runLint: { passed: true },
+        runTests: { passed: true },
+        runTypecheck: { passed: true },
+        triageCiFailure: triage('fix'),
+        updateDomainState: {},
+      },
+      false
+    );
+    const result = await runSpec(
+      CI_TRIAGE_AND_FIX_SPEC,
+      base(max === undefined ? {} : { maxCiFixAttempts: max }),
+      d
+    );
+    expect(result.status).toBe('FAILED');
+    expect(steps.filter((s) => s.step === 'executeCIFixImplementation')).toHaveLength(fixes);
   });
 });
