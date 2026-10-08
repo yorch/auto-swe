@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { sendTemporalUnavailable, temporalConnected } from '../lib/temporalErrors.js';
 import { memberTeams } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { CRON_5_FIELD_RE } from './scheduledWorkRequests.js';
@@ -690,7 +691,9 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'MemoryItem',
       });
 
-      // Best-effort re-embed. The base row id alone would REJECT_DUPLICATE on a
+      // Best-effort re-embed, deliberately not gated on Temporal: the edit stands and
+      // the embedding catches up on the next edit or the bulk re-embed if this fails
+      // (including while Temporal is not connected). The base row id alone would REJECT_DUPLICATE on a
       // second edit, so append a per-edit suffix (Date.now() — the gateway is
       // normal Node) to keep the workflowId unique across successive edits.
       try {
@@ -710,6 +713,11 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const body = request.body;
+      // A channel registered with a digest or poll needs its Temporal schedule; refuse
+      // before the row exists so the database never describes a schedule Temporal lacks.
+      if ((body.ambientEnabled || body.reactiveEnabled) && !temporalConnected(fastify)) {
+        return sendTemporalUnavailable(reply);
+      }
 
       const team = await fastify.prisma.team.findUnique({
         select: { id: true, orgId: true },
@@ -813,6 +821,19 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         return reply
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+      }
+      // A change to whether or when a digest or poll runs needs Temporal. Refuse before
+      // persisting, so the row and the schedules never diverge. The dashboard form sends
+      // every schedule field on each save, so compare against the stored values: an edit
+      // that leaves them as they are goes through.
+      const scheduleChanged =
+        (body.isActive !== undefined && body.isActive !== current.isActive) ||
+        (body.ambientEnabled !== undefined && body.ambientEnabled !== current.ambientEnabled) ||
+        (body.ambientCron !== undefined && body.ambientCron !== current.ambientCron) ||
+        (body.reactiveEnabled !== undefined && body.reactiveEnabled !== current.reactiveEnabled) ||
+        (body.reactiveCron !== undefined && body.reactiveCron !== current.reactiveCron);
+      if (scheduleChanged && !temporalConnected(fastify)) {
+        return sendTemporalUnavailable(reply);
       }
 
       // Re-validate the team when moving the channel; keep orgId in step.
@@ -1019,6 +1040,11 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { params: IdParams } },
     async (request, reply) => {
       const actor = requireUser(request);
+      // Deleting tears down the channel's schedules; an orphaned one keeps firing, so
+      // refuse until Temporal can be asked.
+      if (!temporalConnected(fastify)) {
+        return sendTemporalUnavailable(reply);
+      }
       const current = await fastify.prisma.slackChannel.findUnique({
         where: { id: request.params.id },
       });

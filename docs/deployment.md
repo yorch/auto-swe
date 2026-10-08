@@ -121,6 +121,8 @@ CORS_ORIGIN=https://app.example.com,https://admin.example.com  # first entry = b
 PUBLIC_URL=https://api.example.com                              # used for Slack OAuth callback
 TRUST_PROXY=10.0.0.0/8   # behind a reverse proxy: the proxy IPs/CIDRs whose X-Forwarded-For
                          # is trusted (or `true`). Unset = do not trust it
+RATE_LIMIT_MAX=200               # optional: requests per client per window (default 200)
+RATE_LIMIT_WINDOW_SECONDS=60     # optional: window length in seconds (default 60)
 
 # Config encryption — REQUIRED for gateway and worker to start
 # Encrypts all DB-stored secrets (GitHub token, Slack tokens, S3 credentials, OAuth secrets)
@@ -288,6 +290,43 @@ For real production, run these on dedicated infrastructure (not on the gateway/w
 - Multiple Temporal server replicas behind an internal load balancer.
 - Daily backups of `postgres-temporal`.
 - Mutual TLS for the worker → Temporal gRPC connection.
+
+### Starting without Temporal
+
+The gateway does not itself need Temporal to boot. It connects in the background, retrying with backoff
+(1 s, doubling to 30 s), so an unreachable Temporal at startup delays nothing: sign-in, reads and
+settings that do not touch workflows work straight away. The system schedules (consolidation, the
+sweeps, eval) are synced once the connection is up. Per-channel and per-work-request schedules are not
+re-synced at startup: they are reconciled when their own rows are written, which is refused while
+Temporal is not connected (below). The shipped Compose files still gate the gateway on Temporal's
+health, so this path applies to deployments that start the gateway independently, such as managed
+Temporal or an orchestrator without that dependency.
+
+- **`GET /health`** stays `200` whatever Temporal is doing, so container liveness checks (the gateway
+  image's `HEALTHCHECK`) never restart a gateway for a Temporal outage. The body reports
+  `{"status":"ok","temporal":"connected"}` or `"temporal":"connecting"`. `connected` means only that the
+  first connection has been made: the gateway does not probe, the SDK reconnects on its own, and a
+  later outage still reads `connected`. `connecting` means no workflow operation can run yet.
+- **Until it connects**, these answer `503` with `{"error":{"code":"TEMPORAL_UNAVAILABLE", ...}}` and
+  `Retry-After: 5`: launching, retrying and cancelling runs, signals, human-step responses, eval runs,
+  schedule changes, and the other routes that call Temporal. Saving the consolidation, eval and
+  re-validation schedule settings, and any Slack channel change to whether or when a digest or poll runs
+  (activating, deactivating, enabling, changing a cron, registering with one enabled, deleting), are
+  refused before anything is saved, so the database and the schedules never disagree; other channel
+  edits go through, including a dashboard save that leaves the schedule fields as they were. The
+  synchronous `POST /generate`, the refine route and the explain route keep their own `503` codes
+  (`GENERATION_UNAVAILABLE`, `REFINE_UNAVAILABLE`, `EXPLAIN_UNAVAILABLE`); the asynchronous
+  `POST /generate/jobs` and `GET /generate/jobs/:id` answer `TEMPORAL_UNAVAILABLE`. Editing a memory item still
+  succeeds; its re-embed is best-effort and is skipped when Temporal is not connected.
+- **A launch leaves no rows behind**, and a human step answered in that window is put back to pending.
+  A webhook-triggered launch in the window gets `503`; GitHub does not redeliver on its own, so redeliver
+  it from the webhook's delivery log once `/health` reports `connected`.
+- **Lookups that decide whether a run is finished** treat "not connected" as unconfirmed, never as
+  finished: agent-run admission keeps its concurrency slots and a re-run is refused rather than started
+  on top of a possibly live one. `GET /scheduled-work-requests` returns `exists: null, unavailable: true`
+  for each schedule rather than reporting it missing.
+- **After connecting**, the SDK's gRPC channel reconnects by itself if the server goes away; calls during
+  such an outage fail with the SDK's own error rather than `TEMPORAL_UNAVAILABLE`.
 
 ### b. Temporal Cloud
 
@@ -479,6 +518,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] Magic-link transport is verified end-to-end against a real inbox (not just SMTP 2xx).
 - [ ] Worker host is isolated — separate VPC subnet, no shared Docker socket, no inbound traffic.
 - [ ] Infra ports are not world-reachable. `docker-compose.infra.yml` publishes Postgres (5432), Temporal (7233, plus 8233 for the Web UI only when the `temporal-ui` profile is enabled, which production must not do) and the object store (9000) — and `docker-compose.app.yml` Grafana (3001) and OTLP (4317/4318) — on loopback by default so the runbook can reach them from the host. An override such as `POSTGRES_PORT=55432` without the `127.0.0.1:` prefix publishes on every interface; keep the prefix, or firewall the port.
+- [ ] `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SECONDS` are left at the defaults (200 per minute per client) unless a suite drives one signed-in user hard: an end-to-end (Playwright) run loads many pages as a single user and exhausts 200 per minute. Raise them only for that environment. Both are read once at startup and a value that is not a positive integer stops the gateway from booting.
 - [ ] Reverse proxy enforces HTTPS and forwards `X-Forwarded-For` / `X-Forwarded-Proto`, and `TRUST_PROXY` names that proxy's IPs or CIDRs. The gateway rate-limits a verified user by user id and everything else by client IP; without `TRUST_PROXY` every anonymous request behind the proxy shares the proxy's IP and one limit. Do not set it when clients can reach the gateway directly — they could then choose their own IP.
 - [ ] Postgres connection uses TLS (`?sslmode=require`).
 - [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).

@@ -52,6 +52,8 @@ describe('/api/v1/scheduled-work-requests', () => {
   let membershipRole = 'LEAD';
   let scheduleRow: Record<string, unknown> | null = null;
   let syncShouldFail = false;
+  let temporalUp = true;
+  let statusShouldFail = false;
   // The team default (tpl-1 v3) unless a test says the schedule last ran another.
   let lastSyncedTemplate: { templateId: string; templateVersion: number } = {
     templateId: 'tpl-1',
@@ -269,16 +271,24 @@ describe('/api/v1/scheduled-work-requests', () => {
     };
     app.decorate('prisma', prismaMock as unknown as never);
 
+    app.decorate('temporalConnection', {
+      state: () => (temporalUp ? 'connected' : 'connecting'),
+    } as unknown as never);
     app.decorate('temporal', {
       deleteWorkRequestSchedule: async (id: string) => {
         deletedScheduleIds.push(id);
       },
-      getWorkRequestScheduleStatus: async () => ({
-        exists: true,
-        lastRunAt: null,
-        nextRunAt: '2026-06-17T03:00:00.000Z',
-        paused: false,
-      }),
+      getWorkRequestScheduleStatus: async () => {
+        if (statusShouldFail) {
+          throw new Error('deadline exceeded');
+        }
+        return {
+          exists: true,
+          lastRunAt: null,
+          nextRunAt: '2026-06-17T03:00:00.000Z',
+          paused: false,
+        };
+      },
       syncWorkRequestSchedule: async (input: WorkRequestScheduleInput) => {
         syncCallCount += 1;
         if (syncShouldFail || syncCallCount === failSyncAtCall) {
@@ -304,6 +314,8 @@ describe('/api/v1/scheduled-work-requests', () => {
     membershipRole = 'LEAD';
     scheduleRow = null;
     syncShouldFail = false;
+    temporalUp = true;
+    statusShouldFail = false;
     isOrgMember = true;
     orgSpentUsd = 0;
     overrideTemplateTeamId = null;
@@ -1366,6 +1378,59 @@ describe('/api/v1/scheduled-work-requests', () => {
     expect(body.data).toHaveLength(1);
     expect(body.data[0].schedule.exists).toBe(true);
     expect(body.data[0].schedule.nextRunAt).toBe('2026-06-17T03:00:00.000Z');
+  });
+
+  it('reports an unknown schedule state, not "no schedule", while Temporal is not connected', async () => {
+    scheduleRow = {
+      budgetTier: 'STANDARD',
+      cronExpression: '0 3 * * 1',
+      description: 'Update all dependencies',
+      externalTicketPrefix: 'DEPS',
+      id: SCHEDULE_ID,
+      isActive: true,
+      name: 'Weekly dependency update',
+      repoId: REPO_ID,
+      templateId: null,
+      templateVersion: null,
+      workRequestId: WR_ID,
+    };
+    temporalUp = false;
+    const res = await inject({
+      method: 'GET',
+      token: 'eng-token',
+      url: '/api/v1/scheduled-work-requests',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).data[0].schedule).toMatchObject({
+      exists: null,
+      unavailable: true,
+    });
+  });
+
+  it('reports an unknown state when the live lookup fails while connected', async () => {
+    scheduleRow = {
+      budgetTier: 'STANDARD',
+      cronExpression: '0 3 * * 1',
+      description: 'Update all dependencies',
+      externalTicketPrefix: 'DEPS',
+      id: SCHEDULE_ID,
+      isActive: true,
+      name: 'Weekly dependency update',
+      repoId: REPO_ID,
+      templateId: null,
+      templateVersion: null,
+      workRequestId: WR_ID,
+    };
+    statusShouldFail = true;
+    const res = await inject({
+      method: 'GET',
+      token: 'eng-token',
+      url: '/api/v1/scheduled-work-requests',
+    });
+    expect(JSON.parse(res.payload).data[0].schedule).toMatchObject({
+      exists: null,
+      unavailable: true,
+    });
   });
 
   describe('canManage on the list', () => {

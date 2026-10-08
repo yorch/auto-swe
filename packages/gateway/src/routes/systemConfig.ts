@@ -41,6 +41,7 @@ import {
   updateSlackConfig,
   updateWorkflowDefaults,
 } from '../lib/systemConfigService.js';
+import { sendTemporalUnavailable, temporalConnected } from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /// Admin CRUD routes for the singleton system-config tables:
@@ -539,6 +540,11 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/consolidation',
     { schema: { body: ConsolidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
+      // The save syncs the schedule; refuse before persisting so a config that cannot
+      // reach Temporal is not stored behind a 503.
+      if (!temporalConnected(fastify)) {
+        return sendTemporalUnavailable(reply);
+      }
       const result = await updateConsolidationConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
 
@@ -574,6 +580,11 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/eval-schedule',
     { schema: { body: EvalSchedulePutBody, response: { 200: z.any() } } },
     async (req, reply) => {
+      // The save syncs the schedule; refuse before persisting so a config that cannot
+      // reach Temporal is not stored behind a 503.
+      if (!temporalConnected(fastify)) {
+        return sendTemporalUnavailable(reply);
+      }
       const result = await updateEvalScheduleConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
 
@@ -605,6 +616,11 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/revalidation',
     { schema: { body: RevalidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
+      // The save syncs the schedule; refuse before persisting so a config that cannot
+      // reach Temporal is not stored behind a 503.
+      if (!temporalConnected(fastify)) {
+        return sendTemporalUnavailable(reply);
+      }
       const result = await updateRevalidationScheduleConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
 

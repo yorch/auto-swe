@@ -9,6 +9,7 @@ import {
   buildWorkflowHumanStepControlFilter,
   buildWorkflowHumanStepVisibilityFilter,
 } from '../lib/runVisibility.js';
+import { sendTemporalUnavailable } from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const StepIdParam = z.object({ id: z.string().uuid() });
@@ -149,7 +150,7 @@ function formatDate(value: unknown): string | null {
  * `lib/hitlResolve.ts` so the Slack interactivity handler can share it — this
  * map preserves the inbox route's original wire contract exactly.
  */
-const STATUS_BY_CODE: Record<HitlResolveErrorCode, 200 | 400 | 404 | 409 | 502> = {
+const STATUS_BY_CODE: Record<HitlResolveErrorCode, 200 | 400 | 404 | 409 | 502 | 503> = {
   ALREADY_RESOLVED: 409,
   INVALID_ACTION: 400,
   INVALID_VALUE: 400,
@@ -157,6 +158,7 @@ const STATUS_BY_CODE: Record<HitlResolveErrorCode, 200 | 400 | 404 | 409 | 502> 
   REASON_REQUIRED: 400,
   RUN_NOT_RUNNING: 409,
   SIGNAL_FAILED: 502,
+  TEMPORAL_UNAVAILABLE: 503,
   UNKNOWN_KIND: 400,
 };
 
@@ -508,6 +510,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           404: ErrorResponseSchema,
           409: ErrorResponseSchema,
           502: ErrorResponseSchema,
+          503: ErrorResponseSchema,
         },
       },
     },
@@ -530,6 +533,9 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       );
 
       if (!result.ok) {
+        if (result.code === 'TEMPORAL_UNAVAILABLE') {
+          return sendTemporalUnavailable(reply);
+        }
         return reply
           .status(STATUS_BY_CODE[result.code])
           .send({ error: { code: result.code, message: result.message } });

@@ -39,6 +39,11 @@ import {
 import { mapLimited } from '../lib/mapLimited.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { paginationQuery } from '../lib/pagination.js';
+import {
+  isTemporalUnavailable,
+  sendTemporalUnavailable,
+  temporalConnected,
+} from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { projectEvalResult } from './workflowProjections.js';
 
@@ -526,6 +531,11 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: StartRunBody } },
     async (request, reply) => {
       const { baselineRef, candidateRef, datasetId } = request.body;
+      // Refuse before any row exists: with no Temporal there is nothing to start,
+      // and a FAILED row plus a FAILED metric would record an outage as an eval result.
+      if (!temporalConnected(fastify)) {
+        return sendTemporalUnavailable(reply);
+      }
       const baselineRuntime = request.body.baselineRuntime ?? null;
       const candidateRuntime = request.body.candidateRuntime ?? null;
       const ds = await fastify.prisma.evalDataset.findUnique({ where: { id: datasetId } });
@@ -568,6 +578,9 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         });
         // No workflow exists to finalize this run, so it is counted here.
         recordRunFinalized('FAILED', 'eval');
+        if (isTemporalUnavailable(err)) {
+          return sendTemporalUnavailable(reply);
+        }
         return reply.status(502).send({
           error: { code: 'EVAL_START_FAILED', message: 'Could not start the eval run workflow' },
         });

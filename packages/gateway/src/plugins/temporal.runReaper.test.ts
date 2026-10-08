@@ -39,6 +39,7 @@ describe('syncRunReaperSchedule', () => {
     const app = Fastify();
     await app.register(temporalPlugin);
     await app.ready();
+    await app.temporalConnection.whenConnected();
     return app;
   }
 

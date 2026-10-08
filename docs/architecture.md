@@ -49,7 +49,7 @@ flowchart LR
 
 Two invariants shape everything else:
 
-- **The gateway is stateless.** All durable state lives in Temporal and Postgres.
+- **The gateway is stateless.** All durable state lives in Temporal and Postgres. It boots without Temporal and connects in the background; until it does, routes that need Temporal answer `503 TEMPORAL_UNAVAILABLE` and `/health` reports `"temporal":"connecting"` ([deployment.md §4](./deployment.md#starting-without-temporal)).
 - **The worker drives all execution.** No LLM call ever happens in the gateway.
 
 A third property holds across everything the platform ships, though it is a property of the

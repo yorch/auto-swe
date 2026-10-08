@@ -66,7 +66,10 @@ function newMockTemporal() {
   };
 }
 
-async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
+async function buildApp(
+  role: 'ADMIN' | 'ENGINEER' = 'ADMIN',
+  temporalState: 'connected' | 'connecting' = 'connected'
+) {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -74,6 +77,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   const mockTemporal = newMockTemporal();
   app.decorate('prisma', mockPrisma as unknown as never);
   app.decorate('temporal', mockTemporal as unknown as never);
+  app.decorate('temporalConnection', { state: () => temporalState } as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user-1' }),
   } as unknown as never);
@@ -502,6 +506,92 @@ describe('slackChannelRoutes', () => {
     expect(mockTemporal.syncChannelAmbientSchedule).not.toHaveBeenCalled();
     expect(mockTemporal.deleteChannelAmbientSchedule).toHaveBeenCalledWith(CHANNEL);
     await app.close();
+  });
+
+  const STORED = {
+    ambientCron: '30 8 * * *',
+    ambientEnabled: true,
+    id: CHANNEL,
+    isActive: true,
+    orgId: 'org-1',
+    reactiveCron: null,
+    reactiveEnabled: false,
+    teamId: TEAM,
+  };
+
+  it('refuses a PATCH that changes the schedule with 503 before persisting while Temporal is not connected', async () => {
+    for (const body of [
+      { ambientCron: '0 9 * * *' },
+      { ambientEnabled: false },
+      { isActive: false },
+      { reactiveEnabled: true },
+    ]) {
+      const { app, mockPrisma, mockTemporal } = await buildApp('ADMIN', 'connecting');
+      mockPrisma.slackChannel.findUnique.mockResolvedValue(STORED);
+      const res = await app.inject({
+        body,
+        headers: AUTH,
+        method: 'PATCH',
+        url: `/api/v1/platform/slack-channels/${CHANNEL}`,
+      });
+      expect(res.statusCode).toBe(503);
+      expect(res.json().error.code).toBe('TEMPORAL_UNAVAILABLE');
+      expect(res.headers['retry-after']).toBe('5');
+      expect(mockPrisma.slackChannel.update).not.toHaveBeenCalled();
+      expect(mockTemporal.syncChannelAmbientSchedule).not.toHaveBeenCalled();
+    }
+  });
+
+  it('lets the dashboard form through while connecting when its schedule fields are unchanged', async () => {
+    const { app, mockPrisma } = await buildApp('ADMIN', 'connecting');
+    mockPrisma.slackChannel.findUnique.mockResolvedValue(STORED);
+    mockPrisma.slackChannel.update.mockResolvedValue({ ...STORED, workspace: { id: 'ws-1' } });
+    const res = await app.inject({
+      // The form sends every schedule field on every save.
+      body: {
+        ambientCron: '30 8 * * *',
+        ambientEnabled: true,
+        isActive: true,
+        name: 'renamed',
+        reactiveCron: null,
+        reactiveEnabled: false,
+      },
+      headers: AUTH,
+      method: 'PATCH',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockPrisma.slackChannel.update).toHaveBeenCalled();
+  });
+
+  it('refuses registering a channel with a digest enabled, with no row written, while connecting', async () => {
+    const { app, mockPrisma } = await buildApp('ADMIN', 'connecting');
+    const res = await app.inject({
+      body: {
+        ambientCron: '30 8 * * *',
+        ambientEnabled: true,
+        name: 'general',
+        slackChannelId: 'C123',
+        slackTeamId: 'T123',
+        teamId: TEAM,
+      },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/slack-channels',
+    });
+    expect(res.statusCode).toBe(503);
+    expect(mockPrisma.slackChannel.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a delete with 503 before deleting while Temporal is not connected', async () => {
+    const { app, mockPrisma } = await buildApp('ADMIN', 'connecting');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}`,
+    });
+    expect(res.statusCode).toBe(503);
+    expect(mockPrisma.slackChannel.delete).not.toHaveBeenCalled();
   });
 
   it('syncs the ambient schedule when patching ambient mode on', async () => {

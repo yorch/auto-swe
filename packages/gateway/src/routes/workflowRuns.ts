@@ -21,7 +21,11 @@ import {
   buildWorkflowRunControlFilter,
   buildWorkflowRunVisibilityFilter,
 } from '../lib/runVisibility.js';
-import { isTerminalSignalError } from '../lib/temporalErrors.js';
+import {
+  isTemporalUnavailable,
+  isTerminalSignalError,
+  sendTemporalUnavailable,
+} from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { requestWorkspaceRoutes } from './requestWorkspace.js';
 import {
@@ -308,6 +312,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           404: ErrorResponseSchema,
           409: ErrorResponseSchema,
           502: ErrorResponseSchema,
+          503: ErrorResponseSchema,
         },
       },
     },
@@ -361,6 +366,9 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         } catch (err) {
           if (!isTerminalSignalError(err)) {
             request.log.error({ err, workflowId: run.workflowId }, 'Temporal cancel failed');
+            if (isTemporalUnavailable(err)) {
+              return sendTemporalUnavailable(reply);
+            }
             return sendError(
               reply,
               502,
