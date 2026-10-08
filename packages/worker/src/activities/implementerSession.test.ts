@@ -425,6 +425,23 @@ describe('runImplementerFixSession', () => {
     expect(commands).not.toContain('git diff origin/main; touch /pwned');
   });
 
+  it('clones and diffs against the branch the change was cut from, and carries it forward', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    const { createWorkspace } = await import('./workspace.js');
+    const out = await runImplementerFixSession(
+      input({ previousCodeResult: codeResult({ baseBranch: 'release/1.4', repoId: 'repo-1' }) })
+    );
+    expect(vi.mocked(createWorkspace).mock.calls.at(-1)?.[2]).toBe('release/1.4');
+    expect(execMock.mock.calls.map((c) => c[0])).toContain("git diff origin/'release/1.4'");
+    expect(out.baseBranch).toBe('release/1.4');
+  });
+
+  it('returns no base for a result recorded before the field existed', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    const out = await runImplementerFixSession(input());
+    expect(out).not.toHaveProperty('baseBranch');
+  });
+
   it('feeds the afterGenerate note into the implementation notes', async () => {
     findRepo.mockResolvedValue(REPO as never);
     const out = await runImplementerFixSession(

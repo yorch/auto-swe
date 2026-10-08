@@ -33,6 +33,7 @@
     "./lib/skillSourceSync": "./dist/lib/skillSourceSync.js",
     "./lib/seedPlaceholder": "./dist/lib/seedPlaceholder.js",
     "./lib/regexSafety": "./dist/lib/regexSafety.js",
+    "./lib/gitRef": "./dist/lib/gitRef.js",
     "./lib/modelSpec": "./dist/lib/modelSpec.js",
     "./lib/builtinModels": "./dist/lib/builtinModels.js",
     "./lib/regexExec": "./dist/lib/regexExec.js",

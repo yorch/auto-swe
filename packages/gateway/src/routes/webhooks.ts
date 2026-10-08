@@ -26,6 +26,7 @@ import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
+import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
 
 const JiraWebhookSchema = z
@@ -1107,6 +1108,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             .status(422)
             .send({ error: { code: 'VALIDATION_ERROR', errors: result.errors } });
         }
+      }
+
+      // An optional `baseBranch`, checked before anything is written (same as POST /:id/runs).
+      const base = await launchBaseBranch(payload, reply);
+      if (!base.ok) {
+        return;
       }
 
       // Extract well-known fields from the payload (same as POST /:id/runs).

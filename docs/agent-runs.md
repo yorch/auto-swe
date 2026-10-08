@@ -28,6 +28,7 @@ Request body:
 | `prompt` | What to do. Up to 20,000 characters |
 | `repoId` | The repository (a `git_repo` connection) |
 | `deliver` | `none` (default), `branch`, or `draft_pr` |
+| `baseBranch` | Optional. The branch the checkout is cut from and a draft PR targets, instead of the repository's default branch. Refused (`400`) when it is not a valid branch name or is one of the platform's `<branchPrefix>/…` work branches. A re-run keeps it |
 | `maxSteps`, `maxWallClockSeconds` | Optional caps. They can only **lower** the platform ceilings (section 6) |
 | `budgetTier` | `STANDARD` (default), `LARGE`, `EPIC`, as for any run |
 

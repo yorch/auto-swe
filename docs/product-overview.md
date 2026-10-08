@@ -232,6 +232,15 @@ the template's declared `inputSchema`, with no ticket ID and no repository requi
 | `POST /api/v1/workflow-templates/:id/runs` | ENGINEER | Arbitrary `payload`; `connectionId` optional; `externalTicketId` auto-generated from the label |
 | `POST /api/v1/webhooks/:token` | none — opaque per-template `webhookToken` | Same validation; for firing a template from an external system |
 
+A payload may name a **`baseBranch`**: the branch a repository run cuts its change from, diffs
+against, and opens its pull request into, in place of the repository's default branch. It is a
+reserved key — every step that clones honours it, whatever the template — and it is checked before
+anything is written: an invalid branch name, or one of the platform's own `<branchPrefix>/…` work
+branches, is `400 INVALID_BASE_BRANCH`. It lives in the payload because the payload is what a retry
+and a re-run copy, so a later attempt targets the same branch. Agent runs take it as a body field
+([agent-runs.md](./agent-runs.md)); `POST /api/v1/work-requests`, Slack, schedules, epics and PRD runs
+do not accept one and always use the default branch.
+
 These and `POST /api/v1/prd-runs` accept an optional **`Idempotency-Key`** header. With one, the run's workflow ID is a
 deterministic function of the key, so a retried request or a redelivered webhook collapses onto the
 original run (`409`) instead of starting a second one. Without one, each request is a fresh run —

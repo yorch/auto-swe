@@ -22,6 +22,7 @@ import {
 } from '@auto-swe/shared/lib/agentRunAdmission';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
+import { BaseBranchSchema, isPlatformWorkBranch } from '@auto-swe/shared/lib/gitRef';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
@@ -50,6 +51,8 @@ import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 const CreateAgentRunBody = z.object({
   /** Library agent: `<key>` (float) or `<key>@<version>` (pin the GLOBAL version). */
   agent: z.string().min(1).max(130).regex(AGENT_REF_RE),
+  /** Branch to cut the checkout from and open a draft PR into. Unset: the default branch. */
+  baseBranch: BaseBranchSchema.optional(),
   budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).default('STANDARD'),
   /** `none` shows the diff, `branch` pushes a branch, `draft_pr` also opens a DRAFT pull request. */
   deliver: z.enum(AGENT_RUN_DELIVERIES).default('none'),
@@ -86,6 +89,7 @@ function error(reply: FastifyReply, status: number, code: string, message: strin
 
 interface LaunchInput {
   agent: string;
+  baseBranch?: string;
   budgetTier: BudgetTier;
   deliver: AgentRunPayload['deliver'];
   idempotencyKey: string | undefined;
@@ -312,6 +316,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     // Launch parameters travel in RunInput.payload; the worker re-parses them.
     const payload: AgentRunPayload = AgentRunPayloadSchema.parse({
       agentRef: input.agent,
+      ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
       deliver: input.deliver,
       maxSteps: input.maxSteps,
       maxWallClockSeconds: input.maxWallClockSeconds,
@@ -327,8 +332,17 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       ? workflowIdFromIdempotencyKey('agent', `${repo8}-${user8}`, input.idempotencyKey)
       : `agent-${repo8}-${crypto.randomUUID().replace(/-/g, '')}`;
     const { branchPrefix } = await resolveWorkflowDefaults();
+    if (input.baseBranch && isPlatformWorkBranch(input.baseBranch, branchPrefix)) {
+      return error(
+        reply,
+        400,
+        'BASE_BRANCH_REFUSED',
+        `baseBranch '${input.baseBranch}' is a platform work branch; a run may not be based on one`
+      );
+    }
     const requestPayload = JSON.stringify({
       agent: input.agent,
+      ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
       budgetTier: input.budgetTier,
       deliver: input.deliver,
       maxSteps: input.maxSteps,
@@ -567,6 +581,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       const b: CreateAgentRunBody = request.body;
       return launch(request, reply, {
         agent: b.agent,
+        ...(b.baseBranch ? { baseBranch: b.baseBranch } : {}),
         budgetTier: b.budgetTier,
         deliver: b.deliver,
         idempotencyKey: request.headers['idempotency-key'],
@@ -627,6 +642,8 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return launch(request, reply, {
         agent: p.agentRef,
+        // The original's base: a re-run of a fix for release/1.4 is still a fix for it.
+        ...(p.baseBranch ? { baseBranch: p.baseBranch } : {}),
         // A re-run takes the default tier: the original's is on its ledger row and
         // a re-run is a fresh spend decision by whoever re-runs it.
         budgetTier: 'STANDARD',

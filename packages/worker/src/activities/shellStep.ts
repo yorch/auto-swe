@@ -44,6 +44,7 @@ import {
   redactToken,
 } from '../lib/redactToken.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
+import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
@@ -167,7 +168,8 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
   return {
     cleanUrl,
     cloneUrl: authedCloneUrl,
-    defaultBranch: repo.defaultBranch,
+    // The run's base: what a step that runs before the first push falls back to cloning.
+    defaultBranch: await resolveRequestBaseBranch(request, repo),
     ...(gitAuthHeader ? { gitAuthHeader } : {}),
     teamAllowlist: (repo.team?.shellImageAllowlist as string[] | null) ?? [],
     teamEgressAllowlist: (repo.team?.egressAllowlist as string[] | null) ?? [],

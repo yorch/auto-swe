@@ -35,6 +35,7 @@ import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
+import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -222,6 +223,10 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
   const { authedCloneUrl } = await scm.cloneCredentials(repoRef);
 
   const tracer = new AgentTracer();
+  // The branch the checkout is cut from and a draft PR targets: the launch's, else the
+  // repository's default. Refused before any container exists when it is not one a run
+  // may use.
+  const baseBranch = await resolveRunBaseBranch(payload.baseBranch, repo);
   let agentWs: Workspace | undefined;
   let trusted: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;
@@ -233,7 +238,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     agentWs = await createWorkspace(
       authedCloneUrl,
       branch,
-      repo.defaultBranch,
+      baseBranch,
       repo.executorImage ?? undefined
     );
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
@@ -298,7 +303,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     trusted = await createWorkspace(
       authedCloneUrl,
       branch,
-      repo.defaultBranch,
+      baseBranch,
       repo.executorImage ?? undefined,
       baseSha
     );
@@ -336,7 +341,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       const title = prTitle(request.description);
       try {
         pr = await scm.createOrUpdatePullRequest({
-          baseBranch: repo.defaultBranch,
+          baseBranch,
           body: prBody({
             agent: payload.agentRef,
             files: gated.filesChanged,

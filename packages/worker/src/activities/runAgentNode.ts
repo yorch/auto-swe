@@ -21,6 +21,7 @@ import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
+import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import { runAgent } from './runAgent.js';
@@ -56,9 +57,11 @@ export interface RunAgentNodeInput {
    * Set when the node asks for a workspace (`workspace: true`): the run's
    * repository (null for a run without one, which fails the node), its ticket
    * id, and the branch its code result names, if any. The branch defaults to
-   * `<branchPrefix>/<ticketId>`, as the quality gates' does.
+   * `<branchPrefix>/<ticketId>`, as the quality gates' does. `baseBranch` is the run's
+   * base (unset: the repository's default branch), which the checkout falls back to
+   * before the run has pushed a branch.
    */
-  workspace?: { branch?: string; repoId: string | null; ticketId: string };
+  workspace?: { baseBranch?: string; branch?: string; repoId: string | null; ticketId: string };
 }
 
 export interface RunAgentNodeResult {
@@ -247,18 +250,19 @@ async function runInCheckout(args: {
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
   throwIfActivityCancelled();
   // The run's branch, as the quality gates read it: the one its code result
-  // names, else `<branchPrefix>/<ticketId>`. The checkout is cut from the default
+  // names, else `<branchPrefix>/<ticketId>`. The checkout is cut from the run's base
   // branch and moved to the run's branch when the run has pushed one, so a node
-  // that runs before any code exists reads the default branch.
+  // that runs before any code exists reads the base branch.
   const branch =
     args.workspace.branch ??
     `${(await resolveWorkflowDefaults()).branchPrefix}/${args.workspace.ticketId}`;
+  const baseBranch = await resolveRunBaseBranch(args.workspace.baseBranch, repo);
   // The clone credential is never written into the container: only `gitAuthed`
   // injects it, and only here, before the agent has started.
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
-    repo.defaultBranch,
+    baseBranch,
     repo.executorImage ?? undefined
   );
   onOpen(workspace.destroy);
@@ -267,7 +271,7 @@ async function runInCheckout(args: {
     await workspace.gitAuthed(fetchBranchesSubcommand([branch]));
     await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
   } catch {
-    checkedOut = repo.defaultBranch;
+    checkedOut = baseBranch;
   }
   tracer.addActivityEvent({
     name: 'agent.runtime',

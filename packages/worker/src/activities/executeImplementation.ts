@@ -37,6 +37,7 @@ import {
   wantsCrossRepoContext,
 } from '../lib/repoDependencyContext.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
+import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -126,10 +127,14 @@ export async function executeImplementation(
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 
+  // The branch the change is cut from and diffed against: the launch's base, else the
+  // repository's default. Clone, path guard and diff must all use the same one.
+  const baseBranch = await resolveRequestBaseBranch(request, repo);
+
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
-    repo.defaultBranch,
+    baseBranch,
     repo.executorImage ?? undefined
   );
 
@@ -169,9 +174,9 @@ export async function executeImplementation(
     }
 
     // After any sync to a previous attempt's pushed branch, and before any agent turn:
-    // this session answers for its own changes from here. `baseSha` (the default branch's
+    // this session answers for its own changes from here. `baseSha` (the base branch's
     // tip, read before the agent) is what the whole change is reported against.
-    pathGuard = await startPathGuard(workspace, repo.defaultBranch, allowedPaths, baseSha);
+    pathGuard = await startPathGuard(workspace, baseBranch, allowedPaths, baseSha);
 
     // Detect test framework
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
@@ -369,9 +374,10 @@ export async function executeImplementation(
     await workspace.gitAuthed(`push origin ${pushRefspec(branch, pushSha)}`);
 
     // Collect results
-    // `defaultBranch` is an operator-editable column — quote it like every other
-    // interpolated ref so it cannot smuggle shell syntax into the container.
-    const diff = await diffForResult(workspace, repo.defaultBranch, pathGuard, pushSha);
+    // `baseBranch` is an operator-editable column or a launch input — `diffForResult`
+    // quotes it like every other interpolated ref so it cannot smuggle shell syntax
+    // into the container.
+    const diff = await diffForResult(workspace, baseBranch, pathGuard, pushSha);
     // A guarded step reports the commit it pushed, not whatever HEAD has become.
     const headSha = pushSha ?? (await workspace.exec('git rev-parse HEAD')).trim();
 
@@ -418,6 +424,7 @@ export async function executeImplementation(
     }
 
     return {
+      baseBranch,
       baseSha,
       branch,
       codeSecurityFindings: codeSecurityFindings.length > 0 ? codeSecurityFindings : undefined,

@@ -115,6 +115,29 @@ describe('createOrUpdatePullRequest draft option', () => {
   });
 });
 
+describe('the pull request base', () => {
+  it("is the repository's default branch for a run that names no base", async () => {
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.createPr).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: 'main' }));
+  });
+
+  it("is the run's payload base when the code result does not say", async () => {
+    await createOrUpdatePullRequest(
+      { ...request, payload: { baseBranch: 'release/1.4' } },
+      codeResult
+    );
+    expect(m.createPr).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: 'release/1.4' }));
+  });
+
+  it('is the branch the code result was cut from, which wins', async () => {
+    await createOrUpdatePullRequest(
+      { ...request, payload: { baseBranch: 'release/1.4' } },
+      { ...codeResult, baseBranch: 'release/1.5' }
+    );
+    expect(m.createPr).toHaveBeenCalledWith(expect.objectContaining({ baseBranch: 'release/1.5' }));
+  });
+});
+
 describe('the tracker sync when a PR is opened', () => {
   it.each([
     [true, 0],

@@ -29,6 +29,7 @@ import { putArtifact } from '../lib/artifactStore.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { recordGateEval } from '../lib/evalCapture.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
+import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
 import {
@@ -165,14 +166,17 @@ async function provisionGateWorkspace(
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 
+  // Cloned at the run's base, which the work branch was cut from, so the shallow clone
+  // shares history with it.
+  const baseBranch = await resolveRequestBaseBranch(request, repo);
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
-    repo.defaultBranch,
+    baseBranch,
     repo.executorImage ?? undefined
   );
 
-  // createWorkspace produces a fresh local branch from the default branch.
+  // createWorkspace produces a fresh local branch from the base branch.
   // For gates we want the implementer's pushed commits, so fetch + reset.
   //
   // A failure here fails the gate. It used to fall through and run the gate
@@ -187,7 +191,7 @@ async function provisionGateWorkspace(
     await workspace.destroy();
     throw new Error(
       `gate ${gate}: could not check out branch '${branch}' from origin, so the gate ` +
-        `cannot run against the change (refusing to run it against '${repo.defaultBranch}'): ` +
+        `cannot run against the change (refusing to run it against '${baseBranch}'): ` +
         getErrorMessage(err).slice(0, 500)
     );
   }

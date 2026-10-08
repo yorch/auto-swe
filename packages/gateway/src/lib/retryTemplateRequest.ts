@@ -9,6 +9,7 @@ import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { requireUser } from '../plugins/auth.js';
 import { authorizeLaunch, sendLaunchRefusal } from './launchAuthorization.js';
+import { launchBaseBranch } from './launchBaseBranch.js';
 import { validateRunConnection } from './runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from './runVisibility.js';
 import { isSystemTemplate } from './systemTemplate.js';
@@ -112,6 +113,11 @@ export async function retryTemplateRequest(
     ...(instructions && typeof stored.description === 'string' ? { description } : {}),
   };
   if (!inputsSatisfySchema(reply, template.inputSchema, payload)) {
+    return;
+  }
+  // The original's base, re-checked: the branch prefix may have changed since.
+  const base = await launchBaseBranch(payload, reply);
+  if (!base.ok) {
     return;
   }
   const budgetTier: BudgetTier =

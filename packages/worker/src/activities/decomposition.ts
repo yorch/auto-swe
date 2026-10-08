@@ -41,6 +41,7 @@ import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
+import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { recordLessonBackground } from './commitToMemory.js';
@@ -426,7 +427,7 @@ async function provisionMergeWorkspace(
   targetBranch: string,
   sourceBranches: string[],
   label: string
-): Promise<{ workspace: Workspace; log: string[]; defaultBranch: string }> {
+): Promise<{ workspace: Workspace; log: string[]; baseBranch: string }> {
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { host: true, installationId: true } } },
     where: { id: requireRepoId(request, 'decomposition') },
@@ -434,10 +435,12 @@ async function provisionMergeWorkspace(
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 
+  // The run's base: the feature branch and its subtask branches were all cut from it.
+  const baseBranch = await resolveRequestBaseBranch(request, repo);
   const workspace = await createWorkspace(
     authedCloneUrl,
     targetBranch,
-    repo.defaultBranch,
+    baseBranch,
     repo.executorImage ?? undefined
   );
   heartbeat(`${label}: workspace provisioned`);
@@ -466,10 +469,10 @@ async function provisionMergeWorkspace(
     await workspace.exec(`git reset --hard origin/${shellQuote(targetBranch)}`);
     log.push(`reset to origin/${targetBranch}`);
   } catch {
-    log.push(`origin/${targetBranch} not found; starting from defaultBranch`);
+    log.push(`origin/${targetBranch} not found; starting from ${baseBranch}`);
   }
 
-  return { defaultBranch: repo.defaultBranch, log, workspace };
+  return { baseBranch, log, workspace };
 }
 
 async function pushAndCapture(

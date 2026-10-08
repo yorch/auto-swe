@@ -156,6 +156,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       return agentNodeWorkspaceActivities.runAgentNode({
         ...input,
         workspace: {
+          ...(payloadBaseBranch(request) ? { baseBranch: payloadBaseBranch(request) } : {}),
           branch: lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined,
           repoId: request.repoId,
           ticketId: request.externalTicketId,
@@ -266,12 +267,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'executeReviewFixImplementation',
-    ({ ctx, config, inputs }) => {
+    ({ ctx, request, config, inputs }) => {
       const rejection =
         (inputs.rejectionSummary as string | undefined) ??
         (lookupPath(ctx, 'context.lastRejectionSummary') as string | undefined) ??
         '';
-      const prev = pickCodeResult(inputs.previousCodeResult, ctx);
+      const prev = withRunBase(pickCodeResult(inputs.previousCodeResult, ctx), request);
       const allowedPaths = allowedPathsConfig(config);
       return allowedPaths
         ? agentActivities.executeReviewFixImplementation(
@@ -289,12 +290,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'executeCIFixImplementation',
-    ({ ctx, config, inputs }) => {
+    ({ ctx, request, config, inputs }) => {
       const failureContext =
         (inputs.failureContext as string | undefined) ??
         (lookupPath(ctx, 'context.lastCILogs') as string | undefined) ??
         '';
-      const prev = pickCodeResult(inputs.previousCodeResult, ctx);
+      const prev = withRunBase(pickCodeResult(inputs.previousCodeResult, ctx), request);
       return agentActivities.executeCIFixImplementation(
         failureContext,
         prev,
@@ -464,7 +465,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'executeGateFixImplementation',
-    ({ ctx, config, inputs }) => {
+    ({ ctx, request, config, inputs }) => {
       const gateName =
         (inputs.gateName as string | undefined) ??
         (config.gateName as string | undefined) ??
@@ -477,7 +478,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
           'executeGateFixImplementation requires inputs.gateOutput or context.lastGateOutput'
         );
       }
-      const prev = pickCodeResult(inputs.previousCodeResult, ctx);
+      const prev = withRunBase(pickCodeResult(inputs.previousCodeResult, ctx), request);
       return agentActivities.executeGateFixImplementation({
         gateName,
         gateOutput,
@@ -630,6 +631,31 @@ function pickCodeResult(provided: unknown, ctx: Context): CodeResult {
     throw new Error('step requires a CodeResult but none is bound (context.currentCodeResult)');
   }
   return v as CodeResult;
+}
+
+/**
+ * The base branch the run's launch payload names, unvalidated (the activity that
+ * clones validates it). Plain property reads: this runs in the workflow isolate.
+ */
+function payloadBaseBranch(request: RepoWorkRequest): string | undefined {
+  const payload = request.payload;
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return undefined;
+  }
+  const raw = (payload as Record<string, unknown>).baseBranch;
+  return typeof raw === 'string' && raw !== '' ? raw : undefined;
+}
+
+/**
+ * A fix session's previous result, with the run's base filled in when the result does not
+ * name one — a CodeResult a template assembles in a `set` node never does, and a fix session
+ * that fell back to the default branch would clone the wrong branch and diff the whole
+ * divergence between the two. Unchanged for a run with no base, so those runs call the
+ * activity exactly as before.
+ */
+function withRunBase(prev: CodeResult, request: RepoWorkRequest): CodeResult {
+  const base = payloadBaseBranch(request);
+  return base && !prev.baseBranch ? { ...prev, baseBranch: base } : prev;
 }
 
 /**

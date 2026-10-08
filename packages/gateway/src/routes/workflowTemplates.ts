@@ -36,6 +36,7 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
@@ -2007,6 +2008,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         if (!authorization.ok) {
           return sendLaunchRefusal(reply, authorization.refusal);
         }
+      }
+
+      // An optional `baseBranch` in the payload: the branch the run's change is cut from
+      // and its pull request targets (unset: the repository's default branch).
+      const base = await launchBaseBranch(payload, reply);
+      if (!base.ok) {
+        return;
       }
 
       const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);

@@ -14,8 +14,8 @@ import { findRepoByName } from './workRequests.js';
 const SUB_HELP = `auto-swe agent — run a library agent on a repository
 
   agent run <key[@version]> "<prompt>" --repo=<org/name>|--repo-id=<uuid>
-            [--deliver=none|branch|draft_pr] [--max-steps=N] [--timeout=SECONDS]
-            [--budget=STANDARD|LARGE|EPIC] [--idempotency-key=KEY] [--wait]
+            [--deliver=none|branch|draft_pr] [--base=<branch>] [--max-steps=N]
+            [--timeout=SECONDS] [--budget=STANDARD|LARGE|EPIC] [--idempotency-key=KEY] [--wait]
   agent rerun <workRequestId> [--idempotency-key=KEY] [--wait]
 
   The agent works in a throwaway checkout of the repository. By default nothing leaves
@@ -27,6 +27,8 @@ const SUB_HELP = `auto-swe agent — run a library agent on a repository
     <key[@version]>        A library agent (\`key\` floats; \`key@3\` pins the global version)
     --prompt=@<file>|-     Read the prompt from a file or stdin instead of the argument
                            (use it for a long prompt or one that begins with "-")
+    --base=<branch>        Cut the checkout from this branch and open a draft PR into it
+                           (default: the repository's default branch)
     --max-steps=N          Cap model steps (can only lower the platform ceiling)
     --timeout=SECONDS      Cap wall-clock time (can only lower the platform ceiling)
     --wait                 Poll until the run finishes; exit 2 if it did not succeed
@@ -156,6 +158,7 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
     'repo',
     'repo-id',
     'deliver',
+    'base',
     'max-steps',
     'timeout',
     'budget',
@@ -210,6 +213,7 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
     '/api/v1/agent-runs',
     {
       agent,
+      ...(flags.base ? { baseBranch: flags.base } : {}),
       budgetTier: budget,
       deliver,
       ...(maxSteps > 0 ? { maxSteps } : {}),
