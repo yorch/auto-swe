@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CI_TRIAGE_TEMPLATE_NAME } from '../../lib/ciTrigger.js';
+import { type Dispatcher, runSpec } from '../interpreter.js';
 import type { Node } from '../spec.js';
 import { validateSpec } from '../validateSpec.js';
 import { CI_TRIAGE_AND_FIX_SPEC } from './ciTriageAndFix.js';
@@ -44,5 +45,107 @@ describe('ci-triage-and-fix', () => {
   it('validates', () => {
     const result = validateSpec(CI_TRIAGE_AND_FIX_SPEC);
     expect(result.errors).toEqual([]);
+  });
+});
+
+describe('ci-triage-and-fix runs', () => {
+  type Outputs = Record<string, unknown | (() => unknown)>;
+
+  function dispatcher(outputs: Outputs) {
+    const steps: Array<{ step: string; inputs: Record<string, unknown> }> = [];
+    const d: Dispatcher = {
+      async dispatchStep({ step, inputs }) {
+        steps.push({ inputs, step });
+        const out = outputs[step];
+        return typeof out === 'function' ? (out as () => unknown)() : out;
+      },
+      async recordStep() {},
+      async waitSignal() {
+        // The draft's CI passes.
+        return { passed: true };
+      },
+    };
+    return { d, steps };
+  }
+
+  const base = () => ({
+    context: {},
+    nodes: {},
+    request: { externalTicketId: 'ci-1-1', repoId: 'r' },
+    workflow: { id: 'w' },
+  });
+  const triage = (decision: string) => ({
+    brief: 'Workflow failed: expected 3, received 4',
+    category: 'regression',
+    decision,
+    reason: 'because',
+  });
+
+  it('skips without reporting a run the platform may not act on', async () => {
+    const { d, steps } = dispatcher({ triageCiFailure: triage('skip') });
+    const result = await runSpec(CI_TRIAGE_AND_FIX_SPEC, base(), d);
+    expect(result.status).toBe('SKIPPED');
+    expect(steps.map((s) => s.step)).toEqual(['triageCiFailure']);
+  });
+
+  it('reports a diagnosis without changing anything', async () => {
+    const { d, steps } = dispatcher({
+      reportCiTriage: { commented: true },
+      triageCiFailure: triage('report'),
+    });
+    const result = await runSpec(CI_TRIAGE_AND_FIX_SPEC, base(), d);
+    expect(result.status).toBe('SUCCESS');
+    expect(steps.map((s) => s.step)).toEqual(['triageCiFailure', 'reportCiTriage']);
+  });
+
+  it('fixes, opens a draft, links it from the PR and ends when its CI passes', async () => {
+    const { d, steps } = dispatcher({
+      createOrUpdatePullRequest: { prNumber: 8, prUrl: 'https://github.com/a/b/pull/8' },
+      executeImplementation: {
+        branch: 'auto/ci-1-1',
+        filesChanged: [{ path: 'src/sum.ts' }],
+        headSha: 'x',
+      },
+      reportCiTriage: { commented: true },
+      resolveCiWaitConfig: { deadlineSec: 60, graceSec: 5, intervalSec: 5, mode: 'signal' },
+      runLint: { passed: true },
+      runTests: { passed: true },
+      runTypecheck: { passed: true },
+      triageCiFailure: triage('fix'),
+      updateDomainState: {},
+    });
+    const result = await runSpec(CI_TRIAGE_AND_FIX_SPEC, base(), d);
+    expect(result.status).toBe('SUCCESS');
+    const implement = steps.find((s) => s.step === 'executeImplementation');
+    expect(implement?.inputs.ciDiagnosis).toContain('expected 3');
+    const report = steps.filter((s) => s.step === 'reportCiTriage').at(-1);
+    expect(report?.inputs.fixPrUrl).toBe('https://github.com/a/b/pull/8');
+  });
+
+  it('reports and ends FAILED when the fix attempt fails, opening nothing', async () => {
+    const { d, steps } = dispatcher({
+      executeImplementation: () => {
+        throw new Error('DIFF_TOUCHES_WORKFLOWS');
+      },
+      reportCiTriage: { commented: true },
+      triageCiFailure: triage('fix'),
+      updateDomainState: {},
+    });
+    const result = await runSpec(CI_TRIAGE_AND_FIX_SPEC, base(), d);
+    expect(result.status).toBe('FAILED');
+    expect(steps.map((s) => s.step)).not.toContain('createOrUpdatePullRequest');
+    expect(steps.at(-1)?.step).toBe('reportCiTriage');
+  });
+
+  it('reports instead of opening a PR when the fix changed no files', async () => {
+    const { d, steps } = dispatcher({
+      executeImplementation: { branch: 'auto/ci-1-1', filesChanged: [] },
+      reportCiTriage: { commented: true },
+      triageCiFailure: triage('fix'),
+      updateDomainState: {},
+    });
+    const result = await runSpec(CI_TRIAGE_AND_FIX_SPEC, base(), d);
+    expect(result.status).toBe('SUCCESS');
+    expect(steps.map((s) => s.step)).not.toContain('createOrUpdatePullRequest');
   });
 });

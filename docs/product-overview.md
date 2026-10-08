@@ -234,7 +234,8 @@ the template's declared `inputSchema`, with no ticket ID and no repository requi
 
 A payload may name a **`baseBranch`**: the branch a repository run cuts its change from, diffs
 against, and opens its pull request into, in place of the repository's default branch. It is a
-reserved key — every step that clones honours it, whatever the template — and it is checked before
+reserved key — every step that clones honours it, whatever the template, so a template that
+used an input of that name for something else now targets that branch — and it is checked before
 anything is written: an invalid branch name, or one of the platform's own `<branchPrefix>/…` work
 branches, is `400 INVALID_BASE_BRANCH`. It lives in the payload because the payload is what a retry
 and a re-run copy, so a later attempt targets the same branch. Agent runs take it as a body field

@@ -16,12 +16,12 @@
  */
 import { prisma } from '@auto-swe/shared/db';
 import { type CiTriagePayload, CiTriagePayloadSchema } from '@auto-swe/shared/lib/ciTrigger';
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
-import { AgentTracer, redactString } from '../lib/agentTracer.js';
+import { AgentTracer } from '../lib/agentTracer.js';
+import { ciLogIsUsable, redactCiLog } from '../lib/ciLogGuard.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
@@ -104,30 +104,6 @@ export interface CiTriageResult {
   pullRequestNumber: number | null;
   /** Markdown for the implementer: the diagnosis and log excerpts. Untrusted data. */
   brief: string;
-}
-
-/** Secret shapes `redactString` does not cover, which a build log can print. */
-const SECRET_PATTERNS: RegExp[] = [
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
-  /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
-  /\bxox[abposr]-[A-Za-z0-9-]{10,}\b/g,
-  /\bsk-[A-Za-z0-9_-]{20,}\b/g,
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
-];
-
-/**
- * Redact what looks like a credential before a log goes to a model, a trace or
- * a comment. GitHub masks the secrets it was given; it cannot mask a token a
- * step derived or printed from elsewhere.
- */
-export function redactCiLog(text: string): string {
-  let out = redactString(text);
-  for (const re of SECRET_PATTERNS) {
-    out = out.replace(re, '***');
-  }
-  return out;
 }
 
 function emptyResult(decision: CiTriageDecision, reason: string): CiTriageResult {
@@ -243,7 +219,7 @@ export function decide(input: {
 }): { decision: 'fix' | 'report'; reason: string } {
   const { verdict } = input;
   if (input.mode !== 'fix') {
-    return { decision: 'report', reason: 'the trigger only diagnoses (TRIAGE_ONLY)' };
+    return { decision: 'report', reason: 'the run was started to diagnose only (mode triage)' };
   }
   if (!input.logsRead) {
     return { decision: 'report', reason: 'no job log could be read, so nothing is changed' };
@@ -329,9 +305,17 @@ async function triageCiFailureImpl(
     // with the failing branch as its head.
     let pullRequestNumber: number | null = null;
     if (failure.run.event === 'pull_request') {
-      const pr = payload.pullRequestNumber
-        ? await scm.pullRequestInfo(repoRef, payload.pullRequestNumber)
-        : null;
+      // The payload's pull request, else the one GitHub lists for this branch on the run.
+      const prNumber =
+        payload.pullRequestNumber ??
+        failure.run.pullRequests.find((p) => p.headRef === headBranch)?.number ??
+        null;
+      if (prNumber === null) {
+        const reason = 'the run names no pull request from this branch';
+        tracer.addActivityEvent({ name: 'ci_triage.skipped', outputJson: { reason } });
+        return { ...emptyResult('skip', reason), run: runSummary(failure) };
+      }
+      const pr = await scm.pullRequestInfo(repoRef, prNumber);
       if (
         pr?.state !== 'open' ||
         pr.headRef !== headBranch ||
@@ -352,14 +336,9 @@ async function triageCiFailureImpl(
 
     // Instructions planted in a log are the attack this template invites; a log that
     // matches an injection pattern is diagnosed but never fixed from.
-    let suspiciousLogs = false;
-    try {
-      const scan = await scanSkillContent(logs, { full: true });
-      suspiciousLogs = !scan.safe || scan.incomplete === true;
-    } catch {
-      // A scan that cannot run cannot say the logs are clean.
-      suspiciousLogs = true;
-    }
+    // Screened with the INJECTION patterns only (`lib/ciLogGuard.ts`); a scan that cannot
+    // complete cannot say the logs are clean.
+    const suspiciousLogs = !(await ciLogIsUsable(logs));
 
     heartbeat('diagnosing');
     const spec = await resolveAgentSpec(

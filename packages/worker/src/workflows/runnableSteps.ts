@@ -78,13 +78,22 @@ function resolveConnectionId(step: string, ctx: Context, inputs: Record<string, 
  * default applies.
  */
 /**
- * `{ refuseWorkflowChanges: true }` when the step's `config.refuseWorkflowChanges` is true,
- * else undefined — so a step that does not set it calls its activity exactly as before.
+ * What a step's `config` asks of an implementer step beyond the defaults:
+ * `refuseWorkflowChanges` and (for the CI fix) `untrustedCiLogs`. Undefined when it asks for
+ * neither — so a step that does not set them calls its activity exactly as before.
  */
 function guardOptionsConfig(
   config: Record<string, unknown>
-): { refuseWorkflowChanges: true } | undefined {
-  return config.refuseWorkflowChanges === true ? { refuseWorkflowChanges: true } : undefined;
+): { refuseWorkflowChanges?: true; untrustedCiLogs?: true } | undefined {
+  const refuse = config.refuseWorkflowChanges === true;
+  const untrusted = config.untrustedCiLogs === true;
+  if (!refuse && !untrusted) {
+    return undefined;
+  }
+  return {
+    ...(refuse ? { refuseWorkflowChanges: true as const } : {}),
+    ...(untrusted ? { untrustedCiLogs: true as const } : {}),
+  };
 }
 
 /** Longest CI diagnosis handed to the implementer, so log text cannot crowd out the task. */
@@ -581,7 +590,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         gateName,
         gateOutput,
         previousCodeResult: prev,
-        ...(guardOptionsConfig(config) ? { refuseWorkflowChanges: true } : {}),
+        ...(guardOptionsConfig(config)?.refuseWorkflowChanges
+          ? { refuseWorkflowChanges: true }
+          : {}),
         systemPromptOverride: config.systemPrompt as string | undefined,
       });
     },

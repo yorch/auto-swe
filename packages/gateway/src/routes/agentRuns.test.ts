@@ -277,7 +277,7 @@ describe('POST /api/v1/agent-runs', () => {
     it('refuses a platform work branch: it belongs to another run', async () => {
       const res = await post({ baseBranch: 'auto/JIRA-1' });
       expect(res.statusCode).toBe(400);
-      expect(res.json().error.code).toBe('BASE_BRANCH_REFUSED');
+      expect(res.json().error.code).toBe('INVALID_BASE_BRANCH');
       expect(started).toHaveLength(0);
     });
   });

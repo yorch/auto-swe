@@ -27,6 +27,12 @@
       "onTrue": "incCIRetries",
       "type": "cond"
     },
+    "checkImplemented": {
+      "expr": "nodes.implement.output == null",
+      "onFalse": "storeCodeResult",
+      "onTrue": "implementFailed",
+      "type": "cond"
+    },
     "checkSkipped": {
       "expr": "context.ciTriage.decision == 'skip'",
       "onFalse": "reportDiagnosis",
@@ -35,7 +41,8 @@
     },
     "ciFix": {
       "config": {
-        "refuseWorkflowChanges": true
+        "refuseWorkflowChanges": true,
+        "untrustedCiLogs": true
       },
       "inputs": {
         "failureContext": {
@@ -125,6 +132,39 @@
       "step": "fetchCILogs",
       "type": "step"
     },
+    "fixFailed": {
+      "result": {
+        "category": {
+          "from": "context.ciTriage.category"
+        },
+        "confidence": {
+          "from": "context.ciTriage.confidence"
+        },
+        "decision": {
+          "from": "context.ciTriage.decision"
+        },
+        "error": {
+          "from": "nodes.implement.error"
+        },
+        "reason": {
+          "from": "context.ciTriage.reason"
+        },
+        "rootCause": {
+          "from": "context.ciTriage.rootCause"
+        },
+        "run": {
+          "from": "context.ciTriage.run"
+        },
+        "suggestedFix": {
+          "from": "context.ciTriage.suggestedFix"
+        },
+        "summary": {
+          "from": "context.ciTriage.summary"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
     "implement": {
       "config": {
         "refuseWorkflowChanges": true
@@ -134,9 +174,22 @@
           "from": "context.ciTriage.brief"
         }
       },
-      "next": "storeCodeResult",
+      "next": "checkImplemented",
+      "onFail": "warn",
       "step": "executeImplementation",
       "type": "step"
+    },
+    "implementFailed": {
+      "next": "reportFixFailed",
+      "type": "set",
+      "values": {
+        "context.ciTriage.decision": {
+          "literal": "report"
+        },
+        "context.ciTriage.reason": {
+          "literal": "a fix was attempted but failed before a pull request was opened"
+        }
+      }
     },
     "incCIRetries": {
       "next": "checkCILimit",
@@ -218,6 +271,17 @@
         }
       },
       "next": "loadCiWaitConfig",
+      "onFail": "warn",
+      "step": "reportCiTriage",
+      "type": "step"
+    },
+    "reportFixFailed": {
+      "inputs": {
+        "triage": {
+          "from": "context.ciTriage"
+        }
+      },
+      "next": "fixFailed",
       "onFail": "warn",
       "step": "reportCiTriage",
       "type": "step"

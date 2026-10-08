@@ -336,7 +336,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       return error(
         reply,
         400,
-        'BASE_BRANCH_REFUSED',
+        'INVALID_BASE_BRANCH',
         `baseBranch '${input.baseBranch}' is a platform work branch; a run may not be based on one`
       );
     }

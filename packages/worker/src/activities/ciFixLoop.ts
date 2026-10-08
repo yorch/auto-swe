@@ -1,11 +1,13 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
+import { ApplicationFailure } from '@temporalio/activity';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import {
   CI_FAILURE_TRACE_CHARS,
   CI_FAILURE_TRACE_EVENT,
   currentActivityId,
 } from '../lib/attemptTrace.js';
+import { ciLogIsUsable, fenceCiLogs, redactCiLog } from '../lib/ciLogGuard.js';
 import { rejectionText } from '../lib/rejectionText.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
@@ -33,9 +35,16 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
   return getScmProvider(repoRef).fetchCiLogs(logsUrl, repoRef);
 }
 
-/** Pre-push refusals a template step asks of a fix session (`config.refuseWorkflowChanges`). */
+/** What a template step asks of a fix session beyond the defaults. */
 export interface FixSessionOptions {
+  /** `config.refuseWorkflowChanges`: refuse a workflow or action change before the push. */
   refuseWorkflowChanges?: boolean;
+  /**
+   * `config.untrustedCiLogs`: the logs are untrusted input (the CI triage template). They are
+   * redacted, screened for injection phrasing — a log that matches is refused, never fixed
+   * from — and fenced as data before the agent or the trace sees them.
+   */
+  untrustedCiLogs?: boolean;
 }
 
 /**
@@ -50,6 +59,17 @@ export async function executeCIFixImplementation(
   systemPromptOverride?: string,
   options: FixSessionOptions = {}
 ): Promise<CodeResult> {
+  if (options.untrustedCiLogs) {
+    const redacted = redactCiLog(failureContext);
+    if (!(await ciLogIsUsable(redacted))) {
+      throw ApplicationFailure.nonRetryable(
+        'The CI logs contain text that looks like instructions to an agent, or could not be ' +
+          'screened, so no fix is attempted from them.',
+        'CI_LOGS_REFUSED'
+      );
+    }
+    failureContext = fenceCiLogs(redacted);
+  }
   return runImplementerFixSession({
     ...(options.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'ciFixer',

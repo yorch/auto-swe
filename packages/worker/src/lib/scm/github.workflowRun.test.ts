@@ -18,12 +18,19 @@ vi.mock('@auto-swe/shared/lib/connectionCredential', () => ({
   resolveUserCredential: vi.fn(async () => null),
   resolveUserCredentialPolicy: vi.fn(async () => ({ enabled: true, hosts: ['github.com'] })),
 }));
+const cred = vi.hoisted(() => ({ appId: null as string | null }));
+vi.mock('@auto-swe/shared/lib/githubHostCredential', () => ({
+  resolvePlatformCredential: vi.fn(async () => ({
+    config: { apiUrl: 'https://api.github.com', appId: cred.appId, baseUrl: 'https://github.com' },
+    scope: 'instance',
+  })),
+}));
 vi.mock('../runLauncher.js', () => ({ currentRunLauncherId: vi.fn(async () => null) }));
 
 const a = vi.hoisted(() => ({
   createComment: vi.fn(),
-  download: vi.fn(),
   getAttempt: vi.fn(),
+  getAuth: vi.fn(),
   getBranch: vi.fn(),
   listComments: vi.fn(),
   listJobs: vi.fn(),
@@ -33,7 +40,6 @@ const a = vi.hoisted(() => ({
 vi.mock('@octokit/rest', () => ({
   Octokit: class {
     actions = {
-      downloadJobLogsForWorkflowRun: a.download,
       getWorkflowRunAttempt: a.getAttempt,
       listJobsForWorkflowRunAttempt: a.listJobs,
     };
@@ -42,8 +48,21 @@ vi.mock('@octokit/rest', () => ({
       listComments: a.listComments,
       updateComment: a.updateComment,
     };
+    paginate = {
+      // One page per listComments result, as the real iterator yields.
+      iterator: async function* (
+        fn: (p: unknown) => Promise<{ data: unknown[] }>,
+        params: unknown
+      ) {
+        const pages = (await fn(params)) as unknown as { data: unknown[] }[] | { data: unknown[] };
+        for (const page of Array.isArray(pages) ? pages : [pages]) {
+          yield page;
+        }
+      },
+    };
     pulls = { get: a.pullsGet };
     repos = { getBranch: a.getBranch };
+    users = { getAuthenticated: a.getAuth };
   },
 }));
 
@@ -102,8 +121,16 @@ describe('GitHubScmProvider.fetchWorkflowRunFailure', () => {
         ],
       },
     });
-    a.download.mockResolvedValue({ data: `${'x'.repeat(20_000)}TAIL` });
-    const out = await new GitHubScmProvider().fetchWorkflowRunFailure(repo, '9', 2);
+    const scm = new GitHubScmProvider();
+    const download = vi
+      .spyOn(scm as unknown as { downloadCiLogs: () => Promise<unknown> }, 'downloadCiLogs')
+      .mockResolvedValue({ ok: true, text: `${'x'.repeat(20_000)}TAIL` });
+    const out = await scm.fetchWorkflowRunFailure(repo, '9', 2);
+    // The job log is read from the repository's own API, through the guarded download.
+    expect(download).toHaveBeenCalledWith(
+      'https://api.github.com/repos/acme/api/actions/jobs/2/logs',
+      repo
+    );
     expect(a.getAttempt).toHaveBeenCalledWith({
       attempt_number: 2,
       owner: 'acme',
@@ -127,9 +154,19 @@ describe('GitHubScmProvider.fetchWorkflowRunFailure', () => {
     a.listJobs.mockResolvedValue({
       data: { jobs: [{ conclusion: 'failure', html_url: null, id: 2, name: 'test', steps: [] }] },
     });
-    a.download.mockRejectedValue(Object.assign(new Error('gone'), { status: 410 }));
-    const out = await new GitHubScmProvider().fetchWorkflowRunFailure(repo, '9', 1);
-    expect(out.failedJobs[0]).toMatchObject({ log: '', logUnavailable: 'HTTP 410' });
+    const scm = new GitHubScmProvider();
+    vi.spyOn(
+      scm as unknown as { downloadCiLogs: () => Promise<unknown> },
+      'downloadCiLogs'
+    ).mockResolvedValue({
+      error: 'Failed to fetch CI logs (HTTP 410): gone',
+      ok: false,
+    });
+    const out = await scm.fetchWorkflowRunFailure(repo, '9', 1);
+    expect(out.failedJobs[0]).toMatchObject({
+      log: '',
+      logUnavailable: 'Failed to fetch CI logs (HTTP 410): gone',
+    });
   });
 
   it('fails non-retryably on a missing run or a credential without Actions access', async () => {
@@ -161,25 +198,66 @@ describe('GitHubScmProvider.branchHeadSha', () => {
 });
 
 describe('GitHubScmProvider.upsertMarkedComment', () => {
-  it('edits the newest comment carrying the marker', async () => {
-    a.listComments.mockResolvedValue({
-      data: [
-        { body: 'unrelated', id: 1 },
-        { body: '<!-- m --> old', id: 2 },
-      ],
-    });
+  const ours = { body: '<!-- m --> old', id: 2, user: { login: 'platform-bot' } };
+
+  beforeEach(() => {
+    a.getAuth.mockResolvedValue({ data: { login: 'platform-bot' } });
     a.updateComment.mockResolvedValue({ data: { html_url: 'https://x/c/2' } });
+    a.createComment.mockResolvedValue({ data: { html_url: 'https://x/c/new' } });
+  });
+
+  it("edits the newest of the platform's own marked comments, on any page", async () => {
+    a.listComments.mockResolvedValue([
+      { data: [{ body: '<!-- m --> first', id: 1, user: { login: 'platform-bot' } }] },
+      { data: [{ body: 'unrelated', id: 5, user: { login: 'alice' } }, ours] },
+    ]);
     const out = await new GitHubScmProvider().upsertMarkedComment(repo, 7, '<!-- m -->', 'new');
     expect(a.updateComment).toHaveBeenCalledWith(expect.objectContaining({ comment_id: 2 }));
     expect(out).toEqual({ htmlUrl: 'https://x/c/2', updated: true });
     expect(a.createComment).not.toHaveBeenCalled();
   });
 
-  it('posts a new comment when there is none, or the marked one is not ours to edit', async () => {
-    a.listComments.mockResolvedValue({ data: [{ body: '<!-- m --> theirs', id: 3 }] });
-    a.updateComment.mockRejectedValue(Object.assign(new Error('no'), { status: 403 }));
-    a.createComment.mockResolvedValue({ data: { html_url: 'https://x/c/4' } });
+  it("never edits someone else's comment that carries the marker", async () => {
+    a.listComments.mockResolvedValue({
+      data: [{ body: '<!-- m --> planted', id: 3, user: { login: 'mallory' } }],
+    });
     const out = await new GitHubScmProvider().upsertMarkedComment(repo, 7, '<!-- m -->', 'new');
-    expect(out).toEqual({ htmlUrl: 'https://x/c/4', updated: false });
+    expect(a.updateComment).not.toHaveBeenCalled();
+    expect(out).toEqual({ htmlUrl: 'https://x/c/new', updated: false });
+  });
+
+  it('recognises an App installation by the app GitHub stamps on its comments', async () => {
+    a.getAuth.mockRejectedValue(Object.assign(new Error('integration'), { status: 403 }));
+    cred.appId = '41';
+    a.listComments.mockResolvedValue({
+      data: [
+        {
+          body: '<!-- m -->',
+          id: 4,
+          performed_via_github_app: { id: 41 },
+          user: { login: 'app[bot]' },
+        },
+        {
+          body: '<!-- m -->',
+          id: 6,
+          performed_via_github_app: { id: 99 },
+          user: { login: 'other[bot]' },
+        },
+      ],
+    });
+    const out = await new GitHubScmProvider().upsertMarkedComment(repo, 7, '<!-- m -->', 'new');
+    expect(a.updateComment).toHaveBeenCalledWith(expect.objectContaining({ comment_id: 4 }));
+    expect(out.updated).toBe(true);
+    cred.appId = null;
+  });
+
+  it('edits nothing when it cannot tell which comments are its own', async () => {
+    a.getAuth.mockRejectedValue(Object.assign(new Error('integration'), { status: 403 }));
+    a.listComments.mockResolvedValue({
+      data: [{ body: '<!-- m -->', id: 4, performed_via_github_app: { id: 41 } }],
+    });
+    const out = await new GitHubScmProvider().upsertMarkedComment(repo, 7, '<!-- m -->', 'new');
+    expect(a.listComments).not.toHaveBeenCalled();
+    expect(out.updated).toBe(false);
   });
 });

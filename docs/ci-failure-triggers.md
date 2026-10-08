@@ -128,11 +128,26 @@ The run goes through these nodes:
    instead of waiting for the webhook when the CI wait strategy at `/govern/workflow-defaults` says
    so, which matters here: a draft into a feature branch often runs no CI at all.
 5. When the failure came from a pull request, the diagnosis comment links the draft.
+6. **A fix attempt that fails** (a refused change, the security gate, the budget) still posts the
+   diagnosis, then ends the run `FAILED` with the error. Nothing is opened.
 
 Every implementer step in the template, including the CI loop's fix, sets
-`refuseWorkflowChanges`: a change under `.github/workflows/` or `.github/actions/` fails the step
-before the push (`DIFF_TOUCHES_WORKFLOWS`), because a pushed workflow runs with the repository's
-secrets.
+`refuseWorkflowChanges`. Before the push, the step fails (`DIFF_TOUCHES_WORKFLOWS`) on:
+
+- a change under `.github/workflows` or `.github/actions`, or to either path itself, in any case;
+- any added or changed symlink or submodule, either of which can point a checked path at content
+  the check never read.
+
+This refusal stops the agent editing workflow and action YAML. **It is not a secrets boundary.**
+The draft's branch is pushed to the repository, so `on: push` and `on: pull_request` workflows run
+on it with whatever secrets they are given. They run the repository's own code, which the fix may
+change: package scripts, test files, build scripts, a local action referenced from outside
+`.github/actions`. Restrict what secrets workflows expose to branches the platform pushes
+(`<branchPrefix>/…`), as for any automated contributor.
+
+The CI loop's fix also sets `untrustedCiLogs`. The draft's CI output is redacted, screened as in
+§4, and fenced before the fixer sees it. Logs that fail the screen stop the fix with
+`CI_LOGS_REFUSED` instead of being used.
 
 ### The base branch
 
@@ -162,8 +177,11 @@ reason:
 
 - the payload's `mode` is `fix`;
 - at least one failed job's log could be read;
-- the logs passed the `INJECTION` / `EXFILTRATION` scanner patterns (`scanSkillContent`, over the
-  whole text). A scan that matches, or cannot complete, means the logs are never used to fix from;
+- the logs passed the prompt-injection screen (`ciLogIsUsable`, over the whole text). It uses the
+  active `INJECTION` scanner patterns except `template-injection`, which matches every `{{ }}` a
+  build prints. The `EXFILTRATION` set is not used: it is written for prose and matches nearly
+  every log (`https://…`, `curl `). A scan that matches, or cannot complete, means the logs are
+  never used to fix from;
 - for a pull request, the branch has not moved since the failure. A pushed branch that moved is
   still fixed, on its current tip;
 - the category is `regression`, `test_bug`, `configuration` or `dependency`, and the verdict says
@@ -172,17 +190,24 @@ reason:
 
 ## 5. What reaches the model, and what reaches the PR
 
-- **Logs are redacted** before the triager, the trace or the brief sees them. `redactString`, plus
-  GitHub, AWS, Slack, OpenAI-style, JWT and private-key token shapes. GitHub masks only the secrets
-  it was given.
+- **Logs are redacted** before the triager, the CI loop's fixer, the trace or the brief sees them.
+  This applies `redactString`, plus GitHub, AWS, Slack, OpenAI-style, JWT and private-key token
+  shapes. GitHub masks only the secrets it was given.
+- **Logs are downloaded through the guarded fetch** the CI loop uses (`downloadCiLogs`). Every
+  redirect hop passes the SSRF guard and is pinned, the credential goes only to the repository's
+  API origin, and each download times out after 15 s.
 - **The implementer gets the diagnosis as untrusted data.** It arrives through the step's
   `ciDiagnosis` input, not `guidance`, and is fenced and labelled as derived from CI logs, never as
   the requester's instructions.
 - **The pull request comment is rendered from the verdict's fields**, not posted as model text.
   Each field is flattened to one line and bounded, and mentions, autolinks, HTML and markdown
-  structure are neutralised. The only link is the draft's URL as GitHub returned it. The platform
-  edits one comment per pull request, found by a hidden marker, rather than adding one per
-  failure. A comment that cannot be posted is reported in the step output and does not fail the run.
+  structure are neutralised. The only link is the draft's URL as GitHub returned it.
+- **The platform edits one comment per pull request** rather than adding one per failure. It is
+  found by a hidden marker, but only among comments **the platform wrote**: the login a PAT
+  authenticates as, or, for a GitHub App, the App id GitHub stamps on its comments. Anyone can
+  paste the marker, and a write credential can edit other people's comments, so the marker alone
+  is never enough. When the platform cannot tell which comments are its own, it posts a new one.
+  A comment that cannot be posted is reported in the step output and does not fail the run.
 
 ## 6. The `ciTriager` agent
 
@@ -225,10 +250,14 @@ See [github-app-setup.md](./github-app-setup.md).
   the fix is still attempted on the head branch.
 - **Workflow files are never changed.** A failure that only a workflow change can fix is diagnosed
   and reported, not fixed.
-- **Injection screening is pattern-based.** The scanner patterns catch known injection phrasing,
-  not every instruction a log could carry. The fenced brief and the workflow-file refusal are the
-  backstop, not the scan.
-- **Comment search is one page.** The marker comment is looked for in the 100 most recent comments
-  of the pull request. On a longer thread a second comment can appear rather than an edit.
+- **Injection screening is pattern-based.** It is only as good as the active `INJECTION` patterns:
+  it catches known phrasing, not every instruction a log could carry, and finds nothing when an
+  admin has deactivated them. The fenced brief and the workflow-file refusal narrow what a planted
+  instruction can do; neither is a secrets boundary (§2).
+- **Comment search is bounded.** The platform's marked comment is looked for in the first 3,000
+  comments of the pull request. On a longer thread, a second comment can appear rather than an
+  edit.
+- **A failed draft is not reported on.** If opening the draft pull request fails (a repository
+  that cannot hold drafts), the run fails without posting the diagnosis.
 - **Nothing proves the fix.** The draft's own CI loop is the check. The template does not re-run the
   originally failing workflow on the fix before opening the draft.

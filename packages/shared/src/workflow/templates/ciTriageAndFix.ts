@@ -106,11 +106,48 @@ const nodes: NodeMap = mergeNodes(
       group: 'fix',
       // Fenced and labelled as untrusted data by the step, never as the requester's guidance.
       inputs: { ciDiagnosis: { from: 'context.ciTriage.brief' } },
-      next: 'storeCodeResult',
+      next: 'checkImplemented',
+      // A refused change (a workflow file, the security gate) or any other failure still
+      // posts the diagnosis, then ends the run FAILED.
+      onFail: 'warn',
       step: 'executeImplementation',
       title: 'Fix the failure',
       type: 'step',
     },
+    checkImplemented: {
+      expr: 'nodes.implement.output == null',
+      group: 'fix',
+      onFalse: 'storeCodeResult',
+      onTrue: 'implementFailed',
+      title: 'Did the fix attempt fail?',
+      type: 'cond',
+    },
+    implementFailed: {
+      group: 'fix',
+      next: 'reportFixFailed',
+      title: 'Record that the fix failed',
+      type: 'set',
+      values: {
+        'context.ciTriage.decision': { literal: 'report' },
+        'context.ciTriage.reason': {
+          literal: 'a fix was attempted but failed before a pull request was opened',
+        },
+      },
+    },
+    reportFixFailed: {
+      group: 'fix',
+      inputs: { triage: { from: 'context.ciTriage' } },
+      next: 'fixFailed',
+      onFail: 'warn',
+      step: 'reportCiTriage',
+      title: 'Post the diagnosis on the pull request',
+      type: 'step',
+    },
+    fixFailed: terminate('FAILED', {
+      group: 'fix',
+      result: { ...TRIAGE_RESULT, error: { from: 'nodes.implement.error' } },
+      title: 'Fix failed',
+    }),
     storeCodeResult: storeCodeResult('checkChanged', { group: 'fix' }),
     checkChanged: {
       expr: 'context.currentCodeResult.filesChanged.length == 0',
@@ -170,12 +207,17 @@ const nodes: NodeMap = mergeNodes(
   }
 );
 
-// The CI loop's own fix step refuses workflow changes too.
+// The CI loop's own fix step refuses workflow changes too…
 const ciFix = nodes.ciFix;
 if (ciFix?.type !== 'step') {
   throw new Error('ci-triage-and-fix: the CI loop has no ciFix step');
 }
-nodes.ciFix = { ...ciFix, config: { ...(ciFix.config ?? {}), ...REFUSE_WORKFLOW_CHANGES } };
+// …and its logs (the draft's own CI output) are untrusted input: redacted, screened for
+// injection phrasing and fenced before the fixer sees them.
+nodes.ciFix = {
+  ...ciFix,
+  config: { ...(ciFix.config ?? {}), ...REFUSE_WORKFLOW_CHANGES, untrustedCiLogs: true },
+};
 
 /**
  * A failed GitHub Actions run, diagnosed, and — when the trigger allows it and

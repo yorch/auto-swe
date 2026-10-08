@@ -17,7 +17,7 @@ import {
  */
 
 /** A path whose change would run with repository secrets or can reach outside the tree. */
-const WORKFLOW_PATH_RE = /^\.github\/(workflows|actions)\//i;
+const WORKFLOW_PATH_RE = /^\.github\/(workflows|actions)(\/|$)/i;
 
 /**
  * Whether a change to `path` is a change to a GitHub Actions workflow or action, which runs
@@ -28,8 +28,8 @@ export function isWorkflowPath(path: string): boolean {
   return WORKFLOW_PATH_RE.test(path);
 }
 
-const SYMLINK_MODE = '120000';
-const GITLINK_MODE = '160000';
+export const SYMLINK_MODE = '120000';
+export const GITLINK_MODE = '160000';
 const ABSENT_MODE = '000000';
 
 export interface RawChange {

@@ -12,14 +12,17 @@ const FORBIDDEN_CHARS = new Set(['~', '^', ':', '?', '*', '[', '\\']);
 
 /**
  * Whether `name` is a branch name a run may be based on: valid under
- * `git check-ref-format --branch`, and safe on a command line.
+ * `git check-ref-format --branch`, and never readable as an option.
  *
  * The git rules, applied to the short name: no ASCII control character, space,
  * `~ ^ : ? * [ \`, no `..`, no `@{`, not `@` alone, no component that starts
  * with `.` or ends with `.lock`, no empty component (a leading, trailing or
  * doubled `/`), and no trailing `.`. On top of git's rules a leading `-` is
- * refused, so the name can never be read as an option by any git subcommand,
- * quoted or not. Every caller still shell-quotes it; this is the second wall.
+ * refused, so no git subcommand can read the name as an option.
+ *
+ * This does NOT make a name safe to splice into a shell command: git allows
+ * `$ ( ) ; | & '` and backticks in a branch name, and so does this. Every
+ * caller shell-quotes it (`shellQuote`); that quoting is the protection.
  */
 export function isSafeGitBranchName(name: string): boolean {
   if (name.length === 0 || name.length > MAX_BRANCH_NAME_LENGTH) {

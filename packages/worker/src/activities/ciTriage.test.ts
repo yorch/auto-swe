@@ -37,12 +37,12 @@ vi.mock('../lib/scm/index.js', () => ({
   toRepoRef: () => ({ organizationName: 'acme', repoName: 'api' }),
 }));
 
+import { redactCiLog } from '../lib/ciLogGuard.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import {
   CI_TRIAGE_COMMENT_MARKER,
   decide,
   neutralizeCommentText,
-  redactCiLog,
   refusalFor,
   renderTriageComment,
   reportCiTriage,
@@ -236,6 +236,40 @@ describe('triageCiFailure', () => {
       request: request({ baseBranch: 'feat/x', pullRequestNumber: 7 }),
     });
     expect(out.decision).toBe('skip');
+  });
+
+  it("falls back to the run's own pull request when the payload names none", async () => {
+    m.fetchWorkflowRunFailure.mockResolvedValue(
+      failure({
+        event: 'pull_request',
+        headBranch: 'feat/x',
+        pullRequests: [{ baseRef: 'main', headRef: 'feat/x', number: 9 }],
+      })
+    );
+    m.pullRequestInfo.mockResolvedValue({
+      baseRef: 'main',
+      headRef: 'feat/x',
+      headRepositoryFullName: 'acme/api',
+      headSha: SHA,
+      htmlUrl: 'https://github.com/acme/api/pull/9',
+      merged: false,
+      number: 9,
+      state: 'open',
+    });
+    const out = await triageCiFailure({ request: request({ baseBranch: 'feat/x' }) });
+    expect(m.pullRequestInfo).toHaveBeenCalledWith(expect.anything(), 9);
+    expect(out).toMatchObject({ decision: 'fix', pullRequestNumber: 9 });
+  });
+
+  it('says so when a pull-request failure names no pull request at all', async () => {
+    m.fetchWorkflowRunFailure.mockResolvedValue(
+      failure({ event: 'pull_request', headBranch: 'feat/x' })
+    );
+    const out = await triageCiFailure({ request: request({ baseBranch: 'feat/x' }) });
+    expect(out).toMatchObject({
+      decision: 'skip',
+      reason: 'the run names no pull request from this branch',
+    });
   });
 
   it('reports instead of fixing when the logs look like an injection', async () => {
