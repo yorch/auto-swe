@@ -381,6 +381,8 @@ Pick a name (`opencodego`, `groq`, `bedrock`, …). If the provider speaks the O
 5. API key: paste from your password manager — you won't see it again after save.
 6. Click **Test** to verify the credential works (issues a `GET <base>/models` probe).
 
+A built-in provider (`anthropic`, `openai`, `google`) with an API base set — a proxy or gateway in front of the vendor — is probed and discovered at `<base>/models` with that provider's own auth style, behind the same SSRF guard. With no API base, the vendor's endpoint is used.
+
 If the provider speaks a different API (e.g. Anthropic-style `/v1/messages`), you need a code change in `packages/worker/src/lib/models.ts` `buildModelUncached()` to construct the right SDK client. The current built-ins are `anthropic`, `openai`, `google`; everything else routes through `@ai-sdk/openai-compatible`.
 
 ### Overriding a model for one team

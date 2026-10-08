@@ -19,8 +19,10 @@ export type ModelKind = 'CHAT' | 'EMBEDDING';
 /**
  * A provider's list-models request: URL plus auth. `query` adds parameters (page
  * size, cursor). Shared by the credential probe and model discovery, so both hit
- * the same endpoint with the same auth behind the same SSRF guard. Returns why
- * the request cannot be made instead, for an OpenAI-compatible provider without a
+ * the same endpoint with the same auth behind the same SSRF guard. A built-in
+ * provider's own endpoint is used unless the credential sets an `apiBase`, which
+ * then replaces it (a proxy keeps the provider's auth style). Returns why the
+ * request cannot be made instead, for an OpenAI-compatible provider without a
  * usable `apiBase`.
  */
 export function modelListRequest(args: {
@@ -36,25 +38,33 @@ export function modelListRequest(args: {
     const params = new URLSearchParams({ ...extra, ...query });
     return params.size ? `${base}?${params}` : base;
   };
-  if (provider === 'anthropic') {
+  // The auth each provider expects, and where its own endpoint lives. A credential's `apiBase`
+  // replaces that endpoint (a proxy or gateway in front of the provider) but not the auth style.
+  const adapters: Record<
+    string,
+    { base: string; headers?: Record<string, string>; keyQuery?: boolean }
+  > = {
+    anthropic: {
+      base: 'https://api.anthropic.com/v1',
+      headers: { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey },
+    },
+    google: { base: 'https://generativelanguage.googleapis.com/v1beta', keyQuery: true },
+    openai: {
+      base: 'https://api.openai.com/v1',
+      headers: { Authorization: `Bearer ${apiKey}` },
+    },
+  };
+  const adapter = adapters[provider];
+  const extra: Record<string, string> = adapter?.keyQuery ? { key: apiKey } : {};
+
+  if (adapter && !apiBase) {
     return {
-      init: { headers: { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey } },
-      url: withQuery('https://api.anthropic.com/v1/models'),
+      init: adapter.headers ? { headers: adapter.headers } : {},
+      url: withQuery(`${adapter.base}/models`, extra),
     };
   }
-  if (provider === 'openai') {
-    return {
-      init: { headers: { Authorization: `Bearer ${apiKey}` } },
-      url: withQuery('https://api.openai.com/v1/models'),
-    };
-  }
-  if (provider === 'google') {
-    return {
-      init: {},
-      url: withQuery('https://generativelanguage.googleapis.com/v1beta/models', { key: apiKey }),
-    };
-  }
-  // OpenAI-compatible: `<base>/models`. SSRF guards run here.
+  // OpenAI-compatible, or a built-in provider behind its own `apiBase`: `<base>/models`.
+  // SSRF guards run here.
   if (!apiBase) {
     return { error: 'apiBase required to list models from an OpenAI-compatible provider' };
   }
@@ -70,8 +80,11 @@ export function modelListRequest(args: {
   const base = safety.url.toString().replace(/\/+$/, '');
   return {
     // The guard checked `apiBase`, not wherever it redirects to.
-    init: { headers: { Authorization: `Bearer ${apiKey}` }, redirect: 'manual' },
-    url: withQuery(`${base}/models`),
+    init: {
+      headers: adapter ? adapter.headers : { Authorization: `Bearer ${apiKey}` },
+      redirect: 'manual',
+    },
+    url: withQuery(`${base}/models`, extra),
   };
 }
 
