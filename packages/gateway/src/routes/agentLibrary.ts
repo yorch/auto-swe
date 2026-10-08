@@ -22,6 +22,7 @@ import {
   validateMcpConnectionRef,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { ModelSpecSchema } from '../lib/modelSpecSchema.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -42,7 +43,11 @@ const AgentBaseFields = {
   description: z.string().max(2_000).nullable().optional(),
   inheritsModelFrom: z.string().max(100).nullable().optional(),
   mcpConnectionId: z.string().uuid().nullable().optional(),
-  modelSpec: z.string().max(200).nullable().optional(),
+  // An empty string clears the model, as null does.
+  modelSpec: z
+    .union([z.literal('').transform(() => null), ModelSpecSchema])
+    .nullable()
+    .optional(),
   name: z.string().min(1).max(200),
   runtime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   skillRefs: z

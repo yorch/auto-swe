@@ -27,3 +27,35 @@ export function parseProviderModelSpec(spec: string): ProviderModelSpec {
   }
   return { modelId, provider };
 }
+
+/**
+ * The canonical spelling of a spec: provider trimmed and lowercased, model id as
+ * written. Credential lookup already reads the provider this way, so storing and
+ * pricing the canonical form keeps `OpenAI/gpt-6-luna` from running on the
+ * `openai` credential while being priced (and harness-checked) as an unknown
+ * provider. Throws on a malformed spec, as {@link parseProviderModelSpec} does.
+ */
+export function normalizeModelSpec(spec: string): string {
+  const { provider, modelId } = parseProviderModelSpec(spec);
+  return `${provider}/${modelId}`;
+}
+
+/**
+ * Why a provider cannot back the embedding model, or null when it can. Anthropic
+ * is a built-in chat provider with no embedding endpoint; every other built-in
+ * and any OpenAI-compatible endpoint may serve one.
+ */
+export function embeddingProviderProblem(provider: string): string | null {
+  return provider.trim().toLowerCase() === 'anthropic'
+    ? "Provider 'anthropic' has no embedding models. Pick an OpenAI, Google or OpenAI-compatible embedding model."
+    : null;
+}
+
+/**
+ * Whether a spec routes to Anthropic — the only provider the claude-code
+ * harness can drive. Case-insensitive, as credential routing is, so a row saved
+ * as `Anthropic/…` before specs were stored canonical still qualifies.
+ */
+export function isAnthropicSpec(spec: string): boolean {
+  return spec.trim().toLowerCase().startsWith('anthropic/');
+}

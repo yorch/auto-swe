@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@auto-swe/shared';
-import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { isAnthropicSpec, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
@@ -126,7 +126,7 @@ export async function runtimeSaveError(
     return own;
   }
   const inherited = await inheritedModelSpec(prisma, version.inheritsModelFrom);
-  if (!inherited || inherited.startsWith('anthropic/')) {
+  if (!inherited || isAnthropicSpec(inherited)) {
     return null;
   }
   return `The claude-code runtime needs an Anthropic model, but this agent inherits '${inherited}' from '${version.inheritsModelFrom}'. Give it an anthropic/<model> of its own, or set the runtime to mastra.`;
@@ -176,7 +176,7 @@ export async function inheritingHarnessWarnings(
    */
   visibleToTeam?: string
 ): Promise<string[]> {
-  if (!modelSpec || modelSpec.startsWith('anthropic/')) {
+  if (!modelSpec || isAnthropicSpec(modelSpec)) {
     return [];
   }
   const warnings: string[] = [];

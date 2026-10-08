@@ -547,6 +547,46 @@ describe('teamAgentLibraryRoutes — team owner', () => {
   });
 });
 
+describe('agent model spec', () => {
+  async function create(modelSpec: unknown) {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'a-1', key: 'spec', version: 1 });
+    const res = await app.inject({
+      body: { key: 'spec', modelSpec, name: 'Spec', scope: 'GLOBAL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    await app.close();
+    return { mockPrisma, res };
+  }
+
+  it('refuses a spec that names no provider', async () => {
+    const { mockPrisma, res } = await create('gpt-6-luna');
+    expect(res.statusCode).toBe(400);
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+  });
+
+  it('stores the spec with its provider lowercased', async () => {
+    const { mockPrisma, res } = await create(' OpenRouter/openai/gpt-6-luna ');
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ modelSpec: 'openrouter/openai/gpt-6-luna' }),
+      })
+    );
+  });
+
+  it('reads an empty spec as no model of its own', async () => {
+    const { mockPrisma, res } = await create('');
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ modelSpec: null }) })
+    );
+  });
+});
+
 describe('agent credential pin', () => {
   const CRED = '33333333-3333-4333-8333-333333333333';
   const OTHER_TEAM = '44444444-4444-4444-8444-444444444444';

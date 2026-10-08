@@ -1,5 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
-import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { embeddingProviderProblem, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { resolveAgent } from './agentResolver.js';
 import { requiredAgentKeysForDeployment } from './deploymentAgents.js';
 
@@ -47,7 +47,10 @@ export async function assertConfigReady(): Promise<void> {
         `  - EmbeddingConfig has invalid modelSpec '${embedding.modelSpec}': ${err instanceof Error ? err.message : err}`
       );
     }
-    if (embedProvider !== null) {
+    const embedProblem = embedProvider !== null ? embeddingProviderProblem(embedProvider) : null;
+    if (embedProblem) {
+      missing.push(`  - EmbeddingConfig (spec '${embedding.modelSpec}'): ${embedProblem}`);
+    } else if (embedProvider !== null) {
       if (embedding.credential) {
         if (embedding.credential.provider !== embedProvider) {
           missing.push(

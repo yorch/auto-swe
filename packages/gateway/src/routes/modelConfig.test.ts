@@ -406,7 +406,10 @@ describe('PUT /embedding-config — model catalog warnings', () => {
     Object.assign(mockPrisma, {
       embeddingConfig: {
         findUnique: vi.fn().mockResolvedValue(null),
-        upsert: vi.fn(async () => ({ id: 'default', modelSpec })),
+        upsert: vi.fn(async (args: { create: { modelSpec: string } }) => ({
+          id: 'default',
+          modelSpec: args.create.modelSpec,
+        })),
       },
       modelCatalogEntry: {
         findMany: vi.fn().mockResolvedValue([]),
@@ -430,10 +433,22 @@ describe('PUT /embedding-config — model catalog warnings', () => {
   });
 
   it('saves a chat model, but warns it is not an embedding model', async () => {
-    const res = await saveEmbeddingSpec('anthropic/claude-opus-5-5');
+    const res = await saveEmbeddingSpec('openai/gpt-6-luna');
     expect(res.statusCode).toBe(200);
     expect(res.json().catalogWarnings).toEqual([
-      "'anthropic/claude-opus-5-5' is cataloged as a chat model, but is being used as an embedding model.",
+      "'openai/gpt-6-luna' is cataloged as a chat model, but is being used as an embedding model.",
     ]);
+  });
+
+  it('refuses Anthropic, which serves no embedding model', async () => {
+    const res = await saveEmbeddingSpec('anthropic/claude-opus-5-5');
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('EMBEDDING_PROVIDER_UNSUPPORTED');
+  });
+
+  it('stores the spec with its provider lowercased', async () => {
+    const res = await saveEmbeddingSpec('OpenAI/text-embedding-3-large');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.modelSpec).toBe('openai/text-embedding-3-large');
   });
 });

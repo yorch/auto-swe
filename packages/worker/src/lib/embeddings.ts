@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { prisma } from '@auto-swe/shared/db';
-import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
-import { embed } from 'ai';
+import { embeddingProviderProblem, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { APICallError, embed } from 'ai';
 import {
   currentActivityType,
   currentAttempt,
@@ -24,7 +26,7 @@ import { EMBEDDING_AGENT_KEY } from './traceTotals.js';
  */
 const REQUIRED_DIMENSIONS = 1536;
 
-type EmbeddingModel = ReturnType<ReturnType<typeof createOpenAI>['embedding']>;
+type EmbeddingModel = Parameters<typeof embed>[0]['model'];
 
 interface CachedEmbeddingModel {
   cacheKey: string;
@@ -33,6 +35,9 @@ interface CachedEmbeddingModel {
    *  vectors from different embedding spaces are never compared. */
   spec: string;
   model: EmbeddingModel;
+  /** An OpenAI-compatible endpoint that refused the `dimensions` parameter;
+   *  later calls leave it out. */
+  dimensionsRejected?: boolean;
 }
 
 let cachedModel: CachedEmbeddingModel | null = null;
@@ -41,34 +46,82 @@ async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
   const { spec, apiKey, apiBase } = await resolveEmbeddingConfig();
   const { provider, modelId } = parseProviderModelSpec(spec);
 
-  const cacheKey = `${spec}|${apiKey.slice(-6)}|${apiBase ?? ''}`;
+  const keyDigest = createHash('sha256').update(apiKey).digest('hex').slice(0, 32);
+  const cacheKey = `${spec}|${keyDigest}|${apiBase ?? ''}`;
   if (cachedModel?.cacheKey === cacheKey) {
     return cachedModel;
   }
 
-  if (provider === 'openai') {
-    cachedModel = {
-      cacheKey,
-      model: createOpenAI({ apiKey, baseURL: apiBase }).embedding(modelId),
-      provider,
-      spec,
-    };
-    return cachedModel;
+  let model: EmbeddingModel;
+  switch (provider) {
+    case 'openai':
+      model = createOpenAI({ apiKey, baseURL: apiBase }).embedding(modelId);
+      break;
+    case 'google':
+      model = createGoogleGenerativeAI({ apiKey, baseURL: apiBase }).embedding(modelId);
+      break;
+    default: {
+      const problem = embeddingProviderProblem(provider);
+      if (problem) {
+        throw new Error(`${problem} Set it at /studio/models (Embeddings tab).`);
+      }
+      if (!apiBase) {
+        throw new Error(
+          `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models (Embeddings tab).`
+        );
+      }
+      model = createOpenAICompatible({ apiKey, baseURL: apiBase, name: provider }).embeddingModel(
+        modelId
+      );
+    }
   }
-  if (!apiBase) {
-    throw new Error(
-      `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models (Embeddings tab).`
-    );
-  }
-  cachedModel = {
-    cacheKey,
-    model: createOpenAICompatible({ apiKey, baseURL: apiBase, name: provider }).textEmbeddingModel(
-      modelId
-    ),
-    provider,
-    spec,
-  };
+  cachedModel = { cacheKey, model, provider, spec };
   return cachedModel;
+}
+
+/**
+ * The provider option that asks for {@link REQUIRED_DIMENSIONS}-wide vectors.
+ * OpenAI's text-embedding-3 family and Google's Gemini embeddings truncate from
+ * their native width; OpenAI-compatible endpoints (OpenRouter, vLLM, Ollama)
+ * take the same `dimensions` field when the model supports it.
+ */
+function dimensionOptions(
+  cached: CachedEmbeddingModel
+): Parameters<typeof embed>[0]['providerOptions'] {
+  switch (cached.provider) {
+    case 'openai':
+      return { openai: { dimensions: REQUIRED_DIMENSIONS } };
+    case 'google':
+      return { google: { outputDimensionality: REQUIRED_DIMENSIONS } };
+    default:
+      return cached.dimensionsRejected
+        ? undefined
+        : { openaiCompatible: { dimensions: REQUIRED_DIMENSIONS } };
+  }
+}
+
+/**
+ * Embed once, and for an OpenAI-compatible endpoint that answers 400 to the
+ * `dimensions` field (a model without truncation support), once more without
+ * it. A model whose native width is already 1536 then works; any other width
+ * still fails the dimension check below, with the reason.
+ */
+async function embedWithDimensions(cached: CachedEmbeddingModel, text: string) {
+  const providerOptions = dimensionOptions(cached);
+  try {
+    return await embed({
+      model: cached.model,
+      value: text,
+      ...(providerOptions ? { providerOptions } : {}),
+    });
+  } catch (err) {
+    const compatible = cached.provider !== 'openai' && cached.provider !== 'google';
+    if (compatible && providerOptions && APICallError.isInstance(err) && err.statusCode === 400) {
+      cached.dimensionsRejected = true;
+      return embed({ model: cached.model, value: text });
+    }
+    throw err;
+  }
 }
 
 /**
@@ -100,18 +153,10 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 export async function generateEmbeddingWithSpec(
   text: string
 ): Promise<{ embedding: number[]; spec: string }> {
-  const { provider, model, spec } = await buildEmbeddingModel();
-  // OpenAI's text-embedding-3-large supports a `dimensions` option to truncate
-  // from its native 3072 down to the 1536 required by the pgvector column.
-  // Other providers don't accept this key, so it's only sent for OpenAI.
+  const cached = await buildEmbeddingModel();
+  const { spec } = cached;
   const start = Date.now();
-  const { embedding, usage } = await embed({
-    model,
-    value: text,
-    ...(provider === 'openai'
-      ? { providerOptions: { openai: { dimensions: REQUIRED_DIMENSIONS } } }
-      : {}),
-  });
+  const { embedding, usage } = await embedWithDimensions(cached, text);
   // The SDK reports `tokens: NaN` when a provider omits usage.
   const tokens = Number.isFinite(usage?.tokens) ? usage.tokens : null;
   await recordEmbeddingUsage(spec, tokens, text.length, Date.now() - start);
