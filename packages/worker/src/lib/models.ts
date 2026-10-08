@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
 import { anthropic, createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI, google } from '@ai-sdk/google';
 import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
-import type { LanguageModel as AiLanguageModel } from 'ai';
+import { type LanguageModel as AiLanguageModel, wrapLanguageModel } from 'ai';
 import { resolveAgent } from './config/agentResolver.js';
 import { currentRequestContext } from './config/contextLookup.js';
 import type {
@@ -11,6 +12,7 @@ import type {
   ModelBackedAgentKey as ConfigModelBackedAgentKey,
   ResolveCtx,
 } from './config/types.js';
+import { schemaInPromptMiddleware } from './schemaInPrompt.js';
 
 // The provider factories no longer agree on a return type: since
 // @ai-sdk/anthropic 4.0.34 the Anthropic and OpenAI providers return the
@@ -84,26 +86,38 @@ export function resolveModel(spec: string, apiKey: string, apiBase?: string): La
 
 // ── Cache of constructed LanguageModel instances ──
 
+/** Upper bound on cached clients; the least recently used is dropped past it. */
+const MODEL_CACHE_MAX = 256;
+
 const modelCache = new Map<string, LanguageModel>();
 
 function cacheKeyForBuild(spec: string, apiKey: string, apiBase: string | undefined): string {
-  // Hash-ish key — include the last 6 chars of the apiKey so a credential
-  // rotation in the DB busts the cache without holding the full secret in the
-  // map key. apiBase is included verbatim since it's non-secret.
-  const keyTail = apiKey.slice(-6);
-  const base = apiBase ?? '';
-  return `${spec}|${keyTail}|${base}`;
+  // A digest of the whole key, never the key itself: two credentials that share
+  // a spec and apiBase (two teams' keys for one OpenAI-compatible endpoint) must
+  // not share a client, and a rotation in the DB must bust the entry. apiBase is
+  // non-secret and included verbatim.
+  const keyDigest = createHash('sha256').update(apiKey).digest('hex').slice(0, 32);
+  return `${spec}|${keyDigest}|${apiBase ?? ''}`;
 }
 
 function buildModel(spec: string, apiKey: string, apiBase?: string): LanguageModel {
   const key = cacheKeyForBuild(spec, apiKey, apiBase);
   const cached = modelCache.get(key);
   if (cached) {
+    // Re-insert so Map iteration order tracks recency.
+    modelCache.delete(key);
+    modelCache.set(key, cached);
     return cached;
   }
 
   const built = buildModelUncached(spec, apiKey, apiBase);
   modelCache.set(key, built);
+  if (modelCache.size > MODEL_CACHE_MAX) {
+    const oldest = modelCache.keys().next().value;
+    if (oldest !== undefined) {
+      modelCache.delete(oldest);
+    }
+  }
   return built;
 }
 
@@ -113,8 +127,14 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
   switch (provider) {
     case 'anthropic':
       return createAnthropic({ apiKey, baseURL: apiBase })(modelId);
-    case 'openai':
-      return createOpenAI({ apiKey, baseURL: apiBase })(modelId);
+    case 'openai': {
+      const openaiProvider = createOpenAI({ apiKey, baseURL: apiBase });
+      // The default OpenAI model speaks the Responses API. A credential with an
+      // apiBase points at a proxy or gateway (LiteLLM, Azure, a corporate
+      // relay), and most of those serve only Chat Completions — so a custom
+      // base gets the Chat Completions model, which OpenAI itself also serves.
+      return apiBase ? openaiProvider.chat(modelId) : openaiProvider(modelId);
+    }
     case 'google':
       return createGoogleGenerativeAI({ apiKey, baseURL: apiBase })(modelId);
     default:
@@ -126,7 +146,12 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
           `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models.`
         );
       }
-      return createOpenAICompatible({ apiKey, baseURL: apiBase, name: provider })(modelId);
+      // The adapter sends JSON mode without the schema; put the schema in the
+      // prompt so structured-output callers get the shape they validate.
+      return wrapLanguageModel({
+        middleware: schemaInPromptMiddleware,
+        model: createOpenAICompatible({ apiKey, baseURL: apiBase, name: provider })(modelId),
+      });
   }
 }
 

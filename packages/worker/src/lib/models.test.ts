@@ -117,6 +117,81 @@ describe('resolveModel', () => {
   });
 });
 
+describe('resolveModel — OpenAI with a custom base', () => {
+  it('uses the Responses API against OpenAI itself', () => {
+    expect(resolveModel('openai/gpt-6-luna', 'sk-x').provider).toBe('openai.responses');
+  });
+
+  it('uses Chat Completions behind a proxy or gateway apiBase', () => {
+    const m = resolveModel('openai/gpt-6-luna', 'sk-x', 'https://litellm.internal/v1');
+    expect(m.provider).toBe('openai.chat');
+    expect(m.modelId).toBe('gpt-6-luna');
+  });
+});
+
+describe('resolveModel — OpenAI-compatible structured output', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends the response schema in the system prompt, since the adapter drops it', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        bodies.push(JSON.parse(String(init.body)));
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: 'stop',
+                index: 0,
+                message: { content: '{"ok":true}', role: 'assistant' },
+              },
+            ],
+            created: 0,
+            id: 'x',
+            model: 'glm-5.2',
+            usage: { completion_tokens: 1, prompt_tokens: 1, total_tokens: 2 },
+          }),
+          { headers: { 'content-type': 'application/json' }, status: 200 }
+        );
+      })
+    );
+    const m = resolveModel('opencode-go/glm-5.2', 'sk-go', 'https://example.test/v1');
+    await m.doGenerate({
+      prompt: [
+        { content: 'You review code.', role: 'system' },
+        { content: [{ text: 'Review this.', type: 'text' }], role: 'user' },
+      ],
+      responseFormat: {
+        schema: { properties: { ok: { type: 'boolean' } }, required: ['ok'], type: 'object' },
+        type: 'json',
+      },
+    });
+
+    const messages = bodies[0]?.messages as Array<{ content: string; role: string }>;
+    expect(messages[0]?.role).toBe('system');
+    expect(messages[0]?.content).toMatch(/^You review code\./);
+    expect(messages[0]?.content).toContain('"required":["ok"]');
+    expect(bodies[0]?.response_format).toEqual({ type: 'json_object' });
+  });
+});
+
+describe('resolveModel — client cache', () => {
+  it('reuses the client for the same spec, key and base', () => {
+    const a = resolveModel('openrouter/x', 'sk-same-123456', 'https://openrouter.ai/api/v1');
+    const b = resolveModel('openrouter/x', 'sk-same-123456', 'https://openrouter.ai/api/v1');
+    expect(a).toBe(b);
+  });
+
+  it('never shares a client between two keys that end the same way', () => {
+    const a = resolveModel('openrouter/x', 'sk-team-a-123456', 'https://openrouter.ai/api/v1');
+    const b = resolveModel('openrouter/x', 'sk-team-b-123456', 'https://openrouter.ai/api/v1');
+    expect(a).not.toBe(b);
+  });
+});
+
 describe('getModel', () => {
   it('throws ConfigMissingError when the Agent does not resolve', async () => {
     mockedResolveAgent.mockRejectedValue(new ConfigMissingError('no agent'));
