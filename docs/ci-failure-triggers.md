@@ -35,7 +35,12 @@ In globs, `*` matches within one path segment, `**` matches across them, and `?`
 character. A later pattern overrides an earlier one, so `!` exclusions go after what they exclude.
 An empty list never means "everything".
 
-### The API
+### Managing triggers
+
+On the dashboard, **Connections** (`/connections`) has a **CI-failure triggers** action for each git
+repository. It lists the repository's triggers and their recent decisions to its members, and lets
+those who may manage them add, enable, disable and remove one. The same operations are available
+through the API:
 
 | Route | Who |
 |---|---|
@@ -233,7 +238,6 @@ See [github-app-setup.md](./github-app-setup.md).
   Neither is a `startup_failure` (an invalid workflow file), which has no logs.
 - **One run per commit per trigger.** When several workflows fail on one commit, only the first
   to finish is diagnosed. A re-run that fails again on the same commit is not diagnosed again.
-- **Triggers are managed through the API only.** There is no dashboard page for them yet.
 - **The fire history is kept.** Suppressed decisions are recorded too, and nothing prunes them;
   deleting a trigger deletes its history.
 - **A template that is missing when a failure arrives is recorded as `FAILED_TO_START`** under
