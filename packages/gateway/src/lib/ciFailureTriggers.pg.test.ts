@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
+import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -38,13 +39,17 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
   const suffix = crypto.randomBytes(4).toString('hex');
   const org = `ci-${suffix}`;
   let triggerId: string;
+  let templateId: string;
   let repoId: string;
   const started: string[] = [];
+  /** Executions Temporal reports as over. */
+  const gone = new Set<string>();
 
   const fastify = {
     log: { error: vi.fn(), warn: vi.fn() },
     prisma,
     temporal: {
+      isWorkflowGone: async (id: string) => gone.has(id),
       startRunnableWorkflow: async (id: string) => {
         // Long enough that concurrent deliveries overlap in the decision.
         await new Promise((r) => setTimeout(r, 20));
@@ -70,7 +75,7 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
   });
 
   const deliver = (e: WorkflowRunFailedEvent) =>
-    handleWorkflowRunFailure(fastify as never, e, null);
+    handleWorkflowRunFailure(fastify as never, e, null, new Date(), 0);
 
   beforeAll(async () => {
     await runUnscoped(
@@ -88,7 +93,13 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
         });
         repoId = repo.id;
         const tpl = await prisma.workflowTemplate.create({
-          data: { activeVersion: 1, name: `ci-tpl-${suffix}`, status: 'ACTIVE', teamId: team.id },
+          data: {
+            activeVersion: 1,
+            inputSchema: CI_TRIAGE_INPUT_SCHEMA as object,
+            name: `ci-tpl-${suffix}`,
+            status: 'ACTIVE',
+            teamId: team.id,
+          },
         });
         const trigger = await prisma.ciFailureTrigger.create({
           data: {
@@ -104,12 +115,14 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
           },
         });
         triggerId = trigger.id;
+        templateId = tpl.id;
       }
     );
   });
 
   beforeEach(async () => {
     started.length = 0;
+    gone.clear();
     await prisma.ciFailureTriggerFire.deleteMany({ where: { triggerId } });
     await prisma.activeWorkflow.deleteMany({ where: { repoId } });
   });
@@ -164,6 +177,58 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
       data: { branchPatterns: ['main'] },
       where: { id: triggerId },
     });
+  });
+
+  it('suppresses while an earlier run is open, and not once its row is closed or Temporal says it is over', async () => {
+    await prisma.ciFailureTrigger.update({
+      data: { cooldownMinutes: 0 },
+      where: { id: triggerId },
+    });
+    const first = await deliver(event({ runId: '200' }));
+    expect(first).toMatchObject({ outcome: 'STARTED' });
+    const wfId = (first as { temporalWorkflowId: string }).temporalWorkflowId;
+    await expect(deliver(event({ headSha: 'b'.repeat(40), runId: '201' }))).resolves.toMatchObject({
+      outcome: 'SUPPRESSED_IN_FLIGHT',
+    });
+    // Terminated before it finalized: the row says IMPLEMENTING, Temporal says it is over.
+    gone.add(wfId);
+    await expect(deliver(event({ headSha: 'c'.repeat(40), runId: '202' }))).resolves.toMatchObject({
+      outcome: 'STARTED',
+    });
+  });
+
+  it('starts one run when two triggers match two workflows failing on one commit at once', async () => {
+    const second = await prisma.ciFailureTrigger.create({
+      data: {
+        branchPatterns: ['main'],
+        connectionId: repoId,
+        cooldownMinutes: 0,
+        events: ['push'],
+        maxRunsPerDay: 3,
+        mode: 'FIX',
+        name: 'lint',
+        templateId,
+        workflowPatterns: ['.github/workflows/lint.yml'],
+      },
+    });
+    await prisma.ciFailureTrigger.update({
+      data: { workflowPatterns: ['.github/workflows/ci.yml'] },
+      where: { id: triggerId },
+    });
+    try {
+      const results = await Promise.all([
+        deliver(event({ runId: '300', workflowPath: '.github/workflows/ci.yml' })),
+        deliver(event({ runId: '301', workflowPath: '.github/workflows/lint.yml' })),
+      ]);
+      expect(outcomes(results)).toEqual(['STARTED', 'SUPPRESSED_SAME_COMMIT']);
+      expect(started).toHaveLength(1);
+    } finally {
+      await prisma.ciFailureTrigger.delete({ where: { id: second.id } });
+      await prisma.ciFailureTrigger.update({
+        data: { workflowPatterns: ['.github/workflows/**'] },
+        where: { id: triggerId },
+      });
+    }
   });
 
   it('refuses a trigger row with an empty list or an unknown event', async () => {

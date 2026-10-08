@@ -66,7 +66,7 @@ vi.mock('@octokit/rest', () => ({
   },
 }));
 
-import { GitHubScmProvider, parseRunId } from './github.js';
+import { GitHubScmProvider, parseRunId, readTail } from './github.js';
 import type { RepoRef } from './types.js';
 
 const repo = { organizationName: 'acme', repoName: 'api' } as unknown as RepoRef;
@@ -259,5 +259,38 @@ describe('GitHubScmProvider.upsertMarkedComment', () => {
     const out = await new GitHubScmProvider().upsertMarkedComment(repo, 7, '<!-- m -->', 'new');
     expect(a.listComments).not.toHaveBeenCalled();
     expect(out.updated).toBe(false);
+  });
+});
+
+describe('readTail', () => {
+  it('keeps only the end of a large streamed body', async () => {
+    const chunks = Array.from(
+      { length: 50 },
+      (_, i) => `${String(i).padStart(2, '0')}${'x'.repeat(998)}`
+    );
+    const body = new ReadableStream({
+      start(controller) {
+        for (const c of chunks) {
+          controller.enqueue(new TextEncoder().encode(c));
+        }
+        controller.close();
+      },
+    });
+    const tail = await readTail(new Response(body), 1_500);
+    expect(tail).toHaveLength(1_500);
+    expect(tail.endsWith('x'.repeat(998))).toBe(true);
+    expect(tail).toContain('49');
+  });
+
+  it('decodes a multi-byte character split across chunks', async () => {
+    const bytes = new TextEncoder().encode('añb');
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, 2));
+        controller.enqueue(bytes.slice(2));
+        controller.close();
+      },
+    });
+    await expect(readTail(new Response(body), 10)).resolves.toBe('añb');
   });
 });

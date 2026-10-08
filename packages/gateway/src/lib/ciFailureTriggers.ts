@@ -28,8 +28,10 @@ import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { getErrorName } from '../plugins/auth.js';
 import { isOrgOverBudget } from './orgAccess.js';
 import { webhookRepositoryWhere } from './repositoryHost.js';
+import { EXCLUDE_SYSTEM_TEMPLATES } from './systemTemplate.js';
 import { isValidTicketId } from './ticketId.js';
 import { launchTrackedWorkflow } from './workflowLaunch.js';
 
@@ -46,8 +48,13 @@ export const CI_FIRE_OUTCOMES = [
 ] as const;
 export type CiFireOutcome = (typeof CI_FIRE_OUTCOMES)[number];
 
-/** How far back a started run still counts as possibly in flight. */
-const IN_FLIGHT_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * How far back a started run still counts as possibly in flight: longer than the template can
+ * run (an implementation, then up to three CI waits of four hours).
+ */
+const IN_FLIGHT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+/** Attempts at starting the workflow before the decision is given up. */
+const START_ATTEMPTS = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const WorkflowRunWebhookSchema = z.object({
@@ -243,7 +250,8 @@ export async function handleWorkflowRunFailure(
   fastify: FastifyInstance,
   event: WorkflowRunFailedEvent,
   verifiedHost: string | null,
-  now: Date = new Date()
+  now: Date = new Date(),
+  startRetryDelayMs = 1_000
 ): Promise<CiTriggerResult> {
   const prisma = fastify.prisma;
   const { branchPrefix } = await resolveWorkflowDefaults();
@@ -416,17 +424,46 @@ export async function handleWorkflowRunFailure(
           ticketIsSynthetic: true,
         },
       },
-      () => {
+      async () => {
         startAttempted = true;
-        return fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
-          request,
-          templateId: template.id,
-          templateVersion: template.activeVersion,
-        });
+        // GitHub does not redeliver a failed webhook by itself, so a transient Temporal error
+        // is retried here. A retry that finds the execution already started means an earlier
+        // attempt did start it (its reply was lost): that is success, not a duplicate.
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+              request,
+              templateId: template.id,
+              templateVersion: template.activeVersion,
+            });
+            return;
+          } catch (err) {
+            if (attempt > 1 && getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+              return;
+            }
+            if (
+              attempt >= START_ATTEMPTS ||
+              getErrorName(err) === 'WorkflowExecutionAlreadyStartedError'
+            ) {
+              throw err;
+            }
+            await new Promise((r) => setTimeout(r, startRetryDelayMs * attempt));
+          }
+        }
       },
       {
         guard: async (tx) => {
-          decided = await decideUnderLock(tx, trigger, event, now);
+          decided = await decideUnderLock(
+            tx,
+            {
+              connectionIds: connections.map((c) => c.id),
+              repoKey: `${host}/${event.repoFullName}`.toLowerCase(),
+              trigger,
+            },
+            event,
+            now,
+            (id) => fastify.temporal.isWorkflowGone(id)
+          );
           await tx.ciFailureTriggerFire.create({
             data: {
               ...fireBase,
@@ -484,21 +521,40 @@ type TriggerRow = {
 };
 
 /**
- * The checks that must see every earlier decision of this trigger, under a per-trigger
- * transaction lock so two deliveries cannot both pass them. Null: start the run.
+ * The checks that must see every earlier decision on the same repository, under a transaction
+ * lock on the repository, so two deliveries cannot both pass them — however many triggers or
+ * repository rows they matched. Null: start the run.
+ *
+ * Same commit, cooldown and in-flight are judged across every trigger of the repository (its
+ * `connectionIds`): two triggers matching two workflows that fail on one push must not open two
+ * fixes into one branch. The daily cap is the trigger's own.
  */
 export async function decideUnderLock(
   tx: Prisma.TransactionClient,
-  trigger: Pick<TriggerRow, 'id' | 'cooldownMinutes' | 'maxRunsPerDay'>,
+  scope: {
+    trigger: Pick<TriggerRow, 'id' | 'cooldownMinutes' | 'maxRunsPerDay'>;
+    /** `<host>/<owner>/<repo>`, lowercased: the repository, whichever row matched. */
+    repoKey: string;
+    /** Every connection row of the repository. */
+    connectionIds: string[];
+  },
   event: Pick<WorkflowRunFailedEvent, 'headBranch' | 'headSha'>,
-  now: Date
+  now: Date,
+  /** Whether Temporal says an execution is over. Throws when Temporal cannot say. */
+  isWorkflowGone: (temporalWorkflowId: string) => Promise<boolean>
 ): Promise<{ outcome: CiFireOutcome; reason: string } | null> {
-  // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises one trigger's
+  const { trigger } = scope;
+  // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises one repository's
   // decisions; Prisma has no way to express it.
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`ci-trigger:${trigger.id}`}, 0))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`ci-repo:${scope.repoKey}`}, 0))`;
 
-  const started = { outcome: 'STARTED', triggerId: trigger.id } as const;
-  if (await tx.ciFailureTriggerFire.findFirst({ where: { ...started, headSha: event.headSha } })) {
+  const startedOnRepo = {
+    outcome: 'STARTED',
+    trigger: { connectionId: { in: scope.connectionIds } },
+  } as const;
+  if (
+    await tx.ciFailureTriggerFire.findFirst({ where: { ...startedOnRepo, headSha: event.headSha } })
+  ) {
     return {
       outcome: 'SUPPRESSED_SAME_COMMIT',
       reason: 'a run was already started for this commit (another workflow, or a re-run)',
@@ -507,7 +563,7 @@ export async function decideUnderLock(
   if (trigger.cooldownMinutes > 0) {
     const since = new Date(now.getTime() - trigger.cooldownMinutes * 60_000);
     const recent = await tx.ciFailureTriggerFire.findFirst({
-      where: { ...started, createdAt: { gte: since }, headBranch: event.headBranch },
+      where: { ...startedOnRepo, createdAt: { gte: since }, headBranch: event.headBranch },
     });
     if (recent) {
       return {
@@ -519,7 +575,7 @@ export async function decideUnderLock(
   const earlier = await tx.ciFailureTriggerFire.findMany({
     select: { temporalWorkflowId: true },
     where: {
-      ...started,
+      ...startedOnRepo,
       createdAt: { gte: new Date(now.getTime() - IN_FLIGHT_LOOKBACK_MS) },
       headBranch: event.headBranch,
       temporalWorkflowId: { not: null },
@@ -527,22 +583,31 @@ export async function decideUnderLock(
   });
   const ids = earlier.map((f) => f.temporalWorkflowId as string);
   if (ids.length > 0) {
-    const inFlight = await tx.activeWorkflow.findFirst({
-      select: { id: true },
+    const open = await tx.activeWorkflow.findMany({
+      select: { temporalWorkflowId: true },
       where: {
         currentStatus: { notIn: [...ACTIVE_WORKFLOW_TERMINAL_STATUSES] },
         temporalWorkflowId: { in: ids },
       },
     });
-    if (inFlight) {
-      return {
-        outcome: 'SUPPRESSED_IN_FLIGHT',
-        reason: 'an earlier run for this branch is still in progress',
-      };
+    for (const row of open) {
+      // The ledger row is not the truth: an execution terminated before it finalized never
+      // closes its row. Temporal decides; a Temporal that cannot answer counts as running.
+      const gone = await isWorkflowGone(row.temporalWorkflowId).catch(() => false);
+      if (!gone) {
+        return {
+          outcome: 'SUPPRESSED_IN_FLIGHT',
+          reason: 'an earlier run for this branch is still in progress',
+        };
+      }
     }
   }
   const today = await tx.ciFailureTriggerFire.count({
-    where: { ...started, createdAt: { gte: new Date(now.getTime() - DAY_MS) } },
+    where: {
+      createdAt: { gte: new Date(now.getTime() - DAY_MS) },
+      outcome: 'STARTED',
+      triggerId: trigger.id,
+    },
   });
   if (today >= trigger.maxRunsPerDay) {
     return {
@@ -570,9 +635,35 @@ async function recordSuppression(
   return { outcome, reason, triggerId: fire.triggerId };
 }
 
+/** A payload of the shape a trigger sends, for checking a template accepts it. */
+const SAMPLE_CI_PAYLOAD: CiTriagePayload = {
+  baseBranch: 'main',
+  commentOnPullRequest: true,
+  connectionId: '00000000-0000-4000-8000-000000000000',
+  description: 'Fix the failing workflow',
+  githubRunId: '1',
+  mode: 'triage',
+  pullRequestNumber: 1,
+  runAttempt: 1,
+  ticketId: 'ci-1-1',
+};
+
 /**
- * The template a trigger starts: its own, when it names one that is active and is either
- * global or its repository team's; otherwise the built-in `ci-triage-and-fix`.
+ * Whether a template's declared input schema takes the CI triage payload: it names
+ * `githubRunId` (a template that does not is not CI-aware, whatever it accepts) and a full
+ * payload validates. A template with no schema accepts anything, so it is refused.
+ */
+export function acceptsCiPayload(inputSchema: unknown): boolean {
+  if (!isInputSchema(inputSchema) || !('githubRunId' in inputSchema.properties)) {
+    return false;
+  }
+  return validateInputPayload(inputSchema, SAMPLE_CI_PAYLOAD).ok;
+}
+
+/**
+ * The template a trigger starts: its own, when it names one that is active, global or its
+ * repository team's, not a system template, and accepts the CI payload; otherwise the
+ * built-in `ci-triage-and-fix`. Null when there is none to start.
  */
 async function resolveTriggerTemplate(
   prisma: PrismaClient,
@@ -583,14 +674,19 @@ async function resolveTriggerTemplate(
   const row = templateId
     ? await prisma.workflowTemplate.findFirst({
         select,
-        where: { id: templateId, OR: [{ teamId: null }, { teamId }], status: 'ACTIVE' },
+        where: {
+          AND: [
+            { id: templateId, OR: [{ teamId: null }, { teamId }], status: 'ACTIVE' },
+            EXCLUDE_SYSTEM_TEMPLATES,
+          ],
+        },
       })
     : await prisma.workflowTemplate.findFirst({
         orderBy: [{ updatedAt: 'desc' }],
         select,
         where: { name: CI_TRIAGE_TEMPLATE_NAME, status: 'ACTIVE', teamId: null },
       });
-  if (!row || row.activeVersion === null) {
+  if (!row || row.activeVersion === null || !acceptsCiPayload(row.inputSchema)) {
     return null;
   }
   return { activeVersion: row.activeVersion, id: row.id, inputSchema: row.inputSchema };

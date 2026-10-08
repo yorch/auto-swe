@@ -44,15 +44,25 @@ through the API:
 
 | Route | Who |
 |---|---|
-| `GET /api/v1/repositories/:id/ci-triggers` | A member of the owning team or of a team the repository is shared with, or ADMIN. The response says whether the caller may manage them (`canManage`) |
+| `GET /api/v1/repositories/:id/ci-triggers` | A member of the owning team or of a team the repository is shared with, or ADMIN; under an enforcing [access gate](./repo-access-gating.md) a member also needs a current GitHub permission on the repository. The response says whether the caller may manage them (`canManage`) |
 | `POST /api/v1/repositories/:id/ci-triggers` | ADMIN, or a LEAD of the repository's **owning** team |
 | `PATCH` / `DELETE /api/v1/repositories/:id/ci-triggers/:triggerId` | The same |
 | `GET /api/v1/repositories/:id/ci-triggers/:triggerId/fires?limit=` | A member, as for the list |
 
 A trigger in `FIX` mode opens pull requests on the repository with the platform credential. That
 is why managing triggers stays with the owning team, like every other repository setting, and a
-shared team can read them but not create one. Every create, update and delete is written to the
-audit log.
+shared team can read them but not create one.
+
+Saving a trigger that can start runs is a **launch decision**, made as it is for a schedule. This
+covers creating an enabled trigger, and any change other than switching one off. The repository
+must be active. The access gate judges the caller's own GitHub login (the runs use the platform
+credential), and the caller must belong to the repository's organization, which must be under its
+monthly cap. Otherwise a lead whose GitHub access was revoked could keep a trigger acting on the
+repository. Switching a trigger off is never refused.
+
+A trigger's `templateId` must name a template that is active, not a system template, global or the
+repository team's own, and whose input schema names `githubRunId` and accepts the payload in §2.
+Every create, update and delete is written to the audit log.
 
 ### From webhook to run
 
@@ -75,24 +85,27 @@ verified and bound to its host exactly like the other GitHub deliveries
    oldest first within each. One failed run attempt starts at most one run, however many triggers
    or repository rows match it.
 3. **The decision is recorded** as a `CiFailureTriggerFire`, keyed by the run attempt on its host.
-   A redelivered webhook therefore answers `duplicate` and starts nothing. Under a per-trigger
-   transaction lock, so concurrent deliveries see each other, a run is **suppressed** when:
+   A redelivered webhook therefore answers `duplicate` and starts nothing. The decision is taken
+   under a transaction lock on the **repository**, so concurrent deliveries see each other. A run
+   is **suppressed** when:
 
    | Outcome | When |
    |---|---|
-   | `SUPPRESSED_SAME_COMMIT` | This trigger already started a run for this commit: another workflow failing on it, or a re-run |
-   | `SUPPRESSED_COOLDOWN` | It started one for this branch within `cooldownMinutes` |
-   | `SUPPRESSED_IN_FLIGHT` | A run it started for this branch in the last 7 days is still in progress |
-   | `SUPPRESSED_DAILY_CAP` | It started `maxRunsPerDay` runs in the last 24 hours |
+   | `SUPPRESSED_SAME_COMMIT` | Any trigger of the repository already started a run for this commit: another workflow failing on it, or a re-run. Two triggers on two failing workflows of one push open one fix, not two |
+   | `SUPPRESSED_COOLDOWN` | Any trigger of the repository started one for this branch within this trigger's `cooldownMinutes` |
+   | `SUPPRESSED_IN_FLIGHT` | A run started for this branch in the last 24 hours is still in progress: its ledger row is open **and** Temporal does not report the execution over (a Temporal that cannot answer counts as running) |
+   | `SUPPRESSED_DAILY_CAP` | This trigger started `maxRunsPerDay` runs in the last 24 hours |
    | `SUPPRESSED_NO_PULL_REQUEST` | A `pull_request` failure with no open pull request from this branch of this repository |
    | `SUPPRESSED_BUDGET` | The repository's organization is over its monthly budget |
-   | `FAILED_TO_START` | The trigger's template is missing or inactive, or does not accept the payload |
+   | `FAILED_TO_START` | The trigger's template is missing, inactive, a system template, or does not accept the payload |
 
 4. Otherwise the run starts (`STARTED`) as a synthetic ticket `ci-<runId>-<attempt>`. Its branch is
    `<branchPrefix>/ci-<runId>-<attempt>`. It has no requesting user, so it uses the platform
-   credential and never a person's saved token. If the workflow cannot be started (Temporal is
-   unreachable), the recorded decision is removed and the delivery answers `503`, so it can be
-   redelivered.
+   credential and never a person's saved token. Starting the workflow is tried three times. A
+   retry that finds the execution already started counts as started, because an earlier attempt
+   whose reply was lost did start it. If every attempt fails, the recorded decision is removed and
+   the delivery answers `503`. GitHub does not redeliver by itself: someone has to redeliver it
+   from the webhook's delivery log, or start the template by hand with the run id.
 
 The payload carries `mode` from the trigger (`FIX` → `fix`, `TRIAGE_ONLY` → `triage`). For a push
 the base branch is the pushed branch. For a pull request it is the pull request's head branch, so a
@@ -236,8 +249,13 @@ See [github-app-setup.md](./github-app-setup.md).
 - **Only `push` and `pull_request` runs.** A nightly `schedule` failure on `main`, a
   `workflow_dispatch` run, a merge-queue run and anything a fork's code produced are never acted on.
   Neither is a `startup_failure` (an invalid workflow file), which has no logs.
-- **One run per commit per trigger.** When several workflows fail on one commit, only the first
-  to finish is diagnosed. A re-run that fails again on the same commit is not diagnosed again.
+- **One run per commit per repository.** When several workflows fail on one commit, only the
+  first to finish is diagnosed, whichever trigger it matched. A re-run that fails again on the same
+  commit is not diagnosed again.
+- **A failed start is not retried by itself.** After three attempts the delivery answers `503` and
+  nothing more happens until someone redelivers it. Failures that arrived meanwhile were suppressed
+  against the run that did not start (as the same commit, the cooldown or in flight) and stay
+  suppressed. A decision that fails in the database answers `500` with nothing recorded.
 - **The fire history is kept.** Suppressed decisions are recorded too, and nothing prunes them;
   deleting a trigger deletes its history.
 - **A template that is missing when a failure arrives is recorded as `FAILED_TO_START`** under

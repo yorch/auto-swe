@@ -15,7 +15,17 @@ const m = vi.hoisted(() => ({
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: { connection: { findUniqueOrThrow: m.findRepo } },
 }));
-vi.mock('@auto-swe/shared/lib/skillScanner', () => ({ scanSkillContent: m.scan }));
+vi.mock('@auto-swe/shared/lib/ciLogScreen', () => ({
+  ciLogInjectionMatches: m.scan,
+  ciLogIsUsable: async (t: string) => {
+    try {
+      const r = await m.scan(t);
+      return r.matches.length === 0 && !r.incomplete;
+    } catch {
+      return false;
+    }
+  },
+}));
 vi.mock('@temporalio/activity', async (orig) => ({
   ...(await orig<typeof import('@temporalio/activity')>()),
   heartbeat: vi.fn(),
@@ -114,7 +124,7 @@ beforeEach(() => {
   m.findRepo.mockResolvedValue({ id: CONN, organizationName: 'acme', repoName: 'api' });
   m.fetchWorkflowRunFailure.mockResolvedValue(failure());
   m.branchHeadSha.mockResolvedValue(SHA);
-  m.scan.mockResolvedValue({ incomplete: false, safe: true, warnings: [] });
+  m.scan.mockResolvedValue({ incomplete: false, matches: [] });
   m.runAgent.mockResolvedValue({ object: verdict });
 });
 
@@ -273,7 +283,7 @@ describe('triageCiFailure', () => {
   });
 
   it('reports instead of fixing when the logs look like an injection', async () => {
-    m.scan.mockResolvedValue({ incomplete: false, safe: false, warnings: ['injection:x'] });
+    m.scan.mockResolvedValue({ incomplete: false, matches: ['ignore-previous-instructions'] });
     const out = await triageCiFailure({ request: request() });
     expect(out).toMatchObject({ decision: 'report', suspiciousLogs: true });
   });

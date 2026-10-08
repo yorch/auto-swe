@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BaseBranchSchema } from './gitRef.js';
+import type { InputSchema } from './inputSchema.js';
 
 /** Name of the built-in template a CI-failure trigger starts by default. */
 export const CI_TRIAGE_TEMPLATE_NAME = 'ci-triage-and-fix';
@@ -43,6 +44,27 @@ export const CiTriagePayloadSchema = z.object({
   ticketId: z.string().max(200).optional(),
 });
 export type CiTriagePayload = z.infer<typeof CiTriagePayloadSchema>;
+
+/**
+ * The run-input contract of the CI triage template, declared on it so the gateway validates a
+ * launch against it. The failing run is named by id; the worker reads
+ * everything else about it from the repository itself.
+ */
+export const CI_TRIAGE_INPUT_SCHEMA: InputSchema = {
+  properties: {
+    baseBranch: { type: 'string' },
+    commentOnPullRequest: { type: 'boolean' },
+    connectionId: { connectionType: 'git_repo', type: 'connection' },
+    description: { type: 'string' },
+    githubRunId: { type: 'string' },
+    mode: { enum: ['triage', 'fix'], type: 'string' },
+    pullRequestNumber: { type: 'number' },
+    runAttempt: { type: 'number' },
+    ticketId: { type: 'string' },
+  },
+  required: ['connectionId', 'githubRunId', 'runAttempt', 'baseBranch', 'mode'],
+  type: 'object',
+};
 
 const MAX_PATTERN_LENGTH = 200;
 

@@ -292,7 +292,7 @@
           "from": "context.currentCodeResult"
         }
       },
-      "next": "waitForCI",
+      "next": "loadCiWaitConfig",
       "step": "createOrUpdatePullRequest",
       "type": "step"
     },

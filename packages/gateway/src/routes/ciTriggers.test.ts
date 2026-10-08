@@ -1,6 +1,28 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const gateState = vi.hoisted(() => ({ gate: undefined as unknown }));
+vi.mock('@auto-swe/shared/lib/repoAccessGate', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/repoAccessGate')>()),
+  resolveRepoAccessGateOrLastKnown: vi.fn(async () => gateState.gate),
+}));
+
+const launch = vi.hoisted(() => ({
+  decision: { ok: true } as
+    | { ok: true }
+    | { ok: false; refusal: { status: 403; body: { error: { code: string; message: string } } } },
+}));
+vi.mock('../lib/launchAuthorization.js', () => ({
+  authorizeLaunch: vi.fn(async () => launch.decision),
+  sendLaunchRefusal: (
+    reply: { status: (n: number) => { send: (b: unknown) => unknown } },
+    r: { status: number; body: unknown }
+  ) => reply.status(r.status).send(r.body),
+}));
+
+import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
+import { authorizeLaunch } from '../lib/launchAuthorization.js';
 import { ciTriggerRoutes } from './ciTriggers.js';
 
 const REPO = '11111111-1111-4111-8111-111111111111';
@@ -11,12 +33,21 @@ const AUTH = { authorization: 'Bearer fake' };
 
 type Membership = { role: string; userId: string } | null;
 
-function repoRow(owning: Membership, shared: Membership = null) {
+function repoRow(owning: Membership, shared: Membership = null, isActive = true) {
   return {
+    githubApiUrl: null,
+    githubUrl: null,
     id: REPO,
-    isActive: true,
+    installation: null,
+    isActive,
+    organizationName: 'acme',
+    repoName: 'api',
     shares: shared ? [{ team: { memberships: [shared] } }] : [],
-    team: { memberships: owning ? [owning] : [] },
+    team: {
+      memberships: owning ? [owning] : [],
+      organization: { monthlyBudgetUsdCents: null },
+      orgId: 'org-1',
+    },
     teamId: 'team-1',
     type: 'git_repo',
   };
@@ -48,7 +79,7 @@ async function buildApp() {
     },
     ciFailureTriggerFire: { findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]) },
     configAuditLog: { create: vi.fn(async (_args: { data: Record<string, unknown> }) => ({})) },
-    connection: { findUnique: vi.fn() },
+    connection: { findFirst: vi.fn() },
     workflowTemplate: { findFirst: vi.fn() },
   };
   app.decorate('prisma', prisma as unknown as never);
@@ -69,6 +100,8 @@ describe('ciTriggerRoutes', () => {
   beforeEach(() => {
     ctx.auth.role = 'ENGINEER';
     ctx.auth.sub = 'user-1';
+    gateState.gate = undefined;
+    launch.decision = { ok: true };
     vi.clearAllMocks();
   });
 
@@ -77,20 +110,20 @@ describe('ciTriggerRoutes', () => {
 
   describe('reading', () => {
     it('lists the triggers to a member, saying whether they may manage them', async () => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(member));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
       const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: URL });
       expect(res.statusCode).toBe(200);
       expect(res.json().data).toEqual({ canManage: false, triggers: [] });
     });
 
     it('lets a member of a SHARED team read, but not manage', async () => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(null, lead));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null, lead));
       const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: URL });
       expect(res.json().data.canManage).toBe(false);
     });
 
     it('404s a repository the caller is not a member of', async () => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(null));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null));
       const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: URL });
       expect(res.statusCode).toBe(404);
     });
@@ -98,7 +131,7 @@ describe('ciTriggerRoutes', () => {
 
   describe('creating', () => {
     it('lets a LEAD of the owning team create one, with safe defaults', async () => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(lead));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       const res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
       expect(res.statusCode).toBe(201);
       expect(ctx.prisma.ciFailureTrigger.create.mock.calls[0]?.[0].data).toMatchObject({
@@ -113,10 +146,10 @@ describe('ciTriggerRoutes', () => {
     });
 
     it('refuses a plain member and a shared team’s lead', async () => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(member));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
       let res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
       expect(res.statusCode).toBe(403);
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(null, lead));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null, lead));
       res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
       expect(res.statusCode).toBe(403);
       expect(ctx.prisma.ciFailureTrigger.create).not.toHaveBeenCalled();
@@ -130,13 +163,68 @@ describe('ciTriggerRoutes', () => {
       ['a negative cooldown', { ...VALID, cooldownMinutes: -1 }],
       ['a zero daily cap', { ...VALID, maxRunsPerDay: 0 }],
     ])('rejects %s', async (_label, payload) => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(lead));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       const res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload, url: URL });
       expect(res.statusCode).toBe(400);
     });
 
+    it('refuses a launch the access gate or the organization refuses', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      launch.decision = {
+        ok: false,
+        refusal: { body: { error: { code: 'REPO_ACCESS_DENIED', message: 'no' } }, status: 403 },
+      };
+      const res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('REPO_ACCESS_DENIED');
+      expect(ctx.prisma.ciFailureTrigger.create).not.toHaveBeenCalled();
+      expect(vi.mocked(authorizeLaunch).mock.calls[0]?.[2]).toMatchObject({
+        runIdentity: 'platform',
+      });
+    });
+
+    it('requires a current GitHub permission under an enforcing gate', async () => {
+      gateState.gate = { mode: 'enforce', staleAfterHours: 24 };
+      ctx.prisma.connection.findFirst.mockResolvedValue(null);
+      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: URL });
+      expect(res.statusCode).toBe(404);
+      const where = ctx.prisma.connection.findFirst.mock.calls[0]?.[0].where;
+      expect(JSON.stringify(where)).toContain('repoAccess');
+    });
+
+    it('accepts a team template that takes the CI payload', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
+        id: TEMPLATE,
+        inputSchema: CI_TRIAGE_INPUT_SCHEMA,
+      });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { ...VALID, templateId: TEMPLATE },
+        url: URL,
+      });
+      expect(res.statusCode).toBe(201);
+      // System templates are excluded in the query itself.
+      expect(
+        JSON.stringify(ctx.prisma.workflowTemplate.findFirst.mock.calls[0]?.[0].where)
+      ).toContain('system:');
+    });
+
+    it('refuses a template that does not take the CI payload', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({ id: TEMPLATE, inputSchema: null });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { ...VALID, templateId: TEMPLATE },
+        url: URL,
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
     it("refuses a template that is not active and global or the team's", async () => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(lead));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.workflowTemplate.findFirst.mockResolvedValue(null);
       const res = await ctx.app.inject({
         headers: AUTH,
@@ -150,7 +238,7 @@ describe('ciTriggerRoutes', () => {
 
     it('lets an ADMIN create one on any repository', async () => {
       ctx.auth.role = 'ADMIN';
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(null));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null));
       const res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
       expect(res.statusCode).toBe(201);
     });
@@ -158,7 +246,7 @@ describe('ciTriggerRoutes', () => {
 
   describe('changing and removing', () => {
     it('updates and audits with before and after', async () => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(lead));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ id: TRIGGER, mode: 'TRIAGE_ONLY' });
       const res = await ctx.app.inject({
         headers: AUTH,
@@ -173,8 +261,50 @@ describe('ciTriggerRoutes', () => {
       });
     });
 
+    it('lets a trigger be switched off without a launch decision, even on an inactive repository', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead, null, false));
+      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ enabled: true, id: TRIGGER });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload: { enabled: false },
+        url: `${URL}/${TRIGGER}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(authorizeLaunch).not.toHaveBeenCalled();
+    });
+
+    it('refuses turning a trigger on for an inactive repository', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead, null, false));
+      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ enabled: false, id: TRIGGER });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload: { enabled: true },
+        url: `${URL}/${TRIGGER}`,
+      });
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('re-decides the launch when a change keeps the trigger able to start runs', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ id: TRIGGER, mode: 'TRIAGE_ONLY' });
+      launch.decision = {
+        ok: false,
+        refusal: { body: { error: { code: 'REPO_ACCESS_DENIED', message: 'no' } }, status: 403 },
+      };
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload: { mode: 'FIX' },
+        url: `${URL}/${TRIGGER}`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(ctx.prisma.ciFailureTrigger.update).not.toHaveBeenCalled();
+    });
+
     it('404s a trigger of another repository', async () => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(lead));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue(null);
       const res = await ctx.app.inject({
         headers: AUTH,
@@ -189,7 +319,7 @@ describe('ciTriggerRoutes', () => {
     });
 
     it('refuses a member', async () => {
-      ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(member));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
       ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ id: TRIGGER });
       const res = await ctx.app.inject({
         headers: AUTH,
@@ -202,7 +332,7 @@ describe('ciTriggerRoutes', () => {
   });
 
   it('shows a member what a trigger decided', async () => {
-    ctx.prisma.connection.findUnique.mockResolvedValue(repoRow(member));
+    ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
     ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ id: TRIGGER });
     ctx.prisma.ciFailureTriggerFire.findMany.mockResolvedValue([
       { outcome: 'SUPPRESSED_COOLDOWN' },

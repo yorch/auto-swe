@@ -16,7 +16,9 @@ vi.mock('./repositoryHost.js', () => ({
 }));
 vi.mock('./orgAccess.js', () => ({ isOrgOverBudget: vi.fn(async () => m.overBudget) }));
 
+import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
 import {
+  acceptsCiPayload,
   fireDedupeKey,
   handleWorkflowRunFailure,
   normalizeWorkflowRunEvent,
@@ -179,11 +181,51 @@ function trigger(over: Record<string, unknown> = {}) {
   };
 }
 
-function harness(opts: { triggers?: ReturnType<typeof trigger>[]; template?: unknown } = {}) {
+function harness(
+  opts: {
+    triggers?: ReturnType<typeof trigger>[];
+    template?: unknown;
+    /** Temporal's answer to "is this execution over?". */
+    gone?: (id: string) => Promise<boolean>;
+  } = {}
+) {
   const fires: Fire[] = [];
   const active: Array<{ temporalWorkflowId: string; currentStatus: string }> = [];
   const started: Array<{ id: string; input: Record<string, unknown> }> = [];
   const runInputs: unknown[] = [];
+  const triggers = opts.triggers ?? [trigger()];
+  const CONNECTION = 'cccccccc-0000-4000-8000-000000000001';
+  // Every trigger in the harness hangs off the one repository row.
+  const connectionOf = (triggerId: string) =>
+    triggers.some((t) => t.id === triggerId) ? CONNECTION : null;
+
+  /** The subset of Prisma's `where` the decision uses, evaluated against a fire. */
+  const matches = (f: Fire, where: Record<string, unknown>): boolean => {
+    if (where.triggerId !== undefined && f.triggerId !== where.triggerId) {
+      return false;
+    }
+    const rel = where.trigger as { connectionId: { in: string[] } } | undefined;
+    if (rel && !rel.connectionId.in.includes(connectionOf(f.triggerId) ?? '')) {
+      return false;
+    }
+    if (where.outcome !== undefined && f.outcome !== where.outcome) {
+      return false;
+    }
+    if (where.headSha !== undefined && f.headSha !== where.headSha) {
+      return false;
+    }
+    if (where.headBranch !== undefined && f.headBranch !== where.headBranch) {
+      return false;
+    }
+    if (where.createdAt && f.createdAt < (where.createdAt as { gte: Date }).gte) {
+      return false;
+    }
+    if (where.temporalWorkflowId && !f.temporalWorkflowId) {
+      return false;
+    }
+    return true;
+  };
+
   const db = {
     $executeRaw: vi.fn(async () => 0),
     $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(db)),
@@ -195,32 +237,23 @@ function harness(opts: { triggers?: ReturnType<typeof trigger>[]; template?: unk
         }
       ),
       delete: vi.fn(async () => ({})),
-      findFirst: vi.fn(
+      findMany: vi.fn(
         async ({
           where,
         }: {
           where: { temporalWorkflowId: { in: string[] }; currentStatus: { notIn: string[] } };
         }) =>
-          active.find(
+          active.filter(
             (a) =>
               where.temporalWorkflowId.in.includes(a.temporalWorkflowId) &&
               !where.currentStatus.notIn.includes(a.currentStatus)
-          ) ?? null
+          )
       ),
     },
     ciFailureTriggerFire: {
       count: vi.fn(
-        async ({
-          where,
-        }: {
-          where: { triggerId: string; outcome: string; createdAt: { gte: Date } };
-        }) =>
-          fires.filter(
-            (f) =>
-              f.triggerId === where.triggerId &&
-              f.outcome === where.outcome &&
-              f.createdAt >= where.createdAt.gte
-          ).length
+        async ({ where }: { where: Record<string, unknown> }) =>
+          fires.filter((f) => matches(f, where)).length
       ),
       create: vi.fn(async ({ data }: { data: Omit<Fire, 'createdAt'> }) => {
         if (fires.some((f) => f.dedupeKey === data.dedupeKey)) {
@@ -238,31 +271,17 @@ function harness(opts: { triggers?: ReturnType<typeof trigger>[]; template?: unk
       }),
       findFirst: vi.fn(
         async ({ where }: { where: Record<string, unknown> }) =>
-          fires.find(
-            (f) =>
-              f.triggerId === where.triggerId &&
-              f.outcome === where.outcome &&
-              (where.headSha === undefined || f.headSha === where.headSha) &&
-              (where.headBranch === undefined || f.headBranch === where.headBranch) &&
-              (where.createdAt === undefined ||
-                f.createdAt >= (where.createdAt as { gte: Date }).gte)
-          ) ?? null
+          fires.find((f) => matches(f, where)) ?? null
       ),
-      findMany: vi.fn(async ({ where }: { where: { triggerId: string; headBranch: string } }) =>
-        fires.filter(
-          (f) =>
-            f.triggerId === where.triggerId &&
-            f.outcome === 'STARTED' &&
-            f.headBranch === where.headBranch &&
-            f.temporalWorkflowId
-        )
+      findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
+        fires.filter((f) => matches(f, where))
       ),
     },
     connection: {
       findMany: vi.fn(async () => [
         {
-          ciFailureTriggers: opts.triggers ?? [trigger()],
-          id: 'cccccccc-0000-4000-8000-000000000001',
+          ciFailureTriggers: triggers,
+          id: CONNECTION,
           installation: null,
           team: {
             id: 'team-1',
@@ -283,7 +302,11 @@ function harness(opts: { triggers?: ReturnType<typeof trigger>[]; template?: unk
     workflowTemplate: {
       findFirst: vi.fn(async () =>
         opts.template === undefined
-          ? { activeVersion: 1, id: 'tttttttt-0000-4000-8000-000000000001', inputSchema: null }
+          ? {
+              activeVersion: 1,
+              id: 'tttttttt-0000-4000-8000-000000000001',
+              inputSchema: CI_TRIAGE_INPUT_SCHEMA,
+            }
           : opts.template
       ),
     },
@@ -292,6 +315,7 @@ function harness(opts: { triggers?: ReturnType<typeof trigger>[]; template?: unk
     log: { error: vi.fn(), warn: vi.fn() },
     prisma: db,
     temporal: {
+      isWorkflowGone: vi.fn(opts.gone ?? (async () => false)),
       startRunnableWorkflow: vi.fn(async (id: string, input: Record<string, unknown>) => {
         started.push({ id, input });
       }),
@@ -306,7 +330,7 @@ beforeEach(() => {
 });
 
 const handle = (h: ReturnType<typeof harness>, event: WorkflowRunFailedEvent = failed) =>
-  handleWorkflowRunFailure(h.fastify as never, event, null);
+  handleWorkflowRunFailure(h.fastify as never, event, null, new Date(), 0);
 
 describe('handleWorkflowRunFailure', () => {
   it('starts one triage run targeting the failing branch, by run id, as a synthetic ticket', async () => {
@@ -446,17 +470,114 @@ describe('handleWorkflowRunFailure', () => {
     await expect(handle(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });
   });
 
-  it('forgets the decision when the workflow cannot start, so a redelivery can retry', async () => {
+  it('forgets the decision when every start attempt fails, so a redelivery can retry', async () => {
     const h = harness();
-    h.fastify.temporal.startRunnableWorkflow.mockRejectedValueOnce(new Error('temporal down'));
+    h.fastify.temporal.startRunnableWorkflow.mockRejectedValue(new Error('temporal down'));
     await expect(handle(h)).rejects.toMatchObject({ name: 'CiTriggerStartError' });
+    expect(h.fastify.temporal.startRunnableWorkflow).toHaveBeenCalledTimes(3);
     expect(h.fires).toHaveLength(0);
+    h.fastify.temporal.startRunnableWorkflow.mockResolvedValue(undefined);
     await expect(handle(h)).resolves.toMatchObject({ outcome: 'STARTED' });
   });
 
-  it('takes the per-trigger lock before deciding', async () => {
+  it('starts one fix per commit even when two triggers match two failing workflows', async () => {
+    const h = harness({
+      triggers: [
+        trigger({
+          id: 'aaaaaaaa-0000-4000-8000-0000000000a1',
+          workflowPatterns: ['.github/workflows/ci.yml'],
+        }),
+        trigger({
+          id: 'aaaaaaaa-0000-4000-8000-0000000000a2',
+          workflowPatterns: ['.github/workflows/lint.yml'],
+        }),
+      ],
+    });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'STARTED' });
+    const second = await handle(h, {
+      ...failed,
+      runId: '777',
+      workflowPath: '.github/workflows/lint.yml',
+    });
+    expect(second).toMatchObject({
+      outcome: 'SUPPRESSED_SAME_COMMIT',
+      triggerId: 'aaaaaaaa-0000-4000-8000-0000000000a2',
+    });
+    expect(h.started).toHaveLength(1);
+  });
+
+  it('does not treat a run Temporal says is over as in flight, whatever its ledger row says', async () => {
+    const h = harness({ gone: async () => true, triggers: [trigger({ cooldownMinutes: 0 })] });
+    await handle(h);
+    // The ledger row stays IMPLEMENTING, as for an execution terminated before it finalized.
+    const next = await handle(h, { ...failed, headSha: 'b'.repeat(40), runId: '999' });
+    expect(next).toMatchObject({ outcome: 'STARTED' });
+  });
+
+  it('counts a run as in flight when Temporal cannot answer', async () => {
+    const h = harness({
+      gone: async () => {
+        throw new Error('temporal down');
+      },
+      triggers: [trigger({ cooldownMinutes: 0 })],
+    });
+    await handle(h);
+    const next = await handle(h, { ...failed, headSha: 'b'.repeat(40), runId: '999' });
+    expect(next).toMatchObject({ outcome: 'SUPPRESSED_IN_FLIGHT' });
+  });
+
+  it('retries a transient start failure before giving up', async () => {
+    const h = harness();
+    h.fastify.temporal.startRunnableWorkflow.mockRejectedValueOnce(new Error('unavailable'));
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'STARTED' });
+    expect(h.fastify.temporal.startRunnableWorkflow).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes "already started" on a retry as the earlier attempt having started it', async () => {
+    const h = harness();
+    h.fastify.temporal.startRunnableWorkflow
+      .mockRejectedValueOnce(new Error('deadline exceeded'))
+      .mockRejectedValueOnce(
+        Object.assign(new Error('started'), { name: 'WorkflowExecutionAlreadyStartedError' })
+      );
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'STARTED' });
+    expect(h.fires[0]).toMatchObject({ outcome: 'STARTED' });
+    expect(h.active).toHaveLength(1);
+  });
+
+  it('records FAILED_TO_START for a template that does not declare the CI payload', async () => {
+    const h = harness({ template: { activeVersion: 1, id: 't', inputSchema: null } });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('takes the per-repository lock before deciding', async () => {
     const h = harness();
     await handle(h);
     expect(h.db.$executeRaw).toHaveBeenCalled();
+  });
+});
+
+describe('acceptsCiPayload', () => {
+  it('accepts the built-in template schema', () => {
+    expect(acceptsCiPayload(CI_TRIAGE_INPUT_SCHEMA)).toBe(true);
+  });
+
+  it('refuses a template with no schema, or one that is not CI-aware', () => {
+    expect(acceptsCiPayload(null)).toBe(false);
+    expect(
+      acceptsCiPayload({
+        properties: { description: { type: 'string' } },
+        required: [],
+        type: 'object',
+      })
+    ).toBe(false);
+    expect(
+      acceptsCiPayload({
+        properties: { githubRunId: { type: 'number' } },
+        required: ['githubRunId'],
+        type: 'object',
+      })
+    ).toBe(false);
   });
 });

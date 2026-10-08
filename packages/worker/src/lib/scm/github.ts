@@ -247,6 +247,39 @@ async function octokitFor(repo: RepoRef) {
   return new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
 }
 
+/** Characters of a CI log kept: its end, where the failure is. */
+const CI_LOG_TAIL_CHARS = 50_000;
+
+/**
+ * The last `maxChars` characters of a response body, read as a stream so memory stays
+ * bounded by the tail however large the body is. Bytes are decoded as they arrive (a split
+ * multi-byte character is carried over by the streaming decoder).
+ */
+export async function readTail(
+  response: Pick<Response, 'body' | 'text'>,
+  maxChars: number
+): Promise<string> {
+  if (!response.body) {
+    // A body that cannot be streamed is read whole.
+    return (await response.text()).slice(-maxChars);
+  }
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let tail = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    tail += decoder.decode(value, { stream: true });
+    if (tail.length > maxChars * 2) {
+      tail = tail.slice(-maxChars);
+    }
+  }
+  tail += decoder.decode();
+  return tail.slice(-maxChars);
+}
+
 /** Wall-clock cap on a CI log download — the URL is third-party data. */
 const CI_LOG_FETCH_TIMEOUT_MS = 15_000;
 
@@ -625,9 +658,9 @@ export class GitHubScmProvider implements ScmProvider {
       };
     }
 
-    const fullLog = await response.text();
-    // Truncate to last 50KB to fit in LLM context
-    return { ok: true, text: fullLog.slice(-50_000) };
+    // Only the end is kept (it fits an LLM's context, and the failure is there), and it is kept
+    // while streaming: a job log can run to hundreds of megabytes.
+    return { ok: true, text: await readTail(response, CI_LOG_TAIL_CHARS) };
   }
 
   async fetchFileContent(repo: RepoRef, path: string, ref?: string): Promise<string | null> {

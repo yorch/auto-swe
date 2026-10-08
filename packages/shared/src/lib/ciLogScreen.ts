@@ -1,4 +1,12 @@
-import { scanSkillContent } from './skillScanner.js';
+import { resolveRegexBudgetMs, runRegexBatch, toRegexSpecs } from './regexExec.js';
+import { chunkScanText } from './regexSafety.js';
+import { makePatternLoader } from './scannerPatternLoader.js';
+
+// INJECTION only, loaded on their own: a slow or quarantined EXFILTRATION row must not make
+// every log "incomplete", and their cost is not paid for nothing.
+const { load: loadInjectionPatterns, invalidate } = makePatternLoader('INJECTION', 'ciLogScreen');
+
+export { invalidate as invalidateCiLogScreenCache };
 
 /**
  * Screening CI log text for prompt-injection phrasing before an agent acts on it (the CI
@@ -27,12 +35,16 @@ export async function ciLogInjectionMatches(
   if (!text) {
     return { incomplete: false, matches: [] };
   }
-  const scan = await scanSkillContent(text, { full: true });
-  const matches = scan.warnings
-    .filter((key) => key.startsWith(INJECTION_KEY_PREFIX))
-    .map((key) => key.slice(INJECTION_KEY_PREFIX.length))
-    .filter((label) => !NOT_FOR_LOGS.has(label));
-  return { incomplete: scan.incomplete === true, matches };
+  const patterns = (await loadInjectionPatterns()).filter((p) => !NOT_FOR_LOGS.has(p.label));
+  const targets = chunkScanText(text).map((t, i) => ({ key: `text:${i}`, text: t }));
+  const { hits, incomplete, quarantinedPatternKeys } = await runRegexBatch(
+    toRegexSpecs(patterns, INJECTION_KEY_PREFIX),
+    targets,
+    { budgetMs: resolveRegexBudgetMs(), label: 'ciLogScreen' }
+  );
+  const matches = [...new Set(hits.map((h) => h.patternKey.slice(INJECTION_KEY_PREFIX.length)))];
+  // A quarantined pattern was skipped, so the scan did not run every rule.
+  return { incomplete: incomplete || quarantinedPatternKeys.length > 0, matches };
 }
 
 /**

@@ -1,4 +1,3 @@
-import type { InputSchema } from '../../lib/inputSchema.js';
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
@@ -28,25 +27,7 @@ const TRIAGE_RESULT = {
 /** Every implementer step here refuses a change to `.github/workflows` or `.github/actions`. */
 const REFUSE_WORKFLOW_CHANGES = { refuseWorkflowChanges: true } as const;
 
-/**
- * The run-input contract. The failing run is named by id; the worker reads
- * everything else about it from the repository itself.
- */
-export const CI_TRIAGE_INPUT_SCHEMA: InputSchema = {
-  properties: {
-    baseBranch: { type: 'string' },
-    commentOnPullRequest: { type: 'boolean' },
-    connectionId: { connectionType: 'git_repo', type: 'connection' },
-    description: { type: 'string' },
-    githubRunId: { type: 'string' },
-    mode: { enum: ['triage', 'fix'], type: 'string' },
-    pullRequestNumber: { type: 'number' },
-    runAttempt: { type: 'number' },
-    ticketId: { type: 'string' },
-  },
-  required: ['connectionId', 'githubRunId', 'runAttempt', 'baseBranch', 'mode'],
-  type: 'object',
-};
+export { CI_TRIAGE_INPUT_SCHEMA } from '../../lib/ciTrigger.js';
 
 const nodes: NodeMap = mergeNodes(
   {
@@ -218,6 +199,15 @@ nodes.ciFix = {
   ...ciFix,
   config: { ...(ciFix.config ?? {}), ...REFUSE_WORKFLOW_CHANGES, untrustedCiLogs: true },
 };
+
+// After a fix is pushed, the wait starts over the way it first did: through the poll-or-signal
+// router, not straight into the webhook wait (`ciLoop` re-enters `waitForCI`), so a deployment
+// that only polls does not sit out four hours for a webhook that never comes.
+const repush = nodes.repushAfterFix;
+if (repush?.type !== 'step') {
+  throw new Error('ci-triage-and-fix: the CI loop has no repushAfterFix step');
+}
+nodes.repushAfterFix = { ...repush, next: ciWaitEntry('pollOrSignal') };
 
 /**
  * A failed GitHub Actions run, diagnosed, and — when the trigger allows it and

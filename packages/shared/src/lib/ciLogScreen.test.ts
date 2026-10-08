@@ -6,14 +6,11 @@ vi.mock('@auto-swe/shared/db', () => ({
 
 import { prisma } from '@auto-swe/shared/db';
 import { BUILTIN_SCANNER_PATTERNS } from '../scannerPatterns/index.js';
-import { ciLogInjectionMatches, ciLogIsUsable } from './ciLogScreen.js';
-import { invalidateScannerPatternCache } from './skillScanner.js';
+import { ciLogInjectionMatches, ciLogIsUsable, invalidateCiLogScreenCache } from './ciLogScreen.js';
 
-// The real shipped INJECTION/EXFILTRATION definitions, so a realistic log is shown not to
+// The real shipped INJECTION definitions (the loader asks for those alone), so a realistic log is shown not to
 // trip the screen — the reason it uses the INJECTION set alone.
-const ROWS = BUILTIN_SCANNER_PATTERNS.filter(
-  (p) => p.type === 'INJECTION' || p.type === 'EXFILTRATION'
-).map((p, i) => ({
+const ROWS = BUILTIN_SCANNER_PATTERNS.filter((p) => p.type === 'INJECTION').map((p, i) => ({
   flags: p.flags,
   id: `p-${i}`,
   isActive: true,
@@ -23,7 +20,7 @@ const ROWS = BUILTIN_SCANNER_PATTERNS.filter(
 }));
 
 beforeEach(() => {
-  invalidateScannerPatternCache();
+  invalidateCiLogScreenCache();
   vi.mocked(prisma.scannerPattern.findMany).mockResolvedValue(ROWS as never);
 });
 
@@ -61,7 +58,7 @@ describe('ciLogInjectionMatches', () => {
   });
 
   it('treats a scan that cannot run as unusable', async () => {
-    invalidateScannerPatternCache();
+    invalidateCiLogScreenCache();
     vi.mocked(prisma.scannerPattern.findMany).mockRejectedValue(new Error('db down'));
     await expect(ciLogIsUsable(ORDINARY_LOG)).resolves.toBe(false);
   });

@@ -13,12 +13,17 @@ import {
   CI_TRIGGER_MODES,
   GlobListSchema,
 } from '@auto-swe/shared/lib/ciTrigger';
+import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { isRepoMember, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { acceptsCiPayload } from '../lib/ciFailureTriggers.js';
 import { sendError } from '../lib/httpErrors.js';
+import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
+import { permissionRequirement } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 const RepoParams = z.object({ id: z.string().uuid() });
@@ -92,26 +97,35 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
    * not a git repository or the caller may not read it — answered 404 either way, so the
    * route does not confirm a repository the caller cannot see.
    */
-  async function loadRepo(id: string, user: JwtPayload) {
-    const repo = await fastify.prisma.connection.findUnique({
+  async function loadRepo(id: string, user: JwtPayload, gate: RepoAccessGate | undefined) {
+    const admin = user.role === 'ADMIN';
+    const repo = await fastify.prisma.connection.findFirst({
       select: {
+        githubApiUrl: true,
+        githubUrl: true,
         id: true,
+        installation: { select: { host: true, installationId: true, isActive: true } },
         isActive: true,
+        organizationName: true,
+        repoName: true,
         shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
         team: {
           select: {
             memberships: { select: { role: true, userId: true }, where: { userId: user.sub } },
+            organization: { select: { monthlyBudgetUsdCents: true } },
+            orgId: true,
           },
         },
         teamId: true,
         type: true,
       },
-      where: { id },
+      // Under an enforcing access gate a member must also hold a current GitHub permission
+      // on the repository, as for every other repository read.
+      where: { id, ...(admin ? {} : permissionRequirement(user, gate)) },
     });
     if (repo?.type !== 'git_repo') {
       return null;
     }
-    const admin = user.role === 'ADMIN';
     if (!admin && !isRepoMember(repo, user.sub)) {
       return null;
     }
@@ -119,13 +133,48 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
     return { canManage: admin || role === 'LEAD' || role === 'ADMIN', repo };
   }
 
-  /** A template a trigger may start: active, and global or the repository team's own. */
+  /**
+   * A trigger starts runs on the repository, so saving one that can start runs is a launch
+   * decision, exactly as for a schedule: the access gate, organization membership and its
+   * monthly cap. Otherwise a lead whose GitHub access was revoked could keep a trigger acting
+   * on the repository. The runs use the platform credential, so the gate judges the caller's
+   * own login, not a saved token. Sends the refusal and returns false.
+   */
+  async function mayLaunch(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    user: JwtPayload,
+    repo: NonNullable<Awaited<ReturnType<typeof loadRepo>>>['repo']
+  ): Promise<boolean> {
+    const decision = await authorizeLaunch(fastify.prisma, user, {
+      gate: request.repoAccessGate,
+      log: request.log,
+      repos: [repo],
+      runIdentity: 'platform',
+    });
+    if (decision.ok) {
+      return true;
+    }
+    await sendLaunchRefusal(reply, decision.refusal);
+    return false;
+  }
+
+  /**
+   * A template a trigger may start: active, global or the repository team's own, not a
+   * system template, and declaring an input schema that accepts the CI payload — so a trigger
+   * cannot start a template that would read the payload as something else.
+   */
   async function templateAllowed(templateId: string, teamId: string): Promise<boolean> {
     const row = await fastify.prisma.workflowTemplate.findFirst({
-      select: { id: true },
-      where: { id: templateId, OR: [{ teamId: null }, { teamId }], status: 'ACTIVE' },
+      select: { id: true, inputSchema: true },
+      where: {
+        AND: [
+          { id: templateId, OR: [{ teamId: null }, { teamId }], status: 'ACTIVE' },
+          EXCLUDE_SYSTEM_TEMPLATES,
+        ],
+      },
     });
-    return row !== null;
+    return row !== null && acceptsCiPayload(row.inputSchema);
   }
 
   const FORBIDDEN = 'Requires ADMIN role, or LEAD membership on the repository owning team';
@@ -136,7 +185,7 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: signedIn, schema: { params: RepoParams } },
     async (request, reply) => {
       const user = requireUser(request);
-      const loaded = await loadRepo(request.params.id, user);
+      const loaded = await loadRepo(request.params.id, user, request.repoAccessGate);
       if (!loaded) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
@@ -155,7 +204,7 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: signedIn, schema: { body: CreateBody, params: RepoParams } },
     async (request, reply) => {
       const user = requireUser(request);
-      const loaded = await loadRepo(request.params.id, user);
+      const loaded = await loadRepo(request.params.id, user, request.repoAccessGate);
       if (!loaded) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
@@ -166,12 +215,15 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 409, 'REPO_INACTIVE', 'The repository is not active');
       }
       const body = request.body;
+      if (body.enabled && !(await mayLaunch(request, reply, user, loaded.repo))) {
+        return;
+      }
       if (body.templateId && !(await templateAllowed(body.templateId, loaded.repo.teamId))) {
         return sendError(
           reply,
           400,
           'INVALID_TEMPLATE',
-          'templateId must name an active template that is global or owned by the repository team'
+          'templateId must name an active, non-system template, global or owned by the repository team, whose input schema accepts the CI triage payload (githubRunId, runAttempt, baseBranch, mode)'
         );
       }
       const created = await fastify.prisma.ciFailureTrigger.create({
@@ -195,7 +247,7 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: signedIn, schema: { body: UpdateBody, params: TriggerParams } },
     async (request, reply) => {
       const user = requireUser(request);
-      const loaded = await loadRepo(request.params.id, user);
+      const loaded = await loadRepo(request.params.id, user, request.repoAccessGate);
       if (!loaded) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
@@ -210,12 +262,23 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 403, 'FORBIDDEN', FORBIDDEN);
       }
       const body = request.body;
+      // Anything but switching it off leaves a trigger able to start runs.
+      const onlyDisables =
+        Object.keys(body).every((k) => k === 'enabled') && body.enabled === false;
+      if (!onlyDisables) {
+        if (!loaded.repo.isActive) {
+          return sendError(reply, 409, 'REPO_INACTIVE', 'The repository is not active');
+        }
+        if (!(await mayLaunch(request, reply, user, loaded.repo))) {
+          return;
+        }
+      }
       if (body.templateId && !(await templateAllowed(body.templateId, loaded.repo.teamId))) {
         return sendError(
           reply,
           400,
           'INVALID_TEMPLATE',
-          'templateId must name an active template that is global or owned by the repository team'
+          'templateId must name an active, non-system template, global or owned by the repository team, whose input schema accepts the CI triage payload (githubRunId, runAttempt, baseBranch, mode)'
         );
       }
       const updated = await fastify.prisma.ciFailureTrigger.update({
@@ -241,7 +304,7 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: signedIn, schema: { params: TriggerParams } },
     async (request, reply) => {
       const user = requireUser(request);
-      const loaded = await loadRepo(request.params.id, user);
+      const loaded = await loadRepo(request.params.id, user, request.repoAccessGate);
       if (!loaded) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
@@ -273,7 +336,7 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: signedIn, schema: { params: TriggerParams, querystring: FiresQuery } },
     async (request, reply) => {
       const user = requireUser(request);
-      const loaded = await loadRepo(request.params.id, user);
+      const loaded = await loadRepo(request.params.id, user, request.repoAccessGate);
       if (!loaded) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
