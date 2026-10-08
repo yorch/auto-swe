@@ -10,7 +10,10 @@ import type { FastifyInstance } from 'fastify';
  * Sync the system-wide Temporal Schedules with their configuration, once the
  * gateway's background Temporal connection is up (immediately on a healthy
  * start, later after an outage at boot). Each sync is best-effort: a failure is
- * logged and an admin can re-save from the UI.
+ * logged. Consolidation, eval regression and revalidation can be re-saved from the
+ * admin UI; the environment-driven schedules (repository dependency scan,
+ * repository access sync, model discovery, run reaper, skill-source sync) are
+ * next synced at the following gateway start.
  *
  * Only these system schedules are re-synced here. Per-channel and
  * per-work-request schedules are reconciled when their own rows are written
