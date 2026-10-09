@@ -580,7 +580,9 @@ export function renderTriageComment(
     } else if (!pushFailed.attempted) {
       why = 'and the trigger allows no revisions';
     } else if (pushFailed.reason) {
-      why = `and a follow-up could not be pushed: ${neutralizeCommentText(pushFailed.reason, 300)}`;
+      why =
+        `and a follow-up could not be pushed (${neutralizeCommentText(pushFailed.reason, 300)}); ` +
+        "it is kept on the run's work branch";
     } else {
       why = 'and a follow-up attempt produced no change';
     }
@@ -667,6 +669,12 @@ export interface PushCiFixInput {
   triage: CiTriageResult;
   /** The implementation's result: the fix commit, on the run's own work branch. */
   codeResult: CodeResult;
+  /**
+   * Keep the work branch after the push, for a follow-up (the step's `config.keepWorkBranch`,
+   * set by a template that watches the pushed commit and then calls `finishCiFixPush`). A run
+   * of a template that does not ask has it deleted here, as it always was.
+   */
+  keepWorkBranch?: boolean;
 }
 
 export type PushCiFixResult =
@@ -828,6 +836,9 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
     };
     // A retry after a push whose reply was lost: the branch is already at the recorded commit.
     if (fire.producedKey === fixSha && info.sha === fixSha) {
+      if (!input.keepWorkBranch) {
+        await scm.deleteBranch(repoRef, workBranch);
+      }
       return done();
     }
     if ((await scm.branchHeadSha(repoRef, workBranch)) !== fixSha) {
@@ -844,6 +855,32 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
       return refuse('the fix touches a workflow file');
     }
 
+    // A follow-up replaces the run's produced commit, but the earlier one is still the
+    // platform's own: a slow workflow can fail on it after the run ended. It keeps a row of
+    // its own, which only the own-output guard reads (and retention keeps).
+    if (fire.producedKey && fire.producedKey !== fixSha) {
+      await prisma.automationFire
+        .create({
+          data: {
+            automationId: fire.automationId,
+            connectionId: fire.connectionId,
+            dedupeKey: `${fire.dedupeKey}~produced~${fire.producedKey}`,
+            facts: fire.facts ?? {},
+            outcome: 'SUPPRESSED_OWN_OUTPUT',
+            producedKey: fire.producedKey,
+            reason: 'an earlier fix this run pushed, followed up by another',
+            repoKey: fire.repoKey,
+            scopeKey: fire.scopeKey,
+            source: fire.source,
+            subjectKey: fire.producedKey,
+          },
+        })
+        .catch((err: unknown) => {
+          if ((err as { code?: string }).code !== 'P2002') {
+            throw err;
+          }
+        });
+    }
     // Recorded first: if the push lands and nothing after it does, the commit's failure is
     // still recognised as the platform's own.
     await prisma.automationFire.update({
@@ -860,8 +897,12 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
       });
       return refuse('GitHub refused the push (the branch moved, or a rule protects it)');
     }
-    // The work branch stays while the run watches the pushed commit's CI: a follow-up fix is
-    // made on it. `finishCiFixPush` removes it when the run ends.
+    // The work branch only carried the commit there; it is now on the pull request's branch.
+    // A template that watches the pushed commit keeps it for a follow-up, and removes it with
+    // `finishCiFixPush` when it is done.
+    if (!input.keepWorkBranch) {
+      await scm.deleteBranch(repoRef, workBranch);
+    }
     return done();
   } catch (err) {
     tracer.addActivityEvent({ error: getErrorMessage(err), name: 'ci_fix.push_failed' });
@@ -872,11 +913,14 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
 }
 
 /**
- * Remove this run's work branch once a pushed fix is done with: it only carried the fix commit,
- * which is now on the pull request's branch. Best-effort; a branch that is gone is fine.
+ * Remove this run's work branch once a pushed fix is done with: it only carried the fix commits,
+ * which are now on the pull request's branch. Kept when its head is anything else — a follow-up
+ * that could not be pushed is its only copy. Best-effort; a branch that is gone is fine.
  */
 export async function finishCiFixPush(input: {
   request: RepoWorkRequest;
+  /** The commit last pushed onto the pull request's branch. */
+  pushedCommitSha?: string | null;
 }): Promise<{ deleted: boolean }> {
   const { request } = input;
   const repo = await prisma.connection.findUniqueOrThrow({
@@ -891,5 +935,13 @@ export async function finishCiFixPush(input: {
     return { deleted: false };
   }
   const repoRef = toRepoRef(repo);
-  return { deleted: await getScmProvider(repoRef).deleteBranch(repoRef, workBranch) };
+  const scm = getScmProvider(repoRef);
+  const head = await scm.branchHeadSha(repoRef, workBranch);
+  if (head === null) {
+    return { deleted: false };
+  }
+  if (!input.pushedCommitSha || head !== input.pushedCommitSha) {
+    return { deleted: false };
+  }
+  return { deleted: await scm.deleteBranch(repoRef, workBranch) };
 }

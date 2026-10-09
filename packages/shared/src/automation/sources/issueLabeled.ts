@@ -38,6 +38,15 @@ export const IssueLabeledFactsSchema = z.object({
 });
 export type IssueLabeledFacts = z.infer<typeof IssueLabeledFactsSchema>;
 
+/**
+ * Issue text as GitHub shows it: HTML comments (`<!-- … -->`, an unterminated one to the end)
+ * are not rendered, so a member who read the issue before labelling it never saw them, and
+ * neither does the run.
+ */
+export function visibleIssueText(text: string): string {
+  return text.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+}
+
 /** A short, stable, dependency-free hash (FNV-1a), for ids that must not carry raw text. */
 function shortHash(text: string): string {
   let h = 0x811c9dc5;
@@ -99,8 +108,8 @@ export const issueLabeledSource: EventSource<IssueLabeledFilters, IssueLabeledFa
       : `the label '${x.label}' is not one of ${f.labels.join(', ')}`,
   run: (x) => ({
     description: [
-      x.title,
-      x.body,
+      visibleIssueText(x.title),
+      visibleIssueText(x.body),
       `GitHub issue #${x.issueNumber}, labelled ${x.label} by ${x.senderLogin}: ${x.htmlUrl}`,
     ]
       .filter((p) => p.trim().length > 0)

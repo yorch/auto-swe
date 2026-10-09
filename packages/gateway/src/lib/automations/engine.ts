@@ -18,20 +18,24 @@ import {
   type EventSource,
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
+import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
-import { repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
+import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
+import { isRepoMember } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../../plugins/auth.js';
+import { authorizeLaunch } from '../launchAuthorization.js';
 import { isOrgOverBudget } from '../orgAccess.js';
 import { webhookRepositoryWhere } from '../repositoryHost.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../systemTemplate.js';
 import { isValidTicketId } from '../ticketId.js';
 import { launchTrackedWorkflow } from '../workflowLaunch.js';
+import { findLaunchRepo } from './access.js';
 
 /** Attempts at starting the workflow before the decision is given up. */
 const START_ATTEMPTS = 3;
@@ -284,15 +288,22 @@ export async function decideAndStart<F, X>(
     let requestedById: string | null = null;
     if (source.actor) {
       const actor = source.actor(facts);
-      requestedById = await actorMember(prisma, repoKey, actor.id, connection.id);
-      if (!requestedById) {
+      const decided = await actorLaunchDecision(
+        prisma,
+        repoKey,
+        actor.id,
+        connection.id,
+        fastify.log
+      );
+      if ('refused' in decided) {
         return recordDecision(
           prisma,
           fireBase,
           'SUPPRESSED_PRECONDITION',
-          `${actor.login.slice(0, 100)} is not an active platform user with this GitHub account who is a member of the repository`
+          `${actor.login.slice(0, 100)} ${decided.refused}`.slice(0, 500)
         );
       }
+      requestedById = decided.userId;
     }
     const org = connection.team?.organization;
     if (org && (await isOrgOverBudget(prisma, org.id, org.monthlyBudgetUsdCents))) {
@@ -586,40 +597,58 @@ export async function decideUnderLock<F, X>(
 }
 
 /**
- * The platform user behind a host account, when they may ask for runs on the repository: the
+ * The platform user behind a host account, when they may start work on the repository: the
  * account (GitHub's numeric id, on the repository's host) is the one linked to an active user,
- * and that user is a member of the repository's owning team or a team it is shared with.
+ * that user is a member of the repository (owning team or a team it is shared with), and the
+ * same launch decision every other launch path takes allows them now — the access gate's
+ * GitHub permission check, organization membership, the organization's cap. Otherwise why not.
  */
-export async function actorMember(
+export async function actorLaunchDecision(
   prisma: PrismaClient,
   repoKey: string,
   accountId: string,
-  connectionId: string
-): Promise<string | null> {
+  connectionId: string,
+  log?: AccessLog
+): Promise<{ userId: string } | { refused: string }> {
+  const notLinked = {
+    refused: 'is not an active platform user with this GitHub account',
+  };
   if (!/^\d{1,20}$/.test(accountId)) {
-    return null;
+    return notLinked;
   }
   const host = repoKey.slice(0, repoKey.indexOf('/'));
   // How a linked account is recorded: a bare id on github.com, `<host>:<id>` elsewhere.
   const linked =
     host === 'github.com' ? [accountId, `github.com:${accountId}`] : [`${host}:${accountId}`];
   const user = await prisma.user.findFirst({
-    select: { id: true },
+    select: { id: true, role: true },
     where: { githubLoginAccountId: { in: linked }, isActive: true },
   });
   if (!user) {
-    return null;
+    return notLinked;
   }
-  const member = await runUnscoped(
-    'membership of the repository an occurrence names, for the person behind it',
+  const repo = await runUnscoped(
+    'the repository an occurrence names, for the person behind it',
     ['Connection'],
-    () =>
-      prisma.connection.findFirst({
-        select: { id: true },
-        where: { AND: [{ id: connectionId }, repoMemberWhere({ userId: user.id })] },
-      })
+    () => findLaunchRepo(prisma, connectionId, user.id)
   );
-  return member ? user.id : null;
+  if (!repo || !isRepoMember(repo, user.id)) {
+    return { refused: 'is not a member of the repository' };
+  }
+  const decision = await authorizeLaunch(
+    prisma,
+    { role: user.role, sub: user.id },
+    {
+      gate: (await resolveRepoAccessGateOrLastKnown()) ?? undefined,
+      ...(log ? { log } : {}),
+      repos: [repo],
+      runIdentity: 'platform',
+    }
+  );
+  if (!decision.ok) {
+    return { refused: `may not start work here (${decision.refusal.body.error.message})` };
+  }
+  return { userId: user.id };
 }
 
 /**

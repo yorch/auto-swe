@@ -30,7 +30,8 @@ export async function pruneAutomationDecisions(
 ): Promise<PruneAutomationDecisionsResult> {
   const retentionDays = await resolveSetting('workflow.automationDecisionRetentionDays', {});
   const cutoff = new Date(now.getTime() - retentionDays * DAY_MS);
-  const where = { createdAt: { lt: cutoff }, outcome: { not: 'STARTED' } };
+  // A row that names something the platform produced is own-output memory, kept like STARTED.
+  const where = { createdAt: { lt: cutoff }, outcome: { not: 'STARTED' }, producedKey: null };
   let deleted = 0;
   for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch++) {
     const ids = await prisma.automationFire.findMany({

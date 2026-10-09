@@ -442,7 +442,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'pushCiFixToPullRequest',
-    ({ ctx, request, inputs }) => {
+    ({ ctx, config, request, inputs }) => {
       const triage = (inputs.triage ?? lookupPath(ctx, 'context.ciTriage')) as
         | activitiesType.CiTriageResult
         | undefined;
@@ -452,10 +452,25 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       if (!triage || !codeResult) {
         throw new Error('pushCiFixToPullRequest requires the triage and the code result');
       }
-      return ciTriageActivities.pushCiFixToPullRequest({ codeResult, request, triage });
+      return ciTriageActivities.pushCiFixToPullRequest({
+        codeResult,
+        request,
+        triage,
+        ...(config.keepWorkBranch === true ? { keepWorkBranch: true } : {}),
+      });
     },
   ],
-  ['finishCiFixPush', ({ request }) => ciTriageActivities.finishCiFixPush({ request })],
+  [
+    'finishCiFixPush',
+    ({ ctx, request, inputs }) =>
+      ciTriageActivities.finishCiFixPush({
+        pushedCommitSha: (inputs.pushedCommitSha ?? lookupPath(ctx, 'context.pushedCommitSha')) as
+          | string
+          | null
+          | undefined,
+        request,
+      }),
+  ],
   [
     'verifyCiFix',
     ({ ctx, request, inputs }) => {

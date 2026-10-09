@@ -5,6 +5,7 @@ const m = vi.hoisted(() => ({
   branchHeadSha: vi.fn(),
   branchInfo: vi.fn(),
   compareCommits: vi.fn(),
+  createFire: vi.fn(async () => ({})),
   defaultBranch: vi.fn(),
   deleteBranch: vi.fn(),
   fastForwardBranch: vi.fn(),
@@ -21,7 +22,7 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    automationFire: { findFirst: m.findFire, update: m.updateFire },
+    automationFire: { create: m.createFire, findFirst: m.findFire, update: m.updateFire },
     connection: { findUniqueOrThrow: m.findRepo },
     runInput: { findUnique: m.findRunInput },
     workflowTemplate: { findFirst: m.findBuiltIn },
@@ -170,8 +171,8 @@ describe('pushCiFixToPullRequest', () => {
     expect(m.order).toEqual(['record', 'push']);
     expect(m.fastForwardBranch).toHaveBeenCalledWith(expect.anything(), BRANCH, FIX);
     expect(m.compareCommits).toHaveBeenCalledWith(expect.anything(), TIP, FIX);
-    // The work branch stays: a follow-up fix is made on it while the run watches CI.
-    expect(m.deleteBranch).not.toHaveBeenCalled();
+    // A template that does not ask to keep it: the work branch only carried the commit.
+    expect(m.deleteBranch).toHaveBeenCalledWith(expect.anything(), 'auto/ci-1-1');
     // The fire is the one this request started.
     expect(m.findFire.mock.calls[0]?.[0].where).toEqual({
       outcome: 'STARTED',
@@ -367,7 +368,36 @@ describe('pushCiFixToPullRequest', () => {
     m.branchInfo.mockResolvedValue({ protected: false, sha: FIX });
     await expect(push()).resolves.toEqual({ branch: BRANCH, commitSha: FIX, pushed: true });
     expect(m.fastForwardBranch).not.toHaveBeenCalled();
+    expect(m.deleteBranch).toHaveBeenCalledWith(expect.anything(), 'auto/ci-1-1');
+  });
+
+  it('keeps the work branch for a follow-up when the template asks', async () => {
+    await expect(
+      pushCiFixToPullRequest({
+        codeResult,
+        keepWorkBranch: true,
+        request: request(),
+        triage: triage(),
+      })
+    ).resolves.toMatchObject({ pushed: true });
     expect(m.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the earlier pushed commit as the platform’s own when a follow-up replaces it', async () => {
+    const EARLIER = 'e'.repeat(40);
+    m.findFire.mockResolvedValue(fireRow({ producedKey: EARLIER }));
+    await push();
+    expect(m.createFire).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        outcome: 'SUPPRESSED_OWN_OUTPUT',
+        producedKey: EARLIER,
+        subjectKey: EARLIER,
+      }),
+    });
+    expect(m.updateFire).toHaveBeenCalledWith({
+      data: { producedKey: FIX },
+      where: { id: 'fire-1' },
+    });
   });
 
   it('never pushes for a push-event failure, whatever the payload says', async () => {
@@ -386,8 +416,19 @@ describe('pushCiFixToPullRequest', () => {
 });
 
 describe('finishCiFixPush', () => {
-  it('deletes the run’s own work branch, never the pull request’s', async () => {
-    await expect(finishCiFixPush({ request: request() })).resolves.toEqual({ deleted: true });
+  it('deletes the run’s own work branch when its head is the commit last pushed', async () => {
+    m.branchHeadSha.mockResolvedValue(FIX);
+    await expect(finishCiFixPush({ pushedCommitSha: FIX, request: request() })).resolves.toEqual({
+      deleted: true,
+    });
     expect(m.deleteBranch).toHaveBeenCalledWith(expect.anything(), 'auto/ci-1-1');
+  });
+
+  it('keeps it when it holds a follow-up that was never pushed', async () => {
+    m.branchHeadSha.mockResolvedValue('f'.repeat(40));
+    await expect(finishCiFixPush({ pushedCommitSha: FIX, request: request() })).resolves.toEqual({
+      deleted: false,
+    });
+    expect(m.deleteBranch).not.toHaveBeenCalled();
   });
 });

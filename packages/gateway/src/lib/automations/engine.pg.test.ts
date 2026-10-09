@@ -45,6 +45,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
   let templateId: string;
   let repoId: string;
   let teamId: string;
+  let orgId: string;
   const started: string[] = [];
   /** Executions Temporal reports as over. */
   const gone = new Set<string>();
@@ -120,6 +121,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
         });
         repoId = repo.id;
         teamId = team.id;
+        orgId = organization.id;
         const tpl = await prisma.workflowTemplate.create({
           data: {
             activeVersion: 1,
@@ -344,6 +346,18 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       },
     });
     await prisma.teamMembership.create({ data: { teamId, userId: member.id } });
+    const outsider = await prisma.user.create({
+      data: {
+        email: `issue-outsider-${suffix}@example.test`,
+        githubLogin: `outsider-${suffix}`,
+        githubLoginAccountId: `${accountId}7`,
+      },
+    });
+    // On the team but not in the organization: the launch decision refuses them.
+    await prisma.teamMembership.create({ data: { teamId, userId: outsider.id } });
+    await runUnscoped('test fixture', ['OrganizationMembership'], () =>
+      prisma.organizationMembership.create({ data: { orgId, userId: member.id } })
+    );
     const swe = await runUnscoped('test fixture', ['WorkflowTemplate'], () =>
       prisma.workflowTemplate.create({
         data: {
@@ -399,6 +413,11 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     try {
       await expect(label('999999999999', '2026-10-01T00:00:00Z')).resolves.toMatchObject({
         outcome: 'SUPPRESSED_PRECONDITION',
+        reason: expect.stringMatching(/not an active platform user/),
+      });
+      await expect(label(`${accountId}7`, '2026-10-01T12:00:00Z')).resolves.toMatchObject({
+        outcome: 'SUPPRESSED_PRECONDITION',
+        reason: expect.stringMatching(/may not start work here/),
       });
       const ok = await label(accountId, '2026-10-02T00:00:00Z');
       expect(ok).toMatchObject({ outcome: 'STARTED' });
@@ -415,7 +434,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     } finally {
       await prisma.automationFire.deleteMany({ where: { repoKey } });
       await prisma.automation.delete({ where: { id: automation.id } });
-      await prisma.user.delete({ where: { id: member.id } });
+      await prisma.user.deleteMany({ where: { id: { in: [member.id, outsider.id] } } });
     }
   });
 

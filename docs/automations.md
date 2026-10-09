@@ -235,12 +235,17 @@ asked. Three things stand between an issue and a run:
 - **The person.** The source names who added the label (`actor`). A run starts only when that
   GitHub account, matched by its numeric id on the repository's host (not by login, which can be
   renamed and reused), is linked to an **active** platform user who is a **member** of the
-  repository's owning team or a team it is shared with. Anyone else's labelling is recorded as
-  `SUPPRESSED_PRECONDITION`. A label added by a bot or an App, the platform's own included, is
-  ignored.
-- **The run's identity.** The run records that user as its requester (`RunInput.requestedById`),
-  for attribution only. It uses the platform credential, as every automation run does; it never
-  acts with the person's own saved token.
+  repository's owning team or a team it is shared with, **and** the launch decision every other
+  launch path takes allows them now: the [access gate](./repo-access-gating.md)'s GitHub
+  permission check, membership of the repository's organization, and its monthly cap. Anyone
+  else's labelling is recorded as `SUPPRESSED_PRECONDITION` with the reason. A label added by a bot
+  or an App, the platform's own included, is ignored.
+- **The run's identity.** The run records that user as its requester (`RunInput.requestedById`): it
+  is visible to them as their run, and it counts toward their in-flight runs wherever those are
+  capped. It uses the platform credential, as every automation run does; it never acts with the
+  person's own saved token.
+- **What the run reads.** The issue's title and body as GitHub shows them: HTML comments, which
+  GitHub does not render and the labeller therefore never saw, are dropped first.
 
 Each labelling is its own subject, so removing and adding a label again starts again; the issue is
 the scope, so a labelling while an earlier run on the issue is open is `SUPPRESSED_IN_FLIGHT`, for
@@ -296,6 +301,9 @@ other decision that started no run.
 - **Membership is read when the label arrives.** A person who leaves the team keeps the runs they
   already started; a person whose GitHub account is not linked to their platform user cannot start
   one.
+- **Decide again uses the issue as it was.** Taking an issue decision again reads the recorded
+  occurrence, not the issue now: a run can start on an issue closed or unlabelled since. The
+  labeller's launch decision is taken again, as of now.
 - **The other kinds keep their own storage.** Schedules, template webhook URLs and the tracker
   transition are configured where they always were (§5). Schedules and webhooks record their latest
   decision, but not a full history in the dashboard, and only the first refusal of a reason in an

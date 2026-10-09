@@ -4,6 +4,7 @@ interface Row {
   id: string;
   outcome: string;
   createdAt: Date;
+  producedKey?: string | null;
 }
 const db = vi.hoisted(() => ({ rows: [] as Row[] }));
 
@@ -12,7 +13,13 @@ function matches(r: Row, where: Record<string, unknown>): boolean {
   const created = where.createdAt as { lt: Date };
   const outcome = where.outcome as { not: string };
   const ids = where.id as { in: string[] } | undefined;
-  return r.createdAt < created.lt && r.outcome !== outcome.not && (!ids || ids.in.includes(r.id));
+  const produced = where.producedKey === null ? (r.producedKey ?? null) === null : true;
+  return (
+    r.createdAt < created.lt &&
+    r.outcome !== outcome.not &&
+    produced &&
+    (!ids || ids.in.includes(r.id))
+  );
 }
 
 vi.mock('@auto-swe/shared/db', () => ({
@@ -58,13 +65,20 @@ describe('pruneAutomationDecisions', () => {
       { createdAt: daysAgo(100), id: 'old-cooldown', outcome: 'SUPPRESSED_COOLDOWN' },
       { createdAt: daysAgo(91), id: 'old-failed', outcome: 'FAILED_TO_START' },
       { createdAt: daysAgo(30), id: 'recent-cooldown', outcome: 'SUPPRESSED_COOLDOWN' },
+      {
+        createdAt: daysAgo(400),
+        id: 'old-own-fix',
+        outcome: 'SUPPRESSED_OWN_OUTPUT',
+        producedKey: 'a'.repeat(40),
+      },
     ];
     await expect(pruneAutomationDecisions(NOW)).resolves.toEqual({
       deleted: 2,
       more: false,
       retentionDays: 90,
     });
-    expect(db.rows.map((r) => r.id)).toEqual(['old-started', 'recent-cooldown']);
+    // A row naming a commit the platform produced is kept: the own-output guard reads it.
+    expect(db.rows.map((r) => r.id)).toEqual(['old-started', 'recent-cooldown', 'old-own-fix']);
   });
 
   it('stops at its batch limit and says more is left', async () => {

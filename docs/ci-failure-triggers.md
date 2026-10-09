@@ -168,7 +168,8 @@ an author's branch does not reach it), within the CI wait strategy's poll deadli
 - CI fails again, or the follow-up changes nothing or cannot be pushed: the pull request comment
   says so (when the trigger comments), and the run ends `FAILED`, leaving the branch to a person.
 
-The run's work branch carries the fix commits and is deleted when the run ends.
+The run's work branch carries the fix commits and is deleted when the run ends, unless it holds a
+follow-up that could not be pushed.
 
 A trigger asking for `push` is refused at save (`OPTION_DISABLED`) while the setting is
 off, and (`INVALID_INPUTS`) with a template other than the built-in; the run decides again from the
@@ -345,11 +346,14 @@ See [github-app-setup.md](./github-app-setup.md).
   unless the repository dismisses stale approvals. The push also re-runs that pull request's
   workflows (`synchronize`).
 - **A pushed fix gets one follow-up, not a loop.** If the follow-up fails the pull request's CI
-  too, the run stops and says so; that failure is suppressed as the platform's own. A follow-up the
-  author's own new commits get in the way of is refused (the branch moved) rather than rebased. Only
-  the latest pushed commit is recorded as the platform's output, so a webhook for the first fix
-  arriving after the run ended would be triaged; while the run is open it is suppressed as in
-  flight. An author's later commit is triaged as usual.
+  too, the run stops and says so; that failure is suppressed as the platform's own, and so is a
+  later failure of the first fix (it keeps a decision row of its own, which retention keeps). A
+  follow-up the author's own new commits get in the way of is refused (the branch moved) rather than
+  rebased, and stays on the run's work branch for a person. An author's later commit is triaged as
+  usual.
+- **A work branch can outlive its run.** It is deleted when the run ends through its push path
+  and its head is the commit last pushed. A run cancelled, terminated or failing elsewhere while it
+  watches the pushed commit leaves `<branchPrefix>/ci-<runId>-<attempt>` behind.
 - **The run stays open while it watches.** Polling the pushed commit holds the run, and so
   suppresses other failures on that branch as in flight, for up to the CI wait strategy's poll
   deadline.

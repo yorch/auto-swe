@@ -439,6 +439,7 @@ function ciTriagePushWatch(g: WorkflowSpec): WorkflowSpec {
   const verification = { from: 'context.ciVerification' };
   const pushed = { from: 'context.pushedCommitSha' };
   nodes.checkPushed = { ...nodes.checkPushed, onTrue: 'startPushWatch' };
+  nodes.pushFix = { ...nodes.pushFix, config: { keepWorkBranch: true } };
   nodes.startPushWatch = {
     next: 'reportPushed',
     type: 'set',
@@ -508,6 +509,7 @@ function ciTriagePushWatch(g: WorkflowSpec): WorkflowSpec {
     values: { 'context.currentCodeResult': { from: 'nodes.pushRetryFix.output' } },
   };
   nodes.pushFixAgain = {
+    config: { keepWorkBranch: true },
     inputs: {
       codeResult: { from: 'context.currentCodeResult' },
       triage: { from: 'context.ciTriage' },

@@ -199,6 +199,8 @@ const nodes: NodeMap = mergeNodes(
       type: 'cond',
     },
     pushFix: {
+      // Kept for a follow-up while the run watches the pushed commit; `finishCiFixPush` ends it.
+      config: { keepWorkBranch: true },
       group: 'deliver',
       inputs: {
         codeResult: { from: 'context.currentCodeResult' },
@@ -318,6 +320,7 @@ const nodes: NodeMap = mergeNodes(
       values: { 'context.currentCodeResult': { from: 'nodes.pushRetryFix.output' } },
     },
     pushFixAgain: {
+      config: { keepWorkBranch: true },
       group: 'push CI',
       inputs: {
         codeResult: { from: 'context.currentCodeResult' },

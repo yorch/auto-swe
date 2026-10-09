@@ -3,7 +3,7 @@
  * an occurrence for the engine. Everything that is never acted on is ignored here, before any
  * query: another action, a closed issue, a pull request, a bot.
  */
-import type { IssueLabeledFacts } from '@auto-swe/shared/automation';
+import { type IssueLabeledFacts, visibleIssueText } from '@auto-swe/shared/automation';
 import { z } from 'zod';
 import type { Occurrence } from './engine.js';
 
@@ -58,13 +58,14 @@ export function normalizeIssueLabeledEvent(body: unknown): IssueEvent {
   }
   return {
     facts: {
-      body: (issue.body ?? '').slice(0, 4_000),
+      // What the labeller could see: hidden comments are dropped before the text is bounded.
+      body: visibleIssueText(issue.body ?? '').slice(0, 4_000),
       htmlUrl: issue.html_url.slice(0, 500),
       issueNumber: issue.number,
       label: name,
       senderId: String(sender.id),
       senderLogin: sender.login.slice(0, 100),
-      title: issue.title.slice(0, 256),
+      title: visibleIssueText(issue.title).slice(0, 256),
       updatedAt: issue.updated_at.slice(0, 40),
     },
     org,
