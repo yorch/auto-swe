@@ -160,6 +160,13 @@ export interface EventSource<Filters = unknown, Facts = unknown> {
   templateCompatible(schema: InputSchema): boolean;
   /** The template an automation with no template starts. */
   defaultTemplate: { name: string };
+  /**
+   * The person on the host whose action is the occurrence (who added a label), when the source
+   * acts only for a platform member. The engine then starts a run only when that account
+   * (by its numeric id on the repository's host) is an active platform user who is a member of
+   * the repository, records the run as theirs, and otherwise suppresses it as a precondition.
+   */
+  actor?(facts: Facts): { id: string; login: string };
   /** Per-team / -organization switch that stops every automation of this source. */
   killSwitch: SettingKey;
   /**

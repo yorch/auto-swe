@@ -197,6 +197,7 @@ are environment-only ([configuration.md](./configuration.md)).
 | Source | When | Subject / scope | Default template | Kill switch |
 |---|---|---|---|---|
 | `github.workflow_run.failed` | A GitHub Actions run of a `push`, `pull_request` or `schedule` workflow fails ([ci-failure-triggers.md](./ci-failure-triggers.md)) | the commit / the branch | `ci-triage-and-fix` | `github.ciFailureTriggersEnabled` |
+| `github.issues.labeled` | A person adds one of the automation's labels to an open issue (§3.1) | that labelling / the issue | `default-engineering` | `github.issueLabelAutomationsEnabled` (off by default) |
 
 A source is a pure descriptor (`EventSource` in `@auto-swe/shared/automation`) plus a webhook
 normalizer in the gateway. The descriptor declares:
@@ -219,10 +220,37 @@ Adding a source means:
 
 The engine, API, dashboard and ledger take it from there.
 
+### 3.1 Issue labels
+
+A label added to an open issue starts the automation's template on the issue: by default the
+engineering template, which implements it and opens a pull request. The filters name the labels
+(compared without case). The run's description is the issue's title, its body (the first 4,000
+characters) and a link back; its ticket is synthetic, `issue-<number>-<hash>`.
+
+Issue forms add labels on behalf of whoever opens the issue, so a label says nothing about who
+asked. Three things stand between an issue and a run:
+
+- **The switch.** `github.issueLabelAutomationsEnabled` is off by default (ADMIN, per team or
+  organization).
+- **The person.** The source names who added the label (`actor`). A run starts only when that
+  GitHub account, matched by its numeric id on the repository's host (not by login, which can be
+  renamed and reused), is linked to an **active** platform user who is a **member** of the
+  repository's owning team or a team it is shared with. Anyone else's labelling is recorded as
+  `SUPPRESSED_PRECONDITION`. A label added by a bot or an App, the platform's own included, is
+  ignored.
+- **The run's identity.** The run records that user as its requester (`RunInput.requestedById`),
+  for attribution only. It uses the platform credential, as every automation run does; it never
+  acts with the person's own saved token.
+
+Each labelling is its own subject, so removing and adding a label again starts again; the issue is
+the scope, so a labelling while an earlier run on the issue is open is `SUPPRESSED_IN_FLIGHT`, for
+up to 14 days. A closed issue and a pull request are ignored.
+
 ## 4. Permissions on the host
 
 What an occurrence needs from the host is the source's: for CI, the **Workflow run** event and
-**Actions: Read** ([github-app-setup.md](./github-app-setup.md)).
+**Actions: Read**; for issue labels, the **Issues** event and **Issues: Read**
+([github-app-setup.md](./github-app-setup.md)).
 
 ## 5. Other kinds of automation
 
@@ -237,10 +265,15 @@ event automations, with the latest run each started.
 
 ## Limitations
 
-- **One event source.** Only failed GitHub Actions runs start event automations. Labelling an issue,
-  a comment or a review is not a source. An issue-label source in particular would act on text
-  anyone who can open an issue wrote, through issue forms that apply labels themselves, so it needs
-  the sender mapped to a platform user and an off-by-default switch before it can be added.
+- **Two event sources.** Failed GitHub Actions runs and issue labels start event automations; a
+  comment, a review or a pull request label does not.
+- **An issue run acts on the issue's text.** The labeller is a member, but the issue's title and
+  body may be anyone's: an issue opened by an outsider and labelled by a member carries the
+  outsider's text into the run's description, as a work request typed from it would. Only the first
+  4,000 characters of the body are used, and later edits to the issue are not seen.
+- **Membership is read when the label arrives.** A person who leaves the team keeps the runs they
+  already started; a person whose GitHub account is not linked to their platform user cannot start
+  one.
 - **The other kinds keep their own storage.** Schedules, template webhook URLs and the tracker
   transition write no ledger rows and are configured where they always were (§5). The Automations
   page shows the last time they fired, not what came of it: a schedule fire the worker then skipped

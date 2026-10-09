@@ -20,6 +20,7 @@ import {
 import { resolveSetting } from '@auto-swe/shared/config';
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
+import { repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
@@ -279,6 +280,20 @@ export async function decideAndStart<F, X>(
     if (unmet) {
       return recordDecision(prisma, fireBase, 'SUPPRESSED_PRECONDITION', unmet);
     }
+    // A source that acts only for a platform member: the account on the host must be one.
+    let requestedById: string | null = null;
+    if (source.actor) {
+      const actor = source.actor(facts);
+      requestedById = await actorMember(prisma, repoKey, actor.id, connection.id);
+      if (!requestedById) {
+        return recordDecision(
+          prisma,
+          fireBase,
+          'SUPPRESSED_PRECONDITION',
+          `${actor.login.slice(0, 100)} is not an active platform user with this GitHub account who is a member of the repository`
+        );
+      }
+    }
     const org = connection.team?.organization;
     if (org && (await isOrgOverBudget(prisma, org.id, org.monthlyBudgetUsdCents))) {
       return recordDecision(
@@ -364,7 +379,9 @@ export async function decideAndStart<F, X>(
             externalTicketId: run.ticketId,
             id: workRequestId,
             payload: payload as object,
-            requestedById: null,
+            // Who asked, for a source that acts for a person; attribution only. The run still
+            // uses the platform credential: it carries no `launchedById`.
+            requestedById,
             requestPayload: JSON.stringify(payload),
             templateId: template.id,
             templateVersion: template.activeVersion,
@@ -566,6 +583,43 @@ export async function decideUnderLock<F, X>(
     };
   }
   return null;
+}
+
+/**
+ * The platform user behind a host account, when they may ask for runs on the repository: the
+ * account (GitHub's numeric id, on the repository's host) is the one linked to an active user,
+ * and that user is a member of the repository's owning team or a team it is shared with.
+ */
+export async function actorMember(
+  prisma: PrismaClient,
+  repoKey: string,
+  accountId: string,
+  connectionId: string
+): Promise<string | null> {
+  if (!/^\d{1,20}$/.test(accountId)) {
+    return null;
+  }
+  const host = repoKey.slice(0, repoKey.indexOf('/'));
+  // How a linked account is recorded: a bare id on github.com, `<host>:<id>` elsewhere.
+  const linked =
+    host === 'github.com' ? [accountId, `github.com:${accountId}`] : [`${host}:${accountId}`];
+  const user = await prisma.user.findFirst({
+    select: { id: true },
+    where: { githubLoginAccountId: { in: linked }, isActive: true },
+  });
+  if (!user) {
+    return null;
+  }
+  const member = await runUnscoped(
+    'membership of the repository an occurrence names, for the person behind it',
+    ['Connection'],
+    () =>
+      prisma.connection.findFirst({
+        select: { id: true },
+        where: { AND: [{ id: connectionId }, repoMemberWhere({ userId: user.id })] },
+      })
+  );
+  return member ? user.id : null;
 }
 
 /**

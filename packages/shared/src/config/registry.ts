@@ -197,6 +197,18 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  'github.issueLabelAutomationsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether a repository's issue-label automations may start runs. Off by default: a label added to an issue starts a template on the issue's text, so an admin turns this on deliberately. Even when on, a labelling starts a run only when the person who added the label is an active platform user with a linked GitHub account and a member of the repository; issue forms add labels for whoever opens the issue, so the label alone says nothing about who asked. Turning it off does not stop runs already started.",
+    group: 'github',
+    label: 'Issue-label automations enabled',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'github.repositoryHosts': defineSetting({
     defaultValue: [],
     description:

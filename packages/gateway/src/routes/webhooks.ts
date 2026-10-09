@@ -1,6 +1,10 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
-import { workflowRunFailedSource } from '@auto-swe/shared/automation';
+import {
+  type EventSource,
+  issueLabeledSource,
+  workflowRunFailedSource,
+} from '@auto-swe/shared/automation';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { resolvePlatformCredential } from '@auto-swe/shared/lib/githubHostCredential';
 import { installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
@@ -22,7 +26,12 @@ import {
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { AutomationStartError, handleOccurrence } from '../lib/automations/engine.js';
+import {
+  AutomationStartError,
+  handleOccurrence,
+  type Occurrence,
+} from '../lib/automations/engine.js';
+import { normalizeIssueLabeledEvent } from '../lib/automations/issueLabeled.js';
 import { normalizeWorkflowRunEvent } from '../lib/automations/workflowRunFailed.js';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
@@ -230,12 +239,31 @@ async function handleWorkflowRunDelivery(
   reply: FastifyReply,
   verifiedHost: string | null
 ) {
-  const event = normalizeWorkflowRunEvent(body);
-  if (event.type === 'unrecognized') {
-    return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
-  }
-  if (event.type === 'ignored') {
+  return handleSourceDelivery(
+    fastify,
+    workflowRunFailedSource,
+    normalizeWorkflowRunEvent(body),
+    reply,
+    verifiedHost
+  );
+}
+
+/** An event source's occurrence, normalized from a verified delivery, handed to the engine. */
+async function handleSourceDelivery<F, X>(
+  fastify: FastifyInstance,
+  source: EventSource<F, X>,
+  event:
+    | (Occurrence<X> & { type: string })
+    | { type: 'unrecognized' }
+    | { type: 'ignored'; reason: string },
+  reply: FastifyReply,
+  verifiedHost: string | null
+) {
+  if ('reason' in event) {
     return { data: { ignored: true, reason: event.reason } };
+  }
+  if (!('facts' in event)) {
+    return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
   }
   if (
     !deliveryHostMatches(verifiedHost, event.repoHtmlUrl) ||
@@ -244,10 +272,10 @@ async function handleWorkflowRunDelivery(
     return HOST_MISMATCH;
   }
   try {
-    return { data: await handleOccurrence(fastify, workflowRunFailedSource, event, verifiedHost) };
+    return { data: await handleOccurrence(fastify, source, event, verifiedHost) };
   } catch (err) {
     if (err instanceof AutomationStartError) {
-      fastify.log.error({ err: err.cause, runId: event.facts.runId }, err.message);
+      fastify.log.error({ err: err.cause, source: source.key }, err.message);
       return sendError(
         reply,
         503,
@@ -529,6 +557,16 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // So do workflow runs: an App has one webhook URL.
       if (eventType === 'workflow_run') {
         return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);
+      }
+      // And issues, for issue-label automations.
+      if (eventType === 'issues') {
+        return handleSourceDelivery(
+          fastify,
+          issueLabeledSource,
+          normalizeIssueLabeledEvent(request.body),
+          reply,
+          verified.host
+        );
       }
       if (typeof eventType === 'string' && INSTALLATION_EVENT_TYPES.has(eventType)) {
         return {

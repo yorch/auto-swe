@@ -41,6 +41,7 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
    - Actions: **Read** — reading a failed workflow run's jobs and logs for
      [CI failure triage](./ci-failure-triggers.md). An installation created before this permission
      was added has to accept it (GitHub asks the installation owner) before those logs can be read
+   - Issues: **Read** — only for [issue-label automations](./automations.md#31-issue-labels)
    - Metadata: **Read** (mandatory)
 5. Set **Subscribe to events**:
    - Pull request
@@ -48,6 +49,8 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
    - Workflow run — only needed for [CI-failure triggers](./ci-failure-triggers.md) (event
      [automations](./automations.md) of failed runs); a delivery for a
      repository with no trigger is acknowledged and ignored
+   - Issues — only needed for [issue-label automations](./automations.md#31-issue-labels); a
+     labelling on a repository with no matching automation is acknowledged and ignored
 
    GitHub delivers the App's `installation` events (`deleted`, `suspend`, `unsuspend`) to the webhook
    URL by default; they cannot be subscribed to or unsubscribed from. auto-swe treats a delivery only

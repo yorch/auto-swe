@@ -8,16 +8,19 @@
  * their filters and tests a would-be occurrence with the same `mismatch` the webhook uses.
  * Adding a source is a descriptor plus a webhook normalizer.
  */
+import { ISSUE_LABELED, issueLabeledSource } from './sources/issueLabeled.js';
 import { WORKFLOW_RUN_FAILED, workflowRunFailedSource } from './sources/workflowRunFailed.js';
 import type { EventSource } from './types.js';
 
 export * from './inputs.js';
+export * from './sources/issueLabeled.js';
 export * from './sources/workflowRunFailed.js';
 export * from './types.js';
 
 /** Every event source, by the key an automation stores. */
 export const EVENT_SOURCES = {
   [WORKFLOW_RUN_FAILED]: workflowRunFailedSource,
+  [ISSUE_LABELED]: issueLabeledSource,
 } as const;
 
 export type EventSourceKey = keyof typeof EVENT_SOURCES;
