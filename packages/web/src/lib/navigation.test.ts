@@ -68,7 +68,7 @@ describe('NAV_GROUPS', () => {
 describe('visibleNavGroups', () => {
   it('shows an ENGINEER only ENGINEER pages', () => {
     const hrefs = visibleNavGroups('ENGINEER').flatMap((g) => g.items.map((i) => i.href));
-    expect(hrefs).toContain('/govern/schedules');
+    expect(hrefs).toContain('/govern/automations');
     expect(hrefs).not.toContain('/govern/baselines');
     expect(hrefs).toContain('/connections');
     expect(hrefs).not.toContain('/studio/skills');

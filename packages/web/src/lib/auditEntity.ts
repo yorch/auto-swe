@@ -11,6 +11,7 @@ interface EntityTarget {
 
 const TARGETS: Record<string, EntityTarget> = {
   Agent: { list: '/studio/agents/library' },
+  Automation: { list: '/govern/automations' },
   AutonomyPolicy: { list: '/govern/policies' },
   ConfigPermission: { list: '/govern/config-grants' },
   ConfigSetting: { list: '/govern/platform-settings' },

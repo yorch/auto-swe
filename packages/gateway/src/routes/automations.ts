@@ -21,6 +21,8 @@ import {
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -34,6 +36,8 @@ import { parseFilters, resolveAutomationTemplate } from '../lib/automations/engi
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
+import { teamMembershipFilter, templateWriteFilter } from '../lib/templateLaunch.js';
+import { reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 const IdParams = z.object({ id: z.string().uuid() });
@@ -200,6 +204,159 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
     }
     return { access, row, user };
   }
+
+  // GET /api/v1/automations — every automation of the kinds this route owns that the caller
+  // may see, normalised for one list: event automations on reachable repositories, template
+  // webhook URLs on templates they can read, and (ADMIN only) the tracker transition hook.
+  // Schedules keep their own list route, permissions and live state; the dashboard merges them.
+  app.get('/', { onRequest: signedIn }, async (request) => {
+    const user = requireUser(request);
+    const admin = user.role === 'ADMIN';
+
+    // Scoped through the repository the caller can reach; an admin sees all.
+    const automations = await fastify.prisma.automation.findMany({
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: {
+        ...automationSelect,
+        connection: {
+          select: {
+            id: true,
+            organizationName: true,
+            repoName: true,
+            team: {
+              select: {
+                id: true,
+                memberships: {
+                  select: { role: true },
+                  where: { userId: user.sub },
+                },
+                name: true,
+              },
+            },
+          },
+        },
+        fires: {
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          select: { createdAt: true, outcome: true },
+          take: 1,
+        },
+      },
+      where: admin ? {} : { connection: reachableConnections(user, request.repoAccessGate) },
+    });
+    const events = automations.map((a) => {
+      const source = eventSource(a.source);
+      const filters = source ? parseFilters(source, a.filters) : null;
+      const role = a.connection.team.memberships[0]?.role;
+      const { connection, fires, ...automation } = a;
+      return {
+        automation,
+        canManage: admin || role === 'LEAD' || role === 'ADMIN',
+        enabled: a.enabled,
+        id: a.id,
+        kind: 'event' as const,
+        lastActivity: fires[0] ? { at: fires[0].createdAt, outcome: fires[0].outcome } : null,
+        name: a.name,
+        repository: {
+          id: connection.id,
+          organizationName: connection.organizationName,
+          repoName: connection.repoName,
+        },
+        source: a.source,
+        team: { id: connection.team.id, name: connection.team.name },
+        template: a.template,
+        when:
+          source && filters !== null
+            ? `${source.label}: ${source.describe(filters)}`
+            : 'an event this build does not know',
+      };
+    });
+
+    // Template webhook URLs: the template's own setting, managed on its page.
+    const templates = await runUnscoped(
+      'template webhooks are filtered by team membership; an admin sees all',
+      ['WorkflowTemplate'],
+      () =>
+        fastify.prisma.workflowTemplate.findMany({
+          orderBy: [{ name: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            team: { select: { id: true, name: true } },
+          },
+          where: {
+            AND: [
+              { webhookToken: { not: null } },
+              teamMembershipFilter(user),
+              EXCLUDE_SYSTEM_TEMPLATES,
+            ],
+          },
+        })
+    );
+    const writable = new Set(
+      (
+        await runUnscoped(
+          'narrowing templates the caller can already read to those they may edit',
+          ['WorkflowTemplate'],
+          () =>
+            fastify.prisma.workflowTemplate.findMany({
+              select: { id: true },
+              where: {
+                AND: [{ id: { in: templates.map((t) => t.id) } }, templateWriteFilter(user)],
+              },
+            })
+        )
+      ).map((t) => t.id)
+    );
+    const webhooks = await Promise.all(
+      templates.map(async (t) => {
+        const last = await fastify.prisma.workflowRun.findFirst({
+          orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+          select: { startedAt: true, status: true },
+          where: { templateId: t.id, workflowId: { startsWith: 'wh-' } },
+        });
+        return {
+          canManage: writable.has(t.id),
+          enabled: t.status === 'ACTIVE',
+          id: t.id,
+          kind: 'template_webhook' as const,
+          lastActivity: last ? { at: last.startedAt, outcome: last.status } : null,
+          name: t.name,
+          repository: null,
+          team: t.team,
+          template: { id: t.id, name: t.name },
+          when: 'A POST to the template’s secret webhook URL',
+        };
+      })
+    );
+
+    // The tracker transition hook: platform configuration, so ADMIN only, and not even read
+    // for anyone else.
+    const tracker: unknown[] = [];
+    if (admin) {
+      const config = await resolveIssueTrackerConfig();
+      if (config.webhookTriggerStatus) {
+        const last = await fastify.prisma.workflowRun.findFirst({
+          orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+          select: { startedAt: true, status: true },
+          where: { workflowId: { startsWith: 'jira-' } },
+        });
+        tracker.push({
+          canManage: true,
+          enabled: Boolean(config.webhookSecret),
+          id: 'issue-tracker',
+          kind: 'tracker_transition' as const,
+          lastActivity: last ? { at: last.startedAt, outcome: last.status } : null,
+          name: 'Issue-tracker transition',
+          repository: null,
+          team: null,
+          template: null,
+          when: `A ticket moves to “${config.webhookTriggerStatus}”`,
+        });
+      }
+    }
+    return { data: [...events, ...webhooks, ...tracker] };
+  });
 
   // GET /api/v1/automations/events?connectionId= — a repository's event automations.
   app.get(

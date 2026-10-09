@@ -126,3 +126,35 @@ export function useDeleteEventAutomation(connectionId: string) {
     onSuccess: invalidate,
   });
 }
+
+/** The kinds the cross-kind list holds; schedules come from their own route and are merged in. */
+export type AutomationKind = 'event' | 'schedule' | 'template_webhook' | 'tracker_transition';
+
+/** One automation of any kind, normalised for the Automations page. */
+export interface AutomationSummary {
+  kind: AutomationKind;
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** When it fires, in words. */
+  when: string;
+  repository: { id: string; organizationName: string | null; repoName: string | null } | null;
+  team: { id: string; name: string } | null;
+  template: { id: string; name: string } | null;
+  canManage: boolean;
+  /** The latest decision or run, with its outcome or status. */
+  lastActivity: { at: string; outcome: string } | null;
+  /** For `event`: the automation itself. */
+  automation?: EventAutomation;
+  /** For `event`: its source key. */
+  source?: string;
+}
+
+/** Event automations, template webhooks and (ADMIN) the tracker hook the caller may see. */
+export function useAllAutomations() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: AutomationSummary[] }>('/api/v1/automations').then((r) => r.data),
+    queryKey: ['automations', 'all'],
+  });
+}

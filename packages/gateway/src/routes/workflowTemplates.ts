@@ -52,8 +52,9 @@ import {
   launchableTemplateWhere,
   sendTemplateNotLaunchable,
   teamMembershipFilter,
+  templateWriteFilter,
 } from '../lib/templateLaunch.js';
-import { ledTeams, memberOrgs } from '../lib/tenantScope.js';
+import { memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -491,31 +492,6 @@ async function createTemplateVersion(
     }
   }
   return null;
-}
-
-/**
- * Write-scoped counterpart of `teamMembershipFilter`. Global templates
- * (`teamId: null`) are readable by everyone but may only be mutated by a
- * platform admin — a LEAD must never be able to edit, version, promote or
- * re-key the platform-wide fallback every other team runs.
- *
- * A team template needs LEAD (or ADMIN) membership on an active owning team,
- * the same bar `canManageTeamRepos` sets for the team's repositories. The
- * route-level `requiredRole: 'LEAD'` checks only the platform role, so without
- * this a platform LEAD who is a plain ENGINEER on a team could rewrite the
- * workflow every one of that team's runs executes.
- */
-function templateWriteFilter(user: {
-  sub: string;
-  role: string;
-}): Prisma.WorkflowTemplateWhereInput {
-  if (user.role === 'ADMIN') {
-    return {};
-  }
-  return {
-    team: { ...ledTeams(user), isActive: true },
-    teamId: { not: null },
-  };
 }
 
 interface LastRunRow {

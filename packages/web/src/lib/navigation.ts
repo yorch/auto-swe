@@ -207,11 +207,13 @@ export const NAV_GROUPS: NavGroup[] = [
         minRole: 'ADMIN',
         section: 'Configuration',
       },
-      // The schedules API admits ENGINEERs (launch authorization is per repo).
+      // Every automation kind in one list; schedules are still edited on their own page, which
+      // keeps this entry lit. The APIs admit ENGINEERs (launch authorization is per repo).
       {
-        href: '/govern/schedules',
+        alsoActiveFor: ['/govern/schedules'],
+        href: '/govern/automations',
         icon: 'clock',
-        label: 'Schedules',
+        label: 'Automations',
         minRole: 'ENGINEER',
         section: 'Configuration',
       },

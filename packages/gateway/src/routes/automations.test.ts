@@ -20,6 +20,14 @@ vi.mock('@auto-swe/shared/config', () => ({
   ),
 }));
 
+const tracker = vi.hoisted(() => ({
+  config: { webhookSecret: 's', webhookTriggerStatus: 'Ready for dev' } as Record<string, unknown>,
+}));
+vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/systemConfig')>()),
+  resolveIssueTrackerConfig: vi.fn(async () => tracker.config),
+}));
+
 vi.mock('../lib/launchAuthorization.js', () => ({
   authorizeLaunch: vi.fn(async () => launch.decision),
   sendLaunchRefusal: (
@@ -30,6 +38,7 @@ vi.mock('../lib/launchAuthorization.js', () => ({
 
 import { WORKFLOW_RUN_FAILED } from '@auto-swe/shared/automation';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
+import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { authorizeLaunch } from '../lib/launchAuthorization.js';
 import { automationRoutes } from './automations.js';
 
@@ -108,6 +117,7 @@ async function buildApp() {
     automationFire: { findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]) },
     configAuditLog: { create: vi.fn(async (_args: { data: Record<string, unknown> }) => ({})) },
     connection: { findFirst: vi.fn() },
+    workflowRun: { findFirst: vi.fn(async () => null) },
     workflowTemplate: {
       findFirst: vi.fn(),
       findMany: vi.fn(async (_args: unknown) => [] as unknown[]),
@@ -138,6 +148,8 @@ describe('automationRoutes (event automations)', () => {
     // The built-in template, unless a test says otherwise.
     ctx.prisma.workflowTemplate.findFirst.mockResolvedValue(BUILTIN);
     ctx.prisma.automation.findUnique.mockResolvedValue(stored());
+    ctx.prisma.automation.findMany.mockResolvedValue([]);
+    ctx.prisma.workflowTemplate.findMany.mockResolvedValue([]);
   });
 
   const BUILTIN = {
@@ -261,6 +273,68 @@ describe('automationRoutes (event automations)', () => {
       });
       expect(res.statusCode).toBe(404);
       expect(ctx.prisma.automationFire.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the list of every kind', () => {
+    const listed = (role: string | null) => ({
+      ...stored(),
+      connection: {
+        id: REPO,
+        organizationName: 'acme',
+        repoName: 'api',
+        team: { id: 'team-1', memberships: role ? [{ role }] : [], name: 'Payments' },
+      },
+      createdAt: new Date(0),
+      fires: [{ createdAt: new Date(1000), outcome: 'STARTED' }],
+      name: 'mainline',
+      template: null,
+    });
+    const list = () => ctx.app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/automations' });
+
+    it('lists event automations on reachable repositories, with who may manage each', async () => {
+      ctx.prisma.automation.findMany.mockResolvedValue([
+        listed('LEAD'),
+        { ...listed(null), id: 'x' },
+      ] as never);
+      const res = await list();
+      expect(res.statusCode).toBe(200);
+      const [lead, plain] = res.json().data;
+      expect(lead).toMatchObject({
+        canManage: true,
+        kind: 'event',
+        lastActivity: { outcome: 'STARTED' },
+        repository: { id: REPO },
+        when: expect.stringContaining('When CI fails'),
+      });
+      expect(plain.canManage).toBe(false);
+      expect(
+        JSON.stringify((ctx.prisma.automation.findMany.mock.calls as unknown[][])[0]?.[0])
+      ).toContain('memberships');
+    });
+
+    it('lists template webhooks the caller can read, editable only where they may write', async () => {
+      ctx.prisma.workflowTemplate.findMany
+        .mockResolvedValueOnce([
+          { id: TEMPLATE, name: 'hooked', status: 'ACTIVE', team: { id: 't', name: 'T' } },
+        ])
+        .mockResolvedValueOnce([]);
+      const [hook] = (await list()).json().data;
+      expect(hook).toMatchObject({ canManage: false, id: TEMPLATE, kind: 'template_webhook' });
+    });
+
+    it('never reads the tracker configuration for anyone but an admin', async () => {
+      const data = (await list()).json().data;
+      expect(data.some((r: { kind: string }) => r.kind === 'tracker_transition')).toBe(false);
+      expect(resolveIssueTrackerConfig).not.toHaveBeenCalled();
+      ctx.auth.role = 'ADMIN';
+      const admin = (await list()).json().data;
+      expect(admin).toEqual([
+        expect.objectContaining({
+          kind: 'tracker_transition',
+          when: expect.stringContaining('Ready for dev'),
+        }),
+      ]);
     });
   });
 

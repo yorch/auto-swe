@@ -58,10 +58,34 @@ Filters are stored as the source's schema parsed them. The database refuses a so
 know, and filters that break the source's invariants (an empty event or pattern list). A stored
 automation whose filters do not parse matches nothing.
 
+### The Automations page
+
+**Automations** (`/govern/automations`, in the Configuration section of the navigation) lists every
+automation the caller may see, of every kind (§5). Each row says:
+
+- when it fires;
+- what it is on (a repository, a team's template, the platform);
+- what it starts;
+- what it last did: the latest decision for an event automation, the latest run for the others.
+
+Rows can be filtered by kind and searched. **Manage** opens where that kind is edited. **When CI
+fails** (one button per event source) asks for a repository and opens its automations. **Schedules**
+leads to the schedule editor at `/govern/schedules`, which keeps its own page and live state.
+
+`GET /api/v1/automations` serves the page:
+
+- event automations on the repositories the caller can reach (all, for ADMIN);
+- template webhook URLs on templates the caller can read;
+- for ADMIN only, the tracker transition hook. Its configuration is not read for anyone else.
+
+Each row says whether the caller may manage it. Schedules come from their own list route,
+`GET /api/v1/scheduled-work-requests`, so their visibility and permission rules stay where they are
+enforced; the dashboard merges them.
+
 ### Managing event automations
 
 On the dashboard, **Connections** (`/connections`) has an **Automations** action for each git
-repository. It lists the repository's event automations and their recent decisions to its members,
+repository, and the Automations page opens the same dialog. It lists the repository's event automations and their recent decisions to its members,
 and lets those who may manage them add one (one button per source), edit, enable, disable and
 remove one. The form has a tester: given an occurrence (for CI, an event, a branch and a workflow
 file), it says whether the automation would react and, if not, which filter rules it out. It calls
@@ -130,8 +154,10 @@ host. The engine (`handleOccurrence`) then:
 
 ### The ledger
 
-`AutomationFire` rows belong to the **repository** (`repoKey`, `<host>/<owner>/<repo>` lowercased),
-not to the automation or the connection row. The automation and connection links are set to null
+`AutomationFire` rows belong to the **repository** (`repoKey`, `<host>/<owner>/<repo>` lowercased)
+and the **source**, not to the automation or the connection row. The guards count one source's
+decisions on one repository. The exception is the own-output check, which matches the subject on
+its own: a commit sha names one commit wherever it is. The automation and connection links are set to null
 when either is deleted, and the limits keep reading the rows. So deleting and recreating an
 automation, or a repository row, does not forget which subjects were handled, what the platform
 produced, or what is still in flight. Each row keeps:
@@ -175,11 +201,12 @@ What an occurrence needs from the host is the source's: for CI, the **Workflow r
 
 ## 5. Other kinds of automation
 
-These start runs too, and keep their own configuration:
+These start runs too and keep their own configuration. The Automations page lists them beside
+event automations, with the latest run each started.
 
 | Kind | Configured at | Who |
 |---|---|---|
-| Cron schedule (`ScheduledWorkRequest`) | `/govern/schedules` | ADMIN, or a LEAD of the owning team or a team the repository is shared with |
+| Cron schedule (`ScheduledWorkRequest`) | `/govern/schedules`, linked from the Automations page | ADMIN, or a LEAD of the owning team or a team the repository is shared with |
 | Template webhook URL | the template's page | LEAD+ who may edit the template |
 | Issue-tracker transition | `/studio/integrations` → Tracker | ADMIN |
 
@@ -190,7 +217,13 @@ These start runs too, and keep their own configuration:
   anyone who can open an issue wrote, through issue forms that apply labels themselves, so it needs
   the sender mapped to a platform user and an off-by-default switch before it can be added.
 - **The other kinds keep their own storage.** Schedules, template webhook URLs and the tracker
-  transition write no ledger rows and are configured where they always were (§5).
+  transition write no ledger rows and are configured where they always were (§5). The Automations
+  page shows their latest run, not their refusals: a schedule fire the worker refused, or a webhook
+  call with a bad payload, is not listed.
+- **A renamed repository starts a fresh ledger.** The ledger is keyed by the repository's name on
+  its host, so after a rename the subject, cooldown and in-flight checks no longer see the earlier
+  decisions. They come back with the next ones. The own-output check matches a commit wherever it
+  is, so a fix the platform pushed is still recognised.
 - **The ledger is never pruned.** Every decision is kept, so an own-output or same-subject guard
   never lapses; nothing removes old rows.
 - **Shared teams do not manage event automations.** A LEAD of a team the repository is shared with

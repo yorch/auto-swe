@@ -1,7 +1,7 @@
 import type { Prisma } from '@auto-swe/shared';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import type { FastifyReply } from 'fastify';
-import { memberTeams } from './tenantScope.js';
+import { ledTeams, memberTeams } from './tenantScope.js';
 
 /** Templates the user may see: global ones, plus those of a team they belong to (all, for ADMIN). */
 export function teamMembershipFilter(user: {
@@ -16,6 +16,31 @@ export function teamMembershipFilter(user: {
       { teamId: null }, // Global templates visible to everyone
       { team: memberTeams(user) },
     ],
+  };
+}
+
+/**
+ * Write-scoped counterpart of `teamMembershipFilter`. Global templates
+ * (`teamId: null`) are readable by everyone but may only be mutated by a
+ * platform admin — a LEAD must never be able to edit, version, promote or
+ * re-key the platform-wide fallback every other team runs.
+ *
+ * A team template needs LEAD (or ADMIN) membership on an active owning team,
+ * the same bar `canManageTeamRepos` sets for the team's repositories. The
+ * route-level `requiredRole: 'LEAD'` checks only the platform role, so without
+ * this a platform LEAD who is a plain ENGINEER on a team could rewrite the
+ * workflow every one of that team's runs executes.
+ */
+export function templateWriteFilter(user: {
+  sub: string;
+  role: string;
+}): Prisma.WorkflowTemplateWhereInput {
+  if (user.role === 'ADMIN') {
+    return {};
+  }
+  return {
+    team: { ...ledTeams(user), isActive: true },
+    teamId: { not: null },
   };
 }
 
