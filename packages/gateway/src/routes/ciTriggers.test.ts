@@ -134,7 +134,7 @@ describe('ciTriggerRoutes', () => {
     });
 
     it('lists the templates a trigger may start with only the options a trigger sets', async () => {
-      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.workflowTemplate.findMany.mockResolvedValue([
         {
           description: '',
@@ -160,6 +160,13 @@ describe('ciTriggerRoutes', () => {
       expect(JSON.stringify(ctx.prisma.workflowTemplate.findMany.mock.calls[0]?.[0])).toContain(
         'system:'
       );
+    });
+
+    it('refuses the template list to those who may not manage the triggers', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null, lead));
+      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: `${URL}/templates` });
+      expect(res.statusCode).toBe(403);
+      expect(ctx.prisma.workflowTemplate.findMany).not.toHaveBeenCalled();
     });
 
     it('404s a repository the caller is not a member of', async () => {
@@ -297,6 +304,8 @@ describe('ciTriggerRoutes', () => {
     it('updates and audits with before and after', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
+        enabled: true,
+        events: ['push'],
         id: TRIGGER,
         inputs: {},
         templateId: null,
@@ -345,6 +354,8 @@ describe('ciTriggerRoutes', () => {
     it('re-decides the launch when a change keeps the trigger able to start runs', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
+        enabled: true,
+        events: ['push'],
         id: TRIGGER,
         inputs: {},
         templateId: null,
@@ -366,6 +377,8 @@ describe('ciTriggerRoutes', () => {
     it('checks the kept options against a new template', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
+        enabled: true,
+        events: ['push'],
         id: TRIGGER,
         inputs: { minFixConfidence: 0.8 },
         templateId: null,
@@ -394,6 +407,52 @@ describe('ciTriggerRoutes', () => {
       expect(res.statusCode).toBe(400);
       expect(res.json().error.code).toBe('INVALID_INPUTS');
       expect(ctx.prisma.ciFailureTrigger.update).not.toHaveBeenCalled();
+    });
+
+    it('lets a trigger that stays off be edited without a launch decision', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead, null, false));
+      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
+        enabled: false,
+        events: ['push'],
+        id: TRIGGER,
+        inputs: {},
+        templateId: null,
+      });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload: { name: 'renamed', workflowPatterns: ['.github/workflows/ci.yml'] },
+        url: `${URL}/${TRIGGER}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(authorizeLaunch).not.toHaveBeenCalled();
+    });
+
+    it('checks a template requiring a pull request against push failures too', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
+        activeVersion: 1,
+        id: TEMPLATE,
+        inputSchema: {
+          ...CI_TRIAGE_INPUT_SCHEMA,
+          required: [...(CI_TRIAGE_INPUT_SCHEMA.required ?? []), 'pullRequestNumber'],
+        },
+      });
+      const prOnly = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { ...VALID, events: ['pull_request'], templateId: TEMPLATE },
+        url: URL,
+      });
+      expect(prOnly.statusCode).toBe(201);
+      const withPush = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { ...VALID, events: ['push', 'pull_request'], templateId: TEMPLATE },
+        url: URL,
+      });
+      expect(withPush.statusCode).toBe(400);
+      expect(withPush.json().error.code).toBe('INVALID_INPUTS');
     });
 
     it('404s a trigger of another repository', async () => {

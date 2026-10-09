@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
+import { inputSchemaProblems } from '@auto-swe/shared/lib/inputSchema';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -311,7 +312,17 @@ const UpdateTemplateBody = z.object({
   estimatedHumanTimeSavedMinutes: z.number().min(0).nullable().optional(),
   experimentSplit: z.number().int().min(0).max(100).nullable().optional(),
   experimentVersion: z.number().int().min(1).nullable().optional(),
-  inputSchema: z.record(z.string(), z.unknown()).nullable().optional(),
+  // Shape-checked, not rewritten: a keyword of the wrong type would crash the forms rendered
+  // from it, or be read as something else by the validator.
+  inputSchema: z
+    .record(z.string(), z.unknown())
+    .nullable()
+    .optional()
+    .superRefine((v, ctx) => {
+      for (const message of v == null ? [] : inputSchemaProblems(v)) {
+        ctx.addIssue({ code: 'custom', message });
+      }
+    }),
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),

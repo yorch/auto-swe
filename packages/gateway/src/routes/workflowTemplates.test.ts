@@ -1007,6 +1007,25 @@ describe('workflow-templates routes', () => {
     expect(res.json().error?.code).toBe('EXPERIMENT_VERSION_REQUIRED');
   });
 
+  it('rejects an input schema whose keywords have the wrong type', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'PATCH',
+      payload: {
+        inputSchema: {
+          properties: { kinds: { items: { enum: 'a,b', type: 'string' }, type: 'array' } },
+          type: 'object',
+        },
+      },
+      url: `/api/v1/workflow-templates/${tpl.id}`,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('rejects experimentVersion pointing at a missing version', async () => {
     const tpl = state.templates[0];
     if (!tpl) {

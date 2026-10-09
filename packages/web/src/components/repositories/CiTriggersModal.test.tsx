@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   created: [] as unknown[],
   templates: [] as unknown[],
   triggers: [] as unknown[],
+  updated: [] as unknown[],
 }));
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -34,7 +35,12 @@ vi.mock('@/hooks/useCiTriggers', () => {
       mutate: (body: unknown) => state.created.push(body),
     }),
     useDeleteCiTrigger: mutation,
-    useUpdateCiTrigger: mutation,
+    useUpdateCiTrigger: () => ({
+      error: null,
+      isError: false,
+      isPending: false,
+      mutate: (body: unknown) => state.updated.push(body),
+    }),
   };
 });
 
@@ -93,6 +99,7 @@ describe('CiTriggersModal', () => {
   beforeEach(() => {
     state.canManage = false;
     state.created = [];
+    state.updated = [];
     state.templates = [builtIn];
     state.triggers = [];
   });
@@ -161,5 +168,13 @@ describe('CiTriggersModal', () => {
     expect((screen.getByLabelText(/Minimum confidence to fix/) as HTMLInputElement).value).toBe(
       '0.8'
     );
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    // The row's switch owns `enabled`: a save never sends a stale copy of it.
+    expect(state.updated).toHaveLength(1);
+    expect(state.updated[0]).not.toHaveProperty('enabled');
+    expect(state.updated[0]).toMatchObject({
+      id: 't-1',
+      inputs: { minFixConfidence: 0.8, mode: 'fix' },
+    });
   });
 });

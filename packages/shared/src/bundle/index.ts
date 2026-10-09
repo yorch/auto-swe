@@ -7,7 +7,7 @@ import {
 } from 'node:crypto';
 import { z } from 'zod';
 import { AGENT_RUN_TEMPLATE_NAME, isReservedTemplateOrigin } from '../lib/agentRun.js';
-import { isInputSchema } from '../lib/inputSchema.js';
+import { inputSchemaProblems } from '../lib/inputSchema.js';
 import {
   checkRegexSafety,
   MAX_PATTERN_SOURCE_LENGTH,
@@ -117,8 +117,10 @@ export const BundleTemplateSchema = z.object({
     .optional()
     // Typed as a plain boolean predicate on purpose: a type-guard refine would
     // narrow the field to `InputSchema`, and the exporter feeds it a Prisma Json.
-    .refine((v): boolean => v == null || isInputSchema(v), {
-      message: "inputSchema must be `{ type: 'object', properties: { … } }`",
+    .superRefine((v, ctx) => {
+      for (const message of v == null ? [] : inputSchemaProblems(v)) {
+        ctx.addIssue({ code: 'custom', message });
+      }
     }),
   name: z.string().min(1),
   origin: z.string().nullable().optional(),

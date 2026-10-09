@@ -65,6 +65,49 @@ describe('SchemaFieldInput', () => {
   });
 });
 
+describe('SchemaFieldInput robustness', () => {
+  it('shows a numeric enum default as selected and hands back the number', () => {
+    const onChange = vi.fn();
+    render(
+      <SchemaFieldInput
+        name="level"
+        onChange={onChange}
+        prop={{ enum: [1, 3, 5], type: 'number' }}
+        value={3}
+      />
+    );
+    const select = screen.getByRole('button', { name: /level/i });
+    expect(select.textContent).toContain('3');
+    fireEvent.click(select);
+    fireEvent.click(screen.getByRole('option', { name: '5' }));
+    expect(onChange).toHaveBeenCalledWith(5);
+    expect(
+      validatePayload(
+        { properties: { level: { enum: [1, 3, 5], type: 'number' } }, type: 'object' },
+        { level: 3 }
+      )
+    ).toEqual({});
+  });
+
+  it('renders a malformed title or choice list as a plain field instead of crashing', () => {
+    render(
+      <SchemaFieldInput
+        name="kinds"
+        onChange={() => undefined}
+        prop={
+          {
+            items: { enum: 'a,b', type: 'string' },
+            title: { bad: true },
+            type: 'array',
+          } as never
+        }
+        value={['a']}
+      />
+    );
+    expect((screen.getByLabelText('Kinds') as HTMLInputElement).value).toBe('a');
+  });
+});
+
 describe('buildInitialPayload / validatePayload', () => {
   const schema = {
     properties: {

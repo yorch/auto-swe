@@ -11,7 +11,7 @@ import {
   TriggerInputsSchema,
   triggerOptionKeys,
 } from './ciTrigger.js';
-import type { InputSchema } from './inputSchema.js';
+import { type InputSchema, inputSchemaProblems } from './inputSchema.js';
 
 describe('globMatch', () => {
   it('matches literally outside the wildcards', () => {
@@ -97,6 +97,10 @@ describe('CiTriagePayloadSchema defaults', () => {
       runAttempt: 1,
     });
     expect(parsed).toMatchObject(CI_TRIAGE_DEFAULTS);
+  });
+
+  it('declares a sound input schema', () => {
+    expect(inputSchemaProblems(CI_TRIAGE_INPUT_SCHEMA)).toEqual([]);
   });
 
   it('declares the same defaults on the input schema the form is rendered from', () => {

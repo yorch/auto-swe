@@ -325,7 +325,7 @@ function TriggerEditor({
   const body: CiTriggerInput = {
     branchPatterns: splitPatterns(form.branches),
     cooldownMinutes: Number(form.cooldown),
-    enabled: trigger?.enabled ?? true,
+    enabled: true,
     events,
     inputs: changedOptions(template?.options, form.options),
     maxRunsPerDay: Number(form.dailyCap),
@@ -348,7 +348,10 @@ function TriggerEditor({
   const error = create.error ?? update.error;
   const save = () => {
     if (trigger) {
-      update.mutate({ id: trigger.id, ...body }, { onSuccess: onDone });
+      // The on/off switch is the row's: a save never sends it, so switching the trigger while
+      // the editor is open is not undone by the editor's stale copy.
+      const { enabled: _enabled, ...changes } = body;
+      update.mutate({ id: trigger.id, ...changes }, { onSuccess: onDone });
     } else {
       create.mutate(body, { onSuccess: onDone });
     }
@@ -490,7 +493,8 @@ export function CiTriggersModal({
   onClose: () => void;
 }) {
   const { data, isLoading, isError, error } = useCiTriggers(repo.id);
-  const templates = useCiTriggerTemplates(repo.id);
+  // Only those who may manage the triggers may list the templates they could start.
+  const templates = useCiTriggerTemplates(repo.id, data?.canManage === true);
   const remove = useDeleteCiTrigger(repo.id);
   const [pendingRemove, setPendingRemove] = useState<CiTrigger | null>(null);
   // null: list only; 'new': adding; a trigger: editing it.

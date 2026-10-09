@@ -178,6 +178,7 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
   async function optionsProblem(
     templateId: string | null,
     inputs: unknown,
+    events: readonly string[],
     teamId: string
   ): Promise<{ code: string; message: string } | null> {
     const template = await resolveTriggerTemplate(fastify.prisma, templateId, teamId);
@@ -190,13 +191,23 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
           }
         : { code: 'TEMPLATE_MISSING', message: 'The built-in CI triage template is not installed' };
     }
-    const built = buildCiTriggerPayload(template.inputSchema, inputs, SAMPLE_CI_EVENT_FIELDS);
-    return built.ok
-      ? null
-      : {
+    // Checked as each kind of failure the trigger reacts to arrives: a pull-request failure
+    // carries a pull request number and a push failure does not, so a template that requires
+    // one would otherwise pass here and refuse every push.
+    const samples = [
+      ...(events.includes('pull_request') ? [SAMPLE_CI_EVENT_FIELDS] : []),
+      ...(events.includes('push') ? [{ ...SAMPLE_CI_EVENT_FIELDS, pullRequestNumber: null }] : []),
+    ];
+    for (const sample of samples) {
+      const built = buildCiTriggerPayload(template.inputSchema, inputs, sample);
+      if (!built.ok) {
+        return {
           code: 'INVALID_INPUTS',
           message: `The options do not fit the template: ${built.errors.join('; ').slice(0, 500)}`,
         };
+      }
+    }
+    return null;
   }
 
   const FORBIDDEN = 'Requires ADMIN role, or LEAD membership on the repository owning team';
@@ -222,6 +233,7 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /api/v1/repositories/:id/ci-triggers/templates — what a trigger here may start, and
   // the options each declares, so the form is rendered from the template's own contract.
+  // Those who may manage the triggers only.
   app.get(
     '/:id/ci-triggers/templates',
     { onRequest: signedIn, schema: { params: RepoParams } },
@@ -230,6 +242,11 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
       const loaded = await loadRepo(request.params.id, user, request.repoAccessGate);
       if (!loaded) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      // The owning team's own templates are its business: a shared team's member reads the
+      // triggers, not the templates they could be pointed at.
+      if (!loaded.canManage) {
+        return sendError(reply, 403, 'FORBIDDEN', FORBIDDEN);
       }
       const rows = await fastify.prisma.workflowTemplate.findMany({
         orderBy: [{ name: 'asc' }, { id: 'asc' }],
@@ -293,7 +310,12 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
       if (body.enabled && !(await mayLaunch(request, reply, user, loaded.repo))) {
         return;
       }
-      const problem = await optionsProblem(body.templateId, body.inputs, loaded.repo.teamId);
+      const problem = await optionsProblem(
+        body.templateId,
+        body.inputs,
+        body.events,
+        loaded.repo.teamId
+      );
       if (problem) {
         return sendError(reply, 400, problem.code, problem.message);
       }
@@ -338,10 +360,10 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 403, 'FORBIDDEN', FORBIDDEN);
       }
       const body = request.body;
-      // Anything but switching it off leaves a trigger able to start runs.
-      const onlyDisables =
-        Object.keys(body).every((k) => k === 'enabled') && body.enabled === false;
-      if (!onlyDisables) {
+      // A trigger that is off after the change cannot start runs, whatever else changed, so
+      // editing a disabled trigger is not a launch decision. Anything that leaves it on is.
+      const offAfter = (body.enabled ?? existing.enabled) === false;
+      if (!offAfter) {
         if (!loaded.repo.isActive) {
           return sendError(reply, 409, 'REPO_INACTIVE', 'The repository is not active');
         }
@@ -351,10 +373,11 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // The options are checked against the template they will run with: a new template is
       // checked against the options it inherits, and new options against the kept template.
-      if (body.templateId !== undefined || body.inputs !== undefined) {
+      if (body.templateId !== undefined || body.inputs !== undefined || body.events) {
         const problem = await optionsProblem(
           body.templateId === undefined ? existing.templateId : body.templateId,
           body.inputs ?? existing.inputs,
+          body.events ?? existing.events,
           loaded.repo.teamId
         );
         if (problem) {

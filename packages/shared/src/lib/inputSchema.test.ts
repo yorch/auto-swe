@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { type InputSchema, isInputSchema, validateInputPayload } from './inputSchema.js';
+import {
+  type InputSchema,
+  inputSchemaProblems,
+  isInputSchema,
+  validateInputPayload,
+} from './inputSchema.js';
 
 const SWE_SCHEMA: InputSchema = {
   properties: {
@@ -165,5 +170,58 @@ describe('isInputSchema', () => {
     expect(isInputSchema({ type: 'array' })).toBe(false);
     expect(isInputSchema({ properties: {}, type: 'object' })).toBe(true);
     expect(isInputSchema('x')).toBe(false);
+  });
+});
+
+describe('integer and maxItems', () => {
+  const schema: InputSchema = {
+    properties: {
+      n: { integer: true, type: 'number' },
+      tags: { items: { type: 'string' }, maxItems: 2, type: 'array' },
+    },
+    type: 'object',
+  };
+
+  it('refuses a fraction for an integer and too many items', () => {
+    expect(validateInputPayload(schema, { n: 2, tags: ['a', 'b'] })).toEqual({ ok: true });
+    expect(validateInputPayload(schema, { n: 1.5, tags: ['a', 'b', 'c'] })).toEqual({
+      errors: ["'n' must be a whole number", "'tags' must have at most 2 item(s)"],
+      ok: false,
+    });
+  });
+
+  it('never matches a string enum by substring', () => {
+    const odd = {
+      properties: { mode: { enum: 'triage fix', type: 'string' } },
+      type: 'object',
+    } as unknown as InputSchema;
+    expect(validateInputPayload(odd, { mode: 'fix' })).toEqual({ ok: true });
+  });
+});
+
+describe('inputSchemaProblems', () => {
+  it('passes a sound schema', () => {
+    expect(inputSchemaProblems(SWE_SCHEMA)).toEqual([]);
+  });
+
+  it.each([
+    ['an object title', { title: { a: 1 }, type: 'string' }, /title must be a string/],
+    [
+      'a string items.enum',
+      { items: { enum: 'a,b', type: 'string' }, type: 'array' },
+      /items.enum/,
+    ],
+    ['a string enum', { enum: 'a', type: 'string' }, /enum must be a list/],
+    ['an unknown type', { type: 'object' }, /type must be one of/],
+    ['a text minimum', { minimum: '1', type: 'number' }, /minimum must be a number/],
+    ['a fractional minItems', { minItems: 0.5, type: 'array' }, /minItems/],
+    ['a default of the wrong type', { default: 'x', type: 'number' }, /default must be a number/],
+  ])('reports %s', (_label, prop, re) => {
+    const problems = inputSchemaProblems({ properties: { f: prop }, type: 'object' });
+    expect(problems.join('\n')).toMatch(re);
+  });
+
+  it('reports a schema without the outline', () => {
+    expect(inputSchemaProblems({ properties: [] })).toHaveLength(1);
   });
 });

@@ -95,8 +95,14 @@ export function SchemaFieldInput({
   error?: string;
 }) {
   const fieldId = useId();
-  const base = prop.title ?? name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
-  const hint = prop.description;
+  // A template's schema is team-authored JSON: read each keyword only when it has the type
+  // it is rendered as, so a malformed one degrades to the plain field instead of a crash.
+  const base =
+    typeof prop.title === 'string'
+      ? prop.title
+      : name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
+  const hint = typeof prop.description === 'string' ? prop.description : undefined;
+  const options = Array.isArray(prop.enum) ? prop.enum : undefined;
 
   if (prop.type === 'connection') {
     return (
@@ -136,7 +142,8 @@ export function SchemaFieldInput({
   }
 
   // A set of fixed choices: one checkbox per allowed value.
-  const choices = prop.type === 'array' ? prop.items?.enum : undefined;
+  const choices =
+    prop.type === 'array' && Array.isArray(prop.items?.enum) ? prop.items.enum : undefined;
   if (choices) {
     const selected = Array.isArray(value) ? value : [];
     return (
@@ -171,20 +178,43 @@ export function SchemaFieldInput({
     );
   }
 
-  if (prop.enum) {
+  if (options) {
     return (
       <Select
         error={error}
         hint={hint}
         id={fieldId}
         label={base}
-        onChange={onChange}
+        // The option itself, not its text: a numeric choice stays a number.
+        onChange={(v) => onChange(options.find((opt) => String(opt) === v) ?? '')}
         options={[
           { label: 'Select…', value: '' },
-          ...prop.enum.map((opt) => ({ label: String(opt), value: String(opt) })),
+          ...options.map((opt) => ({ label: String(opt), value: String(opt) })),
         ]}
         required={required}
-        value={typeof value === 'string' ? value : ''}
+        value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
+      />
+    );
+  }
+
+  // A free list: one value per comma.
+  if (prop.type === 'array') {
+    return (
+      <Input
+        error={error}
+        hint={hint ?? 'Comma-separated'}
+        id={fieldId}
+        label={base}
+        onChange={(e) =>
+          onChange(
+            e.target.value
+              .split(',')
+              .map((v) => v.trim())
+              .filter((v) => v !== '')
+          )
+        }
+        required={required}
+        value={Array.isArray(value) ? value.join(', ') : ''}
       />
     );
   }
@@ -200,7 +230,7 @@ export function SchemaFieldInput({
         min={prop.minimum}
         onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
         required={required}
-        step="any"
+        step={prop.integer === true ? 1 : 'any'}
         type="number"
         value={typeof value === 'number' ? String(value) : ''}
       />
@@ -254,6 +284,9 @@ function validateField(
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       return 'Must be a valid number';
     }
+    if (prop.integer === true && !Number.isInteger(value)) {
+      return 'Must be a whole number';
+    }
     if (prop.minimum !== undefined && value < prop.minimum) {
       return `Must be at least ${prop.minimum}`;
     }
@@ -266,13 +299,18 @@ function validateField(
       return prop.minItems === 1 ? 'Choose at least one' : `Choose at least ${prop.minItems}`;
     }
   }
+  if (prop.type === 'array' && Array.isArray(value) && prop.maxItems !== undefined) {
+    if (value.length > prop.maxItems) {
+      return `Choose at most ${prop.maxItems}`;
+    }
+  }
   if (prop.type === 'string' && prop.format === 'uuid' && value !== '' && value !== undefined) {
     if (typeof value !== 'string' || !UUID_RE.test(value)) {
       return 'Must be a valid UUID';
     }
   }
-  if (prop.enum && value !== '' && value !== undefined) {
-    if (!prop.enum.some((opt) => String(opt) === value)) {
+  if (Array.isArray(prop.enum) && value !== '' && value !== undefined) {
+    if (!prop.enum.some((opt) => String(opt) === String(value))) {
       return `Must be one of: ${prop.enum.join(', ')}`;
     }
   }

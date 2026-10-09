@@ -131,6 +131,7 @@ export const CI_TRIAGE_INPUT_SCHEMA: InputSchema = {
       description:
         'Only these diagnoses are fixed. Flaky tests, infrastructure and unknown causes never are.',
       items: { enum: [...CI_FIXABLE_CATEGORIES], type: 'string' },
+      maxItems: CI_FIXABLE_CATEGORIES.length,
       minItems: 1,
       title: 'Fix these kinds of failure',
       type: 'array',
@@ -139,6 +140,7 @@ export const CI_TRIAGE_INPUT_SCHEMA: InputSchema = {
     maxCiFixAttempts: {
       default: CI_TRIAGE_DEFAULTS.maxCiFixAttempts,
       description: "How many times a fix may be revised when its own pull request's CI fails.",
+      integer: true,
       maximum: CI_FIX_ATTEMPTS_RANGE.max,
       minimum: CI_FIX_ATTEMPTS_RANGE.min,
       title: 'Revisions of a failing fix',

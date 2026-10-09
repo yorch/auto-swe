@@ -47,8 +47,14 @@ gets a form for them. The built-in template declares these:
 | `fixCategories` | Which diagnoses are fixed: any of `regression`, `test_bug`, `configuration`, `dependency` (at least one) | all four |
 | `maxCiFixAttempts` | How many times a draft is revised while its own CI fails (0–5) | 2 |
 
-A trigger stores only the options it changes from the default, so a template whose default moves
-carries its triggers along.
+The dashboard saves only the options changed from the template's default, so a trigger made there
+follows the template when a default moves. The API stores the options it is sent, so an option set
+to its current default through the API stays at that value.
+
+Every CI-aware template's payload must also satisfy the CI payload contract the worker parses
+(`CiTriagePayloadSchema`): a team template may declare options of its own, but an option with a
+name the built-in uses (`mode`, `minFixConfidence`, `fixCategories`, `maxCiFixAttempts`,
+`commentOnPullRequest`) keeps the built-in's meaning and bounds.
 
 In globs, `*` matches within one path segment, `**` matches across them, and `?` matches one
 character. A later pattern overrides an earlier one, so `!` exclusions go after what they exclude.
@@ -70,14 +76,15 @@ available through the API:
 | `POST /api/v1/repositories/:id/ci-triggers` | ADMIN, or a LEAD of the repository's **owning** team |
 | `PATCH` / `DELETE /api/v1/repositories/:id/ci-triggers/:triggerId` | The same |
 | `GET /api/v1/repositories/:id/ci-triggers/:triggerId/fires?limit=` | A member, as for the list |
-| `GET /api/v1/repositories/:id/ci-triggers/templates` | A member, as for the list: the templates a trigger here may start, each with the options it declares |
+| `GET /api/v1/repositories/:id/ci-triggers/templates` | Those who may manage the triggers: the templates a trigger here may start, each with the options it declares |
 
 A trigger in fix mode opens pull requests on the repository with the platform credential. That
 is why managing triggers stays with the owning team, like every other repository setting, and a
 shared team can read them but not create one.
 
 Saving a trigger that can start runs is a **launch decision**, made as it is for a schedule. This
-covers creating an enabled trigger, and any change other than switching one off. The repository
+covers creating an enabled trigger, and any change that leaves a trigger on. Editing a trigger
+that is off, and switching one off, are not launch decisions. The repository
 must be active. The access gate judges the caller's own GitHub login (the runs use the platform
 credential), and the caller must belong to the repository's organization, which must be under its
 monthly cap. Otherwise a lead whose GitHub access was revoked could keep a trigger acting on the
@@ -88,8 +95,9 @@ repository team's own, and whose input schema names `githubRunId`. Its `inputs` 
 template declares, and the payload they build (`buildCiTriggerPayload`: every declared default,
 then the trigger's options, then the failing run's fields) must pass both the template's input
 schema and the CI payload contract the worker parses (`CiTriagePayloadSchema`) — so a value the
-worker would refuse is refused at save, not after a run has started. Changing the template checks
-the options the trigger keeps against it. Every create, update and delete is written to the audit
+worker would refuse is refused at save, not after a run has started. The check is made as each kind
+of failure the trigger reacts to would arrive, with and without a pull request. Changing the
+template or the events checks the options the trigger keeps against them. Every create, update and delete is written to the audit
 log.
 
 ### From webhook to run
@@ -311,6 +319,9 @@ See [github-app-setup.md](./github-app-setup.md).
   that cannot hold drafts), the run fails without posting the diagnosis.
 - **A fix is always a draft pull request.** A fix for a pull request's failure is a draft into
   that pull request's branch, never a commit pushed to it; the author merges it into their branch.
+- **A run started by hand is checked less.** A launch from the template page is checked against
+  the template's input schema only, not the CI payload contract a trigger's options pass through, so
+  a value the worker refuses (a `null` option, say) ends the run at the triage step.
 - **Some decisions are not options.** Changing workflow files, acting on forks, tags and the
   platform's own branches, and the set of events are fixed, because each would widen what an agent
   can do with the platform credential rather than tune how it decides.
