@@ -345,13 +345,23 @@ quick: the implementer runs it after each turn.
 
 ### Setup readiness
 
-`GET /api/v1/platform/readiness` (ADMIN) reports whether a first run has what it needs: every provider
-used by an active GLOBAL agent's own model, and by the embedding model, has a GLOBAL credential (an
-agent pinned to its own credential does not need one); GitHub has a token or an App, from the database
-or the environment; and at least one repository connection exists. Home shows the missing items to
-admins with a link to each fix, the Credentials tab marks each needed provider present or missing, and
-the Models, Integrations and Connections pages show a banner for the items they can fix. A sub-role
-that inherits its model is covered by the agent it inherits from.
+`GET /api/v1/platform/readiness` (ADMIN) reports whether a first run has what it needs: every agent
+the worker's boot gate resolves — the agents the installed templates' steps use, plus
+`channelAssistant` when Slack channels exist (`deploymentAgentRequirements` in
+`shared/lib/deploymentAgents.ts`, the same function the worker calls) — and the embedding model can
+be called with a credential; GitHub has a token or an App, from the database or the environment; and
+at least one repository connection exists. Home shows the missing items to admins with a link to each
+fix, the Credentials tab marks each provider present or missing, and the Models, Integrations and
+Connections pages show a banner for the items they can fix.
+
+"Can be called" is decided by `credentialGaps` (`shared/lib/credentialCoverage.ts`), which mirrors the
+worker's resolution: the model comes from the agent's own spec or its `inheritsModelFrom` chain; a
+pinned credential counts when it exists, is for that provider and is reachable from the agent's scope;
+otherwise the TEAM → ORGANIZATION → GLOBAL cascade picks the first reachable credential, and a
+non-built-in provider needs an `apiBase` on it. The response's `gaps` lists every agent at every scope
+that fails that test. Only a boot-gate agent's gap fails readiness (`blocking: true`); an agent no
+installed template runs, or a team, organization, channel or template override, is reported without
+failing it, because the worker starts without it.
 
 ### Bootstrap (fresh deployment)
 
@@ -708,9 +718,11 @@ forced delete.
   model in its system prompt, not as an enforced `json_schema` response format, so a model that
   ignores instructions can still return JSON its caller rejects, and an endpoint that refuses
   `response_format: json_object` fails those calls outright.
-- **Credential coverage is advised, not enforced.** `credentialWarnings` on an agent save, and the
-  setup readiness check, both look only at whether a credential exists where the agent could reach
-  it. Neither tests the key, and readiness covers GLOBAL agents only.
+- **Credential coverage checks rows, not keys.** `credentialWarnings` on an agent save, the readiness
+  check and the delete guard all decide from which credential rows exist and where they reach; none
+  of them tests that a key works. A CHANNEL or WORKFLOW_TEMPLATE agent runs for whichever team owns
+  the run, so any credential for its provider counts as covering it, and a team without one still
+  fails at run time. Readiness fails only on the boot gate's agents; every other gap is advisory.
 - **Embeddings are locked to 1536 dimensions.** `memory_items.embedding` is `vector(1536)`, so a
   model returning any other shape throws. Changing dimension is a migration plus a re-embed of every
   `MemoryItem`; the bulk re-embed below handles the second half, but nothing performs the migration.

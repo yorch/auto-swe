@@ -18,12 +18,28 @@ export interface ReadinessProvider {
   provider: string;
   usedBy: string[];
   present: boolean;
+  /** Whether an agent the worker needs at boot, or the embedding model, calls it. */
+  required: boolean;
+}
+
+/** An agent (or `embeddings`) with no credential it can use. */
+export interface ReadinessGap {
+  subject: string;
+  scope: string;
+  teamId: string | null;
+  orgId: string | null;
+  provider: string | null;
+  problem: string;
+  detail: string;
+  /** True when it fails readiness — the worker cannot start — rather than being advisory. */
+  blocking: boolean;
 }
 
 export interface Readiness {
   ready: boolean;
   items: ReadinessItem[];
   providers: ReadinessProvider[];
+  gaps: ReadinessGap[];
 }
 
 export const READINESS_KEY = ['platform-readiness'] as const;

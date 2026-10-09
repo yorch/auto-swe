@@ -37,6 +37,7 @@
     "./lib/ciTrigger": "./dist/lib/ciTrigger.js",
     "./lib/ciLogScreen": "./dist/lib/ciLogScreen.js",
     "./lib/modelSpec": "./dist/lib/modelSpec.js",
+    "./lib/deploymentAgents": "./dist/lib/deploymentAgents.js",
     "./lib/credentialCoverage": "./dist/lib/credentialCoverage.js",
     "./lib/builtinModels": "./dist/lib/builtinModels.js",
     "./lib/regexExec": "./dist/lib/regexExec.js",
