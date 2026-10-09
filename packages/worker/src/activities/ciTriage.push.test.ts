@@ -2,23 +2,29 @@ import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
+  branchHeadSha: vi.fn(),
   branchInfo: vi.fn(),
   compareCommits: vi.fn(),
   defaultBranch: vi.fn(),
   deleteBranch: vi.fn(),
   fastForwardBranch: vi.fn(),
+  findBuiltIn: vi.fn(),
   findFire: vi.fn(),
   findRepo: vi.fn(),
+  findRunInput: vi.fn(),
   order: [] as string[],
   pullRequestInfo: vi.fn(),
   settings: {} as Record<string, unknown>,
   updateFire: vi.fn(),
+  workflowId: 'ci-wf-1' as string | undefined,
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     ciFailureTriggerFire: { findFirst: m.findFire, update: m.updateFire },
     connection: { findUniqueOrThrow: m.findRepo },
+    runInput: { findUnique: m.findRunInput },
+    workflowTemplate: { findFirst: m.findBuiltIn },
   },
 }));
 vi.mock('@auto-swe/shared/config', () => ({
@@ -26,7 +32,16 @@ vi.mock('@auto-swe/shared/config', () => ({
 }));
 vi.mock('@temporalio/activity', async (orig) => ({
   ...(await orig<typeof import('@temporalio/activity')>()),
+  activityInfo: () => {
+    if (m.workflowId === undefined) {
+      throw new Error('Activity context is not available');
+    }
+    return { workflowExecution: { workflowId: m.workflowId } };
+  },
   heartbeat: vi.fn(),
+}));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),
 }));
 vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: vi.fn(async () => true) }));
 vi.mock('../lib/execUtils.js', () => ({
@@ -35,6 +50,7 @@ vi.mock('../lib/execUtils.js', () => ({
 }));
 vi.mock('../lib/scm/index.js', () => ({
   getScmProvider: () => ({
+    branchHeadSha: m.branchHeadSha,
     branchInfo: m.branchInfo,
     compareCommits: m.compareCommits,
     defaultBranch: m.defaultBranch,
@@ -50,6 +66,7 @@ import { type CiTriageResult, pushCiFixToPullRequest } from './ciTriage.js';
 const CONN = '11111111-1111-4111-8111-111111111111';
 const TIP = 'b'.repeat(40);
 const FIX = 'c'.repeat(40);
+const BUILTIN = 'b0000000-0000-4000-8000-000000000000';
 const BRANCH = 'feature/sum';
 
 function request(payload: Record<string, unknown> = {}): RepoWorkRequest {
@@ -88,6 +105,15 @@ const push = (over: { request?: RepoWorkRequest; triage?: CiTriageResult } = {})
     triage: over.triage ?? triage(),
   });
 
+const fireRow = (over: Record<string, unknown> = {}) => ({
+  fixCommitSha: null,
+  headBranch: BRANCH,
+  id: 'fire-1',
+  temporalWorkflowId: 'ci-wf-1',
+  trigger: { connectionId: CONN, inputs: { pullRequestDelivery: 'push' }, templateId: null },
+  ...over,
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   m.order = [];
@@ -95,11 +121,11 @@ beforeEach(() => {
     'github.ciFixNeverPushBranches': ['main', 'release/**'],
     'github.ciFixPushToPullRequestEnabled': true,
   };
-  m.findFire.mockResolvedValue({
-    headBranch: BRANCH,
-    id: 'fire-1',
-    trigger: { connectionId: CONN, inputs: { pullRequestDelivery: 'push' }, templateId: null },
-  });
+  m.workflowId = 'ci-wf-1';
+  m.findFire.mockResolvedValue(fireRow());
+  m.findRunInput.mockResolvedValue({ templateId: BUILTIN });
+  m.findBuiltIn.mockResolvedValue({ id: BUILTIN });
+  m.branchHeadSha.mockResolvedValue(FIX);
   m.findRepo.mockResolvedValue({
     id: CONN,
     organizationName: 'acme',
@@ -159,22 +185,48 @@ describe('pushCiFixToPullRequest', () => {
     [
       'when the trigger, not the payload, does not ask for it',
       () =>
-        m.findFire.mockResolvedValue({
-          headBranch: BRANCH,
-          id: 'fire-1',
-          trigger: { connectionId: CONN, inputs: {}, templateId: null },
-        }),
+        m.findFire.mockResolvedValue(
+          fireRow({ trigger: { connectionId: CONN, inputs: {}, templateId: null } })
+        ),
       /does not ask/,
     ],
     [
       'for a trigger with its own template',
       () =>
-        m.findFire.mockResolvedValue({
-          headBranch: BRANCH,
-          id: 'fire-1',
-          trigger: { connectionId: CONN, inputs: { pullRequestDelivery: 'push' }, templateId: 't' },
-        }),
+        m.findFire.mockResolvedValue(
+          fireRow({
+            trigger: {
+              connectionId: CONN,
+              inputs: { pullRequestDelivery: 'push' },
+              templateId: 't',
+            },
+          })
+        ),
       /built-in/,
+    ],
+    [
+      'for a re-run of the request (another workflow execution)',
+      () => {
+        m.workflowId = 'rerun-wf-2';
+      },
+      /trigger started/,
+    ],
+    [
+      'outside an activity',
+      () => {
+        m.workflowId = undefined;
+      },
+      /trigger started/,
+    ],
+    [
+      'for a run executing another template, even if the trigger now names the built-in',
+      () => m.findRunInput.mockResolvedValue({ templateId: 'team-template' }),
+      /built-in/,
+    ],
+    [
+      'a commit that is not on the run’s work branch',
+      () => m.branchHeadSha.mockResolvedValue('d'.repeat(40)),
+      /work branch/,
     ],
     ['onto the default branch', () => m.defaultBranch.mockResolvedValue(BRANCH), /default branch/],
     [
@@ -256,6 +308,46 @@ describe('pushCiFixToPullRequest', () => {
     if (!/refused the push/.test(String(reason))) {
       expect(m.fastForwardBranch).not.toHaveBeenCalled();
     }
+  });
+
+  it('refuses a fix whose code result names another branch, and deletes nothing', async () => {
+    const out = await pushCiFixToPullRequest({
+      codeResult: { ...codeResult, branch: BRANCH },
+      request: request(),
+      triage: triage(),
+    });
+    expect(out).toMatchObject({ pushed: false, reason: expect.stringMatching(/work branch/) });
+    expect(m.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  it('matches the never-push list without case', async () => {
+    m.settings['github.ciFixNeverPushBranches'] = ['release/**'];
+    m.findFire.mockResolvedValue(fireRow({ headBranch: 'Release/2.0' }));
+    const out = await pushCiFixToPullRequest({
+      codeResult,
+      request: request({ baseBranch: 'Release/2.0' }),
+      triage: triage({
+        run: { event: 'pull_request', headBranch: 'Release/2.0' } as CiTriageResult['run'],
+      }),
+    });
+    expect(out).toMatchObject({ pushed: false, reason: expect.stringMatching(/never pushed to/) });
+  });
+
+  it('un-records the commit when GitHub refuses the push', async () => {
+    m.fastForwardBranch.mockResolvedValue(false);
+    await push();
+    expect(m.updateFire.mock.calls.map((c) => c[0].data)).toEqual([
+      { fixCommitSha: FIX },
+      { fixCommitSha: null },
+    ]);
+  });
+
+  it('answers pushed on a retry after a push whose reply was lost', async () => {
+    m.findFire.mockResolvedValue(fireRow({ fixCommitSha: FIX }));
+    m.branchInfo.mockResolvedValue({ protected: false, sha: FIX });
+    await expect(push()).resolves.toEqual({ branch: BRANCH, commitSha: FIX, pushed: true });
+    expect(m.fastForwardBranch).not.toHaveBeenCalled();
+    expect(m.deleteBranch).toHaveBeenCalledWith(expect.anything(), 'auto/ci-1-1');
   });
 
   it('never pushes for a push-event failure, whatever the payload says', async () => {

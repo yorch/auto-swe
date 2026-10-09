@@ -19,14 +19,16 @@ import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import {
   CI_FIXABLE_CATEGORIES,
+  CI_TRIAGE_TEMPLATE_NAME,
   type CiFixableCategory,
   type CiTriagePayload,
   CiTriagePayloadSchema,
   matchesPatterns,
   storedTriggerInputs,
 } from '@auto-swe/shared/lib/ciTrigger';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { ApplicationFailure, heartbeat } from '@temporalio/activity';
+import { ApplicationFailure, activityInfo, heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -584,6 +586,15 @@ export async function reportCiTriage(
 
 // ── Pushing a fix onto the pull request's branch ────────────────────────────
 
+/** The workflow execution this activity belongs to; undefined outside an activity. */
+function currentWorkflowId(): string | undefined {
+  try {
+    return activityInfo().workflowExecution?.workflowId;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Paths a pushed fix may never touch: what a workflow run executes with the repo's secrets. */
 const WORKFLOW_PATH_RE = /^\.github\/(workflows|actions)(\/|$)/i;
 
@@ -603,9 +614,12 @@ export type PushCiFixResult =
  * a fast-forward to the commit the implementation pushed to its work branch — when, and only
  * when, every one of these holds at the moment of the push:
  *
- * - the run was started by a CI-failure trigger (its fire row names this request), the trigger
- *   uses the built-in template, and the TRIGGER — not the payload, which a hand-started run
- *   controls — asks for `push`;
+ * - this execution IS the one a CI-failure trigger started (its fire row names this request
+ *   and this workflow id, so a re-run of the request — which keeps the request id — does not
+ *   qualify), the run's template is the built-in one, the trigger still uses it, and the
+ *   TRIGGER — not the payload, which a hand-started run controls — asks for `push`;
+ * - the commit is the one on the run's own work branch (`<branchPrefix>/<ticket>`), which the
+ *   built-in template's implementer wrote under the workflow-file refusal;
  * - an admin allows it for the repository's team (`github.ciFixPushToPullRequestEnabled`);
  * - the failure is a `pull_request` run whose pull request is still open, from this
  *   repository, with the failing branch as its head;
@@ -617,7 +631,8 @@ export type PushCiFixResult =
  * Anything else answers `pushed: false` with the reason, and the template opens the draft pull
  * request instead. The commit is recorded on the fire row BEFORE the push, so its own CI
  * failure is suppressed by the gateway (`SUPPRESSED_OWN_FIX`) even if this activity dies
- * right after pushing.
+ * right after pushing, and cleared again when the push is refused. A retry after a push that
+ * landed (the reply was lost) finds the branch at the recorded commit and answers `pushed`.
  */
 export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<PushCiFixResult> {
   const tracer = new AgentTracer();
@@ -642,10 +657,28 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
       include: { trigger: { select: { connectionId: true, inputs: true, templateId: true } } },
       where: { outcome: 'STARTED', workRequestId: request.workRequestId },
     });
-    if (!fire || fire.trigger.connectionId !== repoId) {
-      return refuse('only a run a CI-failure trigger started may push to a pull request branch');
+    if (
+      !fire ||
+      fire.trigger.connectionId !== repoId ||
+      fire.temporalWorkflowId === null ||
+      fire.temporalWorkflowId !== currentWorkflowId() ||
+      request.launchedById !== undefined
+    ) {
+      return refuse('only the run a CI-failure trigger started may push to a pull request branch');
     }
-    if (fire.trigger.templateId !== null) {
+    // The template this run executes, as recorded when the trigger started it — not what the
+    // trigger says now, which a lead can change while the run is in flight.
+    const [runInput, builtIn] = await Promise.all([
+      prisma.runInput.findUnique({
+        select: { templateId: true },
+        where: { id: request.workRequestId },
+      }),
+      prisma.workflowTemplate.findFirst({
+        select: { id: true },
+        where: { name: CI_TRIAGE_TEMPLATE_NAME, teamId: null },
+      }),
+    ]);
+    if (!builtIn || runInput?.templateId !== builtIn.id || fire.trigger.templateId !== null) {
       return refuse('only the built-in CI triage template pushes to a pull request branch');
     }
     if (storedTriggerInputs(fire.trigger.inputs).pullRequestDelivery !== 'push') {
@@ -673,8 +706,14 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
     ) {
       return refuse('only a pull request failure is fixed on its own branch');
     }
+    // Compared without case: `Release/2.0` is a release branch too.
     const neverPush = await resolveSetting('github.ciFixNeverPushBranches', ctx);
-    if (matchesPatterns(neverPush, branch)) {
+    if (
+      matchesPatterns(
+        neverPush.map((p) => p.toLowerCase()),
+        branch.toLowerCase()
+      )
+    ) {
       return refuse(`'${branch}' is listed as a branch fixes are never pushed to`);
     }
 
@@ -703,6 +742,28 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
     if (!fixSha || !/^[0-9a-f]{40}$/i.test(fixSha)) {
       return refuse('the fix has no commit to push');
     }
+    // The commit must be the one on this run's own work branch: what the built-in template's
+    // implementer committed there, under the workflow-file refusal.
+    const { branchPrefix } = await resolveWorkflowDefaults();
+    const workBranch = `${branchPrefix}/${request.externalTicketId}`;
+    if (codeResult.branch !== workBranch || workBranch === branch) {
+      return refuse("the fix is not on this run's work branch");
+    }
+    const done = () => {
+      tracer.addActivityEvent({
+        name: 'ci_fix.pushed',
+        outputJson: { branch, commitSha: fixSha, prNumber: pr.number },
+      });
+      return { branch, commitSha: fixSha, pushed: true } as const;
+    };
+    // A retry after a push whose reply was lost: the branch is already at the recorded commit.
+    if (fire.fixCommitSha === fixSha && info.sha === fixSha) {
+      await scm.deleteBranch(repoRef, workBranch);
+      return done();
+    }
+    if ((await scm.branchHeadSha(repoRef, workBranch)) !== fixSha) {
+      return refuse("the fix is not on this run's work branch");
+    }
     const range = await scm.compareCommits(repoRef, info.sha, fixSha);
     if (range.status !== 'ahead' || range.behindBy !== 0 || range.aheadBy < 1) {
       return refuse('the branch has moved since the fix was made');
@@ -722,15 +783,17 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
     });
     throwIfActivityCancelled();
     if (!(await scm.fastForwardBranch(repoRef, branch, fixSha))) {
+      // Not pushed after all: the commit becomes the draft's head, and an author who later
+      // takes it onto their branch must still have its failures triaged.
+      await prisma.ciFailureTriggerFire.update({
+        data: { fixCommitSha: null },
+        where: { id: fire.id },
+      });
       return refuse('GitHub refused the push (the branch moved, or a rule protects it)');
     }
     // The work branch only carried the commit there; it is now on the pull request's branch.
-    await scm.deleteBranch(repoRef, codeResult.branch);
-    tracer.addActivityEvent({
-      name: 'ci_fix.pushed',
-      outputJson: { branch, commitSha: fixSha, prNumber: pr.number },
-    });
-    return { branch, commitSha: fixSha, pushed: true };
+    await scm.deleteBranch(repoRef, workBranch);
+    return done();
   } catch (err) {
     tracer.addActivityEvent({ error: getErrorMessage(err), name: 'ci_fix.push_failed' });
     throw err;

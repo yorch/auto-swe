@@ -197,19 +197,28 @@ API with `force: false`, so GitHub accepts only a fast-forward. It pushes only w
 moment, every one of these holds; otherwise it answers with the reason and the run opens the draft
 instead, and the comment says why:
 
-- the run was started by a CI-failure trigger (its fire row names the run's request), the trigger
-  uses the built-in template, and the **trigger's stored options** ask for `push`. The payload alone
-  is not enough, so a run started by hand never pushes;
+- the run is the very execution a CI-failure trigger started: its fire row names the run's request
+  **and** its workflow id, so a run started by hand, and a re-run of a triggered run (which keeps
+  the request), never pushes;
+- the template the run executes — recorded when the trigger started it — is the built-in one, the
+  trigger still uses it, and the **trigger's stored options** ask for `push`. The payload alone is
+  not enough;
+- the commit is the tip of the run's own work branch (`<branchPrefix>/ci-<runId>-<attempt>`), where
+  the built-in implementer wrote it under the workflow-file refusal (§2.2);
 - `github.ciFixPushToPullRequestEnabled` is on for the repository's team (off by default, ADMIN);
 - the failure is a `pull_request` run whose pull request is still open, from this repository, with
   the failing branch as its head;
 - the branch is not the repository's default branch, not protected (GitHub's branch protection
-  flag), and not matched by `github.ciFixNeverPushBranches` (by default `main`, `master`,
-  `develop`, `trunk`, `release/**`, `releases/**` and `hotfix/**`);
-- the fix commit is ahead of the branch's current tip with nothing behind it, and touches no file
-  under `.github/workflows` or `.github/actions` (checked again here, over the whole range).
+  flag), and not matched by `github.ciFixNeverPushBranches`, compared without case (by default
+  `main`, `master`, `develop`, `trunk`, `release/**`, `releases/**` and `hotfix/**`; the list
+  needs at least one pattern, so it cannot be emptied);
+- the fix commit is ahead of the branch's current tip with nothing behind it, and no path in the
+  range is under `.github/workflows` or `.github/actions`. This is a second, path-only check; the
+  implementer's refusal (§2.2), which also covers symlinks and submodules, is the full one.
 
-The fix commit is written to the fire row (`fixCommitSha`) **before** the push. The pull request's
+The fix commit is written to the fire row (`fixCommitSha`) **before** the push, and cleared again
+if GitHub refuses it. A retry after a push whose reply was lost finds the branch at the recorded
+commit and reports it pushed. The pull request's
 own CI then runs on it; a failure of that commit is suppressed as `SUPPRESSED_OWN_FIX`, so a fix is
 never fixed again by another run. The run's work branch is deleted after a successful push, and the
 run ends `SUCCESS` with the commit in its result. There is no CI loop on this path.
