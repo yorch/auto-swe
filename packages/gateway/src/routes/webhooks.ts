@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
+import { workflowRunFailedSource } from '@auto-swe/shared/automation';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { resolvePlatformCredential } from '@auto-swe/shared/lib/githubHostCredential';
 import { installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
@@ -21,11 +22,8 @@ import {
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import {
-  CiTriggerStartError,
-  handleWorkflowRunFailure,
-  normalizeWorkflowRunEvent,
-} from '../lib/ciFailureTriggers.js';
+import { AutomationStartError, handleOccurrence } from '../lib/automations/engine.js';
+import { normalizeWorkflowRunEvent } from '../lib/automations/workflowRunFailed.js';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -221,8 +219,8 @@ const HOST_MISMATCH = {
 };
 
 /**
- * A `workflow_run` delivery: a failed run on a connected repository may start the CI triage
- * template through the repository's CI-failure triggers (`lib/ciFailureTriggers.ts`). Bound
+ * A `workflow_run` delivery: a failed run on a connected repository may start a run through
+ * the repository's `github.workflow_run.failed` automations (`lib/automations/`). Bound
  * to the verified host like every other delivery. A run that could not be started after the
  * decision answers 503, so the delivery can be sent again.
  */
@@ -246,14 +244,14 @@ async function handleWorkflowRunDelivery(
     return HOST_MISMATCH;
   }
   try {
-    return { data: await handleWorkflowRunFailure(fastify, event, verifiedHost) };
+    return { data: await handleOccurrence(fastify, workflowRunFailedSource, event, verifiedHost) };
   } catch (err) {
-    if (err instanceof CiTriggerStartError) {
-      fastify.log.error({ err: err.cause, runId: event.runId }, err.message);
+    if (err instanceof AutomationStartError) {
+      fastify.log.error({ err: err.cause, runId: event.facts.runId }, err.message);
       return sendError(
         reply,
         503,
-        'CI_TRIGGER_START_FAILED',
+        'AUTOMATION_START_FAILED',
         `${err.message} — retry the delivery`
       );
     }

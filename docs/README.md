@@ -27,6 +27,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [autonomy-policies.md](./autonomy-policies.md) | When a run may act alone and when it must ask — risk classes, the scope cascade, failing closed, the decision log |
 | [evals.md](./evals.md) | Output-quality measurement — the `eval` node, scorers, datasets, the regression harness, canary routing |
 | [agent-runs.md](./agent-runs.md) | Running one library agent against a repository on demand — the throwaway workspace, delivery as a branch or draft PR through a trusted container and a deterministic push policy, the tool-grant rule, bounds and concurrency |
+| [automations.md](./automations.md) | What starts runs without a person: event automations on a repository (a source, its filters, a template and its options, limits), the decision ledger every event automation writes, how to add an event source, and the other kinds |
 | [ci-failure-triggers.md](./ci-failure-triggers.md) | A failed GitHub Actions run diagnosed from its logs and, when code can fix it, a draft fix into the branch that failed — the `ci-triage-and-fix` template, what it refuses to act on, and how untrusted log text is contained |
 | [channel-assistant.md](./channel-assistant.md) | The Slack channel teammate — a capability in its own right and the platform's conversational control surface; turns, ambient and reactive modes, channel memory, personas, budgets |
 | [memory.md](./memory.md) | Agent memory — lessons and channel memory in pgvector, how they are written, recalled, consolidated and gated |

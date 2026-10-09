@@ -165,7 +165,7 @@ Teams author their own workflow DAGs on a visual canvas without code changes, ve
 
 ### 5.7 Scheduled work requests
 
-Admins configure standing automations backed by Temporal Schedules (nightly dependency checks, recurring lint sweeps, periodic doc generation) at `/govern/schedules`.
+Admins configure standing automations backed by Temporal Schedules (nightly dependency checks, recurring lint sweeps, periodic doc generation) at `/govern/schedules`; every kind of automation, schedules included, is listed at `/govern/automations` ([automations.md](./automations.md)).
 
 A schedule's runs share one branch, so a fire is skipped while a retry of its request is running, and a retry is refused while a fire is running ([work-views.md](./work-views.md)).
 

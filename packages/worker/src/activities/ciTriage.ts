@@ -15,6 +15,7 @@
  * links as the platform.
  */
 
+import { storedInputs, WORKFLOW_RUN_FAILED } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import {
@@ -24,7 +25,6 @@ import {
   type CiTriagePayload,
   CiTriagePayloadSchema,
   matchesPatterns,
-  storedTriggerInputs,
 } from '@auto-swe/shared/lib/ciTrigger';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -630,7 +630,7 @@ export type PushCiFixResult =
  *
  * Anything else answers `pushed: false` with the reason, and the template opens the draft pull
  * request instead. The commit is recorded on the fire row BEFORE the push, so its own CI
- * failure is suppressed by the gateway (`SUPPRESSED_OWN_FIX`) even if this activity dies
+ * failure is suppressed by the gateway (`SUPPRESSED_OWN_OUTPUT`) even if this activity dies
  * right after pushing, and cleared again when the push is refused. A retry after a push that
  * landed (the reply was lost) finds the branch at the recorded commit and answers `pushed`.
  */
@@ -653,13 +653,19 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
     if (triage.decision !== 'fix' || payload.pullRequestDelivery !== 'push') {
       return refuse('this run was not asked to push its fix');
     }
-    const fire = await prisma.ciFailureTriggerFire.findFirst({
-      include: { trigger: { select: { connectionId: true, inputs: true, templateId: true } } },
+    const fire = await prisma.automationFire.findFirst({
+      include: {
+        automation: {
+          select: { connectionId: true, inputs: true, source: true, templateId: true },
+        },
+      },
       where: { outcome: 'STARTED', workRequestId: request.workRequestId },
     });
     if (
-      !fire ||
-      fire.trigger.connectionId !== repoId ||
+      // No fire, or its automation deleted since: no trigger to ask, so never pushed.
+      !fire?.automation ||
+      fire.automation.source !== WORKFLOW_RUN_FAILED ||
+      fire.automation.connectionId !== repoId ||
       fire.temporalWorkflowId === null ||
       fire.temporalWorkflowId !== currentWorkflowId() ||
       request.launchedById !== undefined
@@ -678,10 +684,10 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
         where: { name: CI_TRIAGE_TEMPLATE_NAME, teamId: null },
       }),
     ]);
-    if (!builtIn || runInput?.templateId !== builtIn.id || fire.trigger.templateId !== null) {
+    if (!builtIn || runInput?.templateId !== builtIn.id || fire.automation.templateId !== null) {
       return refuse('only the built-in CI triage template pushes to a pull request branch');
     }
-    if (storedTriggerInputs(fire.trigger.inputs).pullRequestDelivery !== 'push') {
+    if (storedInputs(fire.automation.inputs).pullRequestDelivery !== 'push') {
       return refuse('the trigger does not ask for its fixes to be pushed');
     }
 
@@ -702,7 +708,7 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
       triage.run?.event !== 'pull_request' ||
       triage.run.headBranch !== branch ||
       triage.pullRequestNumber === null ||
-      fire.headBranch !== branch
+      fire.scopeKey !== branch
     ) {
       return refuse('only a pull request failure is fixed on its own branch');
     }
@@ -757,7 +763,7 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
       return { branch, commitSha: fixSha, pushed: true } as const;
     };
     // A retry after a push whose reply was lost: the branch is already at the recorded commit.
-    if (fire.fixCommitSha === fixSha && info.sha === fixSha) {
+    if (fire.producedKey === fixSha && info.sha === fixSha) {
       await scm.deleteBranch(repoRef, workBranch);
       return done();
     }
@@ -777,16 +783,16 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
 
     // Recorded first: if the push lands and nothing after it does, the commit's failure is
     // still recognised as the platform's own.
-    await prisma.ciFailureTriggerFire.update({
-      data: { fixCommitSha: fixSha },
+    await prisma.automationFire.update({
+      data: { producedKey: fixSha },
       where: { id: fire.id },
     });
     throwIfActivityCancelled();
     if (!(await scm.fastForwardBranch(repoRef, branch, fixSha))) {
       // Not pushed after all: the commit becomes the draft's head, and an author who later
       // takes it onto their branch must still have its failures triaged.
-      await prisma.ciFailureTriggerFire.update({
-        data: { fixCommitSha: null },
+      await prisma.automationFire.update({
+        data: { producedKey: null },
         where: { id: fire.id },
       });
       return refuse('GitHub refused the push (the branch moved, or a rule protects it)');
