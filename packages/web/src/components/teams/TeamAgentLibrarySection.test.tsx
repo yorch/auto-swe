@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 const idle = { isPending: false, mutateAsync: vi.fn() };
+const createMutation = { isPending: false, mutateAsync: vi.fn() };
 vi.mock('@/hooks/useAgentLibrary', () => ({
-  useCreateTeamAgent: () => idle,
+  useCreateTeamAgent: () => createMutation,
   useDeleteTeamAgent: () => idle,
   useTeamAgentOptions: () => ({
     data: [{ key: 'reviewer', modelSpec: 'anthropic/x', name: 'Reviewer' }],
@@ -36,5 +37,21 @@ describe('TeamAgentLibrarySection', () => {
     fireEvent.click(screen.getByRole('radio', { name: /Inherit from another agent/ }));
     expect(screen.getByRole('combobox', { name: 'Inherit model from' })).toBeTruthy();
     expect(screen.queryByLabelText(/Inherit model from \(agent key\)/)).toBeNull();
+  });
+
+  it('shows the catalog and credential warnings of a saved override', async () => {
+    createMutation.mutateAsync.mockResolvedValueOnce({
+      catalogWarnings: ['No price for acme/x.'],
+      credentialWarnings: ['No credential for acme.'],
+      data: {},
+    });
+    render(<TeamAgentLibrarySection teamId="t-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'New override' }));
+    fireEvent.change(screen.getByLabelText(/^Key/), { target: { value: 'reviewer' } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Reviewer' } });
+    fireEvent.click(screen.getByRole('button', { name: /^(Create|Save)/ }));
+    await waitFor(() => expect(createMutation.mutateAsync).toHaveBeenCalled());
+    expect(await screen.findByText(/Model catalog: No price for acme\/x\./)).toBeTruthy();
+    expect(screen.getByText(/Credentials: No credential for acme\./)).toBeTruthy();
   });
 });

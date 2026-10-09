@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { ModelSaveWarnings } from '@/components/agents/ModelSaveWarnings';
 import { VersionDiff } from '@/components/agents/VersionDiff';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -9,7 +10,12 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Modal } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { type AgentRow, useAgentVersions, useRestoreAgentVersion } from '@/hooks/useAgentLibrary';
+import {
+  type AgentRow,
+  type AgentSaveWarnings,
+  useAgentVersions,
+  useRestoreAgentVersion,
+} from '@/hooks/useAgentLibrary';
 import { diffAgentVersions } from '@/lib/agentDiff';
 import { modelLabel } from '@/lib/agentDisplay';
 import { formatDate } from '@/lib/utils';
@@ -42,6 +48,7 @@ export function AgentHistoryModal({
   const [selected, setSelected] = useState<string | null>(null);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [modelWarnings, setModelWarnings] = useState<AgentSaveWarnings>({});
   const [restored, setRestored] = useState<number | null>(null);
 
   const latestVersion = versions?.[0]?.version;
@@ -77,6 +84,10 @@ export function AgentHistoryModal({
           {warnings.length > 0 && (
             <Alert variant="warning">Content scan warnings: {warnings.join('; ')}</Alert>
           )}
+          <ModelSaveWarnings
+            catalogWarnings={modelWarnings.catalogWarnings}
+            credentialWarnings={modelWarnings.credentialWarnings}
+          />
           <QueryBoundary
             error={error}
             isError={isError}
@@ -164,6 +175,7 @@ export function AgentHistoryModal({
           if (restoreTarget) {
             const res = await restore.mutateAsync({ id: agent.id, versionId: restoreTarget.id });
             setWarnings([...(res.scanWarnings ?? []), ...(res.skillWarnings ?? [])]);
+            setModelWarnings(res);
             setRestored(res.data.version);
             setSelected(null);
             setRestoring(null);

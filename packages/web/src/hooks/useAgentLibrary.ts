@@ -65,6 +65,25 @@ export interface CreateAgentBody {
 
 export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>>;
 
+/**
+ * Advisory findings on a save. The agent is saved either way; each list is absent when empty.
+ * `catalogWarnings` are about the model's catalog entry (unpriced, deprecated, wrong kind);
+ * `credentialWarnings` say no credential is reachable for its provider, or that a custom
+ * provider's credential has no `apiBase`.
+ */
+export interface AgentSaveWarnings {
+  scanWarnings?: string[];
+  catalogWarnings?: string[];
+  credentialWarnings?: string[];
+}
+
+/** A create / update / restore response. */
+export interface AgentSaveResult extends AgentSaveWarnings {
+  data: AgentRow;
+  runtimeWarnings?: string[];
+  skillWarnings?: string[];
+}
+
 const KEY = ['admin-agent-library'];
 
 /** List Agents from the library (latest version per lineage by default). */
@@ -90,10 +109,7 @@ export function useCreateAgent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateAgentBody) =>
-      api.post<{ data: AgentRow; scanWarnings?: string[]; catalogWarnings?: string[] }>(
-        '/api/v1/platform/agent-library',
-        body
-      ),
+      api.post<AgentSaveResult>('/api/v1/platform/agent-library', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -102,12 +118,7 @@ export function useUpdateAgent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateAgentBody }) =>
-      api.put<{
-        data: AgentRow;
-        scanWarnings?: string[];
-        catalogWarnings?: string[];
-        runtimeWarnings?: string[];
-      }>(`/api/v1/platform/agent-library/${id}`, body),
+      api.put<AgentSaveResult>(`/api/v1/platform/agent-library/${id}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -155,10 +166,7 @@ export function useCreateTeamAgent(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateTeamAgentBody) =>
-      api.post<{ data: AgentRow; scanWarnings?: string[]; catalogWarnings?: string[] }>(
-        `/api/v1/teams/${teamId}/agent-library`,
-        body
-      ),
+      api.post<AgentSaveResult>(`/api/v1/teams/${teamId}/agent-library`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: teamKey(teamId) });
       // The admin library view lists every scope, so a team change shows up there too.
@@ -171,10 +179,7 @@ export function useUpdateTeamAgent(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateAgentBody }) =>
-      api.put<{ data: AgentRow; scanWarnings?: string[]; catalogWarnings?: string[] }>(
-        `/api/v1/teams/${teamId}/agent-library/${id}`,
-        body
-      ),
+      api.put<AgentSaveResult>(`/api/v1/teams/${teamId}/agent-library/${id}`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: teamKey(teamId) });
       // The admin library view lists every scope, so a team change shows up there too.
@@ -220,12 +225,7 @@ export function useRestoreAgentVersion() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, versionId }: { id: string; versionId: string }) =>
-      api.post<{
-        data: AgentRow;
-        scanWarnings?: string[];
-        catalogWarnings?: string[];
-        skillWarnings?: string[];
-      }>(`/api/v1/platform/agent-library/${id}/restore`, { versionId }),
+      api.post<AgentSaveResult>(`/api/v1/platform/agent-library/${id}/restore`, { versionId }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
