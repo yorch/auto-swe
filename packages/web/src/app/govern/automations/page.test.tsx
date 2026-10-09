@@ -95,6 +95,39 @@ describe('GovernAutomationsPage', () => {
     expect(await screen.findByText('automations of api')).toBeTruthy();
   });
 
+  it('opens an event automation whose repository is not in the (active, capped) list', async () => {
+    setupFetchMock({
+      'GET /api/v1/automations': () => ({ data: [eventRow] }),
+      'GET /api/v1/repositories': () => ({ data: [] }),
+      'GET /api/v1/scheduled-work-requests': () => ({ data: [] }),
+    });
+    render(withQuery(<GovernAutomationsPage />));
+    const eventTr = (await screen.findByText('mainline CI')).closest('tr') as HTMLElement;
+    fireEvent.click(within(eventTr).getByRole('button', { name: 'Manage' }));
+    expect(await screen.findByText('automations of api')).toBeTruthy();
+  });
+
+  it('shows a schedule whose Temporal schedule is gone as off, with its stored last fire', async () => {
+    setupFetchMock({
+      'GET /api/v1/automations': () => ({ data: [] }),
+      'GET /api/v1/repositories': () => ({ data: [REPO] }),
+      'GET /api/v1/scheduled-work-requests': () => ({
+        data: [
+          {
+            ...schedule,
+            isActive: true,
+            lastFiredAt: '2026-10-01T00:00:00.000Z',
+            schedule: { exists: false, lastRunAt: null, nextRunAt: null, paused: false },
+          },
+        ],
+      }),
+    });
+    render(withQuery(<GovernAutomationsPage />));
+    const row = (await screen.findByText('Weekly deps')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('off')).toBeTruthy();
+    expect(within(row).getByText('fired')).toBeTruthy();
+  });
+
   it('filters by kind', async () => {
     render(withQuery(<GovernAutomationsPage />));
     await screen.findByText('Weekly deps');

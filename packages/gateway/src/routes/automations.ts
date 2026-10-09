@@ -9,7 +9,7 @@
  * them is ADMIN, or a LEAD of the owning team (`repoAutomationAccess`). Saving one that can
  * start runs is a launch decision, as for a schedule.
  */
-import type { Prisma } from '@auto-swe/shared';
+import type { Prisma, Role } from '@auto-swe/shared';
 import {
   AutomationInputsSchema,
   automationOptionsProblem,
@@ -20,6 +20,7 @@ import {
   storedInputs,
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
+import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -35,6 +36,7 @@ import {
 import { parseFilters, resolveAutomationTemplate } from '../lib/automations/engine.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
 import { teamMembershipFilter, templateWriteFilter } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
@@ -89,6 +91,34 @@ const automationSelect = {
   templateId: true,
   updatedAt: true,
 } as const;
+
+/**
+ * The newest row per key from a `groupBy` of the newest timestamp per key: one bounded fetch of
+ * just those rows (Prisma has no DISTINCT ON). A tie on the timestamp keeps the first row in the
+ * fetch's order.
+ */
+async function newestPerKey<K extends string, Row extends Record<K, string | null>>(
+  heads: Array<Record<K, string | null> & { _max: Record<string, Date | null> }>,
+  key: K,
+  fetch: (keys: Array<Record<string, unknown>>) => Promise<Row[]>
+): Promise<Map<string, Row>> {
+  const keys = heads.flatMap((h) => {
+    const at = Object.values(h._max)[0];
+    const timeField = Object.keys(h._max)[0];
+    return h[key] !== null && at && timeField ? [{ [key]: h[key], [timeField]: at }] : [];
+  });
+  const map = new Map<string, Row>();
+  if (keys.length === 0) {
+    return map;
+  }
+  for (const row of await fetch(keys)) {
+    const k = row[key];
+    if (k !== null && !map.has(k)) {
+      map.set(k, row);
+    }
+  }
+  return map;
+}
 
 export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -235,26 +265,38 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
             },
           },
         },
-        fires: {
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          select: { createdAt: true, outcome: true },
-          take: 1,
-        },
       },
       where: admin ? {} : { connection: reachableConnections(user, request.repoAccessGate) },
     });
+    // The newest decision of each automation in two bounded queries: a nested `take: 1` would
+    // load every automation's whole (unpruned) ledger and slice it in memory.
+    const lastFires = await newestPerKey(
+      await fastify.prisma.automationFire.groupBy({
+        _max: { createdAt: true },
+        by: ['automationId'],
+        where: { automationId: { in: automations.map((a) => a.id) } },
+      }),
+      'automationId',
+      (keys) =>
+        fastify.prisma.automationFire.findMany({
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          select: { automationId: true, createdAt: true, outcome: true },
+          where: { OR: keys },
+        })
+    );
     const events = automations.map((a) => {
       const source = eventSource(a.source);
       const filters = source ? parseFilters(source, a.filters) : null;
       const role = a.connection.team.memberships[0]?.role;
-      const { connection, fires, ...automation } = a;
+      const { connection, ...automation } = a;
+      const last = lastFires.get(a.id);
       return {
         automation,
         canManage: admin || role === 'LEAD' || role === 'ADMIN',
         enabled: a.enabled,
         id: a.id,
         kind: 'event' as const,
-        lastActivity: fires[0] ? { at: fires[0].createdAt, outcome: fires[0].outcome } : null,
+        lastActivity: last ? { at: last.createdAt, outcome: last.outcome } : null,
         name: a.name,
         repository: {
           id: connection.id,
@@ -308,27 +350,45 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         )
       ).map((t) => t.id)
     );
-    const webhooks = await Promise.all(
-      templates.map(async (t) => {
-        const last = await fastify.prisma.workflowRun.findFirst({
+    // Only runs the caller may see: a global template's webhook is started on many teams'
+    // repositories, and another team's run is not theirs to see, even as a timestamp.
+    const visibleWebhookRuns: Prisma.WorkflowRunWhereInput = {
+      AND: [
+        buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        { workflowId: { startsWith: 'wh-' } },
+      ],
+    };
+    const lastWebhookRuns = await newestPerKey(
+      await fastify.prisma.workflowRun.groupBy({
+        _max: { startedAt: true },
+        by: ['templateId'],
+        where: { AND: [visibleWebhookRuns], templateId: { in: templates.map((t) => t.id) } },
+      }),
+      'templateId',
+      (keys) =>
+        fastify.prisma.workflowRun.findMany({
           orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
-          select: { startedAt: true, status: true },
-          where: { templateId: t.id, workflowId: { startsWith: 'wh-' } },
-        });
-        return {
-          canManage: writable.has(t.id),
-          enabled: t.status === 'ACTIVE',
-          id: t.id,
-          kind: 'template_webhook' as const,
-          lastActivity: last ? { at: last.startedAt, outcome: last.status } : null,
-          name: t.name,
-          repository: null,
-          team: t.team,
-          template: { id: t.id, name: t.name },
-          when: 'A POST to the template’s secret webhook URL',
-        };
-      })
+          select: { startedAt: true, status: true, templateId: true },
+          where: { AND: [visibleWebhookRuns], OR: keys },
+        })
     );
+    // Editing a webhook (regenerate, remove) also needs platform role LEAD.
+    const mayEditWebhooks = roleMeets(user.role as Role, 'LEAD' as Role);
+    const webhooks = templates.map((t) => {
+      const last = lastWebhookRuns.get(t.id);
+      return {
+        canManage: mayEditWebhooks && writable.has(t.id),
+        enabled: t.status === 'ACTIVE',
+        id: t.id,
+        kind: 'template_webhook' as const,
+        lastActivity: last ? { at: last.startedAt, outcome: last.status } : null,
+        name: t.name,
+        repository: null,
+        team: t.team,
+        template: { id: t.id, name: t.name },
+        when: 'A POST to the template’s secret webhook URL',
+      };
+    });
 
     // The tracker transition hook: platform configuration, so ADMIN only, and not even read
     // for anyone else.
@@ -336,6 +396,8 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
     if (admin) {
       const config = await resolveIssueTrackerConfig();
       if (config.webhookTriggerStatus) {
+        // One admin-only query per page load. `jira-` is a prefix of the unique workflow ID,
+        // which no index serves outside C collation, so this scans `workflow_runs`.
         const last = await fastify.prisma.workflowRun.findFirst({
           orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
           select: { startedAt: true, status: true },

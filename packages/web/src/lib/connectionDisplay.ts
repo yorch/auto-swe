@@ -1,6 +1,8 @@
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 
-export function connectionLabel(r: RepositorySummary): string {
+export function connectionLabel(
+  r: Pick<RepositorySummary, 'name' | 'organizationName' | 'repoName' | 'type'>
+): string {
   if (!r.type || r.type === 'git_repo') {
     return `${r.organizationName ?? ''}/${r.repoName ?? ''}`;
   }

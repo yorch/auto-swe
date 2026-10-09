@@ -66,16 +66,19 @@ automation the caller may see, of every kind (§5). Each row says:
 - when it fires;
 - what it is on (a repository, a team's template, the platform);
 - what it starts;
-- what it last did: the latest decision for an event automation, the latest run for the others.
+- what it last did: the latest decision for an event automation, the latest run the caller may
+  see for a template webhook or the tracker hook, and the last fire for a schedule.
 
-Rows can be filtered by kind and searched. **Manage** opens where that kind is edited. **When CI
-fails** (one button per event source) asks for a repository and opens its automations. **Schedules**
+Rows can be filtered by kind and searched. **Manage** opens where that kind is edited. **New event
+automation** asks for a repository and opens its automations. **Schedules**
 leads to the schedule editor at `/govern/schedules`, which keeps its own page and live state.
 
 `GET /api/v1/automations` serves the page:
 
 - event automations on the repositories the caller can reach (all, for ADMIN);
-- template webhook URLs on templates the caller can read;
+- template webhook URLs on templates the caller can read. Managing one also needs platform role
+  LEAD, as the webhook routes do, and a webhook's last run is the newest run of it the caller may
+  see, so a global template never shows another team's run;
 - for ADMIN only, the tracker transition hook. Its configuration is not read for anyone else.
 
 Each row says whether the caller may manage it. Schedules come from their own list route,
@@ -218,8 +221,9 @@ event automations, with the latest run each started.
   the sender mapped to a platform user and an off-by-default switch before it can be added.
 - **The other kinds keep their own storage.** Schedules, template webhook URLs and the tracker
   transition write no ledger rows and are configured where they always were (§5). The Automations
-  page shows their latest run, not their refusals: a schedule fire the worker refused, or a webhook
-  call with a bad payload, is not listed.
+  page shows the last time they fired, not what came of it: a schedule fire the worker then skipped
+  counts as a fire, and a webhook call refused before a run started is not listed. A dashboard
+  re-run of a webhook or tracker run keeps the run's prefix and counts as that kind's activity.
 - **A renamed repository starts a fresh ledger.** The ledger is keyed by the repository's name on
   its host, so after a rename the subject, cooldown and in-flight checks no longer see the earlier
   decisions. They come back with the next ones. The own-output check matches a commit wherever it
@@ -229,4 +233,5 @@ event automations, with the latest run each started.
 - **Shared teams do not manage event automations.** A LEAD of a team the repository is shared with
   can read them, but only the owning team's leads and ADMIN manage them, unlike schedules (§5).
 - **The daily cap is the automation's own.** Deleting and recreating an automation starts its cap
-  afresh; the repository-wide guards (subject, scope, own output) are not affected.
+  afresh; the repository-wide guards (subject, scope, in flight) and the own-output check, which
+  matches the subject across the source's whole ledger, are not affected.

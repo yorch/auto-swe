@@ -5,6 +5,12 @@ import { EventAutomationsPanel } from '@/components/automations/EventAutomations
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { connectionLabel } from '@/lib/connectionDisplay';
 
+/** What the dialog needs of a repository: the list rows carry no more than this. */
+export type AutomationRepository = Pick<
+  RepositorySummary,
+  'id' | 'name' | 'organizationName' | 'repoName' | 'type'
+>;
+
 /**
  * A repository's event automations (docs/automations.md), opened from Connections: when
  * something happens on the repository — a GitHub Actions run fails — and an automation matches,
@@ -14,7 +20,7 @@ export function RepoAutomationsModal({
   repo,
   onClose,
 }: {
-  repo: RepositorySummary;
+  repo: AutomationRepository;
   onClose: () => void;
 }) {
   return (

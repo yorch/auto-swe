@@ -1,12 +1,14 @@
 'use client';
 
-import { EVENT_SOURCE_KEYS, eventSource } from '@auto-swe/shared/automation';
-import type { RepositorySummary } from '@auto-swe/shared/types/api';
+import { eventSource } from '@auto-swe/shared/automation';
 import Link from 'next/link';
 import { useState } from 'react';
 import { outcomeLabel, outcomeTone } from '@/components/automations/AutomationHistory';
-import { RepoAutomationsModal } from '@/components/repositories/RepoAutomationsModal';
-import { Badge } from '@/components/ui/Badge';
+import {
+  type AutomationRepository,
+  RepoAutomationsModal,
+} from '@/components/repositories/RepoAutomationsModal';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
@@ -35,6 +37,20 @@ const KIND_LABEL: Record<AutomationKind, string> = {
   tracker_transition: 'Tracker transition',
 };
 
+/** The tone of the last-activity badge for kinds whose activity is a run, not a decision. */
+const RUN_TONE: Record<string, BadgeTone> = {
+  CANCELLED: 'muted',
+  COMPLETED: 'moss',
+  FAILED: 'brick',
+  RUNNING: 'violet',
+  TERMINATED: 'brick',
+  TIMED_OUT: 'brick',
+};
+
+function activityTone(row: AutomationSummary, outcome: string): BadgeTone {
+  return row.kind === 'event' ? outcomeTone(outcome) : (RUN_TONE[outcome] ?? 'neutral');
+}
+
 /** Where an automation of each kind is edited. */
 function manageHref(row: AutomationSummary): string | null {
   switch (row.kind) {
@@ -54,7 +70,7 @@ function PickRepository({
   onPick,
   onClose,
 }: {
-  onPick: (repo: RepositorySummary) => void;
+  onPick: (repo: AutomationRepository) => void;
   onClose: () => void;
 }) {
   const { data: repos } = useRepositories();
@@ -101,18 +117,24 @@ function PickRepository({
 export default function GovernAutomationsPage() {
   const all = useAllAutomations();
   const schedules = useSchedules();
-  const { data: repos } = useRepositories();
   const [kind, setKind] = useState<'all' | AutomationKind>('all');
   const [query, setQuery] = useState('');
   const [picking, setPicking] = useState(false);
-  const [openRepo, setOpenRepo] = useState<RepositorySummary | null>(null);
+  const [openRepo, setOpenRepo] = useState<AutomationRepository | null>(null);
 
   const scheduleRows: AutomationSummary[] = (schedules.data ?? []).map((s) => ({
     canManage: s.canManage,
-    enabled: s.isActive && !s.schedule.paused,
+    // Off when paused, deactivated, or its Temporal schedule is gone; unknown (Temporal not
+    // reachable) reads as the stored flag.
+    enabled: s.isActive && !s.schedule.paused && s.schedule.exists !== false,
     id: s.id,
     kind: 'schedule',
-    lastActivity: s.schedule.lastRunAt ? { at: s.schedule.lastRunAt, outcome: 'fired' } : null,
+    // Temporal's last action, else the database's when Temporal cannot be asked. A fire the
+    // worker then skipped still counts as one.
+    lastActivity:
+      (s.schedule.lastRunAt ?? s.lastFiredAt)
+        ? { at: (s.schedule.lastRunAt ?? s.lastFiredAt) as string, outcome: 'fired' }
+        : null,
     name: s.name,
     repository: s.repository,
     team: s.team,
@@ -133,20 +155,20 @@ export default function GovernAutomationsPage() {
           r.team?.name ?? '',
         ].some((t) => t.toLowerCase().includes(needle)))
   );
-  const repoOf = (r: AutomationSummary) =>
-    r.repository ? (repos ?? []).find((x) => x.id === r.repository?.id) : undefined;
+  // From the row itself: the repository list is active-only and capped, and an automation on a
+  // deactivated or far-down repository must still open.
+  const repoOf = (r: AutomationSummary): AutomationRepository | undefined =>
+    r.repository ? { ...r.repository, name: null, type: 'git_repo' } : undefined;
 
   return (
     <div className="space-y-6">
       <PageHeader
         actions={
           <div className="flex flex-wrap justify-end gap-2">
-            {EVENT_SOURCE_KEYS.map((key) => (
-              <Button key={key} onClick={() => setPicking(true)} variant="primary">
-                <Icon name="plus" size={14} />
-                {eventSource(key)?.label ?? key}
-              </Button>
-            ))}
+            <Button onClick={() => setPicking(true)} variant="primary">
+              <Icon name="plus" size={14} />
+              New event automation
+            </Button>
             <Link
               className="inline-flex items-center rounded-md border border-ink-500 px-3 py-1.5 text-paper-200 text-sm hover:bg-ink-800"
               href="/govern/schedules"
@@ -259,7 +281,7 @@ export default function GovernAutomationsPage() {
                               {r.lastActivity ? (
                                 <span className="flex items-center gap-2">
                                   <Badge
-                                    tone={outcomeTone(r.lastActivity.outcome)}
+                                    tone={activityTone(r, r.lastActivity.outcome)}
                                     variant="outline"
                                   >
                                     {r.kind === 'event'

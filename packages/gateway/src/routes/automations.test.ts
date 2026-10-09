@@ -114,10 +114,17 @@ async function buildApp() {
         ...data,
       })),
     },
-    automationFire: { findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]) },
+    automationFire: {
+      findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]),
+      groupBy: vi.fn(async (_args: unknown) => [] as unknown[]),
+    },
     configAuditLog: { create: vi.fn(async (_args: { data: Record<string, unknown> }) => ({})) },
     connection: { findFirst: vi.fn() },
-    workflowRun: { findFirst: vi.fn(async () => null) },
+    workflowRun: {
+      findFirst: vi.fn(async () => null),
+      findMany: vi.fn(async (_args: unknown) => [] as unknown[]),
+      groupBy: vi.fn(async (_args: unknown) => [] as unknown[]),
+    },
     workflowTemplate: {
       findFirst: vi.fn(),
       findMany: vi.fn(async (_args: unknown) => [] as unknown[]),
@@ -286,7 +293,6 @@ describe('automationRoutes (event automations)', () => {
         team: { id: 'team-1', memberships: role ? [{ role }] : [], name: 'Payments' },
       },
       createdAt: new Date(0),
-      fires: [{ createdAt: new Date(1000), outcome: 'STARTED' }],
       name: 'mainline',
       template: null,
     });
@@ -297,6 +303,14 @@ describe('automationRoutes (event automations)', () => {
         listed('LEAD'),
         { ...listed(null), id: 'x' },
       ] as never);
+      // The newest decision per automation: a groupBy, then just those rows.
+      ctx.prisma.automationFire.groupBy.mockResolvedValue([
+        { _max: { createdAt: new Date(1000) }, automationId: AUTOMATION },
+      ]);
+      ctx.prisma.automationFire.findMany.mockResolvedValue([
+        { automationId: AUTOMATION, createdAt: new Date(1000), outcome: 'STARTED' },
+        { automationId: AUTOMATION, createdAt: new Date(1000), outcome: 'SUPPRESSED_COOLDOWN' },
+      ]);
       const res = await list();
       expect(res.statusCode).toBe(200);
       const [lead, plain] = res.json().data;
@@ -307,7 +321,8 @@ describe('automationRoutes (event automations)', () => {
         repository: { id: REPO },
         when: expect.stringContaining('When CI fails'),
       });
-      expect(plain.canManage).toBe(false);
+      expect(plain).toMatchObject({ canManage: false, lastActivity: null });
+      expect(ctx.prisma.automationFire.findMany.mock.calls[0]?.[0]).not.toHaveProperty('take');
       expect(
         JSON.stringify((ctx.prisma.automation.findMany.mock.calls as unknown[][])[0]?.[0])
       ).toContain('memberships');
@@ -321,6 +336,45 @@ describe('automationRoutes (event automations)', () => {
         .mockResolvedValueOnce([]);
       const [hook] = (await list()).json().data;
       expect(hook).toMatchObject({ canManage: false, id: TEMPLATE, kind: 'template_webhook' });
+    });
+
+    it('needs platform role LEAD as well as write access to manage a webhook', async () => {
+      const hooked = [
+        { id: TEMPLATE, name: 'hooked', status: 'ACTIVE', team: { id: 't', name: 'T' } },
+      ];
+      ctx.prisma.workflowTemplate.findMany
+        .mockResolvedValueOnce(hooked)
+        .mockResolvedValueOnce([{ id: TEMPLATE }]);
+      expect((await list()).json().data[0].canManage).toBe(false);
+      ctx.auth.role = 'LEAD';
+      ctx.prisma.workflowTemplate.findMany
+        .mockResolvedValueOnce(hooked)
+        .mockResolvedValueOnce([{ id: TEMPLATE }]);
+      expect((await list()).json().data[0].canManage).toBe(true);
+    });
+
+    it('reports a webhook’s last run only from runs the caller may see', async () => {
+      ctx.prisma.workflowTemplate.findMany
+        .mockResolvedValueOnce([
+          { id: TEMPLATE, name: 'hooked', status: 'ACTIVE', team: { id: 't', name: 'T' } },
+        ])
+        .mockResolvedValueOnce([]);
+      ctx.prisma.workflowRun.groupBy.mockResolvedValue([
+        { _max: { startedAt: new Date(5000) }, templateId: TEMPLATE },
+      ]);
+      ctx.prisma.workflowRun.findMany.mockResolvedValue([
+        { startedAt: new Date(5000), status: 'COMPLETED', templateId: TEMPLATE },
+      ]);
+      const [hook] = (await list()).json().data;
+      expect(hook.lastActivity).toMatchObject({ outcome: 'COMPLETED' });
+      for (const call of [
+        ctx.prisma.workflowRun.groupBy.mock.calls[0]?.[0],
+        ctx.prisma.workflowRun.findMany.mock.calls[0]?.[0],
+      ]) {
+        // The non-admin run-visibility predicate names the caller.
+        expect(JSON.stringify(call)).toContain('user-1');
+        expect(JSON.stringify(call)).toContain('wh-');
+      }
     });
 
     it('never reads the tracker configuration for anyone but an admin', async () => {

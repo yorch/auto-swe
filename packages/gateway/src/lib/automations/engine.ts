@@ -383,10 +383,12 @@ export async function handleOccurrence<F, X>(
  * lock on the repository, so two deliveries cannot both pass them — however many automations or
  * repository rows they matched. Null: start the run.
  *
- * Own output, same subject, cooldown and in-flight are judged across the repository's whole
- * ledger (`repoKey`), which outlives any automation and connection row: two automations matching
- * two workflows that fail on one push must not open two fixes, and deleting and recreating an
- * automation must not forget what was done. The daily cap is the automation's own.
+ * Every check reads only the occurrence's own source. Same subject, cooldown and in-flight are
+ * judged across the repository's whole ledger (`repoKey`), which outlives any automation and
+ * connection row: two automations matching two workflows that fail on one push must not open two
+ * fixes, and deleting and recreating an automation must not forget what was done. Own output
+ * matches the subject alone (`producedKey`), so it survives a repository rename. The daily cap
+ * is the automation's own.
  */
 export async function decideUnderLock<F, X>(
   tx: Prisma.TransactionClient,
