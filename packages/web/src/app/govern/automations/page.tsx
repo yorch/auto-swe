@@ -47,8 +47,16 @@ const RUN_TONE: Record<string, BadgeTone> = {
   TIMED_OUT: 'brick',
 };
 
+/**
+ * Whether a row's last activity is a decision from the ledger (an event automation's, a
+ * schedule fire's, a webhook call's) rather than a run's status (the tracker hook).
+ */
+function isDecision(row: AutomationSummary): boolean {
+  return row.kind !== 'tracker_transition' && row.lastActivity?.outcome !== 'fired';
+}
+
 function activityTone(row: AutomationSummary, outcome: string): BadgeTone {
-  return row.kind === 'event' ? outcomeTone(outcome) : (RUN_TONE[outcome] ?? 'neutral');
+  return isDecision(row) ? outcomeTone(outcome) : (RUN_TONE[outcome] ?? 'neutral');
 }
 
 /** Where an automation of each kind is edited. */
@@ -129,10 +137,11 @@ export default function GovernAutomationsPage() {
     enabled: s.isActive && !s.schedule.paused && s.schedule.exists !== false,
     id: s.id,
     kind: 'schedule',
-    // Temporal's last action, else the database's when Temporal cannot be asked. A fire the
-    // worker then skipped still counts as one.
-    lastActivity:
-      (s.schedule.lastRunAt ?? s.lastFiredAt)
+    // What the latest fire decided, from the ledger; before any is recorded, Temporal's last
+    // action, else the database's when Temporal cannot be asked.
+    lastActivity: s.lastDecision
+      ? s.lastDecision
+      : (s.schedule.lastRunAt ?? s.lastFiredAt)
         ? { at: (s.schedule.lastRunAt ?? s.lastFiredAt) as string, outcome: 'fired' }
         : null,
     name: s.name,
@@ -279,12 +288,15 @@ export default function GovernAutomationsPage() {
                             </Td>
                             <Td label="Last activity">
                               {r.lastActivity ? (
-                                <span className="flex items-center gap-2">
+                                <span
+                                  className="flex items-center gap-2"
+                                  title={r.lastActivity.reason ?? undefined}
+                                >
                                   <Badge
                                     tone={activityTone(r, r.lastActivity.outcome)}
                                     variant="outline"
                                   >
-                                    {r.kind === 'event'
+                                    {isDecision(r)
                                       ? outcomeLabel(r.lastActivity.outcome)
                                       : r.lastActivity.outcome.toLowerCase()}
                                   </Badge>

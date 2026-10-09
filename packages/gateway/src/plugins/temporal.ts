@@ -44,6 +44,7 @@ export const REPO_DEPENDENCY_SCAN_SCHEDULE_ID = 'auto-swe-repo-dependency-scan';
 export const REPO_ACCESS_SYNC_SCHEDULE_ID = 'auto-swe-repo-access-sync';
 export const MODEL_DISCOVERY_SCHEDULE_ID = 'auto-swe-model-discovery';
 export const RUN_REAPER_SCHEDULE_ID = 'auto-swe-run-reaper';
+export const AUTOMATION_DECISION_PRUNE_SCHEDULE_ID = 'auto-swe-automation-decision-prune';
 export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
@@ -204,6 +205,15 @@ export interface RunReaperScheduleConfig {
 }
 
 /**
+ * The automation ledger's retention sweep. The workflow reads its retention setting itself,
+ * so the schedule carries no arguments.
+ */
+export interface AutomationDecisionPruneScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/**
  * The skill-source sweep. The workflow reads the tracked sources itself, so the
  * schedule carries no arguments.
  */
@@ -320,6 +330,9 @@ declare module 'fastify' {
       syncRepoAccessSyncSchedule: (config: RepoAccessSyncScheduleConfig) => Promise<void>;
       syncModelDiscoverySchedule: (config: ModelDiscoveryScheduleConfig) => Promise<void>;
       syncRunReaperSchedule: (config: RunReaperScheduleConfig) => Promise<void>;
+      syncAutomationDecisionPruneSchedule: (
+        config: AutomationDecisionPruneScheduleConfig
+      ) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
       triggerRepoDependencyScanNow: () => Promise<void>;
@@ -481,6 +494,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledRunReaperWorkflow',
+    };
+  }
+
+  // Automation-ledger retention action. The workflow reads its setting itself.
+  function makeAutomationDecisionPruneScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledAutomationDecisionPruneWorkflow',
     };
   }
 
@@ -1033,6 +1056,18 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         taskQueue: 'engineering-workflow',
         workflowExecutionTimeout: '6 minutes',
         workflowId,
+      });
+    },
+
+    // ── Automation-ledger retention (one system-wide Temporal Schedule) ──
+
+    async syncAutomationDecisionPruneSchedule(
+      config: AutomationDecisionPruneScheduleConfig
+    ): Promise<void> {
+      await upsertSchedule(AUTOMATION_DECISION_PRUNE_SCHEDULE_ID, {
+        action: makeAutomationDecisionPruneScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
       });
     },
 

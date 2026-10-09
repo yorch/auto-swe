@@ -29,6 +29,7 @@ import {
   ciConfigActivities,
   ciPollActivities,
   ciTriageActivities,
+  ciVerifyActivities,
   conflictActivities,
   containerStepActivities,
   contextActivities,
@@ -416,9 +417,23 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       const fixPrUrl = inputs.fixPrUrl as string | null | undefined;
       const pushedCommitSha = inputs.pushedCommitSha as string | null | undefined;
       const pushRefusedReason = inputs.pushRefusedReason as string | null | undefined;
+      const verification = inputs.verification as activitiesType.CiVerification | undefined;
+      const pushFailed =
+        inputs.pushFailed === true
+          ? {
+              attempted: inputs.pushRetryAttempted === true,
+              pushed: inputs.pushRetryPushed === true,
+              reason:
+                typeof inputs.pushRetryRefusedReason === 'string'
+                  ? inputs.pushRetryRefusedReason
+                  : null,
+            }
+          : undefined;
       return ciTriageActivities.reportCiTriage({
         request,
         triage,
+        ...(pushFailed ? { pushFailed } : {}),
+        ...(verification ? { verification } : {}),
         ...(fixPrUrl ? { fixPrUrl } : {}),
         ...(pushedCommitSha ? { pushedCommitSha } : {}),
         ...(typeof pushRefusedReason === 'string' ? { pushRefusedReason } : {}),
@@ -427,7 +442,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'pushCiFixToPullRequest',
-    ({ ctx, request, inputs }) => {
+    ({ ctx, config, request, inputs }) => {
       const triage = (inputs.triage ?? lookupPath(ctx, 'context.ciTriage')) as
         | activitiesType.CiTriageResult
         | undefined;
@@ -437,7 +452,38 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       if (!triage || !codeResult) {
         throw new Error('pushCiFixToPullRequest requires the triage and the code result');
       }
-      return ciTriageActivities.pushCiFixToPullRequest({ codeResult, request, triage });
+      return ciTriageActivities.pushCiFixToPullRequest({
+        codeResult,
+        request,
+        triage,
+        ...(config.keepWorkBranch === true ? { keepWorkBranch: true } : {}),
+      });
+    },
+  ],
+  [
+    'finishCiFixPush',
+    ({ ctx, request, inputs }) =>
+      ciTriageActivities.finishCiFixPush({
+        pushedCommitSha: (inputs.pushedCommitSha ?? lookupPath(ctx, 'context.pushedCommitSha')) as
+          | string
+          | null
+          | undefined,
+        request,
+      }),
+  ],
+  [
+    'verifyCiFix',
+    ({ ctx, request, inputs }) => {
+      const triage = (inputs.triage ?? lookupPath(ctx, 'context.ciTriage')) as
+        | activitiesType.CiTriageResult
+        | undefined;
+      const codeResult = (inputs.codeResult ?? lookupPath(ctx, 'context.currentCodeResult')) as
+        | CodeResult
+        | undefined;
+      if (!triage || !codeResult) {
+        throw new Error('verifyCiFix requires the triage and the code result');
+      }
+      return ciVerifyActivities.verifyCiFix({ codeResult, request, triage });
     },
   ],
   [

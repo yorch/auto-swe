@@ -24,7 +24,7 @@ builder and the decision ledger are shared by every event source and described i
 
 | Filter | Meaning | Dashboard default |
 |---|---|---|
-| `events` | `push` and/or `pull_request` | `push` |
+| `events` | Any of `push`, `pull_request` and `schedule`. A scheduled run (a nightly build) tests the head of a branch already in the repository, so it is handled like a push to that branch | `push` |
 | `branchPatterns` | Globs over the failing branch (`main`, `release/*`, `!release/legacy`). At least one pattern that is not a `!` exclusion | `main, release/*` |
 | `workflowPatterns` | Globs over the workflow **file path** (`.github/workflows/ci.yml`), never its display name, which a pull request can change | `.github/workflows/**` |
 
@@ -76,8 +76,8 @@ The rest goes to the engine ([automations.md §2](./automations.md#2-from-occurr
 - **The run.** It starts as a synthetic ticket `ci-<runId>-<attempt>`, on the branch
   `<branchPrefix>/ci-<runId>-<attempt>`, with the workflow id `ci-<automation8>-<runId12>-<attempt>`.
   GitHub does not redeliver a webhook by itself: when the start fails and the delivery answers
-  `503`, redeliver it from the webhook's delivery log, or start the template by hand with the run
-  id.
+  `503`, redeliver it from the webhook's delivery log, or use **Decide again** in the automation's
+  history ([automations.md](./automations.md#2-from-occurrence-to-run)).
 
 The payload carries every option explicitly, defaults included. For a push the base branch is the
 pushed branch. For a pull request it is the pull request's head branch. A fix is then a draft
@@ -104,15 +104,17 @@ The run goes through these nodes:
 
 1. **`triage`** (`triageCiFailure`) reads the run from GitHub and decides whether it may act on it
    at all (§3). It then gives the failed jobs' log tails to the `ciTriager` agent, which returns a
-   typed verdict: a category, whether code can fix it, a confidence, a summary, the root cause and
-   a suggested fix.
+   typed verdict: a category, whether code can fix it, a confidence, a summary, the root cause, a
+   suggested fix, and the failing step's own `run:` command when running it alone would reproduce
+   the failure.
 2. **Code decides**, from the verdict and the facts around it, whether the run goes on to `fix`,
    `report` or `skip` (§4). The model can rule a fix out, but it cannot start one the rules refuse.
 3. **`report`** posts the diagnosis on the pull request (when asked) and ends the run `SUCCESS`.
    **`skip`** ends it `SKIPPED` with the reason. Both results carry the diagnosis.
 4. **`fix`** runs the implementer on the failing branch's current tip. The diagnosis reaches it
-   fenced as untrusted data (§5). Lint, typecheck and tests run, and a draft pull request is opened
-   into the failing branch. A fix that changed no files opens nothing and is reported instead.
+   fenced as untrusted data (§5). Lint, typecheck and tests run, the fix is **verified** (§2.3), and
+   a draft pull request is opened into the failing branch. A fix that changed no files opens
+   nothing and is reported instead.
    The draft's own CI is then watched by the usual CI loop, which revises the draft up to
    `maxCiFixAttempts` times while it keeps failing and then ends the run `FAILED`. It can poll
    instead of waiting for the webhook when the CI wait strategy at `/govern/workflow-defaults` says
@@ -152,10 +154,22 @@ instead, and the comment says why:
 
 The fix commit is written to the decision row (`producedKey`) **before** the push, and cleared again
 if GitHub refuses it. A retry after a push whose reply was lost finds the branch at the recorded
-commit and reports it pushed. The pull request's
-own CI then runs on it; a failure of that commit is suppressed as `SUPPRESSED_OWN_OUTPUT`, so a fix is
-never fixed again by another run. The run's work branch is deleted after a successful push, and the
-run ends `SUCCESS` with the commit in its result. There is no CI loop on this path.
+commit and reports it pushed. A failure of that commit is suppressed as `SUPPRESSED_OWN_OUTPUT`, so a
+fix is never fixed again by another run.
+
+The run then **watches the pull request's CI on the pushed commit** itself, by polling (a webhook for
+an author's branch does not reach it), within the CI wait strategy's poll deadline:
+
+- CI passes, or never reports, or the poll cannot say: the run ends `SUCCESS` with the commit.
+- CI fails: unless the trigger's `maxCiFixAttempts` is `0`, the run makes **one** follow-up. It
+  fetches the logs, has the CI fixer (refusing workflow changes, with the logs fenced as untrusted
+  data) fix the fix on the run's work branch, and pushes it through the same checks as the first
+  push. Its CI is watched the same way.
+- CI fails again, or the follow-up changes nothing or cannot be pushed: the pull request comment
+  says so (when the trigger comments), and the run ends `FAILED`, leaving the branch to a person.
+
+The run's work branch carries the fix commits and is deleted when the run ends, unless it holds a
+follow-up that could not be pushed.
 
 A trigger asking for `push` is refused at save (`OPTION_DISABLED`) while the setting is
 off, and (`INVALID_INPUTS`) with a template other than the built-in; the run decides again from the
@@ -187,6 +201,30 @@ The template is the main user of a run's **base branch** (`payload.baseBranch`).
 clones uses it: the implementation, the three fix sessions, the quality gates, shell steps and agent
 nodes. They clone it, diff against it, and open the pull request into it. See
 [product-overview.md](./product-overview.md) for how a launch sets it.
+
+### 2.3 Verifying a fix
+
+Before a fix is delivered, `verifyCiFix` runs the triager's reproduction command in a fresh
+workspace: first on the failing branch, then on the fix. The result goes into the draft's body, the
+pull request comment when the trigger comments, and the run's result as `verification`:
+
+| Status | Meaning |
+|---|---|
+| `verified` | The command failed on the failing branch and passes on the fix |
+| `not_reproduced` | It passed on the failing branch too: the failure could not be reproduced outside CI |
+| `still_failing` | It fails before and after: the fix may be incomplete, or the command needs setup only the workflow provides |
+| `unverified` | Nothing was run: no command, or one that was refused |
+
+The command is model output read from untrusted logs, so it runs only when it is, **whole**, the
+`run:` of a step GitHub reports as failed (matched by job and step name in the workflow file on the
+branch, indentation aside), and the shell command scanner clears it. A fragment of a step, another
+job's step or text in a comment is refused. That makes it the repository's own command, as trusted
+as the code its tests already run. The fix branch is fetched before anything runs, so no credential
+is used after the branch's code has run, and the tree is cleaned (`git clean -ffdx`) between the two
+runs so the first one's output cannot make the second pass. A
+command with `${{ }}` expressions is never run. Verification labels a fix; it never stops one from
+being delivered, since a command that needs the workflow's setup steps fails both times for reasons
+that say nothing about the fix. Both runs' output is kept as a `ci.verify` artifact.
 
 ## 3. When a run is not acted on
 
@@ -264,22 +302,25 @@ See [github-app-setup.md](./github-app-setup.md).
 
 ## Limitations
 
-- **Only `push` and `pull_request` runs.** A nightly `schedule` failure on `main`, a
-  `workflow_dispatch` run, a merge-queue run and anything a fork's code produced are never acted on.
-  Neither is a `startup_failure` (an invalid workflow file), which has no logs.
+- **Only `push`, `pull_request` and `schedule` runs.** A `workflow_dispatch` run, a merge-queue run
+  and anything a fork's code produced are never acted on. Neither is a `startup_failure` (an invalid
+  workflow file), which has no logs.
+- **A nightly that keeps failing is diagnosed once per commit.** A scheduled run's subject is the
+  commit it tested, so when the branch has not moved, the next night's failure is
+  `SUPPRESSED_SAME_SUBJECT`. Its cooldown and in-flight checks are shared with pushes to the same
+  branch.
 - **One run per commit per repository.** When several workflows fail on one commit, only the
   first to finish is diagnosed, whichever trigger it matched. A re-run that fails again on the same
   commit is not diagnosed again.
-- **A failed start is not retried by itself.** After three attempts the delivery answers `503` and
-  nothing more happens until someone redelivers it. Failures that arrived meanwhile were suppressed
-  against the run that did not start (as the same commit, the cooldown or in flight) and stay
-  suppressed. A decision that fails in the database answers `500` with nothing recorded.
-- **The decision history is kept.** Suppressed decisions are recorded too, and nothing prunes
-  them; deleting a trigger keeps its decisions in the repository's ledger
+- **A failed start is not retried by itself.** After three attempts the delivery answers `503`, the
+  decision is recorded as `FAILED_TO_START`, and nothing more happens until someone redelivers it or
+  decides again. Failures that arrived while the start was being attempted were suppressed against
+  it (as the same commit, the cooldown or in flight) and stay suppressed until each is decided
+  again by hand. A decision that fails in the database answers `500` with nothing recorded.
+- **The decision history is kept for a while.** Suppressed decisions are recorded too and kept for
+  `workflow.automationDecisionRetentionDays` (90 days by default); decisions that started a run are
+  kept for good. Deleting a trigger keeps its decisions in the repository's ledger
   ([automations.md](./automations.md#the-ledger)).
-- **A template that is missing when a failure arrives is recorded as `FAILED_TO_START`** under
-  that run's key. A redelivery after the template is installed does not retry it; start the
-  template by hand with the run id.
 
 - **Only GitHub Actions.** A failure reported by another CI system (commit statuses, third-party
   check runs) is not read. The run is looked up through the Actions API.
@@ -304,9 +345,18 @@ See [github-app-setup.md](./github-app-setup.md).
   author's pull request, and is reviewed only as part of it; an approval given before the push stays
   unless the repository dismisses stale approvals. The push also re-runs that pull request's
   workflows (`synchronize`).
-- **A pushed fix is not revised.** There is no CI loop after a push: if the pull request's CI
-  fails on the fix, the failure is suppressed as the platform's own and nothing more happens. An
-  author's later commit is triaged as usual.
+- **A pushed fix gets one follow-up, not a loop.** If the follow-up fails the pull request's CI
+  too, the run stops and says so; that failure is suppressed as the platform's own, and so is a
+  later failure of the first fix (it keeps a decision row of its own, which retention keeps). A
+  follow-up the author's own new commits get in the way of is refused (the branch moved) rather than
+  rebased, and stays on the run's work branch for a person. An author's later commit is triaged as
+  usual.
+- **A work branch can outlive its run.** It is deleted when the run ends through its push path
+  and its head is the commit last pushed. A run cancelled, terminated or failing elsewhere while it
+  watches the pushed commit leaves `<branchPrefix>/ci-<runId>-<attempt>` behind.
+- **The run stays open while it watches.** Polling the pushed commit holds the run, and so
+  suppresses other failures on that branch as in flight, for up to the CI wait strategy's poll
+  deadline.
 - **Protection is read from GitHub's branch flag.** A branch guarded only by a repository ruleset
   that the platform's credential bypasses is not seen as protected; list such branches in
   `github.ciFixNeverPushBranches`.
@@ -321,5 +371,7 @@ See [github-app-setup.md](./github-app-setup.md).
   the rest are read from the template's input schema at each fire. A release that changes the
   built-in schema moves an untouched stored schema forward, but a schema an admin edited is kept,
   and then a new built-in option does not appear until the admin adds it.
-- **Nothing proves the fix.** The draft's own CI loop is the check. The template does not re-run the
-  originally failing workflow on the fix before opening the draft.
+- **Verification is local and partial.** The workspace installs nothing and has none of the
+  workflow's services, secrets or matrix, so many commands cannot reproduce the failure and the fix
+  is labelled `not_reproduced` or `still_failing` rather than verified. Only the failing step's own
+  command is tried, never the steps before it. The draft's own CI loop remains the real check.

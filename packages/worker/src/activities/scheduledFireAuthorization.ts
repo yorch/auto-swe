@@ -23,6 +23,11 @@
 import type { PrismaClient, Role } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
+import {
+  recordAutomationActivity,
+  refusalKey,
+  SCHEDULE_FIRE_SOURCE,
+} from '@auto-swe/shared/lib/automationLedger';
 import { orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import {
   decideRepoAccess,
@@ -315,6 +320,20 @@ export async function recordScheduledFireRefusal(
   } catch {
     console.warn('[scheduledFire] refused', refusal, workflowId);
   }
+  // The schedule's decision history (docs/automations.md §5): one row an hour per reason.
+  await recordAutomationActivity(
+    db,
+    {
+      connectionId: null,
+      facts: { reason: refusal.reason, workflowId },
+      key: refusalKey(SCHEDULE_FIRE_SOURCE, refusal.scheduleId, refusal.reason, new Date()),
+      outcome: REFUSAL_OUTCOME[refusal.reason] ?? 'SUPPRESSED_PRECONDITION',
+      ownerId: refusal.scheduleId,
+      reason: refusal.message,
+      source: SCHEDULE_FIRE_SOURCE,
+    },
+    (err) => console.warn('[scheduledFire] could not record the refusal in the ledger:', err)
+  );
   try {
     const recent = await db.configAuditLog.findFirst({
       select: { id: true },
@@ -349,6 +368,12 @@ export async function recordScheduledFireRefusal(
     );
   }
 }
+
+/** How a refused fire reads in the decision ledger; anything else is a precondition. */
+const REFUSAL_OUTCOME: Partial<Record<ScheduledFireRefusalReason, string>> = {
+  'org-budget-exceeded': 'SUPPRESSED_BUDGET',
+  'request-in-flight': 'SUPPRESSED_IN_FLIGHT',
+};
 
 /**
  * Throw when this run is a scheduled fire its owner may no longer launch.

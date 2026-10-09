@@ -34,6 +34,8 @@ export interface AutomationFire {
   facts: Record<string, unknown>;
   temporalWorkflowId: string | null;
   workRequestId: string | null;
+  /** Set when the decision was taken again; a newer row holds the outcome. */
+  retriedAt: string | null;
   createdAt: string;
 }
 
@@ -91,6 +93,25 @@ export function useAutomationFires(id: string | null) {
   });
 }
 
+/** Take a decision that started no run again, now; every limit applies. */
+export function useRetryAutomationFire(automationId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (fireId: string) =>
+      api
+        .post<{ data: { outcome?: string; reason?: string } }>(
+          `${BASE}/${automationId}/fires/${fireId}/retry`,
+          {}
+        )
+        .then((r) => r.data),
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['automations', 'fires', automationId] }),
+        qc.invalidateQueries({ queryKey: ['automations', 'all'] }),
+      ]),
+  });
+}
+
 /** Everything that lists automations: the repository's, and the cross-kind list. */
 function useInvalidate(connectionId: string) {
   const qc = useQueryClient();
@@ -143,7 +164,8 @@ export interface AutomationSummary {
   template: { id: string; name: string } | null;
   canManage: boolean;
   /** The latest decision or run, with its outcome or status. */
-  lastActivity: { at: string; outcome: string } | null;
+  /** A decision (outcome, and why when it started nothing), or a run's status. */
+  lastActivity: { at: string; outcome: string; reason?: string | null } | null;
   /** For `event`: the automation itself. */
   automation?: EventAutomation;
   /** For `event`: its source key. */

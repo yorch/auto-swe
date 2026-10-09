@@ -6,6 +6,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveEvalScheduleConfig: async () => cfg,
   resolveRevalidationConfig: async () => cfg,
   resolveScheduledSweeps: () => ({
+    automationDecisionPrune: cfg,
     modelDiscovery: cfg,
     repoAccess: cfg,
     repoDependency: cfg,
@@ -22,6 +23,7 @@ const SYNCS = [
   'syncRepoAccessSyncSchedule',
   'syncModelDiscoverySchedule',
   'syncRunReaperSchedule',
+  'syncAutomationDecisionPruneSchedule',
   'syncSkillSourceSyncSchedule',
   'syncEvalSchedule',
   'syncRevalidationSchedule',

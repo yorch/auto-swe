@@ -1,6 +1,15 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
-import { workflowRunFailedSource } from '@auto-swe/shared/automation';
+import {
+  type EventSource,
+  issueLabeledSource,
+  workflowRunFailedSource,
+} from '@auto-swe/shared/automation';
+import {
+  recordAutomationActivity,
+  refusalKey,
+  TEMPLATE_WEBHOOK_SOURCE,
+} from '@auto-swe/shared/lib/automationLedger';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { resolvePlatformCredential } from '@auto-swe/shared/lib/githubHostCredential';
 import { installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
@@ -22,7 +31,12 @@ import {
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { AutomationStartError, handleOccurrence } from '../lib/automations/engine.js';
+import {
+  AutomationStartError,
+  handleOccurrence,
+  type Occurrence,
+} from '../lib/automations/engine.js';
+import { normalizeIssueLabeledEvent } from '../lib/automations/issueLabeled.js';
 import { normalizeWorkflowRunEvent } from '../lib/automations/workflowRunFailed.js';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
@@ -230,12 +244,31 @@ async function handleWorkflowRunDelivery(
   reply: FastifyReply,
   verifiedHost: string | null
 ) {
-  const event = normalizeWorkflowRunEvent(body);
-  if (event.type === 'unrecognized') {
-    return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
-  }
-  if (event.type === 'ignored') {
+  return handleSourceDelivery(
+    fastify,
+    workflowRunFailedSource,
+    normalizeWorkflowRunEvent(body),
+    reply,
+    verifiedHost
+  );
+}
+
+/** An event source's occurrence, normalized from a verified delivery, handed to the engine. */
+async function handleSourceDelivery<F, X>(
+  fastify: FastifyInstance,
+  source: EventSource<F, X>,
+  event:
+    | (Occurrence<X> & { type: string })
+    | { type: 'unrecognized' }
+    | { type: 'ignored'; reason: string },
+  reply: FastifyReply,
+  verifiedHost: string | null
+) {
+  if ('reason' in event) {
     return { data: { ignored: true, reason: event.reason } };
+  }
+  if (!('facts' in event)) {
+    return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
   }
   if (
     !deliveryHostMatches(verifiedHost, event.repoHtmlUrl) ||
@@ -244,10 +277,10 @@ async function handleWorkflowRunDelivery(
     return HOST_MISMATCH;
   }
   try {
-    return { data: await handleOccurrence(fastify, workflowRunFailedSource, event, verifiedHost) };
+    return { data: await handleOccurrence(fastify, source, event, verifiedHost) };
   } catch (err) {
     if (err instanceof AutomationStartError) {
-      fastify.log.error({ err: err.cause, runId: event.facts.runId }, err.message);
+      fastify.log.error({ err: err.cause, source: source.key }, err.message);
       return sendError(
         reply,
         503,
@@ -529,6 +562,16 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // So do workflow runs: an App has one webhook URL.
       if (eventType === 'workflow_run') {
         return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);
+      }
+      // And issues, for issue-label automations.
+      if (eventType === 'issues') {
+        return handleSourceDelivery(
+          fastify,
+          issueLabeledSource,
+          normalizeIssueLabeledEvent(request.body),
+          reply,
+          verified.host
+        );
       }
       if (typeof eventType === 'string' && INSTALLATION_EVENT_TYPES.has(eventType)) {
         return {
@@ -1140,12 +1183,30 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'WEBHOOK_NOT_FOUND', message: 'Webhook not found' } });
       }
+      // What came of the call, in the template's decision history (docs/automations.md §5).
+      // Only once the token named a template; a refusal is kept once an hour per reason.
+      const refused = (outcome: string, code: string, reason: string, connection?: string | null) =>
+        recordAutomationActivity(
+          fastify.prisma,
+          {
+            connectionId: connection ?? null,
+            facts: { code },
+            key: refusalKey(TEMPLATE_WEBHOOK_SOURCE, template.id, code, new Date()),
+            outcome,
+            ownerId: template.id,
+            reason,
+            source: TEMPLATE_WEBHOOK_SOURCE,
+          },
+          (err) => request.log.warn({ err }, 'could not record a webhook call in the ledger')
+        );
       if (template.status !== 'ACTIVE') {
+        await refused('FAILED_TO_START', 'TEMPLATE_NOT_ACTIVE', 'the template is not active');
         return reply
           .status(409)
           .send({ error: { code: 'TEMPLATE_NOT_ACTIVE', message: 'Template is not active' } });
       }
       if (template.activeVersion === null) {
+        await refused('FAILED_TO_START', 'NO_ACTIVE_VERSION', 'the template has no active version');
         return reply.status(409).send({
           error: { code: 'NO_ACTIVE_VERSION', message: 'Template has no active version' },
         });
@@ -1156,6 +1217,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       if (template.inputSchema && isInputSchema(template.inputSchema)) {
         const result = validateInputPayload(template.inputSchema, payload);
         if (!result.ok) {
+          await refused(
+            'FAILED_TO_START',
+            'VALIDATION_ERROR',
+            "the payload does not fit the template's inputs"
+          );
           return reply
             .status(422)
             .send({ error: { code: 'VALIDATION_ERROR', errors: result.errors } });
@@ -1165,6 +1231,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // An optional `baseBranch`, checked before anything is written (same as POST /:id/runs).
       const base = await launchBaseBranch(payload, reply);
       if (!base.ok) {
+        await refused('FAILED_TO_START', 'INVALID_BASE_BRANCH', 'the base branch is not usable');
         return;
       }
 
@@ -1203,6 +1270,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         reply
       );
       if (!connectionResult.ok) {
+        await refused(
+          'FAILED_TO_START',
+          'CONNECTION_REFUSED',
+          'the payload names a connection this template may not use'
+        );
         return;
       }
       const budgetOrgId = connectionResult.budgetOrgId ?? template.team?.organization?.id;
@@ -1210,6 +1282,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         connectionResult.budgetCap ?? template.team?.organization?.monthlyBudgetUsdCents;
 
       if (budgetOrgId && !(await assertOrgBudget(fastify.prisma, budgetOrgId, budgetCap, reply))) {
+        await refused(
+          'SUPPRESSED_BUDGET',
+          'BUDGET',
+          'the organization is over its monthly budget',
+          connectionId
+        );
         return;
       }
 
@@ -1258,6 +1336,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         { log: fastify.log }
       );
       if (!launch.ok) {
+        await refused(
+          'SUPPRESSED_SAME_SUBJECT',
+          'RUN_CONFLICT',
+          'a run with this idempotency key already exists',
+          connectionId
+        );
         return reply.status(409).send({
           error: {
             code: 'RUN_CONFLICT',
@@ -1265,6 +1349,20 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       }
+      await recordAutomationActivity(
+        fastify.prisma,
+        {
+          connectionId,
+          facts: { workflowId: temporalWorkflowId },
+          key: `${TEMPLATE_WEBHOOK_SOURCE}:${temporalWorkflowId}`,
+          outcome: 'STARTED',
+          ownerId: template.id,
+          source: TEMPLATE_WEBHOOK_SOURCE,
+          temporalWorkflowId,
+          workRequestId,
+        },
+        (err) => request.log.warn({ err }, 'could not record a webhook call in the ledger')
+      );
 
       return reply.status(201).send({
         data: { temporalWorkflowId, workflowId: launch.activeWorkflowId, workRequestId },

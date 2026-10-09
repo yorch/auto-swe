@@ -90,7 +90,11 @@ function AutomationRow({
       )}
       {showHistory && (
         <div className="mt-3 rounded-md border border-ink-600 px-3 py-1">
-          <AutomationHistory automationId={automation.id} source={automation.source} />
+          <AutomationHistory
+            automationId={automation.id}
+            canManage={canManage}
+            source={automation.source}
+          />
         </div>
       )}
     </li>

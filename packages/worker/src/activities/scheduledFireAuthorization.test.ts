@@ -45,6 +45,7 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     activeWorkflow: { findMany: vi.fn(), updateMany: vi.fn() },
+    automationFire: { create: vi.fn(async () => ({})) },
     configAuditLog: { create: vi.fn(), findFirst: vi.fn() },
     connection: { findUnique: vi.fn() },
     organizationMembership: { findUnique: vi.fn() },
@@ -390,6 +391,17 @@ describe('assertScheduledFireAuthorized', () => {
         }),
         entityId: SCHEDULE_ID,
         entityType: 'ScheduledWorkRequest',
+      }),
+    });
+    // And in the schedule's decision history, keyed by reason and hour.
+    expect(db.automationFire.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        dedupeKey: expect.stringMatching(
+          new RegExp(`^schedule\\.fire:${SCHEDULE_ID}:not-a-team-member:`)
+        ),
+        outcome: 'SUPPRESSED_PRECONDITION',
+        source: 'schedule.fire',
+        subjectKey: SCHEDULE_ID,
       }),
     });
   });

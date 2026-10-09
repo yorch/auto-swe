@@ -115,6 +115,7 @@ const verdict = {
   category: 'regression',
   confidence: 0.9,
   fixable: true,
+  reproCommand: 'yarn test',
   rootCause: 'sum() adds one',
   suggestedFix: 'remove the +1',
   summary: 'sum is off by one',
@@ -142,12 +143,16 @@ describe('refusalFor', () => {
     expect(refusalFor(failure(), payload, 'acme/api')).toBeNull();
   });
 
+  it('accepts a failed scheduled run on that branch', () => {
+    expect(refusalFor(failure({ event: 'schedule' } as never), payload, 'acme/api')).toBeNull();
+  });
+
   it.each([
     ['another repository', { repositoryFullName: 'evil/api' }, /belongs to/],
     ['a run that did not fail', { conclusion: 'success' }, /did not fail/],
     ['a run still in progress', { conclusion: null, status: 'in_progress' }, /did not fail/],
     ['pull_request_target', { event: 'pull_request_target' }, /not acted on/],
-    ['a schedule', { event: 'schedule' }, /not acted on/],
+    ['workflow_dispatch', { event: 'workflow_dispatch' }, /not acted on/],
     ['a fork', { headRepositoryFullName: 'mallory/api' }, /fork/],
     ['a deleted fork', { headRepositoryFullName: null }, /fork/],
     ['another branch than the payload claims', { headBranch: 'main' }, /asked to target/],
@@ -417,6 +422,37 @@ describe('the pull request comment', () => {
     );
     expect(draft).toContain('It was not pushed to this branch');
     expect(draft).not.toMatch(/@team/);
+  });
+
+  it('reports the verification only alongside a fix', () => {
+    const triage = {
+      brief: '',
+      category: 'regression' as const,
+      confidence: 0.9,
+      decision: 'fix' as const,
+      failedJobs: [],
+      fixable: true,
+      pullRequestNumber: 7,
+      reason: 'attempting a fix',
+      rootCause: '',
+      run: null,
+      suggestedFix: '',
+      summary: 'off by one',
+      superseded: false,
+      suspiciousLogs: false,
+    } satisfies CiTriageResult;
+    const verification = {
+      afterExitCode: 0,
+      beforeExitCode: 1,
+      command: 'yarn test',
+      status: 'verified' as const,
+      summary: '`yarn test` failed before the fix (exit 1) and passes with it',
+    };
+    const url = 'https://github.com/acme/api/pull/8';
+    expect(renderTriageComment(triage, url, null, null, verification)).toContain(
+      '**Verified:** `yarn test` failed before the fix'
+    );
+    expect(renderTriageComment(triage, null, null, null, verification)).not.toContain('Verified');
   });
 
   it('posts only when the payload asks and the failure has a PR, and never fails the run', async () => {

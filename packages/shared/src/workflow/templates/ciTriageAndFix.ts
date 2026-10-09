@@ -153,7 +153,39 @@ const nodes: NodeMap = mergeNodes(
     },
     runLint: qualityGate('runLint', 'runTypecheck', { group: 'verify' }),
     runTypecheck: qualityGate('runTypecheck', 'runTests', { group: 'verify' }),
-    runTests: qualityGate('runTests', 'routeDelivery', { group: 'verify' }),
+    runTests: qualityGate('runTests', 'verifyFix', { group: 'verify' }),
+    // The failing step's own command, before and after the fix. It labels the fix (in the
+    // pull request's body and the run's result); it never stops one from being delivered.
+    verifyFix: {
+      group: 'verify',
+      inputs: {
+        codeResult: { from: 'context.currentCodeResult' },
+        triage: { from: 'context.ciTriage' },
+      },
+      next: 'storeVerification',
+      onFail: 'warn',
+      step: 'verifyCiFix',
+      title: 'Reproduce the failure, then check the fix',
+      type: 'step',
+    },
+    storeVerification: {
+      expr: 'nodes.verifyFix.output == null',
+      group: 'verify',
+      onFalse: 'keepVerification',
+      onTrue: 'routeDelivery',
+      title: 'Did verification run?',
+      type: 'cond',
+    },
+    keepVerification: {
+      group: 'verify',
+      next: 'routeDelivery',
+      title: 'Keep the verification',
+      type: 'set',
+      values: {
+        'context.ciVerification': { from: 'nodes.verifyFix.output.verification' },
+        'context.currentCodeResult': { from: 'nodes.verifyFix.output.codeResult' },
+      },
+    },
 
     // A pull request's fix can be asked to land on its own branch. The step decides, from the
     // trigger, the admin setting and the branch as they are now; anything it refuses opens the
@@ -167,6 +199,8 @@ const nodes: NodeMap = mergeNodes(
       type: 'cond',
     },
     pushFix: {
+      // Kept for a follow-up while the run watches the pushed commit; `finishCiFixPush` ends it.
+      config: { keepWorkBranch: true },
       group: 'deliver',
       inputs: {
         codeResult: { from: 'context.currentCodeResult' },
@@ -182,27 +216,188 @@ const nodes: NodeMap = mergeNodes(
       expr: 'nodes.pushFix.output.pushed == true',
       group: 'deliver',
       onFalse: 'openPR',
-      onTrue: 'reportPushed',
+      onTrue: 'startPushWatch',
       title: 'Pushed?',
       type: 'cond',
+    },
+    startPushWatch: {
+      group: 'deliver',
+      next: 'reportPushed',
+      title: 'Record the pushed fix',
+      type: 'set',
+      values: {
+        'context.pushedCommitSha': { from: 'nodes.pushFix.output.commitSha' },
+        'context.pushRetries': { literal: 0 },
+      },
     },
     reportPushed: {
       group: 'deliver',
       inputs: {
-        pushedCommitSha: { from: 'nodes.pushFix.output.commitSha' },
+        pushedCommitSha: { from: 'context.pushedCommitSha' },
         triage: { from: 'context.ciTriage' },
+        verification: { from: 'context.ciVerification' },
       },
-      next: 'pushed',
+      next: 'watchPushedCi',
       onFail: 'warn',
       step: 'reportCiTriage',
       title: 'Report the pushed fix on the pull request',
       type: 'step',
     },
-    // No CI loop: the pull request's own CI runs on the new commit, and a failure of it is
-    // recognised by the gateway as the platform's own fix (`SUPPRESSED_OWN_OUTPUT`).
+    // The pull request's CI on the pushed commit, polled: a webhook for an author's branch
+    // does not reach this run. A poll that cannot say (its deadline, no access) ends the watch
+    // as it was; the commit's later failure is the platform's own (`SUPPRESSED_OWN_OUTPUT`).
+    watchPushedCi: {
+      group: 'push CI',
+      inputs: { ref: { from: 'context.pushedCommitSha' } },
+      next: 'checkPushedCi',
+      onError: 'continue',
+      step: 'waitForCiByPolling',
+      title: "Watch the pull request's CI on the fix",
+      type: 'step',
+    },
+    checkPushedCi: {
+      expr: 'nodes.watchPushedCi.output.ciPassed == false',
+      group: 'push CI',
+      onFalse: 'finishPushed',
+      onTrue: 'checkPushRetries',
+      title: 'Did the fix fail CI?',
+      type: 'cond',
+    },
+    // One more attempt, unless the trigger allows no revisions at all.
+    checkPushRetries: {
+      expr: `context.pushRetries >= 1 || (request.payload.maxCiFixAttempts ?? ${CI_TRIAGE_DEFAULTS.maxCiFixAttempts}) == 0`,
+      group: 'push CI',
+      onFalse: 'countPushRetry',
+      onTrue: 'reportPushFailed',
+      title: 'Out of attempts?',
+      type: 'cond',
+    },
+    countPushRetry: {
+      group: 'push CI',
+      next: 'fetchPushedLogs',
+      title: 'Count the attempt',
+      type: 'set',
+      values: { 'context.pushRetries': { expr: 'context.pushRetries + 1' } },
+    },
+    fetchPushedLogs: {
+      group: 'push CI',
+      inputs: { logsUrl: { from: 'nodes.watchPushedCi.output.logsUrl' } },
+      next: 'pushRetryFix',
+      onFail: 'warn',
+      step: 'fetchCILogs',
+      title: 'Fetch the CI logs',
+      type: 'step',
+    },
+    pushRetryFix: {
+      // The pull request's own CI output: untrusted, as for the draft's CI loop.
+      config: { ...REFUSE_WORKFLOW_CHANGES, untrustedCiLogs: true },
+      group: 'push CI',
+      inputs: {
+        failureContext: { from: 'nodes.fetchPushedLogs.output' },
+        previousCodeResult: { from: 'context.currentCodeResult' },
+      },
+      next: 'checkPushRetryFix',
+      onFail: 'warn',
+      step: 'executeCIFixImplementation',
+      title: 'Fix the fix',
+      type: 'step',
+    },
+    checkPushRetryFix: {
+      expr:
+        'nodes.pushRetryFix.output == null || ' +
+        'nodes.pushRetryFix.output.headSha == context.currentCodeResult.headSha',
+      group: 'push CI',
+      onFalse: 'keepPushRetryFix',
+      onTrue: 'reportPushFailed',
+      title: 'Did the follow-up change nothing?',
+      type: 'cond',
+    },
+    keepPushRetryFix: {
+      group: 'push CI',
+      next: 'pushFixAgain',
+      title: 'Keep the follow-up',
+      type: 'set',
+      values: { 'context.currentCodeResult': { from: 'nodes.pushRetryFix.output' } },
+    },
+    pushFixAgain: {
+      config: { keepWorkBranch: true },
+      group: 'push CI',
+      inputs: {
+        codeResult: { from: 'context.currentCodeResult' },
+        triage: { from: 'context.ciTriage' },
+      },
+      next: 'checkPushedAgain',
+      onFail: 'warn',
+      step: 'pushCiFixToPullRequest',
+      title: "Push the follow-up onto the pull request's branch",
+      type: 'step',
+    },
+    checkPushedAgain: {
+      expr: 'nodes.pushFixAgain.output.pushed == true',
+      group: 'push CI',
+      onFalse: 'reportPushFailed',
+      onTrue: 'storePushedAgain',
+      title: 'Pushed?',
+      type: 'cond',
+    },
+    storePushedAgain: {
+      group: 'push CI',
+      next: 'reportPushed',
+      title: 'Record the follow-up',
+      type: 'set',
+      values: { 'context.pushedCommitSha': { from: 'nodes.pushFixAgain.output.commitSha' } },
+    },
+    reportPushFailed: {
+      group: 'push CI',
+      inputs: {
+        pushFailed: { literal: true },
+        // A follow-up was attempted, and whether it reached the branch (and failed CI too).
+        pushRetryAttempted: { expr: 'context.pushRetries >= 1' },
+        pushRetryPushed: { expr: 'nodes.pushFixAgain.output.pushed == true' },
+        pushRetryRefusedReason: { from: 'nodes.pushFixAgain.output.reason' },
+        pushedCommitSha: { from: 'context.pushedCommitSha' },
+        triage: { from: 'context.ciTriage' },
+        verification: { from: 'context.ciVerification' },
+      },
+      next: 'finishPushFailed',
+      onFail: 'warn',
+      step: 'reportCiTriage',
+      title: 'Report that the pushed fix failed CI',
+      type: 'step',
+    },
+    finishPushFailed: {
+      group: 'push CI',
+      next: 'pushFailed',
+      onError: 'continue',
+      step: 'finishCiFixPush',
+      title: 'Remove the work branch',
+      type: 'step',
+    },
+    pushFailed: terminate('FAILED', {
+      group: 'push CI',
+      result: {
+        ...TRIAGE_RESULT,
+        error: { literal: "the pushed fix did not pass the pull request's CI" },
+        pushedCommitSha: { from: 'context.pushedCommitSha' },
+        verification: { from: 'context.ciVerification' },
+      },
+      title: 'Pushed fix failed CI',
+    }),
+    finishPushed: {
+      group: 'push CI',
+      next: 'pushed',
+      onError: 'continue',
+      step: 'finishCiFixPush',
+      title: 'Remove the work branch',
+      type: 'step',
+    },
     pushed: terminate('SUCCESS', {
-      group: 'deliver',
-      result: { ...TRIAGE_RESULT, pushedCommitSha: { from: 'nodes.pushFix.output.commitSha' } },
+      group: 'push CI',
+      result: {
+        ...TRIAGE_RESULT,
+        pushedCommitSha: { from: 'context.pushedCommitSha' },
+        verification: { from: 'context.ciVerification' },
+      },
       title: 'Fix pushed',
     }),
   },
@@ -217,6 +412,7 @@ const nodes: NodeMap = mergeNodes(
         // Why a requested push became this draft, when it did.
         pushRefusedReason: { from: 'nodes.pushFix.output.reason' },
         triage: { from: 'context.ciTriage' },
+        verification: { from: 'context.ciVerification' },
       },
       next: ciWaitEntry('pollOrSignal'),
       onFail: 'warn',
@@ -243,7 +439,11 @@ const nodes: NodeMap = mergeNodes(
   {
     done: terminate('SUCCESS', {
       group: 'finish',
-      result: { ...prResult(), ...TRIAGE_RESULT },
+      result: {
+        ...prResult(),
+        ...TRIAGE_RESULT,
+        verification: { from: 'context.ciVerification' },
+      },
       title: 'Fix opened',
     }),
   }

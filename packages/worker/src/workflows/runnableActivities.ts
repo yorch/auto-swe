@@ -141,11 +141,23 @@ export const githubActivities = proxyActivities<
 // Retried like any LLM step; the invalid-payload and refused-run failures are
 // non-retryable ApplicationFailures, which the policy does not retry.
 export const ciTriageActivities = proxyActivities<
-  Pick<typeof activitiesType, 'triageCiFailure' | 'reportCiTriage' | 'pushCiFixToPullRequest'>
+  Pick<
+    typeof activitiesType,
+    'triageCiFailure' | 'reportCiTriage' | 'pushCiFixToPullRequest' | 'finishCiFixPush'
+  >
 >({
   heartbeatTimeout: T_2M,
   retry: RETRY_STANDARD,
   startToCloseTimeout: T_10M,
+});
+
+// Verifying a CI fix: a clone, a fetch and two runs of the reproduction command (eight minutes
+// each) in one workspace. Never retried: it only labels a fix, and a second try would hold the
+// run up to another hour for that.
+export const ciVerifyActivities = proxyActivities<Pick<typeof activitiesType, 'verifyCiFix'>>({
+  heartbeatTimeout: T_2M,
+  retry: { maximumAttempts: 1 },
+  startToCloseTimeout: T_60M,
 });
 
 // Lists provider models through the GLOBAL credentials. Provider calls inside are

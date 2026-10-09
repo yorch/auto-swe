@@ -60,10 +60,13 @@ export {
 } from './ciFixLoop.js';
 export {
   type CiTriageResult,
+  finishCiFixPush,
   pushCiFixToPullRequest,
   reportCiTriage,
   triageCiFailure,
 } from './ciTriage.js';
+export type { CiVerification, VerifyCiFixResult } from './ciVerify.js';
+export { verifyCiFix } from './ciVerify.js';
 export { commitToMemory } from './commitToMemory.js';
 // Channel assistant (Gap F) — channel memory consolidation (de-dup / summarize / expire)
 export type {
@@ -171,6 +174,8 @@ export {
   submitPrdWorkRequests,
 } from './prdWorkflow.js';
 export { prepareScheduledEvalRun } from './prepareScheduledEvalRun.js';
+export type { PruneAutomationDecisionsResult } from './pruneAutomationDecisions.js';
+export { pruneAutomationDecisions } from './pruneAutomationDecisions.js';
 export type {
   PublishOutcomeInput,
   PublishOutcomeResult,

@@ -29,6 +29,7 @@ interface Harness {
   order: string[];
   runInputs: Array<Record<string, unknown>>;
   activeWorkflows: Array<Record<string, unknown>>;
+  decisions: Array<Record<string, unknown>>;
   connection: Record<string, unknown> | null;
   template: Record<string, unknown>;
   startError?: Error;
@@ -43,6 +44,7 @@ async function buildHarness(): Promise<Harness> {
     activeWorkflows: [],
     app: Fastify(),
     connection: null,
+    decisions: [],
     order: [],
     runInputs: [],
     started: [],
@@ -79,6 +81,13 @@ async function buildHarness(): Promise<Harness> {
       delete: async ({ where }: { where: { id: string } }) => {
         h.activeWorkflows = h.activeWorkflows.filter((a) => a.id !== where.id);
         return {};
+      },
+    },
+    // The template's decision history.
+    automationFire: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        h.decisions.push(data);
+        return data;
       },
     },
     connection: {
@@ -155,6 +164,22 @@ describe('POST /webhooks/:token', () => {
 
     expect(res.statusCode).toBe(201);
     expect(h.order).toEqual(['ledger', 'start']);
+  });
+
+  it('records the call in the template’s decision history, refusals once an hour per reason', async () => {
+    await fire(h);
+    expect(h.decisions.at(-1)).toMatchObject({
+      outcome: 'STARTED',
+      source: 'template_webhook.call',
+      subjectKey: TEMPLATE_ID,
+    });
+    h.template = { ...h.template, status: 'ARCHIVED' };
+    await fire(h);
+    await fire(h);
+    const refusals = h.decisions.filter((d) => d.outcome === 'FAILED_TO_START');
+    expect(refusals).toHaveLength(2);
+    // Same owner, reason and hour: one key, so the database keeps one row.
+    expect(refusals[0]?.dedupeKey).toBe(refusals[1]?.dedupeKey);
   });
 
   it('404s an unknown token without touching the ledger', async () => {

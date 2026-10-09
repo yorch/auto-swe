@@ -5,6 +5,7 @@ import {
   CI_TRIAGE_TEMPLATE_NAME,
   CI_TRIGGER_EVENTS,
   CiTriagePayloadSchema,
+  ciEventLabel,
   GlobListSchema,
   matchesPatterns,
 } from '../../lib/ciTrigger.js';
@@ -29,15 +30,16 @@ export const WorkflowRunFailedFiltersSchema = z.object({
 export type WorkflowRunFailedFilters = z.infer<typeof WorkflowRunFailedFiltersSchema>;
 
 /** A failed workflow run, as a decision needs it. Built from the signed webhook alone. */
-export interface WorkflowRunFailedFacts {
-  event: string;
-  branch: string;
-  workflowPath: string;
-  headSha: string;
-  runId: string;
-  runAttempt: number;
-  pullRequestNumber: number | null;
-}
+export const WorkflowRunFailedFactsSchema = z.object({
+  branch: z.string().min(1).max(255),
+  event: z.string().min(1).max(64),
+  headSha: z.string().min(1).max(64),
+  pullRequestNumber: z.number().int().positive().nullable(),
+  runAttempt: z.number().int().min(1),
+  runId: z.string().regex(/^\d{1,20}$/),
+  workflowPath: z.string().min(1).max(500),
+});
+export type WorkflowRunFailedFacts = z.infer<typeof WorkflowRunFailedFactsSchema>;
 
 /** A workflow path fit to quote in a run description, or a neutral stand-in. */
 function quotablePath(path: string): string {
@@ -62,7 +64,7 @@ export const workflowRunFailedSource: EventSource<
   },
   defaultTemplate: { name: CI_TRIAGE_TEMPLATE_NAME },
   describe: (f) =>
-    `${f.events.map((e) => (e === 'pull_request' ? 'pull requests' : 'pushes')).join(' or ')} on ` +
+    `${f.events.map(ciEventLabel).join(' or ')} on ` +
     `${f.branchPatterns.join(', ')} · ${f.workflowPatterns.join(', ')}`,
   describeInputs(given) {
     // The built-in template's defaults under what is given: a summary of the default template.
@@ -92,6 +94,7 @@ export const workflowRunFailedSource: EventSource<
     return `${text('workflowPath')} on ${text('branch')}${pr} · ${text('event')} · run ${text('runId')}/${text('runAttempt')}`;
   },
   eventInputKeys: CI_EVENT_INPUT_KEYS,
+  facts: WorkflowRunFailedFactsSchema,
   filterFields: [
     {
       key: 'events',
@@ -100,6 +103,7 @@ export const workflowRunFailedSource: EventSource<
       options: [
         { label: 'Pushes', value: 'push' },
         { label: 'Pull requests from this repository', value: 'pull_request' },
+        { label: 'Scheduled runs', value: 'schedule' },
       ],
     },
     {
@@ -139,7 +143,7 @@ export const workflowRunFailedSource: EventSource<
   label: 'When CI fails',
   mismatch(f, x) {
     if (!(f.events as readonly string[]).includes(x.event)) {
-      return `it does not react to ${x.event === 'pull_request' ? 'pull requests' : `'${x.event}'`}`;
+      return `it does not react to ${ciEventLabel(x.event)}`;
     }
     if (!matchesPatterns(f.branchPatterns, x.branch)) {
       return `the branch '${x.branch}' is not selected by its branch patterns`;
@@ -179,7 +183,7 @@ export const workflowRunFailedSource: EventSource<
       workflowPath: '.github/workflows/ci.yml',
     })),
   summary:
-    'A GitHub Actions run of a push or pull request fails: diagnose it, and optionally fix it.',
+    'A GitHub Actions run of a push, pull request or schedule fails: diagnose it, and optionally fix it.',
   templateCompatible(schema: InputSchema) {
     if (!('githubRunId' in schema.properties)) {
       return false;
@@ -217,6 +221,7 @@ export const workflowRunFailedSource: EventSource<
         options: [
           { label: 'Push', value: 'push' },
           { label: 'Pull request', value: 'pull_request' },
+          { label: 'Scheduled run', value: 'schedule' },
         ],
       },
       { initial: 'main', key: 'branch', label: 'Branch' },

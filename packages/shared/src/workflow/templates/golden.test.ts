@@ -386,6 +386,196 @@ function failureLessons(g: WorkflowSpec, loops: ReadonlyArray<'review' | 'ci'>):
   return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
 }
 
+/**
+ * ci-triage-and-fix checks a fix against the failing step's own command after the tests and
+ * before delivery, keeps what it found, and reports it with the fix.
+ */
+function ciTriageVerification(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
+  nodes.runTests = { ...nodes.runTests, next: 'verifyFix' };
+  nodes.verifyFix = {
+    inputs: {
+      codeResult: { from: 'context.currentCodeResult' },
+      triage: { from: 'context.ciTriage' },
+    },
+    next: 'storeVerification',
+    onFail: 'warn',
+    step: 'verifyCiFix',
+    type: 'step',
+  };
+  nodes.storeVerification = {
+    expr: 'nodes.verifyFix.output == null',
+    onFalse: 'keepVerification',
+    onTrue: 'routeDelivery',
+    type: 'cond',
+  };
+  nodes.keepVerification = {
+    next: 'routeDelivery',
+    type: 'set',
+    values: {
+      'context.ciVerification': { from: 'nodes.verifyFix.output.verification' },
+      'context.currentCodeResult': { from: 'nodes.verifyFix.output.codeResult' },
+    },
+  };
+  const verification = { from: 'context.ciVerification' };
+  for (const id of ['reportPushed', 'reportFix']) {
+    const node = nodes[id] as { inputs: Record<string, unknown> };
+    node.inputs = { ...node.inputs, verification };
+  }
+  for (const id of ['pushed', 'done']) {
+    const node = nodes[id] as { result: Record<string, unknown> };
+    node.result = { ...node.result, verification };
+  }
+  return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
+}
+
+/**
+ * ci-triage-and-fix watches the pull request's CI on a pushed fix: one follow-up attempt when
+ * it fails (unless the trigger allows no revisions), then a comment, and the run's work branch
+ * removed when it ends.
+ */
+function ciTriagePushWatch(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
+  const verification = { from: 'context.ciVerification' };
+  const pushed = { from: 'context.pushedCommitSha' };
+  nodes.checkPushed = { ...nodes.checkPushed, onTrue: 'startPushWatch' };
+  nodes.pushFix = { ...nodes.pushFix, config: { keepWorkBranch: true } };
+  nodes.startPushWatch = {
+    next: 'reportPushed',
+    type: 'set',
+    values: {
+      'context.pushedCommitSha': { from: 'nodes.pushFix.output.commitSha' },
+      'context.pushRetries': { literal: 0 },
+    },
+  };
+  nodes.reportPushed = {
+    ...nodes.reportPushed,
+    inputs: { pushedCommitSha: pushed, triage: { from: 'context.ciTriage' }, verification },
+    next: 'watchPushedCi',
+  };
+  nodes.watchPushedCi = {
+    inputs: { ref: pushed },
+    next: 'checkPushedCi',
+    onError: 'continue',
+    step: 'waitForCiByPolling',
+    type: 'step',
+  };
+  nodes.checkPushedCi = {
+    expr: 'nodes.watchPushedCi.output.ciPassed == false',
+    onFalse: 'finishPushed',
+    onTrue: 'checkPushRetries',
+    type: 'cond',
+  };
+  nodes.checkPushRetries = {
+    expr: 'context.pushRetries >= 1 || (request.payload.maxCiFixAttempts ?? 2) == 0',
+    onFalse: 'countPushRetry',
+    onTrue: 'reportPushFailed',
+    type: 'cond',
+  };
+  nodes.countPushRetry = {
+    next: 'fetchPushedLogs',
+    type: 'set',
+    values: { 'context.pushRetries': { expr: 'context.pushRetries + 1' } },
+  };
+  nodes.fetchPushedLogs = {
+    inputs: { logsUrl: { from: 'nodes.watchPushedCi.output.logsUrl' } },
+    next: 'pushRetryFix',
+    onFail: 'warn',
+    step: 'fetchCILogs',
+    type: 'step',
+  };
+  nodes.pushRetryFix = {
+    config: { refuseWorkflowChanges: true, untrustedCiLogs: true },
+    inputs: {
+      failureContext: { from: 'nodes.fetchPushedLogs.output' },
+      previousCodeResult: { from: 'context.currentCodeResult' },
+    },
+    next: 'checkPushRetryFix',
+    onFail: 'warn',
+    step: 'executeCIFixImplementation',
+    type: 'step',
+  };
+  nodes.checkPushRetryFix = {
+    expr:
+      'nodes.pushRetryFix.output == null || ' +
+      'nodes.pushRetryFix.output.headSha == context.currentCodeResult.headSha',
+    onFalse: 'keepPushRetryFix',
+    onTrue: 'reportPushFailed',
+    type: 'cond',
+  };
+  nodes.keepPushRetryFix = {
+    next: 'pushFixAgain',
+    type: 'set',
+    values: { 'context.currentCodeResult': { from: 'nodes.pushRetryFix.output' } },
+  };
+  nodes.pushFixAgain = {
+    config: { keepWorkBranch: true },
+    inputs: {
+      codeResult: { from: 'context.currentCodeResult' },
+      triage: { from: 'context.ciTriage' },
+    },
+    next: 'checkPushedAgain',
+    onFail: 'warn',
+    step: 'pushCiFixToPullRequest',
+    type: 'step',
+  };
+  nodes.checkPushedAgain = {
+    expr: 'nodes.pushFixAgain.output.pushed == true',
+    onFalse: 'reportPushFailed',
+    onTrue: 'storePushedAgain',
+    type: 'cond',
+  };
+  nodes.storePushedAgain = {
+    next: 'reportPushed',
+    type: 'set',
+    values: { 'context.pushedCommitSha': { from: 'nodes.pushFixAgain.output.commitSha' } },
+  };
+  nodes.reportPushFailed = {
+    inputs: {
+      pushFailed: { literal: true },
+      pushRetryAttempted: { expr: 'context.pushRetries >= 1' },
+      pushRetryPushed: { expr: 'nodes.pushFixAgain.output.pushed == true' },
+      pushRetryRefusedReason: { from: 'nodes.pushFixAgain.output.reason' },
+      pushedCommitSha: pushed,
+      triage: { from: 'context.ciTriage' },
+      verification,
+    },
+    next: 'finishPushFailed',
+    onFail: 'warn',
+    step: 'reportCiTriage',
+    type: 'step',
+  };
+  nodes.finishPushFailed = {
+    next: 'pushFailed',
+    onError: 'continue',
+    step: 'finishCiFixPush',
+    type: 'step',
+  };
+  nodes.pushFailed = {
+    ...nodes.pushed,
+    result: {
+      ...(nodes.pushed as { result: Record<string, unknown> }).result,
+      error: { literal: "the pushed fix did not pass the pull request's CI" },
+      pushedCommitSha: pushed,
+    },
+    status: 'FAILED',
+  };
+  nodes.finishPushed = {
+    next: 'pushed',
+    onError: 'continue',
+    step: 'finishCiFixPush',
+    type: 'step',
+  };
+  nodes.pushed = {
+    ...nodes.pushed,
+    result: {
+      ...(nodes.pushed as { result: Record<string, unknown> }).result,
+      pushedCommitSha: pushed,
+    },
+  };
+  return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
+}
+
 const FAILURE_LESSONS_REASON =
   'a review or CI loop that runs out of attempts stores a lesson about what blocked it ' +
   'before the run fails';
@@ -446,6 +636,13 @@ const INTENDED_CHANGES: Record<
       'implementation, a failing CI is fixed (2 attempts) before anything else, and the ' +
       'two-reviewer consensus runs on the green code, a rejection going fix -> CI -> consensus; ' +
       FAILURE_LESSONS_REASON,
+  },
+  'ci-triage-and-fix': {
+    apply: (g: WorkflowSpec) => ciTriagePushWatch(ciTriageVerification(g)),
+    reason:
+      'a fix is checked against the failing step’s own command before it is delivered, and ' +
+      'the result is reported with the fix; a fix pushed onto a pull request has its CI ' +
+      'watched, with one follow-up attempt and a comment when it still fails',
   },
   'four-eyes': {
     apply: (g: WorkflowSpec) =>

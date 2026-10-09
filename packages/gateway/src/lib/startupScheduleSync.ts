@@ -12,8 +12,8 @@ import type { FastifyInstance } from 'fastify';
  * start, later after an outage at boot). Each sync is best-effort: a failure is
  * logged. Consolidation, eval regression and revalidation can be re-saved from the
  * admin UI; the environment-driven schedules (repository dependency scan,
- * repository access sync, model discovery, run reaper, skill-source sync) are
- * next synced at the following gateway start.
+ * repository access sync, model discovery, run reaper, automation decision prune,
+ * skill-source sync) are next synced at the following gateway start.
  *
  * Only these system schedules are re-synced here. Per-channel and
  * per-work-request schedules are reconciled when their own rows are written
@@ -44,6 +44,10 @@ export async function syncSchedulesOnceConnected(
   // The run reaper finalizes (and bills) runs whose workflow ended without
   // finalizing them. It only reads Temporal, so it is on by default.
   app.temporal.syncRunReaperSchedule(sweeps.runReaper).catch(warn('run reaper'));
+  // Deletes automation decisions that started no run, past their retention. On by default.
+  app.temporal
+    .syncAutomationDecisionPruneSchedule(sweeps.automationDecisionPrune)
+    .catch(warn('automation decision prune'));
   // One cheap request per tracked source; it only flags. On by default.
   app.temporal.syncSkillSourceSyncSchedule(sweeps.skillSourceSync).catch(warn('skill source sync'));
   // The nightly eval benchmark: off by default, needs a seeded dataset and a Docker-capable worker.

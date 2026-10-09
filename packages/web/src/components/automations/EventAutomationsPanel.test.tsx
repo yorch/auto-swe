@@ -32,6 +32,7 @@ vi.mock('@/hooks/useAutomations', () => {
       isError: false,
       isLoading: false,
     }),
+    useRetryAutomationFire: mutation,
     useUpdateEventAutomation: () => ({
       error: null,
       isError: false,

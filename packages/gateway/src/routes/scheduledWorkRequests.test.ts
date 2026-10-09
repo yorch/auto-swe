@@ -148,6 +148,11 @@ describe('/api/v1/scheduled-work-requests', () => {
         },
         deleteMany: async () => ({ count: 1 }),
       },
+      // Each schedule's latest fire decision; none recorded unless a test says so.
+      automationFire: {
+        findMany: async () => [],
+        groupBy: async () => [],
+      },
       configAuditLog: {
         create: async (args: { data: Record<string, unknown> }) => {
           auditRows.push(args.data);

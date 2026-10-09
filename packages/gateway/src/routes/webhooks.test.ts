@@ -947,6 +947,46 @@ describe('webhook routes', () => {
     });
   });
 
+  describe('issues deliveries', () => {
+    const labelled = JSON.stringify({
+      action: 'labeled',
+      issue: {
+        body: 'It should return 200.',
+        html_url: 'https://github.com/acme/payments-api/issues/9',
+        number: 9,
+        state: 'open',
+        title: 'Add a health check',
+        updated_at: '2026-10-01T00:00:00Z',
+      },
+      label: { name: 'auto-swe' },
+      repository: { full_name: 'acme/payments-api' },
+      sender: { id: 42, login: 'octocat', type: 'User' },
+    });
+    const ISSUES = { 'x-github-event': 'issues' };
+
+    beforeEach(() => {
+      vi.mocked(handleOccurrence).mockClear();
+    });
+
+    it('hands a signed labelling to the issue-label automations', async () => {
+      const res = await inject('/api/v1/webhooks/git', labelled, sign(labelled), ISSUES);
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[1]).toMatchObject({
+        key: 'github.issues.labeled',
+      });
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[2]).toMatchObject({
+        facts: { issueNumber: 9, label: 'auto-swe', senderId: '42' },
+      });
+    });
+
+    it('acknowledges a label added by a bot without acting on it', async () => {
+      const bot = labelled.replace('"type":"User"', '"type":"Bot"');
+      const res = await inject('/api/v1/webhooks/git', bot, sign(bot), ISSUES);
+      expect(res.json().data).toMatchObject({ ignored: true });
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+  });
+
   describe('POST /ci', () => {
     const HEAD_SHA = 'abc123def456';
 

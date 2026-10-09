@@ -28,6 +28,12 @@ vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
   resolveIssueTrackerConfig: vi.fn(async () => tracker.config),
 }));
 
+const engine = vi.hoisted(() => ({ decideAndStart: vi.fn() }));
+vi.mock('../lib/automations/engine.js', async (orig) => ({
+  ...(await orig<typeof import('../lib/automations/engine.js')>()),
+  decideAndStart: engine.decideAndStart,
+}));
+
 vi.mock('../lib/launchAuthorization.js', () => ({
   authorizeLaunch: vi.fn(async () => launch.decision),
   sendLaunchRefusal: (
@@ -115,6 +121,7 @@ async function buildApp() {
       })),
     },
     automationFire: {
+      findFirst: vi.fn(),
       findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]),
       groupBy: vi.fn(async (_args: unknown) => [] as unknown[]),
     },
@@ -283,6 +290,82 @@ describe('automationRoutes (event automations)', () => {
     });
   });
 
+  describe('retrying a decision', () => {
+    const FIRE = '44444444-4444-4444-8444-444444444444';
+    const FACTS = {
+      branch: 'main',
+      event: 'push',
+      headSha: 'a'.repeat(40),
+      pullRequestNumber: null,
+      runAttempt: 1,
+      runId: '12',
+      workflowPath: '.github/workflows/ci.yml',
+    };
+    const fire = (over: Record<string, unknown> = {}) => ({
+      facts: FACTS,
+      id: FIRE,
+      outcome: 'FAILED_TO_START',
+      repoKey: 'github.com/acme/api',
+      retriedAt: null,
+      ...over,
+    });
+    const retry = () =>
+      ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `${URL}/${AUTOMATION}/fires/${FIRE}/retry`,
+      });
+
+    it('lets a lead take a decision that started nothing again, through every limit', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+      engine.decideAndStart.mockResolvedValue({ automationId: AUTOMATION, outcome: 'STARTED' });
+      const res = await retry();
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toMatchObject({ outcome: 'STARTED' });
+      expect(engine.decideAndStart.mock.calls[0]?.[2]).toMatchObject({
+        facts: FACTS,
+        repoKey: 'github.com/acme/api',
+        retry: { fireId: FIRE, kind: 'manual' },
+      });
+      expect(authorizeLaunch).toHaveBeenCalled();
+    });
+
+    it('refuses a plain member', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+      expect((await retry()).statusCode).toBe(403);
+      expect(engine.decideAndStart).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a decision that started a run', fire({ outcome: 'STARTED' }), stored()],
+      ['a decision already taken again', fire({ retriedAt: new Date() }), stored()],
+      ['an occurrence this build cannot read', fire({ facts: { runId: 'x' } }), stored()],
+      ['an automation that is off', fire(), stored({ enabled: false })],
+      [
+        'filters that no longer select it',
+        fire(),
+        stored({ filters: { ...FILTERS, branchPatterns: ['release/*'] } }),
+      ],
+    ])('refuses %s', async (_name, row, automation) => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automation.findUnique.mockResolvedValue(automation);
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(row);
+      const res = await retry();
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('NOT_RETRYABLE');
+      expect(engine.decideAndStart).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 when another retry got there first', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+      engine.decideAndStart.mockResolvedValue({ duplicate: true });
+      expect((await retry()).statusCode).toBe(409);
+    });
+  });
+
   describe('the list of every kind', () => {
     const listed = (role: string | null) => ({
       ...stored(),
@@ -353,28 +436,42 @@ describe('automationRoutes (event automations)', () => {
       expect((await list()).json().data[0].canManage).toBe(true);
     });
 
-    it('reports a webhook’s last run only from runs the caller may see', async () => {
+    it('reports a webhook’s last call from the ledger, only calls the caller may see', async () => {
       ctx.prisma.workflowTemplate.findMany
         .mockResolvedValueOnce([
           { id: TEMPLATE, name: 'hooked', status: 'ACTIVE', team: { id: 't', name: 'T' } },
         ])
         .mockResolvedValueOnce([]);
-      ctx.prisma.workflowRun.groupBy.mockResolvedValue([
-        { _max: { startedAt: new Date(5000) }, templateId: TEMPLATE },
-      ]);
-      ctx.prisma.workflowRun.findMany.mockResolvedValue([
-        { startedAt: new Date(5000), status: 'COMPLETED', templateId: TEMPLATE },
-      ]);
+      const calls = (where: unknown) => JSON.stringify(where).includes('template_webhook.call');
+      ctx.prisma.automationFire.groupBy.mockImplementation((async (args: { where: unknown }) =>
+        calls(args.where)
+          ? [{ _max: { createdAt: new Date(5000) }, subjectKey: TEMPLATE }]
+          : []) as never);
+      ctx.prisma.automationFire.findMany.mockImplementation((async (args: { where: unknown }) =>
+        calls(args.where)
+          ? [
+              {
+                createdAt: new Date(5000),
+                outcome: 'FAILED_TO_START',
+                reason: 'the payload does not fit the template’s inputs',
+                subjectKey: TEMPLATE,
+              },
+            ]
+          : []) as never);
       const [hook] = (await list()).json().data;
-      expect(hook.lastActivity).toMatchObject({ outcome: 'COMPLETED' });
-      for (const call of [
-        ctx.prisma.workflowRun.groupBy.mock.calls[0]?.[0],
-        ctx.prisma.workflowRun.findMany.mock.calls[0]?.[0],
-      ]) {
-        // The non-admin run-visibility predicate names the caller.
-        expect(JSON.stringify(call)).toContain('user-1');
-        expect(JSON.stringify(call)).toContain('wh-');
-      }
+      expect(hook.lastActivity).toMatchObject({
+        outcome: 'FAILED_TO_START',
+        reason: expect.stringMatching(/payload/),
+      });
+      const where = JSON.stringify(
+        (ctx.prisma.automationFire.groupBy.mock.calls as unknown[][]).find((c) =>
+          calls((c[0] as { where: unknown }).where)
+        )?.[0]
+      );
+      // The non-admin reach predicate names the caller; a call on no repository only for a
+      // team's own template.
+      expect(where).toContain('user-1');
+      expect(where).toContain('"connectionId":null');
     });
 
     it('never reads the tracker configuration for anyone but an admin', async () => {

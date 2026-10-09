@@ -66,8 +66,8 @@ automation the caller may see, of every kind (§5). Each row says:
 - when it fires;
 - what it is on (a repository, a team's template, the platform);
 - what it starts;
-- what it last did: the latest decision for an event automation, the latest run the caller may
-  see for a template webhook or the tracker hook, and the last fire for a schedule.
+- what it last did: the latest decision for an event automation, a schedule or a template webhook
+  (§5), with its reason on hover, and the latest run for the tracker hook.
 
 Rows can be filtered by kind and searched. **Manage** opens where that kind is edited. **New event
 automation** asks for a repository and opens its automations. **Schedules**
@@ -77,8 +77,8 @@ leads to the schedule editor at `/govern/schedules`, which keeps its own page an
 
 - event automations on the repositories the caller can reach (all, for ADMIN);
 - template webhook URLs on templates the caller can read. Managing one also needs platform role
-  LEAD, as the webhook routes do, and a webhook's last run is the newest run of it the caller may
-  see, so a global template never shows another team's run;
+  LEAD, as the webhook routes do, and a webhook's last call is the newest one the caller may see
+  (§5), so a global template never shows another team's call;
 - for ADMIN only, the tracker transition hook. Its configuration is not read for anyone else.
 
 Each row says whether the caller may manage it. Schedules come from their own list route,
@@ -101,6 +101,7 @@ which depend on earlier runs.
 | `POST /api/v1/automations/events` | ADMIN, or a LEAD of the repository's **owning** team |
 | `PATCH` / `DELETE /api/v1/automations/events/:id` | The same |
 | `GET /api/v1/automations/events/:id/fires?limit=` | A member, as for the list |
+| `POST /api/v1/automations/events/:id/fires/:fireId/retry` | Those who may manage, as a launch decision: takes one decision that started no run again (§2) |
 | `GET /api/v1/automations/events/templates?connectionId=&source=` | Those who may manage: the templates an automation of that source may start, each with the options it declares |
 
 An event automation starts runs on the repository with the platform credential. That is why
@@ -133,7 +134,8 @@ host. The engine (`handleOccurrence`) then:
    automations oldest first within each. One occurrence starts at most one run, however many
    automations or repository rows match it.
 3. **Records the decision** as an `AutomationFire`, keyed by the occurrence on its repository
-   (`dedupeKey`). A redelivered webhook answers `duplicate` and starts nothing. The decision is taken
+   (`dedupeKey`). A redelivered webhook answers `duplicate` and starts nothing, unless the earlier
+   decision was `FAILED_TO_START`: that one is taken again. The decision is taken
    under a transaction lock on the **repository**, so concurrent deliveries see each other. A run
    is **suppressed** when:
 
@@ -153,7 +155,16 @@ host. The engine (`handleOccurrence`) then:
    requesting user, so it uses the platform credential and never a person's saved token. Starting
    the workflow is tried three times. A retry that finds the execution already started counts as
    started, because an earlier attempt whose reply was lost did start it. If every attempt fails,
-   the decision is removed and the delivery answers `503`.
+   the decision becomes `FAILED_TO_START` and the delivery answers `503`. A failed start counts
+   against nothing: only `STARTED` decisions suppress later occurrences.
+
+A decision that started no run can be **taken again**: by redelivering the webhook when it was
+`FAILED_TO_START`, or with **Decide again** in the automation's history (the retry route above) for
+any outcome but `STARTED`. The retry reads the occurrence from the ledger's `facts`, needs the
+automation on and its filters still selecting the occurrence, and passes every limit a delivery
+does, so a decision that still holds (a cooldown that has not run out, the platform's own output)
+is recorded again. The earlier row stays in the history, marked `retriedAt`, with its dedupe key
+moved aside to `<key>~<its id>`; concurrent retries and redeliveries take it at most once.
 
 ### The ledger
 
@@ -168,13 +179,25 @@ produced, or what is still in flight. Each row keeps:
 - `subjectKey`: what one run is enough for;
 - `scopeKey`: what the cooldown and in-flight checks count over;
 - `producedKey`: what a run produced;
-- `facts`: the occurrence as the source saw it, which the history shows.
+- `facts`: the occurrence as the source saw it, which the history shows and a retry decides
+  from;
+- `retriedAt`: set when the decision was taken again.
+
+**Retention.** A daily sweep (`ScheduledAutomationDecisionPruneWorkflow`, the
+`auto-swe-automation-decision-prune` schedule) deletes decisions that started no run once they are
+older than `workflow.automationDecisionRetentionDays` (default 90 days, at least 7). `STARTED`
+decisions are kept regardless, because the same-subject and own-output guards read them; a sweep
+deletes in batches of 2,000 and at most 100,000 rows, leaving any backlog to the next one. The
+seven-day floor keeps a decision at least as long as GitHub lets a delivery be redelivered, so a
+redelivery finds its decision rather than being decided afresh. The schedule's switch and cadence
+are environment-only ([configuration.md](./configuration.md)).
 
 ## 3. Event sources
 
 | Source | When | Subject / scope | Default template | Kill switch |
 |---|---|---|---|---|
-| `github.workflow_run.failed` | A GitHub Actions run of a `push` or `pull_request` workflow fails ([ci-failure-triggers.md](./ci-failure-triggers.md)) | the commit / the branch | `ci-triage-and-fix` | `github.ciFailureTriggersEnabled` |
+| `github.workflow_run.failed` | A GitHub Actions run of a `push`, `pull_request` or `schedule` workflow fails ([ci-failure-triggers.md](./ci-failure-triggers.md)) | the commit / the branch | `ci-triage-and-fix` | `github.ciFailureTriggersEnabled` |
+| `github.issues.labeled` | A person adds one of the automation's labels to an open issue (§3.1) | that labelling / the issue | `default-engineering` | `github.issueLabelAutomationsEnabled` (off by default) |
 
 A source is a pure descriptor (`EventSource` in `@auto-swe/shared/automation`) plus a webhook
 normalizer in the gateway. The descriptor declares:
@@ -197,15 +220,69 @@ Adding a source means:
 
 The engine, API, dashboard and ledger take it from there.
 
+### 3.1 Issue labels
+
+A label added to an open issue starts the automation's template on the issue: by default the
+engineering template, which implements it and opens a pull request. The filters name the labels
+(compared without case). The run's description is the issue's title, its body (the first 4,000
+characters) and a link back; its ticket is synthetic, `issue-<number>-<hash>`.
+
+Issue forms add labels on behalf of whoever opens the issue, so a label says nothing about who
+asked. Three things stand between an issue and a run:
+
+- **The switch.** `github.issueLabelAutomationsEnabled` is off by default (ADMIN, per team or
+  organization).
+- **The person.** The source names who added the label (`actor`). A run starts only when that
+  GitHub account, matched by its numeric id on the repository's host (not by login, which can be
+  renamed and reused), is linked to an **active** platform user who is a **member** of the
+  repository's owning team or a team it is shared with, **and** the launch decision every other
+  launch path takes allows them now: the [access gate](./repo-access-gating.md)'s GitHub
+  permission check, membership of the repository's organization, and its monthly cap. Anyone
+  else's labelling is recorded as `SUPPRESSED_PRECONDITION` with the reason. A label added by a bot
+  or an App, the platform's own included, is ignored.
+- **The run's identity.** The run records that user as its requester (`RunInput.requestedById`): it
+  is visible to them as their run, and it counts toward their in-flight runs wherever those are
+  capped. It uses the platform credential, as every automation run does; it never acts with the
+  person's own saved token.
+- **What the run reads.** The issue's title and body as GitHub shows them: HTML comments, which
+  GitHub does not render and the labeller therefore never saw, are dropped first.
+
+Each labelling is its own subject, so removing and adding a label again starts again; the issue is
+the scope, so a labelling while an earlier run on the issue is open is `SUPPRESSED_IN_FLIGHT`, for
+up to 14 days. A closed issue and a pull request are ignored.
+
 ## 4. Permissions on the host
 
 What an occurrence needs from the host is the source's: for CI, the **Workflow run** event and
-**Actions: Read** ([github-app-setup.md](./github-app-setup.md)).
+**Actions: Read**; for issue labels, the **Issues** event and **Issues: Read**
+([github-app-setup.md](./github-app-setup.md)).
 
 ## 5. Other kinds of automation
 
 These start runs too and keep their own configuration. The Automations page lists them beside
-event automations, with the latest run each started.
+event automations.
+
+Schedules and template webhooks also write their decisions to the ledger, under their own sources
+(`schedule.fire`, `template_webhook.call`), with the schedule's or template's id as subject and
+scope and no repository key. Event sources' guards read only their own source, so these rows never
+suppress anything:
+
+- **A schedule fire** is recorded by the worker when the run is created (`STARTED`, keyed by the
+  fire's workflow id, so a retried activity records it once) or when the owner's launch decision
+  refuses it: `SUPPRESSED_IN_FLIGHT` for a fire skipped while the request is still running,
+  `SUPPRESSED_BUDGET` over the cap, `SUPPRESSED_PRECONDITION` for every other refusal, with the
+  refusal's message as the reason.
+- **A template webhook call** is recorded once its token names a template: `STARTED`, or
+  `FAILED_TO_START` (inactive template, no active version, a payload or base branch or connection
+  it refuses), `SUPPRESSED_BUDGET`, or `SUPPRESSED_SAME_SUBJECT` for an idempotency key already used.
+  A call to an unknown token records nothing.
+
+A refusal is keyed by the owner, its reason and the hour, so a per-minute cron that keeps being
+refused, or a caller hammering a webhook, leaves one row an hour per reason. `GET
+/api/v1/scheduled-work-requests` returns each schedule's `lastDecision`; the Automations list returns
+a webhook's latest call only when the caller may see it: a call on a repository they can reach, or a
+call on no repository to a team's own template. The retention sweep removes these rows like any
+other decision that started no run.
 
 | Kind | Configured at | Who |
 |---|---|---|
@@ -215,21 +292,31 @@ event automations, with the latest run each started.
 
 ## Limitations
 
-- **One event source.** Only failed GitHub Actions runs start event automations. Labelling an issue,
-  a comment or a review is not a source. An issue-label source in particular would act on text
-  anyone who can open an issue wrote, through issue forms that apply labels themselves, so it needs
-  the sender mapped to a platform user and an off-by-default switch before it can be added.
+- **Two event sources.** Failed GitHub Actions runs and issue labels start event automations; a
+  comment, a review or a pull request label does not.
+- **An issue run acts on the issue's text.** The labeller is a member, but the issue's title and
+  body may be anyone's: an issue opened by an outsider and labelled by a member carries the
+  outsider's text into the run's description, as a work request typed from it would. Only the first
+  4,000 characters of the body are used, and later edits to the issue are not seen.
+- **Membership is read when the label arrives.** A person who leaves the team keeps the runs they
+  already started; a person whose GitHub account is not linked to their platform user cannot start
+  one.
+- **Decide again uses the issue as it was.** Taking an issue decision again reads the recorded
+  occurrence, not the issue now: a run can start on an issue closed or unlabelled since. The
+  labeller's launch decision is taken again, as of now.
 - **The other kinds keep their own storage.** Schedules, template webhook URLs and the tracker
-  transition write no ledger rows and are configured where they always were (§5). The Automations
-  page shows the last time they fired, not what came of it: a schedule fire the worker then skipped
-  counts as a fire, and a webhook call refused before a run started is not listed. A dashboard
-  re-run of a webhook or tracker run keeps the run's prefix and counts as that kind's activity.
+  transition are configured where they always were (§5). Schedules and webhooks record their latest
+  decision, but not a full history in the dashboard, and only the first refusal of a reason in an
+  hour; a schedule's history starts with its first recorded fire. The tracker transition writes no
+  ledger rows: the page shows its latest run. A webhook call on a global template with no repository
+  is shown only to admins.
 - **A renamed repository starts a fresh ledger.** The ledger is keyed by the repository's name on
   its host, so after a rename the subject, cooldown and in-flight checks no longer see the earlier
   decisions. They come back with the next ones. The own-output check matches a commit wherever it
   is, so a fix the platform pushed is still recognised.
-- **The ledger is never pruned.** Every decision is kept, so an own-output or same-subject guard
-  never lapses; nothing removes old rows.
+- **Started decisions are never pruned.** The retention sweep removes only decisions that started
+  no run, so the ledger still grows by one row per run started, and an own-output or same-subject
+  guard never lapses. A redelivery older than the retention is decided afresh.
 - **Shared teams do not manage event automations.** A LEAD of a team the repository is shared with
   can read them, but only the owning team's leads and ADMIN manage them, unlike schedules (§5).
 - **The daily cap is the automation's own.** Deleting and recreating an automation starts its cap

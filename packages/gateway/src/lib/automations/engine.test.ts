@@ -140,6 +140,7 @@ describe('the dedupe key', () => {
 // ── handleOccurrence against an in-memory database ───────────────────
 
 interface Fire {
+  id: string;
   dedupeKey: string;
   automationId: string;
   repoKey: string;
@@ -151,6 +152,7 @@ interface Fire {
   createdAt: Date;
   temporalWorkflowId?: string | null;
   reason?: string | null;
+  retriedAt?: Date | null;
 }
 
 /** An automation, described flat; its event, branch and workflow lists become its filters. */
@@ -194,6 +196,8 @@ function harness(
   /** The subset of Prisma's `where` the decision uses, evaluated against a fire. */
   const matches = (f: Fire, where: Record<string, unknown>): boolean => {
     for (const key of [
+      'id',
+      'dedupeKey',
       'automationId',
       'repoKey',
       'outcome',
@@ -202,7 +206,12 @@ function harness(
       'producedKey',
       'source',
     ] as const) {
-      if (where[key] !== undefined && f[key] !== where[key]) {
+      const want = where[key];
+      if (want !== null && typeof want === 'object' && 'not' in want) {
+        if (f[key] === (want as { not: unknown }).not) {
+          return false;
+        }
+      } else if (want !== undefined && f[key] !== want) {
         return false;
       }
     }
@@ -244,19 +253,12 @@ function harness(
         async ({ where }: { where: Record<string, unknown> }) =>
           fires.filter((f) => matches(f, where)).length
       ),
-      create: vi.fn(async ({ data }: { data: Omit<Fire, 'createdAt'> }) => {
+      create: vi.fn(async ({ data }: { data: Omit<Fire, 'createdAt' | 'id'> }) => {
         if (fires.some((f) => f.dedupeKey === data.dedupeKey)) {
           throw Object.assign(new Error('unique'), { code: 'P2002' });
         }
-        fires.push({ ...data, createdAt: new Date() });
+        fires.push({ ...data, createdAt: new Date(), id: `fire-${fires.length + 1}` });
         return data;
-      }),
-      deleteMany: vi.fn(async ({ where }: { where: { dedupeKey: string } }) => {
-        const i = fires.findIndex((f) => f.dedupeKey === where.dedupeKey);
-        if (i >= 0) {
-          fires.splice(i, 1);
-        }
-        return { count: 1 };
       }),
       findFirst: vi.fn(
         async ({ where }: { where: Record<string, unknown> }) =>
@@ -264,6 +266,15 @@ function harness(
       ),
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
         fires.filter((f) => matches(f, where))
+      ),
+      updateMany: vi.fn(
+        async ({ data, where }: { data: Partial<Fire>; where: Record<string, unknown> }) => {
+          const hit = fires.filter((f) => matches(f, where));
+          for (const f of hit) {
+            Object.assign(f, data);
+          }
+          return { count: hit.length };
+        }
       ),
     },
     connection: {
@@ -399,6 +410,7 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
       automationId: 'other',
       createdAt: new Date(),
       dedupeKey: 'x',
+      id: 'fire-x',
       outcome: 'STARTED',
       repoKey: 'github.com/acme/api',
       scopeKey: 'release/1.4',
@@ -414,6 +426,7 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
       automationId: 'a',
       createdAt: new Date(0),
       dedupeKey: 'y',
+      id: 'fire-y',
       outcome: 'STARTED',
       producedKey: failed.headSha,
       repoKey: 'github.com/acme/old-name',
@@ -543,14 +556,47 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     await expect(handle(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });
   });
 
-  it('forgets the decision when every start attempt fails, so a redelivery can retry', async () => {
+  it('records a failed start when every start attempt fails, and a redelivery takes it again', async () => {
     const h = harness();
     h.fastify.temporal.startRunnableWorkflow.mockRejectedValue(new Error('temporal down'));
     await expect(handle(h)).rejects.toMatchObject({ name: 'AutomationStartError' });
     expect(h.fastify.temporal.startRunnableWorkflow).toHaveBeenCalledTimes(3);
-    expect(h.fires).toHaveLength(0);
+    expect(h.fires).toEqual([
+      expect.objectContaining({ outcome: 'FAILED_TO_START', temporalWorkflowId: null }),
+    ]);
+    // Meanwhile another workflow fails on the same commit: the failed start does not count.
     h.fastify.temporal.startRunnableWorkflow.mockResolvedValue(undefined);
+    await expect(
+      handle(h, { ...failed, runId: '778', workflowPath: '.github/workflows/lint.yml' })
+    ).resolves.toMatchObject({ outcome: 'STARTED' });
+  });
+
+  it('gives a failed start back when taking it again ends with no decision', async () => {
+    const h = harness({ template: null });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });
+    const key = h.fires[0]?.dedupeKey;
+    h.db.workflowTemplate.findFirst.mockRejectedValue(new Error('database down'));
+    await expect(handle(h)).rejects.toThrow('database down');
+    expect(h.fires).toEqual([
+      expect.objectContaining({ dedupeKey: key, outcome: 'FAILED_TO_START', retriedAt: null }),
+    ]);
+  });
+
+  it('takes a failed start again on redelivery, keeping the earlier decision marked retried', async () => {
+    const h = harness({ template: null });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });
+    h.db.workflowTemplate.findFirst.mockResolvedValue({
+      activeVersion: 1,
+      id: 'tttttttt-0000-4000-8000-000000000001',
+      inputSchema: CI_TRIAGE_INPUT_SCHEMA,
+    } as never);
     await expect(handle(h)).resolves.toMatchObject({ outcome: 'STARTED' });
+    expect(h.fires).toHaveLength(2);
+    const [old, fresh] = h.fires;
+    expect(old).toMatchObject({ outcome: 'FAILED_TO_START', retriedAt: expect.any(Date) });
+    expect(old?.dedupeKey).toBe(`${fresh?.dedupeKey}~${old?.id}`);
+    // Any other decision stands: a redelivery of a started occurrence is a duplicate.
+    await expect(handle(h)).resolves.toEqual({ duplicate: true });
   });
 
   it('starts one fix per commit even when two triggers match two failing workflows', async () => {

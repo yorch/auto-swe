@@ -24,6 +24,22 @@ describe('workflowRunFailedSource', () => {
     expect(ci.mismatch(filters, { ...facts, workflowPath: 'x.yml' })).toMatch(/workflow file/);
   });
 
+  it('reacts to scheduled runs only when asked to, as a run on their branch', () => {
+    const nightly = { ...facts, branch: 'main', event: 'schedule' };
+    expect(ci.mismatch(filters, nightly)).toMatch(/scheduled runs/);
+    const withSchedule = WorkflowRunFailedFiltersSchema.parse({
+      ...filters,
+      events: ['push', 'schedule'],
+    });
+    expect(ci.mismatch(withSchedule, nightly)).toBeNull();
+    expect(ci.describe(withSchedule)).toMatch(/^pushes or scheduled runs on/);
+    expect(ci.precondition?.(nightly)).toBeNull();
+    expect(ci.samples(withSchedule).map((x) => [x.event, x.pullRequestNumber])).toEqual([
+      ['push', null],
+      ['schedule', null],
+    ]);
+  });
+
   it('decides per commit and counts limits per branch', () => {
     expect(ci.keys(facts)).toEqual({ scope: 'release/1.4', subject: 'a'.repeat(40) });
   });

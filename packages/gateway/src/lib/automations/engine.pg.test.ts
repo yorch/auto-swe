@@ -1,5 +1,10 @@
 import crypto from 'node:crypto';
-import { WORKFLOW_RUN_FAILED, workflowRunFailedSource } from '@auto-swe/shared/automation';
+import {
+  ISSUE_LABELED,
+  issueLabeledSource,
+  WORKFLOW_RUN_FAILED,
+  workflowRunFailedSource,
+} from '@auto-swe/shared/automation';
 import { prisma } from '@auto-swe/shared/db';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -39,10 +44,14 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
   let automationId: string;
   let templateId: string;
   let repoId: string;
+  let teamId: string;
+  let orgId: string;
   const started: string[] = [];
   /** Executions Temporal reports as over. */
   const gone = new Set<string>();
 
+  /** When set, every start throws (Temporal down). */
+  let temporalDown = false;
   const fastify = {
     log: { error: vi.fn(), warn: vi.fn() },
     prisma,
@@ -51,6 +60,9 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       startRunnableWorkflow: async (id: string) => {
         // Long enough that concurrent deliveries overlap in the decision.
         await new Promise((r) => setTimeout(r, 20));
+        if (temporalDown) {
+          throw new Error('temporal down');
+        }
         started.push(id);
       },
     },
@@ -108,6 +120,8 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
           data: { organizationName: org, repoName: 'repo', teamId: team.id, type: 'git_repo' },
         });
         repoId = repo.id;
+        teamId = team.id;
+        orgId = organization.id;
         const tpl = await prisma.workflowTemplate.create({
           data: {
             activeVersion: 1,
@@ -138,6 +152,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
   beforeEach(async () => {
     started.length = 0;
     gone.clear();
+    temporalDown = false;
     await prisma.automationFire.deleteMany({ where: { repoKey } });
     await prisma.activeWorkflow.deleteMany({ where: { repoId } });
   });
@@ -286,17 +301,157 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     }
   });
 
+  it('records a failed start, and concurrent redeliveries take it again exactly once', async () => {
+    temporalDown = true;
+    await expect(deliver({ runId: '600' })).rejects.toMatchObject({
+      name: 'AutomationStartError',
+    });
+    const failed = await prisma.automationFire.findMany({ where: { repoKey } });
+    expect(failed).toEqual([
+      expect.objectContaining({ outcome: 'FAILED_TO_START', temporalWorkflowId: null }),
+    ]);
+    temporalDown = false;
+    const results = await Promise.all(Array.from({ length: 4 }, () => deliver({ runId: '600' })));
+    expect(outcomes(results)).toEqual(['DUPLICATE', 'DUPLICATE', 'DUPLICATE', 'STARTED']);
+    expect(started).toHaveLength(1);
+    const rows = await prisma.automationFire.findMany({
+      orderBy: { createdAt: 'asc' },
+      where: { repoKey },
+    });
+    expect(rows.map((r) => [r.outcome, r.retriedAt !== null])).toEqual([
+      ['FAILED_TO_START', true],
+      ['STARTED', false],
+    ]);
+  });
+
+  it('accepts scheduled runs as an event', async () => {
+    const row = await prisma.automation.create({
+      data: {
+        connectionId: repoId,
+        filters: filters({ events: ['push', 'schedule'] }),
+        name: 'nightly',
+        source: WORKFLOW_RUN_FAILED,
+      },
+    });
+    await prisma.automation.delete({ where: { id: row.id } });
+  });
+
+  it('starts an issue run only for an active platform member, as theirs', async () => {
+    const accountId = String(Date.now()).slice(-9);
+    const member = await prisma.user.create({
+      data: {
+        email: `issue-${suffix}@example.test`,
+        githubLogin: `octo-${suffix}`,
+        githubLoginAccountId: accountId,
+      },
+    });
+    await prisma.teamMembership.create({ data: { teamId, userId: member.id } });
+    const outsider = await prisma.user.create({
+      data: {
+        email: `issue-outsider-${suffix}@example.test`,
+        githubLogin: `outsider-${suffix}`,
+        githubLoginAccountId: `${accountId}7`,
+      },
+    });
+    // On the team but not in the organization: the launch decision refuses them.
+    await prisma.teamMembership.create({ data: { teamId, userId: outsider.id } });
+    await runUnscoped('test fixture', ['OrganizationMembership'], () =>
+      prisma.organizationMembership.create({ data: { orgId, userId: member.id } })
+    );
+    const swe = await runUnscoped('test fixture', ['WorkflowTemplate'], () =>
+      prisma.workflowTemplate.create({
+        data: {
+          activeVersion: 1,
+          inputSchema: {
+            properties: {
+              connectionId: { type: 'string' },
+              description: { type: 'string' },
+              ticketId: { type: 'string' },
+            },
+            required: ['ticketId', 'connectionId', 'description'],
+            type: 'object',
+          },
+          name: `issue-tpl-${suffix}`,
+          status: 'ACTIVE',
+          teamId,
+        },
+      })
+    );
+    const automation = await prisma.automation.create({
+      data: {
+        connectionId: repoId,
+        filters: { labels: ['auto-swe'] },
+        name: 'issues',
+        source: ISSUE_LABELED,
+        templateId: swe.id,
+      },
+    });
+    const label = (senderId: string, updatedAt: string) =>
+      handleOccurrence(
+        fastify as never,
+        issueLabeledSource,
+        {
+          facts: {
+            body: 'It should return 200.',
+            htmlUrl: `https://github.com/${org}/repo/issues/3`,
+            issueNumber: 3,
+            label: 'auto-swe',
+            senderId,
+            senderLogin: 'someone',
+            title: 'Add a health check',
+            updatedAt,
+          },
+          org,
+          repoFullName: `${org}/repo`,
+          repoHtmlUrl: `https://github.com/${org}/repo`,
+          repoName: 'repo',
+        },
+        null,
+        new Date(),
+        0
+      );
+    try {
+      await expect(label('999999999999', '2026-10-01T00:00:00Z')).resolves.toMatchObject({
+        outcome: 'SUPPRESSED_PRECONDITION',
+        reason: expect.stringMatching(/not an active platform user/),
+      });
+      await expect(label(`${accountId}7`, '2026-10-01T12:00:00Z')).resolves.toMatchObject({
+        outcome: 'SUPPRESSED_PRECONDITION',
+        reason: expect.stringMatching(/may not start work here/),
+      });
+      const ok = await label(accountId, '2026-10-02T00:00:00Z');
+      expect(ok).toMatchObject({ outcome: 'STARTED' });
+      const runInput = await prisma.runInput.findUnique({
+        where: { id: (ok as { workRequestId: string }).workRequestId },
+      });
+      expect(runInput).toMatchObject({ requestedById: member.id, templateId: swe.id });
+      // Deactivated: no longer anyone who may ask.
+      await prisma.user.update({ data: { isActive: false }, where: { id: member.id } });
+      gone.add((ok as { temporalWorkflowId: string }).temporalWorkflowId);
+      await expect(label(accountId, '2026-10-03T00:00:00Z')).resolves.toMatchObject({
+        outcome: 'SUPPRESSED_PRECONDITION',
+      });
+    } finally {
+      await prisma.automationFire.deleteMany({ where: { repoKey } });
+      await prisma.automation.delete({ where: { id: automation.id } });
+      await prisma.user.deleteMany({ where: { id: { in: [member.id, outsider.id] } } });
+    }
+  });
+
   it('refuses an automation row with filters its source does not accept, or unknown sources', async () => {
     const base = { connectionId: repoId, name: 'bad', source: WORKFLOW_RUN_FAILED };
     for (const bad of [
       { ...base, filters: filters({ branchPatterns: [] }) },
       { ...base, filters: filters({ events: ['pull_request_target'] }) },
+      { ...base, filters: filters({ events: ['workflow_dispatch'] }) },
       { ...base, filters: filters({ events: [] }) },
       { ...base, filters: ['main'] },
       { ...base, filters: {} },
       { ...base, filters: { branchPatterns: ['main'], events: ['push'] } },
       { ...base, filters: filters({ events: 'push' }) },
       { ...base, filters: filters(), source: 'github.issue.labeled' },
+      { ...base, filters: { labels: [] }, source: ISSUE_LABELED },
+      { ...base, filters: {}, source: ISSUE_LABELED },
       { ...base, filters: filters(), maxRunsPerDay: 0 },
       { ...base, filters: filters(), inputs: ['fix'] },
     ]) {

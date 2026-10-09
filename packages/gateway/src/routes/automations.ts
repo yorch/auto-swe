@@ -21,7 +21,9 @@ import {
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
+import { latestActivity, TEMPLATE_WEBHOOK_SOURCE } from '@auto-swe/shared/lib/automationLedger';
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -33,16 +35,23 @@ import {
   type RepoAutomationAccess,
   repoAutomationAccess,
 } from '../lib/automations/access.js';
-import { parseFilters, resolveAutomationTemplate } from '../lib/automations/engine.js';
+import {
+  AutomationStartError,
+  automationMatches,
+  connectionInclude,
+  decideAndStart,
+  parseFilters,
+  resolveAutomationTemplate,
+} from '../lib/automations/engine.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
-import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
 import { teamMembershipFilter, templateWriteFilter } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 const IdParams = z.object({ id: z.string().uuid() });
+const FireParams = z.object({ fireId: z.string().uuid(), id: z.string().uuid() });
 const ListQuery = z.object({ connectionId: z.string().uuid() });
 const TemplatesQuery = z.object({
   connectionId: z.string().uuid(),
@@ -350,38 +359,35 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         )
       ).map((t) => t.id)
     );
-    // Only runs the caller may see: a global template's webhook is started on many teams'
-    // repositories, and another team's run is not theirs to see, even as a timestamp.
-    const visibleWebhookRuns: Prisma.WorkflowRunWhereInput = {
-      AND: [
-        buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
-        { workflowId: { startsWith: 'wh-' } },
-      ],
-    };
-    const lastWebhookRuns = await newestPerKey(
-      await fastify.prisma.workflowRun.groupBy({
-        _max: { startedAt: true },
-        by: ['templateId'],
-        where: { AND: [visibleWebhookRuns], templateId: { in: templates.map((t) => t.id) } },
-      }),
-      'templateId',
-      (keys) =>
-        fastify.prisma.workflowRun.findMany({
-          orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
-          select: { startedAt: true, status: true, templateId: true },
-          where: { AND: [visibleWebhookRuns], OR: keys },
-        })
+    // What came of each webhook's latest call, from the decision ledger, and only calls the
+    // caller may see: a global template's webhook is called for many teams' repositories, and
+    // another team's call is not theirs to see, even as a timestamp. A call on a repository
+    // counts when the repository is reachable; one on none, when the template is a team's own
+    // (which the caller can read only as a member).
+    const teamOwned = templates.filter((t) => t.team !== null).map((t) => t.id);
+    const lastWebhookCalls = await latestActivity(
+      fastify.prisma,
+      TEMPLATE_WEBHOOK_SOURCE,
+      templates.map((t) => t.id),
+      admin
+        ? {}
+        : {
+            OR: [
+              { connection: reachableConnections(user, request.repoAccessGate) },
+              { connectionId: null, subjectKey: { in: teamOwned } },
+            ],
+          }
     );
     // Editing a webhook (regenerate, remove) also needs platform role LEAD.
     const mayEditWebhooks = roleMeets(user.role as Role, 'LEAD' as Role);
     const webhooks = templates.map((t) => {
-      const last = lastWebhookRuns.get(t.id);
+      const last = lastWebhookCalls.get(t.id);
       return {
         canManage: mayEditWebhooks && writable.has(t.id),
         enabled: t.status === 'ACTIVE',
         id: t.id,
         kind: 'template_webhook' as const,
-        lastActivity: last ? { at: last.startedAt, outcome: last.status } : null,
+        lastActivity: last ? { at: last.at, outcome: last.outcome, reason: last.reason } : null,
         name: t.name,
         repository: null,
         team: t.team,
@@ -678,6 +684,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           id: true,
           outcome: true,
           reason: true,
+          retriedAt: true,
           scopeKey: true,
           subjectKey: true,
           temporalWorkflowId: true,
@@ -687,6 +694,101 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         where: { automationId: loaded.row.id },
       });
       return { data: { fires } };
+    }
+  );
+
+  // POST /api/v1/automations/events/:id/fires/:fireId/retry — take a decision that started no
+  // run again, now, from the occurrence the ledger recorded. Every limit applies as it would to
+  // a delivery; the earlier decision stays in the history, marked retried.
+  app.post(
+    '/events/:id/fires/:fireId/retry',
+    { onRequest: signedIn, schema: { params: FireParams } },
+    async (request, reply) => {
+      const loaded = await loadAutomation(request, reply, request.params.id);
+      if (!loaded) {
+        return;
+      }
+      const { access, row: automation, user } = loaded;
+      if (!access.canManage) {
+        return sendError(reply, 403, 'FORBIDDEN', MANAGE_FORBIDDEN);
+      }
+      const fire = await fastify.prisma.automationFire.findFirst({
+        select: { facts: true, id: true, outcome: true, repoKey: true, retriedAt: true },
+        where: { automationId: automation.id, id: request.params.fireId },
+      });
+      if (!fire) {
+        return sendError(reply, 404, 'FIRE_NOT_FOUND', 'Decision not found');
+      }
+      if (fire.outcome === 'STARTED' || fire.retriedAt !== null) {
+        return sendError(
+          reply,
+          409,
+          'NOT_RETRYABLE',
+          fire.outcome === 'STARTED'
+            ? 'The decision started a run'
+            : 'The decision was already taken again'
+        );
+      }
+      const source = eventSource(automation.source);
+      const facts = source?.facts.safeParse(fire.facts);
+      if (!source || !facts?.success) {
+        return sendError(
+          reply,
+          409,
+          'NOT_RETRYABLE',
+          'The recorded occurrence cannot be read by this build'
+        );
+      }
+      if (!automationMatches(source, automation, facts.data)) {
+        return sendError(
+          reply,
+          409,
+          'NOT_RETRYABLE',
+          'The automation is off, or its filters no longer select this occurrence'
+        );
+      }
+      const connection = await fastify.prisma.connection.findFirst({
+        include: connectionInclude,
+        where: { id: access.repo.id, isActive: true, type: 'git_repo' },
+      });
+      if (!connection || isInstallationRetired(connection)) {
+        return sendError(reply, 409, 'REPO_INACTIVE', 'The repository is not active');
+      }
+      if (!(await mayLaunch(request, reply, user, access))) {
+        return;
+      }
+      let result: Awaited<ReturnType<typeof decideAndStart>>;
+      try {
+        result = await decideAndStart(fastify, source, {
+          automation,
+          connection,
+          facts: facts.data,
+          now: new Date(),
+          repoKey: fire.repoKey,
+          retry: { fireId: fire.id, kind: 'manual' },
+          startRetryDelayMs: 1_000,
+        });
+      } catch (err) {
+        if (err instanceof AutomationStartError) {
+          return sendError(reply, 503, 'AUTOMATION_START_FAILED', err.message);
+        }
+        throw err;
+      }
+      if ('duplicate' in result) {
+        return sendError(reply, 409, 'NOT_RETRYABLE', 'The decision was already taken again');
+      }
+      if ('ignored' in result) {
+        return sendError(reply, 409, 'NOT_RETRYABLE', `Nothing was decided: ${result.reason}`);
+      }
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { outcome: result.outcome, retriedFireId: fire.id },
+        before: { outcome: fire.outcome },
+        entityId: automation.id,
+        entityType: 'Automation',
+      });
+      return { data: result };
     }
   );
 };

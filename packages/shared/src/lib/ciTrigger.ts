@@ -6,13 +6,28 @@ import type { InputSchema } from './inputSchema.js';
 export const CI_TRIAGE_TEMPLATE_NAME = 'ci-triage-and-fix';
 
 /**
- * The GitHub Actions events a trigger can react to. Anything else is never
- * acted on: `pull_request_target` and `workflow_run` run with the base
- * repository's secrets on behalf of someone else's code, `schedule` and
- * `workflow_dispatch` have no change to blame, and `merge_group` branches are
- * transient.
+ * The GitHub Actions events a trigger can react to. A `schedule` run (a nightly
+ * build) tests the head of a branch already in the repository, so it is acted on
+ * like a push to that branch. Anything else is never acted on:
+ * `pull_request_target` and `workflow_run` run with the base repository's secrets
+ * on behalf of someone else's code, `workflow_dispatch` is a person's own run of
+ * whatever they chose, and `merge_group` branches are transient.
  */
-export const CI_TRIGGER_EVENTS = ['push', 'pull_request'] as const;
+export const CI_TRIGGER_EVENTS = ['push', 'pull_request', 'schedule'] as const;
+
+/** How an event reads in lists and messages: "pushes", "pull requests", "scheduled runs". */
+export function ciEventLabel(event: string): string {
+  switch (event) {
+    case 'push':
+      return 'pushes';
+    case 'pull_request':
+      return 'pull requests';
+    case 'schedule':
+      return 'scheduled runs';
+    default:
+      return `'${event}'`;
+  }
+}
 export type CiTriggerEvent = (typeof CI_TRIGGER_EVENTS)[number];
 
 /** A GitHub run id: decimal digits, exact as a JavaScript number. Carried as a string. */

@@ -93,6 +93,8 @@ vi.mock('@auto-swe/shared/db', () => {
     agentTrace: {
       aggregate: vi.fn(),
     },
+    // A scheduled fire's row in the schedule's decision history.
+    automationFire: { create: vi.fn(async () => ({})) },
     autonomyDecision: {
       findMany: vi.fn(async () => []),
     },
@@ -115,6 +117,7 @@ vi.mock('@auto-swe/shared/db', () => {
     runInput: {
       findUnique: vi.fn(async () => null),
     },
+    scheduledWorkRequest: { findFirst: vi.fn(async () => ({ id: 'sched-row-1' })) },
     // Run-start skill-revision snapshot: no skills means an empty pin map.
     skill: {
       findMany: vi.fn(async () => []),

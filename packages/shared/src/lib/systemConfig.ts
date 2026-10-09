@@ -955,6 +955,7 @@ export interface ScheduledSweepsConfig {
   repoAccess: SweepSchedule;
   /// Finalizes runs whose workflow ended in Temporal without finalizing them.
   runReaper: SweepSchedule;
+  automationDecisionPrune: SweepSchedule;
   /// Refreshes the repo dependency graph from manifests and git signals.
   repoDependency: SweepSchedule;
   /// Asks each tracked skill source which commit its ref names now; only flags, never updates.
@@ -996,6 +997,10 @@ function envCron(name: string, fallback: string): string {
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
 export function resolveScheduledSweeps(): ScheduledSweepsConfig {
   return {
+    automationDecisionPrune: {
+      cronExpression: envCron('AUTOMATION_DECISION_PRUNE_CRON', '37 4 * * *'),
+      enabled: envFlag('AUTOMATION_DECISION_PRUNE_ENABLED', true),
+    },
     modelDiscovery: {
       cronExpression: envCron('MODEL_DISCOVERY_CRON', '17 3 * * *'),
       enabled: envFlag('MODEL_DISCOVERY_ENABLED', true),
@@ -1041,6 +1046,12 @@ export function validateScheduledSweepsEnv(): string[] {
   check('MODEL_DISCOVERY_CRON', cron, 'a five-field cron expression such as "17 3 * * *"');
   check('RUN_REAPER_ENABLED', flag, "'true' or 'false'");
   check('RUN_REAPER_CRON', cron, 'a five-field cron expression such as "*/15 * * * *"');
+  check('AUTOMATION_DECISION_PRUNE_ENABLED', flag, "'true' or 'false'");
+  check(
+    'AUTOMATION_DECISION_PRUNE_CRON',
+    cron,
+    'a five-field cron expression such as "37 4 * * *"'
+  );
   check('SKILL_SOURCE_SYNC_ENABLED', flag, "'true' or 'false'");
   check('SKILL_SOURCE_SYNC_CRON', cron, 'a five-field cron expression such as "41 5 * * *"');
   return problems;
