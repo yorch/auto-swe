@@ -3,6 +3,10 @@ import type { SettingResolveCtx } from '@auto-swe/shared/config';
 import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
+import {
+  recordAutomationActivity,
+  SCHEDULE_FIRE_SOURCE,
+} from '@auto-swe/shared/lib/automationLedger';
 import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -11,7 +15,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { Context } from '@temporalio/activity';
 import { currentTemporalRunId } from '../lib/activityContext.js';
-import { logError } from '../lib/activityLog.js';
+import { logError, logWarn } from '../lib/activityLog.js';
 import { backfillPinnedSettings } from '../lib/config/pinnedSettings.js';
 import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
@@ -355,6 +359,28 @@ export async function createWorkflowRun(
   // after this activity returns.
   if (scheduledAnchor) {
     await writeScheduledFireLedgerRow(input, scheduledAnchor);
+    // The fire in the schedule's decision history, keyed by the fire: a retry records it once.
+    const schedule = await prisma.scheduledWorkRequest.findFirst({
+      select: { id: true },
+      where: { workRequestId: input.workRequestId },
+    });
+    if (schedule) {
+      await recordAutomationActivity(
+        prisma,
+        {
+          connectionId: scheduledRepoId,
+          facts: { workflowId: input.workflowId },
+          key: `${SCHEDULE_FIRE_SOURCE}:${input.workflowId}`,
+          outcome: 'STARTED',
+          ownerId: schedule.id,
+          source: SCHEDULE_FIRE_SOURCE,
+          temporalWorkflowId: input.workflowId,
+          workRequestId: input.workRequestId ?? null,
+        },
+        (err) =>
+          logWarn('could not record a schedule fire in the decision ledger', { err: String(err) })
+      );
+    }
   }
 
   // Read the pin back off the row rather than trusting the value just computed:

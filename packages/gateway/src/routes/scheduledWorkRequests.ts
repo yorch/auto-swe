@@ -1,4 +1,9 @@
 import crypto from 'node:crypto';
+import {
+  type LatestActivity,
+  latestActivity,
+  SCHEDULE_FIRE_SOURCE,
+} from '@auto-swe/shared/lib/automationLedger';
 import type { RunIdentity } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -427,8 +432,13 @@ function rowCanManage(user: { role: string }, row: any): boolean {
   return canManage(user, repo as unknown as RepoWithMembership, { teamId: row.teamId ?? null });
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: row shape comes from the include above; serialized explicitly
-function serializeSchedule(row: any, schedule: unknown, mayManage: boolean) {
+function serializeSchedule(
+  // biome-ignore lint/suspicious/noExplicitAny: row shape comes from the include above; serialized explicitly
+  row: any,
+  schedule: unknown,
+  mayManage: boolean,
+  lastDecision: LatestActivity | null = null
+) {
   return {
     /** Whose own GitHub token fires may use — the last author of its contents. */
     actsAs: row.actsAsUser ?? null,
@@ -443,6 +453,8 @@ function serializeSchedule(row: any, schedule: unknown, mayManage: boolean) {
     externalTicketPrefix: row.externalTicketPrefix,
     id: row.id,
     isActive: row.isActive,
+    /** What came of the latest fire: started, or refused and why (docs/automations.md §5). */
+    lastDecision,
     lastFiredAt: row.lastFiredAt,
     name: row.name,
     repository: {
@@ -713,8 +725,16 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         }
       })
     );
+    // The rows are the caller's to see; so is what their fires decided.
+    const decisions = await latestActivity(
+      fastify.prisma,
+      SCHEDULE_FIRE_SOURCE,
+      rows.map((r) => r.id)
+    );
     return {
-      data: rows.map((row, i) => serializeSchedule(row, statuses[i], rowCanManage(user, row))),
+      data: rows.map((row, i) =>
+        serializeSchedule(row, statuses[i], rowCanManage(user, row), decisions.get(row.id) ?? null)
+      ),
     };
   });
 

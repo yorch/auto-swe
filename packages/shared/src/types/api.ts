@@ -829,6 +829,8 @@ export interface ScheduledWorkRequestSummary {
   /** The team that owns the schedule; null means its team was deleted. */
   team: TeamRef | null;
   lastFiredAt: string | null;
+  /** What came of the latest fire: `STARTED`, or a refusal and why. Null before any. */
+  lastDecision?: { at: string; outcome: string; reason: string | null } | null;
   schedule: ScheduledWorkRequestScheduleStatus;
   createdAt: string;
   updatedAt: string;

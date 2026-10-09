@@ -21,6 +21,7 @@ import {
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
+import { latestActivity, TEMPLATE_WEBHOOK_SOURCE } from '@auto-swe/shared/lib/automationLedger';
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -44,7 +45,6 @@ import {
 } from '../lib/automations/engine.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
-import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
 import { teamMembershipFilter, templateWriteFilter } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
@@ -359,38 +359,35 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         )
       ).map((t) => t.id)
     );
-    // Only runs the caller may see: a global template's webhook is started on many teams'
-    // repositories, and another team's run is not theirs to see, even as a timestamp.
-    const visibleWebhookRuns: Prisma.WorkflowRunWhereInput = {
-      AND: [
-        buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
-        { workflowId: { startsWith: 'wh-' } },
-      ],
-    };
-    const lastWebhookRuns = await newestPerKey(
-      await fastify.prisma.workflowRun.groupBy({
-        _max: { startedAt: true },
-        by: ['templateId'],
-        where: { AND: [visibleWebhookRuns], templateId: { in: templates.map((t) => t.id) } },
-      }),
-      'templateId',
-      (keys) =>
-        fastify.prisma.workflowRun.findMany({
-          orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
-          select: { startedAt: true, status: true, templateId: true },
-          where: { AND: [visibleWebhookRuns], OR: keys },
-        })
+    // What came of each webhook's latest call, from the decision ledger, and only calls the
+    // caller may see: a global template's webhook is called for many teams' repositories, and
+    // another team's call is not theirs to see, even as a timestamp. A call on a repository
+    // counts when the repository is reachable; one on none, when the template is a team's own
+    // (which the caller can read only as a member).
+    const teamOwned = templates.filter((t) => t.team !== null).map((t) => t.id);
+    const lastWebhookCalls = await latestActivity(
+      fastify.prisma,
+      TEMPLATE_WEBHOOK_SOURCE,
+      templates.map((t) => t.id),
+      admin
+        ? {}
+        : {
+            OR: [
+              { connection: reachableConnections(user, request.repoAccessGate) },
+              { connectionId: null, subjectKey: { in: teamOwned } },
+            ],
+          }
     );
     // Editing a webhook (regenerate, remove) also needs platform role LEAD.
     const mayEditWebhooks = roleMeets(user.role as Role, 'LEAD' as Role);
     const webhooks = templates.map((t) => {
-      const last = lastWebhookRuns.get(t.id);
+      const last = lastWebhookCalls.get(t.id);
       return {
         canManage: mayEditWebhooks && writable.has(t.id),
         enabled: t.status === 'ACTIVE',
         id: t.id,
         kind: 'template_webhook' as const,
-        lastActivity: last ? { at: last.startedAt, outcome: last.status } : null,
+        lastActivity: last ? { at: last.at, outcome: last.outcome, reason: last.reason } : null,
         name: t.name,
         repository: null,
         team: t.team,

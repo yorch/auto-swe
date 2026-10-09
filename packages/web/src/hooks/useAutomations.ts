@@ -164,7 +164,8 @@ export interface AutomationSummary {
   template: { id: string; name: string } | null;
   canManage: boolean;
   /** The latest decision or run, with its outcome or status. */
-  lastActivity: { at: string; outcome: string } | null;
+  /** A decision (outcome, and why when it started nothing), or a run's status. */
+  lastActivity: { at: string; outcome: string; reason?: string | null } | null;
   /** For `event`: the automation itself. */
   automation?: EventAutomation;
   /** For `event`: its source key. */

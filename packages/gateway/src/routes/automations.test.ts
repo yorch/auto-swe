@@ -436,28 +436,42 @@ describe('automationRoutes (event automations)', () => {
       expect((await list()).json().data[0].canManage).toBe(true);
     });
 
-    it('reports a webhook’s last run only from runs the caller may see', async () => {
+    it('reports a webhook’s last call from the ledger, only calls the caller may see', async () => {
       ctx.prisma.workflowTemplate.findMany
         .mockResolvedValueOnce([
           { id: TEMPLATE, name: 'hooked', status: 'ACTIVE', team: { id: 't', name: 'T' } },
         ])
         .mockResolvedValueOnce([]);
-      ctx.prisma.workflowRun.groupBy.mockResolvedValue([
-        { _max: { startedAt: new Date(5000) }, templateId: TEMPLATE },
-      ]);
-      ctx.prisma.workflowRun.findMany.mockResolvedValue([
-        { startedAt: new Date(5000), status: 'COMPLETED', templateId: TEMPLATE },
-      ]);
+      const calls = (where: unknown) => JSON.stringify(where).includes('template_webhook.call');
+      ctx.prisma.automationFire.groupBy.mockImplementation((async (args: { where: unknown }) =>
+        calls(args.where)
+          ? [{ _max: { createdAt: new Date(5000) }, subjectKey: TEMPLATE }]
+          : []) as never);
+      ctx.prisma.automationFire.findMany.mockImplementation((async (args: { where: unknown }) =>
+        calls(args.where)
+          ? [
+              {
+                createdAt: new Date(5000),
+                outcome: 'FAILED_TO_START',
+                reason: 'the payload does not fit the template’s inputs',
+                subjectKey: TEMPLATE,
+              },
+            ]
+          : []) as never);
       const [hook] = (await list()).json().data;
-      expect(hook.lastActivity).toMatchObject({ outcome: 'COMPLETED' });
-      for (const call of [
-        ctx.prisma.workflowRun.groupBy.mock.calls[0]?.[0],
-        ctx.prisma.workflowRun.findMany.mock.calls[0]?.[0],
-      ]) {
-        // The non-admin run-visibility predicate names the caller.
-        expect(JSON.stringify(call)).toContain('user-1');
-        expect(JSON.stringify(call)).toContain('wh-');
-      }
+      expect(hook.lastActivity).toMatchObject({
+        outcome: 'FAILED_TO_START',
+        reason: expect.stringMatching(/payload/),
+      });
+      const where = JSON.stringify(
+        (ctx.prisma.automationFire.groupBy.mock.calls as unknown[][]).find((c) =>
+          calls((c[0] as { where: unknown }).where)
+        )?.[0]
+      );
+      // The non-admin reach predicate names the caller; a call on no repository only for a
+      // team's own template.
+      expect(where).toContain('user-1');
+      expect(where).toContain('"connectionId":null');
     });
 
     it('never reads the tracker configuration for anyone but an admin', async () => {

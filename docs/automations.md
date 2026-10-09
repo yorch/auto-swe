@@ -66,8 +66,8 @@ automation the caller may see, of every kind (§5). Each row says:
 - when it fires;
 - what it is on (a repository, a team's template, the platform);
 - what it starts;
-- what it last did: the latest decision for an event automation, the latest run the caller may
-  see for a template webhook or the tracker hook, and the last fire for a schedule.
+- what it last did: the latest decision for an event automation, a schedule or a template webhook
+  (§5), with its reason on hover, and the latest run for the tracker hook.
 
 Rows can be filtered by kind and searched. **Manage** opens where that kind is edited. **New event
 automation** asks for a repository and opens its automations. **Schedules**
@@ -77,8 +77,8 @@ leads to the schedule editor at `/govern/schedules`, which keeps its own page an
 
 - event automations on the repositories the caller can reach (all, for ADMIN);
 - template webhook URLs on templates the caller can read. Managing one also needs platform role
-  LEAD, as the webhook routes do, and a webhook's last run is the newest run of it the caller may
-  see, so a global template never shows another team's run;
+  LEAD, as the webhook routes do, and a webhook's last call is the newest one the caller may see
+  (§5), so a global template never shows another team's call;
 - for ADMIN only, the tracker transition hook. Its configuration is not read for anyone else.
 
 Each row says whether the caller may manage it. Schedules come from their own list route,
@@ -255,7 +255,29 @@ What an occurrence needs from the host is the source's: for CI, the **Workflow r
 ## 5. Other kinds of automation
 
 These start runs too and keep their own configuration. The Automations page lists them beside
-event automations, with the latest run each started.
+event automations.
+
+Schedules and template webhooks also write their decisions to the ledger, under their own sources
+(`schedule.fire`, `template_webhook.call`), with the schedule's or template's id as subject and
+scope and no repository key. Event sources' guards read only their own source, so these rows never
+suppress anything:
+
+- **A schedule fire** is recorded by the worker when the run is created (`STARTED`, keyed by the
+  fire's workflow id, so a retried activity records it once) or when the owner's launch decision
+  refuses it: `SUPPRESSED_IN_FLIGHT` for a fire skipped while the request is still running,
+  `SUPPRESSED_BUDGET` over the cap, `SUPPRESSED_PRECONDITION` for every other refusal, with the
+  refusal's message as the reason.
+- **A template webhook call** is recorded once its token names a template: `STARTED`, or
+  `FAILED_TO_START` (inactive template, no active version, a payload or base branch or connection
+  it refuses), `SUPPRESSED_BUDGET`, or `SUPPRESSED_SAME_SUBJECT` for an idempotency key already used.
+  A call to an unknown token records nothing.
+
+A refusal is keyed by the owner, its reason and the hour, so a per-minute cron that keeps being
+refused, or a caller hammering a webhook, leaves one row an hour per reason. `GET
+/api/v1/scheduled-work-requests` returns each schedule's `lastDecision`; the Automations list returns
+a webhook's latest call only when the caller may see it: a call on a repository they can reach, or a
+call on no repository to a team's own template. The retention sweep removes these rows like any
+other decision that started no run.
 
 | Kind | Configured at | Who |
 |---|---|---|
@@ -275,10 +297,11 @@ event automations, with the latest run each started.
   already started; a person whose GitHub account is not linked to their platform user cannot start
   one.
 - **The other kinds keep their own storage.** Schedules, template webhook URLs and the tracker
-  transition write no ledger rows and are configured where they always were (§5). The Automations
-  page shows the last time they fired, not what came of it: a schedule fire the worker then skipped
-  counts as a fire, and a webhook call refused before a run started is not listed. A dashboard
-  re-run of a webhook or tracker run keeps the run's prefix and counts as that kind's activity.
+  transition are configured where they always were (§5). Schedules and webhooks record their latest
+  decision, but not a full history in the dashboard, and only the first refusal of a reason in an
+  hour; a schedule's history starts with its first recorded fire. The tracker transition writes no
+  ledger rows: the page shows its latest run. A webhook call on a global template with no repository
+  is shown only to admins.
 - **A renamed repository starts a fresh ledger.** The ledger is keyed by the repository's name on
   its host, so after a rename the subject, cooldown and in-flight checks no longer see the earlier
   decisions. They come back with the next ones. The own-output check matches a commit wherever it
