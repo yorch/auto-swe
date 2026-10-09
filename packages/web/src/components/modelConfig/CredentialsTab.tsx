@@ -68,10 +68,11 @@ export function usedByLabel(usedBy: string[]): string {
   return `Used by ${count}${embeddings ? ' and embeddings' : ''}: ${names}${more}`;
 }
 
-function deleteMessage(target: ProviderCredentialRow, all: ProviderCredentialRow[]) {
+export function deleteMessage(target: ProviderCredentialRow, all: ProviderCredentialRow[]) {
   const usedBy = target.usage?.agents ?? [];
   const embedding = target.usage?.embedding ?? false;
   const isLast = isLastPlatformCredential(target, all);
+  const stranded = target.usage?.leavesWithoutCredential ?? [];
   return (
     <div className="space-y-2">
       <p>
@@ -89,6 +90,23 @@ function deleteMessage(target: ProviderCredentialRow, all: ProviderCredentialRow
           . They will use another {target.provider} credential if one applies, otherwise they will
           fail.
         </p>
+      )}
+      {stranded.length > 0 && (
+        <div className="font-medium text-brick-400">
+          <p>
+            {stranded.length === 1 ? 'This leaves one' : `This leaves ${stranded.length}`} with no
+            credential it can use, so {stranded.length === 1 ? 'it fails' : 'they fail'} at the next
+            model call:
+          </p>
+          <ul className="list-disc pl-5">
+            {stranded.map((d) => (
+              <li key={`${d.subject}|${d.scope}|${d.teamId ?? ''}|${d.orgId ?? ''}`}>
+                {d.subject === 'embeddings' ? 'Semantic memory embeddings' : humanizeKey(d.subject)}
+                {d.scope === 'GLOBAL' ? '' : ` (${d.scope.toLowerCase()} override)`}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {isLast && (
         <p className="font-medium text-brick-400">

@@ -552,7 +552,16 @@ Team owners use the parallel team-scoped routes — `/api/v1/teams/<teamId>/agen
 overrides and `/api/v1/teams/<teamId>/credentials` for credentials. Same shapes; scope is forced
 server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent-library-api).
 
-### What happens when you delete a pinned credential
+### Deleting a credential
+
+`DELETE /credentials/:id` and `DELETE /teams/:id/credentials/:credId` refuse to remove a credential
+that is the only one some agent or the embedding model can use: they answer `409 CREDENTIAL_IN_USE`
+with `dependents` — what would be left without a credential, judged by the same `credentialGaps` the
+readiness check uses — and delete only with `?force=true`. A forced delete records those dependents
+in the audit entry. A team admin's delete is refused, and the dependents named, only for its own
+team's agents. The credential listing reports the same list per credential as
+`usage.leavesWithoutCredential`, and the dashboard's delete confirmation shows it before sending the
+forced delete.
 
 `Agent.credentialId` is `ON DELETE SET NULL`. Deleting a credential row leaves any rows that pinned it pointing at NULL, so the resolver falls back to the standard provider-name credential cascade on the next call. No data loss; just a silent demotion. The audit log captures the credential's removal but not the implicit fallback. A pin that is set but unusable — another provider after a model change, or a team credential resolved for another team's run — falls back the same way, with a worker warning.
 

@@ -59,3 +59,11 @@ export function embeddingProviderProblem(provider: string): string | null {
 export function isAnthropicSpec(spec: string): boolean {
   return spec.trim().toLowerCase().startsWith('anthropic/');
 }
+
+/** The providers with their own client; any other name is an OpenAI-compatible endpoint. */
+export const BUILTIN_PROVIDERS: readonly string[] = ['anthropic', 'openai', 'google'];
+
+/** Whether `provider` has its own client, so its credential needs no `apiBase`. */
+export function isBuiltInProvider(provider: string): boolean {
+  return BUILTIN_PROVIDERS.includes(provider.trim().toLowerCase());
+}

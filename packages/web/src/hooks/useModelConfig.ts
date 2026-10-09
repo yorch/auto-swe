@@ -25,7 +25,12 @@ export interface ProviderCredentialRow {
   createdAt: string;
   updatedAt: string;
   /** What this credential backs: agent keys pinned to it and whether embeddings use it. */
-  usage?: { agents: string[]; embedding: boolean };
+  usage?: {
+    agents: string[];
+    embedding: boolean;
+    /** What deleting this credential would leave with no credential it can use. */
+    leavesWithoutCredential?: CredentialDependent[];
+  };
 }
 
 export interface EmbeddingConfigRow {
@@ -80,10 +85,22 @@ export function useAdminUpdateCredential() {
   });
 }
 
+/** An agent (or `embeddings`) a credential delete would leave uncovered, as the gateway reports it. */
+export interface CredentialDependent {
+  subject: string;
+  scope: string;
+  teamId: string | null;
+  orgId: string | null;
+  problem: string;
+  detail: string;
+}
+
 export function useAdminDeleteCredential() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/platform/credentials/${id}`),
+    // The confirmation dialog has already shown what this leaves uncovered
+    // (`usage.leavesWithoutCredential`), so the admin's confirm is the force.
+    mutationFn: (id: string) => api.delete(`/api/v1/platform/credentials/${id}?force=true`),
     onSuccess: () => invalidateCredentialQueries(qc),
   });
 }

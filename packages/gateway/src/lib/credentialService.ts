@@ -92,7 +92,7 @@ export async function probeCredential(args: {
 }
 
 /** Providers with a built-in SDK adapter; every other provider is OpenAI-compatible. */
-export const BUILTIN_PROVIDERS: readonly string[] = ['anthropic', 'openai', 'google'];
+export { BUILTIN_PROVIDERS } from '@auto-swe/shared/lib/modelSpec';
 
 /// Why a credential's key or `apiBase` cannot be saved, or null. A key with a
 /// control character or whitespace can never be a valid header value, and the

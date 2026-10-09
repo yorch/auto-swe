@@ -192,6 +192,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/regexSafety.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/credentialCoverage',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/credentialCoverage.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/modelSpec',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/modelSpec.ts'),
       },

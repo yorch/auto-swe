@@ -27,7 +27,8 @@ interface MockPrisma {
     findMany: ReturnType<typeof vi.fn>;
   };
   agent: { findMany: ReturnType<typeof vi.fn> };
-  embeddingConfig: { findFirst: ReturnType<typeof vi.fn> };
+  embeddingConfig: { findFirst: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
+  team: { findMany: ReturnType<typeof vi.fn> };
 }
 
 function newMockPrisma(): MockPrisma {
@@ -37,7 +38,10 @@ function newMockPrisma(): MockPrisma {
       create: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
     },
-    embeddingConfig: { findFirst: vi.fn().mockResolvedValue(null) },
+    embeddingConfig: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     providerCredential: {
       create: vi.fn(),
       delete: vi.fn().mockResolvedValue({}),
@@ -46,6 +50,7 @@ function newMockPrisma(): MockPrisma {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    team: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
 
@@ -269,8 +274,103 @@ describe('modelConfigRoutes — admin', () => {
         url: '/api/v1/platform/credentials',
       });
       const [one, two] = JSON.parse(res.payload).data;
-      expect(one.usage).toEqual({ agents: ['implementer', 'reviewer'], embedding: false });
-      expect(two.usage).toEqual({ agents: [], embedding: true });
+      expect(one.usage).toEqual({
+        agents: ['implementer', 'reviewer'],
+        embedding: false,
+        leavesWithoutCredential: [],
+      });
+      expect(two.usage).toEqual({ agents: [], embedding: true, leavesWithoutCredential: [] });
+      await ctx.app.close();
+    });
+  });
+
+  describe('DELETE /credentials/:id', () => {
+    const CRED = '11111111-1111-4111-8111-111111111111';
+    const credRow = {
+      apiBase: null,
+      createdAt: new Date(),
+      createdById: null,
+      id: CRED,
+      keyVersion: 1,
+      lastFour: '1234',
+      orgId: null,
+      provider: 'openrouter',
+      scope: 'GLOBAL',
+      teamId: null,
+      updatedAt: new Date(),
+    };
+    const agentRow = {
+      channelId: null,
+      credentialId: null,
+      inheritsModelFrom: null,
+      key: 'reviewer',
+      modelSpec: 'openrouter/openai/gpt-6-luna',
+      orgId: null,
+      scope: 'GLOBAL',
+      teamId: null,
+      version: 1,
+      workflowTemplateId: null,
+    };
+
+    async function del(query = '') {
+      const ctx = await buildAdminApp('ADMIN');
+      ctx.mockPrisma.providerCredential.findUnique.mockResolvedValue(credRow);
+      ctx.mockPrisma.providerCredential.findMany.mockResolvedValue([
+        { ...credRow, apiBase: 'https://openrouter.ai/api/v1' },
+      ]);
+      ctx.mockPrisma.agent.findMany.mockResolvedValue([agentRow]);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'DELETE',
+        url: `/api/v1/platform/credentials/${CRED}${query}`,
+      });
+      await ctx.app.close();
+      return { body: JSON.parse(res.payload), ctx, res };
+    }
+
+    it('refuses to delete the only credential an agent can use, naming the agent', async () => {
+      const { body, ctx, res } = await del();
+      expect(res.statusCode).toBe(409);
+      expect(body.error.code).toBe('CREDENTIAL_IN_USE');
+      expect(body.error.dependents).toEqual([
+        expect.objectContaining({ problem: 'no-credential', scope: 'GLOBAL', subject: 'reviewer' }),
+      ]);
+      expect(ctx.mockPrisma.providerCredential.delete).not.toHaveBeenCalled();
+    });
+
+    it('deletes anyway with force=true and records what it left uncovered', async () => {
+      const { ctx, res } = await del('?force=true');
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.providerCredential.delete).toHaveBeenCalledWith({
+        where: { id: CRED },
+      });
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            afterJson: {
+              leftWithoutCredential: [expect.objectContaining({ subject: 'reviewer' })],
+            },
+          }),
+        })
+      );
+    });
+
+    it('reads force=false as false', async () => {
+      const { res } = await del('?force=false');
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('deletes a credential nothing depends on without force', async () => {
+      const ctx = await buildAdminApp('ADMIN');
+      ctx.mockPrisma.providerCredential.findUnique.mockResolvedValue(credRow);
+      ctx.mockPrisma.providerCredential.findMany.mockResolvedValue([credRow]);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'DELETE',
+        url: `/api/v1/platform/credentials/${CRED}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.providerCredential.delete).toHaveBeenCalled();
       await ctx.app.close();
     });
   });
@@ -353,6 +453,50 @@ describe('modelConfigRoutes — admin', () => {
 });
 
 describe('modelConfigRoutes — team-scoped credentials', () => {
+  it('refuses a team delete only over its own team’s agents, and names only those', async () => {
+    const teamId = '99999999-9999-4999-8999-999999999999';
+    const credId = '22222222-2222-4222-8222-222222222222';
+    const { app, mockPrisma } = await buildTeamApp({
+      role: 'ENGINEER',
+      teamMembership: { role: 'ADMIN' },
+    });
+    const teamCred = {
+      apiBase: 'https://openrouter.ai/api/v1',
+      id: credId,
+      orgId: null,
+      provider: 'openrouter',
+      scope: 'TEAM',
+      teamId,
+    };
+    mockPrisma.providerCredential.findUnique.mockResolvedValue(teamCred);
+    mockPrisma.providerCredential.findMany.mockResolvedValue([teamCred]);
+    const agentBase = {
+      credentialId: null,
+      inheritsModelFrom: null,
+      modelSpec: 'openrouter/x',
+      orgId: null,
+      teamId: null,
+      version: 1,
+      workflowTemplateId: null,
+    };
+    // A channel agent counts any credential, so it too loses coverage — but it is not the team's.
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { ...agentBase, channelId: null, key: 'teamReviewer', scope: 'TEAM', teamId },
+      { ...agentBase, channelId: 'ch-1', key: 'channelBot', scope: 'CHANNEL' },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/teams/${teamId}/credentials/${credId}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(
+      JSON.parse(res.payload).error.dependents.map((d: { subject: string }) => d.subject)
+    ).toEqual(['teamReviewer']);
+    expect(mockPrisma.providerCredential.delete).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('creates a team credential with masked response', async () => {
     const teamId = '99999999-9999-4999-8999-999999999999';
     const { app, mockPrisma } = await buildTeamApp({
