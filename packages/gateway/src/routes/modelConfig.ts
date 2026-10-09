@@ -1,8 +1,13 @@
+import {
+  type CoverageGap,
+  gapsOpenedByRemoving,
+  loadCoverageInput,
+} from '@auto-swe/shared/lib/credentialCoverage';
 import { isPrivateHostListed, resolvePrivateModelHosts } from '@auto-swe/shared/lib/modelDiscovery';
 import { embeddingProviderProblem, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -17,6 +22,7 @@ import {
 import { catalogWarnings } from '../lib/modelCatalogService.js';
 import { upsertEmbeddingConfig } from '../lib/modelConfigService.js';
 import { ModelSpecSchema } from '../lib/modelSpecSchema.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -68,6 +74,9 @@ const CredentialUpdateSchema = z.object({
 });
 
 const IdParams = z.object({ id: z.string().uuid() });
+
+/** `?force=true` deletes a credential even though agents depend on it. */
+const DeleteQuery = z.object({ force: booleanQueryParam(false) });
 
 const EMBEDDING_CONFIG_SENTINEL_UUID = '00000000-0000-4000-a000-000000000001';
 
@@ -164,15 +173,49 @@ async function updateCredentialAndAudit(
   return { data: redactCredential(updated) };
 }
 
+/** A gap as the API reports it: what would stop working, never a credential detail. */
+function dependentOf(gap: CoverageGap) {
+  return {
+    detail: gap.detail,
+    orgId: gap.orgId,
+    problem: gap.problem,
+    scope: gap.scope,
+    subject: gap.subject,
+    teamId: gap.teamId,
+  };
+}
+
+/**
+ * Deletes a credential, unless doing so would leave an agent or the embedding
+ * model with no credential it can use — then `409 CREDENTIAL_IN_USE` lists them,
+ * and `force` deletes anyway. `visible` narrows what may block (and be named) to
+ * what the caller may see: a team admin is refused only over its own team's agents.
+ */
 async function deleteCredentialAndAudit(
   fastify: FastifyInstance,
   actor: JwtPayload,
-  existing: Parameters<typeof redactCredential>[0]
+  reply: FastifyReply,
+  existing: Parameters<typeof redactCredential>[0],
+  opts: { force: boolean; visible?: (gap: CoverageGap) => boolean }
 ): Promise<unknown> {
+  const opened = gapsOpenedByRemoving(await loadCoverageInput(fastify.prisma), existing.id).filter(
+    (gap) => opts.visible?.(gap) ?? true
+  );
+  if (opened.length > 0 && !opts.force) {
+    return reply.status(409).send({
+      error: {
+        code: 'CREDENTIAL_IN_USE',
+        dependents: opened.map(dependentOf),
+        message: `Deleting this ${existing.provider} credential leaves ${opened.length} ${opened.length === 1 ? 'dependent' : 'dependents'} with no credential: ${opened.map((g) => g.subject).join(', ')}. Pass force=true to delete it anyway.`,
+      },
+    });
+  }
   await fastify.prisma.providerCredential.delete({ where: { id: existing.id } });
   await writeAuditLog(fastify, {
     action: 'DELETE',
     actor,
+    // What the forced delete left uncovered, so the audit says why runs started failing.
+    ...(opened.length > 0 ? { after: { leftWithoutCredential: opened.map(dependentOf) } } : {}),
     before: redactCredential(existing),
     entityId: existing.id,
     entityType: 'ProviderCredential',
@@ -219,6 +262,8 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
                 }),
               ])
           );
+    // What deleting each one would leave with no credential at all, for the confirmation.
+    const coverage = rows.length === 0 ? null : await loadCoverageInput(fastify.prisma);
     return {
       data: rows.map((row) => ({
         ...redactCredential(row),
@@ -227,6 +272,9 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
             ...new Set(agentRows.filter((a) => a.credentialId === row.id).map((a) => a.key)),
           ].sort(),
           embedding: embedding?.credentialId === row.id,
+          leavesWithoutCredential: coverage
+            ? gapsOpenedByRemoving(coverage, row.id).map(dependentOf)
+            : [],
         },
       })),
     };
@@ -271,7 +319,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.delete(
     '/credentials/:id',
-    { onRequest: adminOnly, schema: { params: IdParams } },
+    { onRequest: adminOnly, schema: { params: IdParams, querystring: DeleteQuery } },
     async (request, reply) => {
       const actor = requireUser(request);
       const existing = await fastify.prisma.providerCredential.findUnique({
@@ -282,7 +330,9 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'NOT_FOUND', message: 'Credential not found' },
         });
       }
-      return deleteCredentialAndAudit(fastify, actor, existing);
+      return deleteCredentialAndAudit(fastify, actor, reply, existing, {
+        force: request.query.force,
+      });
     }
   );
 
@@ -535,7 +585,7 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.delete(
     '/:id/credentials/:credId',
-    { onRequest: teamAdmin, schema: { params: TeamCredParams } },
+    { onRequest: teamAdmin, schema: { params: TeamCredParams, querystring: DeleteQuery } },
     async (request, reply): Promise<unknown> => {
       const actor = requireUser(request);
       const existing = await fastify.prisma.providerCredential.findUnique({
@@ -546,7 +596,11 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Credential not found for this team' } });
       }
-      return deleteCredentialAndAudit(fastify, actor, existing);
+      const teamId = request.params.id;
+      return deleteCredentialAndAudit(fastify, actor, reply, existing, {
+        force: request.query.force,
+        visible: (gap) => gap.scope === 'TEAM' && gap.teamId === teamId,
+      });
     }
   );
 };

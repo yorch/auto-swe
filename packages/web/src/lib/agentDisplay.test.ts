@@ -19,8 +19,8 @@ describe('modelLabel', () => {
 
 describe('missingCredentialProvider', () => {
   const providers = [
-    { present: false, provider: 'openai', usedBy: ['planner', 'decomposer'] },
-    { present: true, provider: 'anthropic', usedBy: ['reviewer'] },
+    { present: false, provider: 'openai', required: true, usedBy: ['planner', 'decomposer'] },
+    { present: true, provider: 'anthropic', required: true, usedBy: ['reviewer'] },
   ];
   const planner = {
     credentialId: null,
