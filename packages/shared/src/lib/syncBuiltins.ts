@@ -36,6 +36,7 @@ import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
 } from './channelTask.js';
+import type { InputSchema } from './inputSchema.js';
 import {
   initialRevision,
   isRevisionConflict,
@@ -956,6 +957,121 @@ export const SUPERSEDED_TEMPLATE_DESCRIPTIONS: Readonly<Record<string, readonly 
   ],
 };
 
+/** The `connectionId` property built-in input schemas shipped before the run form had connection pickers. */
+const UUID_CONNECTION_ID = { format: 'uuid', type: 'string' } as const;
+
+/**
+ * Input schemas earlier releases shipped, by current template name.
+ *
+ * Sync never overwrites a template's `inputSchema` an admin may have edited
+ * (the admin API can PATCH it). A row still holding exactly one of these, by
+ * {@link canonicalJson}, was never edited, so it is moved onto the schema this
+ * release ships — the same rule as {@link PREVIOUS_DEFAULT_MODEL_SPECS}. When a
+ * release changes a built-in template's `inputSchema`, add the outgoing value
+ * here; otherwise an existing deployment keeps the old one: a new option never
+ * reaches a schema-driven form, and a newly required key fails every launch
+ * that omits it.
+ */
+export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly InputSchema[]>> = {
+  'create-issue': [
+    {
+      properties: {
+        connectionId: UUID_CONNECTION_ID,
+        description: { type: 'string' },
+        projectKey: { type: 'string' },
+        title: { type: 'string' },
+      },
+      required: ['connectionId', 'title'],
+      type: 'object',
+    },
+  ],
+  'create-issue-from-brief': [
+    {
+      properties: {
+        brief: { type: 'string' },
+        connectionId: UUID_CONNECTION_ID,
+        instructions: { type: 'string' },
+        projectKey: { type: 'string' },
+        title: { type: 'string' },
+      },
+      required: ['connectionId', 'title', 'brief'],
+      type: 'object',
+    },
+  ],
+  'default-engineering': [
+    {
+      properties: {
+        budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
+        connectionId: UUID_CONNECTION_ID,
+        description: { type: 'string' },
+        ticketId: { type: 'string' },
+      },
+      required: ['ticketId', 'connectionId', 'description'],
+      type: 'object',
+    },
+  ],
+  'notion-content-brand-review': [
+    {
+      properties: {
+        connectionId: UUID_CONNECTION_ID,
+        instructions: { type: 'string' },
+        sourcePageId: { type: 'string' },
+        targetPageId: { type: 'string' },
+      },
+      required: ['connectionId', 'sourcePageId', 'targetPageId'],
+      type: 'object',
+    },
+  ],
+  'notion-content-draft': [
+    {
+      properties: {
+        connectionId: UUID_CONNECTION_ID,
+        instructions: { type: 'string' },
+        sourcePageId: { type: 'string' },
+        targetPageId: { type: 'string' },
+      },
+      required: ['connectionId', 'sourcePageId', 'targetPageId'],
+      type: 'object',
+    },
+  ],
+  'product-prd-draft': [
+    {
+      properties: {
+        brief: { type: 'string' },
+        connectionId: UUID_CONNECTION_ID,
+        instructions: { type: 'string' },
+        sourcePageId: { type: 'string' },
+        targetPageId: { type: 'string' },
+      },
+      required: ['brief', 'connectionId', 'targetPageId'],
+      type: 'object',
+    },
+  ],
+  'send-slack-update': [
+    {
+      properties: {
+        channelId: { type: 'string' },
+        connectionId: UUID_CONNECTION_ID,
+        message: { type: 'string' },
+      },
+      required: ['channelId', 'connectionId', 'message'],
+      type: 'object',
+    },
+  ],
+  'zendesk-ticket-reply': [
+    {
+      properties: {
+        connectionId: UUID_CONNECTION_ID,
+        instructions: { type: 'string' },
+        public: { type: 'boolean' },
+        ticketId: { type: 'string' },
+      },
+      required: ['connectionId', 'ticketId'],
+      type: 'object',
+    },
+  ],
+};
+
 async function renameTemplates(prisma: PrismaClient): Promise<void> {
   for (const [from, to] of Object.entries(RENAMED_TEMPLATES)) {
     const legacy = await prisma.workflowTemplate.findFirst({ where: { name: from, teamId: null } });
@@ -1000,6 +1116,29 @@ function canonicalJson(value: unknown): string {
   );
 }
 
+/**
+ * The `inputSchema` write that moves a built-in template from a schema an
+ * earlier release shipped onto the one this release ships, or nothing when the
+ * stored value is current, unset, or not one a release shipped (an admin's).
+ */
+function shippedInputSchemaUpdate(
+  name: string,
+  stored: unknown,
+  shipped: object | undefined
+): { inputSchema: object } | Record<string, never> {
+  if (stored == null || !shipped) {
+    return {};
+  }
+  const current = canonicalJson(stored);
+  if (current === canonicalJson(shipped)) {
+    return {};
+  }
+  const previous = PREVIOUS_BUILTIN_INPUT_SCHEMAS[name] ?? [];
+  return previous.some((schema) => canonicalJson(schema) === current)
+    ? { inputSchema: shipped }
+    : {};
+}
+
 function isUniqueViolation(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === 'P2002';
 }
@@ -1020,6 +1159,11 @@ function isUniqueViolation(err: unknown): boolean {
  *   `workspaceProvider`), only when the template is still active on the
  *   previous built-in version: an admin who moved it to their own version, or
  *   archived it, keeps that choice.
+ * - **Built-in `inputSchema` changed** → moved forward, with or without a spec
+ *   change, only while the template is active on its latest built-in version,
+ *   runs no A/B experiment, and still stores a schema an earlier release
+ *   shipped ({@link PREVIOUS_BUILTIN_INPUT_SCHEMAS}); any other value is an
+ *   admin's edit and is kept.
  *
  * Safe under concurrent gateway boots: a version-number clash means another
  * replica appended the same spec first.
@@ -1090,7 +1234,33 @@ async function syncBuiltinTemplate(
   });
   const builtins = versions.filter((v) => v.createdBy == null && v.generatedBy == null);
   const latestBuiltin = builtins.at(-1);
+  const onPreviousBuiltin =
+    latestBuiltin !== undefined &&
+    existing.activeVersion === latestBuiltin.version &&
+    existing.status === 'ACTIVE';
+  const experimentRunning = (existing.experimentSplit ?? 0) > 0;
+  // A schema an earlier release shipped moves forward only on a template still
+  // on its built-in version, and never mid-experiment: both arms of an A/B
+  // experiment read the same template-level schema.
+  const schemaMove =
+    onPreviousBuiltin && !experimentRunning
+      ? shippedInputSchemaUpdate(tmpl.name, existing.inputSchema, templateFields.inputSchema)
+      : {};
   if (latestBuiltin && canonicalJson(latestBuiltin.spec) === canonicalJson(spec)) {
+    if ('inputSchema' in schemaMove) {
+      // Conditional on the row still holding what we read, so an admin's
+      // concurrent edit or activation is not overwritten.
+      await prisma.workflowTemplate.updateMany({
+        data: schemaMove,
+        where: {
+          activeVersion: latestBuiltin.version,
+          id: existing.id,
+          inputSchema: { equals: existing.inputSchema as object },
+          status: 'ACTIVE',
+          teamId: null,
+        },
+      });
+    }
     return;
   }
 
@@ -1106,11 +1276,7 @@ async function syncBuiltinTemplate(
     throw err;
   }
 
-  const onPreviousBuiltin =
-    latestBuiltin !== undefined &&
-    existing.activeVersion === latestBuiltin.version &&
-    existing.status === 'ACTIVE';
-  if (onPreviousBuiltin && (existing.experimentSplit ?? 0) > 0) {
+  if (onPreviousBuiltin && experimentRunning) {
     // A live A/B experiment compares versions by number. Moving its control arm to a
     // new version mid-experiment would split the control sample across two versions
     // (and leave a built-in experiment arm behind), so the new version is appended
@@ -1121,13 +1287,14 @@ async function syncBuiltinTemplate(
         'Promote it when the experiment ends.'
     );
   } else if (onPreviousBuiltin) {
-    // Template-level built-in fields are only filled where the row has none: the
-    // admin API can PATCH them, and nothing records what the previous release
-    // shipped, so a stored value cannot be told apart from an admin's edit.
+    // Template-level built-in fields are filled where the row has none. The
+    // admin API can PATCH them, so a stored value is kept unless it is one an
+    // earlier release shipped (the input schema only: nothing records earlier
+    // workspace providers).
     const fill = {
       ...(existing.inputSchema == null && templateFields.inputSchema
         ? { inputSchema: templateFields.inputSchema }
-        : {}),
+        : schemaMove),
       ...(existing.workspaceProvider == null && templateFields.workspaceProvider
         ? { workspaceProvider: templateFields.workspaceProvider }
         : {}),

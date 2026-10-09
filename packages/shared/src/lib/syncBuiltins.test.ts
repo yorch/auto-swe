@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
-import { seedCoreDefaults, seedSweStarter } from './syncBuiltins.js';
+import {
+  PREVIOUS_BUILTIN_INPUT_SCHEMAS,
+  seedCoreDefaults,
+  seedSweStarter,
+} from './syncBuiltins.js';
 
 /**
  * Admin-owned state must survive a gateway restart: `syncBuiltins` runs on
@@ -416,6 +420,109 @@ describe('syncBuiltins — rolling the helper-built templates out', () => {
     expect(edited.workspaceProvider).toBe('document');
     expect(edited.activeVersion).toBe(2);
     expect(unset.workspaceProvider).toBe('git_repo');
+  });
+});
+
+describe('syncBuiltins — built-in input schemas', () => {
+  const NAME = 'zendesk-ticket-reply';
+  const shipped = BUILTIN_TEMPLATES.find((t) => t.name === NAME)?.inputSchema;
+  const [previous] = PREVIOUS_BUILTIN_INPUT_SCHEMAS[NAME] ?? [];
+
+  /** A database the previous release seeded: same spec, the schema it shipped. */
+  async function seedWithPreviousSchema() {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const row = template(tables, NAME);
+    row.inputSchema = structuredClone(previous);
+    return { prisma, row, tables };
+  }
+
+  it('moves a schema an earlier release shipped forward without a spec change, cutting no version', async () => {
+    const { prisma, row, tables } = await seedWithPreviousSchema();
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toEqual(shipped);
+    expect(row.activeVersion).toBe(1);
+    expect(versionsOf(tables, row.id)).toHaveLength(1);
+  });
+
+  it('recognises the shipped schema whatever its stored key order', async () => {
+    const { prisma, row } = await seedWithPreviousSchema();
+    // jsonb hands keys back in its own order, not the order they were written in.
+    row.inputSchema = Object.fromEntries(Object.entries(previous as object).reverse());
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toEqual(shipped);
+  });
+
+  it('moves it together with the new version when the spec changed too', async () => {
+    const { prisma, row, tables } = await seedWithPreviousSchema();
+    (versionsOf(tables, row.id)[0] as Row).spec = { old: 'spec' };
+    await seedSweStarter(prisma);
+    expect(row.activeVersion).toBe(2);
+    expect(row.inputSchema).toEqual(shipped);
+  });
+
+  it('keeps a schema an admin edited', async () => {
+    const { prisma, row } = await seedWithPreviousSchema();
+    const edited = { ...structuredClone(previous), required: ['ticketId'] };
+    row.inputSchema = edited;
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toEqual(edited);
+  });
+
+  it('keeps a schema an admin cleared when the spec is unchanged', async () => {
+    const { prisma, row } = await seedWithPreviousSchema();
+    row.inputSchema = null;
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toBeNull();
+  });
+
+  it('leaves the schema alone once an admin moved the template off its built-in version', async () => {
+    const { prisma, row, tables } = await seedWithPreviousSchema();
+    tables.workflowTemplateVersion.push({
+      createdBy: 'admin-1',
+      generatedBy: null,
+      id: 'v-admin',
+      spec: { admin: 'spec' },
+      templateId: row.id,
+      version: 2,
+    });
+    row.activeVersion = 2;
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toEqual(previous);
+  });
+
+  it('leaves the schema alone on an archived template', async () => {
+    const { prisma, row } = await seedWithPreviousSchema();
+    row.status = 'ARCHIVED';
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toEqual(previous);
+  });
+
+  it('leaves the schema alone while an A/B experiment runs, with or without a spec change', async () => {
+    const { prisma, row, tables } = await seedWithPreviousSchema();
+    Object.assign(row, { experimentSplit: 20, experimentVersion: 1 });
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toEqual(previous);
+
+    (versionsOf(tables, row.id)[0] as Row).spec = { old: 'spec' };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await seedSweStarter(prisma);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(row.activeVersion).toBe(1);
+    expect(row.inputSchema).toEqual(previous);
+  });
+
+  it('lists only built-in templates with a schema, and never the schema a template ships now', () => {
+    for (const [name, olds] of Object.entries(PREVIOUS_BUILTIN_INPUT_SCHEMAS)) {
+      const current = BUILTIN_TEMPLATES.find((t) => t.name === name)?.inputSchema;
+      expect(current, name).toBeDefined();
+      for (const old of olds) {
+        expect(old, name).not.toEqual(current);
+      }
+    }
   });
 });
 
