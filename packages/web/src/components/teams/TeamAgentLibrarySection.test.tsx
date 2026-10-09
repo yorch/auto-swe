@@ -44,6 +44,7 @@ describe('TeamAgentLibrarySection', () => {
       catalogWarnings: ['No price for acme/x.'],
       credentialWarnings: ['No credential for acme.'],
       data: {},
+      runtimeWarnings: ['harnessAgent (inherits from reviewer)'],
     });
     render(<TeamAgentLibrarySection teamId="t-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'New override' }));
@@ -53,5 +54,7 @@ describe('TeamAgentLibrarySection', () => {
     await waitFor(() => expect(createMutation.mutateAsync).toHaveBeenCalled());
     expect(await screen.findByText(/Model catalog: No price for acme\/x\./)).toBeTruthy();
     expect(screen.getByText(/Credentials: No credential for acme\./)).toBeTruthy();
+    expect(screen.getByText(/harnessAgent \(inherits from reviewer\)/)).toBeTruthy();
+    expect(screen.getByText(/agents on the Claude Code harness inherit this model/)).toBeTruthy();
   });
 });

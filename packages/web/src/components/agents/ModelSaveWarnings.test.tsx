@@ -21,4 +21,10 @@ describe('ModelSaveWarnings', () => {
     expect(screen.getByText('Model catalog: Unpriced. Deprecated.')).toBeTruthy();
     expect(screen.getByText('Credentials: No apiBase.')).toBeTruthy();
   });
+
+  it('lists the harness agents a model change would break', () => {
+    render(<ModelSaveWarnings runtimeWarnings={['harness-agent']} />);
+    expect(screen.getByText('harness-agent')).toBeTruthy();
+    expect(screen.getByText(/Claude Code harness inherit this model/)).toBeTruthy();
+  });
 });

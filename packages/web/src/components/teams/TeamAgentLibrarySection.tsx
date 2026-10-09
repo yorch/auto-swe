@@ -98,7 +98,8 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const hasSaveWarnings =
     (saveWarnings.scanWarnings?.length ?? 0) > 0 ||
     (saveWarnings.catalogWarnings?.length ?? 0) > 0 ||
-    (saveWarnings.credentialWarnings?.length ?? 0) > 0;
+    (saveWarnings.credentialWarnings?.length ?? 0) > 0 ||
+    (saveWarnings.runtimeWarnings?.length ?? 0) > 0;
 
   async function submitCreate() {
     setCreateError(null);
@@ -203,6 +204,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
           <ModelSaveWarnings
             catalogWarnings={saveWarnings.catalogWarnings}
             credentialWarnings={saveWarnings.credentialWarnings}
+            runtimeWarnings={saveWarnings.runtimeWarnings}
           />
         </div>
       )}

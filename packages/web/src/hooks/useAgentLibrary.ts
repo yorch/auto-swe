@@ -68,6 +68,7 @@ export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>>;
 /**
  * Advisory findings on a save. The agent is saved either way; each list is absent when empty.
  * `catalogWarnings` are about the model's catalog entry (unpriced, deprecated, wrong kind);
+ * `runtimeWarnings` name harness agents that would inherit a model the harness cannot drive;
  * `credentialWarnings` say no credential is reachable for its provider, or that a custom
  * provider's credential has no `apiBase`.
  */
@@ -75,12 +76,13 @@ export interface AgentSaveWarnings {
   scanWarnings?: string[];
   catalogWarnings?: string[];
   credentialWarnings?: string[];
+  /** Harness agents that inherit a newly saved model and cannot run on it. */
+  runtimeWarnings?: string[];
 }
 
 /** A create / update / restore response. */
 export interface AgentSaveResult extends AgentSaveWarnings {
   data: AgentRow;
-  runtimeWarnings?: string[];
   skillWarnings?: string[];
 }
 

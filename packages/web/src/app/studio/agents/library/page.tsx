@@ -690,19 +690,8 @@ export default function AgentLibraryPage() {
             <ModelSaveWarnings
               catalogWarnings={saved.catalogWarnings}
               credentialWarnings={saved.credentialWarnings}
+              runtimeWarnings={saved.runtimeWarnings}
             />
-            {saved.runtimeWarnings.length > 0 && (
-              <Alert variant="warning">
-                Saved, but agents on the Claude Code harness inherit this model, which the harness
-                cannot drive. Their runs fail until they get an Anthropic model of their own or move
-                to the Mastra loop:
-                <ul className="mt-1 list-disc pl-5">
-                  {saved.runtimeWarnings.map((w) => (
-                    <li key={w}>{w}</li>
-                  ))}
-                </ul>
-              </Alert>
-            )}
             <div className="flex justify-end">
               <Button onClick={() => setSaved(null)} variant="primary">
                 Done
