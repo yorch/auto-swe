@@ -6,6 +6,7 @@ import {
   type CacheMultipliers,
   cacheMultipliers,
 } from '@auto-swe/shared/lib/builtinModels';
+import { normalizeModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import { type Span, trace } from '@opentelemetry/api';
@@ -136,6 +137,20 @@ export function _resetModelPricesForTests(): void {
 }
 
 /**
+ * The spec as prices are keyed: provider lowercased, as credential routing reads
+ * it. A row saved as `OpenAI/gpt-6-luna` runs on the `openai` credential, so it
+ * must be priced as `openai/gpt-6-luna` rather than as an unknown, $0 model. A
+ * malformed spec is looked up as written (and is unknown).
+ */
+function canonicalSpec(spec: string): string {
+  try {
+    return normalizeModelSpec(spec);
+  } catch {
+    return spec;
+  }
+}
+
+/**
  * Looks up the cost rate for a model spec: the model catalog, then the built-in
  * table, else zero with `known=false`. The lookup is exact — a near-miss such as
  * `gpt-5-5` for `gpt-5.5` is unknown, never silently priced as its neighbour.
@@ -151,13 +166,14 @@ export async function getModelPrice(spec: string): Promise<{
    */
   catalogAvailable: boolean;
 }> {
+  const key = canonicalSpec(spec);
   const catalog = await catalogPrices();
   const catalogAvailable = catalog !== null;
-  const fromCatalog = catalog?.prices.get(spec);
+  const fromCatalog = catalog?.prices.get(key);
   if (fromCatalog) {
     return { catalogAvailable, known: true, price: fromCatalog, source: 'catalog' };
   }
-  const builtin = MODEL_PRICES[spec];
+  const builtin = MODEL_PRICES[key];
   if (builtin) {
     return { catalogAvailable, known: true, price: builtin, source: 'builtin' };
   }
@@ -170,8 +186,9 @@ export async function getModelPrice(spec: string): Promise<{
  * row that overrides only the 1-hour write rate keeps the table's read rate.
  */
 export async function getCacheMultipliers(spec: string): Promise<CacheMultipliers> {
-  const overrides = (await catalogPrices())?.cacheRates.get(spec);
-  return { ...cacheMultipliers(spec), ...overrides };
+  const key = canonicalSpec(spec);
+  const overrides = (await catalogPrices())?.cacheRates.get(key);
+  return { ...cacheMultipliers(key), ...overrides };
 }
 
 /**

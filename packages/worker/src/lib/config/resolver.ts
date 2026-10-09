@@ -83,6 +83,46 @@ async function resolveProviderCredentialUncached(
   );
 }
 
+/// Why an `Agent.credentialId` pin was not used: the row is gone, it belongs to
+/// a different provider than the model being bound, or it lives at a TEAM or
+/// ORGANIZATION scope the run does not belong to.
+export type PinnedCredentialMiss = 'missing' | 'provider-mismatch' | 'out-of-scope';
+
+export type PinnedCredentialResult =
+  | { ok: true; apiBase?: string; apiKey: string }
+  | { ok: false; reason: PinnedCredentialMiss };
+
+/// The credential an Agent pins by id, if it may be used for this call. A pin
+/// is honoured only where the cascade itself could have reached a credential of
+/// that scope — GLOBAL always, ORGANIZATION for the run's org, TEAM for the
+/// run's team — so a scoped agent cannot spend another team's key by naming its
+/// id, and only when its provider is the one the model spec routes to, so a
+/// stale pin left behind by a model change never sends one vendor's key to
+/// another vendor's API. The caller decides what a miss means.
+export async function resolvePinnedCredential(
+  credentialId: string,
+  provider: string,
+  ctx?: ResolveCtx
+): Promise<PinnedCredentialResult> {
+  const row = await withCache(`cred-pin:${credentialId}`, configCacheTtlMs(), () =>
+    prisma.providerCredential.findUnique({ where: { id: credentialId } })
+  );
+  if (!row) {
+    return { ok: false, reason: 'missing' };
+  }
+  if (row.provider.trim().toLowerCase() !== provider) {
+    return { ok: false, reason: 'provider-mismatch' };
+  }
+  const reachable =
+    row.scope === 'GLOBAL' ||
+    (row.scope === 'ORGANIZATION' && Boolean(ctx?.orgId) && row.orgId === ctx?.orgId) ||
+    (row.scope === 'TEAM' && Boolean(ctx?.teamId) && row.teamId === ctx?.teamId);
+  if (!reachable) {
+    return { ok: false, reason: 'out-of-scope' };
+  }
+  return { ok: true, ...decryptRow(row) };
+}
+
 /// Embedding-model spec + credential. The system has exactly one embedding
 /// role (semantic memory commit), backed by the singleton `EmbeddingConfig`
 /// row. Output must be 1536-dim or `generateEmbedding` throws.

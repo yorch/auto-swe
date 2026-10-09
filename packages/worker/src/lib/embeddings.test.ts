@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   embedMock,
+  googleEmbeddingFactory,
   openaiEmbeddingFactory,
   openaiCompatTextEmbeddingFactory,
   embeddingFindUniqueMock,
@@ -16,6 +17,7 @@ const {
   credFindFirstMock: vi.fn().mockResolvedValue(null),
   embeddingFindUniqueMock: vi.fn(),
   embedMock: vi.fn(),
+  googleEmbeddingFactory: vi.fn(),
   ledgerUpdateManyMock: vi.fn(),
   openaiCompatTextEmbeddingFactory: vi.fn(),
   openaiEmbeddingFactory: vi.fn(),
@@ -23,8 +25,20 @@ const {
   traceCreateMock: vi.fn(),
 }));
 
-vi.mock('ai', () => ({
-  embed: embedMock,
+vi.mock('ai', () => {
+  class APICallError extends Error {
+    constructor(readonly statusCode: number) {
+      super(`HTTP ${statusCode}`);
+    }
+    static isInstance(err: unknown): err is APICallError {
+      return err instanceof APICallError;
+    }
+  }
+  return { APICallError, embed: embedMock };
+});
+
+vi.mock('@ai-sdk/google', () => ({
+  createGoogleGenerativeAI: vi.fn(() => ({ embedding: googleEmbeddingFactory })),
 }));
 
 vi.mock('@ai-sdk/openai', () => ({
@@ -32,7 +46,7 @@ vi.mock('@ai-sdk/openai', () => ({
 }));
 
 vi.mock('@ai-sdk/openai-compatible', () => ({
-  createOpenAICompatible: vi.fn(() => ({ textEmbeddingModel: openaiCompatTextEmbeddingFactory })),
+  createOpenAICompatible: vi.fn(() => ({ embeddingModel: openaiCompatTextEmbeddingFactory })),
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
@@ -66,6 +80,7 @@ vi.mock('./costTracking.js', () => ({
 
 import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { _resetKeyCacheForTests, encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { APICallError } from 'ai';
 import { ConfigMissingError } from './config/resolver.js';
 import { _resetEmbeddingClientForTests, generateEmbedding } from './embeddings.js';
 import { withSpendOwner } from './spendOwner.js';
@@ -92,6 +107,7 @@ beforeEach(() => {
   embedMock.mockReset();
   openaiEmbeddingFactory.mockReset().mockReturnValue({ tag: 'openai-embed' });
   openaiCompatTextEmbeddingFactory.mockReset().mockReturnValue({ tag: 'compat-embed' });
+  googleEmbeddingFactory.mockReset().mockReturnValue({ tag: 'google-embed' });
   embeddingFindUniqueMock.mockReset();
   credFindFirstMock.mockReset();
   traceCreateMock.mockReset().mockResolvedValue({});
@@ -145,11 +161,72 @@ describe('generateEmbedding', () => {
     await generateEmbedding('hi');
 
     expect(openaiCompatTextEmbeddingFactory).toHaveBeenCalledWith('nomic-embed-text');
-    // OpenAI-specific providerOptions (dimensions) must NOT be forwarded to non-OpenAI providers.
+    // OpenRouter's text-embedding-3-large is 3072-wide unless asked for 1536.
     expect(embedMock).toHaveBeenCalledWith({
       model: { tag: 'compat-embed' },
+      providerOptions: { openaiCompatible: { dimensions: 1536 } },
       value: 'hi',
     });
+  });
+
+  it('retries without dimensions when a compatible endpoint refuses them, and remembers', async () => {
+    embeddingFindUniqueMock.mockResolvedValue({
+      credential: credRow('sk-vllm', 'http://vllm.internal/v1'),
+      modelSpec: 'vllm/bge-1536',
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: the mocked error class takes a status
+    const Rejected = APICallError as any;
+    embedMock
+      .mockRejectedValueOnce(new Rejected(400))
+      .mockResolvedValue({ embedding: new Array(1536).fill(0) });
+
+    await generateEmbedding('a');
+    await generateEmbedding('b');
+
+    expect(embedMock).toHaveBeenNthCalledWith(1, {
+      model: { tag: 'compat-embed' },
+      providerOptions: { openaiCompatible: { dimensions: 1536 } },
+      value: 'a',
+    });
+    expect(embedMock).toHaveBeenNthCalledWith(2, { model: { tag: 'compat-embed' }, value: 'a' });
+    expect(embedMock).toHaveBeenNthCalledWith(3, { model: { tag: 'compat-embed' }, value: 'b' });
+  });
+
+  it('does not retry an OpenAI-compatible failure that is not a 400', async () => {
+    embeddingFindUniqueMock.mockResolvedValue({
+      credential: credRow('sk-or', 'https://openrouter.ai/api/v1'),
+      modelSpec: 'openrouter/openai/text-embedding-3-large',
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: the mocked error class takes a status
+    const Rejected = APICallError as any;
+    embedMock.mockRejectedValue(new Rejected(401));
+    await expect(generateEmbedding('x')).rejects.toThrow('HTTP 401');
+    expect(embedMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('builds Google embeddings natively, truncated to 1536', async () => {
+    embeddingFindUniqueMock.mockResolvedValue({
+      credential: credRow('g-key'),
+      modelSpec: 'google/gemini-embedding-001',
+    });
+    embedMock.mockResolvedValue({ embedding: new Array(1536).fill(0) });
+
+    await generateEmbedding('hi');
+
+    expect(googleEmbeddingFactory).toHaveBeenCalledWith('gemini-embedding-001');
+    expect(embedMock).toHaveBeenCalledWith({
+      model: { tag: 'google-embed' },
+      providerOptions: { google: { outputDimensionality: 1536 } },
+      value: 'hi',
+    });
+  });
+
+  it('refuses Anthropic, which has no embedding models', async () => {
+    embeddingFindUniqueMock.mockResolvedValue({
+      credential: credRow('sk-ant'),
+      modelSpec: 'anthropic/claude-opus-5-5',
+    });
+    await expect(generateEmbedding('x')).rejects.toThrow(/has no embedding models/);
   });
 
   it('throws ConfigMissingError when EmbeddingConfig row is absent', async () => {

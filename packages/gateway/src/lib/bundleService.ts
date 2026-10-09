@@ -20,6 +20,7 @@ import {
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
 import { isReservedTemplateOrigin } from '@auto-swe/shared/lib/agentRun';
+import { normalizeModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import {
   initialRevision,
   isRevisionConflict,
@@ -669,7 +670,8 @@ export async function installBundle(
         const base = {
           description: a.description ?? null,
           inheritsModelFrom: a.inheritsModelFrom ?? null,
-          modelSpec: a.modelSpec ?? null,
+          // Validated by validateBundleAgents; stored canonical, as the agent library does.
+          modelSpec: a.modelSpec ? normalizeModelSpec(a.modelSpec) : null,
           name: a.name,
           origin,
           systemPrompt: a.systemPrompt ?? null,

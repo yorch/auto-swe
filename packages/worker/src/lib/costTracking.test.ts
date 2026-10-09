@@ -165,6 +165,22 @@ describe('getModelPrice', () => {
     });
   });
 
+  it('prices a spec saved with a capitalised provider as the canonical built-in', async () => {
+    expect(await getModelPrice('Anthropic/claude-opus-4-6')).toMatchObject({
+      known: true,
+      price: { input: 5, output: 25 },
+      source: 'builtin',
+    });
+  });
+
+  it('prices a spec saved with a capitalised provider from the catalog', async () => {
+    catalogFindMany.mockResolvedValue([catalogRow('openrouter/openai/gpt-6-luna', 1, 2)]);
+    expect(await getModelPrice('OpenRouter/openai/gpt-6-luna')).toMatchObject({
+      known: true,
+      source: 'catalog',
+    });
+  });
+
   it('prices from the catalog first — an admin edit beats the built-in price', async () => {
     catalogFindMany.mockResolvedValue([catalogRow('anthropic/claude-opus-4-6', 1, 2)]);
     expect(await getModelPrice('anthropic/claude-opus-4-6')).toEqual({

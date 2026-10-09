@@ -1,3 +1,4 @@
+import type { PrismaClient } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { IMPLEMENTER_RUNTIMES } from '@auto-swe/shared/types/api';
 import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
@@ -17,9 +18,11 @@ import {
   runtimeSaveError,
   updateAgent,
   validateAgentScopeRefs,
+  validateCredentialRef,
   validateMcpConnectionRef,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { ModelSpecSchema } from '../lib/modelSpecSchema.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -40,7 +43,11 @@ const AgentBaseFields = {
   description: z.string().max(2_000).nullable().optional(),
   inheritsModelFrom: z.string().max(100).nullable().optional(),
   mcpConnectionId: z.string().uuid().nullable().optional(),
-  modelSpec: z.string().max(200).nullable().optional(),
+  // An empty string clears the model, as null does.
+  modelSpec: z
+    .union([z.literal('').transform(() => null), ModelSpecSchema])
+    .nullable()
+    .optional(),
   name: z.string().min(1).max(200),
   runtime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   skillRefs: z
@@ -74,6 +81,34 @@ const RUNTIME_ADMIN_ONLY = {
 
 function runtimeModelMismatch(message: string) {
   return { error: { code: 'RUNTIME_MODEL_MISMATCH', message } };
+}
+
+/**
+ * The credential-pin check for an edit. Only an edit that touches the pin or the
+ * model is checked: a pin a version already carries is not re-litigated when
+ * someone changes only its prompt, and the worker skips an unusable pin at run
+ * time anyway.
+ */
+async function pinnedCredentialError(
+  prisma: PrismaClient,
+  current: {
+    credentialId: string | null;
+    orgId: string | null;
+    scope: string;
+    teamId: string | null;
+  },
+  body: { credentialId?: string | null; modelSpec?: string | null },
+  modelSpec: string | null
+): Promise<string | null> {
+  if (body.credentialId === undefined && body.modelSpec === undefined) {
+    return null;
+  }
+  const credentialId = body.credentialId === undefined ? current.credentialId : body.credentialId;
+  return validateCredentialRef(prisma, credentialId, modelSpec, {
+    orgId: current.orgId,
+    scope: current.scope as AgentScope,
+    teamId: current.teamId,
+  });
 }
 
 const CreateAgentSchema = z
@@ -195,6 +230,17 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
+      const credentialError = await validateCredentialRef(
+        fastify.prisma,
+        body.credentialId,
+        body.modelSpec,
+        { orgId: body.orgId, scope: body.scope, teamId: body.teamId }
+      );
+      if (credentialError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+      }
       const named = {
         inheritsModelFrom: body.inheritsModelFrom ?? null,
         modelSpec: body.modelSpec ?? null,
@@ -216,7 +262,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         workflowTemplateId: body.workflowTemplateId,
       };
       try {
-        const { agent, catalogWarnings, scanWarnings } = await createAgent(
+        const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await createAgent(
           fastify.prisma,
           key,
           { ...body, runtime },
@@ -233,6 +279,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           data: agent,
           ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
           ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+          ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
         });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
@@ -270,7 +317,18 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
-      const { agent, catalogWarnings, scanWarnings } = await updateAgent(
+      const credentialError = await pinnedCredentialError(
+        fastify.prisma,
+        current,
+        request.body,
+        merged.modelSpec
+      );
+      if (credentialError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+      }
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
         current,
         request.body,
@@ -297,6 +355,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
         ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
         ...(runtimeWarnings.length > 0 ? { runtimeWarnings } : {}),
       });
     }
@@ -443,13 +502,24 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
+      const credentialError = await validateCredentialRef(
+        fastify.prisma,
+        request.body.credentialId,
+        request.body.modelSpec,
+        { scope: 'TEAM', teamId: request.params.id }
+      );
+      if (credentialError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+      }
       const key: AgentScopeKey = {
         key: request.body.key,
         scope: 'TEAM',
         teamId: request.params.id,
       };
       try {
-        const { agent, catalogWarnings, scanWarnings } = await createAgent(
+        const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await createAgent(
           fastify.prisma,
           key,
           { ...request.body, runtime },
@@ -466,6 +536,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           data: agent,
           ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
           ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+          ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
         });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
@@ -505,6 +576,17 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
+      const credentialError = await pinnedCredentialError(
+        fastify.prisma,
+        current,
+        request.body,
+        merged.modelSpec
+      );
+      if (credentialError) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+      }
       const mcpError = await validateMcpConnectionRef(
         fastify.prisma,
         request.body.mcpConnectionId,
@@ -518,7 +600,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
-      const { agent, catalogWarnings, scanWarnings } = await updateAgent(
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await updateAgent(
         fastify.prisma,
         current,
         request.body,
@@ -554,6 +636,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         data: agent,
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
         ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
+        ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
         ...(runtimeWarnings.length > 0 ? { runtimeWarnings } : {}),
       });
     }

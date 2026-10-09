@@ -363,6 +363,27 @@ describe('agent runtimes', () => {
     ]);
   });
 
+  it('refuses an agent whose model spec names no provider', () => {
+    expect(
+      validateBundleAgents(
+        withAgents([
+          { key: 'bare', modelSpec: 'gpt-6-luna', name: 'Bare' },
+          { key: 'ok', modelSpec: 'OpenRouter/openai/gpt-6-luna', name: 'Ok' },
+        ])
+      )
+    ).toEqual([expect.stringMatching(/^agent 'bare': Invalid model spec 'gpt-6-luna'/)]);
+  });
+
+  it('accepts a capitalised Anthropic provider for the harness', () => {
+    expect(
+      validateBundleAgents(
+        withAgents([
+          { key: 'cap', modelSpec: 'Anthropic/claude-opus-5-5', name: 'C', runtime: 'claude-code' },
+        ])
+      )
+    ).toEqual([]);
+  });
+
   it('warns about each agent it would put on a harness, and only those', () => {
     const warnings = bundleAgentRuntimeWarnings(
       withAgents([
