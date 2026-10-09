@@ -369,8 +369,10 @@ See [github-app-setup.md](./github-app-setup.md).
   can do with the platform credential rather than tune how it decides.
 - **Options follow the template, not a version of it.** A trigger stores the options it changed;
   the rest are read from the template's input schema at each fire. A release that changes the
-  built-in schema moves an untouched stored schema forward, but a schema an admin edited is kept,
-  and then a new built-in option does not appear until the admin adds it.
+  built-in schema moves a stored schema forward only while it is still one an earlier release
+  shipped and the template is active on its built-in version with no A/B experiment running
+  ([architecture](./architecture.md#versioning-and-reproducibility)). A schema an admin edited is
+  kept, and then a new built-in option does not appear until the admin adds it.
 - **Verification is local and partial.** The workspace installs nothing and has none of the
   workflow's services, secrets or matrix, so many commands cannot reproduce the failure and the fix
   is labelled `not_reproduced` or `still_failing` rather than verified. Only the failing step's own
