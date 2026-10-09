@@ -275,8 +275,9 @@ See [github-app-setup.md](./github-app-setup.md).
   decides again. Failures that arrived while the start was being attempted were suppressed against
   it (as the same commit, the cooldown or in flight) and stay suppressed until each is decided
   again by hand. A decision that fails in the database answers `500` with nothing recorded.
-- **The decision history is kept.** Suppressed decisions are recorded too, and nothing prunes
-  them; deleting a trigger keeps its decisions in the repository's ledger
+- **The decision history is kept for a while.** Suppressed decisions are recorded too and kept for
+  `workflow.automationDecisionRetentionDays` (90 days by default); decisions that started a run are
+  kept for good. Deleting a trigger keeps its decisions in the repository's ledger
   ([automations.md](./automations.md#the-ledger)).
 
 - **Only GitHub Actions.** A failure reported by another CI system (commit statuses, third-party

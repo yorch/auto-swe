@@ -435,6 +435,20 @@ export const SETTING_DEFINITIONS = {
   // interpreter runs inside the Temporal V8 isolate and cannot read the
   // database, and a run that started under one transition ceiling must finish
   // under the same one or its replay history stops matching its code.
+  // Read by the daily ledger sweep, which has no team: GLOBAL only.
+  'workflow.automationDecisionRetentionDays': defineSetting({
+    defaultValue: 90,
+    description:
+      "How long an event automation's decisions that started no run (suppressed, failed to start) are kept before the daily sweep deletes them. Decisions that started a run are kept regardless: the same-commit and own-fix guards read them. At least 7 days, so a host's redelivery of a recent webhook still finds its decision.",
+    group: 'workflow',
+    label: 'Automation decision retention',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(7).max(3650),
+    unit: 'days',
+  }),
   'workflow.fanoutConcurrency': defineSetting({
     defaultValue: 4,
     description:

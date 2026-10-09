@@ -183,6 +183,15 @@ produced, or what is still in flight. Each row keeps:
   from;
 - `retriedAt`: set when the decision was taken again.
 
+**Retention.** A daily sweep (`ScheduledAutomationDecisionPruneWorkflow`, the
+`auto-swe-automation-decision-prune` schedule) deletes decisions that started no run once they are
+older than `workflow.automationDecisionRetentionDays` (default 90 days, at least 7). `STARTED`
+decisions are kept regardless, because the same-subject and own-output guards read them; a sweep
+deletes in batches of 2,000 and at most 100,000 rows, leaving any backlog to the next one. The
+seven-day floor keeps a decision at least as long as GitHub lets a delivery be redelivered, so a
+redelivery finds its decision rather than being decided afresh. The schedule's switch and cadence
+are environment-only ([configuration.md](./configuration.md)).
+
 ## 3. Event sources
 
 | Source | When | Subject / scope | Default template | Kill switch |
@@ -241,8 +250,9 @@ event automations, with the latest run each started.
   its host, so after a rename the subject, cooldown and in-flight checks no longer see the earlier
   decisions. They come back with the next ones. The own-output check matches a commit wherever it
   is, so a fix the platform pushed is still recognised.
-- **The ledger is never pruned.** Every decision is kept, so an own-output or same-subject guard
-  never lapses; nothing removes old rows.
+- **Started decisions are never pruned.** The retention sweep removes only decisions that started
+  no run, so the ledger still grows by one row per run started, and an own-output or same-subject
+  guard never lapses. A redelivery older than the retention is decided afresh.
 - **Shared teams do not manage event automations.** A LEAD of a team the repository is shared with
   can read them, but only the owning team's leads and ADMIN manage them, unlike schedules (§5).
 - **The daily cap is the automation's own.** Deleting and recreating an automation starts its cap

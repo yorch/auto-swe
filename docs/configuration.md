@@ -6,7 +6,7 @@ everything else is data an operator can change without a deploy.**
 
 | Tier | Lives in | Contents | Changed by |
 |---|---|---|---|
-| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `AWS_*`); workspace sizing, images and network (`WORKSPACE_*`); the harness model proxy (`HARNESS_MODEL_PROXY_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`, `MODEL_DISCOVERY_*`, `RUN_REAPER_*`, `SKILL_SOURCE_SYNC_*`) | The deploy pipeline |
+| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `AWS_*`); workspace sizing, images and network (`WORKSPACE_*`); the harness model proxy (`HARNESS_MODEL_PROXY_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`, `MODEL_DISCOVERY_*`, `RUN_REAPER_*`, `AUTOMATION_DECISION_PRUNE_*`, `SKILL_SOURCE_SYNC_*`) | The deploy pipeline |
 | Integrations | Singleton config tables | GitHub, Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/studio/integrations` and `/govern/workflow-defaults` |
 | Policy | The setting registry | Operator knobs that used to be constants in the worker | Admins and grant holders, at `/govern/platform-settings` |
 
@@ -64,6 +64,11 @@ sweeps, so it is environment-only and applied once at gateway startup (a change 
 `SKILL_SOURCE_SYNC_ENABLED` (default `true`; it spends one API request per source and changes no skill)
 and `SKILL_SOURCE_SYNC_CRON` (five-field cron, UTC, default `41 5 * * *`). The gateway refuses to start on
 a value it cannot use. See [agents.md](./agents.md#66-external-skill-sources).
+
+The automation ledger's retention sweep is environment-only too: `AUTOMATION_DECISION_PRUNE_ENABLED`
+(default `true`) and `AUTOMATION_DECISION_PRUNE_CRON` (default `37 4 * * *`). How long it keeps decisions
+is the registry setting `workflow.automationDecisionRetentionDays` (ADMIN, GLOBAL only, default 90 days,
+at least 7), read on each sweep. See [automations.md](./automations.md#the-ledger).
 
 This doc covers the third tier. For integration credentials see
 [model-configuration.md](./model-configuration.md) and the admin pages themselves; for the

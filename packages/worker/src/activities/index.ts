@@ -171,6 +171,8 @@ export {
   submitPrdWorkRequests,
 } from './prdWorkflow.js';
 export { prepareScheduledEvalRun } from './prepareScheduledEvalRun.js';
+export type { PruneAutomationDecisionsResult } from './pruneAutomationDecisions.js';
+export { pruneAutomationDecisions } from './pruneAutomationDecisions.js';
 export type {
   PublishOutcomeInput,
   PublishOutcomeResult,
