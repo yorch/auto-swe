@@ -29,6 +29,7 @@ system is put together see [`docs/architecture.md`](./docs/architecture.md).
 |---|---|
 | [`docs/`](./docs/README.md) | **Living references** — how the system works now. Start at `docs/README.md`. |
 | [`.claude/skills/`](./.claude/skills/) | **Load-on-demand gotchas** — narrow, high-cost traps that only matter while touching one thing. Read the matching skill before editing a Dockerfile or a Prisma migration. |
+| [`wiki/`](./wiki/README.md) | **Generated snapshot** — a commit-pinned codebase wiki produced by the `repo-wiki-generator` skill. Not a living doc: `docs:check`'s relative-link walk covers `wiki/`, but its count and status-prose checks do not. Refresh it by regenerating it (the `repo-wiki-generator` skill was used) at current `main`, never by hand-editing; where it and the code diverge, the code wins. `yarn wiki:check` verifies its citations in PRs (integrity only); the weekly `wiki.yml` run adds a staleness check. |
 | [`docs/history/`](./docs/history/) | **Frozen** — completed roadmaps, closed build plans, point-in-time reviews, research. Preserved for rationale; the code wins wherever they diverge. |
 
 Do not consult `docs/history/` to learn current behaviour, and do not update it.
