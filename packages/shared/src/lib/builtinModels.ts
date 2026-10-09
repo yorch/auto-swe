@@ -85,17 +85,42 @@ const MODEL_CACHE_MULTIPLIERS: Readonly<Record<string, CacheMultipliers>> = {
 };
 
 /**
+ * Routers whose model ids are `<vendor>/<model>` and whose cached input is billed
+ * at the upstream vendor's cache rates. ASSUMPTION, not read from this repo: that
+ * OpenRouter passes the vendor's prompt-cache pricing through (an Anthropic model
+ * keeps its 0.1x read and 1.25x / 2x write rates) rather than charging cached input
+ * at the plain input price or at a rate of its own. A router missing from this set,
+ * or one that bills otherwise, gets no discount here — which overstates cached
+ * input rather than understating it — and an admin sets the real rates on the
+ * model's catalog row, which wins over this table.
+ */
+const PASS_THROUGH_ROUTERS: ReadonlySet<string> = new Set(['openrouter']);
+
+/**
  * The cache rates for a `<provider>/<model-id>` spec: the model's own entry,
- * then its provider's rule, else no discount. Defaulting to 1 overstates the
- * cost of a cached read rather than understating it, so a USD budget errs
- * toward stopping early.
+ * then its provider's rule, then — for a pass-through router (see
+ * `PASS_THROUGH_ROUTERS`) whose model id is itself `<vendor>/<model>`, as
+ * `openrouter/anthropic/claude-opus-5-5` — the upstream vendor's rules for
+ * `<vendor>/<model>`, else no discount. Defaulting to 1 overstates the cost of
+ * a cached read rather than understating it, so a USD budget errs toward
+ * stopping early.
  */
 export function cacheMultipliers(spec: string): CacheMultipliers {
-  return (
-    MODEL_CACHE_MULTIPLIERS[spec] ??
-    PROVIDER_CACHE_MULTIPLIERS[spec.slice(0, spec.indexOf('/'))] ??
-    NO_CACHE_DISCOUNT
-  );
+  const slash = spec.indexOf('/');
+  const provider = spec.slice(0, slash);
+  const own = MODEL_CACHE_MULTIPLIERS[spec] ?? PROVIDER_CACHE_MULTIPLIERS[provider];
+  if (own) {
+    return own;
+  }
+  const upstream = spec.slice(slash + 1);
+  if (PASS_THROUGH_ROUTERS.has(provider) && upstream.includes('/')) {
+    // One level only: the upstream spec's own provider is a vendor, never another router.
+    const vendor = upstream.slice(0, upstream.indexOf('/'));
+    return (
+      MODEL_CACHE_MULTIPLIERS[upstream] ?? PROVIDER_CACHE_MULTIPLIERS[vendor] ?? NO_CACHE_DISCOUNT
+    );
+  }
+  return NO_CACHE_DISCOUNT;
 }
 
 export const BUILTIN_MODELS: ReadonlyArray<BuiltinModel> = [

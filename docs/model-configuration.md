@@ -107,8 +107,9 @@ row where it sets them — `cacheReadMultiplier`, `cacheWrite5mMultiplier` and
 stays the source for built-ins and a correction to it reaches every deployment; an admin's value
 overrides it and a **Reset** clears it. The table gives Anthropic models 0.1× for reads, 1.25× for
 5-minute writes and 2× for 1-hour writes, on every Claude spec including catalog-only ones;
-`openai/gpt-5` reads at 0.1×. Any other model's cached input is priced as ordinary input unless its
-row says otherwise. A negative or non-finite multiplier is ignored. The multipliers scale whatever
+`openai/gpt-5` reads at 0.1×. A model routed through OpenRouter, whose id is itself `<vendor>/<model>`
+(`openrouter/anthropic/claude-opus-5-5`), takes the upstream vendor's rule from the same table. Any
+other model's cached input is priced as ordinary input unless its row says otherwise. A negative or non-finite multiplier is ignored. The multipliers scale whatever
 input price the catalog holds, so a customized price needs no second edit. The budget tiers still
 meter every input token, cached or not.
 
@@ -597,6 +598,17 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   tokens, so an unpriced model is still capped there. Where an organization or channel monthly
   budget applies, the call is refused instead (see above). Embedding calls and the eval harness are
   not covered by that refusal, and a cost shown for a run on an unpriced model is $0.
+- **Cache rates for a routed model assume the router passes the vendor's pricing through.** A spec
+  such as `openrouter/anthropic/claude-opus-5-5` is given Anthropic's cache rates (0.1× reads, 1.25×
+  and 2× writes). That is an assumption about what OpenRouter bills, not something read from a
+  pricing page, and it is made for OpenRouter only; any other router with a `<vendor>/<model>` id
+  gets no cache discount, which overstates cached reads. If a router bills cached input differently,
+  set the multipliers on the model's catalog row, which win over the code table.
+- **Only `openai/gpt-5` has a model-level OpenAI cache read rate.** The other OpenAI models in the
+  built-in table price cached input as ordinary input, because no cached-input rate for them is
+  recorded in this repository and a rate is not added without a source it can cite. This overstates
+  cached reads for those models until their multipliers are set on the catalog row or added to the
+  table with a citation.
 - **The editor's cost estimate prices GLOBAL defaults.** It uses the model each role's GLOBAL agent
   runs, so a team, organization or template override of that agent's model is not reflected, and
   token counts come from each step's static `costHint`, not from measured runs.

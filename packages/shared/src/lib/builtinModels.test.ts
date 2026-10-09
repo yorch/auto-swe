@@ -201,6 +201,40 @@ describe('cacheMultipliers', () => {
     expect(cacheMultipliers('openai/gpt-5')).toEqual({ read: 0.1, write: 1, write1h: 1 });
   });
 
+  it("applies the upstream vendor's rule to a model routed through OpenRouter", () => {
+    expect(cacheMultipliers('openrouter/anthropic/claude-opus-5-5')).toEqual({
+      read: 0.1,
+      write: 1.25,
+      write1h: 2,
+    });
+    expect(cacheMultipliers('openrouter/openai/gpt-5')).toEqual({
+      read: 0.1,
+      write: 1,
+      write1h: 1,
+    });
+    // Variant suffixes ride on the model id; the vendor's rule is by provider.
+    expect(cacheMultipliers('openrouter/anthropic/claude-opus-5-5:thinking').read).toBe(0.1);
+  });
+
+  it('gives a routed model no discount when its vendor has no rule', () => {
+    const none = { read: 1, write: 1, write1h: 1 };
+    expect(cacheMultipliers('openrouter/google/gemini-2.5-pro')).toEqual(none);
+    expect(cacheMultipliers('openrouter/openai/gpt-5.5-pro')).toEqual(none);
+    // No vendor segment: nothing upstream to fall back to.
+    expect(cacheMultipliers('openrouter/some-model')).toEqual(none);
+  });
+
+  it('does not borrow a vendor rule for a router that is not a known pass-through', () => {
+    const none = { read: 1, write: 1, write1h: 1 };
+    expect(cacheMultipliers('acme-gateway/anthropic/claude-opus-5-5')).toEqual(none);
+    expect(cacheMultipliers('ollama/meta-llama/llama-3')).toEqual(none);
+  });
+
+  it("keeps a router's own rule ahead of the upstream vendor's", () => {
+    // Anthropic is a provider with its own rule; a bare spec is untouched by the fallback.
+    expect(cacheMultipliers('anthropic/claude-opus-5-5').read).toBe(0.1);
+  });
+
   it('prices cached input as ordinary input when no discount is known', () => {
     expect(cacheMultipliers('openai/gpt-5.5-pro')).toEqual({ read: 1, write: 1, write1h: 1 });
     expect(cacheMultipliers('google/gemini-2.5-pro')).toEqual({ read: 1, write: 1, write1h: 1 });
