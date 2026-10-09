@@ -649,12 +649,13 @@ export async function createWorkspace(
   // A deployment-chosen network in place of the default bridge — the one the
   // worker also joins, so a harness turn reaches the worker's model proxy.
   const network = infra.network ? ` --network=${shellQuote(infra.network)}` : '';
+  const dns = infra.dns.map((server) => `--dns=${shellQuote(server)}`).join(' ');
   try {
     await execShellAsync(
       // `workspaceMemory` is a DB-backed string, so shell-quote it (the numeric
       // caps can't carry shell metacharacters); defense-in-depth on top of the
       // route-level format validation.
-      `docker run -d --name ${containerName} --init --dns=1.1.1.1 --dns=8.8.8.8 --memory=${shellQuote(infra.memory)} --cpus=${infra.cpus} --pids-limit=${infra.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0${proxyHost}${network} -- ${shellQuote(effectiveImage)} sleep infinity`,
+      `docker run -d --name ${containerName} --init ${dns} --memory=${shellQuote(infra.memory)} --cpus=${infra.cpus} --pids-limit=${infra.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0${proxyHost}${network} -- ${shellQuote(effectiveImage)} sleep infinity`,
       { heartbeatLabel: 'workspace: starting container' }
     );
 

@@ -402,6 +402,7 @@ describe('systemConfig resolvers', () => {
       'HARNESS_MODEL_PROXY_URL',
       'HARNESS_MODEL_PROXY_BIND',
       'WORKSPACE_NETWORK',
+      'WORKSPACE_DNS',
     ];
     beforeEach(() => {
       for (const key of KEYS) {
@@ -413,6 +414,7 @@ describe('systemConfig resolvers', () => {
       expect(resolveWorkspaceInfra()).toEqual({
         blockMetadata: true,
         cpus: 2,
+        dns: ['1.1.1.1', '8.8.8.8'],
         harnessModelProxy: null,
         image: 'node:24-alpine',
         maxConcurrentActivities: 10,
@@ -480,6 +482,29 @@ describe('systemConfig resolvers', () => {
       expect(resolveWorkspaceInfra().blockMetadata).toBe(true);
     });
 
+    describe('WORKSPACE_DNS', () => {
+      it('replaces the public resolvers with the listed ones, trimmed', () => {
+        vi.stubEnv('WORKSPACE_DNS', '100.64.0.10');
+        expect(resolveWorkspaceInfra().dns).toEqual(['100.64.0.10']);
+        vi.stubEnv('WORKSPACE_DNS', ' 10.0.0.2 , fd00::53 ');
+        expect(resolveWorkspaceInfra().dns).toEqual(['10.0.0.2', 'fd00::53']);
+      });
+
+      it('keeps the public resolvers when it is unset or empty', () => {
+        vi.stubEnv('WORKSPACE_DNS', '');
+        expect(resolveWorkspaceInfra().dns).toEqual(['1.1.1.1', '8.8.8.8']);
+      });
+
+      it('falls back to the public resolvers for anything that is not an IP address', () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        for (const bad of ['dns.internal', '10.0.0.2,;rm -rf', '10.0.0.2,', '999.1.1.1']) {
+          vi.stubEnv('WORKSPACE_DNS', bad);
+          expect(resolveWorkspaceInfra().dns).toEqual(['1.1.1.1', '8.8.8.8']);
+        }
+        error.mockRestore();
+      });
+    });
+
     it('clamps an oversized concurrency, and ignores an unparseable one', () => {
       vi.stubEnv('WORKER_MAX_CONCURRENT_ACTIVITIES', '2000');
       expect(resolveWorkspaceInfra().maxConcurrentActivities).toBe(1000);
@@ -518,6 +543,15 @@ describe('systemConfig resolvers', () => {
           'HARNESS_MODEL_PROXY_URL="ftp://proxy" is not an http(s) URL with no credentials',
           'WORKSPACE_NETWORK="bad network;rm" is not a Docker network name',
         ]);
+      });
+
+      it('fails the boot on a WORKSPACE_DNS entry that is not an IP address', () => {
+        vi.stubEnv('WORKSPACE_DNS', '10.0.0.2,dns.internal');
+        expect(validateWorkspaceInfraEnv()).toEqual([
+          'WORKSPACE_DNS="10.0.0.2,dns.internal" is not a comma-separated list of resolver IP addresses',
+        ]);
+        vi.stubEnv('WORKSPACE_DNS', '100.64.0.10,fd00::53');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
       });
 
       it('does not treat an oversized number as a problem — the resolver clamps it', () => {
