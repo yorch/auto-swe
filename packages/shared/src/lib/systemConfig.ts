@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { hostname } from 'node:os';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { decryptSecret } from './crypto.js';
@@ -756,6 +757,12 @@ export interface WorkspaceInfraConfig {
   /// the worker also joins is how a workspace reaches the worker's model proxy
   /// without the proxy being published on the host.
   network: string | null;
+  /// Resolver IPs handed to every workspace container (`WORKSPACE_DNS`). Public
+  /// by default, which only means workspaces are not handed the host's resolver:
+  /// egress is not IP-filtered, so agent code can still query any resolver it can
+  /// reach. Set an internal one when the repositories live on a host only that
+  /// resolver answers correctly (a split-horizon GitHub Enterprise name).
+  dns: string[];
 }
 
 export interface HarnessModelProxyConfig {
@@ -825,6 +832,53 @@ function boundedEnvInt(name: string, fallback: number, min: number, max: number)
 
 const warnedInvalidEnv = new Set<string>();
 
+const DEFAULT_WORKSPACE_DNS = ['1.1.1.1', '8.8.8.8'];
+const DNS_HINT =
+  'a comma-separated list of resolver IP addresses (no zone ids, loopback or unspecified addresses)';
+// What `buildMetadataBlockArgs` (activities/workspace.ts) blackholes in every workspace. A resolver
+// at one of these (the VPC resolver on GCE is the metadata address) can never answer.
+const METADATA_BLOCKED_ADDRESSES = ['169.254.169.254', '169.254.170.2', 'fd00:ec2::254'];
+
+/// A usable `--dns` entry: an IP address, not zoned (`docker run` rejects `fe80::1%eth0`, and a
+/// zone means nothing inside the container's namespace), and not loopback or unspecified (those
+/// are the container's own namespace, where no resolver listens).
+function isResolverAddress(entry: string): boolean {
+  const kind = isIP(entry);
+  if (kind === 0 || entry.includes('%')) {
+    return false;
+  }
+  const loopbackOrUnspecified =
+    kind === 4
+      ? /^(127\.|0\.0\.0\.0$)/.test(entry)
+      : /^(::1?|0*:0*:0*:0*:0*:0*:0*:[01])$/.test(entry);
+  return !loopbackOrUnspecified;
+}
+
+/// `null` when any entry is empty or unusable: `docker run --dns` takes addresses only, and an
+/// entry reaches a shell command line.
+function parseDnsList(raw: string): string[] | null {
+  const entries = raw.split(',').map((entry) => entry.trim());
+  return entries.every(isResolverAddress) ? entries : null;
+}
+
+function workspaceDnsFromEnv(): string[] {
+  const raw = process.env.WORKSPACE_DNS;
+  if (!raw) {
+    return DEFAULT_WORKSPACE_DNS;
+  }
+  const parsed = parseDnsList(raw);
+  if (parsed) {
+    return parsed;
+  }
+  if (!warnedInvalidEnv.has('WORKSPACE_DNS')) {
+    warnedInvalidEnv.add('WORKSPACE_DNS');
+    console.error(
+      `[config] ignoring WORKSPACE_DNS: not ${DNS_HINT}. Using the default '${DEFAULT_WORKSPACE_DNS.join(',')}'.`
+    );
+  }
+  return DEFAULT_WORKSPACE_DNS;
+}
+
 /// Reads a string variable that ends up inside a `docker run` command, falling
 /// back to `fallback` when it is unset or fails `pattern`. These values used to
 /// be validated when an admin saved them; now that nobody saves them, the check
@@ -862,6 +916,7 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
   return {
     blockMetadata: process.env.WORKSPACE_BLOCK_METADATA !== 'false',
     cpus: Number.isFinite(cpus) && cpus > 0 ? cpus : 2,
+    dns: workspaceDnsFromEnv(),
     harnessModelProxy: resolveHarnessModelProxy(),
     image: validatedEnv('WORKSPACE_IMAGE', 'node:24-alpine', DOCKER_IMAGE_REF_RE, IMAGE_HINT),
     maxConcurrentActivities: boundedEnvInt('WORKER_MAX_CONCURRENT_ACTIVITIES', 10, 1, 1000),
@@ -926,6 +981,16 @@ export function validateWorkspaceInfraEnv(): string[] {
   check('HARNESS_MODEL_PROXY_PORT', isPort, 'a port number (1-65535)');
   check('HARNESS_MODEL_PROXY_URL', isHttpUrl, 'an http(s) URL with no credentials');
   check('WORKSPACE_NETWORK', (raw) => DOCKER_NETWORK_RE.test(raw), 'a Docker network name');
+  check('WORKSPACE_DNS', (raw) => parseDnsList(raw) !== null, DNS_HINT);
+  if (process.env.WORKSPACE_BLOCK_METADATA !== 'false') {
+    for (const entry of (process.env.WORKSPACE_DNS ?? '').split(',').map((e) => e.trim())) {
+      if (METADATA_BLOCKED_ADDRESSES.includes(entry.toLowerCase())) {
+        problems.push(
+          `WORKSPACE_DNS includes ${entry}, which WORKSPACE_BLOCK_METADATA blackholes inside every workspace`
+        );
+      }
+    }
+  }
   return problems;
 }
 

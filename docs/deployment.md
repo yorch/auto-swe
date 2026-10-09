@@ -198,6 +198,9 @@ WEB_URL=https://app.example.com      # base URL for the "Open inbox" link in Sla
 #                                                  # is the worker's own (default http://host.docker.internal:<port>)
 # HARNESS_MODEL_PROXY_BIND=0.0.0.0
 # WORKSPACE_NETWORK=auto-swe-workspaces            # a Docker network workspaces join instead of the default bridge
+# WORKSPACE_DNS=1.1.1.1,8.8.8.8                    # resolvers every workspace uses; set an internal one when the repository
+#                                                  # host (a split-horizon GHE name) resolves to an unreachable address on public DNS.
+#                                                  # Agent-run code can then resolve every name that resolver knows
 ```
 
 > **Magic-link transport gotcha.** `nodemailer.sendMail()` resolves on SMTP `2xx` (relay accepted) — *not* delivery. Always test end-to-end against a real inbox after configuring SMTP/Resend, and check the audit log for `accepted` vs `rejected` arrays.

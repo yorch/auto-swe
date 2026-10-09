@@ -28,6 +28,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkspaceInfra: vi.fn(() => ({
     blockMetadata: true,
     cpus: 2,
+    dns: ['1.1.1.1', '8.8.8.8'],
     image: 'node:24-alpine',
     memory: '4g',
     metadataBlockImage: 'alpine:3.20',
@@ -147,10 +148,38 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     await ws.destroy();
   });
 
+  it('hands the workspace the configured resolvers, not a fixed public pair', async () => {
+    const start = async () => {
+      const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main');
+      await ws.destroy();
+      const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+      return commands.find((c) => c.includes('docker run -d --name')) ?? '';
+    };
+    vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
+      blockMetadata: true,
+      cpus: 2,
+      dns: ['100.64.0.10'],
+      image: 'node:24-alpine',
+      memory: '4g',
+      metadataBlockImage: 'alpine:3.20',
+      pidsLimit: 512,
+    } as never);
+    const custom = await start();
+    expect(custom).toContain(`--dns=${shellQuote('100.64.0.10')} `);
+    expect(custom).not.toContain('1.1.1.1');
+    expect(custom).not.toContain('8.8.8.8');
+
+    vi.mocked(execShellAsync).mockClear();
+    expect(await start()).toContain(
+      `--dns=${shellQuote('1.1.1.1')} --dns=${shellQuote('8.8.8.8')} `
+    );
+  });
+
   it('applies the workspace caps + default image from the environment', async () => {
     vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
       blockMetadata: true,
       cpus: 6,
+      dns: ['1.1.1.1', '8.8.8.8'],
       image: 'custom/base:1.2',
       memory: '9g',
       metadataBlockImage: 'alpine:3.20',
@@ -175,6 +204,7 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     const infra = {
       blockMetadata: true,
       cpus: 2,
+      dns: ['1.1.1.1', '8.8.8.8'],
       image: 'node:24-alpine',
       memory: '4g',
       metadataBlockImage: 'alpine:3.20',
