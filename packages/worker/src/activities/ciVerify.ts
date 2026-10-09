@@ -3,14 +3,21 @@
  * triager says reproduces the failure is run in a fresh workspace on the failing branch, then
  * on the fix. Failing before and passing after verifies the fix.
  *
- * The command is model output read from untrusted logs, so it runs only when it appears
- * verbatim in the failing workflow file in the repository — the repository's own command, as
- * trusted as the code its tests run — and the shell scanner clears it. The workspace installs
+ * The command is model output read from untrusted logs, so it runs only when it is, whole, the
+ * `run:` of a step the host reports as failed, read from the workflow file in the repository —
+ * the repository's own command, as trusted as the code its tests run — and the shell scanner
+ * clears it. The fix branch is fetched before anything runs, so no credential is used after
+ * the branch's own code has. The workspace installs
  * nothing first, so a command that needs the workflow's setup steps fails both times; that is
  * reported, never treated as proof the fix is wrong. Verification only labels a fix; it never
  * stops one from being delivered.
  */
 import { prisma } from '@auto-swe/shared/db';
+import {
+  type FailedJobSteps,
+  failingStepRuns,
+  normaliseRunCommand,
+} from '@auto-swe/shared/lib/ciWorkflowFile';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
@@ -26,8 +33,8 @@ import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspac
 
 /** The longest reproduction command kept; a longer one is dropped, never cut. */
 export const MAX_REPRO_COMMAND_CHARS = 1_000;
-/** Wall-clock for each of the two runs of the command. */
-const RUN_TIMEOUT_MS = 10 * 60 * 1000;
+/** Wall-clock for each of the two runs; with the clone and fetch, within the activity's hour. */
+const RUN_TIMEOUT_MS = 8 * 60 * 1000;
 /** A workflow file path as GitHub reports it; anything else is not read. */
 const WORKFLOW_PATH_RE = /^\.github\/workflows\/[\w./-]{1,200}\.ya?ml$/;
 
@@ -59,21 +66,16 @@ export interface VerifyCiFixResult {
   codeResult: CodeResult;
 }
 
-/** Each line trimmed, blank lines dropped: a `run:` block's indentation is not the command. */
-function normalise(text: string): string {
-  return text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-    .join('\n');
-}
-
 /**
  * Why the command may not run, or null when it may. Pure: the workflow file's text is read by
  * the caller. The scanner is applied separately.
  */
-export function reproCommandProblem(command: string, workflowFile: string): string | null {
-  const c = normalise(command);
+export function reproCommandProblem(
+  command: string,
+  workflowFile: string,
+  failedJobs: FailedJobSteps[]
+): string | null {
+  const c = normaliseRunCommand(command);
   if (c.length === 0) {
     return 'the triager named no command that reproduces the failure';
   }
@@ -83,8 +85,8 @@ export function reproCommandProblem(command: string, workflowFile: string): stri
   if (c.includes('${{')) {
     return 'the reproduction command uses workflow expressions, which only GitHub can resolve';
   }
-  if (!normalise(workflowFile).includes(c)) {
-    return 'the reproduction command is not in the failing workflow file';
+  if (!failingStepRuns(workflowFile, failedJobs).includes(c)) {
+    return 'the reproduction command is not the whole command of a step that failed';
   }
   return null;
 }
@@ -168,16 +170,25 @@ async function verify(input: {
     if (file.exitCode !== 0) {
       return unverified('the failing workflow file is not on the branch', command);
     }
-    const problem = reproCommandProblem(command, file.stdout);
+    const problem = reproCommandProblem(command, file.stdout, triage.failedJobs);
     if (problem) {
       return unverified(problem, command);
+    }
+    // Fetched now, before the branch's code runs: nothing after that uses the credential.
+    try {
+      await workspace.gitAuthed(fetchBranchesSubcommand([fixBranch]));
+    } catch (err) {
+      return unverified(
+        `the fix branch could not be fetched (${getErrorMessage(err).slice(0, 200)})`,
+        command
+      );
     }
 
     heartbeat('verifyCiFix: running the command on the failing branch');
     const before = await workspace.execCapture(command, { timeoutMs: RUN_TIMEOUT_MS });
     try {
-      await workspace.gitAuthed(fetchBranchesSubcommand([fixBranch]));
-      await workspace.exec(`git reset --hard origin/${shellQuote(fixBranch)}`);
+      // What the first run left behind (build output, caches) must not make the second pass.
+      await workspace.exec(`git reset --hard origin/${shellQuote(fixBranch)} && git clean -ffdx`);
     } catch (err) {
       return unverified(
         `the fix branch could not be checked out (${getErrorMessage(err).slice(0, 200)})`,

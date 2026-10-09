@@ -235,8 +235,9 @@ register({
   configFields: [],
   description:
     'Run the command the CI triager says reproduces the failure on the failing branch, then on ' +
-    'the fix, in a fresh workspace. Only a command that appears verbatim in the failing workflow ' +
-    'file and that the shell scanner clears is run. output.verification.status is verified, ' +
+    'the fix, in a fresh workspace. Only the whole run: of a step the host reports as failed, ' +
+    'read from the workflow file, and that the shell scanner clears is run. ' +
+    'output.verification.status is verified, ' +
     'not_reproduced, still_failing or unverified; output.codeResult carries it in its notes for ' +
     'the pull request. Never fails the run.',
   label: 'Verify a CI fix',

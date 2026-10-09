@@ -184,6 +184,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ciTrigger.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/ciWorkflowFile',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/ciWorkflowFile.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/gitRef',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/gitRef.ts'),
       },

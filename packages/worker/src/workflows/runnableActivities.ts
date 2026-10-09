@@ -151,12 +151,13 @@ export const ciTriageActivities = proxyActivities<
   startToCloseTimeout: T_10M,
 });
 
-// Verifying a CI fix: two runs of the reproduction command in one workspace, each bounded at
-// ten minutes, plus a clone. Retried like a gate.
+// Verifying a CI fix: a clone, a fetch and two runs of the reproduction command (eight minutes
+// each) in one workspace. Never retried: it only labels a fix, and a second try would hold the
+// run up to another hour for that.
 export const ciVerifyActivities = proxyActivities<Pick<typeof activitiesType, 'verifyCiFix'>>({
   heartbeatTimeout: T_2M,
-  retry: RETRY_SANDBOX,
-  startToCloseTimeout: T_30M,
+  retry: { maximumAttempts: 1 },
+  startToCloseTimeout: T_60M,
 });
 
 // Lists provider models through the GLOBAL credentials. Provider calls inside are

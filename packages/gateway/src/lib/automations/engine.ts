@@ -222,6 +222,12 @@ export async function decideAndStart<F, X>(
   const prisma = fastify.prisma;
   const { connection, automation, facts, repoKey, now, startRetryDelayMs } = args;
   const { branchPrefix } = await resolveWorkflowDefaults();
+  // Asked again here, not only by the webhook path: a retry of a decision recorded before the
+  // rule changed (a new branch prefix) must still never act on the platform's own work.
+  const ignored = source.ignore?.(facts, { branchPrefix });
+  if (ignored) {
+    return { ignored: true, reason: ignored };
+  }
   const orgId = connection.team?.orgId ?? undefined;
   const enabled = await resolveSetting(source.killSwitch, {
     ...(orgId ? { orgId } : {}),
@@ -246,192 +252,211 @@ export async function decideAndStart<F, X>(
   // Taking an earlier decision again: it keeps its row, marked retried, and gives up the
   // dedupe key so the new decision can be recorded under it. Exactly one taker wins.
   const released = await releaseDecision(prisma, fireBase.dedupeKey, args.retry, now);
-  if (!released) {
+  if (!released.ok) {
     return { duplicate: true };
   }
-
-  // Decisions that need no lock: recorded once, by the dedupe key.
-  const unmet = source.precondition?.(facts);
-  if (unmet) {
-    return recordDecision(prisma, fireBase, 'SUPPRESSED_PRECONDITION', unmet);
-  }
-  const org = connection.team?.organization;
-  if (org && (await isOrgOverBudget(prisma, org.id, org.monthlyBudgetUsdCents))) {
-    return recordDecision(
-      prisma,
-      fireBase,
-      'SUPPRESSED_BUDGET',
-      'the organization is over its monthly budget'
-    );
-  }
-  const template = await resolveAutomationTemplate(
-    prisma,
-    source,
-    automation.templateId,
-    connection.teamId
-  );
-  if (!template) {
-    fastify.log.warn(
-      { automationId: automation.id },
-      'automation has no active template to start; nothing started'
-    );
-    return recordDecision(
-      prisma,
-      fireBase,
-      'FAILED_TO_START',
-      'the automation template is not installed or not active'
-    );
-  }
-
-  // Built and checked again at fire time: the template may have changed since the automation
-  // was saved, and a payload the run would refuse must not spend one.
-  const built = buildAutomationPayload(
-    source,
-    template.inputSchema,
-    automation.inputs,
-    connection.id,
-    facts
-  );
-  if (!built.ok) {
-    return recordDecision(
-      prisma,
-      fireBase,
-      'FAILED_TO_START',
-      `the automation's options do not fit its template: ${built.errors.join('; ').slice(0, 300)}`
-    );
-  }
-  const run = source.run(facts);
-  if (!isValidTicketId(run.ticketId)) {
-    return { ignored: true, reason: 'the occurrence does not form a ticket id' };
-  }
-  const payload = built.payload;
-  const workRequestId = crypto.randomUUID();
-  const temporalWorkflowId = `${source.workflowId.prefix}-${automation.id.replace(/-/g, '').slice(0, 8)}-${source.workflowId.part(facts)}`;
-  const request: RepoWorkRequest = {
-    budgetTier: 'STANDARD',
-    connectionId: connection.id,
-    description: run.description,
-    externalTicketId: run.ticketId,
-    payload,
-    repoId: connection.id,
-    requestPayload: JSON.stringify(payload),
-    workRequestId,
-    workspaceProvider: 'git_repo',
-  };
-
-  let decided: { outcome: AutomationOutcome; reason: string } | null = null;
-  let startAttempted = false;
-  let launch: Awaited<ReturnType<typeof launchTrackedWorkflow>>;
+  // Whatever ends this without a decision under the key (an ignored occurrence, a database
+  // error) gives the earlier decision back, so it can be taken again later.
+  let result: AutomationResult;
   try {
-    launch = await launchTrackedWorkflow(
-      prisma,
-      {
-        activeWorkflow: {
-          assignedBranch: `${branchPrefix}/${run.ticketId}`,
-          budgetTier: 'STANDARD',
-          currentStatus: 'IMPLEMENTING',
-          repoId: connection.id,
-          temporalWorkflowId,
-          workRequestId,
-        },
-        runInput: {
-          connectionId: connection.id,
-          description: run.description,
-          externalTicketId: run.ticketId,
-          id: workRequestId,
-          payload: payload as object,
-          requestedById: null,
-          requestPayload: JSON.stringify(payload),
-          templateId: template.id,
-          templateVersion: template.activeVersion,
-          ticketIsSynthetic: run.ticketIsSynthetic,
-        },
-      },
-      async () => {
-        startAttempted = true;
-        // A host does not redeliver a failed webhook by itself, so a transient Temporal error
-        // is retried here. A retry that finds the execution already started means an earlier
-        // attempt did start it (its reply was lost): that is success, not a duplicate.
-        for (let attempt = 1; ; attempt++) {
-          try {
-            await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
-              request,
-              templateId: template.id,
-              templateVersion: template.activeVersion,
-            });
-            return;
-          } catch (err) {
-            if (attempt > 1 && getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-              return;
-            }
-            if (
-              attempt >= START_ATTEMPTS ||
-              getErrorName(err) === 'WorkflowExecutionAlreadyStartedError'
-            ) {
-              throw err;
-            }
-            await new Promise((r) => setTimeout(r, startRetryDelayMs * attempt));
-          }
-        }
-      },
-      {
-        guard: async (tx) => {
-          decided = await decideUnderLock(tx, { automation, repoKey }, source, keys, now, (id) =>
-            fastify.temporal.isWorkflowGone(id)
-          );
-          await tx.automationFire.create({
-            data: {
-              ...fireBase,
-              outcome: decided?.outcome ?? 'STARTED',
-              reason: decided?.reason ?? null,
-              ...(decided ? {} : { temporalWorkflowId, workRequestId }),
-            },
-          });
-          return decided ? decided.outcome : null;
-        },
-        log: fastify.log,
-      }
-    );
+    result = await decide();
   } catch (err) {
-    if (!startAttempted) {
-      // The decision itself failed (the database): nothing was committed.
-      throw err;
-    }
-    // The decision was STARTED and committed, but the workflow did not start (the ledger
-    // rows were rolled back). Record it as a failed start: it no longer counts against later
-    // occurrences, it shows in the history, and a redelivery or a retry takes it again. The
-    // caller answers non-2xx.
-    await prisma.automationFire
-      .updateMany({
-        data: {
-          outcome: 'FAILED_TO_START',
-          reason: 'the workflow could not be started; redeliver the event or retry the decision',
-          temporalWorkflowId: null,
-          workRequestId: null,
-        },
-        where: { dedupeKey: fireBase.dedupeKey, outcome: 'STARTED' },
-      })
-      .catch((cleanupErr: unknown) =>
-        fastify.log.error(
-          { dedupeKey: fireBase.dedupeKey, err: cleanupErr },
-          'could not record an unstarted automation fire as failed'
-        )
+    await released
+      .restore()
+      .catch((restoreErr: unknown) =>
+        fastify.log.error({ err: restoreErr }, 'could not restore a released automation decision')
       );
-    throw new AutomationStartError('The automation run could not be started', { cause: err });
+    throw err;
   }
-  if (launch.ok) {
-    return { automationId: automation.id, outcome: 'STARTED', temporalWorkflowId, workRequestId };
+  if ('ignored' in result) {
+    await released.restore();
   }
-  if (launch.reason === 'GUARD_REFUSED') {
-    const outcome = decided as { outcome: AutomationOutcome; reason: string } | null;
-    return {
-      automationId: automation.id,
-      outcome: outcome?.outcome ?? 'FAILED_TO_START',
-      reason: outcome?.reason,
+  return result;
+
+  async function decide(): Promise<AutomationResult> {
+    // Decisions that need no lock: recorded once, by the dedupe key.
+    const unmet = source.precondition?.(facts);
+    if (unmet) {
+      return recordDecision(prisma, fireBase, 'SUPPRESSED_PRECONDITION', unmet);
+    }
+    const org = connection.team?.organization;
+    if (org && (await isOrgOverBudget(prisma, org.id, org.monthlyBudgetUsdCents))) {
+      return recordDecision(
+        prisma,
+        fireBase,
+        'SUPPRESSED_BUDGET',
+        'the organization is over its monthly budget'
+      );
+    }
+    const template = await resolveAutomationTemplate(
+      prisma,
+      source,
+      automation.templateId,
+      connection.teamId
+    );
+    if (!template) {
+      fastify.log.warn(
+        { automationId: automation.id },
+        'automation has no active template to start; nothing started'
+      );
+      return recordDecision(
+        prisma,
+        fireBase,
+        'FAILED_TO_START',
+        'the automation template is not installed or not active'
+      );
+    }
+
+    // Built and checked again at fire time: the template may have changed since the automation
+    // was saved, and a payload the run would refuse must not spend one.
+    const built = buildAutomationPayload(
+      source,
+      template.inputSchema,
+      automation.inputs,
+      connection.id,
+      facts
+    );
+    if (!built.ok) {
+      return recordDecision(
+        prisma,
+        fireBase,
+        'FAILED_TO_START',
+        `the automation's options do not fit its template: ${built.errors.join('; ').slice(0, 300)}`
+      );
+    }
+    const run = source.run(facts);
+    if (!isValidTicketId(run.ticketId)) {
+      return { ignored: true, reason: 'the occurrence does not form a ticket id' };
+    }
+    const payload = built.payload;
+    const workRequestId = crypto.randomUUID();
+    const temporalWorkflowId = `${source.workflowId.prefix}-${automation.id.replace(/-/g, '').slice(0, 8)}-${source.workflowId.part(facts)}`;
+    const request: RepoWorkRequest = {
+      budgetTier: 'STANDARD',
+      connectionId: connection.id,
+      description: run.description,
+      externalTicketId: run.ticketId,
+      payload,
+      repoId: connection.id,
+      requestPayload: JSON.stringify(payload),
+      workRequestId,
+      workspaceProvider: 'git_repo',
     };
+
+    let decided: { outcome: AutomationOutcome; reason: string } | null = null;
+    let startAttempted = false;
+    let launch: Awaited<ReturnType<typeof launchTrackedWorkflow>>;
+    try {
+      launch = await launchTrackedWorkflow(
+        prisma,
+        {
+          activeWorkflow: {
+            assignedBranch: `${branchPrefix}/${run.ticketId}`,
+            budgetTier: 'STANDARD',
+            currentStatus: 'IMPLEMENTING',
+            repoId: connection.id,
+            temporalWorkflowId,
+            workRequestId,
+          },
+          runInput: {
+            connectionId: connection.id,
+            description: run.description,
+            externalTicketId: run.ticketId,
+            id: workRequestId,
+            payload: payload as object,
+            requestedById: null,
+            requestPayload: JSON.stringify(payload),
+            templateId: template.id,
+            templateVersion: template.activeVersion,
+            ticketIsSynthetic: run.ticketIsSynthetic,
+          },
+        },
+        async () => {
+          startAttempted = true;
+          // A host does not redeliver a failed webhook by itself, so a transient Temporal error
+          // is retried here. A retry that finds the execution already started means an earlier
+          // attempt did start it (its reply was lost): that is success, not a duplicate.
+          for (let attempt = 1; ; attempt++) {
+            try {
+              await fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
+                request,
+                templateId: template.id,
+                templateVersion: template.activeVersion,
+              });
+              return;
+            } catch (err) {
+              if (attempt > 1 && getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+                return;
+              }
+              if (
+                attempt >= START_ATTEMPTS ||
+                getErrorName(err) === 'WorkflowExecutionAlreadyStartedError'
+              ) {
+                throw err;
+              }
+              await new Promise((r) => setTimeout(r, startRetryDelayMs * attempt));
+            }
+          }
+        },
+        {
+          guard: async (tx) => {
+            decided = await decideUnderLock(tx, { automation, repoKey }, source, keys, now, (id) =>
+              fastify.temporal.isWorkflowGone(id)
+            );
+            await tx.automationFire.create({
+              data: {
+                ...fireBase,
+                outcome: decided?.outcome ?? 'STARTED',
+                reason: decided?.reason ?? null,
+                ...(decided ? {} : { temporalWorkflowId, workRequestId }),
+              },
+            });
+            return decided ? decided.outcome : null;
+          },
+          log: fastify.log,
+        }
+      );
+    } catch (err) {
+      if (!startAttempted) {
+        // The decision itself failed (the database): nothing was committed.
+        throw err;
+      }
+      // The decision was STARTED and committed, but the workflow did not start (the ledger
+      // rows were rolled back). Record it as a failed start: it no longer counts against later
+      // occurrences, it shows in the history, and a redelivery or a retry takes it again. The
+      // caller answers non-2xx.
+      await prisma.automationFire
+        .updateMany({
+          data: {
+            outcome: 'FAILED_TO_START',
+            reason: 'the workflow could not be started; redeliver the event or retry the decision',
+            temporalWorkflowId: null,
+            workRequestId: null,
+          },
+          where: { dedupeKey: fireBase.dedupeKey, outcome: 'STARTED' },
+        })
+        .catch((cleanupErr: unknown) =>
+          fastify.log.error(
+            { dedupeKey: fireBase.dedupeKey, err: cleanupErr },
+            'could not record an unstarted automation fire as failed'
+          )
+        );
+      throw new AutomationStartError('The automation run could not be started', { cause: err });
+    }
+    if (launch.ok) {
+      return { automationId: automation.id, outcome: 'STARTED', temporalWorkflowId, workRequestId };
+    }
+    if (launch.reason === 'GUARD_REFUSED') {
+      const outcome = decided as { outcome: AutomationOutcome; reason: string } | null;
+      return {
+        automationId: automation.id,
+        outcome: outcome?.outcome ?? 'FAILED_TO_START',
+        reason: outcome?.reason,
+      };
+    }
+    // The dedupe key (or the workflow id) was taken: another delivery already decided this one.
+    return { duplicate: true };
   }
-  // The dedupe key (or the workflow id) was taken: another delivery already decided this one.
-  return { duplicate: true };
 }
 
 /**
@@ -554,7 +579,8 @@ async function releaseDecision(
   dedupeKey: string,
   retry: RetryScope,
   now: Date
-): Promise<boolean> {
+): Promise<{ ok: boolean; restore: () => Promise<void> }> {
+  const nothing = async () => {};
   const where: Prisma.AutomationFireWhereInput =
     retry.kind === 'manual'
       ? { dedupeKey, id: retry.fireId, outcome: { not: 'STARTED' } }
@@ -562,14 +588,33 @@ async function releaseDecision(
   const earlier = await prisma.automationFire.findFirst({ select: { id: true }, where });
   if (!earlier) {
     // A redelivery of something never decided, or decided otherwise: the dedupe key decides.
-    return retry.kind === 'redelivery';
+    return { ok: retry.kind === 'redelivery', restore: nothing };
   }
   // Moved aside under its own id, so the key is unique again and the row stays in the history.
+  const aside = `${dedupeKey}~${earlier.id}`;
   const { count } = await prisma.automationFire.updateMany({
-    data: { dedupeKey: `${dedupeKey}~${earlier.id}`, retriedAt: now },
+    data: { dedupeKey: aside, retriedAt: now },
     where: { ...where, id: earlier.id },
   });
-  return count === 1;
+  if (count !== 1) {
+    return { ok: false, restore: nothing };
+  }
+  return {
+    ok: true,
+    // Back under the key, unless a new decision holds it after all (the unique key decides).
+    restore: async () => {
+      try {
+        await prisma.automationFire.updateMany({
+          data: { dedupeKey, retriedAt: null },
+          where: { dedupeKey: aside, id: earlier.id },
+        });
+      } catch (err) {
+        if ((err as { code?: string }).code !== 'P2002') {
+          throw err;
+        }
+      }
+    },
+  };
 }
 
 async function recordDecision(

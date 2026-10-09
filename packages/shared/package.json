@@ -35,6 +35,7 @@
     "./lib/regexSafety": "./dist/lib/regexSafety.js",
     "./lib/gitRef": "./dist/lib/gitRef.js",
     "./lib/ciTrigger": "./dist/lib/ciTrigger.js",
+    "./lib/ciWorkflowFile": "./dist/lib/ciWorkflowFile.js",
     "./lib/ciLogScreen": "./dist/lib/ciLogScreen.js",
     "./lib/modelSpec": "./dist/lib/modelSpec.js",
     "./lib/builtinModels": "./dist/lib/builtinModels.js",

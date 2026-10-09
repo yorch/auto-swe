@@ -430,11 +430,7 @@ export const SETTING_DEFINITIONS = {
     sensitive: true,
   }),
 
-  // ── Workflow interpreter ───────────────────────────────────────────────────
-  // These bound how a single run may expand. They are run-pinned: the
-  // interpreter runs inside the Temporal V8 isolate and cannot read the
-  // database, and a run that started under one transition ceiling must finish
-  // under the same one or its replay history stops matching its code.
+  // ── Automation ledger ──────────────────────────────────────────────────────
   // Read by the daily ledger sweep, which has no team: GLOBAL only.
   'workflow.automationDecisionRetentionDays': defineSetting({
     defaultValue: 90,
@@ -449,6 +445,12 @@ export const SETTING_DEFINITIONS = {
     schema: z.number().int().min(7).max(3650),
     unit: 'days',
   }),
+
+  // ── Workflow interpreter ───────────────────────────────────────────────────
+  // These bound how a single run may expand. They are run-pinned: the
+  // interpreter runs inside the Temporal V8 isolate and cannot read the
+  // database, and a run that started under one transition ceiling must finish
+  // under the same one or its replay history stops matching its code.
   'workflow.fanoutConcurrency': defineSetting({
     defaultValue: 4,
     description:

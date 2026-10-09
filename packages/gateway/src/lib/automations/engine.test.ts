@@ -571,6 +571,17 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     ).resolves.toMatchObject({ outcome: 'STARTED' });
   });
 
+  it('gives a failed start back when taking it again ends with no decision', async () => {
+    const h = harness({ template: null });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });
+    const key = h.fires[0]?.dedupeKey;
+    h.db.workflowTemplate.findFirst.mockRejectedValue(new Error('database down'));
+    await expect(handle(h)).rejects.toThrow('database down');
+    expect(h.fires).toEqual([
+      expect.objectContaining({ dedupeKey: key, outcome: 'FAILED_TO_START', retriedAt: null }),
+    ]);
+  });
+
   it('takes a failed start again on redelivery, keeping the earlier decision marked retried', async () => {
     const h = harness({ template: null });
     await expect(handle(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });

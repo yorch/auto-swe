@@ -204,8 +204,8 @@ nodes. They clone it, diff against it, and open the pull request into it. See
 ### 2.3 Verifying a fix
 
 Before a fix is delivered, `verifyCiFix` runs the triager's reproduction command in a fresh
-workspace: first on the failing branch, then on the fix. The result goes into the draft's body (or
-the pull request comment, for a pushed fix) and the run's result as `verification`:
+workspace: first on the failing branch, then on the fix. The result goes into the draft's body, the
+pull request comment when the trigger comments, and the run's result as `verification`:
 
 | Status | Meaning |
 |---|---|
@@ -214,9 +214,13 @@ the pull request comment, for a pushed fix) and the run's result as `verificatio
 | `still_failing` | It fails before and after: the fix may be incomplete, or the command needs setup only the workflow provides |
 | `unverified` | Nothing was run: no command, or one that was refused |
 
-The command is model output read from untrusted logs, so it runs only when it appears **verbatim**
-in the failing workflow file on the branch (indentation aside) and the shell command scanner clears
-it. That makes it the repository's own command, as trusted as the code its tests already run. A
+The command is model output read from untrusted logs, so it runs only when it is, **whole**, the
+`run:` of a step GitHub reports as failed (matched by job and step name in the workflow file on the
+branch, indentation aside), and the shell command scanner clears it. A fragment of a step, another
+job's step or text in a comment is refused. That makes it the repository's own command, as trusted
+as the code its tests already run. The fix branch is fetched before anything runs, so no credential
+is used after the branch's code has run, and the tree is cleaned (`git clean -ffdx`) between the two
+runs so the first one's output cannot make the second pass. A
 command with `${{ }}` expressions is never run. Verification labels a fix; it never stops one from
 being delivered, since a command that needs the workflow's setup steps fails both times for reasons
 that say nothing about the fix. Both runs' output is kept as a `ci.verify` artifact.

@@ -16,3 +16,9 @@ ALTER TABLE "automations" ADD CONSTRAINT "automations_workflow_run_failed_filter
     AND jsonb_array_length("filters"->'workflowPatterns') > 0,
     false
   ));
+
+-- The retention sweep reads decisions that started no run, oldest first. Partial, so the
+-- started decisions the guards read (kept for good) do not grow it. Hand-written: Prisma cannot
+-- express a partial index (see the prisma-pgvector-hnsw skill).
+CREATE INDEX "automation_fires_prunable_created_at_idx"
+  ON "automation_fires" ("created_at") WHERE "outcome" <> 'STARTED';
