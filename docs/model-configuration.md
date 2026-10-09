@@ -65,9 +65,19 @@ API keys are AES-256-GCM encrypted with a per-record 12-byte nonce. The master k
 
 The worker keeps a process-local 30-second cache of resolved `Agent`, `ProviderCredential`, and `EmbeddingConfig` rows (`packages/shared/src/config/cache.ts`). Tune the TTL with `CONFIG_CACHE_TTL_MS`. The cache holds decrypted plaintext API keys for its TTL window — if you rotate a credential, expect up to `CONFIG_CACHE_TTL_MS` of lag before workers pick it up.
 
-A lookup that falls through to a broader scope than it asked for — a team run with no team-level `Agent` or credential row, answered by the GLOBAL one — is the common case, so it is cached too, under a shorter bound: `CONFIG_CACHE_FALLTHROUGH_TTL_MS` (default 5000, never longer than `CONFIG_CACHE_TTL_MS`). A row an admin then adds at the narrower scope is seen within that bound rather than a full TTL.
+A lookup that falls through to a broader scope than it asked for — a team run with no team-level
+`Agent` or credential row, answered by the GLOBAL one — is the common case, so it is cached too,
+under a shorter bound: `CONFIG_CACHE_FALLTHROUGH_TTL_MS` (default 5000, never longer than
+`CONFIG_CACHE_TTL_MS`). A row an admin then adds at the narrower scope is seen within that bound
+rather than a full TTL. A resolved `Agent` entry embeds its decrypted credential, so it takes the
+short bound when either the agent row or the credential fell through.
 
-A role is resolved once per LLM call: the model that is called, the price checked against a USD cap, the cost recorded and (for the planner, decomposer and security gate) the system prompt all come from that one resolution, so an edit landing mid-call cannot bill a different model from the one called.
+The planner, the decomposer, the security gate, each review-network persona and the lesson
+consolidator resolve their role once per LLM call: the model that is called, the price checked
+against a USD cap and the cost recorded all come from that one resolution, so an edit landing
+mid-call cannot bill a different model from the one called. For the planner and the decomposer the
+system prompt comes from the same resolution as well; the security gate always uses its built-in
+prompt. Other model-calling paths are listed under Limitations.
 
 ### Model catalog
 
@@ -107,9 +117,8 @@ row where it sets them — `cacheReadMultiplier`, `cacheWrite5mMultiplier` and
 stays the source for built-ins and a correction to it reaches every deployment; an admin's value
 overrides it and a **Reset** clears it. The table gives Anthropic models 0.1× for reads, 1.25× for
 5-minute writes and 2× for 1-hour writes, on every Claude spec including catalog-only ones;
-`openai/gpt-5` reads at 0.1×. A model routed through OpenRouter, whose id is itself `<vendor>/<model>`
-(`openrouter/anthropic/claude-opus-5-5`), takes the upstream vendor's rule from the same table. Any
-other model's cached input is priced as ordinary input unless its row says otherwise. A negative or non-finite multiplier is ignored. The multipliers scale whatever
+`openai/gpt-5` reads at 0.1×. Any other model's cached input is priced as ordinary input unless its
+row says otherwise. A negative or non-finite multiplier is ignored. The multipliers scale whatever
 input price the catalog holds, so a customized price needs no second edit. The budget tiers still
 meter every input token, cached or not.
 
@@ -587,23 +596,23 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
   briefly disagree after an edit. A `generate()` call already in flight keeps the model it bound.
 - **A fall-through result is cached for a shorter bound, not for the full TTL.** A row added at a
   narrower scope than the one answering (a team override beside a GLOBAL agent) is seen within
-  `CONFIG_CACHE_FALLTHROUGH_TTL_MS` (5 s by default), not instantly.
-- **Only the planner, decomposer, reviewers and security gate bind their model once per call.** The
-  other model-calling paths (implementer sessions, fix and merge-conflict sessions, memory passes)
-  still resolve their role separately for the USD-cap check and for the call, so an edit landing
-  between the two can price a different model from the one called.
+  `CONFIG_CACHE_FALLTHROUGH_TTL_MS` (5 s by default), not instantly. An agent that inherits its model
+  from a parent is judged by its own row's scope, not the parent's.
+- **Only the planner, decomposer, reviewers, security gate and lesson consolidator bind their model
+  once per call.** The other model-calling paths (implementer sessions, fix and merge-conflict
+  sessions, the commit-to-memory pass) still resolve their role separately for the USD-cap check and
+  for the call, so an edit landing between the two can price a different model from the one called.
 - **Pricing is keyed on the resolved `provider/model` spec.** A model with no catalog row and no
   `BUILTIN_MODELS` entry records usage at **zero cost** — the span carries
   `llm.cost_pricing_known=false` — wherever no USD cap applies. Per-run budget tiers are enforced on
   tokens, so an unpriced model is still capped there. Where an organization or channel monthly
   budget applies, the call is refused instead (see above). Embedding calls and the eval harness are
   not covered by that refusal, and a cost shown for a run on an unpriced model is $0.
-- **Cache rates for a routed model assume the router passes the vendor's pricing through.** A spec
-  such as `openrouter/anthropic/claude-opus-5-5` is given Anthropic's cache rates (0.1× reads, 1.25×
-  and 2× writes). That is an assumption about what OpenRouter bills, not something read from a
-  pricing page, and it is made for OpenRouter only; any other router with a `<vendor>/<model>` id
-  gets no cache discount, which overstates cached reads. If a router bills cached input differently,
-  set the multipliers on the model's catalog row, which win over the code table.
+- **A routed model gets no cache discount.** A spec such as `openrouter/anthropic/claude-opus-5-5`
+  is looked up under its router's name, which has no cache rule, so its cached input is priced as
+  ordinary input and cached reads are overstated. Nothing in this repository records what a router
+  bills for cached input, so none is assumed; an admin sets the multipliers on the model's catalog
+  row.
 - **Only `openai/gpt-5` has a model-level OpenAI cache read rate.** The other OpenAI models in the
   built-in table price cached input as ordinary input, because no cached-input rate for them is
   recorded in this repository and a rate is not added without a source it can cite. This overstates

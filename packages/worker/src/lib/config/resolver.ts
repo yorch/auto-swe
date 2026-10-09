@@ -27,7 +27,7 @@ export class ConfigMissingError extends Error {
 export async function resolveProviderCredential(
   provider: string,
   ctx?: ResolveCtx
-): Promise<{ apiBase?: string; apiKey: string }> {
+): Promise<{ apiBase?: string; apiKey: string; fellThrough: boolean }> {
   const cacheKey = `cred:${provider}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}`;
   // A narrower-scope request that landed on a broader row (a TEAM request on
   // ORG or GLOBAL, an ORG request on GLOBAL) is the common case for team runs,
@@ -38,7 +38,13 @@ export async function resolveProviderCredential(
     (r) => (fellThrough(ctx, r._scope) ? fallThroughCacheTtlMs() : configCacheTtlMs()),
     () => resolveProviderCredentialUncached(provider, ctx)
   );
-  return { apiBase: resolved.apiBase, apiKey: resolved.apiKey };
+  // `fellThrough` lets a caller that embeds this credential in a longer-lived
+  // entry (`resolveAgent`) bound that entry by the same short TTL.
+  return {
+    apiBase: resolved.apiBase,
+    apiKey: resolved.apiKey,
+    fellThrough: fellThrough(ctx, resolved._scope),
+  };
 }
 
 function fellThrough(ctx: ResolveCtx | undefined, scope: ResolvedCredentialInternal['_scope']) {

@@ -4,6 +4,7 @@ import { createGoogleGenerativeAI, google } from '@ai-sdk/google';
 import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { ApplicationFailure } from '@temporalio/activity';
 import { type LanguageModel as AiLanguageModel, wrapLanguageModel } from 'ai';
 import { resolveAgent } from './config/agentResolver.js';
 import { currentRequestContext } from './config/contextLookup.js';
@@ -148,8 +149,10 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
       // so the operator notices the bad config rather than silently failing
       // with an unhelpful SDK error.
       if (!apiBase) {
-        throw new Error(
-          `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models.`
+        // Deterministic: retrying the activity cannot add the missing apiBase.
+        throw ApplicationFailure.nonRetryable(
+          `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models.`,
+          'MODEL_CONFIG_INVALID'
         );
       }
       // The adapter sends JSON mode without the schema; put the schema in the

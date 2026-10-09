@@ -260,6 +260,7 @@ async function resolveModelForAgent(
     model: {
       apiBase: cred.apiBase,
       apiKey: cred.apiKey,
+      credentialFellThrough: cred.fellThrough,
       scope: agent.scope,
       spec,
       systemPrompt: agent.systemPrompt ?? undefined,
@@ -281,12 +282,12 @@ async function credentialForModel(
   source: AgentRow,
   provider: string,
   ctx?: ResolveCtx
-): Promise<{ apiBase?: string; apiKey: string }> {
+): Promise<{ apiBase?: string; apiKey: string; fellThrough: boolean }> {
   const pinned = agent.credentialId ?? source.credentialId;
   if (pinned) {
     const result = await resolvePinnedCredential(pinned, provider, ctx);
     if (result.ok) {
-      return { apiBase: result.apiBase, apiKey: result.apiKey };
+      return { apiBase: result.apiBase, apiKey: result.apiKey, fellThrough: false };
     }
     logWarn('agent credential pin not usable; using the provider credential cascade', {
       agentKey: agent.key,
@@ -412,8 +413,11 @@ export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<Resol
   // resolveProviderCredential).
   const resolved = await withCache(
     cacheKey,
+    // The entry embeds the decrypted credential, so it also lives no longer than
+    // the credential's own fall-through bound: a TEAM agent row over a GLOBAL
+    // credential must still notice a newly added TEAM credential quickly.
     (r) =>
-      SCOPE_RANK[r.model.scope] > mostSpecificRequestedRank(ctx)
+      SCOPE_RANK[r.model.scope] > mostSpecificRequestedRank(ctx) || r.model.credentialFellThrough
         ? fallThroughCacheTtlMs()
         : configCacheTtlMs(),
     () => resolveAgentUncached(key, ctx)

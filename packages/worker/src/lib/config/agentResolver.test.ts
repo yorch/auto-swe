@@ -48,7 +48,9 @@ vi.mock('./resolver.js', () => ({
     }
   },
   resolvePinnedCredential: vi.fn(),
-  resolveProviderCredential: vi.fn().mockResolvedValue({ apiBase: undefined, apiKey: 'sk-cred' }),
+  resolveProviderCredential: vi
+    .fn()
+    .mockResolvedValue({ apiBase: undefined, apiKey: 'sk-cred', fellThrough: false }),
 }));
 
 import { resolveAgent, resolveAgentRuntimeChoice } from './agentResolver.js';
@@ -103,7 +105,11 @@ function agentRow(overrides: Record<string, any> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockedResolveCred.mockResolvedValue({ apiBase: undefined, apiKey: 'sk-cred' });
+  mockedResolveCred.mockResolvedValue({
+    apiBase: undefined,
+    apiKey: 'sk-cred',
+    fellThrough: false,
+  });
 });
 
 describe('resolveAgent — reads from the Agent entity', () => {
@@ -121,6 +127,7 @@ describe('resolveAgent — reads from the Agent entity', () => {
     expect(r.model).toEqual({
       apiBase: undefined,
       apiKey: 'sk-cred',
+      credentialFellThrough: false,
       scope: 'GLOBAL',
       spec: 'anthropic/claude-opus-4-8',
       systemPrompt: 'SYS',
@@ -528,6 +535,21 @@ describe('resolveAgent — cross-scope fall-through is cached briefly', () => {
     );
     await resolveAgent('reviewer', { teamId: 't1' });
     expect(ttls).toEqual([30_000]);
+  });
+
+  it('stores a TEAM agent row over a fallen-through credential under the short TTL', async () => {
+    mockedResolveCred.mockResolvedValueOnce({
+      apiBase: undefined,
+      apiKey: 'sk-global',
+      fellThrough: true,
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: arg inspection
+    agentFindFirst.mockImplementation(async (args: any) =>
+      args.where.scope === 'TEAM' ? agentRow({ scope: 'TEAM' }) : agentRow()
+    );
+    const r = await resolveAgent('reviewer', { teamId: 't1' });
+    expect(r.model.scope).toBe('TEAM');
+    expect(ttls).toEqual([5_000]);
   });
 
   it('stores a GLOBAL-only lookup under the full TTL', async () => {

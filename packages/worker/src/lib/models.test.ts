@@ -108,6 +108,13 @@ describe('resolveModel', () => {
 
   it('throws on unknown provider when no apiBase is supplied', () => {
     expect(() => resolveModel('mystery/some-model', 'sk-x')).toThrow(/apiBase/);
+    // A deterministic config error: retrying the activity cannot cure it.
+    try {
+      resolveModel('mystery/some-model', 'sk-x');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toMatchObject({ nonRetryable: true, type: 'MODEL_CONFIG_INVALID' });
+    }
   });
 
   it('rejects malformed specs', () => {

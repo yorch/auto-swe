@@ -34,7 +34,7 @@ vi.mock('../lib/models.js', () => ({
   resolveSystemPrompt: vi.fn(async (_role: string, fallback: string) => fallback),
 }));
 const { assertRolePricedMock } = vi.hoisted(() => ({
-  assertRolePricedMock: vi.fn(async (_role: string) => {}),
+  assertRolePricedMock: vi.fn(async (_role: string, _spec?: string) => {}),
 }));
 vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: assertRolePricedMock }));
 const unpriced = () =>
@@ -188,7 +188,10 @@ describe('consolidateLessons', () => {
     } catch {
       // The refusal may surface or be absorbed per cluster; either way no call was made.
     }
-    expect(assertRolePricedMock).toHaveBeenCalledWith('lessonConsolidator');
+    expect(assertRolePricedMock).toHaveBeenCalledWith(
+      'lessonConsolidator',
+      'anthropic/claude-opus-5-5'
+    );
     expect(mockGenerate).not.toHaveBeenCalled();
     assertRolePricedMock.mockResolvedValue(undefined);
   });

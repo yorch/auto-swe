@@ -173,6 +173,20 @@ describe('provider-credential cache', () => {
     }
   });
 
+  it('reports whether the credential fell through to a broader scope', async () => {
+    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) =>
+      args.where.scope === 'TEAM' ? credRow('sk-team') : credRow('sk-global')
+    );
+    expect((await resolveProviderCredential('anthropic', { teamId: 't1' })).fellThrough).toBe(
+      false
+    );
+    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) =>
+      args.where.scope === 'TEAM' ? null : credRow('sk-global')
+    );
+    expect((await resolveProviderCredential('anthropic', { teamId: 't2' })).fellThrough).toBe(true);
+    expect((await resolveProviderCredential('anthropic')).fellThrough).toBe(false);
+  });
+
   it('never lets the fall-through TTL exceed the full TTL', async () => {
     vi.useFakeTimers();
     try {

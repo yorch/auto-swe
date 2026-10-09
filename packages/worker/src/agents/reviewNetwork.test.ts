@@ -279,6 +279,27 @@ describe('runReviewNetwork reviewer failures', () => {
     await expect(runReviewNetwork(CODE_RESULT)).rejects.toBeInstanceOf(ConfigMissingError);
   });
 
+  it('fails the review when a persona model cannot be built, not a REVIEWER_CRASH verdict', async () => {
+    // The second persona bound (domain logic) cannot be built.
+    vi.mocked(getBoundModel)
+      .mockResolvedValueOnce({
+        model: { sentinel: 'model' },
+        spec: 'anthropic/a',
+        systemPrompt: null,
+      } as never)
+      .mockRejectedValueOnce(
+        ApplicationFailure.nonRetryable(
+          "Provider 'acme' is not built-in and requires an apiBase on its credential.",
+          'MODEL_CONFIG_INVALID'
+        )
+      );
+    await expect(runReviewNetwork(CODE_RESULT)).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'MODEL_CONFIG_INVALID',
+    });
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
   it('throws a retryable failure when every reviewer crashed', async () => {
     generateMock.mockImplementation(async () => {
       throw new Error('provider 503');

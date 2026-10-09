@@ -72,6 +72,11 @@ export interface ResolvedModelConfig {
   /** Base URL override from the resolved credential. */
   apiBase?: string;
   /**
+   * The credential came from a broader scope than the run asked for, so the
+   * entry caching this config uses the short fall-through TTL.
+   */
+  credentialFellThrough?: boolean;
+  /**
    * Optional system prompt override. `undefined` means use the hardcoded
    * constant in prompts.ts. Set on the `Agent` row via the admin UI.
    */
