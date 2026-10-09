@@ -76,8 +76,8 @@ The rest goes to the engine ([automations.md §2](./automations.md#2-from-occurr
 - **The run.** It starts as a synthetic ticket `ci-<runId>-<attempt>`, on the branch
   `<branchPrefix>/ci-<runId>-<attempt>`, with the workflow id `ci-<automation8>-<runId12>-<attempt>`.
   GitHub does not redeliver a webhook by itself: when the start fails and the delivery answers
-  `503`, redeliver it from the webhook's delivery log, or start the template by hand with the run
-  id.
+  `503`, redeliver it from the webhook's delivery log, or use **Decide again** in the automation's
+  history ([automations.md](./automations.md#2-from-occurrence-to-run)).
 
 The payload carries every option explicitly, defaults included. For a push the base branch is the
 pushed branch. For a pull request it is the pull request's head branch. A fix is then a draft
@@ -270,16 +270,14 @@ See [github-app-setup.md](./github-app-setup.md).
 - **One run per commit per repository.** When several workflows fail on one commit, only the
   first to finish is diagnosed, whichever trigger it matched. A re-run that fails again on the same
   commit is not diagnosed again.
-- **A failed start is not retried by itself.** After three attempts the delivery answers `503` and
-  nothing more happens until someone redelivers it. Failures that arrived meanwhile were suppressed
-  against the run that did not start (as the same commit, the cooldown or in flight) and stay
-  suppressed. A decision that fails in the database answers `500` with nothing recorded.
+- **A failed start is not retried by itself.** After three attempts the delivery answers `503`, the
+  decision is recorded as `FAILED_TO_START`, and nothing more happens until someone redelivers it or
+  decides again. Failures that arrived while the start was being attempted were suppressed against
+  it (as the same commit, the cooldown or in flight) and stay suppressed until each is decided
+  again by hand. A decision that fails in the database answers `500` with nothing recorded.
 - **The decision history is kept.** Suppressed decisions are recorded too, and nothing prunes
   them; deleting a trigger keeps its decisions in the repository's ledger
   ([automations.md](./automations.md#the-ledger)).
-- **A template that is missing when a failure arrives is recorded as `FAILED_TO_START`** under
-  that run's key. A redelivery after the template is installed does not retry it; start the
-  template by hand with the run id.
 
 - **Only GitHub Actions.** A failure reported by another CI system (commit statuses, third-party
   check runs) is not read. The run is looked up through the Actions API.

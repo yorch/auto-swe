@@ -109,6 +109,11 @@ export interface EventSource<Filters = unknown, Facts = unknown> {
   /** One sentence for the picker. */
   summary: string;
   filters: z.ZodType<Filters>;
+  /**
+   * The occurrence as the ledger stores it (`facts`), so a recorded decision can be taken again
+   * from the ledger alone. A row that does not parse cannot be retried.
+   */
+  facts: z.ZodType<Facts>;
   defaultFilters: Filters;
   filterFields: FilterField[];
   /** The filters in a few words, for lists. */

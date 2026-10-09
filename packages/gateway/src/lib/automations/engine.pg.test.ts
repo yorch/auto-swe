@@ -43,6 +43,8 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
   /** Executions Temporal reports as over. */
   const gone = new Set<string>();
 
+  /** When set, every start throws (Temporal down). */
+  let temporalDown = false;
   const fastify = {
     log: { error: vi.fn(), warn: vi.fn() },
     prisma,
@@ -51,6 +53,9 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       startRunnableWorkflow: async (id: string) => {
         // Long enough that concurrent deliveries overlap in the decision.
         await new Promise((r) => setTimeout(r, 20));
+        if (temporalDown) {
+          throw new Error('temporal down');
+        }
         started.push(id);
       },
     },
@@ -138,6 +143,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
   beforeEach(async () => {
     started.length = 0;
     gone.clear();
+    temporalDown = false;
     await prisma.automationFire.deleteMany({ where: { repoKey } });
     await prisma.activeWorkflow.deleteMany({ where: { repoId } });
   });
@@ -284,6 +290,29 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     } finally {
       await prisma.automation.delete({ where: { id: again.id } });
     }
+  });
+
+  it('records a failed start, and concurrent redeliveries take it again exactly once', async () => {
+    temporalDown = true;
+    await expect(deliver({ runId: '600' })).rejects.toMatchObject({
+      name: 'AutomationStartError',
+    });
+    const failed = await prisma.automationFire.findMany({ where: { repoKey } });
+    expect(failed).toEqual([
+      expect.objectContaining({ outcome: 'FAILED_TO_START', temporalWorkflowId: null }),
+    ]);
+    temporalDown = false;
+    const results = await Promise.all(Array.from({ length: 4 }, () => deliver({ runId: '600' })));
+    expect(outcomes(results)).toEqual(['DUPLICATE', 'DUPLICATE', 'DUPLICATE', 'STARTED']);
+    expect(started).toHaveLength(1);
+    const rows = await prisma.automationFire.findMany({
+      orderBy: { createdAt: 'asc' },
+      where: { repoKey },
+    });
+    expect(rows.map((r) => [r.outcome, r.retriedAt !== null])).toEqual([
+      ['FAILED_TO_START', true],
+      ['STARTED', false],
+    ]);
   });
 
   it('refuses an automation row with filters its source does not accept, or unknown sources', async () => {

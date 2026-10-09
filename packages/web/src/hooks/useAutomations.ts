@@ -34,6 +34,8 @@ export interface AutomationFire {
   facts: Record<string, unknown>;
   temporalWorkflowId: string | null;
   workRequestId: string | null;
+  /** Set when the decision was taken again; a newer row holds the outcome. */
+  retriedAt: string | null;
   createdAt: string;
 }
 
@@ -88,6 +90,25 @@ export function useAutomationFires(id: string | null) {
         .get<{ data: { fires: AutomationFire[] } }>(`${BASE}/${id}/fires?limit=20`)
         .then((r) => r.data.fires),
     queryKey: ['automations', 'fires', id],
+  });
+}
+
+/** Take a decision that started no run again, now; every limit applies. */
+export function useRetryAutomationFire(automationId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (fireId: string) =>
+      api
+        .post<{ data: { outcome?: string; reason?: string } }>(
+          `${BASE}/${automationId}/fires/${fireId}/retry`,
+          {}
+        )
+        .then((r) => r.data),
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['automations', 'fires', automationId] }),
+        qc.invalidateQueries({ queryKey: ['automations', 'all'] }),
+      ]),
   });
 }
 

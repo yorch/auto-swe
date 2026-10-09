@@ -28,6 +28,12 @@ vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
   resolveIssueTrackerConfig: vi.fn(async () => tracker.config),
 }));
 
+const engine = vi.hoisted(() => ({ decideAndStart: vi.fn() }));
+vi.mock('../lib/automations/engine.js', async (orig) => ({
+  ...(await orig<typeof import('../lib/automations/engine.js')>()),
+  decideAndStart: engine.decideAndStart,
+}));
+
 vi.mock('../lib/launchAuthorization.js', () => ({
   authorizeLaunch: vi.fn(async () => launch.decision),
   sendLaunchRefusal: (
@@ -115,6 +121,7 @@ async function buildApp() {
       })),
     },
     automationFire: {
+      findFirst: vi.fn(),
       findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]),
       groupBy: vi.fn(async (_args: unknown) => [] as unknown[]),
     },
@@ -280,6 +287,82 @@ describe('automationRoutes (event automations)', () => {
       });
       expect(res.statusCode).toBe(404);
       expect(ctx.prisma.automationFire.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retrying a decision', () => {
+    const FIRE = '44444444-4444-4444-8444-444444444444';
+    const FACTS = {
+      branch: 'main',
+      event: 'push',
+      headSha: 'a'.repeat(40),
+      pullRequestNumber: null,
+      runAttempt: 1,
+      runId: '12',
+      workflowPath: '.github/workflows/ci.yml',
+    };
+    const fire = (over: Record<string, unknown> = {}) => ({
+      facts: FACTS,
+      id: FIRE,
+      outcome: 'FAILED_TO_START',
+      repoKey: 'github.com/acme/api',
+      retriedAt: null,
+      ...over,
+    });
+    const retry = () =>
+      ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `${URL}/${AUTOMATION}/fires/${FIRE}/retry`,
+      });
+
+    it('lets a lead take a decision that started nothing again, through every limit', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+      engine.decideAndStart.mockResolvedValue({ automationId: AUTOMATION, outcome: 'STARTED' });
+      const res = await retry();
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toMatchObject({ outcome: 'STARTED' });
+      expect(engine.decideAndStart.mock.calls[0]?.[2]).toMatchObject({
+        facts: FACTS,
+        repoKey: 'github.com/acme/api',
+        retry: { fireId: FIRE, kind: 'manual' },
+      });
+      expect(authorizeLaunch).toHaveBeenCalled();
+    });
+
+    it('refuses a plain member', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+      expect((await retry()).statusCode).toBe(403);
+      expect(engine.decideAndStart).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a decision that started a run', fire({ outcome: 'STARTED' }), stored()],
+      ['a decision already taken again', fire({ retriedAt: new Date() }), stored()],
+      ['an occurrence this build cannot read', fire({ facts: { runId: 'x' } }), stored()],
+      ['an automation that is off', fire(), stored({ enabled: false })],
+      [
+        'filters that no longer select it',
+        fire(),
+        stored({ filters: { ...FILTERS, branchPatterns: ['release/*'] } }),
+      ],
+    ])('refuses %s', async (_name, row, automation) => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automation.findUnique.mockResolvedValue(automation);
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(row);
+      const res = await retry();
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('NOT_RETRYABLE');
+      expect(engine.decideAndStart).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 when another retry got there first', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+      engine.decideAndStart.mockResolvedValue({ duplicate: true });
+      expect((await retry()).statusCode).toBe(409);
     });
   });
 

@@ -114,7 +114,8 @@ export function repositoryKey(host: string, repoFullName: string): string {
   return `${host}/${repoFullName}`.toLowerCase();
 }
 
-const connectionInclude = {
+/** What the engine loads of a repository row. */
+export const connectionInclude = {
   automations: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
   installation: { select: { isActive: true } },
   team: {
@@ -179,7 +180,48 @@ export async function handleOccurrence<F, X>(
   if (!match) {
     return { ignored: true, reason: 'no matching automation' };
   }
-  const { connection, automation } = match;
+  const host = verifiedHost ?? hostOf(occurrence.repoHtmlUrl) ?? 'github';
+  return decideAndStart(fastify, source, {
+    ...match,
+    facts,
+    now,
+    repoKey: repositoryKey(host, occurrence.repoFullName),
+    // A redelivery takes a failed start again; any other earlier decision stands.
+    retry: { kind: 'redelivery' },
+    startRetryDelayMs,
+  });
+}
+
+/** A repository row as the engine reads it: its automations, installation and team. */
+export type EngineConnection = Prisma.ConnectionGetPayload<{ include: typeof connectionInclude }>;
+
+/** Which earlier decision of the same occurrence a new one may replace. */
+export type RetryScope =
+  /** A redelivered webhook: only a `FAILED_TO_START` decision is taken again. */
+  | { kind: 'redelivery' }
+  /** A manager's retry of one recorded decision that did not start a run. */
+  | { kind: 'manual'; fireId: string };
+
+/**
+ * Decide one occurrence for one matched automation and start its run. Shared by the webhook
+ * path and a manager's retry, so a retry passes every limit a delivery does.
+ */
+export async function decideAndStart<F, X>(
+  fastify: FastifyInstance,
+  source: EventSource<F, X>,
+  args: {
+    connection: EngineConnection;
+    automation: AutomationRow;
+    facts: X;
+    repoKey: string;
+    now: Date;
+    retry: RetryScope;
+    startRetryDelayMs: number;
+  }
+): Promise<AutomationResult> {
+  const prisma = fastify.prisma;
+  const { connection, automation, facts, repoKey, now, startRetryDelayMs } = args;
+  const { branchPrefix } = await resolveWorkflowDefaults();
   const orgId = connection.team?.orgId ?? undefined;
   const enabled = await resolveSetting(source.killSwitch, {
     ...(orgId ? { orgId } : {}),
@@ -189,8 +231,6 @@ export async function handleOccurrence<F, X>(
     return { ignored: true, reason: `${source.label} automations are switched off` };
   }
 
-  const host = verifiedHost ?? hostOf(occurrence.repoHtmlUrl) ?? 'github';
-  const repoKey = repositoryKey(host, occurrence.repoFullName);
   const keys = source.keys(facts);
   const fireBase = {
     automationId: automation.id,
@@ -202,6 +242,13 @@ export async function handleOccurrence<F, X>(
     source: source.key,
     subjectKey: keys.subject,
   };
+
+  // Taking an earlier decision again: it keeps its row, marked retried, and gives up the
+  // dedupe key so the new decision can be recorded under it. Exactly one taker wins.
+  const released = await releaseDecision(prisma, fireBase.dedupeKey, args.retry, now);
+  if (!released) {
+    return { duplicate: true };
+  }
 
   // Decisions that need no lock: recorded once, by the dedupe key.
   const unmet = source.precondition?.(facts);
@@ -351,14 +398,23 @@ export async function handleOccurrence<F, X>(
       throw err;
     }
     // The decision was STARTED and committed, but the workflow did not start (the ledger
-    // rows were rolled back). Remove the fire so a redelivery can try again, and tell the
-    // caller to answer non-2xx.
+    // rows were rolled back). Record it as a failed start: it no longer counts against later
+    // occurrences, it shows in the history, and a redelivery or a retry takes it again. The
+    // caller answers non-2xx.
     await prisma.automationFire
-      .deleteMany({ where: { dedupeKey: fireBase.dedupeKey, outcome: 'STARTED' } })
+      .updateMany({
+        data: {
+          outcome: 'FAILED_TO_START',
+          reason: 'the workflow could not be started; redeliver the event or retry the decision',
+          temporalWorkflowId: null,
+          workRequestId: null,
+        },
+        where: { dedupeKey: fireBase.dedupeKey, outcome: 'STARTED' },
+      })
       .catch((cleanupErr: unknown) =>
         fastify.log.error(
           { dedupeKey: fireBase.dedupeKey, err: cleanupErr },
-          'could not remove an unstarted automation fire'
+          'could not record an unstarted automation fire as failed'
         )
       );
     throw new AutomationStartError('The automation run could not be started', { cause: err });
@@ -485,6 +541,35 @@ export async function decideUnderLock<F, X>(
     };
   }
   return null;
+}
+
+/**
+ * Free the occurrence's dedupe key for a new decision, when the earlier one may be taken again.
+ * True when the caller may decide: nothing recorded yet, or the earlier decision was released
+ * by this call. False when another taker got there first (or, for a manual retry, the decision
+ * is gone, started a run, or was already retried).
+ */
+async function releaseDecision(
+  prisma: PrismaClient,
+  dedupeKey: string,
+  retry: RetryScope,
+  now: Date
+): Promise<boolean> {
+  const where: Prisma.AutomationFireWhereInput =
+    retry.kind === 'manual'
+      ? { dedupeKey, id: retry.fireId, outcome: { not: 'STARTED' } }
+      : { dedupeKey, outcome: 'FAILED_TO_START' };
+  const earlier = await prisma.automationFire.findFirst({ select: { id: true }, where });
+  if (!earlier) {
+    // A redelivery of something never decided, or decided otherwise: the dedupe key decides.
+    return retry.kind === 'redelivery';
+  }
+  // Moved aside under its own id, so the key is unique again and the row stays in the history.
+  const { count } = await prisma.automationFire.updateMany({
+    data: { dedupeKey: `${dedupeKey}~${earlier.id}`, retriedAt: now },
+    where: { ...where, id: earlier.id },
+  });
+  return count === 1;
 }
 
 async function recordDecision(

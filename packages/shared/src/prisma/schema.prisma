@@ -1386,6 +1386,9 @@ model AutomationFire {
   facts              Json        @default("{}")
   temporalWorkflowId String?     @map("temporal_workflow_id")
   workRequestId      String?     @map("work_request_id") @db.Uuid
+  /// Set when the decision was taken again (a redelivery of a failed start, or a manager's
+  /// retry); a newer row then holds the occurrence's dedupe key.
+  retriedAt          DateTime?   @map("retried_at") @db.Timestamptz
   createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([automationId, createdAt])

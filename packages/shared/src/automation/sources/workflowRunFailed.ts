@@ -29,15 +29,16 @@ export const WorkflowRunFailedFiltersSchema = z.object({
 export type WorkflowRunFailedFilters = z.infer<typeof WorkflowRunFailedFiltersSchema>;
 
 /** A failed workflow run, as a decision needs it. Built from the signed webhook alone. */
-export interface WorkflowRunFailedFacts {
-  event: string;
-  branch: string;
-  workflowPath: string;
-  headSha: string;
-  runId: string;
-  runAttempt: number;
-  pullRequestNumber: number | null;
-}
+export const WorkflowRunFailedFactsSchema = z.object({
+  branch: z.string().min(1).max(255),
+  event: z.string().min(1).max(64),
+  headSha: z.string().min(1).max(64),
+  pullRequestNumber: z.number().int().positive().nullable(),
+  runAttempt: z.number().int().min(1),
+  runId: z.string().regex(/^\d{1,20}$/),
+  workflowPath: z.string().min(1).max(500),
+});
+export type WorkflowRunFailedFacts = z.infer<typeof WorkflowRunFailedFactsSchema>;
 
 /** A workflow path fit to quote in a run description, or a neutral stand-in. */
 function quotablePath(path: string): string {
@@ -92,6 +93,7 @@ export const workflowRunFailedSource: EventSource<
     return `${text('workflowPath')} on ${text('branch')}${pr} · ${text('event')} · run ${text('runId')}/${text('runAttempt')}`;
   },
   eventInputKeys: CI_EVENT_INPUT_KEYS,
+  facts: WorkflowRunFailedFactsSchema,
   filterFields: [
     {
       key: 'events',

@@ -101,6 +101,7 @@ which depend on earlier runs.
 | `POST /api/v1/automations/events` | ADMIN, or a LEAD of the repository's **owning** team |
 | `PATCH` / `DELETE /api/v1/automations/events/:id` | The same |
 | `GET /api/v1/automations/events/:id/fires?limit=` | A member, as for the list |
+| `POST /api/v1/automations/events/:id/fires/:fireId/retry` | Those who may manage, as a launch decision: takes one decision that started no run again (§2) |
 | `GET /api/v1/automations/events/templates?connectionId=&source=` | Those who may manage: the templates an automation of that source may start, each with the options it declares |
 
 An event automation starts runs on the repository with the platform credential. That is why
@@ -133,7 +134,8 @@ host. The engine (`handleOccurrence`) then:
    automations oldest first within each. One occurrence starts at most one run, however many
    automations or repository rows match it.
 3. **Records the decision** as an `AutomationFire`, keyed by the occurrence on its repository
-   (`dedupeKey`). A redelivered webhook answers `duplicate` and starts nothing. The decision is taken
+   (`dedupeKey`). A redelivered webhook answers `duplicate` and starts nothing, unless the earlier
+   decision was `FAILED_TO_START`: that one is taken again. The decision is taken
    under a transaction lock on the **repository**, so concurrent deliveries see each other. A run
    is **suppressed** when:
 
@@ -153,7 +155,16 @@ host. The engine (`handleOccurrence`) then:
    requesting user, so it uses the platform credential and never a person's saved token. Starting
    the workflow is tried three times. A retry that finds the execution already started counts as
    started, because an earlier attempt whose reply was lost did start it. If every attempt fails,
-   the decision is removed and the delivery answers `503`.
+   the decision becomes `FAILED_TO_START` and the delivery answers `503`. A failed start counts
+   against nothing: only `STARTED` decisions suppress later occurrences.
+
+A decision that started no run can be **taken again**: by redelivering the webhook when it was
+`FAILED_TO_START`, or with **Decide again** in the automation's history (the retry route above) for
+any outcome but `STARTED`. The retry reads the occurrence from the ledger's `facts`, needs the
+automation on and its filters still selecting the occurrence, and passes every limit a delivery
+does, so a decision that still holds (a cooldown that has not run out, the platform's own output)
+is recorded again. The earlier row stays in the history, marked `retriedAt`, with its dedupe key
+moved aside to `<key>~<its id>`; concurrent retries and redeliveries take it at most once.
 
 ### The ledger
 
@@ -168,7 +179,9 @@ produced, or what is still in flight. Each row keeps:
 - `subjectKey`: what one run is enough for;
 - `scopeKey`: what the cooldown and in-flight checks count over;
 - `producedKey`: what a run produced;
-- `facts`: the occurrence as the source saw it, which the history shows.
+- `facts`: the occurrence as the source saw it, which the history shows and a retry decides
+  from;
+- `retriedAt`: set when the decision was taken again.
 
 ## 3. Event sources
 
