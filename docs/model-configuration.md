@@ -407,7 +407,7 @@ Pick a name (`opencodego`, `groq`, `bedrock`, …). If the provider speaks the O
 5. API key: paste from your password manager — you won't see it again after save.
 6. Click **Test** to verify the credential works (issues a `GET <base>/models` probe).
 
-A built-in provider (`anthropic`, `openai`, `google`) with an API base set — a proxy or gateway in front of the vendor — is probed and discovered at `<base>/models` with that provider's own auth style, behind the same SSRF guard. With no API base, the vendor's endpoint is used.
+A built-in provider (`anthropic`, `openai`, `google`) with an API base set — a proxy or gateway in front of the vendor — is probed and discovered at `<base>/models` with that provider's own auth style, behind the same SSRF guard. With no API base, the vendor's endpoint is used. The API base must not carry a query or fragment. A listing fetched through such a proxy is never treated as complete, so it can suggest models but never proposes retiring one: a proxy exposes aliases or deployments, not the vendor's catalog. Google credentials send the key as the `x-goog-api-key` header to a custom base, as the worker does, and as a query parameter only to Google's own endpoint.
 
 Agents name the provider by that same lowercase name in their model spec: `opencodego/glm-5.2`, `openrouter/openai/gpt-6-luna`. Specs are stored with the provider lowercased and the model id as written, and a spec without a provider is refused on save. Saving an agent whose provider has no credential reachable from its scope — or whose reachable credentials for a non-built-in provider all lack an API base — succeeds but returns `credentialWarnings`.
 

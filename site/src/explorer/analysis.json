@@ -4031,10 +4031,10 @@
       "title": "Fixed-string discovery errors"
     },
     {
-      "anchor": "complete: query === null && !unfollowable && listedIds.size > 0,",
+      "anchor": "// A built-in provider behind an `apiBase` lists what the proxy exposes",
       "before": 8,
       "id": "discoveryList",
-      "lines": 12,
+      "lines": 20,
       "path": "packages/shared/src/lib/modelDiscovery.ts",
       "title": "What counts as a complete provider listing"
     },
