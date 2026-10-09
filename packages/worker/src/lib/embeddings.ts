@@ -3,6 +3,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { prisma } from '@auto-swe/shared/db';
+import { modelCallFetch } from '@auto-swe/shared/lib/modelDiscovery';
 import { embeddingProviderProblem, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { APICallError, embed } from 'ai';
 import {
@@ -42,6 +43,9 @@ interface CachedEmbeddingModel {
 
 let cachedModel: CachedEmbeddingModel | null = null;
 
+/** Embedding calls go through the same SSRF guard as model calls (see `models.ts`). */
+const embeddingFetch = modelCallFetch();
+
 async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
   const { spec, apiKey, apiBase } = await resolveEmbeddingConfig();
   const { provider, modelId } = parseProviderModelSpec(spec);
@@ -55,10 +59,14 @@ async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
   let model: EmbeddingModel;
   switch (provider) {
     case 'openai':
-      model = createOpenAI({ apiKey, baseURL: apiBase }).embedding(modelId);
+      model = createOpenAI({ apiKey, baseURL: apiBase, fetch: embeddingFetch }).embedding(modelId);
       break;
     case 'google':
-      model = createGoogleGenerativeAI({ apiKey, baseURL: apiBase }).embedding(modelId);
+      model = createGoogleGenerativeAI({
+        apiKey,
+        baseURL: apiBase,
+        fetch: embeddingFetch,
+      }).embedding(modelId);
       break;
     default: {
       const problem = embeddingProviderProblem(provider);
@@ -70,9 +78,12 @@ async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
           `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models (Embeddings tab).`
         );
       }
-      model = createOpenAICompatible({ apiKey, baseURL: apiBase, name: provider }).embeddingModel(
-        modelId
-      );
+      model = createOpenAICompatible({
+        apiKey,
+        baseURL: apiBase,
+        fetch: embeddingFetch,
+        name: provider,
+      }).embeddingModel(modelId);
     }
   }
   cachedModel = { cacheKey, model, provider, spec };

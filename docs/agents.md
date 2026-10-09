@@ -560,7 +560,9 @@ the credential never enters the container. Each turn registers with the proxy
 (`agents/claudeCode/modelProxy.ts`) and the harness gets a random token in place of the key and the
 proxy's address in place of the provider's. The proxy accepts only `POST /v1/messages` and
 `/v1/messages/count_tokens`, only with a token whose turn is still running, sends the call on to the
-credential's host with the real key, and streams the answer back unchanged. A token read out of the
+credential's host with the real key — through the same SSRF guard as every model call, so an
+`apiBase` that resolves or redirects to an internal address is refused — and streams the answer back
+unchanged. A token read out of the
 container is good for that turn's model calls, at the proxy, until the turn ends, and spends against
 the run's budget like any other call. A workspace reaches the proxy at `HARNESS_MODEL_PROXY_URL`: by
 default `host.docker.internal`, which `createWorkspace` maps to the Docker host gateway, or a worker

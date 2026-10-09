@@ -219,6 +219,8 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
       advertisedUrl: (port) => `http://${gateway}:${port}`,
       listenHost: '0.0.0.0',
       listenPort: 0,
+      // The provider is a loopback stand-in, which the default guarded fetch refuses.
+      upstreamFetch: globalThis.fetch,
     });
     try {
       const ws = await startWorkspace();

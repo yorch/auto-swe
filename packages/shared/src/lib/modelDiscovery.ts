@@ -143,6 +143,21 @@ export function modelListFetch(privateHosts: readonly string[]): typeof fetch {
   }) as typeof fetch;
 }
 
+/**
+ * The fetch for inference and embedding calls: {@link modelListFetch}'s guard —
+ * every connection resolved, checked and pinned, a private address reachable
+ * only for a host an admin listed in `models.privateNetworkHosts` — with
+ * redirects refused, since a model call carries the API key and its prompt and
+ * has no reason to follow one. The listed hosts are read per request (behind the
+ * settings cache), so a client built once picks up a change to the list.
+ */
+export function modelCallFetch(
+  privateHosts: () => Promise<readonly string[]> = resolvePrivateModelHosts
+): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    modelListFetch(await privateHosts())(input, { ...init, redirect: 'error' })) as typeof fetch;
+}
+
 const SAFE_TOKEN = /^[A-Za-z0-9_]{1,40}$/;
 
 /** A thrown fetch error as a fixed string: its name and error code, never its message. */

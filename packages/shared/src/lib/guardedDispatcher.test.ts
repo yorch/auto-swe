@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   classifyAddress,
   createGuardedFetch,
@@ -248,6 +248,24 @@ describe('createGuardedFetch', () => {
     });
     await ok('https://x.example/');
     expect(fetchImpl.mock.calls[0][1]?.dispatcher).toBeUndefined();
+  });
+});
+
+describe('createGuardedFetch under an environment proxy', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('dispatches through Node’s own fetch, which routes via the configured proxy', async () => {
+    const nodeFetch = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', nodeFetch);
+    const guarded = createGuardedFetch({
+      proxied: true,
+      resolver: resolverOf(v4('93.184.216.34')),
+    });
+    await guarded('https://x.example/', { method: 'POST' });
+    expect(nodeFetch).toHaveBeenCalledTimes(1);
+    expect(nodeFetch.mock.calls[0][1]).toEqual({ method: 'POST' });
   });
 });
 

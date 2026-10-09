@@ -178,6 +178,19 @@ describe('resolveModel — OpenAI-compatible structured output', () => {
   });
 });
 
+describe('resolveModel — SSRF guard', () => {
+  it('refuses a call to an internal apiBase no admin listed, before any request', async () => {
+    const stub = vi.fn();
+    vi.stubGlobal('fetch', stub);
+    const m = resolveModel('vllm/llama-4', 'sk-x', 'http://10.0.0.5:8000/v1');
+    await expect(
+      m.doGenerate({ prompt: [{ content: [{ text: 'hi', type: 'text' }], role: 'user' }] })
+    ).rejects.toThrow(/10\.0\.0\.5|blocked|private/i);
+    expect(stub).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('resolveModel — client cache', () => {
   it('reuses the client for the same spec, key and base', () => {
     const a = resolveModel('openrouter/x', 'sk-same-123456', 'https://openrouter.ai/api/v1');

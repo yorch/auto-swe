@@ -281,6 +281,11 @@ export function setDefaultFetchForTests(fn: typeof fetch): void {
   defaultFetch = fn;
 }
 
+/** The fetch used under an environment proxy: Node's built-in, read at call time. */
+function proxiedFetch(): typeof fetch {
+  return globalThis.fetch;
+}
+
 export interface GuardedFetchOptions extends GuardOptions {
   /** The underlying fetch. Defaults to undici's. */
   fetchImpl?: typeof fetch;
@@ -310,7 +315,11 @@ export function createGuardedFetch(opts: GuardedFetchOptions = {}): typeof fetch
     if (isIP(bareHost(host)) !== 0 || proxied) {
       await resolveAndCheck(host, opts);
     }
-    const doFetch = opts.fetchImpl ?? defaultFetch;
+    // Under an environment proxy nothing is pinned, and only Node's own fetch is
+    // certain to route through the proxy it configured; the undici package's
+    // fetch keeps its own global dispatcher, which may connect directly — and
+    // fail where direct egress is blocked.
+    const doFetch = opts.fetchImpl ?? (proxied ? proxiedFetch() : defaultFetch);
     try {
       return await doFetch(input, (dispatcher ? { ...init, dispatcher } : init) as RequestInit);
     } catch (err) {
