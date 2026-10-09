@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { IBM_Plex_Mono, Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 import { AppConfigScript, InlineHeadScript } from '@/components/AppConfigScript';
 import { AppShell } from '@/components/layout/AppShell';
@@ -8,18 +8,23 @@ import { ThemeSync } from '@/components/ThemeSync';
 import { publicApiUrl, temporalUiUrl } from '@/lib/env';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
 
-const inter = Inter({
+// Served from the repository, not fetched from Google Fonts at build time: a
+// failed download there fails `next build`. Latin subset, from Fontsource;
+// licences beside the files.
+const inter = localFont({
   display: 'swap',
-  subsets: ['latin'],
+  src: [{ path: './fonts/inter-latin-wght-normal.woff2', style: 'normal', weight: '400 700' }],
   variable: '--font-inter',
-  weight: ['400', '500', '600', '700'],
 });
 
-const ibmPlexMono = IBM_Plex_Mono({
+const ibmPlexMono = localFont({
   display: 'swap',
-  subsets: ['latin'],
+  src: [
+    { path: './fonts/ibm-plex-mono-latin-400-normal.woff2', style: 'normal', weight: '400' },
+    { path: './fonts/ibm-plex-mono-latin-500-normal.woff2', style: 'normal', weight: '500' },
+    { path: './fonts/ibm-plex-mono-latin-600-normal.woff2', style: 'normal', weight: '600' },
+  ],
   variable: '--font-ibm-plex-mono',
-  weight: ['400', '500', '600'],
 });
 
 export const metadata: Metadata = {
