@@ -57,6 +57,7 @@
     "./lib/inputSchema": "./dist/lib/inputSchema.js",
     "./lib/triggerMapping": "./dist/lib/triggerMapping.js",
     "./lib/syncBuiltins": "./dist/lib/syncBuiltins.js",
+    "./automation": "./dist/automation/index.js",
     "./bundle": "./dist/bundle/index.js",
     "./lib/trackerWrite": "./dist/lib/trackerWrite.js",
     "./lib/trackerSync": "./dist/lib/trackerSync.js",

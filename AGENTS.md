@@ -140,7 +140,7 @@ Top-level files that matter:
 | Temporal workflow ID          | `eng-<org>-<repoName>-<ticketId>` | `eng-acme-payments-api-JIRA-1234`         |
 | Git branch                    | `<BRANCH_PREFIX>/<ticketId>`      | `auto/JIRA-1234` (default prefix: `auto`) |
 | Agent-run workflow ID / branch | `agent-<repo8>-<hex8>` (with an `Idempotency-Key`: `agent-<repo8>-<user8>-<digest>`) / `<BRANCH_PREFIX>/agent-<id8>` | `agent-1a2b3c4d-9f8e7d6c` / `auto/agent-0a1b2c3d` |
-| CI-trigger workflow ID / branch | `ci-<trigger8>-<runId12>-<attempt>` / `<BRANCH_PREFIX>/ci-<runId>-<attempt>` | `ci-1a2b3c4d-123456789012-1` / `auto/ci-123456789012-1` |
+| CI-failure automation workflow ID / branch | `ci-<automation8>-<runId12>-<attempt>` / `<BRANCH_PREFIX>/ci-<runId>-<attempt>` | `ci-1a2b3c4d-123456789012-1` / `auto/ci-123456789012-1` |
 | Docker workspace container    | `workspace-<random-hex>`          | `workspace-a1b2c3d4`                      |
 | Prisma table mapping          | `snake_case` via `@@map`          | `active_workflows`                        |
 | Team slug                     | `lowercase-kebab-case`            | `payments`, `platform-eng`                |

@@ -21,7 +21,7 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    ciFailureTriggerFire: { findFirst: m.findFire, update: m.updateFire },
+    automationFire: { findFirst: m.findFire, update: m.updateFire },
     connection: { findUniqueOrThrow: m.findRepo },
     runInput: { findUnique: m.findRunInput },
     workflowTemplate: { findFirst: m.findBuiltIn },
@@ -106,11 +106,16 @@ const push = (over: { request?: RepoWorkRequest; triage?: CiTriageResult } = {})
   });
 
 const fireRow = (over: Record<string, unknown> = {}) => ({
-  fixCommitSha: null,
-  headBranch: BRANCH,
+  automation: {
+    connectionId: CONN,
+    inputs: { pullRequestDelivery: 'push' },
+    source: 'github.workflow_run.failed',
+    templateId: null,
+  },
   id: 'fire-1',
+  producedKey: null,
+  scopeKey: BRANCH,
   temporalWorkflowId: 'ci-wf-1',
-  trigger: { connectionId: CONN, inputs: { pullRequestDelivery: 'push' }, templateId: null },
   ...over,
 });
 
@@ -159,7 +164,7 @@ describe('pushCiFixToPullRequest', () => {
   it('records the commit, then fast-forwards the pull request branch to it', async () => {
     await expect(push()).resolves.toEqual({ branch: BRANCH, commitSha: FIX, pushed: true });
     expect(m.updateFire).toHaveBeenCalledWith({
-      data: { fixCommitSha: FIX },
+      data: { producedKey: FIX },
       where: { id: 'fire-1' },
     });
     expect(m.order).toEqual(['record', 'push']);
@@ -186,7 +191,14 @@ describe('pushCiFixToPullRequest', () => {
       'when the trigger, not the payload, does not ask for it',
       () =>
         m.findFire.mockResolvedValue(
-          fireRow({ trigger: { connectionId: CONN, inputs: {}, templateId: null } })
+          fireRow({
+            automation: {
+              connectionId: CONN,
+              inputs: {},
+              source: 'github.workflow_run.failed',
+              templateId: null,
+            },
+          })
         ),
       /does not ask/,
     ],
@@ -195,9 +207,10 @@ describe('pushCiFixToPullRequest', () => {
       () =>
         m.findFire.mockResolvedValue(
           fireRow({
-            trigger: {
+            automation: {
               connectionId: CONN,
               inputs: { pullRequestDelivery: 'push' },
+              source: 'github.workflow_run.failed',
               templateId: 't',
             },
           })
@@ -310,6 +323,12 @@ describe('pushCiFixToPullRequest', () => {
     }
   });
 
+  it('refuses when the automation that fired has since been deleted', async () => {
+    m.findFire.mockResolvedValue(fireRow({ automation: null }));
+    await expect(push()).resolves.toMatchObject({ pushed: false });
+    expect(m.fastForwardBranch).not.toHaveBeenCalled();
+  });
+
   it('refuses a fix whose code result names another branch, and deletes nothing', async () => {
     const out = await pushCiFixToPullRequest({
       codeResult: { ...codeResult, branch: BRANCH },
@@ -322,7 +341,7 @@ describe('pushCiFixToPullRequest', () => {
 
   it('matches the never-push list without case', async () => {
     m.settings['github.ciFixNeverPushBranches'] = ['release/**'];
-    m.findFire.mockResolvedValue(fireRow({ headBranch: 'Release/2.0' }));
+    m.findFire.mockResolvedValue(fireRow({ scopeKey: 'Release/2.0' }));
     const out = await pushCiFixToPullRequest({
       codeResult,
       request: request({ baseBranch: 'Release/2.0' }),
@@ -337,13 +356,13 @@ describe('pushCiFixToPullRequest', () => {
     m.fastForwardBranch.mockResolvedValue(false);
     await push();
     expect(m.updateFire.mock.calls.map((c) => c[0].data)).toEqual([
-      { fixCommitSha: FIX },
-      { fixCommitSha: null },
+      { producedKey: FIX },
+      { producedKey: null },
     ]);
   });
 
   it('answers pushed on a retry after a push whose reply was lost', async () => {
-    m.findFire.mockResolvedValue(fireRow({ fixCommitSha: FIX }));
+    m.findFire.mockResolvedValue(fireRow({ producedKey: FIX }));
     m.branchInfo.mockResolvedValue({ protected: false, sha: FIX });
     await expect(push()).resolves.toEqual({ branch: BRANCH, commitSha: FIX, pushed: true });
     expect(m.fastForwardBranch).not.toHaveBeenCalled();

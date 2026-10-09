@@ -199,7 +199,7 @@ const nodes: NodeMap = mergeNodes(
       type: 'step',
     },
     // No CI loop: the pull request's own CI runs on the new commit, and a failure of it is
-    // recognised by the gateway as the platform's own fix (`SUPPRESSED_OWN_FIX`).
+    // recognised by the gateway as the platform's own fix (`SUPPRESSED_OWN_OUTPUT`).
     pushed: terminate('SUCCESS', {
       group: 'deliver',
       result: { ...TRIAGE_RESULT, pushedCommitSha: { from: 'nodes.pushFix.output.commitSha' } },

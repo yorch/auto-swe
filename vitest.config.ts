@@ -176,6 +176,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ciLogScreen.ts'),
       },
       {
+        find: '@auto-swe/shared/automation',
+        replacement: path.resolve(__dirname, 'packages/shared/src/automation/index.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/ciTrigger',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ciTrigger.ts'),
       },

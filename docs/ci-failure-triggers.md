@@ -1,6 +1,7 @@
 # CI failure triage and fix
 
-When a GitHub Actions workflow fails on a repository with a matching **CI-failure trigger**, the
+When a GitHub Actions workflow fails on a repository with a matching **CI-failure trigger** (an
+[event automation](./automations.md) of the `github.workflow_run.failed` source), the
 platform starts the `ci-triage-and-fix` template. It diagnoses the failure from its
 logs and, when the diagnosis says a code change can fix it, opens a **draft** pull request into the
 branch that failed — or, for a failing pull request where an admin allows it and its trigger asks,
@@ -13,32 +14,25 @@ requests the platform did not open: `main`, release branches, and people's pull 
 
 ---
 
-## 1. Triggers
+## 1. The `github.workflow_run.failed` automation
 
-A **CI-failure trigger** is a rule on one repository (`CiFailureTrigger`). When a GitHub Actions
-run on that repository fails and a trigger matches it, the platform starts the triage template.
-Triggers are opt-in per repository; there are none until someone creates one.
+A CI-failure trigger is an [event automation](./automations.md) with the source
+`github.workflow_run.failed`. When a GitHub Actions run on its repository fails and its filters
+select the run, the platform starts the triage template. Creating, managing, limits, the options
+builder and the decision ledger are shared by every event source and described in
+[automations.md](./automations.md). This section covers what is specific to CI failures.
 
-A trigger has three parts: **when** it fires, the **limits** on how often, and **what** it starts —
-a template and that template's own options.
+| Filter | Meaning | Dashboard default |
+|---|---|---|
+| `events` | `push` and/or `pull_request` | `push` |
+| `branchPatterns` | Globs over the failing branch (`main`, `release/*`, `!release/legacy`). At least one pattern that is not a `!` exclusion | `main, release/*` |
+| `workflowPatterns` | Globs over the workflow **file path** (`.github/workflows/ci.yml`), never its display name, which a pull request can change | `.github/workflows/**` |
 
-| Field | Part | Meaning | Default |
-|---|---|---|---|
-| `name` | — | A label | — |
-| `events` | when | `push` and/or `pull_request` | `push` |
-| `branchPatterns` | when | Globs over the failing branch (`main`, `release/*`, `!release/legacy`). Required, with at least one pattern that is not a `!` exclusion | — |
-| `workflowPatterns` | when | Globs over the workflow **file path** (`.github/workflows/ci.yml`), never its display name, which a pull request can change | `.github/workflows/**` |
-| `cooldownMinutes` | limits | No new run for the same branch within this many minutes of the last one started (0–10080) | 30 |
-| `maxRunsPerDay` | limits | Most runs the trigger starts in any 24 hours (1–500) | 10 |
-| `templateId` | what | A template to start instead of the built-in `ci-triage-and-fix`: active, and global or the repository team's own, and CI-aware (its input schema names `githubRunId`) | the built-in |
-| `inputs` | what | The template's options this trigger sets (below). An option left out takes the template's default | `{}` |
-| `enabled` | — | — | `true` |
+In globs, `*` matches within one path segment, `**` matches across them, and `?` matches one
+character. A later pattern overrides an earlier one, so `!` exclusions go after what they exclude.
+An empty list never means "everything".
 
-**Options** are not fixed by the trigger: they are whatever the chosen template declares in its
-input schema, minus the fields the failing run fills (`baseBranch`, `connectionId`, `description`,
-`githubRunId`, `pullRequestNumber`, `runAttempt`, `ticketId`), which a trigger can never set. The
-dashboard renders the form from that declaration, so a team template that declares its own options
-gets a form for them. The built-in template declares these:
+The default template is the built-in `ci-triage-and-fix`. It declares these options:
 
 | Option | Meaning | Default |
 |---|---|---|
@@ -47,108 +41,48 @@ gets a form for them. The built-in template declares these:
 | `minFixConfidence` | A fix is attempted only when the diagnosis' confidence is at least this (0.3–1) | 0.6 |
 | `fixCategories` | Which diagnoses are fixed: any of `regression`, `test_bug`, `configuration`, `dependency` (at least one) | all four |
 | `maxCiFixAttempts` | How many times a draft is revised while its own CI fails (0–5) | 2 |
-| `pullRequestDelivery` | For a failing pull request: `draft_pr` (a draft into its branch) or `push` (a commit pushed onto its branch, §2.1). A request, not a grant; a push failure always gets a draft | `draft_pr` |
+| `pullRequestDelivery` | For a failing pull request: `draft_pr` (a draft into its branch) or `push` (a commit pushed onto its branch, §2.1). A request, not a grant; a push failure always gets a draft. Gated: refused at save while `github.ciFixPushToPullRequestEnabled` is off, and with any template but the default | `draft_pr` |
 
-The dashboard saves only the options changed from the template's default, so a trigger made there
-follows the template when a default moves. The API stores the options it is sent, so an option set
-to its current default through the API stays at that value.
-
-Every CI-aware template's payload must also satisfy the CI payload contract the worker parses
-(`CiTriagePayloadSchema`): a team template may declare options of its own, but an option with a
-name the built-in uses (`mode`, `minFixConfidence`, `fixCategories`, `maxCiFixAttempts`,
-`commentOnPullRequest`) keeps the built-in's meaning and bounds.
-
-In globs, `*` matches within one path segment, `**` matches across them, and `?` matches one
-character. A later pattern overrides an earlier one, so `!` exclusions go after what they exclude.
-An empty list never means "everything".
-
-### Managing triggers
-
-On the dashboard, **Connections** (`/connections`) has a **CI-failure triggers** action for each git
-repository. It lists the repository's triggers and their recent decisions to its members, and lets
-those who may manage them add, edit, enable, disable and remove one. The form has a tester: given an
-event, a branch and a workflow file, it says whether the trigger would react and, if not, which
-part rules it out. It uses the same matcher (`ciTriggerMismatch`) the webhook does, and says nothing
-about the cooldown, cap and in-flight checks, which depend on earlier runs. The same operations are
-available through the API:
-
-| Route | Who |
-|---|---|
-| `GET /api/v1/repositories/:id/ci-triggers` | A member of the owning team or of a team the repository is shared with, or ADMIN; under an enforcing [access gate](./repo-access-gating.md) a member also needs a current GitHub permission on the repository. The response says whether the caller may manage them (`canManage`) |
-| `POST /api/v1/repositories/:id/ci-triggers` | ADMIN, or a LEAD of the repository's **owning** team |
-| `PATCH` / `DELETE /api/v1/repositories/:id/ci-triggers/:triggerId` | The same |
-| `GET /api/v1/repositories/:id/ci-triggers/:triggerId/fires?limit=` | A member, as for the list |
-| `GET /api/v1/repositories/:id/ci-triggers/templates` | Those who may manage the triggers: the templates a trigger here may start, each with the options it declares |
-
-A trigger in fix mode opens pull requests on the repository with the platform credential. That
-is why managing triggers stays with the owning team, like every other repository setting, and a
-shared team can read them but not create one.
-
-Saving a trigger that can start runs is a **launch decision**, made as it is for a schedule. This
-covers creating an enabled trigger, and any change that leaves a trigger on. Editing a trigger
-that is off, and switching one off, are not launch decisions. The repository
-must be active. The access gate judges the caller's own GitHub login (the runs use the platform
-credential), and the caller must belong to the repository's organization, which must be under its
-monthly cap. Otherwise a lead whose GitHub access was revoked could keep a trigger acting on the
-repository. Switching a trigger off is never refused.
-
-A trigger's `templateId` must name a template that is active, not a system template, global or the
-repository team's own, and whose input schema names `githubRunId`. Its `inputs` must be options that
-template declares, and the payload they build (`buildCiTriggerPayload`: every declared default,
-then the trigger's options, then the failing run's fields) must pass both the template's input
-schema and the CI payload contract the worker parses (`CiTriagePayloadSchema`) — so a value the
-worker would refuse is refused at save, not after a run has started. The check is made as each kind
-of failure the trigger reacts to would arrive, with and without a pull request. Changing the
-template or the events checks the options the trigger keeps against them. Every create, update and delete is written to the audit
-log.
+The occurrence fills `baseBranch`, `githubRunId`, `runAttempt` and, for a pull request,
+`pullRequestNumber`. A CI-aware team template must declare `githubRunId`, and every option it
+shares a name with keeps the built-in's meaning and bounds: the source's payload contract
+(`CiTriagePayloadSchema`) is checked on every CI payload.
 
 ### From webhook to run
 
 GitHub sends a `workflow_run` event when a run completes. It is accepted at `/api/v1/webhooks/git`
 and at `/api/v1/webhooks/ci`, because a GitHub App has a single webhook URL. The delivery is
 verified and bound to its host exactly like the other GitHub deliveries
-([repositories.md](./repositories.md)). Then, without calling GitHub:
+([repositories.md](./repositories.md)). Then, without calling GitHub, the source **ignores**, with
+nothing recorded:
 
-1. **Ignored outright**, with nothing recorded:
-   - a run that is not `completed` with `failure` or `timed_out`;
-   - an event other than `push` or `pull_request`;
-   - a run whose head repository is not this repository (compared by id, so a fork renamed to
-     the same name is still a fork);
-   - a branch name that is not a valid branch;
-   - one of the platform's own `<branchPrefix>/…` branches, which have their own CI loop. This
-     also stops a draft fix whose CI fails from triggering a fix of the fix;
-   - a failure no enabled trigger matches;
-   - a deployment, organization or team with `github.ciFailureTriggersEnabled` off.
-2. **The first matching trigger acts.** Repository rows are taken oldest first, and triggers
-   oldest first within each. One failed run attempt starts at most one run, however many triggers
-   or repository rows match it.
-3. **The decision is recorded** as a `CiFailureTriggerFire`, keyed by the run attempt on its host.
-   A redelivered webhook therefore answers `duplicate` and starts nothing. The decision is taken
-   under a transaction lock on the **repository**, so concurrent deliveries see each other. A run
-   is **suppressed** when:
+- a run that is not `completed` with `failure` or `timed_out`;
+- an event other than `push` or `pull_request`;
+- a run whose head repository is not this repository (compared by id, so a fork renamed to the same
+  name is still a fork);
+- a branch name that is not a valid branch;
+- one of the platform's own `<branchPrefix>/…` branches, which have their own CI loop. This also
+  stops a draft fix whose CI fails from triggering a fix of the fix.
 
-   | Outcome | When |
-   |---|---|
-   | `SUPPRESSED_OWN_FIX` | The commit is one the platform pushed onto a pull request's branch as a fix (§2.1): its failure is that fix failing, and is never triaged again, by any trigger of the repository |
-   | `SUPPRESSED_SAME_COMMIT` | Any trigger of the repository already started a run for this commit: another workflow failing on it, or a re-run. Two triggers on two failing workflows of one push open one fix, not two |
-   | `SUPPRESSED_COOLDOWN` | Any trigger of the repository started one for this branch within this trigger's `cooldownMinutes` |
-   | `SUPPRESSED_IN_FLIGHT` | A run started for this branch in the last 36 hours is still in progress: its ledger row is open **and** Temporal does not report the execution over (a Temporal that cannot answer counts as running) |
-   | `SUPPRESSED_DAILY_CAP` | This trigger started `maxRunsPerDay` runs in the last 24 hours |
-   | `SUPPRESSED_NO_PULL_REQUEST` | A `pull_request` failure with no open pull request from this branch of this repository |
-   | `SUPPRESSED_BUDGET` | The repository's organization is over its monthly budget |
-   | `FAILED_TO_START` | The trigger's template is missing, inactive, a system template, or not CI-aware; or the trigger's options no longer fit it (the payload is built and checked again at every fire, since the template can change after the trigger was saved) |
+The rest goes to the engine ([automations.md §2](./automations.md#2-from-occurrence-to-run)). For CI:
 
-4. Otherwise the run starts (`STARTED`) as a synthetic ticket `ci-<runId>-<attempt>`. Its branch is
-   `<branchPrefix>/ci-<runId>-<attempt>`. It has no requesting user, so it uses the platform
-   credential and never a person's saved token. Starting the workflow is tried three times. A
-   retry that finds the execution already started counts as started, because an earlier attempt
-   whose reply was lost did start it. If every attempt fails, the recorded decision is removed and
-   the delivery answers `503`. GitHub does not redeliver by itself: someone has to redeliver it
-   from the webhook's delivery log, or start the template by hand with the run id.
+- **Decision keys.** The *subject* is the commit, so one run per commit, whichever workflow failed
+  or was re-run. The *scope* is the branch, for the cooldown and the in-flight check. The look-back
+  for in-flight runs is 36 hours (an implementation, then up to six CI waits of four hours). The
+  dedupe key is the run attempt on its repository.
+- **Suppressions.** A `pull_request` failure with no open pull request from this branch of this
+  repository is `SUPPRESSED_PRECONDITION`. A commit the platform pushed as a fix (§2.1) is
+  `SUPPRESSED_OWN_OUTPUT`.
+- **The run.** It starts as a synthetic ticket `ci-<runId>-<attempt>`, on the branch
+  `<branchPrefix>/ci-<runId>-<attempt>`, with the workflow id `ci-<automation8>-<runId12>-<attempt>`.
+  GitHub does not redeliver a webhook by itself: when the start fails and the delivery answers
+  `503`, redeliver it from the webhook's delivery log, or start the template by hand with the run
+  id.
 
-The payload carries every option explicitly, defaults included. For a push the base branch is the pushed branch. For a pull request it is the pull request's head branch, so a
-fix is a draft **into the author's branch**, which they can merge into their own pull request — or,
-with `pullRequestDelivery: push` where allowed, a commit on that branch (§2.1).
+The payload carries every option explicitly, defaults included. For a push the base branch is the
+pushed branch. For a pull request it is the pull request's head branch. A fix is then a draft
+**into the author's branch**, which they can merge into their own pull request — or, with
+`pullRequestDelivery: push` where allowed, a commit on that branch (§2.1).
 
 ## 2. The template
 
@@ -197,7 +131,7 @@ API with `force: false`, so GitHub accepts only a fast-forward. It pushes only w
 moment, every one of these holds; otherwise it answers with the reason and the run opens the draft
 instead, and the comment says why:
 
-- the run is the very execution a CI-failure trigger started: its fire row names the run's request
+- the run is the very execution an automation started: its decision row names the run's request
   **and** its workflow id, so a run started by hand, and a re-run of a triggered run (which keeps
   the request), never pushes;
 - the template the run executes — recorded when the trigger started it — is the built-in one, the
@@ -216,14 +150,14 @@ instead, and the comment says why:
   range is under `.github/workflows` or `.github/actions`. This is a second, path-only check; the
   implementer's refusal (§2.2), which also covers symlinks and submodules, is the full one.
 
-The fix commit is written to the fire row (`fixCommitSha`) **before** the push, and cleared again
+The fix commit is written to the decision row (`producedKey`) **before** the push, and cleared again
 if GitHub refuses it. A retry after a push whose reply was lost finds the branch at the recorded
 commit and reports it pushed. The pull request's
-own CI then runs on it; a failure of that commit is suppressed as `SUPPRESSED_OWN_FIX`, so a fix is
+own CI then runs on it; a failure of that commit is suppressed as `SUPPRESSED_OWN_OUTPUT`, so a fix is
 never fixed again by another run. The run's work branch is deleted after a successful push, and the
 run ends `SUCCESS` with the commit in its result. There is no CI loop on this path.
 
-A trigger asking for `push` is refused at save (`PUSH_DELIVERY_DISABLED`) while the setting is
+A trigger asking for `push` is refused at save (`OPTION_DISABLED`) while the setting is
 off, and (`INVALID_INPUTS`) with a template other than the built-in; the run decides again from the
 setting and the branch as they are when it pushes.
 
@@ -340,8 +274,9 @@ See [github-app-setup.md](./github-app-setup.md).
   nothing more happens until someone redelivers it. Failures that arrived meanwhile were suppressed
   against the run that did not start (as the same commit, the cooldown or in flight) and stay
   suppressed. A decision that fails in the database answers `500` with nothing recorded.
-- **The fire history is kept.** Suppressed decisions are recorded too, and nothing prunes them;
-  deleting a trigger deletes its history.
+- **The decision history is kept.** Suppressed decisions are recorded too, and nothing prunes
+  them; deleting a trigger keeps its decisions in the repository's ledger
+  ([automations.md](./automations.md#the-ledger)).
 - **A template that is missing when a failure arrives is recorded as `FAILED_TO_START`** under
   that run's key. A redelivery after the template is installed does not retry it; start the
   template by hand with the run id.
@@ -383,8 +318,8 @@ See [github-app-setup.md](./github-app-setup.md).
   platform's own branches, and the set of events are fixed, because each would widen what an agent
   can do with the platform credential rather than tune how it decides.
 - **Options follow the template, not a version of it.** A trigger stores the options it changed;
-  the rest are read from the template's input schema at each fire. A built-in template's input
-  schema on an existing database is not replaced by a newer release (only a missing one is filled),
-  so a new built-in option appears once that schema is updated.
+  the rest are read from the template's input schema at each fire. A release that changes the
+  built-in schema moves an untouched stored schema forward, but a schema an admin edited is kept,
+  and then a new built-in option does not appear until the admin adds it.
 - **Nothing proves the fix.** The draft's own CI loop is the check. The template does not re-run the
   originally failing workflow on the fix before opening the draft.

@@ -28,14 +28,15 @@ vi.mock('../lib/launchAuthorization.js', () => ({
   ) => reply.status(r.status).send(r.body),
 }));
 
+import { WORKFLOW_RUN_FAILED } from '@auto-swe/shared/automation';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
 import { authorizeLaunch } from '../lib/launchAuthorization.js';
-import { ciTriggerRoutes } from './ciTriggers.js';
+import { automationRoutes } from './automations.js';
 
 const REPO = '11111111-1111-4111-8111-111111111111';
-const TRIGGER = '22222222-2222-4222-8222-222222222222';
+const AUTOMATION = '22222222-2222-4222-8222-222222222222';
 const TEMPLATE = '33333333-3333-4333-8333-333333333333';
-const URL = `/api/v1/repositories/${REPO}/ci-triggers`;
+const URL = '/api/v1/automations/events';
 const AUTH = { authorization: 'Bearer fake' };
 
 type Membership = { role: string; userId: string } | null;
@@ -60,10 +61,30 @@ function repoRow(owning: Membership, shared: Membership = null, isActive = true)
   };
 }
 
-const VALID = {
+const FILTERS = {
   branchPatterns: ['main', 'release/*'],
-  name: 'release branches',
+  events: ['push'],
+  workflowPatterns: ['.github/workflows/**'],
 };
+
+const VALID = {
+  connectionId: REPO,
+  filters: FILTERS,
+  name: 'release branches',
+  source: WORKFLOW_RUN_FAILED,
+};
+
+/** A stored automation, as `findUnique` returns it. */
+const stored = (over: Record<string, unknown> = {}) => ({
+  connectionId: REPO,
+  enabled: true,
+  filters: FILTERS,
+  id: AUTOMATION,
+  inputs: {},
+  source: WORKFLOW_RUN_FAILED,
+  templateId: null,
+  ...over,
+});
 
 async function buildApp() {
   const app = Fastify();
@@ -71,20 +92,20 @@ async function buildApp() {
   app.setSerializerCompiler(serializerCompiler);
   const auth = { role: 'ENGINEER', sub: 'user-1' };
   const prisma = {
-    ciFailureTrigger: {
+    automation: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
-        id: TRIGGER,
+        id: AUTOMATION,
         ...data,
       })),
       delete: vi.fn(async () => ({})),
-      findFirst: vi.fn(),
       findMany: vi.fn(async () => []),
+      findUnique: vi.fn(),
       update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
-        id: TRIGGER,
+        id: AUTOMATION,
         ...data,
       })),
     },
-    ciFailureTriggerFire: { findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]) },
+    automationFire: { findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]) },
     configAuditLog: { create: vi.fn(async (_args: { data: Record<string, unknown> }) => ({})) },
     connection: { findFirst: vi.fn() },
     workflowTemplate: {
@@ -96,12 +117,12 @@ async function buildApp() {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: auth.role, sub: auth.sub }),
   } as unknown as never);
-  await app.register(ciTriggerRoutes, { prefix: '/api/v1/repositories' });
+  await app.register(automationRoutes, { prefix: '/api/v1/automations' });
   await app.ready();
   return { app, auth, prisma };
 }
 
-describe('ciTriggerRoutes', () => {
+describe('automationRoutes (event automations)', () => {
   let ctx: Awaited<ReturnType<typeof buildApp>>;
   beforeAll(async () => {
     ctx = await buildApp();
@@ -112,9 +133,11 @@ describe('ciTriggerRoutes', () => {
     ctx.auth.sub = 'user-1';
     gateState.gate = undefined;
     launch.decision = { ok: true };
+    settings.pushAllowed = false;
     vi.clearAllMocks();
     // The built-in template, unless a test says otherwise.
     ctx.prisma.workflowTemplate.findFirst.mockResolvedValue(BUILTIN);
+    ctx.prisma.automation.findUnique.mockResolvedValue(stored());
   });
 
   const BUILTIN = {
@@ -125,34 +148,44 @@ describe('ciTriggerRoutes', () => {
 
   const lead = { role: 'LEAD', userId: 'user-1' };
   const member = { role: 'MEMBER', userId: 'user-1' };
+  const post = (payload: Record<string, unknown>) =>
+    ctx.app.inject({ headers: AUTH, method: 'POST', payload, url: URL });
+  const patch = (payload: Record<string, unknown>) =>
+    ctx.app.inject({ headers: AUTH, method: 'PATCH', payload, url: `${URL}/${AUTOMATION}` });
 
   describe('reading', () => {
-    it('lists the triggers to a member, saying whether they may manage them', async () => {
+    it('lists a repository’s automations to a member, saying whether they may manage them', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
-      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: URL });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `${URL}?connectionId=${REPO}`,
+      });
       expect(res.statusCode).toBe(200);
-      expect(res.json().data).toEqual({ canManage: false, triggers: [] });
+      expect(res.json().data).toEqual({ automations: [], canManage: false });
     });
 
     it('lets a member of a SHARED team read, but not manage', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null, lead));
-      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: URL });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `${URL}?connectionId=${REPO}`,
+      });
       expect(res.json().data.canManage).toBe(false);
     });
 
-    it('lists the templates a trigger may start with only the options a trigger sets', async () => {
+    it('lists the templates a source may start, with only the options an automation sets', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.workflowTemplate.findMany.mockResolvedValue([
-        {
-          description: '',
-          id: BUILTIN.id,
-          inputSchema: CI_TRIAGE_INPUT_SCHEMA,
-          name: 'ci',
-          teamId: null,
-        },
-        { description: '', id: TEMPLATE, inputSchema: null, name: 'not-ci', teamId: null },
+        { description: '', id: BUILTIN.id, inputSchema: CI_TRIAGE_INPUT_SCHEMA, name: 'ci' },
+        { description: '', id: TEMPLATE, inputSchema: null, name: 'not-ci' },
       ]);
-      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: `${URL}/templates` });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `${URL}/templates?connectionId=${REPO}&source=${WORKFLOW_RUN_FAILED}`,
+      });
       expect(res.statusCode).toBe(200);
       const [only, ...rest] = res.json().data;
       expect(rest).toEqual([]);
@@ -170,61 +203,115 @@ describe('ciTriggerRoutes', () => {
       );
     });
 
-    it('refuses the template list to those who may not manage the triggers', async () => {
+    it('refuses the template list to those who may not manage', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null, lead));
-      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: `${URL}/templates` });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `${URL}/templates?connectionId=${REPO}&source=${WORKFLOW_RUN_FAILED}`,
+      });
       expect(res.statusCode).toBe(403);
       expect(ctx.prisma.workflowTemplate.findMany).not.toHaveBeenCalled();
     });
 
     it('404s a repository the caller is not a member of', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null));
-      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: URL });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `${URL}?connectionId=${REPO}`,
+      });
       expect(res.statusCode).toBe(404);
+    });
+
+    it('requires a current GitHub permission under an enforcing gate', async () => {
+      gateState.gate = { mode: 'enforce', staleAfterHours: 24 };
+      ctx.prisma.connection.findFirst.mockResolvedValue(null);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `${URL}?connectionId=${REPO}`,
+      });
+      expect(res.statusCode).toBe(404);
+      const where = ctx.prisma.connection.findFirst.mock.calls[0]?.[0].where;
+      expect(JSON.stringify(where)).toContain('repoAccess');
+    });
+
+    it('shows a member what an automation decided', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
+      ctx.prisma.automationFire.findMany.mockResolvedValue([
+        { outcome: 'SUPPRESSED_COOLDOWN' },
+      ] as never);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `${URL}/${AUTOMATION}/fires?limit=5`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.fires).toEqual([{ outcome: 'SUPPRESSED_COOLDOWN' }]);
+      expect(ctx.prisma.automationFire.findMany.mock.calls[0]?.[0].take).toBe(5);
+    });
+
+    it('404s an automation on a repository the caller cannot see', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null));
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `${URL}/${AUTOMATION}/fires`,
+      });
+      expect(res.statusCode).toBe(404);
+      expect(ctx.prisma.automationFire.findMany).not.toHaveBeenCalled();
     });
   });
 
   describe('creating', () => {
     it('lets a LEAD of the owning team create one, with safe defaults', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      const res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
+      const res = await post(VALID);
       expect(res.statusCode).toBe(201);
-      expect(ctx.prisma.ciFailureTrigger.create.mock.calls[0]?.[0].data).toMatchObject({
+      expect(ctx.prisma.automation.create.mock.calls[0]?.[0].data).toMatchObject({
         connectionId: REPO,
         createdById: 'user-1',
-        events: ['push'],
+        filters: FILTERS,
         // No options: the template's defaults, which diagnose only.
         inputs: {},
-        workflowPatterns: ['.github/workflows/**'],
+        source: WORKFLOW_RUN_FAILED,
       });
-      expect(ctx.prisma.configAuditLog.create).toHaveBeenCalled();
+      expect(ctx.prisma.configAuditLog.create.mock.calls[0]?.[0].data).toMatchObject({
+        action: 'CREATE',
+        entityType: 'Automation',
+      });
     });
 
     it('refuses a plain member and a shared team’s lead', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
-      let res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
-      expect(res.statusCode).toBe(403);
+      expect((await post(VALID)).statusCode).toBe(403);
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null, lead));
-      res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
-      expect(res.statusCode).toBe(403);
-      expect(ctx.prisma.ciFailureTrigger.create).not.toHaveBeenCalled();
+      expect((await post(VALID)).statusCode).toBe(403);
+      expect(ctx.prisma.automation.create).not.toHaveBeenCalled();
     });
 
     it.each([
-      ['no branch patterns', { ...VALID, branchPatterns: [] }],
-      ['only exclusions', { ...VALID, branchPatterns: ['!main'] }],
-      ['an event that is never acted on', { ...VALID, events: ['pull_request_target'] }],
+      ['no branch patterns', { ...VALID, filters: { ...FILTERS, branchPatterns: [] } }],
+      ['only exclusions', { ...VALID, filters: { ...FILTERS, branchPatterns: ['!main'] } }],
+      [
+        'an event that is never acted on',
+        { ...VALID, filters: { ...FILTERS, events: ['pull_request_target'] } },
+      ],
+      ['an unknown source', { ...VALID, source: 'github.push' }],
       ['an unknown mode', { ...VALID, inputs: { mode: 'AUTO_MERGE' } }],
       ['an option the template does not declare', { ...VALID, inputs: { autoMerge: true } }],
-      ['a key the failing run fills', { ...VALID, inputs: { baseBranch: 'main' } }],
+      ['a key the occurrence fills', { ...VALID, inputs: { baseBranch: 'main' } }],
+      ['a null option', { ...VALID, inputs: { mode: null } }],
       ['a confidence floor out of range', { ...VALID, inputs: { minFixConfidence: 2 } }],
       ['no category to fix', { ...VALID, inputs: { fixCategories: [] } }],
       ['a negative cooldown', { ...VALID, cooldownMinutes: -1 }],
       ['a zero daily cap', { ...VALID, maxRunsPerDay: 0 }],
     ])('rejects %s', async (_label, payload) => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      const res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload, url: URL });
+      const res = await post(payload);
       expect(res.statusCode).toBe(400);
+      expect(ctx.prisma.automation.create).not.toHaveBeenCalled();
     });
 
     it('refuses a launch the access gate or the organization refuses', async () => {
@@ -233,69 +320,35 @@ describe('ciTriggerRoutes', () => {
         ok: false,
         refusal: { body: { error: { code: 'REPO_ACCESS_DENIED', message: 'no' } }, status: 403 },
       };
-      const res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
+      const res = await post(VALID);
       expect(res.statusCode).toBe(403);
       expect(res.json().error.code).toBe('REPO_ACCESS_DENIED');
-      expect(ctx.prisma.ciFailureTrigger.create).not.toHaveBeenCalled();
       expect(vi.mocked(authorizeLaunch).mock.calls[0]?.[2]).toMatchObject({
         runIdentity: 'platform',
       });
     });
 
-    it('requires a current GitHub permission under an enforcing gate', async () => {
-      gateState.gate = { mode: 'enforce', staleAfterHours: 24 };
-      ctx.prisma.connection.findFirst.mockResolvedValue(null);
-      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url: URL });
-      expect(res.statusCode).toBe(404);
-      const where = ctx.prisma.connection.findFirst.mock.calls[0]?.[0].where;
-      expect(JSON.stringify(where)).toContain('repoAccess');
-    });
-
-    it('accepts a team template that takes the CI payload', async () => {
+    it('accepts a team template its source can start', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
         activeVersion: 2,
         id: TEMPLATE,
         inputSchema: CI_TRIAGE_INPUT_SCHEMA,
       });
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'POST',
-        payload: { ...VALID, templateId: TEMPLATE },
-        url: URL,
-      });
+      const res = await post({ ...VALID, templateId: TEMPLATE });
       expect(res.statusCode).toBe(201);
-      // System templates are excluded in the query itself.
       expect(
         JSON.stringify(ctx.prisma.workflowTemplate.findFirst.mock.calls[0]?.[0].where)
       ).toContain('system:');
     });
 
-    it('refuses a template that does not take the CI payload', async () => {
+    it.each([
+      ['takes no CI payload', { activeVersion: 1, id: TEMPLATE, inputSchema: null }],
+      ['is not active and global or the team’s', null],
+    ])('refuses a template that %s', async (_label, row) => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
-        activeVersion: 1,
-        id: TEMPLATE,
-        inputSchema: null,
-      });
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'POST',
-        payload: { ...VALID, templateId: TEMPLATE },
-        url: URL,
-      });
-      expect(res.statusCode).toBe(400);
-    });
-
-    it("refuses a template that is not active and global or the team's", async () => {
-      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue(null);
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'POST',
-        payload: { ...VALID, templateId: TEMPLATE },
-        url: URL,
-      });
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue(row);
+      const res = await post({ ...VALID, templateId: TEMPLATE });
       expect(res.statusCode).toBe(400);
       expect(res.json().error.code).toBe('INVALID_TEMPLATE');
     });
@@ -303,117 +356,94 @@ describe('ciTriggerRoutes', () => {
     it('refuses a push delivery an admin has not allowed, or with a team template', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       const payload = { ...VALID, inputs: { mode: 'fix', pullRequestDelivery: 'push' } };
-      settings.pushAllowed = false;
-      let res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload, url: URL });
+      let res = await post(payload);
       expect(res.statusCode).toBe(400);
-      expect(res.json().error.code).toBe('PUSH_DELIVERY_DISABLED');
-
+      expect(res.json().error.code).toBe('OPTION_DISABLED');
       settings.pushAllowed = true;
-      res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload, url: URL });
-      expect(res.statusCode).toBe(201);
-
-      res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'POST',
-        payload: { ...payload, templateId: TEMPLATE },
-        url: URL,
-      });
+      expect((await post(payload)).statusCode).toBe(201);
+      res = await post({ ...payload, templateId: TEMPLATE });
       expect(res.statusCode).toBe(400);
-      expect(res.json().error.message).toMatch(/built-in/);
-      settings.pushAllowed = false;
+      expect(res.json().error.message).toMatch(/default template/);
+    });
+
+    it('checks a template requiring a pull request against push failures too', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
+        activeVersion: 1,
+        id: TEMPLATE,
+        inputSchema: {
+          ...CI_TRIAGE_INPUT_SCHEMA,
+          required: [...(CI_TRIAGE_INPUT_SCHEMA.required ?? []), 'pullRequestNumber'],
+        },
+      });
+      const prOnly = { ...FILTERS, events: ['pull_request'] };
+      expect((await post({ ...VALID, filters: prOnly, templateId: TEMPLATE })).statusCode).toBe(
+        201
+      );
+      const withPush = await post({
+        ...VALID,
+        filters: { ...FILTERS, events: ['push', 'pull_request'] },
+        templateId: TEMPLATE,
+      });
+      expect(withPush.statusCode).toBe(400);
+      expect(withPush.json().error.code).toBe('INVALID_INPUTS');
     });
 
     it('lets an ADMIN create one on any repository', async () => {
       ctx.auth.role = 'ADMIN';
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null));
-      const res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload: VALID, url: URL });
-      expect(res.statusCode).toBe(201);
+      expect((await post(VALID)).statusCode).toBe(201);
     });
   });
 
   describe('changing and removing', () => {
     it('updates and audits with before and after', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
-        enabled: true,
-        events: ['push'],
-        id: TRIGGER,
-        inputs: {},
-        templateId: null,
-      });
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'PATCH',
-        payload: { inputs: { mode: 'fix' } },
-        url: `${URL}/${TRIGGER}`,
-      });
+      const res = await patch({ inputs: { mode: 'fix' } });
       expect(res.statusCode).toBe(200);
-      expect(ctx.prisma.ciFailureTrigger.update.mock.calls[0]?.[0].data).toEqual({
+      expect(ctx.prisma.automation.update.mock.calls[0]?.[0].data).toEqual({
         inputs: { mode: 'fix' },
       });
       expect(ctx.prisma.configAuditLog.create.mock.calls[0]?.[0].data).toMatchObject({
         action: 'UPDATE',
-        entityType: 'CiFailureTrigger',
+        entityType: 'Automation',
       });
     });
 
-    it('lets a trigger be switched off without a launch decision, even on an inactive repository', async () => {
+    it('lets an automation be switched off without a launch decision, even on an inactive repository', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead, null, false));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ enabled: true, id: TRIGGER });
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'PATCH',
-        payload: { enabled: false },
-        url: `${URL}/${TRIGGER}`,
-      });
-      expect(res.statusCode).toBe(200);
+      expect((await patch({ enabled: false })).statusCode).toBe(200);
       expect(authorizeLaunch).not.toHaveBeenCalled();
     });
 
-    it('refuses turning a trigger on for an inactive repository', async () => {
+    it('lets one that stays off be edited without a launch decision', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead, null, false));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ enabled: false, id: TRIGGER });
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'PATCH',
-        payload: { enabled: true },
-        url: `${URL}/${TRIGGER}`,
-      });
-      expect(res.statusCode).toBe(409);
+      ctx.prisma.automation.findUnique.mockResolvedValue(stored({ enabled: false }));
+      expect((await patch({ name: 'renamed' })).statusCode).toBe(200);
+      expect(authorizeLaunch).not.toHaveBeenCalled();
     });
 
-    it('re-decides the launch when a change keeps the trigger able to start runs', async () => {
+    it('refuses turning one on for an inactive repository', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead, null, false));
+      ctx.prisma.automation.findUnique.mockResolvedValue(stored({ enabled: false }));
+      expect((await patch({ enabled: true })).statusCode).toBe(409);
+    });
+
+    it('re-decides the launch when a change keeps it able to start runs', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
-        enabled: true,
-        events: ['push'],
-        id: TRIGGER,
-        inputs: {},
-        templateId: null,
-      });
       launch.decision = {
         ok: false,
         refusal: { body: { error: { code: 'REPO_ACCESS_DENIED', message: 'no' } }, status: 403 },
       };
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'PATCH',
-        payload: { inputs: { mode: 'fix' } },
-        url: `${URL}/${TRIGGER}`,
-      });
-      expect(res.statusCode).toBe(403);
-      expect(ctx.prisma.ciFailureTrigger.update).not.toHaveBeenCalled();
+      expect((await patch({ inputs: { mode: 'fix' } })).statusCode).toBe(403);
+      expect(ctx.prisma.automation.update).not.toHaveBeenCalled();
     });
 
     it('checks the kept options against a new template', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
-        enabled: true,
-        events: ['push'],
-        id: TRIGGER,
-        inputs: { minFixConfidence: 0.8 },
-        templateId: null,
-      });
+      ctx.prisma.automation.findUnique.mockResolvedValue(
+        stored({ inputs: { minFixConfidence: 0.8 } })
+      );
       // A CI-aware team template that declares no options.
       ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
         activeVersion: 1,
@@ -429,104 +459,53 @@ describe('ciTriggerRoutes', () => {
           type: 'object',
         },
       });
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'PATCH',
-        payload: { templateId: TEMPLATE },
-        url: `${URL}/${TRIGGER}`,
-      });
+      const res = await patch({ templateId: TEMPLATE });
       expect(res.statusCode).toBe(400);
       expect(res.json().error.code).toBe('INVALID_INPUTS');
-      expect(ctx.prisma.ciFailureTrigger.update).not.toHaveBeenCalled();
+      expect(ctx.prisma.automation.update).not.toHaveBeenCalled();
     });
 
-    it('lets a trigger that stays off be edited without a launch decision', async () => {
-      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead, null, false));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({
-        enabled: false,
-        events: ['push'],
-        id: TRIGGER,
-        inputs: {},
-        templateId: null,
-      });
-      const res = await ctx.app.inject({
-        headers: AUTH,
-        method: 'PATCH',
-        payload: { name: 'renamed', workflowPatterns: ['.github/workflows/ci.yml'] },
-        url: `${URL}/${TRIGGER}`,
-      });
+    it('checks new filters, and stores them as the source parsed them', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      expect((await patch({ filters: { ...FILTERS, events: [] } })).statusCode).toBe(400);
+      const res = await patch({ filters: { ...FILTERS, events: ['push', 'push'] } });
       expect(res.statusCode).toBe(200);
-      expect(authorizeLaunch).not.toHaveBeenCalled();
+      expect(ctx.prisma.automation.update.mock.calls[0]?.[0].data.filters).toEqual(FILTERS);
     });
 
-    it('checks a template requiring a pull request against push failures too', async () => {
-      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
-        activeVersion: 1,
-        id: TEMPLATE,
-        inputSchema: {
-          ...CI_TRIAGE_INPUT_SCHEMA,
-          required: [...(CI_TRIAGE_INPUT_SCHEMA.required ?? []), 'pullRequestNumber'],
-        },
-      });
-      const prOnly = await ctx.app.inject({
-        headers: AUTH,
-        method: 'POST',
-        payload: { ...VALID, events: ['pull_request'], templateId: TEMPLATE },
-        url: URL,
-      });
-      expect(prOnly.statusCode).toBe(201);
-      const withPush = await ctx.app.inject({
-        headers: AUTH,
-        method: 'POST',
-        payload: { ...VALID, events: ['push', 'pull_request'], templateId: TEMPLATE },
-        url: URL,
-      });
-      expect(withPush.statusCode).toBe(400);
-      expect(withPush.json().error.code).toBe('INVALID_INPUTS');
-    });
-
-    it('404s a trigger of another repository', async () => {
-      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue(null);
+    it('404s an unknown automation', async () => {
+      ctx.prisma.automation.findUnique.mockResolvedValue(null);
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'DELETE',
-        url: `${URL}/${TRIGGER}`,
+        url: `${URL}/${AUTOMATION}`,
       });
       expect(res.statusCode).toBe(404);
-      expect(ctx.prisma.ciFailureTrigger.findFirst.mock.calls[0]?.[0].where).toMatchObject({
-        connectionId: REPO,
-        id: TRIGGER,
-      });
     });
 
     it('refuses a member', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
-      ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ id: TRIGGER });
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'DELETE',
-        url: `${URL}/${TRIGGER}`,
+        url: `${URL}/${AUTOMATION}`,
       });
       expect(res.statusCode).toBe(403);
-      expect(ctx.prisma.ciFailureTrigger.delete).not.toHaveBeenCalled();
+      expect(ctx.prisma.automation.delete).not.toHaveBeenCalled();
     });
-  });
 
-  it('shows a member what a trigger decided', async () => {
-    ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
-    ctx.prisma.ciFailureTrigger.findFirst.mockResolvedValue({ id: TRIGGER });
-    ctx.prisma.ciFailureTriggerFire.findMany.mockResolvedValue([
-      { outcome: 'SUPPRESSED_COOLDOWN' },
-    ] as never);
-    const res = await ctx.app.inject({
-      headers: AUTH,
-      method: 'GET',
-      url: `${URL}/${TRIGGER}/fires?limit=5`,
+    it('deletes for a lead, and audits it', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'DELETE',
+        url: `${URL}/${AUTOMATION}`,
+      });
+      expect(res.statusCode).toBe(204);
+      expect(ctx.prisma.configAuditLog.create.mock.calls[0]?.[0].data).toMatchObject({
+        action: 'DELETE',
+        entityType: 'Automation',
+      });
     });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().data.fires).toEqual([{ outcome: 'SUPPRESSED_COOLDOWN' }]);
-    expect(ctx.prisma.ciFailureTriggerFire.findMany.mock.calls[0]?.[0].take).toBe(5);
   });
 });

@@ -266,7 +266,7 @@ jobs:
       - name: CI-failure trigger decisions (database-backed tests)
         env:
           CI_TRIGGER_PG_TEST: '1'
-        run: yarn test packages/gateway/src/lib/ciFailureTriggers.pg.test.ts
+        run: yarn test packages/gateway/src/lib/automations/engine.pg.test.ts
 
       # The pull-request and ticket views: what a list leaves out is decided by
       # relational visibility filters over a group that spans two teams, which a

@@ -3,11 +3,11 @@
 import { getConnectionTypeMetadata, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useCallback, useEffect, useState } from 'react';
-import { CiTriggersModal } from '@/components/repositories/CiTriggersModal';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
 import { MyCredentialModal } from '@/components/repositories/MyCredentialModal';
+import { RepoAutomationsModal } from '@/components/repositories/RepoAutomationsModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
 import { ShareRepoModal } from '@/components/repositories/ShareRepoModal';
@@ -43,7 +43,7 @@ type ModalMode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
   | { kind: 'edit'; repo: RepositorySummary }
   | { kind: 'dependencies'; repo: RepositorySummary }
-  | { kind: 'ciTriggers'; repo: RepositorySummary }
+  | { kind: 'automations'; repo: RepositorySummary }
   | { kind: 'credential'; repo: RepositorySummary }
   | { kind: 'share'; repo: RepositorySummary }
   | { kind: 'import' }
@@ -267,9 +267,9 @@ export default function ConnectionsPage() {
                             },
                             {
                               icon: 'alert' as const,
-                              id: 'ciTriggers',
-                              label: 'CI-failure triggers',
-                              onAction: () => setMode({ kind: 'ciTriggers', repo: r }),
+                              id: 'automations',
+                              label: 'Automations',
+                              onAction: () => setMode({ kind: 'automations', repo: r }),
                             },
                           ]
                         : []),
@@ -458,8 +458,8 @@ export default function ConnectionsPage() {
         />
       )}
 
-      {mode?.kind === 'ciTriggers' && (
-        <CiTriggersModal onClose={() => setMode(null)} repo={mode.repo} />
+      {mode?.kind === 'automations' && (
+        <RepoAutomationsModal onClose={() => setMode(null)} repo={mode.repo} />
       )}
 
       {mode?.kind === 'dependencies' && (

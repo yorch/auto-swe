@@ -45,7 +45,8 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
 5. Set **Subscribe to events**:
    - Pull request
    - Check run
-   - Workflow run — only needed for [CI-failure triggers](./ci-failure-triggers.md); a delivery for a
+   - Workflow run — only needed for [CI-failure triggers](./ci-failure-triggers.md) (event
+     [automations](./automations.md) of failed runs); a delivery for a
      repository with no trigger is acknowledged and ignored
 
    GitHub delivers the App's `installation` events (`deleted`, `suspend`, `unsuspend`) to the webhook

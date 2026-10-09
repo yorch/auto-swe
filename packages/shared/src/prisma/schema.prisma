@@ -381,7 +381,8 @@ model Connection {
   /// Further teams whose members may see and launch on this repository. The
   /// owning team (`teamId`) keeps management, budgets and settings.
   shares                ConnectionTeamShare[]
-  ciFailureTriggers     CiFailureTrigger[]
+  automations           Automation[]
+  automationFires       AutomationFire[]
 
   @@index([teamId])
   @@index([installationId])
@@ -1125,7 +1126,7 @@ model User {
   skillRevisions        SkillRevision[]          @relation("SkillRevisionCreator")
   skillSources          SkillSource[]            @relation("SkillSourceCreator")
   schedulesActingAs     ScheduledWorkRequest[]   @relation("ScheduleActsAs")
-  ciFailureTriggers     CiFailureTrigger[]       @relation("CiFailureTriggerCreator")
+  automations           Automation[]             @relation("AutomationCreator")
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
   connectionCredentials ConnectionCredential[]
@@ -1325,78 +1326,74 @@ model ScheduledWorkRequest {
   @@map("scheduled_work_requests")
 }
 
-/// A rule on one repository: when a GitHub Actions workflow run on it fails, start the CI
-/// triage template (docs/ci-failure-triggers.md). Matched against the host's `workflow_run`
-/// webhook. Managed by the owning team, like schedules. Every list is non-empty; nothing
-/// matches "everything" by default.
-model CiFailureTrigger {
-  id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  connectionId         String            @map("connection_id") @db.Uuid
-  connection           Connection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  name                 String
-  enabled              Boolean           @default(true)
-  /// `push` and/or `pull_request`. No other event is ever acted on.
-  events               String[]
-  /// Globs over the failing branch (`main`, `release/*`, `!release/legacy`).
-  branchPatterns       String[]          @map("branch_patterns")
-  /// Globs over the workflow FILE path (`.github/workflows/ci.yml`), never its display name.
-  workflowPatterns     String[]          @map("workflow_patterns")
-  /// The template options this trigger sets (mode, confidence floor, …), checked against the
-  /// template's declared input schema on save and again on every fire. Never a key the failing
-  /// run fills (`CI_EVENT_INPUT_KEYS`); an empty object means the template's defaults.
-  inputs               Json              @default("{}")
-  /// No new run for the same branch within this many minutes of the last one started.
-  cooldownMinutes      Int               @default(30) @map("cooldown_minutes")
-  /// At most this many runs started by this trigger in any 24 hours.
-  maxRunsPerDay        Int               @default(10) @map("max_runs_per_day")
-  /// The template a fire starts; null means the built-in `ci-triage-and-fix`.
-  templateId           String?           @map("template_id") @db.Uuid
-  template             WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  createdById          String?           @map("created_by_id") @db.Uuid
-  createdBy            User?             @relation("CiFailureTriggerCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt            DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+/// An event automation (docs/automations.md): when an occurrence of `source` on its repository
+/// matches `filters`, start `template` (null: the source's default) with `inputs`, within the
+/// limits. Managed by the repository's owning team. `filters` and `inputs` are JSON objects
+/// whose shape is the source's and the template's; both are checked on save and on every fire.
+model Automation {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  connectionId    String            @map("connection_id") @db.Uuid
+  connection      Connection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  name            String
+  enabled         Boolean           @default(true)
+  /// An event source key (`EVENT_SOURCES`), e.g. `github.workflow_run.failed`.
+  source          String
+  /// The source's filters (`EventSource.filters`).
+  filters         Json
+  /// The template options this automation sets; an empty object means the template's defaults.
+  inputs          Json              @default("{}")
+  /// No new run for the same scope (a branch, an issue) within this many minutes of the last.
+  cooldownMinutes Int               @default(30) @map("cooldown_minutes")
+  /// At most this many runs started by this automation in any 24 hours.
+  maxRunsPerDay   Int               @default(10) @map("max_runs_per_day")
+  /// The template a fire starts; null means the source's default.
+  templateId      String?           @map("template_id") @db.Uuid
+  template        WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  createdById     String?           @map("created_by_id") @db.Uuid
+  createdBy       User?             @relation("AutomationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
 
-  fires CiFailureTriggerFire[]
+  fires AutomationFire[]
 
-  @@index([connectionId])
-  @@map("ci_failure_triggers")
+  @@index([connectionId, source])
+  @@map("automations")
 }
 
-/// One decision a CI-failure trigger made about one failed workflow run: started a run, or
-/// suppressed it and why. Also the deduplication record: `dedupeKey` names the run attempt
-/// on its host, so a redelivered webhook, or a second trigger or repository row matching the
-/// same run, never starts a second run.
-model CiFailureTriggerFire {
-  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  triggerId          String           @map("trigger_id") @db.Uuid
-  trigger            CiFailureTrigger @relation(fields: [triggerId], references: [id], onDelete: Cascade)
-  /// `<host>/<owner>/<repo>#<runId>/<attempt>`, lowercased.
-  dedupeKey          String           @unique @map("dedupe_key")
-  githubRunId        String           @map("github_run_id")
-  runAttempt         Int              @map("run_attempt")
-  workflowPath       String           @map("workflow_path")
-  event              String
-  headBranch         String           @map("head_branch")
-  headSha            String           @map("head_sha")
-  pullRequestNumber  Int?             @map("pull_request_number")
-  /// STARTED, SUPPRESSED_* (see `CI_FIRE_OUTCOMES`), or FAILED_TO_START.
+/// One decision an event automation made about one occurrence: started a run, or suppressed
+/// it and why. Also the record the limits are decided on, so it is keyed on the REPOSITORY
+/// (`repoKey`, `<host>/<owner>/<repo>` lowercased) and outlives the automation and the
+/// connection row: deleting and recreating either must not forget what was already done.
+/// `dedupeKey` names the occurrence on its host; `subjectKey` is what one run is enough for (a
+/// commit); `scopeKey` what cooldown and in-flight count over (a branch); `producedKey` what a
+/// run itself produced (a pushed fix commit), never acted on again.
+model AutomationFire {
+  id                 String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  automationId       String?     @map("automation_id") @db.Uuid
+  automation         Automation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+  connectionId       String?     @map("connection_id") @db.Uuid
+  connection         Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  repoKey            String      @map("repo_key")
+  source             String
+  dedupeKey          String      @unique @map("dedupe_key")
+  /// One of `AUTOMATION_OUTCOMES`.
   outcome            String
   reason             String?
-  temporalWorkflowId String?          @map("temporal_workflow_id")
-  workRequestId      String?          @map("work_request_id") @db.Uuid
-  /// The commit the run pushed onto the failing pull request's branch, written just before the
-  /// push. A later failure of that commit is the platform's own fix failing, and is never
-  /// triaged again (`SUPPRESSED_OWN_FIX`).
-  fixCommitSha       String?          @map("fix_commit_sha")
-  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  scopeKey           String      @map("scope_key")
+  subjectKey         String      @map("subject_key")
+  producedKey        String?     @map("produced_key")
+  /// The occurrence as the source saw it, for display (`workflowPath`, `event`, `runId`, …).
+  facts              Json        @default("{}")
+  temporalWorkflowId String?     @map("temporal_workflow_id")
+  workRequestId      String?     @map("work_request_id") @db.Uuid
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
-  @@index([triggerId, createdAt])
-  @@index([triggerId, headBranch, createdAt])
-  @@index([triggerId, headSha])
-  @@index([fixCommitSha])
+  @@index([automationId, createdAt])
+  @@index([repoKey, scopeKey, createdAt])
+  @@index([repoKey, subjectKey])
+  @@index([producedKey])
   @@index([workRequestId])
-  @@map("ci_failure_trigger_fires")
+  @@map("automation_fires")
 }
 
 /// Large step outputs (diffs, logs, scan artifacts) are kept out of the
@@ -1952,7 +1949,7 @@ model WorkflowTemplate {
   agents                Agent[]
   scheduledWorkRequests ScheduledWorkRequest[]
   configSettings        ConfigSetting[]
-  ciFailureTriggers     CiFailureTrigger[]
+  automations           Automation[]
   autonomyPolicies      AutonomyPolicy[]
 
   @@unique([teamId, name])

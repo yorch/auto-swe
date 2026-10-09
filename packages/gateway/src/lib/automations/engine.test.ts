@@ -11,20 +11,19 @@ vi.mock('@auto-swe/shared/config', () => ({
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),
 }));
-vi.mock('./repositoryHost.js', () => ({
+vi.mock('../repositoryHost.js', () => ({
   webhookRepositoryWhere: vi.fn(async () => ({ organizationName: 'acme', repoName: 'api' })),
 }));
-vi.mock('./orgAccess.js', () => ({ isOrgOverBudget: vi.fn(async () => m.overBudget) }));
+vi.mock('../orgAccess.js', () => ({ isOrgOverBudget: vi.fn(async () => m.overBudget) }));
 
-import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
 import {
-  acceptsCiPayload,
-  fireDedupeKey,
-  handleWorkflowRunFailure,
-  normalizeWorkflowRunEvent,
-  triggerMatches,
-  type WorkflowRunFailedEvent,
-} from './ciFailureTriggers.js';
+  WORKFLOW_RUN_FAILED,
+  type WorkflowRunFailedFacts,
+  workflowRunFailedSource,
+} from '@auto-swe/shared/automation';
+import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
+import { automationMatches, handleOccurrence } from './engine.js';
+import { normalizeWorkflowRunEvent } from './workflowRunFailed.js';
 
 const REPO_ID = 42;
 
@@ -49,123 +48,113 @@ function body(over: Record<string, unknown> = {}, run: Record<string, unknown> =
   };
 }
 
-describe('normalizeWorkflowRunEvent', () => {
-  it('maps a failed push run', () => {
-    expect(normalizeWorkflowRunEvent(body())).toMatchObject({
-      event: 'push',
-      headBranch: 'release/1.4',
-      org: 'acme',
-      pullRequestNumber: null,
-      repoName: 'api',
-      runAttempt: 1,
-      runId: '123456789012',
-      type: 'failed',
-      workflowPath: '.github/workflows/ci.yml',
-    });
-  });
+/** The failure as the tests describe it: flat, the way the CI handler used to take it. */
+type Failed = WorkflowRunFailedFacts & {
+  headBranch: string;
+  org: string;
+  repoName: string;
+  repoFullName: string;
+  repoHtmlUrl?: string;
+};
 
-  it.each([
-    ['a run that has not completed', body({ action: 'requested' })],
-    ['a passing run', body({}, { conclusion: 'success' })],
-    ['a cancelled run', body({}, { conclusion: 'cancelled' })],
-    ['a startup failure (no logs)', body({}, { conclusion: 'startup_failure' })],
-    ['pull_request_target', body({}, { event: 'pull_request_target' })],
-    ['a schedule', body({}, { event: 'schedule' })],
-    ['workflow_dispatch', body({}, { event: 'workflow_dispatch' })],
-    ['merge_group', body({}, { event: 'merge_group' })],
-    ['a fork', body({}, { head_repository: { full_name: 'mallory/api', id: 7 } })],
-    [
-      'a fork renamed to the same name',
-      body({}, { head_repository: { full_name: 'acme/api', id: 7 } }),
-    ],
-    ['a deleted fork', body({}, { head_repository: null })],
-    ['no branch', body({}, { head_branch: null })],
-    ['a branch name that is not safe', body({}, { head_branch: '-x' })],
-  ])('ignores %s', (_label, payload) => {
-    expect(normalizeWorkflowRunEvent(payload).type).toBe('ignored');
-  });
+const normalized = normalizeWorkflowRunEvent(body());
+if (normalized.type !== 'failed') {
+  throw new Error('fixture must be a failed run');
+}
+const failed: Failed = {
+  ...normalized.facts,
+  headBranch: normalized.facts.branch,
+  org: normalized.org,
+  repoFullName: normalized.repoFullName,
+  repoHtmlUrl: normalized.repoHtmlUrl,
+  repoName: normalized.repoName,
+};
 
-  it('is unrecognized for another shape', () => {
-    expect(normalizeWorkflowRunEvent({ check_run: {} }).type).toBe('unrecognized');
-  });
-
-  it('finds the same-repository pull request from the failing branch', () => {
-    const pr = (n: number, ref: string, repoId: number) => ({
-      base: { ref: 'main', repo: { id: REPO_ID } },
-      head: { ref, repo: { id: repoId } },
-      number: n,
-    });
-    const event = normalizeWorkflowRunEvent(
-      body(
-        {},
-        {
-          event: 'pull_request',
-          head_branch: 'feat/x',
-          pull_requests: [pr(1, 'other', REPO_ID), pr(2, 'feat/x', 99), pr(3, 'feat/x', REPO_ID)],
-        }
-      )
-    );
-    expect(event).toMatchObject({ pullRequestNumber: 3, type: 'failed' });
-  });
-
-  it('has no pull request when GitHub lists none', () => {
-    const event = normalizeWorkflowRunEvent(
-      body({}, { event: 'pull_request', head_branch: 'feat/x' })
-    );
-    expect(event).toMatchObject({ pullRequestNumber: null, type: 'failed' });
-  });
+const occurrence = (e: Failed) => ({
+  facts: {
+    branch: e.headBranch,
+    event: e.event,
+    headSha: e.headSha,
+    pullRequestNumber: e.pullRequestNumber,
+    runAttempt: e.runAttempt,
+    runId: e.runId,
+    workflowPath: e.workflowPath,
+  },
+  org: e.org,
+  repoFullName: e.repoFullName,
+  repoHtmlUrl: e.repoHtmlUrl,
+  repoName: e.repoName,
 });
 
-const failed = normalizeWorkflowRunEvent(body()) as WorkflowRunFailedEvent;
-
-describe('triggerMatches', () => {
+describe('automationMatches', () => {
   const rule = {
-    branchPatterns: ['main', 'release/*'],
     enabled: true,
-    events: ['push'],
-    workflowPatterns: ['.github/workflows/ci.yml'],
+    filters: {
+      branchPatterns: ['main', 'release/*'],
+      events: ['push'],
+      workflowPatterns: ['.github/workflows/ci.yml'],
+    },
+    source: WORKFLOW_RUN_FAILED,
   };
-
-  it('matches on event, branch and workflow FILE path', () => {
-    expect(triggerMatches(rule, failed)).toBe(true);
+  const facts = occurrence(failed).facts;
+  const with_ = (filters: Record<string, unknown>) => ({
+    ...rule,
+    filters: { ...rule.filters, ...filters },
   });
 
-  it('does not match a disabled rule, another event, branch or workflow', () => {
-    expect(triggerMatches({ ...rule, enabled: false }, failed)).toBe(false);
-    expect(triggerMatches({ ...rule, events: ['pull_request'] }, failed)).toBe(false);
-    expect(triggerMatches({ ...rule, branchPatterns: ['main'] }, failed)).toBe(false);
+  it('matches on event, branch and workflow FILE path', () => {
+    expect(automationMatches(workflowRunFailedSource, rule, facts)).toBe(true);
+  });
+
+  it('does not match a disabled rule, another source, event, branch or workflow', () => {
+    const m_ = (r: typeof rule) => automationMatches(workflowRunFailedSource, r, facts);
+    expect(m_({ ...rule, enabled: false })).toBe(false);
+    expect(m_({ ...rule, source: 'github.issue.labeled' })).toBe(false);
+    expect(m_(with_({ events: ['pull_request'] }))).toBe(false);
+    expect(m_(with_({ branchPatterns: ['main'] }))).toBe(false);
+    expect(m_(with_({ workflowPatterns: ['.github/workflows/lint.yml'] }))).toBe(false);
+  });
+
+  it('matches nothing when the stored filters do not parse', () => {
+    expect(automationMatches(workflowRunFailedSource, with_({ branchPatterns: [] }), facts)).toBe(
+      false
+    );
     expect(
-      triggerMatches({ ...rule, workflowPatterns: ['.github/workflows/lint.yml'] }, failed)
+      automationMatches(workflowRunFailedSource, { ...rule, filters: 'all' as never }, facts)
     ).toBe(false);
   });
 });
 
-describe('fireDedupeKey', () => {
-  it('names the run attempt on its host, case-insensitively', () => {
-    expect(fireDedupeKey('GitHub.com', { ...failed, repoFullName: 'Acme/API' })).toBe(
+describe('the dedupe key', () => {
+  it('names the run attempt on its repository, case-insensitively', () => {
+    const facts = occurrence(failed).facts;
+    expect(workflowRunFailedSource.dedupeKey('GitHub.com/Acme/API', facts)).toBe(
       'github.com/acme/api#123456789012/1'
     );
-    expect(fireDedupeKey('github.com', { ...failed, runAttempt: 2 })).not.toBe(
-      fireDedupeKey('github.com', failed)
-    );
+    expect(
+      workflowRunFailedSource.dedupeKey('github.com/acme/api', { ...facts, runAttempt: 2 })
+    ).not.toBe(workflowRunFailedSource.dedupeKey('github.com/acme/api', facts));
   });
 });
 
-// ── handleWorkflowRunFailure against an in-memory database ───────────────────
+// ── handleOccurrence against an in-memory database ───────────────────
 
 interface Fire {
   dedupeKey: string;
-  triggerId: string;
+  automationId: string;
+  repoKey: string;
   outcome: string;
-  headBranch: string;
-  headSha: string;
+  scopeKey: string;
+  subjectKey: string;
+  producedKey?: string | null;
   createdAt: Date;
   temporalWorkflowId?: string | null;
   reason?: string | null;
 }
 
+/** An automation, described flat; its event, branch and workflow lists become its filters. */
 function trigger(over: Record<string, unknown> = {}) {
-  return {
+  const flat = {
     branchPatterns: ['release/*'],
     cooldownMinutes: 30,
     createdAt: new Date(0),
@@ -177,6 +166,12 @@ function trigger(over: Record<string, unknown> = {}) {
     templateId: null,
     workflowPatterns: ['.github/workflows/**'],
     ...over,
+  };
+  const { branchPatterns, events, workflowPatterns, ...rest } = flat;
+  return {
+    ...rest,
+    filters: { branchPatterns, events, workflowPatterns },
+    source: WORKFLOW_RUN_FAILED,
   };
 }
 
@@ -194,33 +189,20 @@ function harness(
   const runInputs: unknown[] = [];
   const triggers = opts.triggers ?? [trigger()];
   const CONNECTION = 'cccccccc-0000-4000-8000-000000000001';
-  // Every trigger in the harness hangs off the one repository row.
-  const connectionOf = (triggerId: string) =>
-    triggers.some((t) => t.id === triggerId) ? CONNECTION : null;
 
   /** The subset of Prisma's `where` the decision uses, evaluated against a fire. */
   const matches = (f: Fire, where: Record<string, unknown>): boolean => {
-    if (where.triggerId !== undefined && f.triggerId !== where.triggerId) {
-      return false;
-    }
-    const rel = where.trigger as { connectionId: { in: string[] } } | undefined;
-    if (rel && !rel.connectionId.in.includes(connectionOf(f.triggerId) ?? '')) {
-      return false;
-    }
-    if (where.outcome !== undefined && f.outcome !== where.outcome) {
-      return false;
-    }
-    if (where.headSha !== undefined && f.headSha !== where.headSha) {
-      return false;
-    }
-    if (
-      where.fixCommitSha !== undefined &&
-      (f as { fixCommitSha?: string | null }).fixCommitSha !== where.fixCommitSha
-    ) {
-      return false;
-    }
-    if (where.headBranch !== undefined && f.headBranch !== where.headBranch) {
-      return false;
+    for (const key of [
+      'automationId',
+      'repoKey',
+      'outcome',
+      'subjectKey',
+      'scopeKey',
+      'producedKey',
+    ] as const) {
+      if (where[key] !== undefined && f[key] !== where[key]) {
+        return false;
+      }
     }
     if (where.createdAt && f.createdAt < (where.createdAt as { gte: Date }).gte) {
       return false;
@@ -255,7 +237,7 @@ function harness(
           )
       ),
     },
-    ciFailureTriggerFire: {
+    automationFire: {
       count: vi.fn(
         async ({ where }: { where: Record<string, unknown> }) =>
           fires.filter((f) => matches(f, where)).length
@@ -285,7 +267,7 @@ function harness(
     connection: {
       findMany: vi.fn(async () => [
         {
-          ciFailureTriggers: triggers,
+          automations: triggers,
           id: CONNECTION,
           installation: null,
           team: {
@@ -334,10 +316,17 @@ beforeEach(() => {
   m.overBudget = false;
 });
 
-const handle = (h: ReturnType<typeof harness>, event: WorkflowRunFailedEvent = failed) =>
-  handleWorkflowRunFailure(h.fastify as never, event, null, new Date(), 0);
+const handle = (h: ReturnType<typeof harness>, event: Failed = failed) =>
+  handleOccurrence(
+    h.fastify as never,
+    workflowRunFailedSource,
+    occurrence(event),
+    null,
+    new Date(),
+    0
+  );
 
-describe('handleWorkflowRunFailure', () => {
+describe('handleOccurrence (github.workflow_run.failed)', () => {
   it('starts one triage run targeting the failing branch, by run id, as a synthetic ticket', async () => {
     const h = harness();
     const out = await handle(h);
@@ -375,7 +364,7 @@ describe('handleWorkflowRunFailure', () => {
     const h = harness({ triggers: [trigger({ branchPatterns: ['main'] })] });
     await expect(handle(h)).resolves.toMatchObject({
       ignored: true,
-      reason: 'no matching trigger',
+      reason: 'no matching automation',
     });
     expect(h.fires).toHaveLength(0);
   });
@@ -396,19 +385,30 @@ describe('handleWorkflowRunFailure', () => {
       ],
     });
     const out = await handle(h);
-    expect(out).toMatchObject({ triggerId: 'aaaaaaaa-0000-4000-8000-00000000000b' });
+    expect(out).toMatchObject({ automationId: 'aaaaaaaa-0000-4000-8000-00000000000b' });
     expect(
       (h.started[0]?.input.request as { payload: { mode: string } } | undefined)?.payload.mode
     ).toBe('triage');
+  });
+
+  it('remembers decisions after the automation is deleted and recreated', async () => {
+    const h = harness();
+    await handle(h);
+    // The ledger is the repository's: a new automation with another id still sees the commit.
+    const again = harness({ triggers: [trigger({ id: 'aaaaaaaa-0000-4000-8000-0000000000ff' })] });
+    again.fires.push(...h.fires);
+    await expect(handle(again, { ...failed, runId: '999' })).resolves.toMatchObject({
+      outcome: 'SUPPRESSED_SAME_SUBJECT',
+    });
   });
 
   it('never triages again a commit the platform pushed as a fix', async () => {
     const h = harness();
     await handle(h, { ...failed, headSha: 'f'.repeat(40), runId: '900' });
     // The run pushed its fix as commit 'e…e' onto the branch.
-    (h.fires[0] as { fixCommitSha?: string }).fixCommitSha = 'e'.repeat(40);
+    (h.fires[0] as { producedKey?: string }).producedKey = 'e'.repeat(40);
     const out = await handle(h, { ...failed, headSha: 'e'.repeat(40), runId: '901' });
-    expect(out).toMatchObject({ outcome: 'SUPPRESSED_OWN_FIX' });
+    expect(out).toMatchObject({ outcome: 'SUPPRESSED_OWN_OUTPUT' });
     expect(h.started).toHaveLength(1);
   });
 
@@ -420,7 +420,7 @@ describe('handleWorkflowRunFailure', () => {
       runId: '999',
       workflowPath: '.github/workflows/lint.yml',
     });
-    expect(out).toMatchObject({ outcome: 'SUPPRESSED_SAME_COMMIT' });
+    expect(out).toMatchObject({ outcome: 'SUPPRESSED_SAME_SUBJECT' });
     expect(h.started).toHaveLength(1);
   });
 
@@ -458,7 +458,7 @@ describe('handleWorkflowRunFailure', () => {
   it('records a pull-request failure with no open pull request, and starts nothing', async () => {
     const h = harness({ triggers: [trigger({ events: ['pull_request'] })] });
     const out = await handle(h, { ...failed, event: 'pull_request', pullRequestNumber: null });
-    expect(out).toMatchObject({ outcome: 'SUPPRESSED_NO_PULL_REQUEST' });
+    expect(out).toMatchObject({ outcome: 'SUPPRESSED_PRECONDITION' });
     expect(h.started).toHaveLength(0);
   });
 
@@ -513,7 +513,7 @@ describe('handleWorkflowRunFailure', () => {
   it('forgets the decision when every start attempt fails, so a redelivery can retry', async () => {
     const h = harness();
     h.fastify.temporal.startRunnableWorkflow.mockRejectedValue(new Error('temporal down'));
-    await expect(handle(h)).rejects.toMatchObject({ name: 'CiTriggerStartError' });
+    await expect(handle(h)).rejects.toMatchObject({ name: 'AutomationStartError' });
     expect(h.fastify.temporal.startRunnableWorkflow).toHaveBeenCalledTimes(3);
     expect(h.fires).toHaveLength(0);
     h.fastify.temporal.startRunnableWorkflow.mockResolvedValue(undefined);
@@ -540,8 +540,8 @@ describe('handleWorkflowRunFailure', () => {
       workflowPath: '.github/workflows/lint.yml',
     });
     expect(second).toMatchObject({
-      outcome: 'SUPPRESSED_SAME_COMMIT',
-      triggerId: 'aaaaaaaa-0000-4000-8000-0000000000a2',
+      automationId: 'aaaaaaaa-0000-4000-8000-0000000000a2',
+      outcome: 'SUPPRESSED_SAME_SUBJECT',
     });
     expect(h.started).toHaveLength(1);
   });
@@ -595,29 +595,5 @@ describe('handleWorkflowRunFailure', () => {
     const h = harness();
     await handle(h);
     expect(h.db.$executeRaw).toHaveBeenCalled();
-  });
-});
-
-describe('acceptsCiPayload', () => {
-  it('accepts the built-in template schema', () => {
-    expect(acceptsCiPayload(CI_TRIAGE_INPUT_SCHEMA)).toBe(true);
-  });
-
-  it('refuses a template with no schema, or one that is not CI-aware', () => {
-    expect(acceptsCiPayload(null)).toBe(false);
-    expect(
-      acceptsCiPayload({
-        properties: { description: { type: 'string' } },
-        required: [],
-        type: 'object',
-      })
-    ).toBe(false);
-    expect(
-      acceptsCiPayload({
-        properties: { githubRunId: { type: 'number' } },
-        required: ['githubRunId'],
-        type: 'object',
-      })
-    ).toBe(false);
   });
 });

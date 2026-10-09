@@ -115,6 +115,7 @@ export const SIDEBAR = [
       'docs/autonomy-policies',
       'docs/evals',
       'docs/agent-runs',
+      'docs/automations',
       'docs/ci-failure-triggers',
       'docs/channel-assistant',
       'docs/memory',
