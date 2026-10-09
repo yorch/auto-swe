@@ -497,7 +497,19 @@ describe('systemConfig resolvers', () => {
 
       it('falls back to the public resolvers for anything that is not an IP address', () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-        for (const bad of ['dns.internal', '10.0.0.2,;rm -rf', '10.0.0.2,', '999.1.1.1']) {
+        for (const bad of [
+          'dns.internal',
+          '10.0.0.2,;rm -rf',
+          '10.0.0.2,',
+          '999.1.1.1',
+          // Accepted by `isIP`, refused by `docker run --dns` or meaningless inside the container.
+          'fe80::1%eth0',
+          '127.0.0.1',
+          '127.0.0.53',
+          '::1',
+          '0.0.0.0',
+          '::',
+        ]) {
           vi.stubEnv('WORKSPACE_DNS', bad);
           expect(resolveWorkspaceInfra().dns).toEqual(['1.1.1.1', '8.8.8.8']);
         }
@@ -548,9 +560,22 @@ describe('systemConfig resolvers', () => {
       it('fails the boot on a WORKSPACE_DNS entry that is not an IP address', () => {
         vi.stubEnv('WORKSPACE_DNS', '10.0.0.2,dns.internal');
         expect(validateWorkspaceInfraEnv()).toEqual([
-          'WORKSPACE_DNS="10.0.0.2,dns.internal" is not a comma-separated list of resolver IP addresses',
+          'WORKSPACE_DNS="10.0.0.2,dns.internal" is not a comma-separated list of resolver IP addresses (no zone ids, loopback or unspecified addresses)',
         ]);
         vi.stubEnv('WORKSPACE_DNS', '100.64.0.10,fd00::53');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
+      it('fails the boot on a resolver the metadata blackhole would cut off, unless the block is off', () => {
+        // On GCE the VPC resolver is the metadata address: blackholed, so every clone would fail.
+        for (const address of ['169.254.169.254', '169.254.170.2', 'fd00:ec2::254']) {
+          vi.stubEnv('WORKSPACE_DNS', `10.0.0.2,${address}`);
+          expect(validateWorkspaceInfraEnv()).toEqual([
+            `WORKSPACE_DNS includes ${address}, which WORKSPACE_BLOCK_METADATA blackholes inside every workspace`,
+          ]);
+        }
+        vi.stubEnv('WORKSPACE_DNS', '169.254.169.254');
+        vi.stubEnv('WORKSPACE_BLOCK_METADATA', 'false');
         expect(validateWorkspaceInfraEnv()).toEqual([]);
       });
 
