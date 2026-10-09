@@ -504,6 +504,16 @@ export function neutralizeCommentText(text: string, max = MAX_COMMENT_FIELD_CHAR
   );
 }
 
+/** Why the run stopped trying after a pushed fix failed the pull request's CI. */
+export interface PushFailed {
+  /** A follow-up fix was attempted. */
+  attempted: boolean;
+  /** The follow-up reached the branch (and failed CI too). */
+  pushed: boolean;
+  /** Why the follow-up was refused, when it was. */
+  reason: string | null;
+}
+
 export interface ReportCiTriageInput {
   request: RepoWorkRequest;
   triage: CiTriageResult;
@@ -515,6 +525,8 @@ export interface ReportCiTriageInput {
   pushRefusedReason?: string | null;
   /** Whether the fix was checked against the failing step's own command. */
   verification?: CiVerification | null;
+  /** The pushed fix did not pass the pull request's CI, and the run gave up on it. */
+  pushFailed?: PushFailed | null;
 }
 
 /** Render the PR comment from structured fields only. */
@@ -523,7 +535,8 @@ export function renderTriageComment(
   fixPrUrl?: string | null,
   pushedCommitSha?: string | null,
   pushRefusedReason?: string | null,
-  verification?: CiVerification | null
+  verification?: CiVerification | null,
+  pushFailed?: PushFailed | null
 ): string {
   const lines = [
     CI_TRIAGE_COMMENT_MARKER,
@@ -556,7 +569,25 @@ export function renderTriageComment(
     lines.push(
       '',
       `A fix was pushed to this branch as ${pushedCommitSha}. It is not merged: review it with ` +
-        'the rest of the pull request. If its CI fails, that failure is not triaged again.'
+        'the rest of the pull request. The platform watches its CI and, when the trigger allows ' +
+        'revisions, makes one more attempt if it fails.'
+    );
+  }
+  if (pushFailed && pushedCommitSha && /^[0-9a-f]{40}$/i.test(pushedCommitSha)) {
+    let why: string;
+    if (pushFailed.pushed) {
+      why = 'and neither did one more attempt';
+    } else if (!pushFailed.attempted) {
+      why = 'and the trigger allows no revisions';
+    } else if (pushFailed.reason) {
+      why = `and a follow-up could not be pushed: ${neutralizeCommentText(pushFailed.reason, 300)}`;
+    } else {
+      why = 'and a follow-up attempt produced no change';
+    }
+    lines.push(
+      '',
+      `The fix on this branch (${pushedCommitSha}) did not pass this pull request's CI, ${why}. ` +
+        'It is left for a person.'
     );
   }
   // Only alongside a fix, and only from the platform's own structured result.
@@ -599,7 +630,8 @@ export async function reportCiTriage(
         input.fixPrUrl,
         input.pushedCommitSha,
         input.pushRefusedReason,
-        input.verification
+        input.verification,
+        input.pushFailed
       )
     );
     tracer.addActivityEvent({
@@ -796,7 +828,6 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
     };
     // A retry after a push whose reply was lost: the branch is already at the recorded commit.
     if (fire.producedKey === fixSha && info.sha === fixSha) {
-      await scm.deleteBranch(repoRef, workBranch);
       return done();
     }
     if ((await scm.branchHeadSha(repoRef, workBranch)) !== fixSha) {
@@ -829,8 +860,8 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
       });
       return refuse('GitHub refused the push (the branch moved, or a rule protects it)');
     }
-    // The work branch only carried the commit there; it is now on the pull request's branch.
-    await scm.deleteBranch(repoRef, workBranch);
+    // The work branch stays while the run watches the pushed commit's CI: a follow-up fix is
+    // made on it. `finishCiFixPush` removes it when the run ends.
     return done();
   } catch (err) {
     tracer.addActivityEvent({ error: getErrorMessage(err), name: 'ci_fix.push_failed' });
@@ -838,4 +869,27 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
   } finally {
     await persistActivityTrace(tracer, 'ciTriager');
   }
+}
+
+/**
+ * Remove this run's work branch once a pushed fix is done with: it only carried the fix commit,
+ * which is now on the pull request's branch. Best-effort; a branch that is gone is fine.
+ */
+export async function finishCiFixPush(input: {
+  request: RepoWorkRequest;
+}): Promise<{ deleted: boolean }> {
+  const { request } = input;
+  const repo = await prisma.connection.findUniqueOrThrow({
+    include: { installation: { select: { host: true, installationId: true } } },
+    where: { id: requireRepoId(request, 'finishCiFixPush') },
+  });
+  const payload = parsePayload(request);
+  const { branchPrefix } = await resolveWorkflowDefaults();
+  const workBranch = `${branchPrefix}/${request.externalTicketId}`;
+  // Never the pull request's own branch, whatever the ticket id says.
+  if (workBranch === payload.baseBranch) {
+    return { deleted: false };
+  }
+  const repoRef = toRepoRef(repo);
+  return { deleted: await getScmProvider(repoRef).deleteBranch(repoRef, workBranch) };
 }

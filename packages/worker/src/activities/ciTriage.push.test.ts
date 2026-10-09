@@ -61,7 +61,7 @@ vi.mock('../lib/scm/index.js', () => ({
   toRepoRef: () => ({ organizationName: 'acme', repoName: 'api' }),
 }));
 
-import { type CiTriageResult, pushCiFixToPullRequest } from './ciTriage.js';
+import { type CiTriageResult, finishCiFixPush, pushCiFixToPullRequest } from './ciTriage.js';
 
 const CONN = '11111111-1111-4111-8111-111111111111';
 const TIP = 'b'.repeat(40);
@@ -170,7 +170,8 @@ describe('pushCiFixToPullRequest', () => {
     expect(m.order).toEqual(['record', 'push']);
     expect(m.fastForwardBranch).toHaveBeenCalledWith(expect.anything(), BRANCH, FIX);
     expect(m.compareCommits).toHaveBeenCalledWith(expect.anything(), TIP, FIX);
-    expect(m.deleteBranch).toHaveBeenCalledWith(expect.anything(), 'auto/ci-1-1');
+    // The work branch stays: a follow-up fix is made on it while the run watches CI.
+    expect(m.deleteBranch).not.toHaveBeenCalled();
     // The fire is the one this request started.
     expect(m.findFire.mock.calls[0]?.[0].where).toEqual({
       outcome: 'STARTED',
@@ -366,7 +367,7 @@ describe('pushCiFixToPullRequest', () => {
     m.branchInfo.mockResolvedValue({ protected: false, sha: FIX });
     await expect(push()).resolves.toEqual({ branch: BRANCH, commitSha: FIX, pushed: true });
     expect(m.fastForwardBranch).not.toHaveBeenCalled();
-    expect(m.deleteBranch).toHaveBeenCalledWith(expect.anything(), 'auto/ci-1-1');
+    expect(m.deleteBranch).not.toHaveBeenCalled();
   });
 
   it('never pushes for a push-event failure, whatever the payload says', async () => {
@@ -381,5 +382,12 @@ describe('pushCiFixToPullRequest', () => {
     const out = await push({ request: request({ pullRequestDelivery: 'draft_pr' }) });
     expect(out).toMatchObject({ pushed: false });
     expect(m.findFire).not.toHaveBeenCalled();
+  });
+});
+
+describe('finishCiFixPush', () => {
+  it('deletes the run’s own work branch, never the pull request’s', async () => {
+    await expect(finishCiFixPush({ request: request() })).resolves.toEqual({ deleted: true });
+    expect(m.deleteBranch).toHaveBeenCalledWith(expect.anything(), 'auto/ci-1-1');
   });
 });

@@ -60,6 +60,7 @@ export {
 } from './ciFixLoop.js';
 export {
   type CiTriageResult,
+  finishCiFixPush,
   pushCiFixToPullRequest,
   reportCiTriage,
   triageCiFailure,

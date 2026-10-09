@@ -243,6 +243,16 @@ register({
   name: 'verifyCiFix',
 });
 
+register({
+  category: 'vcs',
+  configFields: [],
+  description:
+    "Delete the run's own work branch once a fix pushed onto a pull request's branch is done " +
+    'with. The pull request branch itself is never touched.',
+  label: 'Finish a pushed CI fix',
+  name: 'finishCiFixPush',
+});
+
 // ── CI wait strategy ─────────────────────────────────────────────────────────
 
 register({

@@ -11,7 +11,11 @@ import { fileURLToPath } from 'node:url';
 import { AGENT_RUN_SPEC } from '@auto-swe/shared/lib/agentRun';
 import { classifyAgentRunFailure } from '@auto-swe/shared/lib/agentRunFailure';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { DEFAULT_ENGINEERING_SPEC, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import {
+  CI_TRIAGE_AND_FIX_SPEC,
+  DEFAULT_ENGINEERING_SPEC,
+  SPEC_SCHEMA_VERSION,
+} from '@auto-swe/shared/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
@@ -104,6 +108,16 @@ function makeSpec(nodes: Record<string, unknown>, entry: string) {
   };
 }
 
+/** What the CI triage template's push path sees, scripted per test. */
+const ciPush = {
+  finished: 0,
+  /** One answer per poll of the pull request's CI on a pushed fix. */
+  polls: [] as boolean[],
+  pushes: [] as unknown[],
+  reports: [] as unknown[],
+};
+const PUSH_SHAS = ['a'.repeat(40), 'b'.repeat(40)];
+
 const fakeActivities = {
   cancelPendingHumanSteps: async (runId: string) => {
     calls.cancelledHumanSteps.push(runId);
@@ -141,23 +155,37 @@ const fakeActivities = {
     calls.implementationExtraArgs.push(rest);
     calls.implementationRequests.push(request);
     calls.implementations.push(subtask);
-    return { branch: 'auto/T-1', headSha: 'sha' };
+    return { branch: 'auto/T-1', filesChanged: [{ path: 'src/a.ts' }], headSha: 'sha' };
   },
   executeReviewFixImplementation: async (...args: unknown[]) => {
     calls.reviewFixArgs.push(args);
     return { branch: 'auto/T-1', headSha: 'sha2' };
   },
+  // ── The CI triage template's steps, scripted through `ciPush` ──
+  fetchCILogs: async () => 'the logs',
   finalizeWorkflowRun: async (runId: string, status: string) => {
     calls.finalize.push({ runId, status });
   },
+  finishCiFixPush: async () => {
+    ciPush.finished += 1;
+    return { deleted: true };
+  },
   listProviderModels: async () => ({ guidance: '## Live model ids\n\n### openai\n\n- gpt-x' }),
   publishOutcome: async (_input: unknown) => ({ decision: 'auto' }),
+  pushCiFixToPullRequest: async (input: unknown) => {
+    ciPush.pushes.push(input);
+    return { branch: 'feature', commitSha: PUSH_SHAS[ciPush.pushes.length - 1], pushed: true };
+  },
   readSource: async (input: unknown) => {
     calls.readSource.push(input);
     return { connectionType: 'notion', data: { ok: true }, ok: true };
   },
   recordWorkflowStep: async (args: { error?: string; nodeId: string; status: string }) => {
     calls.recordedSteps.push(args);
+  },
+  reportCiTriage: async (input: unknown) => {
+    ciPush.reports.push(input);
+    return { commented: true };
   },
   resolveCiWaitConfig: async () => ({
     deadlineSec: 1,
@@ -181,10 +209,12 @@ const fakeActivities = {
   },
   runLint: async () => ({ passed: false, summary: 'lint broke' }),
   runReviewNetwork: async () => ({ approved: true, rejectionSummary: '', verdicts: [] }),
+  runTests: async () => ({ exitCode: 0, passed: true, summary: 'ok' }),
   runTool: async (input: unknown) => {
     calls.runTool.push(input);
     return { connectionType: 'zendesk', ok: true };
   },
+  runTypecheck: async () => ({ exitCode: 0, passed: true, summary: 'ok' }),
   storeContextOverflowBatch: async (input: {
     values: Array<{ path: string; content: string }>;
   }) => {
@@ -194,9 +224,30 @@ const fakeActivities = {
       return { artifactId: `art-${calls.contextOverflows.length}`, sizeBytes: v.content.length };
     });
   },
+  triageCiFailure: async () => ({
+    brief: 'the brief',
+    category: 'regression',
+    confidence: 0.9,
+    decision: 'fix',
+    failedJobs: [],
+    fixable: true,
+    pullRequestNumber: 7,
+    reason: 'attempting a fix',
+    rootCause: '',
+    run: null,
+    suggestedFix: '',
+    summary: 'off by one',
+    superseded: false,
+    suspiciousLogs: false,
+  }),
   updateDomainState: (workflowId: string, status: string) =>
     updateDomainStateImpl(workflowId, status),
   validateContext: async () => ({ contextSnapshotId: 'cs-1', successCriteria: ['builds'] }),
+  verifyCiFix: async (input: { codeResult: unknown }) => ({
+    codeResult: input.codeResult,
+    verification: { status: 'unverified', summary: 'no command' },
+  }),
+  waitForCiByPolling: async () => ({ ciPassed: ciPush.polls.shift() ?? true }),
   writeOutcome: async (input: unknown) => {
     calls.writeOutcome.push(input);
     return { connectionType: 'notion', ok: true, reference: 'page-id' };
@@ -1157,5 +1208,69 @@ describe('RunnableWorkflow — oversized context values', () => {
     );
     await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-no-overflow'));
     expect(calls.contextOverflows).toHaveLength(0);
+  }, 120_000);
+});
+
+describe('the CI triage template: a fix pushed onto a pull request', () => {
+  const CI_REQUEST = {
+    ...REQUEST,
+    payload: {
+      baseBranch: 'feature',
+      connectionId: REQUEST.repoId,
+      githubRunId: '1',
+      maxCiFixAttempts: 2,
+      mode: 'fix',
+      pullRequestDelivery: 'push',
+      runAttempt: 1,
+    },
+  } as RepoWorkRequest;
+
+  beforeEach(() => {
+    currentSpec = CI_TRIAGE_AND_FIX_SPEC as unknown as Record<string, unknown>;
+    Object.assign(ciPush, { finished: 0, polls: [], pushes: [], reports: [] });
+    calls.ciFixArgs.length = 0;
+  });
+
+  it('ends SUCCESS when the pull request’s CI passes on the fix, removing the work branch', async () => {
+    ciPush.polls = [true];
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-ci-push-pass', CI_REQUEST)
+    )) as { status: string; pushedCommitSha?: string };
+    expect(result).toMatchObject({ pushedCommitSha: PUSH_SHAS[0], status: 'SUCCESS' });
+    expect(ciPush.pushes).toHaveLength(1);
+    expect(calls.ciFixArgs).toHaveLength(0);
+    expect(ciPush.finished).toBe(1);
+  }, 120_000);
+
+  it('makes one follow-up when CI fails on the fix, then reports and ends FAILED', async () => {
+    ciPush.polls = [false, false];
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-ci-push-fail', CI_REQUEST)
+    )) as { status: string; pushedCommitSha?: string };
+    expect(result).toMatchObject({ pushedCommitSha: PUSH_SHAS[1], status: 'FAILED' });
+    expect(ciPush.pushes).toHaveLength(2);
+    expect(calls.ciFixArgs).toHaveLength(1);
+    expect(ciPush.reports.at(-1)).toMatchObject({
+      pushedCommitSha: PUSH_SHAS[1],
+      pushFailed: { attempted: true, pushed: true },
+    });
+    expect(ciPush.finished).toBe(1);
+  }, 120_000);
+
+  it('makes no follow-up when the trigger allows no revisions', async () => {
+    ciPush.polls = [false];
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-ci-push-norev', {
+        ...CI_REQUEST,
+        payload: { ...(CI_REQUEST.payload as object), maxCiFixAttempts: 0 },
+      } as RepoWorkRequest)
+    )) as { status: string };
+    expect(result.status).toBe('FAILED');
+    expect(ciPush.pushes).toHaveLength(1);
+    expect(calls.ciFixArgs).toHaveLength(0);
+    expect(ciPush.reports.at(-1)).toMatchObject({ pushFailed: { attempted: false } });
   }, 120_000);
 });

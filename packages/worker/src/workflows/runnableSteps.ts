@@ -418,9 +418,21 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       const pushedCommitSha = inputs.pushedCommitSha as string | null | undefined;
       const pushRefusedReason = inputs.pushRefusedReason as string | null | undefined;
       const verification = inputs.verification as activitiesType.CiVerification | undefined;
+      const pushFailed =
+        inputs.pushFailed === true
+          ? {
+              attempted: inputs.pushRetryAttempted === true,
+              pushed: inputs.pushRetryPushed === true,
+              reason:
+                typeof inputs.pushRetryRefusedReason === 'string'
+                  ? inputs.pushRetryRefusedReason
+                  : null,
+            }
+          : undefined;
       return ciTriageActivities.reportCiTriage({
         request,
         triage,
+        ...(pushFailed ? { pushFailed } : {}),
         ...(verification ? { verification } : {}),
         ...(fixPrUrl ? { fixPrUrl } : {}),
         ...(pushedCommitSha ? { pushedCommitSha } : {}),
@@ -443,6 +455,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       return ciTriageActivities.pushCiFixToPullRequest({ codeResult, request, triage });
     },
   ],
+  ['finishCiFixPush', ({ request }) => ciTriageActivities.finishCiFixPush({ request })],
   [
     'verifyCiFix',
     ({ ctx, request, inputs }) => {

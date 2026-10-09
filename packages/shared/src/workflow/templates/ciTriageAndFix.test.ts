@@ -23,7 +23,7 @@ describe('ci-triage-and-fix', () => {
     const steps = Object.entries(CI_TRIAGE_AND_FIX_SPEC.nodes).filter(
       ([, n]) => n.type === 'step' && implementerSteps.has(n.step)
     );
-    expect(steps.map(([id]) => id).sort()).toEqual(['ciFix', 'implement']);
+    expect(steps.map(([id]) => id).sort()).toEqual(['ciFix', 'implement', 'pushRetryFix']);
     for (const [, node] of steps) {
       expect((node as Extract<Node, { type: 'step' }>).config).toMatchObject({
         refuseWorkflowChanges: true,

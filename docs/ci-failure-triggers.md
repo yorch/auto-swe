@@ -154,10 +154,21 @@ instead, and the comment says why:
 
 The fix commit is written to the decision row (`producedKey`) **before** the push, and cleared again
 if GitHub refuses it. A retry after a push whose reply was lost finds the branch at the recorded
-commit and reports it pushed. The pull request's
-own CI then runs on it; a failure of that commit is suppressed as `SUPPRESSED_OWN_OUTPUT`, so a fix is
-never fixed again by another run. The run's work branch is deleted after a successful push, and the
-run ends `SUCCESS` with the commit in its result. There is no CI loop on this path.
+commit and reports it pushed. A failure of that commit is suppressed as `SUPPRESSED_OWN_OUTPUT`, so a
+fix is never fixed again by another run.
+
+The run then **watches the pull request's CI on the pushed commit** itself, by polling (a webhook for
+an author's branch does not reach it), within the CI wait strategy's poll deadline:
+
+- CI passes, or never reports, or the poll cannot say: the run ends `SUCCESS` with the commit.
+- CI fails: unless the trigger's `maxCiFixAttempts` is `0`, the run makes **one** follow-up. It
+  fetches the logs, has the CI fixer (refusing workflow changes, with the logs fenced as untrusted
+  data) fix the fix on the run's work branch, and pushes it through the same checks as the first
+  push. Its CI is watched the same way.
+- CI fails again, or the follow-up changes nothing or cannot be pushed: the pull request comment
+  says so (when the trigger comments), and the run ends `FAILED`, leaving the branch to a person.
+
+The run's work branch carries the fix commits and is deleted when the run ends.
 
 A trigger asking for `push` is refused at save (`OPTION_DISABLED`) while the setting is
 off, and (`INVALID_INPUTS`) with a template other than the built-in; the run decides again from the
@@ -329,9 +340,15 @@ See [github-app-setup.md](./github-app-setup.md).
   author's pull request, and is reviewed only as part of it; an approval given before the push stays
   unless the repository dismisses stale approvals. The push also re-runs that pull request's
   workflows (`synchronize`).
-- **A pushed fix is not revised.** There is no CI loop after a push: if the pull request's CI
-  fails on the fix, the failure is suppressed as the platform's own and nothing more happens. An
-  author's later commit is triaged as usual.
+- **A pushed fix gets one follow-up, not a loop.** If the follow-up fails the pull request's CI
+  too, the run stops and says so; that failure is suppressed as the platform's own. A follow-up the
+  author's own new commits get in the way of is refused (the branch moved) rather than rebased. Only
+  the latest pushed commit is recorded as the platform's output, so a webhook for the first fix
+  arriving after the run ended would be triaged; while the run is open it is suppressed as in
+  flight. An author's later commit is triaged as usual.
+- **The run stays open while it watches.** Polling the pushed commit holds the run, and so
+  suppresses other failures on that branch as in flight, for up to the CI wait strategy's poll
+  deadline.
 - **Protection is read from GitHub's branch flag.** A branch guarded only by a repository ruleset
   that the platform's credential bypasses is not seen as protected; list such branches in
   `github.ciFixNeverPushBranches`.

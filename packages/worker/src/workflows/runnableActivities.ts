@@ -141,7 +141,10 @@ export const githubActivities = proxyActivities<
 // Retried like any LLM step; the invalid-payload and refused-run failures are
 // non-retryable ApplicationFailures, which the policy does not retry.
 export const ciTriageActivities = proxyActivities<
-  Pick<typeof activitiesType, 'triageCiFailure' | 'reportCiTriage' | 'pushCiFixToPullRequest'>
+  Pick<
+    typeof activitiesType,
+    'triageCiFailure' | 'reportCiTriage' | 'pushCiFixToPullRequest' | 'finishCiFixPush'
+  >
 >({
   heartbeatTimeout: T_2M,
   retry: RETRY_STANDARD,
