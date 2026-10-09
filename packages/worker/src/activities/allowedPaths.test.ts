@@ -342,3 +342,57 @@ describe('startPathGuard', () => {
     });
   });
 });
+
+describe('the workflow-change refusal (refuseWorkflowChanges)', () => {
+  async function runRefusing(agent: () => void, allowed?: string[]): Promise<string | undefined> {
+    const guard = await startPathGuard(workspace, 'main', allowed, undefined, {
+      refuseWorkflowChanges: true,
+    });
+    expect(guard).toBeDefined();
+    agent();
+    sh('git add -A');
+    return commitStaged(workspace, 'auto: fix', guard);
+  }
+
+  it('guards a step with no allowed-paths list at all', async () => {
+    await expect(startPathGuard(workspace, 'main', undefined)).resolves.toBeUndefined();
+    const sha = await runRefusing(() => write('src/sum.ts', 'export const sum = 1;\n'));
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(pushedFiles()).toBe('src/sum.ts');
+  });
+
+  it.each([
+    ['a workflow file', '.github/workflows/ci.yml'],
+    ['a composite action', '.github/actions/setup/action.yml'],
+    ['an upper-case spelling', '.GitHub/Workflows/ci.yml'],
+  ])('refuses %s before the push', async (_label, file) => {
+    await expect(runRefusing(() => write(file, 'on: push\n'))).rejects.toMatchObject({
+      type: 'DIFF_TOUCHES_WORKFLOWS',
+    });
+  });
+
+  it('refuses a symlink, which could point a checked path at content the check never read', async () => {
+    await expect(
+      runRefusing(() => {
+        mkdirSync(path.join(dir, '.github'), { recursive: true });
+        sh('ln -s ../tools .github/workflows');
+      })
+    ).rejects.toMatchObject({ type: 'DIFF_TOUCHES_WORKFLOWS' });
+  });
+
+  it('refuses a submodule', async () => {
+    await expect(
+      runRefusing(() =>
+        sh(
+          'git init -q vendor/sub && git -C vendor/sub -c user.name=t -c user.email=t@t commit -q --allow-empty -m s'
+        )
+      )
+    ).rejects.toMatchObject({ type: 'DIFF_TOUCHES_WORKFLOWS' });
+  });
+
+  it('still applies an allowed-paths list alongside it', async () => {
+    await expect(runRefusing(() => write('other.ts', 'x\n'), ['catalog.ts'])).rejects.toMatchObject(
+      { type: 'DIFF_OUTSIDE_ALLOWED_PATHS' }
+    );
+  });
+});

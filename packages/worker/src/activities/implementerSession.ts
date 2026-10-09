@@ -20,6 +20,7 @@ import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getExecErrorStdout } from '../lib/errors.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
@@ -67,6 +68,8 @@ export interface FixSessionInput {
   systemPromptOverride?: string;
   /** When set, the change may touch only these paths; anything else fails before the push. */
   allowedPaths?: string[];
+  /** Refuse, before the push, a change to a GitHub Actions workflow or action. */
+  refuseWorkflowChanges?: boolean;
   /** Conventional commit message for the fix commit. */
   commitMessage: string;
   /** OTel/cost event name, e.g. 'llm.ci_fix'. */
@@ -139,10 +142,14 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 
+  // The branch the change was cut from (the run's base). A result recorded before it was
+  // carried was always cut from the default branch.
+  const baseBranch = await resolveRunBaseBranch(previousCodeResult.baseBranch, repo);
+
   const workspace = await createWorkspace(
     authedCloneUrl,
     previousCodeResult.branch,
-    repo.defaultBranch,
+    baseBranch,
     repo.executorImage ?? undefined
   );
 
@@ -175,9 +182,10 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // carries it.
     const pathGuard = await startPathGuard(
       workspace,
-      repo.defaultBranch,
+      baseBranch,
       input.allowedPaths,
-      previousCodeResult.baseSha
+      previousCodeResult.baseSha,
+      { refuseWorkflowChanges: input.refuseWorkflowChanges }
     );
 
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
@@ -274,9 +282,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     throwIfActivityCancelled();
     await workspace.gitAuthed(`push origin ${pushRefspec(previousCodeResult.branch, pushSha)}`);
 
-    // `defaultBranch` is an operator-editable column — quote it like every other
-    // interpolated ref so it cannot smuggle shell syntax into the container.
-    const diff = await diffForResult(workspace, repo.defaultBranch, pathGuard, pushSha);
+    // `diffForResult` quotes the base like every other interpolated ref so it cannot
+    // smuggle shell syntax into the container.
+    const diff = await diffForResult(workspace, baseBranch, pathGuard, pushSha);
     // A guarded step reports the commit it pushed, not whatever HEAD has become.
     const headSha = pushSha ?? (await workspace.exec('git rev-parse HEAD')).trim();
 
@@ -327,6 +335,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       // Carried forward for a guarded step only, so the next session can report the whole
       // change against the same base; an unguarded step returns exactly what it always did.
       ...(pathGuard && previousCodeResult.baseSha ? { baseSha: previousCodeResult.baseSha } : {}),
+      // Carried only when the previous result had it, so a result from before the field
+      // existed stays exactly as it was (the default branch).
+      ...(previousCodeResult.baseBranch ? { baseBranch } : {}),
       branch: previousCodeResult.branch,
       codeSecurityFindings: codeSecurityFindings.length > 0 ? codeSecurityFindings : undefined,
       diff,

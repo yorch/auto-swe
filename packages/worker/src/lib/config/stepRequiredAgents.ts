@@ -67,5 +67,7 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | null> = {
   runChannelSubtasks: ['channelAssistant'],
   runEvalNode: ['evalJudge'],
   runReviewNetwork: ['securityReviewer', 'domainLogicReviewer', 'performanceReviewer', 'reviewer'],
+  // The `ciTriager` persona, on the `planner` model it inherits.
+  triageCiFailure: ['ciTriager', 'planner'],
   validateContext: ['validateContext'],
 };

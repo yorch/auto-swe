@@ -3,6 +3,7 @@
 import { getConnectionTypeMetadata, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useCallback, useEffect, useState } from 'react';
+import { CiTriggersModal } from '@/components/repositories/CiTriggersModal';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
@@ -42,6 +43,7 @@ type ModalMode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
   | { kind: 'edit'; repo: RepositorySummary }
   | { kind: 'dependencies'; repo: RepositorySummary }
+  | { kind: 'ciTriggers'; repo: RepositorySummary }
   | { kind: 'credential'; repo: RepositorySummary }
   | { kind: 'share'; repo: RepositorySummary }
   | { kind: 'import' }
@@ -263,6 +265,12 @@ export default function ConnectionsPage() {
                               label: 'Dependencies',
                               onAction: () => setMode({ kind: 'dependencies', repo: r }),
                             },
+                            {
+                              icon: 'alert' as const,
+                              id: 'ciTriggers',
+                              label: 'CI-failure triggers',
+                              onAction: () => setMode({ kind: 'ciTriggers', repo: r }),
+                            },
                           ]
                         : []),
                       ...(showCredential
@@ -448,6 +456,10 @@ export default function ConnectionsPage() {
           onClose={() => setMode(null)}
           repo={mode.repo}
         />
+      )}
+
+      {mode?.kind === 'ciTriggers' && (
+        <CiTriggersModal onClose={() => setMode(null)} repo={mode.repo} />
       )}
 
       {mode?.kind === 'dependencies' && (

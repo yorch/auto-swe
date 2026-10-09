@@ -17,13 +17,33 @@ export type InputFieldType = 'string' | 'number' | 'boolean' | 'array' | 'connec
 
 export interface InputSchemaProperty {
   type: InputFieldType;
+  /** A human label for forms; the property name is shown when absent. */
+  title?: string;
   description?: string;
+  /**
+   * The value a form starts from, and the one an automatic launcher (a trigger) fills in for
+   * an option it was not given. Validation never fills it: a payload that omits the key is
+   * checked as it is.
+   */
+  default?: string | number | boolean | (string | number)[];
   /** Allowed values (scalars only). */
   enum?: (string | number)[];
   /** Extra string constraint. */
   format?: 'uuid';
-  /** Element type when `type === 'array'`. */
-  items?: { type: Exclude<InputFieldType, 'array' | 'connection'>; format?: 'uuid' };
+  /** Inclusive bounds for a `number`. */
+  minimum?: number;
+  maximum?: number;
+  /** A `number` that must be a whole number. */
+  integer?: boolean;
+  /** Fewest and most elements an `array` may have when present. */
+  minItems?: number;
+  maxItems?: number;
+  /** Element type when `type === 'array'`, and optionally the values each element may take. */
+  items?: {
+    type: Exclude<InputFieldType, 'array' | 'connection'>;
+    format?: 'uuid';
+    enum?: (string | number)[];
+  };
   /** When `type === 'connection'`, restricts the picker to connections of this type. */
   connectionType?: string;
 }
@@ -65,7 +85,7 @@ function typeOf(value: unknown): InputFieldType | 'null' | 'object' {
 function checkScalar(
   key: string,
   value: unknown,
-  prop: Pick<InputSchemaProperty, 'type' | 'format' | 'enum'>,
+  prop: Pick<InputSchemaProperty, 'type' | 'format' | 'enum' | 'minimum' | 'maximum' | 'integer'>,
   errors: string[]
 ): void {
   const actual = typeOf(value);
@@ -85,8 +105,19 @@ function checkScalar(
         : `'${key}' must be a UUID`
     );
   }
-  if (prop.enum && !prop.enum.includes(value as string | number)) {
+  if (Array.isArray(prop.enum) && !prop.enum.includes(value as string | number)) {
     errors.push(`'${key}' must be one of: ${prop.enum.join(', ')}`);
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      errors.push(`'${key}' must be a finite number`);
+    } else if (prop.integer === true && !Number.isInteger(value)) {
+      errors.push(`'${key}' must be a whole number`);
+    } else if (prop.minimum !== undefined && value < prop.minimum) {
+      errors.push(`'${key}' must be at least ${prop.minimum}`);
+    } else if (prop.maximum !== undefined && value > prop.maximum) {
+      errors.push(`'${key}' must be at most ${prop.maximum}`);
+    }
   }
 }
 
@@ -117,10 +148,21 @@ export function validateInputPayload(schema: InputSchema, payload: unknown): Inp
         errors.push(`'${key}' must be an array (got ${typeOf(value)})`);
         continue;
       }
+      if (prop.minItems !== undefined && value.length < prop.minItems) {
+        errors.push(`'${key}' must have at least ${prop.minItems} item(s)`);
+      }
+      if (prop.maxItems !== undefined && value.length > prop.maxItems) {
+        errors.push(`'${key}' must have at most ${prop.maxItems} item(s)`);
+      }
       const items = prop.items;
       if (items) {
         value.forEach((el, i) => {
-          checkScalar(`${key}[${i}]`, el, { format: items.format, type: items.type }, errors);
+          checkScalar(
+            `${key}[${i}]`,
+            el,
+            { enum: items.enum, format: items.format, type: items.type },
+            errors
+          );
         });
       }
       continue;
@@ -129,4 +171,99 @@ export function validateInputPayload(schema: InputSchema, payload: unknown): Inp
   }
 
   return errors.length === 0 ? { ok: true } : { errors, ok: false };
+}
+
+const FIELD_TYPES: ReadonlySet<string> = new Set([
+  'string',
+  'number',
+  'boolean',
+  'array',
+  'connection',
+]);
+const SCALAR_TYPES: ReadonlySet<string> = new Set(['string', 'number', 'boolean']);
+
+function isScalarList(v: unknown): boolean {
+  return Array.isArray(v) && v.every((x) => typeof x === 'string' || typeof x === 'number');
+}
+
+function isCount(v: unknown): boolean {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0;
+}
+
+/**
+ * What is wrong with a declared input schema's shape, beyond `isInputSchema`'s outline: each
+ * property's keyword has the type this module and the forms read it as. Empty when it is
+ * sound. Checked where a schema is saved; `isInputSchema` stays lenient, since a caller that
+ * finds no schema validates nothing.
+ */
+export function inputSchemaProblems(value: unknown): string[] {
+  if (!isInputSchema(value)) {
+    return ["inputSchema must be `{ type: 'object', properties: { … } }`"];
+  }
+  const problems: string[] = [];
+  const req = (value as { required?: unknown }).required;
+  if (req !== undefined && !(Array.isArray(req) && req.every((k) => typeof k === 'string'))) {
+    problems.push('required must be a list of property names');
+  }
+  for (const [key, raw] of Object.entries(value.properties as Record<string, unknown>)) {
+    const at = (m: string) => problems.push(`'${key}': ${m}`);
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      at('must be an object');
+      continue;
+    }
+    const p = raw as Record<string, unknown>;
+    if (typeof p.type !== 'string' || !FIELD_TYPES.has(p.type)) {
+      at(`type must be one of ${[...FIELD_TYPES].join(', ')}`);
+      continue;
+    }
+    for (const k of ['title', 'description', 'connectionType'] as const) {
+      if (p[k] !== undefined && typeof p[k] !== 'string') {
+        at(`${k} must be a string`);
+      }
+    }
+    if (p.format !== undefined && p.format !== 'uuid') {
+      at("format may only be 'uuid'");
+    }
+    if (p.enum !== undefined && !isScalarList(p.enum)) {
+      at('enum must be a list of strings or numbers');
+    }
+    for (const k of ['minimum', 'maximum'] as const) {
+      if (p[k] !== undefined && !(typeof p[k] === 'number' && Number.isFinite(p[k]))) {
+        at(`${k} must be a number`);
+      }
+    }
+    if (p.integer !== undefined && typeof p.integer !== 'boolean') {
+      at('integer must be true or false');
+    }
+    for (const k of ['minItems', 'maxItems'] as const) {
+      if (p[k] !== undefined && !isCount(p[k])) {
+        at(`${k} must be a whole number of at least 0`);
+      }
+    }
+    if (p.items !== undefined) {
+      const items = p.items as Record<string, unknown> | null;
+      if (
+        typeof items !== 'object' ||
+        items === null ||
+        typeof items.type !== 'string' ||
+        !SCALAR_TYPES.has(items.type)
+      ) {
+        at('items must be { type: string | number | boolean }');
+      } else if (items.enum !== undefined && !isScalarList(items.enum)) {
+        at('items.enum must be a list of strings or numbers');
+      }
+    }
+    if (p.default !== undefined) {
+      const fits =
+        p.type === 'array'
+          ? isScalarList(p.default)
+          : p.type === 'connection'
+            ? typeof p.default === 'string'
+            : typeof p.default === p.type;
+      if (!fits) {
+        at(`default must be a ${p.type}`);
+      }
+    }
+  }
+  return problems;
 }

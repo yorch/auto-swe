@@ -197,6 +197,39 @@ register({
   name: 'fetchCILogs',
 });
 
+register({
+  category: 'agent',
+  configFields: [SYSTEM_PROMPT_FIELD],
+  description:
+    "Read a failed GitHub Actions run by id (payload.githubRunId / runAttempt) from the run's own " +
+    'repository, check the platform may act on it (not a fork, a branch, the open PR), and have the ' +
+    'ciTriager agent classify the failure from its logs. Code decides output.decision: fix, report or skip.',
+  label: 'Triage a CI failure',
+  name: 'triageCiFailure',
+});
+
+register({
+  category: 'vcs',
+  configFields: [],
+  description:
+    'Post the CI triage diagnosis (and the fix PR, if any) on the failing pull request as one ' +
+    'comment it edits on later failures. Best-effort; only when the payload asks for it.',
+  label: 'Report a CI triage',
+  name: 'reportCiTriage',
+});
+
+register({
+  category: 'vcs',
+  configFields: [],
+  description:
+    "Push a CI fix onto the failing pull request's own branch as a fast-forward, instead of a " +
+    'draft pull request. Only for a run a CI-failure trigger started with the built-in template, ' +
+    'where the trigger asks for it and an admin allows it, onto a branch that is not the default, ' +
+    'protected or listed; output.pushed is false with the reason otherwise, for a fallback.',
+  label: 'Push a CI fix to the pull request',
+  name: 'pushCiFixToPullRequest',
+});
+
 // ── CI wait strategy ─────────────────────────────────────────────────────────
 
 register({

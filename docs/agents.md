@@ -9,7 +9,7 @@
 Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
 `AnySkillRole = string`. New agents are added as data, not code.
 
-`syncBuiltins` seeds 28 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
+`syncBuiltins` seeds 29 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
 are seed content for the flagship software-engineering use case, not a fixed roster. An agent a team
 adds resolves through exactly the same cascade as `implementer`, and nothing in the engine privileges
 the seeded set — `assertConfigReady` gates boot on what the deployment has *installed*, not on the
@@ -94,6 +94,7 @@ own row, with three exceptions that keep an edit to the parent row in force:
 | `gateFixer` | `implementer` | `executeGateFixImplementation` |
 | `mergeConflictResolver` | `implementer` | `resolveMergeConflict` |
 | `lessonConsolidator` | `commitToMemory` | `consolidateLessons` |
+| `ciTriager` | `planner` | `triageCiFailure` ([ci-failure-triggers.md](./ci-failure-triggers.md)) |
 
 `MODEL_BACKED_AGENT_KEYS` in `@auto-swe/shared/agentKeys` is a narrow convenience set used for cost
 pricing and model-config UI labels — it is **not** the agent universe, and it does not include every

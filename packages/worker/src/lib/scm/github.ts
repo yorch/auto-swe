@@ -37,15 +37,20 @@ import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from 
 import { currentRunLauncherId } from '../runLauncher.js';
 import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
 import {
+  type BranchInfo,
   type CiStatusResult,
   type CloneCredentials,
+  type CommitComparison,
   type CreatePullRequestInput,
   DraftPullRequestUnsupportedError,
   ExistingPullRequestNotDraftError,
   type PermissionLookup,
+  type PullRequestInfo,
   type PullRequestRef,
   type RepoRef,
   type ScmProvider,
+  type WorkflowRunFailedJob,
+  type WorkflowRunFailure,
 } from './types.js';
 
 /**
@@ -244,6 +249,39 @@ async function octokitFor(repo: RepoRef) {
   return new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
 }
 
+/** Characters of a CI log kept: its end, where the failure is. */
+const CI_LOG_TAIL_CHARS = 50_000;
+
+/**
+ * The last `maxChars` characters of a response body, read as a stream so memory stays
+ * bounded by the tail however large the body is. Bytes are decoded as they arrive (a split
+ * multi-byte character is carried over by the streaming decoder).
+ */
+export async function readTail(
+  response: Pick<Response, 'body' | 'text'>,
+  maxChars: number
+): Promise<string> {
+  if (!response.body) {
+    // A body that cannot be streamed is read whole.
+    return (await response.text()).slice(-maxChars);
+  }
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let tail = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    tail += decoder.decode(value, { stream: true });
+    if (tail.length > maxChars * 2) {
+      tail = tail.slice(-maxChars);
+    }
+  }
+  tail += decoder.decode();
+  return tail.slice(-maxChars);
+}
+
 /** Wall-clock cap on a CI log download — the URL is third-party data. */
 const CI_LOG_FETCH_TIMEOUT_MS = 15_000;
 
@@ -298,6 +336,84 @@ export function resolveCiLogsTarget(logsUrl: string, trustedOrigins: string[]): 
   }
   const trusted = safety.url.protocol === 'https:' && trustedOrigins.includes(safety.url.origin);
   return { ok: true, trusted, url: safety.url };
+}
+
+/** Job and step conclusions that count as failed. */
+const FAILED_JOB_CONCLUSIONS = new Set(['failure', 'timed_out']);
+/** At most this many failed jobs have their logs read. */
+const MAX_FAILED_JOBS = 5;
+/** The tail of each failed job's log kept: the failure is at the end. */
+const MAX_JOB_LOG_CHARS = 12_000;
+
+/** The REST URL of a job's log, on the repository's own API host. */
+function jobLogsUrl(apiBase: string, repo: RepoRef, jobId: number): string {
+  const owner = encodeURIComponent(repo.organizationName);
+  const name = encodeURIComponent(repo.repoName);
+  return `${apiBase.replace(/\/$/, '')}/repos/${owner}/${name}/actions/jobs/${jobId}/logs`;
+}
+
+/** A GitHub run id as a number: decimal digits only, and exact as a JavaScript number. */
+export function parseRunId(runId: string): number | null {
+  if (!/^[1-9][0-9]{0,15}$/.test(runId)) {
+    return null;
+  }
+  const n = Number(runId);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/**
+ * A failure to read a workflow run, as a non-retryable failure that says what to do:
+ * a missing run stays missing, and a credential without Actions read access stays so until
+ * an admin changes the App's permissions. Anything else (a 5xx, the network) is retryable.
+ */
+function actionsReadFailure(err: unknown, what: string): Error {
+  const status = (err as { status?: number }).status;
+  if (status === 404) {
+    return ApplicationFailure.nonRetryable(
+      `GitHub has no ${what} in this repository.`,
+      'CI_RUN_NOT_FOUND'
+    );
+  }
+  if (status === 401 || status === 403) {
+    return ApplicationFailure.nonRetryable(
+      `GitHub refused to show ${what} (HTTP ${status}). The platform credential needs ` +
+        'read access to Actions (a GitHub App needs the "Actions: Read" permission, accepted ' +
+        'on the installation).',
+      'CI_RUN_FORBIDDEN'
+    );
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+/** At most this many pages of comments are searched for the platform's own marked comment. */
+const MAX_COMMENT_PAGES = 30;
+
+/**
+ * Who the platform's comments are written as on `repo`: the login a token authenticates as
+ * (a PAT), or, for a GitHub App installation token (which cannot read `GET /user`), the App's
+ * id, which GitHub stamps on its comments as `performed_via_github_app`. Undefined when
+ * neither can be established; nothing is edited then.
+ */
+async function commentIdentity(
+  octokit: Awaited<ReturnType<typeof octokitFor>>,
+  repo: RepoRef
+): Promise<{ login?: string; appId?: number } | undefined> {
+  try {
+    const { data } = await octokit.users.getAuthenticated();
+    return { login: data.login };
+  } catch {
+    // An installation token: fall through to the App id.
+  }
+  try {
+    const credential = await platformCredential(repo, await resolveGitHubConfig());
+    if (credential.scope !== 'instance' && credential.scope !== 'host') {
+      return undefined;
+    }
+    const appId = Number(credential.config.appId);
+    return Number.isSafeInteger(appId) && appId > 0 ? { appId } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export class GitHubScmProvider implements ScmProvider {
@@ -407,6 +523,19 @@ export class GitHubScmProvider implements ScmProvider {
   }
 
   async fetchCiLogs(logsUrl: string, repo?: RepoRef): Promise<string> {
+    const result = await this.downloadCiLogs(logsUrl, repo);
+    return result.ok ? result.text : result.error;
+  }
+
+  /**
+   * The download behind {@link fetchCiLogs}, telling a log apart from a reason there is none:
+   * the fix loop hands either to a model as text, but a caller that must know whether it got
+   * a log (the CI triage) reads `ok`.
+   */
+  private async downloadCiLogs(
+    logsUrl: string,
+    repo?: RepoRef
+  ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
     const ghConfig = await resolveGitHubConfig();
     // The platform credential — an App JWT, when minting an installation token
     // — goes to this repository's own API host. Every other route to a token
@@ -418,7 +547,10 @@ export class GitHubScmProvider implements ScmProvider {
         githubUrl: repo.baseUrl,
       });
       if (!hosts.ok) {
-        return `Cannot fetch CI logs — repository URL ${hosts.url} is not on an allowed GitHub host`;
+        return {
+          error: `Cannot fetch CI logs — repository URL ${hosts.url} is not on an allowed GitHub host`,
+          ok: false,
+        };
       }
     }
     // The platform credential set for this repository's host. Without a
@@ -429,7 +561,10 @@ export class GitHubScmProvider implements ScmProvider {
       : { config: ghConfig, scope: 'instance' };
     // Web and API on different hosts: no token of any kind is attached.
     if (repo && credential.scope === 'misconfigured') {
-      return `Cannot fetch CI logs — the repository's web URL and API URL are on different hosts (${hostMisconfigured(repo, ghConfig).message})`;
+      return {
+        error: `Cannot fetch CI logs — the repository's web URL and API URL are on different hosts (${hostMisconfigured(repo, ghConfig).message})`,
+        ok: false,
+      };
     }
     // The platform credential is attached only on the origins of the set it
     // belongs to: the instance's, or the repository's host's own. A repository
@@ -441,7 +576,10 @@ export class GitHubScmProvider implements ScmProvider {
       platform ? trustedGitHubOrigins(platform.config) : []
     );
     if (!target.ok) {
-      return `Cannot fetch CI logs — refusing to fetch '${logsUrl}': ${target.reason}`;
+      return {
+        error: `Cannot fetch CI logs — refusing to fetch '${logsUrl}': ${target.reason}`,
+        ok: false,
+      };
     }
     let githubToken: string | null = null;
     // A launcher's own token goes only to the repository's own hosts, which
@@ -469,7 +607,10 @@ export class GitHubScmProvider implements ScmProvider {
         if (!(err instanceof GitHubTokenMissingError)) {
           // Real auth error (e.g. malformed App credentials) — surface it so the
           // operator knows why the log fetch failed rather than seeing a 401.
-          return `Cannot fetch CI logs — GitHub auth error: ${err instanceof Error ? err.message : String(err)}`;
+          return {
+            error: `Cannot fetch CI logs — GitHub auth error: ${err instanceof Error ? err.message : String(err)}`,
+            ok: false,
+          };
         }
         // No token configured at all: proceed unauthenticated for public repos.
       }
@@ -513,12 +654,15 @@ export class GitHubScmProvider implements ScmProvider {
     );
 
     if (!response.ok) {
-      return `Failed to fetch CI logs (HTTP ${response.status}): ${await response.text().catch(() => 'no body')}`;
+      return {
+        error: `Failed to fetch CI logs (HTTP ${response.status}): ${await response.text().catch(() => 'no body')}`,
+        ok: false,
+      };
     }
 
-    const fullLog = await response.text();
-    // Truncate to last 50KB to fit in LLM context
-    return fullLog.slice(-50_000);
+    // Only the end is kept (it fits an LLM's context, and the failure is there), and it is kept
+    // while streaming: a job log can run to hundreds of megabytes.
+    return { ok: true, text: await readTail(response, CI_LOG_TAIL_CHARS) };
   }
 
   async fetchFileContent(repo: RepoRef, path: string, ref?: string): Promise<string | null> {
@@ -586,6 +730,265 @@ export class GitHubScmProvider implements ScmProvider {
       branchExists,
       openPr: open ? { prNumber: open.number, prUrl: open.html_url } : null,
     };
+  }
+
+  async fetchWorkflowRunFailure(
+    repo: RepoRef,
+    runId: string,
+    attempt: number
+  ): Promise<WorkflowRunFailure> {
+    const runNumber = parseRunId(runId);
+    if (runNumber === null || !Number.isSafeInteger(attempt) || attempt < 1) {
+      throw ApplicationFailure.nonRetryable(
+        `Invalid workflow run reference ${String(runId).slice(0, 40)}#${attempt}`,
+        'CI_RUN_INVALID'
+      );
+    }
+    const octokit = await octokitFor(repo);
+    const apiBase = repoHosts(repo, await resolveGitHubConfig()).apiUrl;
+    const where = { owner: repo.organizationName, repo: repo.repoName, run_id: runNumber };
+    let run: Awaited<ReturnType<typeof octokit.actions.getWorkflowRunAttempt>>['data'];
+    try {
+      run = (await octokit.actions.getWorkflowRunAttempt({ ...where, attempt_number: attempt }))
+        .data;
+    } catch (err) {
+      throw actionsReadFailure(err, `workflow run ${runNumber} (attempt ${attempt})`);
+    }
+    let jobs: Awaited<
+      ReturnType<typeof octokit.actions.listJobsForWorkflowRunAttempt>
+    >['data']['jobs'];
+    try {
+      jobs = (
+        await octokit.actions.listJobsForWorkflowRunAttempt({
+          ...where,
+          attempt_number: attempt,
+          per_page: 100,
+        })
+      ).data.jobs;
+    } catch (err) {
+      throw actionsReadFailure(err, `the jobs of workflow run ${runNumber}`);
+    }
+    const failed = jobs
+      .filter((j) => j.conclusion !== null && FAILED_JOB_CONCLUSIONS.has(j.conclusion))
+      .slice(0, MAX_FAILED_JOBS);
+    const failedJobs: WorkflowRunFailedJob[] = [];
+    for (const job of failed) {
+      const base = {
+        conclusion: job.conclusion,
+        failedSteps: (job.steps ?? [])
+          .filter((st) => st.conclusion !== null && FAILED_JOB_CONCLUSIONS.has(st.conclusion))
+          .map((st) => st.name),
+        htmlUrl: job.html_url ?? null,
+        name: job.name,
+      };
+      // Through the same download as the fix loop's logs: the API answers with a redirect to
+      // short-lived storage, and every hop is checked, pinned and timed out, with the
+      // credential sent only to the API's origin.
+      const logs = await this.downloadCiLogs(jobLogsUrl(apiBase, repo, job.id), repo);
+      failedJobs.push(
+        logs.ok
+          ? { ...base, log: logs.text.slice(-MAX_JOB_LOG_CHARS) }
+          : { ...base, log: '', logUnavailable: logs.error.slice(0, 200) }
+      );
+    }
+    return {
+      failedJobs,
+      run: {
+        attempt: run.run_attempt ?? attempt,
+        conclusion: run.conclusion ?? null,
+        event: run.event,
+        headBranch: run.head_branch ?? null,
+        headRepositoryFullName: run.head_repository?.full_name ?? null,
+        headSha: run.head_sha,
+        htmlUrl: run.html_url,
+        id: String(run.id),
+        name: run.name ?? '',
+        path: run.path ?? '',
+        pullRequests: (run.pull_requests ?? []).map((pr) => ({
+          baseRef: pr.base.ref,
+          headRef: pr.head.ref,
+          number: pr.number,
+        })),
+        repositoryFullName: run.repository.full_name,
+        status: run.status ?? null,
+      },
+    };
+  }
+
+  async branchHeadSha(repo: RepoRef, branch: string): Promise<string | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.repos.getBranch({
+        branch,
+        owner: repo.organizationName,
+        repo: repo.repoName,
+      });
+      return data.commit.sha;
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async pullRequestInfo(repo: RepoRef, prNumber: number): Promise<PullRequestInfo | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.pulls.get({
+        owner: repo.organizationName,
+        pull_number: prNumber,
+        repo: repo.repoName,
+      });
+      return {
+        baseRef: data.base.ref,
+        headRef: data.head.ref,
+        headRepositoryFullName: data.head.repo?.full_name ?? null,
+        headSha: data.head.sha,
+        htmlUrl: data.html_url,
+        merged: data.merged === true,
+        number: data.number,
+        state: data.state === 'open' ? 'open' : 'closed',
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async branchInfo(repo: RepoRef, branch: string): Promise<BranchInfo | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.repos.getBranch({
+        branch,
+        owner: repo.organizationName,
+        repo: repo.repoName,
+      });
+      return { protected: data.protected === true, sha: data.commit.sha };
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async defaultBranch(repo: RepoRef): Promise<string> {
+    const octokit = await octokitFor(repo);
+    const { data } = await octokit.repos.get({
+      owner: repo.organizationName,
+      repo: repo.repoName,
+    });
+    return data.default_branch;
+  }
+
+  async compareCommits(repo: RepoRef, base: string, head: string): Promise<CommitComparison> {
+    const octokit = await octokitFor(repo);
+    const { data } = await octokit.repos.compareCommitsWithBasehead({
+      basehead: `${base}...${head}`,
+      owner: repo.organizationName,
+      per_page: 100,
+      repo: repo.repoName,
+    });
+    const files = data.files ?? [];
+    // GitHub lists at most 300 files on a comparison; past that the list is not the whole range.
+    const truncated = files.length >= 300;
+    return {
+      aheadBy: data.ahead_by,
+      behindBy: data.behind_by,
+      paths: truncated
+        ? null
+        : files.flatMap((f) =>
+            f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]
+          ),
+      status: data.status,
+    };
+  }
+
+  async fastForwardBranch(repo: RepoRef, branch: string, sha: string): Promise<boolean> {
+    const octokit = await octokitFor(repo);
+    try {
+      // `force: false`: the host moves the ref only when `sha` descends from where it points.
+      await octokit.git.updateRef({
+        force: false,
+        owner: repo.organizationName,
+        ref: `heads/${branch}`,
+        repo: repo.repoName,
+        sha,
+      });
+      return true;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      // 422: not a fast-forward, or a protection / ruleset refused the update. 403: the
+      // credential may not push here. Either is a refusal, not a failure.
+      if (status === 422 || status === 403 || status === 409) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async deleteBranch(repo: RepoRef, branch: string): Promise<boolean> {
+    const octokit = await octokitFor(repo);
+    try {
+      await octokit.git.deleteRef({
+        owner: repo.organizationName,
+        ref: `heads/${branch}`,
+        repo: repo.repoName,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async upsertMarkedComment(
+    repo: RepoRef,
+    issueNumber: number,
+    marker: string,
+    body: string
+  ): Promise<{ htmlUrl: string; updated: boolean }> {
+    const octokit = await octokitFor(repo);
+    const where = { issue_number: issueNumber, owner: repo.organizationName, repo: repo.repoName };
+    // Only a comment the platform itself wrote is edited. Anyone who can comment can paste the
+    // marker, and a credential with write access can edit other people's comments, so the
+    // marker alone would let the platform overwrite a person's comment under their name.
+    const identity = await commentIdentity(octokit, repo);
+    let existing: { id: number } | undefined;
+    if (identity) {
+      let pages = 0;
+      // Comments list oldest first; walk every page so the newest marked comment is found.
+      for await (const page of octokit.paginate.iterator(octokit.issues.listComments, {
+        ...where,
+        per_page: 100,
+      })) {
+        for (const c of page.data) {
+          const ours =
+            (identity.login !== undefined && c.user?.login === identity.login) ||
+            (identity.appId !== undefined && c.performed_via_github_app?.id === identity.appId);
+          if (ours && c.body?.includes(marker)) {
+            existing = { id: c.id };
+          }
+        }
+        pages += 1;
+        if (pages >= MAX_COMMENT_PAGES) {
+          break;
+        }
+      }
+    }
+    if (existing) {
+      const { data } = await octokit.issues.updateComment({
+        body,
+        comment_id: existing.id,
+        owner: repo.organizationName,
+        repo: repo.repoName,
+      });
+      return { htmlUrl: data.html_url, updated: true };
+    }
+    const { data } = await octokit.issues.createComment({ ...where, body });
+    return { htmlUrl: data.html_url, updated: false };
   }
 
   async isDraftPullRequest(repo: RepoRef, prNumber: number): Promise<boolean> {

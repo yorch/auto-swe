@@ -201,6 +201,34 @@ describe('executeImplementation agent turn', () => {
   });
 });
 
+describe('executeImplementation base branch', () => {
+  it("clones the repository's default branch when the run names no base", async () => {
+    const result = await executeImplementation(REQUEST);
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[2]).toBe('main');
+    expect(result.baseBranch).toBe('main');
+  });
+
+  it("clones, diffs against and reports the payload's base", async () => {
+    const result = await executeImplementation({
+      ...REQUEST,
+      payload: { baseBranch: 'release/1.4' },
+    });
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[2]).toBe('release/1.4');
+    const diff = workspaceMock.exec.mock.calls.find((c: unknown[]) =>
+      String(c[0]).startsWith('git diff origin/')
+    );
+    expect(diff?.[0]).toBe("git diff origin/'release/1.4'");
+    expect(result.baseBranch).toBe('release/1.4');
+  });
+
+  it('refuses a malformed base before any workspace exists', async () => {
+    await expect(
+      executeImplementation({ ...REQUEST, payload: { baseBranch: '-x' } })
+    ).rejects.toThrow(/not a valid branch name/);
+    expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+  });
+});
+
 describe('executeImplementation cross-repo context', () => {
   it('appends the dependency block to the implementer system prompt', async () => {
     loadMock.mockResolvedValue('\n\n## Cross-Repo Dependency Context\n- acme/web — kinds: code');

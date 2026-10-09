@@ -6,6 +6,7 @@ import {
   BRAND_REVIEWER_PROMPT,
   CHANNEL_ASSISTANT_PROMPT,
   CI_FIX_SYSTEM_PROMPT,
+  CI_TRIAGER_PROMPT,
   CONTENT_WRITER_PROMPT,
   CONTEXT_VALIDATOR_PROMPT,
   DECOMPOSER_AGENT_PROMPT,
@@ -704,6 +705,17 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'prdDecomposer',
     name: 'PRD Decomposer',
     systemPrompt: PRD_DECOMPOSER_PROMPT,
+  },
+  // ── CI failure triage ──────────────────────────────────────────────────────
+  {
+    // Classifies a failed GitHub Actions run from its logs into a typed verdict that fixed
+    // workflow code routes on (`triageCiFailure`). No tools: it only reads what it is given.
+    description:
+      'Diagnoses a failed CI workflow run from its logs and says whether a code fix applies.',
+    inheritsModelFrom: 'planner',
+    key: 'ciTriager',
+    name: 'CI Triager',
+    systemPrompt: CI_TRIAGER_PROMPT,
   },
 ];
 

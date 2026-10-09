@@ -21,11 +21,17 @@ import {
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import {
+  CiTriggerStartError,
+  handleWorkflowRunFailure,
+  normalizeWorkflowRunEvent,
+} from '../lib/ciFailureTriggers.js';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
+import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
 
 const JiraWebhookSchema = z
@@ -213,6 +219,47 @@ type VerifiedWebhook = { ok: true; host: string | null } | { ok: false };
 const HOST_MISMATCH = {
   data: { ignored: true, reason: 'Repository is not on the host that signed this delivery' },
 };
+
+/**
+ * A `workflow_run` delivery: a failed run on a connected repository may start the CI triage
+ * template through the repository's CI-failure triggers (`lib/ciFailureTriggers.ts`). Bound
+ * to the verified host like every other delivery. A run that could not be started after the
+ * decision answers 503, so the delivery can be sent again.
+ */
+async function handleWorkflowRunDelivery(
+  fastify: FastifyInstance,
+  body: unknown,
+  reply: FastifyReply,
+  verifiedHost: string | null
+) {
+  const event = normalizeWorkflowRunEvent(body);
+  if (event.type === 'unrecognized') {
+    return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
+  }
+  if (event.type === 'ignored') {
+    return { data: { ignored: true, reason: event.reason } };
+  }
+  if (
+    !deliveryHostMatches(verifiedHost, event.repoHtmlUrl) ||
+    (await claimsHostWithOwnSecret(fastify.prisma, verifiedHost, event.repoHtmlUrl))
+  ) {
+    return HOST_MISMATCH;
+  }
+  try {
+    return { data: await handleWorkflowRunFailure(fastify, event, verifiedHost) };
+  } catch (err) {
+    if (err instanceof CiTriggerStartError) {
+      fastify.log.error({ err: err.cause, runId: event.runId }, err.message);
+      return sendError(
+        reply,
+        503,
+        'CI_TRIGGER_START_FAILED',
+        `${err.message} — retry the delivery`
+      );
+    }
+    throw err;
+  }
+}
 
 async function verifyWebhookOrReject(
   request: FastifyRequest & { rawBody?: string | Buffer },
@@ -481,6 +528,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       // The App's own lifecycle events arrive on the same webhook URL.
       const eventType = request.headers['x-github-event'];
+      // So do workflow runs: an App has one webhook URL.
+      if (eventType === 'workflow_run') {
+        return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);
+      }
       if (typeof eventType === 'string' && INSTALLATION_EVENT_TYPES.has(eventType)) {
         return {
           data: await applyInstallationEvent(
@@ -774,6 +825,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const verified = await verifyWebhookOrReject(request, reply);
       if (!verified.ok) {
         return;
+      }
+
+      if (request.headers['x-github-event'] === 'workflow_run') {
+        return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);
       }
 
       const event = normalizeGitHubCheckRunEvent(request.body);
@@ -1107,6 +1162,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             .status(422)
             .send({ error: { code: 'VALIDATION_ERROR', errors: result.errors } });
         }
+      }
+
+      // An optional `baseBranch`, checked before anything is written (same as POST /:id/runs).
+      const base = await launchBaseBranch(payload, reply);
+      if (!base.ok) {
+        return;
       }
 
       // Extract well-known fields from the payload (same as POST /:id/runs).

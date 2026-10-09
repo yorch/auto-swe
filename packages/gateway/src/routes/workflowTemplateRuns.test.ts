@@ -4,6 +4,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { workflowTemplateRoutes } from './workflowTemplates.js';
 
 // Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
+  resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),
+}));
+
 vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   ...(await import('../test/billingMock.js')),
@@ -284,6 +289,44 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
     });
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.payload).error.code).toBe('INVALID_TICKET_ID');
+    expect(startedWorkflows).toHaveLength(0);
+  });
+
+  it('rejects a payload baseBranch that is not a valid branch name', async () => {
+    startedWorkflows.length = 0;
+    const response = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: { payload: { baseBranch: 'release..1' } },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.payload).error.code).toBe('INVALID_BASE_BRANCH');
+    expect(startedWorkflows).toHaveLength(0);
+  });
+
+  it('keeps a valid baseBranch in the payload, where every step and a retry read it', async () => {
+    startedWorkflows.length = 0;
+    const response = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: { payload: { baseBranch: 'release/1.4' } },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+    expect(response.statusCode).toBe(201);
+    expect(JSON.stringify(startedWorkflows[0])).toContain('"baseBranch":"release/1.4"');
+  });
+
+  it('refuses a platform work branch as a base', async () => {
+    startedWorkflows.length = 0;
+    const response = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: { payload: { baseBranch: 'auto/JIRA-1' } },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.payload).error.code).toBe('INVALID_BASE_BRANCH');
     expect(startedWorkflows).toHaveLength(0);
   });
 });

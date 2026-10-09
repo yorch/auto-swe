@@ -38,7 +38,7 @@ run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--b
                                      already started instead of a second one
 
 agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|draft_pr]
-          [--max-steps=N] [--timeout=SECONDS] [--wait]
+          [--base=<branch>] [--max-steps=N] [--timeout=SECONDS] [--wait]
                                      Run a library agent on a repository in a throwaway workspace;
                                      --deliver=branch|draft_pr publishes it after the platform's
                                      checks pass (see docs/agent-runs.md)

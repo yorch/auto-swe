@@ -131,6 +131,14 @@ describe('ciLoop', () => {
     expect(limit(6)).toMatchObject({ expr: 'context.ciRetries >= 6' });
   });
 
+  it('takes the limit as an expression, parenthesised so it binds as one operand', () => {
+    const node = ciLoop({
+      fix: { handoff: { repush: 'r' }, limit: 'request.payload.n ?? 2' },
+      passed: 'f',
+    }).checkCILimit;
+    expect(node).toMatchObject({ expr: 'context.ciRetries >= (request.payload.n ?? 2)' });
+  });
+
   it('reports the pull request on both CI terminals', () => {
     const nodes = ciLoop({ fix: false, passed: 'f' });
     for (const id of ['terminateCIFailed', 'terminateCITimedOut']) {

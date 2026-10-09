@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
+import { GlobListSchema } from '../lib/ciTrigger.js';
 import { IMPLEMENTER_RUNTIMES } from '../types/api.js';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { MAX_FANOUT_CONCURRENCY } from '../workflow/spec.js';
@@ -160,6 +161,42 @@ export const SETTING_DEFINITIONS = {
   // and ADMIN-only: each host list is an SSRF decision — it is what lets a
   // credential reach a private-network GitHub Enterprise server — and every
   // other connector reserves that decision for an admin.
+  'github.ciFailureTriggersEnabled': defineSetting({
+    defaultValue: true,
+    description:
+      "Whether a repository's CI-failure triggers may start runs. Each trigger is opt-in on its repository already; this is the switch that stops every one of them at once — a webhook for a failed workflow run is then acknowledged and recorded nowhere. Turning it off does not stop runs already started.",
+    group: 'github',
+    label: 'CI-failure triggers enabled',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'github.ciFixNeverPushBranches': defineSetting({
+    defaultValue: ['main', 'master', 'develop', 'trunk', 'release/**', 'releases/**', 'hotfix/**'],
+    description:
+      "Branches a CI fix is never pushed to, even where a trigger's pull-request fix delivery is 'push' and pushing is allowed: globs over the branch name (* within a path segment, ** across them, a leading ! excludes; the last match wins). The repository's default branch and any protected branch are refused whatever this says; a refused push becomes a draft pull request instead.",
+    group: 'github',
+    label: 'CI fixes are never pushed to',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: GlobListSchema,
+  }),
+  'github.ciFixPushToPullRequestEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether a CI-failure trigger may deliver a fix for a failing pull request as a commit pushed to that pull request's own branch, rather than as a draft pull request into it. Off: every fix is a draft pull request, whatever a trigger asks for. A pushed commit is reviewed only as part of the pull request it lands on, so this moves agent-written code one step closer to a merge. Even when on, the push is fast-forward only, never to the default branch, a protected branch or one matching 'CI fixes are never pushed to', and only with the built-in CI triage template; anything refused becomes a draft pull request.",
+    group: 'github',
+    label: 'CI fixes may be pushed to pull request branches',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'github.repositoryHosts': defineSetting({
     defaultValue: [],
     description:

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { SchemaFieldInput } from './schemaForm';
+import { buildInitialPayload, SchemaFieldInput, validatePayload } from './schemaForm';
 
 vi.mock('@/hooks/useRepositories', () => ({
   useRepositories: () => ({
@@ -42,5 +42,94 @@ describe('SchemaFieldInput', () => {
     expect(options.length).toBe(1);
     expect(options[0].textContent).toContain('My Notion');
     expect(screen.queryByText(/acme/)).toBeNull();
+  });
+
+  it('labels a field by its title, and renders a choice list as checkboxes', () => {
+    const onChange = vi.fn();
+    render(
+      <SchemaFieldInput
+        name="fixCategories"
+        onChange={onChange}
+        prop={{
+          items: { enum: ['regression', 'test_bug'], type: 'string' },
+          title: 'Fix these',
+          type: 'array',
+        }}
+        value={['regression']}
+      />
+    );
+    expect(screen.getByText('Fix these')).toBeTruthy();
+    expect((screen.getByLabelText('regression') as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByLabelText('test bug'));
+    expect(onChange).toHaveBeenCalledWith(['regression', 'test_bug']);
+  });
+});
+
+describe('SchemaFieldInput robustness', () => {
+  it('shows a numeric enum default as selected and hands back the number', () => {
+    const onChange = vi.fn();
+    render(
+      <SchemaFieldInput
+        name="level"
+        onChange={onChange}
+        prop={{ enum: [1, 3, 5], type: 'number' }}
+        value={3}
+      />
+    );
+    const select = screen.getByRole('button', { name: /level/i });
+    expect(select.textContent).toContain('3');
+    fireEvent.click(select);
+    fireEvent.click(screen.getByRole('option', { name: '5' }));
+    expect(onChange).toHaveBeenCalledWith(5);
+    expect(
+      validatePayload(
+        { properties: { level: { enum: [1, 3, 5], type: 'number' } }, type: 'object' },
+        { level: 3 }
+      )
+    ).toEqual({});
+  });
+
+  it('renders a malformed title or choice list as a plain field instead of crashing', () => {
+    render(
+      <SchemaFieldInput
+        name="kinds"
+        onChange={() => undefined}
+        prop={
+          {
+            items: { enum: 'a,b', type: 'string' },
+            title: { bad: true },
+            type: 'array',
+          } as never
+        }
+        value={['a']}
+      />
+    );
+    expect((screen.getByLabelText('Kinds') as HTMLInputElement).value).toBe('a');
+  });
+});
+
+describe('buildInitialPayload / validatePayload', () => {
+  const schema = {
+    properties: {
+      cats: {
+        default: ['a'],
+        items: { enum: ['a', 'b'], type: 'string' as const },
+        minItems: 1,
+        type: 'array' as const,
+      },
+      n: { default: 2, maximum: 5, minimum: 0, type: 'number' as const },
+    },
+    type: 'object' as const,
+  };
+
+  it('starts from the declared defaults', () => {
+    expect(buildInitialPayload(schema)).toEqual({ cats: ['a'], n: 2 });
+  });
+
+  it('reports bounds and an empty choice list', () => {
+    expect(validatePayload(schema, { cats: [], n: 6 })).toEqual({
+      cats: 'Choose at least one',
+      n: 'Must be at most 5',
+    });
   });
 });

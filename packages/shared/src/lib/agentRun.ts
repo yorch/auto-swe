@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BaseBranchSchema } from './gitRef.js';
 
 /**
  * Agent runs: an ad-hoc "run this library Agent on this repository" launch.
@@ -60,6 +61,7 @@ export const NON_LAUNCHABLE_AGENT_KEYS: ReadonlySet<string> = new Set([
   'workflowExplainer',
   'repoDependencyInferrer',
   'channelAssistant',
+  'ciTriager',
 ]);
 
 export function isLaunchableAgentKey(key: string): boolean {
@@ -78,6 +80,8 @@ export const AGENT_REF_RE = /^[A-Za-z0-9_.-]+(@[1-9][0-9]*)?$/;
  */
 export const AgentRunPayloadSchema = z.object({
   agentRef: z.string().min(1).max(130).regex(AGENT_REF_RE),
+  /** The branch the checkout is cut from and a draft PR targets. Unset: the default branch. */
+  baseBranch: BaseBranchSchema.optional(),
   deliver: z.enum(AGENT_RUN_DELIVERIES).default('none'),
   /** Per-launch caps. Can only lower the platform ceilings. */
   maxSteps: z.number().int().min(1).max(500).optional(),

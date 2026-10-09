@@ -122,9 +122,15 @@ export interface CodeResult {
    * backwards compatibility with context snapshots persisted before it existed.
    */
   repoId?: string;
-  /** The defaultBranch HEAD SHA at workspace creation time (before agent edits).
+  /** The base branch HEAD SHA at workspace creation time (before agent edits).
    * Stored best-effort; empty string when capture failed. */
   baseSha?: string;
+  /**
+   * The branch the change was cut from, so the fix sessions clone and diff
+   * against the same branch and the pull request targets it. Unset on results
+   * persisted before it existed, which were always cut from the default branch.
+   */
+  baseBranch?: string;
   codeSecurityFindings?: CodeSecurityFinding[];
   diff: string;
   filesChanged: FileChange[];

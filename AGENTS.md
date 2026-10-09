@@ -140,6 +140,7 @@ Top-level files that matter:
 | Temporal workflow ID          | `eng-<org>-<repoName>-<ticketId>` | `eng-acme-payments-api-JIRA-1234`         |
 | Git branch                    | `<BRANCH_PREFIX>/<ticketId>`      | `auto/JIRA-1234` (default prefix: `auto`) |
 | Agent-run workflow ID / branch | `agent-<repo8>-<hex8>` (with an `Idempotency-Key`: `agent-<repo8>-<user8>-<digest>`) / `<BRANCH_PREFIX>/agent-<id8>` | `agent-1a2b3c4d-9f8e7d6c` / `auto/agent-0a1b2c3d` |
+| CI-trigger workflow ID / branch | `ci-<trigger8>-<runId12>-<attempt>` / `<BRANCH_PREFIX>/ci-<runId>-<attempt>` | `ci-1a2b3c4d-123456789012-1` / `auto/ci-123456789012-1` |
 | Docker workspace container    | `workspace-<random-hex>`          | `workspace-a1b2c3d4`                      |
 | Prisma table mapping          | `snake_case` via `@@map`          | `active_workflows`                        |
 | Team slug                     | `lowercase-kebab-case`            | `payments`, `platform-eng`                |
@@ -168,7 +169,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "77 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "79 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -501,9 +502,9 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   `workflowAuthor`, `workflowExplainer`, `repoDependencyInferrer`. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
-- **Sub-role personas** (`inheritsModelFrom`), 11 of them: `securityReviewer` /
+- **Sub-role personas** (`inheritsModelFrom`), 12 of them: `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
-  `prdDecomposer` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
+  `prdDecomposer` / `ciTriager` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
   `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
 
 Both lists are complete as written, and `yarn docs:check` fails if one stops being — see

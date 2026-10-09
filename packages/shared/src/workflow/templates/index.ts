@@ -4,6 +4,7 @@ import { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
 import type { WorkflowSpec } from '../spec.js';
 import { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 import { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
+import { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
 import { CODE_AND_CI_SPEC } from './codeAndCi.js';
 import { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 import { CREATE_ISSUE_SPEC } from './createIssue.js';
@@ -86,6 +87,14 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: CODE_AND_CI_SPEC.description,
     name: CODE_AND_CI_SPEC.name,
     spec: CODE_AND_CI_SPEC,
+  },
+  {
+    // Started by a CI-failure trigger (a repository's `workflow_run` webhook), or by hand
+    // with a run id. Fix mode opens a draft into the branch that failed.
+    description: CI_TRIAGE_AND_FIX_SPEC.description,
+    inputSchema: CI_TRIAGE_INPUT_SCHEMA,
+    name: CI_TRIAGE_AND_FIX_SPEC.name,
+    spec: CI_TRIAGE_AND_FIX_SPEC,
   },
   {
     description: AGENT_REVIEWED_PR_SPEC.description,
@@ -296,6 +305,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
 export { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
 export { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 export { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
+export { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
 export { CODE_AND_CI_SPEC } from './codeAndCi.js';
 export { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 export { CREATE_ISSUE_SPEC } from './createIssue.js';

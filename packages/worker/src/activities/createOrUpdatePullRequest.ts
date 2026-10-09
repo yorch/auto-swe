@@ -12,6 +12,7 @@ import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
+import { requestedBaseBranch, resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import {
   DraftPullRequestUnsupportedError,
@@ -145,10 +146,16 @@ async function doCreateOrUpdatePullRequest(
   // on the host but crashed before persisting the DB row — the tracking row is
   // still written below). Only a prior attempt could have orphaned a PR, so
   // the extra lookup round-trip is skipped on the first attempt.
+  // Into the branch the change was cut from: the code result says which, and the run's
+  // base covers a result recorded before it did. Both fall back to the default branch.
+  const baseBranch = await resolveRunBaseBranch(
+    codeResult.baseBranch ?? requestedBaseBranch(request),
+    repo
+  );
   let created: { prNumber: number; prUrl: string };
   try {
     created = await scm.createOrUpdatePullRequest({
-      baseBranch: repo.defaultBranch,
+      baseBranch,
       body: formatPRBody(request, codeResult, workflowDefaults.prBodyTemplate || undefined),
       ...(options.draft ? { draft: true } : {}),
       headBranch: codeResult.branch,

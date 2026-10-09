@@ -1,11 +1,13 @@
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
+import { ApplicationFailure } from '@temporalio/activity';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
 import {
   CI_FAILURE_TRACE_CHARS,
   CI_FAILURE_TRACE_EVENT,
   currentActivityId,
 } from '../lib/attemptTrace.js';
+import { ciLogIsUsable, fenceCiLogs, redactCiLog } from '../lib/ciLogGuard.js';
 import { rejectionText } from '../lib/rejectionText.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
@@ -33,6 +35,18 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
   return getScmProvider(repoRef).fetchCiLogs(logsUrl, repoRef);
 }
 
+/** What a template step asks of a fix session beyond the defaults. */
+export interface FixSessionOptions {
+  /** `config.refuseWorkflowChanges`: refuse a workflow or action change before the push. */
+  refuseWorkflowChanges?: boolean;
+  /**
+   * `config.untrustedCiLogs`: the logs are untrusted input (the CI triage template). They are
+   * redacted, screened for injection phrasing — a log that matches is refused, never fixed
+   * from — and fenced as data before the agent or the trace sees them.
+   */
+  untrustedCiLogs?: boolean;
+}
+
 /**
  * Re-provisions a workspace on the existing branch and runs the implementer
  * agent in CI fix mode with the failure logs injected. Thin wrapper around
@@ -42,9 +56,22 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
 export async function executeCIFixImplementation(
   failureContext: string,
   previousCodeResult: CodeResult,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  options: FixSessionOptions = {}
 ): Promise<CodeResult> {
+  if (options.untrustedCiLogs) {
+    const redacted = redactCiLog(failureContext);
+    if (!(await ciLogIsUsable(redacted))) {
+      throw ApplicationFailure.nonRetryable(
+        'The CI logs contain text that looks like instructions to an agent, or could not be ' +
+          'screened, so no fix is attempted from them.',
+        'CI_LOGS_REFUSED'
+      );
+    }
+    failureContext = fenceCiLogs(redacted);
+  }
   return runImplementerFixSession({
+    ...(options.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'ciFixer',
     commitMessage: `auto: fix CI for ${previousCodeResult.branch}`,
     defaultSystemPrompt: CI_FIX_SYSTEM_PROMPT,
@@ -86,10 +113,12 @@ export async function executeReviewFixImplementation(
   rejection: unknown,
   previousCodeResult: CodeResult,
   systemPromptOverride?: string,
-  allowedPaths?: string[]
+  allowedPaths?: string[],
+  options: FixSessionOptions = {}
 ): Promise<CodeResult> {
   const rejectionSummary = rejectionText(rejection);
   return runImplementerFixSession({
+    ...(options.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'reviewFixer',
     allowedPaths,
     commitMessage: `auto: address review findings for ${previousCodeResult.branch}`,

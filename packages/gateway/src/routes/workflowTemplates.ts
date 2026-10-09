@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
+import { inputSchemaProblems } from '@auto-swe/shared/lib/inputSchema';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -36,6 +37,7 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
@@ -310,7 +312,17 @@ const UpdateTemplateBody = z.object({
   estimatedHumanTimeSavedMinutes: z.number().min(0).nullable().optional(),
   experimentSplit: z.number().int().min(0).max(100).nullable().optional(),
   experimentVersion: z.number().int().min(1).nullable().optional(),
-  inputSchema: z.record(z.string(), z.unknown()).nullable().optional(),
+  // Shape-checked, not rewritten: a keyword of the wrong type would crash the forms rendered
+  // from it, or be read as something else by the validator.
+  inputSchema: z
+    .record(z.string(), z.unknown())
+    .nullable()
+    .optional()
+    .superRefine((v, ctx) => {
+      for (const message of v == null ? [] : inputSchemaProblems(v)) {
+        ctx.addIssue({ code: 'custom', message });
+      }
+    }),
   isDefault: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
@@ -2007,6 +2019,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         if (!authorization.ok) {
           return sendLaunchRefusal(reply, authorization.refusal);
         }
+      }
+
+      // An optional `baseBranch` in the payload: the branch the run's change is cut from
+      // and its pull request targets (unset: the repository's default branch).
+      const base = await launchBaseBranch(payload, reply);
+      if (!base.ok) {
+        return;
       }
 
       const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);

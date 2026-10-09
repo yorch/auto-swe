@@ -105,7 +105,7 @@ flowchart TB
 
 | Domain | Capabilities |
 |---|---|
-| **Agent system** | 28 seeded agents (17 model-backed + 11 sub-role personas); multi-agent review network; TDD implementation loop driven by the platform's Mastra tool loop or, per template/team/organization or per agent, the Claude Code harness inside the workspace container ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness)); channel-resident assistant with ambient, reactive, and persona modes. See [agents.md](./agents.md). |
+| **Agent system** | 29 seeded agents (17 model-backed + 12 sub-role personas); multi-agent review network; TDD implementation loop driven by the platform's Mastra tool loop or, per template/team/organization or per agent, the Claude Code harness inside the workspace container ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness)); channel-resident assistant with ambient, reactive, and persona modes. See [agents.md](./agents.md). |
 | **Skills** | 35 built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
 | **Multi-model** | DB-driven model selection per role per scope; Anthropic / OpenAI / Google + any OpenAI-compatible provider; AES-256-GCM encrypted credentials. See [model-configuration.md](./model-configuration.md). |
 | **Workflow engine** | 15 node types (incl. the declarative `agent` node and the `eval` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
@@ -231,6 +231,16 @@ the template's declared `inputSchema`, with no ticket ID and no repository requi
 |---|---|---|
 | `POST /api/v1/workflow-templates/:id/runs` | ENGINEER | Arbitrary `payload`; `connectionId` optional; `externalTicketId` auto-generated from the label |
 | `POST /api/v1/webhooks/:token` | none — opaque per-template `webhookToken` | Same validation; for firing a template from an external system |
+
+A payload may name a **`baseBranch`**: the branch a repository run cuts its change from, diffs
+against, and opens its pull request into, in place of the repository's default branch. It is a
+reserved key — every step that clones honours it, whatever the template, so a template that
+used an input of that name for something else now targets that branch — and it is checked before
+anything is written: an invalid branch name, or one of the platform's own `<branchPrefix>/…` work
+branches, is `400 INVALID_BASE_BRANCH`. It lives in the payload because the payload is what a retry
+and a re-run copy, so a later attempt targets the same branch. Agent runs take it as a body field
+([agent-runs.md](./agent-runs.md)); `POST /api/v1/work-requests`, Slack, schedules, epics and PRD runs
+do not accept one and always use the default branch.
 
 These and `POST /api/v1/prd-runs` accept an optional **`Idempotency-Key`** header. With one, the run's workflow ID is a
 deterministic function of the key, so a retried request or a redelivered webhook collapses onto the

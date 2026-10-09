@@ -33,6 +33,13 @@
  * hardening already documents.
  */
 import { ApplicationFailure } from '@temporalio/activity';
+import {
+  GITLINK_MODE,
+  isWorkflowPath,
+  parseRawDiffZ,
+  type RawChange,
+  SYMLINK_MODE,
+} from '../lib/agentRunPolicy.js';
 import { gitWithAuthHeader, shellQuote, type Workspace } from './workspace.js';
 
 type Exec = Pick<Workspace, 'exec'>;
@@ -44,11 +51,24 @@ const IDENTITY = "-c user.name='auto-swe' -c user.email='auto-swe@localhost'";
 const guardedGit = (subcommand: string): string =>
   `GIT_NO_REPLACE_OBJECTS=1 ${gitWithAuthHeader(subcommand)}`;
 
+/** What a step's guard refuses beyond `allowedPaths`. */
+export interface PathGuardOptions {
+  /** See {@link PathGuard.refuseWorkflowChanges}. */
+  refuseWorkflowChanges?: boolean;
+}
+
 /** What the guard measures against, and what it allows. Present only for a guarded step. */
 export interface PathGuard {
   /** HEAD when the session started, before the agent ran: what this session's change is checked against. */
   sessionBase: string;
-  allowedPaths: readonly string[];
+  /** The only paths the change may touch. Undefined: any path, subject to the refusal below. */
+  allowedPaths: readonly string[] | undefined;
+  /**
+   * Refuse a change under `.github/workflows/` or `.github/actions/`. A pushed workflow runs
+   * with the repository's secrets, so a step whose instructions derive from untrusted text
+   * (CI logs) must not be able to write one, whatever it was told.
+   */
+  refuseWorkflowChanges: boolean;
   /**
    * What `CodeResult.diff` and `filesChanged` (read by the template's `checkScope`) are
    * measured against, as a sha read before the agent ran, never a ref. `twoTree` diffs the
@@ -87,9 +107,11 @@ export async function startPathGuard(
   workspace: Exec,
   defaultBranch: string,
   allowedPaths: readonly string[] | undefined,
-  reportBase?: string
+  reportBase?: string,
+  options: PathGuardOptions = {}
 ): Promise<PathGuard | undefined> {
-  if (!allowedPaths) {
+  const refuseWorkflowChanges = options.refuseWorkflowChanges === true;
+  if (!allowedPaths && !refuseWorkflowChanges) {
     return undefined;
   }
   const [sessionBase, defaultSha] = [
@@ -99,7 +121,7 @@ export async function startPathGuard(
   if (!sessionBase || !defaultSha) {
     throw ApplicationFailure.nonRetryable(
       'Could not read the commit the workspace started from, so the change cannot be confined to ' +
-        `${allowedPaths.join(', ')}. Nothing was committed or pushed.`,
+        `${allowedPaths ? allowedPaths.join(', ') : 'the paths it may touch'}. Nothing was committed or pushed.`,
       'DIFF_BASE_UNREADABLE'
     );
   }
@@ -107,7 +129,7 @@ export async function startPathGuard(
     reportBase && SHA.test(reportBase)
       ? { sha: reportBase, twoTree: true }
       : { sha: defaultSha, twoTree: sessionBase === defaultSha };
-  return { allowedPaths, report, sessionBase };
+  return { allowedPaths, refuseWorkflowChanges, report, sessionBase };
 }
 
 /**
@@ -162,6 +184,13 @@ export async function assertCommittedTreeWithinAllowedPaths(
   guard: PathGuard,
   sha: string
 ): Promise<void> {
+  if (guard.refuseWorkflowChanges) {
+    await assertNoWorkflowChanges(workspace, guard.sessionBase, sha);
+  }
+  const allowed = guard.allowedPaths;
+  if (!allowed) {
+    return;
+  }
   let out: string;
   try {
     out = await workspace.exec(
@@ -176,13 +205,56 @@ export async function assertCommittedTreeWithinAllowedPaths(
       'DIFF_CHECK_FAILED'
     );
   }
-  const outside = out.split('\0').filter((p) => p !== '' && !guard.allowedPaths.includes(p));
+  const changed = out.split('\0').filter((p) => p !== '');
+  const outside = changed.filter((p) => !allowed.includes(p));
   if (outside.length > 0) {
     throw ApplicationFailure.nonRetryable(
       `The change touches files this step may not change (${outside.slice(0, 10).join(', ')}` +
-        `${outside.length > 10 ? ', …' : ''}); allowed: ${guard.allowedPaths.join(', ')}. ` +
+        `${outside.length > 10 ? ', …' : ''}); allowed: ${allowed.join(', ')}. ` +
         'Nothing was pushed.',
       'DIFF_OUTSIDE_ALLOWED_PATHS'
+    );
+  }
+}
+
+/**
+ * Fail non-retryably if the tree of `sha` differs from `sessionBase` in a GitHub Actions workflow
+ * or action (the files, or `.github/workflows` / `.github/actions` themselves), or by adding or
+ * changing a symlink or submodule anywhere: either can point a path this check reads at content
+ * it never saw. Raw entries, so each one's mode is read; renames count both ends.
+ */
+async function assertNoWorkflowChanges(
+  workspace: Exec,
+  sessionBase: string,
+  sha: string
+): Promise<void> {
+  let changes: RawChange[];
+  try {
+    changes = parseRawDiffZ(
+      await workspace.exec(
+        guardedGit(
+          `diff-tree -r --raw -z --no-abbrev --no-renames --ignore-submodules=none ${sessionBase} ${sha}`
+        )
+      )
+    );
+  } catch {
+    throw ApplicationFailure.nonRetryable(
+      'The change could not be compared with the commit the workspace started from, so it ' +
+        'cannot be checked for workflow changes. Nothing was pushed.',
+      'DIFF_CHECK_FAILED'
+    );
+  }
+  const refused = changes
+    .filter(
+      (c) => isWorkflowPath(c.path) || c.newMode === SYMLINK_MODE || c.newMode === GITLINK_MODE
+    )
+    .map((c) => c.path);
+  if (refused.length > 0) {
+    throw ApplicationFailure.nonRetryable(
+      'The change touches GitHub Actions workflow or action files, or adds a symlink or ' +
+        `submodule (${refused.slice(0, 10).join(', ')}${refused.length > 10 ? ', …' : ''}), ` +
+        'which this step may not do. Nothing was pushed.',
+      'DIFF_TOUCHES_WORKFLOWS'
     );
   }
 }

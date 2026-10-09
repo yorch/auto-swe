@@ -257,6 +257,31 @@ describe('POST /api/v1/agent-runs', () => {
     expect(ledgers[0]?.assignedBranch).toBeNull();
   });
 
+  describe('baseBranch', () => {
+    it('carries the base in the payload, where the worker and a re-run read it', async () => {
+      const res = await post({ baseBranch: 'release/1.4', deliver: 'draft_pr' });
+      expect(res.statusCode).toBe(201);
+      const req = started[0]?.input.request as Record<string, unknown>;
+      expect(req.payload).toMatchObject({ baseBranch: 'release/1.4' });
+      expect(JSON.parse(String(runInputs[0]?.requestPayload))).toMatchObject({
+        baseBranch: 'release/1.4',
+      });
+    });
+
+    it('rejects an invalid branch name', async () => {
+      const res = await post({ baseBranch: '-upload-pack=x' });
+      expect(res.statusCode).toBe(400);
+      expect(started).toHaveLength(0);
+    });
+
+    it('refuses a platform work branch: it belongs to another run', async () => {
+      const res = await post({ baseBranch: 'auto/JIRA-1' });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('INVALID_BASE_BRANCH');
+      expect(started).toHaveLength(0);
+    });
+  });
+
   describe('trust: who may launch', () => {
     it('refuses a user who is not a member of the owning or a shared team', async () => {
       s.ownerMembers = ['someone-else'];

@@ -7,6 +7,7 @@ export type AuditEntityType =
   | 'Bundle'
   | 'ConfigPermission'
   | 'Connection'
+  | 'CiFailureTrigger'
   | 'ConnectionCredential'
   | 'EmbeddingConfig'
   | 'EvalDataset'
