@@ -386,6 +386,49 @@ function failureLessons(g: WorkflowSpec, loops: ReadonlyArray<'review' | 'ci'>):
   return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
 }
 
+/**
+ * ci-triage-and-fix checks a fix against the failing step's own command after the tests and
+ * before delivery, keeps what it found, and reports it with the fix.
+ */
+function ciTriageVerification(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
+  nodes.runTests = { ...nodes.runTests, next: 'verifyFix' };
+  nodes.verifyFix = {
+    inputs: {
+      codeResult: { from: 'context.currentCodeResult' },
+      triage: { from: 'context.ciTriage' },
+    },
+    next: 'storeVerification',
+    onFail: 'warn',
+    step: 'verifyCiFix',
+    type: 'step',
+  };
+  nodes.storeVerification = {
+    expr: 'nodes.verifyFix.output == null',
+    onFalse: 'keepVerification',
+    onTrue: 'routeDelivery',
+    type: 'cond',
+  };
+  nodes.keepVerification = {
+    next: 'routeDelivery',
+    type: 'set',
+    values: {
+      'context.ciVerification': { from: 'nodes.verifyFix.output.verification' },
+      'context.currentCodeResult': { from: 'nodes.verifyFix.output.codeResult' },
+    },
+  };
+  const verification = { from: 'context.ciVerification' };
+  for (const id of ['reportPushed', 'reportFix']) {
+    const node = nodes[id] as { inputs: Record<string, unknown> };
+    node.inputs = { ...node.inputs, verification };
+  }
+  for (const id of ['pushed', 'done']) {
+    const node = nodes[id] as { result: Record<string, unknown> };
+    node.result = { ...node.result, verification };
+  }
+  return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
+}
+
 const FAILURE_LESSONS_REASON =
   'a review or CI loop that runs out of attempts stores a lesson about what blocked it ' +
   'before the run fails';
@@ -446,6 +489,12 @@ const INTENDED_CHANGES: Record<
       'implementation, a failing CI is fixed (2 attempts) before anything else, and the ' +
       'two-reviewer consensus runs on the green code, a rejection going fix -> CI -> consensus; ' +
       FAILURE_LESSONS_REASON,
+  },
+  'ci-triage-and-fix': {
+    apply: ciTriageVerification,
+    reason:
+      'a fix is checked against the failing step’s own command before it is delivered, and ' +
+      'the result is reported with the fix',
   },
   'four-eyes': {
     apply: (g: WorkflowSpec) =>

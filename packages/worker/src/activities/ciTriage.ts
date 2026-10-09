@@ -42,6 +42,7 @@ import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { WorkflowRunFailure } from '../lib/scm/types.js';
+import { type CiVerification, MAX_REPRO_COMMAND_CHARS, verificationNote } from './ciVerify.js';
 import { runAgent } from './runAgent.js';
 
 export const CI_TRIAGE_CATEGORIES = [
@@ -62,6 +63,15 @@ const VerdictSchema = z.object({
   category: z.enum(CI_TRIAGE_CATEGORIES),
   confidence: z.number().min(0).max(1),
   fixable: z.boolean(),
+  reproCommand: z
+    .string()
+    .describe(
+      "The failing step's own `run:` command, copied exactly as it appears in the workflow file, " +
+        'when running it alone in a checkout of the repository would reproduce the failure ' +
+        '(a test, lint or build command). Empty when there is none, or when it needs the ' +
+        "workflow's secrets, services or GitHub expressions (`$" +
+        '{{ }}`).'
+    ),
   rootCause: z.string(),
   suggestedFix: z.string(),
   summary: z.string(),
@@ -89,6 +99,12 @@ export interface CiTriageResult {
   summary: string;
   rootCause: string;
   suggestedFix: string;
+  /**
+   * The command the triager says reproduces the failure, as model output: checked against the
+   * workflow file and the shell scanner before `verifyCiFix` runs it. Empty or absent (a
+   * result recorded before it existed) when none.
+   */
+  reproCommand?: string;
   run: {
     id: string;
     attempt: number;
@@ -120,6 +136,7 @@ function emptyResult(decision: CiTriageDecision, reason: string): CiTriageResult
     fixable: false,
     pullRequestNumber: null,
     reason,
+    reproCommand: '',
     rootCause: '',
     run: null,
     suggestedFix: '',
@@ -384,6 +401,11 @@ async function triageCiFailureImpl(
     }
     const verdict: Verdict = {
       ...parsed.data,
+      // Not clipped: a cut command is a different command. One too long is dropped instead.
+      reproCommand:
+        parsed.data.reproCommand.length <= MAX_REPRO_COMMAND_CHARS
+          ? parsed.data.reproCommand.trim()
+          : '',
       rootCause: clip(parsed.data.rootCause, MAX_DETAIL_CHARS),
       suggestedFix: clip(parsed.data.suggestedFix, MAX_DETAIL_CHARS),
       summary: clip(parsed.data.summary, MAX_SUMMARY_CHARS),
@@ -438,6 +460,7 @@ async function triageCiFailureImpl(
       fixable: verdict.fixable,
       pullRequestNumber,
       reason,
+      reproCommand: verdict.reproCommand,
       rootCause: verdict.rootCause,
       run: runSummary(failure),
       suggestedFix: verdict.suggestedFix,
@@ -490,6 +513,8 @@ export interface ReportCiTriageInput {
   pushedCommitSha?: string | null;
   /** Why a push the trigger asked for was not made, when the fix became a draft instead. */
   pushRefusedReason?: string | null;
+  /** Whether the fix was checked against the failing step's own command. */
+  verification?: CiVerification | null;
 }
 
 /** Render the PR comment from structured fields only. */
@@ -497,7 +522,8 @@ export function renderTriageComment(
   triage: CiTriageResult,
   fixPrUrl?: string | null,
   pushedCommitSha?: string | null,
-  pushRefusedReason?: string | null
+  pushRefusedReason?: string | null,
+  verification?: CiVerification | null
 ): string {
   const lines = [
     CI_TRIAGE_COMMENT_MARKER,
@@ -532,6 +558,10 @@ export function renderTriageComment(
       `A fix was pushed to this branch as ${pushedCommitSha}. It is not merged: review it with ` +
         'the rest of the pull request. If its CI fails, that failure is not triaged again.'
     );
+  }
+  // Only alongside a fix, and only from the platform's own structured result.
+  if (verification && (fixPrUrl || pushedCommitSha)) {
+    lines.push('', verificationNote(verification));
   }
   lines.push(
     '',
@@ -568,7 +598,8 @@ export async function reportCiTriage(
         input.triage,
         input.fixPrUrl,
         input.pushedCommitSha,
-        input.pushRefusedReason
+        input.pushRefusedReason,
+        input.verification
       )
     );
     tracer.addActivityEvent({

@@ -153,7 +153,39 @@ const nodes: NodeMap = mergeNodes(
     },
     runLint: qualityGate('runLint', 'runTypecheck', { group: 'verify' }),
     runTypecheck: qualityGate('runTypecheck', 'runTests', { group: 'verify' }),
-    runTests: qualityGate('runTests', 'routeDelivery', { group: 'verify' }),
+    runTests: qualityGate('runTests', 'verifyFix', { group: 'verify' }),
+    // The failing step's own command, before and after the fix. It labels the fix (in the
+    // pull request's body and the run's result); it never stops one from being delivered.
+    verifyFix: {
+      group: 'verify',
+      inputs: {
+        codeResult: { from: 'context.currentCodeResult' },
+        triage: { from: 'context.ciTriage' },
+      },
+      next: 'storeVerification',
+      onFail: 'warn',
+      step: 'verifyCiFix',
+      title: 'Reproduce the failure, then check the fix',
+      type: 'step',
+    },
+    storeVerification: {
+      expr: 'nodes.verifyFix.output == null',
+      group: 'verify',
+      onFalse: 'keepVerification',
+      onTrue: 'routeDelivery',
+      title: 'Did verification run?',
+      type: 'cond',
+    },
+    keepVerification: {
+      group: 'verify',
+      next: 'routeDelivery',
+      title: 'Keep the verification',
+      type: 'set',
+      values: {
+        'context.ciVerification': { from: 'nodes.verifyFix.output.verification' },
+        'context.currentCodeResult': { from: 'nodes.verifyFix.output.codeResult' },
+      },
+    },
 
     // A pull request's fix can be asked to land on its own branch. The step decides, from the
     // trigger, the admin setting and the branch as they are now; anything it refuses opens the
@@ -191,6 +223,7 @@ const nodes: NodeMap = mergeNodes(
       inputs: {
         pushedCommitSha: { from: 'nodes.pushFix.output.commitSha' },
         triage: { from: 'context.ciTriage' },
+        verification: { from: 'context.ciVerification' },
       },
       next: 'pushed',
       onFail: 'warn',
@@ -202,7 +235,11 @@ const nodes: NodeMap = mergeNodes(
     // recognised by the gateway as the platform's own fix (`SUPPRESSED_OWN_OUTPUT`).
     pushed: terminate('SUCCESS', {
       group: 'deliver',
-      result: { ...TRIAGE_RESULT, pushedCommitSha: { from: 'nodes.pushFix.output.commitSha' } },
+      result: {
+        ...TRIAGE_RESULT,
+        pushedCommitSha: { from: 'nodes.pushFix.output.commitSha' },
+        verification: { from: 'context.ciVerification' },
+      },
       title: 'Fix pushed',
     }),
   },
@@ -217,6 +254,7 @@ const nodes: NodeMap = mergeNodes(
         // Why a requested push became this draft, when it did.
         pushRefusedReason: { from: 'nodes.pushFix.output.reason' },
         triage: { from: 'context.ciTriage' },
+        verification: { from: 'context.ciVerification' },
       },
       next: ciWaitEntry('pollOrSignal'),
       onFail: 'warn',
@@ -243,7 +281,11 @@ const nodes: NodeMap = mergeNodes(
   {
     done: terminate('SUCCESS', {
       group: 'finish',
-      result: { ...prResult(), ...TRIAGE_RESULT },
+      result: {
+        ...prResult(),
+        ...TRIAGE_RESULT,
+        verification: { from: 'context.ciVerification' },
+      },
       title: 'Fix opened',
     }),
   }

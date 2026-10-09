@@ -148,6 +148,14 @@ export const ciTriageActivities = proxyActivities<
   startToCloseTimeout: T_10M,
 });
 
+// Verifying a CI fix: two runs of the reproduction command in one workspace, each bounded at
+// ten minutes, plus a clone. Retried like a gate.
+export const ciVerifyActivities = proxyActivities<Pick<typeof activitiesType, 'verifyCiFix'>>({
+  heartbeatTimeout: T_2M,
+  retry: RETRY_SANDBOX,
+  startToCloseTimeout: T_30M,
+});
+
 // Lists provider models through the GLOBAL credentials. Provider calls inside are
 // bounded at 10 s a page, so the timeout is generous; the precondition failures are
 // non-retryable ApplicationFailures, which the policy does not retry.

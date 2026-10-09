@@ -29,6 +29,7 @@ import {
   ciConfigActivities,
   ciPollActivities,
   ciTriageActivities,
+  ciVerifyActivities,
   conflictActivities,
   containerStepActivities,
   contextActivities,
@@ -416,9 +417,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       const fixPrUrl = inputs.fixPrUrl as string | null | undefined;
       const pushedCommitSha = inputs.pushedCommitSha as string | null | undefined;
       const pushRefusedReason = inputs.pushRefusedReason as string | null | undefined;
+      const verification = inputs.verification as activitiesType.CiVerification | undefined;
       return ciTriageActivities.reportCiTriage({
         request,
         triage,
+        ...(verification ? { verification } : {}),
         ...(fixPrUrl ? { fixPrUrl } : {}),
         ...(pushedCommitSha ? { pushedCommitSha } : {}),
         ...(typeof pushRefusedReason === 'string' ? { pushRefusedReason } : {}),
@@ -438,6 +441,21 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         throw new Error('pushCiFixToPullRequest requires the triage and the code result');
       }
       return ciTriageActivities.pushCiFixToPullRequest({ codeResult, request, triage });
+    },
+  ],
+  [
+    'verifyCiFix',
+    ({ ctx, request, inputs }) => {
+      const triage = (inputs.triage ?? lookupPath(ctx, 'context.ciTriage')) as
+        | activitiesType.CiTriageResult
+        | undefined;
+      const codeResult = (inputs.codeResult ?? lookupPath(ctx, 'context.currentCodeResult')) as
+        | CodeResult
+        | undefined;
+      if (!triage || !codeResult) {
+        throw new Error('verifyCiFix requires the triage and the code result');
+      }
+      return ciVerifyActivities.verifyCiFix({ codeResult, request, triage });
     },
   ],
   [

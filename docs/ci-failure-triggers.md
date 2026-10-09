@@ -104,15 +104,17 @@ The run goes through these nodes:
 
 1. **`triage`** (`triageCiFailure`) reads the run from GitHub and decides whether it may act on it
    at all (§3). It then gives the failed jobs' log tails to the `ciTriager` agent, which returns a
-   typed verdict: a category, whether code can fix it, a confidence, a summary, the root cause and
-   a suggested fix.
+   typed verdict: a category, whether code can fix it, a confidence, a summary, the root cause, a
+   suggested fix, and the failing step's own `run:` command when running it alone would reproduce
+   the failure.
 2. **Code decides**, from the verdict and the facts around it, whether the run goes on to `fix`,
    `report` or `skip` (§4). The model can rule a fix out, but it cannot start one the rules refuse.
 3. **`report`** posts the diagnosis on the pull request (when asked) and ends the run `SUCCESS`.
    **`skip`** ends it `SKIPPED` with the reason. Both results carry the diagnosis.
 4. **`fix`** runs the implementer on the failing branch's current tip. The diagnosis reaches it
-   fenced as untrusted data (§5). Lint, typecheck and tests run, and a draft pull request is opened
-   into the failing branch. A fix that changed no files opens nothing and is reported instead.
+   fenced as untrusted data (§5). Lint, typecheck and tests run, the fix is **verified** (§2.3), and
+   a draft pull request is opened into the failing branch. A fix that changed no files opens
+   nothing and is reported instead.
    The draft's own CI is then watched by the usual CI loop, which revises the draft up to
    `maxCiFixAttempts` times while it keeps failing and then ends the run `FAILED`. It can poll
    instead of waiting for the webhook when the CI wait strategy at `/govern/workflow-defaults` says
@@ -187,6 +189,26 @@ The template is the main user of a run's **base branch** (`payload.baseBranch`).
 clones uses it: the implementation, the three fix sessions, the quality gates, shell steps and agent
 nodes. They clone it, diff against it, and open the pull request into it. See
 [product-overview.md](./product-overview.md) for how a launch sets it.
+
+### 2.3 Verifying a fix
+
+Before a fix is delivered, `verifyCiFix` runs the triager's reproduction command in a fresh
+workspace: first on the failing branch, then on the fix. The result goes into the draft's body (or
+the pull request comment, for a pushed fix) and the run's result as `verification`:
+
+| Status | Meaning |
+|---|---|
+| `verified` | The command failed on the failing branch and passes on the fix |
+| `not_reproduced` | It passed on the failing branch too: the failure could not be reproduced outside CI |
+| `still_failing` | It fails before and after: the fix may be incomplete, or the command needs setup only the workflow provides |
+| `unverified` | Nothing was run: no command, or one that was refused |
+
+The command is model output read from untrusted logs, so it runs only when it appears **verbatim**
+in the failing workflow file on the branch (indentation aside) and the shell command scanner clears
+it. That makes it the repository's own command, as trusted as the code its tests already run. A
+command with `${{ }}` expressions is never run. Verification labels a fix; it never stops one from
+being delivered, since a command that needs the workflow's setup steps fails both times for reasons
+that say nothing about the fix. Both runs' output is kept as a `ci.verify` artifact.
 
 ## 3. When a run is not acted on
 
@@ -324,5 +346,7 @@ See [github-app-setup.md](./github-app-setup.md).
   the rest are read from the template's input schema at each fire. A release that changes the
   built-in schema moves an untouched stored schema forward, but a schema an admin edited is kept,
   and then a new built-in option does not appear until the admin adds it.
-- **Nothing proves the fix.** The draft's own CI loop is the check. The template does not re-run the
-  originally failing workflow on the fix before opening the draft.
+- **Verification is local and partial.** The workspace installs nothing and has none of the
+  workflow's services, secrets or matrix, so many commands cannot reproduce the failure and the fix
+  is labelled `not_reproduced` or `still_failing` rather than verified. Only the failing step's own
+  command is tried, never the steps before it. The draft's own CI loop remains the real check.

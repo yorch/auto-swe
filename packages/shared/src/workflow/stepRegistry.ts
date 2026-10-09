@@ -230,6 +230,19 @@ register({
   name: 'pushCiFixToPullRequest',
 });
 
+register({
+  category: 'gate',
+  configFields: [],
+  description:
+    'Run the command the CI triager says reproduces the failure on the failing branch, then on ' +
+    'the fix, in a fresh workspace. Only a command that appears verbatim in the failing workflow ' +
+    'file and that the shell scanner clears is run. output.verification.status is verified, ' +
+    'not_reproduced, still_failing or unverified; output.codeResult carries it in its notes for ' +
+    'the pull request. Never fails the run.',
+  label: 'Verify a CI fix',
+  name: 'verifyCiFix',
+});
+
 // ── CI wait strategy ─────────────────────────────────────────────────────────
 
 register({
