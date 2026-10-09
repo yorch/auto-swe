@@ -13,6 +13,13 @@ const launch = vi.hoisted(() => ({
     | { ok: true }
     | { ok: false; refusal: { status: 403; body: { error: { code: string; message: string } } } },
 }));
+const settings = vi.hoisted(() => ({ pushAllowed: false }));
+vi.mock('@auto-swe/shared/config', () => ({
+  resolveSetting: vi.fn(async (key: string) =>
+    key === 'github.ciFixPushToPullRequestEnabled' ? settings.pushAllowed : undefined
+  ),
+}));
+
 vi.mock('../lib/launchAuthorization.js', () => ({
   authorizeLaunch: vi.fn(async () => launch.decision),
   sendLaunchRefusal: (
@@ -156,6 +163,7 @@ describe('ciTriggerRoutes', () => {
         'maxCiFixAttempts',
         'minFixConfidence',
         'mode',
+        'pullRequestDelivery',
       ]);
       expect(JSON.stringify(ctx.prisma.workflowTemplate.findMany.mock.calls[0]?.[0])).toContain(
         'system:'
@@ -290,6 +298,29 @@ describe('ciTriggerRoutes', () => {
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().error.code).toBe('INVALID_TEMPLATE');
+    });
+
+    it('refuses a push delivery an admin has not allowed, or with a team template', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      const payload = { ...VALID, inputs: { mode: 'fix', pullRequestDelivery: 'push' } };
+      settings.pushAllowed = false;
+      let res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload, url: URL });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('PUSH_DELIVERY_DISABLED');
+
+      settings.pushAllowed = true;
+      res = await ctx.app.inject({ headers: AUTH, method: 'POST', payload, url: URL });
+      expect(res.statusCode).toBe(201);
+
+      res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { ...payload, templateId: TEMPLATE },
+        url: URL,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toMatch(/built-in/);
+      settings.pushAllowed = false;
     });
 
     it('lets an ADMIN create one on any repository', async () => {

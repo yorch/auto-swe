@@ -187,4 +187,51 @@ describe('ci-triage-and-fix runs', () => {
     expect(result.status).toBe('FAILED');
     expect(steps.filter((s) => s.step === 'executeCIFixImplementation')).toHaveLength(fixes);
   });
+
+  const fixOutputs = (pushOut: unknown) => ({
+    createOrUpdatePullRequest: { prNumber: 8, prUrl: 'https://github.com/a/b/pull/8' },
+    executeImplementation: {
+      branch: 'auto/ci-1-1',
+      filesChanged: [{ path: 'src/sum.ts' }],
+      headSha: 'x',
+    },
+    pushCiFixToPullRequest: pushOut,
+    reportCiTriage: { commented: true },
+    resolveCiWaitConfig: { deadlineSec: 60, graceSec: 5, intervalSec: 5, mode: 'signal' },
+    runLint: { passed: true },
+    runTests: { passed: true },
+    runTypecheck: { passed: true },
+    triageCiFailure: triage('fix'),
+    updateDomainState: {},
+  });
+
+  it('pushes onto the pull request branch when asked, reports it, and opens nothing', async () => {
+    const { d, steps } = dispatcher(
+      fixOutputs({ branch: 'feature/x', commitSha: 'c'.repeat(40), pushed: true })
+    );
+    const result = await runSpec(CI_TRIAGE_AND_FIX_SPEC, base({ pullRequestDelivery: 'push' }), d);
+    expect(result.status).toBe('SUCCESS');
+    const names = steps.map((s) => s.step);
+    expect(names).toContain('pushCiFixToPullRequest');
+    expect(names).not.toContain('createOrUpdatePullRequest');
+    expect(steps.filter((s) => s.step === 'reportCiTriage').at(-1)?.inputs.pushedCommitSha).toBe(
+      'c'.repeat(40)
+    );
+  });
+
+  it.each([
+    ['refused', { pushed: false, reason: 'the branch is protected' }],
+    ['failed', () => Promise.reject(new Error('GitHub is down'))],
+  ])('opens the draft instead when the push is %s', async (_label, pushOut) => {
+    const { d, steps } = dispatcher(fixOutputs(pushOut));
+    const result = await runSpec(CI_TRIAGE_AND_FIX_SPEC, base({ pullRequestDelivery: 'push' }), d);
+    expect(result.status).toBe('SUCCESS');
+    expect(steps.map((s) => s.step)).toContain('createOrUpdatePullRequest');
+  });
+
+  it('never tries to push when the payload asks for a draft', async () => {
+    const { d, steps } = dispatcher(fixOutputs({ pushed: true }));
+    await runSpec(CI_TRIAGE_AND_FIX_SPEC, base(), d);
+    expect(steps.map((s) => s.step)).not.toContain('pushCiFixToPullRequest');
+  });
 });

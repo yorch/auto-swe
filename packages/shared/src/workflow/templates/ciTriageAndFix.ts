@@ -153,7 +153,58 @@ const nodes: NodeMap = mergeNodes(
     },
     runLint: qualityGate('runLint', 'runTypecheck', { group: 'verify' }),
     runTypecheck: qualityGate('runTypecheck', 'runTests', { group: 'verify' }),
-    runTests: qualityGate('runTests', 'openPR', { group: 'verify' }),
+    runTests: qualityGate('runTests', 'routeDelivery', { group: 'verify' }),
+
+    // A pull request's fix can be asked to land on its own branch. The step decides, from the
+    // trigger, the admin setting and the branch as they are now; anything it refuses opens the
+    // draft instead, so asking for a push never loses a fix.
+    routeDelivery: {
+      expr: "request.payload.pullRequestDelivery == 'push'",
+      group: 'deliver',
+      onFalse: 'openPR',
+      onTrue: 'pushFix',
+      title: 'Push to the pull request?',
+      type: 'cond',
+    },
+    pushFix: {
+      group: 'deliver',
+      inputs: {
+        codeResult: { from: 'context.currentCodeResult' },
+        triage: { from: 'context.ciTriage' },
+      },
+      next: 'checkPushed',
+      onFail: 'warn',
+      step: 'pushCiFixToPullRequest',
+      title: "Push the fix onto the pull request's branch",
+      type: 'step',
+    },
+    checkPushed: {
+      expr: 'nodes.pushFix.output.pushed == true',
+      group: 'deliver',
+      onFalse: 'openPR',
+      onTrue: 'reportPushed',
+      title: 'Pushed?',
+      type: 'cond',
+    },
+    reportPushed: {
+      group: 'deliver',
+      inputs: {
+        pushedCommitSha: { from: 'nodes.pushFix.output.commitSha' },
+        triage: { from: 'context.ciTriage' },
+      },
+      next: 'pushed',
+      onFail: 'warn',
+      step: 'reportCiTriage',
+      title: 'Report the pushed fix on the pull request',
+      type: 'step',
+    },
+    // No CI loop: the pull request's own CI runs on the new commit, and a failure of it is
+    // recognised by the gateway as the platform's own fix (`SUPPRESSED_OWN_FIX`).
+    pushed: terminate('SUCCESS', {
+      group: 'deliver',
+      result: { ...TRIAGE_RESULT, pushedCommitSha: { from: 'nodes.pushFix.output.commitSha' } },
+      title: 'Fix pushed',
+    }),
   },
   // A draft into the failing branch: a release branch for a push, the author's branch for
   // a pull request. Nothing is pushed to either.
@@ -163,6 +214,8 @@ const nodes: NodeMap = mergeNodes(
       group: 'pull request',
       inputs: {
         fixPrUrl: { from: 'context.prUrl' },
+        // Why a requested push became this draft, when it did.
+        pushRefusedReason: { from: 'nodes.pushFix.output.reason' },
         triage: { from: 'context.ciTriage' },
       },
       next: ciWaitEntry('pollOrSignal'),
@@ -227,7 +280,7 @@ export const CI_TRIAGE_AND_FIX_SPEC: WorkflowSpec = {
     'Diagnose a failed GitHub Actions run from its logs and classify it (regression, test bug, ' +
     'configuration, dependency, flaky, infrastructure). In fix mode, when code can fix it, open ' +
     'a draft pull request into the branch that failed and revise it while its own CI fails, as ' +
-    'many times as the trigger allows. Never ' +
+    "many times as the trigger allows — or, where allowed, push it onto a pull request's own branch. Never " +
     'changes workflow files. Started by a CI-failure trigger.',
   entry: 'triage',
   // A literal, not `CI_TRIAGE_TEMPLATE_NAME`: the site's template extraction reads it from

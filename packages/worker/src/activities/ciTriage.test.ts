@@ -51,6 +51,7 @@ import { redactCiLog } from '../lib/ciLogGuard.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import {
   CI_TRIAGE_COMMENT_MARKER,
+  type CiTriageResult,
   decide,
   neutralizeCommentText,
   refusalFor,
@@ -386,6 +387,36 @@ describe('the pull request comment', () => {
     expect(body.startsWith(CI_TRIAGE_COMMENT_MARKER)).toBe(true);
     expect(body).toContain('https://github.com/acme/api/pull/8');
     expect(body).not.toContain('https://evil.example');
+  });
+
+  it('names a pushed commit only when it is a sha, and why a push became a draft', () => {
+    const triage = {
+      brief: '',
+      category: 'regression' as const,
+      confidence: 0.9,
+      decision: 'fix' as const,
+      failedJobs: [],
+      fixable: true,
+      pullRequestNumber: 7,
+      reason: 'attempting a fix',
+      rootCause: '',
+      run: null,
+      suggestedFix: '',
+      summary: 'off by one',
+      superseded: false,
+      suspiciousLogs: false,
+    } satisfies CiTriageResult;
+    const sha = 'c'.repeat(40);
+    expect(renderTriageComment(triage, null, sha)).toContain(`pushed to this branch as ${sha}`);
+    expect(renderTriageComment(triage, null, 'https://evil.example')).not.toContain('evil');
+    const draft = renderTriageComment(
+      triage,
+      'https://github.com/acme/api/pull/8',
+      null,
+      "'@team/x' is listed as a branch fixes are never pushed to"
+    );
+    expect(draft).toContain('It was not pushed to this branch');
+    expect(draft).not.toMatch(/@team/);
   });
 
   it('posts only when the payload asks and the failure has a PR, and never fails the run', async () => {

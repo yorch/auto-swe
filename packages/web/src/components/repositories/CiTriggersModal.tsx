@@ -437,12 +437,21 @@ function TriggerEditor({
               value={form.options[k]}
             />
           ))}
-        {fixing && (
-          <p className="text-paper-500 text-xs">
-            A fix is always a draft pull request into the failing branch — a pull request's own
-            branch when the failure came from one. Nothing is merged or pushed to that branch.
-          </p>
-        )}
+        {fixing &&
+          (form.options.pullRequestDelivery === 'push' ? (
+            <Alert variant="warning">
+              A fix for a failing pull request is pushed onto that pull request's own branch, where
+              an admin allows it: fast-forward only, never the default branch, a protected branch or
+              one an admin lists. Anything refused becomes a draft pull request instead. The pushed
+              commit is reviewed only as part of the pull request it lands on. A failure on a pushed
+              branch such as main always gets a draft.
+            </Alert>
+          ) : (
+            <p className="text-paper-500 text-xs">
+              A fix is a draft pull request into the failing branch — a pull request's own branch
+              when the failure came from one. Nothing is merged or pushed to that branch.
+            </p>
+          ))}
       </fieldset>
 
       <fieldset className="space-y-3">

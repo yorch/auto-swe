@@ -1385,11 +1385,17 @@ model CiFailureTriggerFire {
   reason             String?
   temporalWorkflowId String?          @map("temporal_workflow_id")
   workRequestId      String?          @map("work_request_id") @db.Uuid
+  /// The commit the run pushed onto the failing pull request's branch, written just before the
+  /// push. A later failure of that commit is the platform's own fix failing, and is never
+  /// triaged again (`SUPPRESSED_OWN_FIX`).
+  fixCommitSha       String?          @map("fix_commit_sha")
   createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([triggerId, createdAt])
   @@index([triggerId, headBranch, createdAt])
   @@index([triggerId, headSha])
+  @@index([fixCommitSha])
+  @@index([workRequestId])
   @@map("ci_failure_trigger_fires")
 }
 

@@ -34,6 +34,7 @@ CREATE TABLE "ci_failure_trigger_fires" (
     "reason" TEXT,
     "temporal_workflow_id" TEXT,
     "work_request_id" UUID,
+    "fix_commit_sha" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "ci_failure_trigger_fires_pkey" PRIMARY KEY ("id")
@@ -53,6 +54,12 @@ CREATE INDEX "ci_failure_trigger_fires_trigger_id_head_branch_created_at_idx" ON
 
 -- CreateIndex
 CREATE INDEX "ci_failure_trigger_fires_trigger_id_head_sha_idx" ON "ci_failure_trigger_fires"("trigger_id", "head_sha");
+
+-- CreateIndex
+CREATE INDEX "ci_failure_trigger_fires_fix_commit_sha_idx" ON "ci_failure_trigger_fires"("fix_commit_sha");
+
+-- CreateIndex
+CREATE INDEX "ci_failure_trigger_fires_work_request_id_idx" ON "ci_failure_trigger_fires"("work_request_id");
 
 -- AddForeignKey
 ALTER TABLE "ci_failure_triggers" ADD CONSTRAINT "ci_failure_triggers_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -1,5 +1,5 @@
 {
-  "description": "Diagnose a failed GitHub Actions run from its logs and classify it (regression, test bug, configuration, dependency, flaky, infrastructure). In fix mode, when code can fix it, open a draft pull request into the branch that failed and revise it while its own CI fails, as many times as the trigger allows. Never changes workflow files. Started by a CI-failure trigger.",
+  "description": "Diagnose a failed GitHub Actions run from its logs and classify it (regression, test bug, configuration, dependency, flaky, infrastructure). In fix mode, when code can fix it, open a draft pull request into the branch that failed and revise it while its own CI fails, as many times as the trigger allows — or, where allowed, push it onto a pull request's own branch. Never changes workflow files. Started by a CI-failure trigger.",
   "entry": "triage",
   "name": "ci-triage-and-fix",
   "nodes": {
@@ -31,6 +31,12 @@
       "expr": "nodes.implement.output == null",
       "onFalse": "storeCodeResult",
       "onTrue": "implementFailed",
+      "type": "cond"
+    },
+    "checkPushed": {
+      "expr": "nodes.pushFix.output.pushed == true",
+      "onFalse": "openPR",
+      "onTrue": "reportPushed",
       "type": "cond"
     },
     "checkSkipped": {
@@ -250,6 +256,53 @@
       "step": "waitForCiByPolling",
       "type": "step"
     },
+    "pushed": {
+      "result": {
+        "category": {
+          "from": "context.ciTriage.category"
+        },
+        "confidence": {
+          "from": "context.ciTriage.confidence"
+        },
+        "decision": {
+          "from": "context.ciTriage.decision"
+        },
+        "pushedCommitSha": {
+          "from": "nodes.pushFix.output.commitSha"
+        },
+        "reason": {
+          "from": "context.ciTriage.reason"
+        },
+        "rootCause": {
+          "from": "context.ciTriage.rootCause"
+        },
+        "run": {
+          "from": "context.ciTriage.run"
+        },
+        "suggestedFix": {
+          "from": "context.ciTriage.suggestedFix"
+        },
+        "summary": {
+          "from": "context.ciTriage.summary"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "pushFix": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "triage": {
+          "from": "context.ciTriage"
+        }
+      },
+      "next": "checkPushed",
+      "onFail": "warn",
+      "step": "pushCiFixToPullRequest",
+      "type": "step"
+    },
     "reportDiagnosis": {
       "inputs": {
         "triage": {
@@ -265,6 +318,9 @@
       "inputs": {
         "fixPrUrl": {
           "from": "context.prUrl"
+        },
+        "pushRefusedReason": {
+          "from": "nodes.pushFix.output.reason"
         },
         "triage": {
           "from": "context.ciTriage"
@@ -286,6 +342,20 @@
       "step": "reportCiTriage",
       "type": "step"
     },
+    "reportPushed": {
+      "inputs": {
+        "pushedCommitSha": {
+          "from": "nodes.pushFix.output.commitSha"
+        },
+        "triage": {
+          "from": "context.ciTriage"
+        }
+      },
+      "next": "pushed",
+      "onFail": "warn",
+      "step": "reportCiTriage",
+      "type": "step"
+    },
     "repushAfterFix": {
       "inputs": {
         "codeResult": {
@@ -302,6 +372,12 @@
       "onTrue": "pollForCI",
       "type": "cond"
     },
+    "routeDelivery": {
+      "expr": "request.payload.pullRequestDelivery == 'push'",
+      "onFalse": "openPR",
+      "onTrue": "pushFix",
+      "type": "cond"
+    },
     "routeTriage": {
       "expr": "context.ciTriage.decision == 'fix'",
       "onFalse": "checkSkipped",
@@ -315,7 +391,7 @@
       "type": "step"
     },
     "runTests": {
-      "next": "openPR",
+      "next": "routeDelivery",
       "onFail": "warn",
       "step": "runTests",
       "type": "step"

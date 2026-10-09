@@ -63,6 +63,7 @@ export const BUILTIN_STEPS = [
   // CI failure triage (the ci-triage-and-fix template)
   'triageCiFailure',
   'reportCiTriage',
+  'pushCiFixToPullRequest',
   // Live provider model ids for the catalog-refresh template (keys stay in the worker)
   'listProviderModels',
   // CI wait strategy: resolve signal-vs-poll config, then poll when configured

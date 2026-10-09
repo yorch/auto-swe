@@ -14,14 +14,18 @@
  * the model copied out of an attacker-written log cannot ping people or post
  * links as the platform.
  */
+
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import {
   CI_FIXABLE_CATEGORIES,
   type CiFixableCategory,
   type CiTriagePayload,
   CiTriagePayloadSchema,
+  matchesPatterns,
+  storedTriggerInputs,
 } from '@auto-swe/shared/lib/ciTrigger';
-import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -31,7 +35,7 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { getErrorMessage } from '../lib/errors.js';
-import { withHeartbeat } from '../lib/execUtils.js';
+import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { WorkflowRunFailure } from '../lib/scm/types.js';
@@ -479,10 +483,19 @@ export interface ReportCiTriageInput {
   triage: CiTriageResult;
   /** The fix pull request, when one was opened. */
   fixPrUrl?: string | null;
+  /** The fix commit, when it was pushed onto the pull request's own branch. */
+  pushedCommitSha?: string | null;
+  /** Why a push the trigger asked for was not made, when the fix became a draft instead. */
+  pushRefusedReason?: string | null;
 }
 
 /** Render the PR comment from structured fields only. */
-export function renderTriageComment(triage: CiTriageResult, fixPrUrl?: string | null): string {
+export function renderTriageComment(
+  triage: CiTriageResult,
+  fixPrUrl?: string | null,
+  pushedCommitSha?: string | null,
+  pushRefusedReason?: string | null
+): string {
   const lines = [
     CI_TRIAGE_COMMENT_MARKER,
     '**auto-swe CI triage**',
@@ -502,6 +515,20 @@ export function renderTriageComment(triage: CiTriageResult, fixPrUrl?: string | 
   // Only a URL the platform itself got back from GitHub is ever linked.
   if (fixPrUrl && /^https:\/\/[^\s<>()]+$/.test(fixPrUrl)) {
     lines.push('', `A draft fix was opened against this branch: ${fixPrUrl}`);
+    if (pushRefusedReason) {
+      lines.push(
+        '',
+        `It was not pushed to this branch: ${neutralizeCommentText(pushRefusedReason, 300)}.`
+      );
+    }
+  }
+  // A sha the platform pushed itself; nothing else is ever printed here.
+  if (pushedCommitSha && /^[0-9a-f]{40}$/i.test(pushedCommitSha)) {
+    lines.push(
+      '',
+      `A fix was pushed to this branch as ${pushedCommitSha}. It is not merged: review it with ` +
+        'the rest of the pull request. If its CI fails, that failure is not triaged again.'
+    );
   }
   lines.push(
     '',
@@ -534,7 +561,12 @@ export async function reportCiTriage(
       repoRef,
       prNumber,
       CI_TRIAGE_COMMENT_MARKER,
-      renderTriageComment(input.triage, input.fixPrUrl)
+      renderTriageComment(
+        input.triage,
+        input.fixPrUrl,
+        input.pushedCommitSha,
+        input.pushRefusedReason
+      )
     );
     tracer.addActivityEvent({
       name: 'ci_triage.commented',
@@ -545,6 +577,163 @@ export async function reportCiTriage(
     const error = getErrorMessage(err).slice(0, 500);
     tracer.addActivityEvent({ error, name: 'ci_triage.comment_failed' });
     return { commented: false, error };
+  } finally {
+    await persistActivityTrace(tracer, 'ciTriager');
+  }
+}
+
+// ── Pushing a fix onto the pull request's branch ────────────────────────────
+
+/** Paths a pushed fix may never touch: what a workflow run executes with the repo's secrets. */
+const WORKFLOW_PATH_RE = /^\.github\/(workflows|actions)(\/|$)/i;
+
+export interface PushCiFixInput {
+  request: RepoWorkRequest;
+  triage: CiTriageResult;
+  /** The implementation's result: the fix commit, on the run's own work branch. */
+  codeResult: CodeResult;
+}
+
+export type PushCiFixResult =
+  | { pushed: true; branch: string; commitSha: string }
+  | { pushed: false; reason: string };
+
+/**
+ * Deliver a fix for a pull request's failure as a commit on that pull request's own branch —
+ * a fast-forward to the commit the implementation pushed to its work branch — when, and only
+ * when, every one of these holds at the moment of the push:
+ *
+ * - the run was started by a CI-failure trigger (its fire row names this request), the trigger
+ *   uses the built-in template, and the TRIGGER — not the payload, which a hand-started run
+ *   controls — asks for `push`;
+ * - an admin allows it for the repository's team (`github.ciFixPushToPullRequestEnabled`);
+ * - the failure is a `pull_request` run whose pull request is still open, from this
+ *   repository, with the failing branch as its head;
+ * - that branch is not the default branch, not protected, and not in
+ *   `github.ciFixNeverPushBranches`;
+ * - the fix commit is a fast-forward of the branch's current tip and touches no workflow
+ *   file.
+ *
+ * Anything else answers `pushed: false` with the reason, and the template opens the draft pull
+ * request instead. The commit is recorded on the fire row BEFORE the push, so its own CI
+ * failure is suppressed by the gateway (`SUPPRESSED_OWN_FIX`) even if this activity dies
+ * right after pushing.
+ */
+export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<PushCiFixResult> {
+  const tracer = new AgentTracer();
+  const refuse = (reason: string): PushCiFixResult => {
+    tracer.addActivityEvent({ name: 'ci_fix.push_refused', outputJson: { reason } });
+    return { pushed: false, reason };
+  };
+  try {
+    const { request, triage, codeResult } = input;
+    const payload = parsePayload(request);
+    const repoId = requireRepoId(request, 'pushCiFixToPullRequest');
+    if (
+      payload.connectionId !== repoId ||
+      (codeResult.repoId !== undefined && codeResult.repoId !== repoId)
+    ) {
+      return refuse('the fix belongs to another repository');
+    }
+    if (triage.decision !== 'fix' || payload.pullRequestDelivery !== 'push') {
+      return refuse('this run was not asked to push its fix');
+    }
+    const fire = await prisma.ciFailureTriggerFire.findFirst({
+      include: { trigger: { select: { connectionId: true, inputs: true, templateId: true } } },
+      where: { outcome: 'STARTED', workRequestId: request.workRequestId },
+    });
+    if (!fire || fire.trigger.connectionId !== repoId) {
+      return refuse('only a run a CI-failure trigger started may push to a pull request branch');
+    }
+    if (fire.trigger.templateId !== null) {
+      return refuse('only the built-in CI triage template pushes to a pull request branch');
+    }
+    if (storedTriggerInputs(fire.trigger.inputs).pullRequestDelivery !== 'push') {
+      return refuse('the trigger does not ask for its fixes to be pushed');
+    }
+
+    const repo = await prisma.connection.findUniqueOrThrow({
+      include: {
+        installation: { select: { host: true, installationId: true } },
+        team: { select: { orgId: true } },
+      },
+      where: { id: repoId },
+    });
+    const ctx = { ...(repo.team?.orgId ? { orgId: repo.team.orgId } : {}), teamId: repo.teamId };
+    if (!(await resolveSetting('github.ciFixPushToPullRequestEnabled', ctx))) {
+      return refuse('pushing CI fixes to pull request branches is switched off');
+    }
+
+    const branch = payload.baseBranch;
+    if (
+      triage.run?.event !== 'pull_request' ||
+      triage.run.headBranch !== branch ||
+      triage.pullRequestNumber === null ||
+      fire.headBranch !== branch
+    ) {
+      return refuse('only a pull request failure is fixed on its own branch');
+    }
+    const neverPush = await resolveSetting('github.ciFixNeverPushBranches', ctx);
+    if (matchesPatterns(neverPush, branch)) {
+      return refuse(`'${branch}' is listed as a branch fixes are never pushed to`);
+    }
+
+    const repoRef = toRepoRef(repo);
+    const scm = getScmProvider(repoRef);
+    const pr = await scm.pullRequestInfo(repoRef, triage.pullRequestNumber);
+    if (
+      pr?.state !== 'open' ||
+      pr.headRef !== branch ||
+      pr.headRepositoryFullName?.toLowerCase() !==
+        `${repo.organizationName}/${repo.repoName}`.toLowerCase()
+    ) {
+      return refuse('the pull request is no longer open from this branch');
+    }
+    if ((await scm.defaultBranch(repoRef)) === branch) {
+      return refuse("the pull request's branch is the repository's default branch");
+    }
+    const info = await scm.branchInfo(repoRef, branch);
+    if (!info) {
+      return refuse('the branch no longer exists');
+    }
+    if (info.protected) {
+      return refuse('the branch is protected');
+    }
+    const fixSha = codeResult.headSha;
+    if (!fixSha || !/^[0-9a-f]{40}$/i.test(fixSha)) {
+      return refuse('the fix has no commit to push');
+    }
+    const range = await scm.compareCommits(repoRef, info.sha, fixSha);
+    if (range.status !== 'ahead' || range.behindBy !== 0 || range.aheadBy < 1) {
+      return refuse('the branch has moved since the fix was made');
+    }
+    if (range.paths === null) {
+      return refuse('the fix is too large to check');
+    }
+    if (range.paths.some((p) => WORKFLOW_PATH_RE.test(p))) {
+      return refuse('the fix touches a workflow file');
+    }
+
+    // Recorded first: if the push lands and nothing after it does, the commit's failure is
+    // still recognised as the platform's own.
+    await prisma.ciFailureTriggerFire.update({
+      data: { fixCommitSha: fixSha },
+      where: { id: fire.id },
+    });
+    throwIfActivityCancelled();
+    if (!(await scm.fastForwardBranch(repoRef, branch, fixSha))) {
+      return refuse('GitHub refused the push (the branch moved, or a rule protects it)');
+    }
+    // The work branch only carried the commit there; it is now on the pull request's branch.
+    await scm.deleteBranch(repoRef, codeResult.branch);
+    tracer.addActivityEvent({
+      name: 'ci_fix.pushed',
+      outputJson: { branch, commitSha: fixSha, prNumber: pr.number },
+    });
+    return { branch, commitSha: fixSha, pushed: true };
+  } catch (err) {
+    tracer.addActivityEvent({ error: getErrorMessage(err), name: 'ci_fix.push_failed' });
+    throw err;
   } finally {
     await persistActivityTrace(tracer, 'ciTriager');
   }

@@ -231,6 +231,19 @@ describe.skipIf(!enabled)('CI-failure trigger decisions against Postgres', () =>
     }
   });
 
+  it('never starts a run for a failure of a commit the platform pushed as a fix', async () => {
+    const first = await deliver(event({ headSha: 'd'.repeat(40), runId: '400' }));
+    expect(first).toMatchObject({ outcome: 'STARTED' });
+    gone.add((first as { temporalWorkflowId: string }).temporalWorkflowId);
+    await prisma.ciFailureTriggerFire.updateMany({
+      data: { fixCommitSha: 'e'.repeat(40) },
+      where: { githubRunId: '400', triggerId },
+    });
+    await expect(deliver(event({ headSha: 'e'.repeat(40), runId: '401' }))).resolves.toMatchObject({
+      outcome: 'SUPPRESSED_OWN_FIX',
+    });
+  });
+
   it('refuses a trigger row with an empty list, an unknown event or non-object options', async () => {
     const base = {
       branchPatterns: ['main'],

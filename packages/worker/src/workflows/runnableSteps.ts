@@ -414,11 +414,30 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         throw new Error('reportCiTriage requires inputs.triage or context.ciTriage');
       }
       const fixPrUrl = inputs.fixPrUrl as string | null | undefined;
+      const pushedCommitSha = inputs.pushedCommitSha as string | null | undefined;
+      const pushRefusedReason = inputs.pushRefusedReason as string | null | undefined;
       return ciTriageActivities.reportCiTriage({
         request,
         triage,
         ...(fixPrUrl ? { fixPrUrl } : {}),
+        ...(pushedCommitSha ? { pushedCommitSha } : {}),
+        ...(typeof pushRefusedReason === 'string' ? { pushRefusedReason } : {}),
       });
+    },
+  ],
+  [
+    'pushCiFixToPullRequest',
+    ({ ctx, request, inputs }) => {
+      const triage = (inputs.triage ?? lookupPath(ctx, 'context.ciTriage')) as
+        | activitiesType.CiTriageResult
+        | undefined;
+      const codeResult = (inputs.codeResult ?? lookupPath(ctx, 'context.currentCodeResult')) as
+        | CodeResult
+        | undefined;
+      if (!triage || !codeResult) {
+        throw new Error('pushCiFixToPullRequest requires the triage and the code result');
+      }
+      return ciTriageActivities.pushCiFixToPullRequest({ codeResult, request, triage });
     },
   ],
   [

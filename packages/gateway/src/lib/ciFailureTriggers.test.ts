@@ -213,6 +213,12 @@ function harness(
     if (where.headSha !== undefined && f.headSha !== where.headSha) {
       return false;
     }
+    if (
+      where.fixCommitSha !== undefined &&
+      (f as { fixCommitSha?: string | null }).fixCommitSha !== where.fixCommitSha
+    ) {
+      return false;
+    }
     if (where.headBranch !== undefined && f.headBranch !== where.headBranch) {
       return false;
     }
@@ -394,6 +400,16 @@ describe('handleWorkflowRunFailure', () => {
     expect(
       (h.started[0]?.input.request as { payload: { mode: string } } | undefined)?.payload.mode
     ).toBe('triage');
+  });
+
+  it('never triages again a commit the platform pushed as a fix', async () => {
+    const h = harness();
+    await handle(h, { ...failed, headSha: 'f'.repeat(40), runId: '900' });
+    // The run pushed its fix as commit 'e…e' onto the branch.
+    (h.fires[0] as { fixCommitSha?: string }).fixCommitSha = 'e'.repeat(40);
+    const out = await handle(h, { ...failed, headSha: 'e'.repeat(40), runId: '901' });
+    expect(out).toMatchObject({ outcome: 'SUPPRESSED_OWN_FIX' });
+    expect(h.started).toHaveLength(1);
   });
 
   it('suppresses a second failure on the same commit', async () => {

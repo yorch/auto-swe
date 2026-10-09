@@ -37,8 +37,10 @@ import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from 
 import { currentRunLauncherId } from '../runLauncher.js';
 import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
 import {
+  type BranchInfo,
   type CiStatusResult,
   type CloneCredentials,
+  type CommitComparison,
   type CreatePullRequestInput,
   DraftPullRequestUnsupportedError,
   ExistingPullRequestNotDraftError,
@@ -853,6 +855,92 @@ export class GitHubScmProvider implements ScmProvider {
         return null;
       }
       throw err;
+    }
+  }
+
+  async branchInfo(repo: RepoRef, branch: string): Promise<BranchInfo | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.repos.getBranch({
+        branch,
+        owner: repo.organizationName,
+        repo: repo.repoName,
+      });
+      return { protected: data.protected === true, sha: data.commit.sha };
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async defaultBranch(repo: RepoRef): Promise<string> {
+    const octokit = await octokitFor(repo);
+    const { data } = await octokit.repos.get({
+      owner: repo.organizationName,
+      repo: repo.repoName,
+    });
+    return data.default_branch;
+  }
+
+  async compareCommits(repo: RepoRef, base: string, head: string): Promise<CommitComparison> {
+    const octokit = await octokitFor(repo);
+    const { data } = await octokit.repos.compareCommitsWithBasehead({
+      basehead: `${base}...${head}`,
+      owner: repo.organizationName,
+      per_page: 100,
+      repo: repo.repoName,
+    });
+    const files = data.files ?? [];
+    // GitHub lists at most 300 files on a comparison; past that the list is not the whole range.
+    const truncated = files.length >= 300;
+    return {
+      aheadBy: data.ahead_by,
+      behindBy: data.behind_by,
+      paths: truncated
+        ? null
+        : files.flatMap((f) =>
+            f.previous_filename ? [f.filename, f.previous_filename] : [f.filename]
+          ),
+      status: data.status,
+    };
+  }
+
+  async fastForwardBranch(repo: RepoRef, branch: string, sha: string): Promise<boolean> {
+    const octokit = await octokitFor(repo);
+    try {
+      // `force: false`: the host moves the ref only when `sha` descends from where it points.
+      await octokit.git.updateRef({
+        force: false,
+        owner: repo.organizationName,
+        ref: `heads/${branch}`,
+        repo: repo.repoName,
+        sha,
+      });
+      return true;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      // 422: not a fast-forward, or a protection / ruleset refused the update. 403: the
+      // credential may not push here. Either is a refusal, not a failure.
+      if (status === 422 || status === 403 || status === 409) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async deleteBranch(repo: RepoRef, branch: string): Promise<boolean> {
+    const octokit = await octokitFor(repo);
+    try {
+      await octokit.git.deleteRef({
+        owner: repo.organizationName,
+        ref: `heads/${branch}`,
+        repo: repo.repoName,
+      });
+      return true;
+    } catch {
+      return false;
     }
   }
 

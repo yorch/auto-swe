@@ -161,6 +161,22 @@ export interface PullRequestInfo {
   htmlUrl: string;
 }
 
+/** A branch's tip and whether the host protects it. */
+export interface BranchInfo {
+  sha: string;
+  protected: boolean;
+}
+
+/** How `head` relates to `base`, and the files between them. */
+export interface CommitComparison {
+  /** `ahead`: head is base plus commits — a fast-forward from base reaches it. */
+  status: 'ahead' | 'behind' | 'identical' | 'diverged';
+  aheadBy: number;
+  behindBy: number;
+  /** Every path the range touches, both ends of a rename. Null when the host truncated the list. */
+  paths: string[] | null;
+}
+
 /** A normalized CI verdict for a ref, plus an optional link to failing logs. */
 export interface CiStatusResult {
   verdict: import('./ciStatus.js').CiVerdict;
@@ -233,6 +249,19 @@ export interface ScmProvider {
   branchHeadSha(repo: RepoRef, branch: string): Promise<string | null>;
   /** A pull request's current state, or null when it does not exist. */
   pullRequestInfo(repo: RepoRef, prNumber: number): Promise<PullRequestInfo | null>;
+  /** A branch's tip and protection, or null when no branch has that name. */
+  branchInfo(repo: RepoRef, branch: string): Promise<BranchInfo | null>;
+  /** The repository's default branch. */
+  defaultBranch(repo: RepoRef): Promise<string>;
+  /** How `head` relates to `base` (commit shas). */
+  compareCommits(repo: RepoRef, base: string, head: string): Promise<CommitComparison>;
+  /**
+   * Move `branch` to `sha` only if that is a fast-forward — never a force. Resolves false when
+   * the host refuses (not a fast-forward, protection, a ruleset); throws on anything else.
+   */
+  fastForwardBranch(repo: RepoRef, branch: string, sha: string): Promise<boolean>;
+  /** Delete a branch; best-effort, resolves false when it could not. */
+  deleteBranch(repo: RepoRef, branch: string): Promise<boolean>;
   /**
    * Create a comment on an issue or pull request, or update the existing one that carries
    * `marker` (a hidden HTML comment), so repeated reports on one PR edit one comment rather

@@ -40,6 +40,7 @@ import { launchTrackedWorkflow } from './workflowLaunch.js';
 /** What a trigger decided about one failed run. */
 export const CI_FIRE_OUTCOMES = [
   'STARTED',
+  'SUPPRESSED_OWN_FIX',
   'SUPPRESSED_SAME_COMMIT',
   'SUPPRESSED_COOLDOWN',
   'SUPPRESSED_IN_FLIGHT',
@@ -52,9 +53,10 @@ export type CiFireOutcome = (typeof CI_FIRE_OUTCOMES)[number];
 
 /**
  * How far back a started run still counts as possibly in flight: longer than the template can
- * run (an implementation, then up to three CI waits of four hours).
+ * run (an implementation, then up to six CI waits of four hours — the first, and one after each
+ * of at most five revisions).
  */
-const IN_FLIGHT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const IN_FLIGHT_LOOKBACK_MS = 36 * 60 * 60 * 1000;
 /** Attempts at starting the workflow before the decision is given up. */
 const START_ATTEMPTS = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -545,6 +547,21 @@ export async function decideUnderLock(
     outcome: 'STARTED',
     trigger: { connectionId: { in: scope.connectionIds } },
   } as const;
+  // A commit the platform pushed as a fix: its failure is the fix failing, which a new run
+  // would only answer with a fix of the fix. Matched across every trigger of the repository.
+  if (
+    await tx.ciFailureTriggerFire.findFirst({
+      where: {
+        fixCommitSha: event.headSha,
+        trigger: { connectionId: { in: scope.connectionIds } },
+      },
+    })
+  ) {
+    return {
+      outcome: 'SUPPRESSED_OWN_FIX',
+      reason: 'the commit is a fix the platform pushed; its failure is not triaged again',
+    };
+  }
   if (
     await tx.ciFailureTriggerFire.findFirst({ where: { ...startedOnRepo, headSha: event.headSha } })
   ) {

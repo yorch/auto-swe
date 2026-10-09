@@ -37,6 +37,17 @@ export const CI_FIXABLE_CATEGORIES = [
 ] as const;
 export type CiFixableCategory = (typeof CI_FIXABLE_CATEGORIES)[number];
 
+/**
+ * How a fix for a `pull_request` failure reaches the pull request: a draft pull request into
+ * its branch, or a commit pushed onto its branch. `push` is a request, not a grant: the worker
+ * pushes only where an admin allows it (`github.ciFixPushToPullRequestEnabled`), fast-forward,
+ * to a branch that is not the default, protected or listed in `github.ciFixNeverPushBranches`,
+ * and otherwise opens the draft. A `push` failure (`main`, a release branch) always gets a
+ * draft pull request.
+ */
+export const CI_PULL_REQUEST_DELIVERIES = ['draft_pr', 'push'] as const;
+export type CiPullRequestDelivery = (typeof CI_PULL_REQUEST_DELIVERIES)[number];
+
 /** Defaults of the options a trigger may set, applied wherever the payload omits one. */
 export const CI_TRIAGE_DEFAULTS = {
   commentOnPullRequest: true,
@@ -44,12 +55,14 @@ export const CI_TRIAGE_DEFAULTS = {
   maxCiFixAttempts: 2,
   minFixConfidence: 0.6,
   mode: 'triage',
+  pullRequestDelivery: 'draft_pr',
 } as const satisfies {
   commentOnPullRequest: boolean;
   fixCategories: CiFixableCategory[];
   maxCiFixAttempts: number;
   minFixConfidence: number;
   mode: CiTriageMode;
+  pullRequestDelivery: CiPullRequestDelivery;
 };
 
 /** Bounds of the numeric options. */
@@ -103,6 +116,9 @@ export const CiTriagePayloadSchema = z.object({
     .max(CI_FIX_CONFIDENCE_RANGE.max)
     .default(CI_TRIAGE_DEFAULTS.minFixConfidence),
   mode: z.enum(CI_TRIAGE_MODES).default(CI_TRIAGE_DEFAULTS.mode),
+  pullRequestDelivery: z
+    .enum(CI_PULL_REQUEST_DELIVERIES)
+    .default(CI_TRIAGE_DEFAULTS.pullRequestDelivery),
   pullRequestNumber: z.number().int().positive().optional(),
   runAttempt: z.number().int().min(1).max(1000),
   ticketId: z.string().max(200).optional(),
@@ -159,6 +175,14 @@ export const CI_TRIAGE_INPUT_SCHEMA: InputSchema = {
       description: 'Diagnose only, or also attempt a fix when the diagnosis allows it.',
       enum: [...CI_TRIAGE_MODES],
       title: 'Mode',
+      type: 'string',
+    },
+    pullRequestDelivery: {
+      default: CI_TRIAGE_DEFAULTS.pullRequestDelivery,
+      description:
+        'How a fix for a failing pull request reaches it: a draft pull request into its branch, or a commit pushed onto its branch where an admin allows it (never the default branch, a protected branch or a listed one; anything refused becomes a draft). A failure on a pushed branch always gets a draft pull request.',
+      enum: [...CI_PULL_REQUEST_DELIVERIES],
+      title: 'Pull request fix delivery',
       type: 'string',
     },
     pullRequestNumber: { type: 'number' },

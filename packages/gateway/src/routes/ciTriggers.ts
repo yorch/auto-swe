@@ -15,11 +15,13 @@
  */
 
 import type { Prisma } from '@auto-swe/shared';
+import { resolveSetting } from '@auto-swe/shared/config';
 import {
   buildCiTriggerPayload,
   CI_TRIGGER_EVENTS,
   GlobListSchema,
   SAMPLE_CI_EVENT_FIELDS,
+  storedTriggerInputs,
   TriggerInputsSchema,
   triggerOptionKeys,
 } from '@auto-swe/shared/lib/ciTrigger';
@@ -179,8 +181,30 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
     templateId: string | null,
     inputs: unknown,
     events: readonly string[],
-    teamId: string
+    teamId: string,
+    orgId: string | null
   ): Promise<{ code: string; message: string } | null> {
+    // Asking for a push is refused early where it could never happen; the worker decides again
+    // at run time, from the trigger, the setting and the branch as they are then.
+    if (storedTriggerInputs(inputs).pullRequestDelivery === 'push') {
+      if (templateId !== null) {
+        return {
+          code: 'INVALID_INPUTS',
+          message: "A fix is pushed to a pull request's branch only by the built-in template",
+        };
+      }
+      const allowed = await resolveSetting('github.ciFixPushToPullRequestEnabled', {
+        ...(orgId ? { orgId } : {}),
+        teamId,
+      });
+      if (!allowed) {
+        return {
+          code: 'PUSH_DELIVERY_DISABLED',
+          message:
+            "Pushing CI fixes to pull request branches is switched off (github.ciFixPushToPullRequestEnabled); choose 'draft_pr'",
+        };
+      }
+    }
     const template = await resolveTriggerTemplate(fastify.prisma, templateId, teamId);
     if (!template) {
       return templateId
@@ -314,7 +338,8 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
         body.templateId,
         body.inputs,
         body.events,
-        loaded.repo.teamId
+        loaded.repo.teamId,
+        loaded.repo.team.orgId
       );
       if (problem) {
         return sendError(reply, 400, problem.code, problem.message);
@@ -378,7 +403,8 @@ export const ciTriggerRoutes: FastifyPluginAsync = async (fastify) => {
           body.templateId === undefined ? existing.templateId : body.templateId,
           body.inputs ?? existing.inputs,
           body.events ?? existing.events,
-          loaded.repo.teamId
+          loaded.repo.teamId,
+          loaded.repo.team.orgId
         );
         if (problem) {
           return sendError(reply, 400, problem.code, problem.message);

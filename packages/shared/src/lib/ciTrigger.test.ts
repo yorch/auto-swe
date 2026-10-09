@@ -145,6 +145,7 @@ describe('triggerOptionKeys', () => {
       'maxCiFixAttempts',
       'minFixConfidence',
       'mode',
+      'pullRequestDelivery',
     ]);
   });
 });
