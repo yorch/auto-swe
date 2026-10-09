@@ -519,9 +519,13 @@ new version, and activates it only when the template is still active on the prev
 version; a template an admin archived or moved onto their own version keeps that choice, and so
 does one running a live A/B experiment (`experimentSplit` above zero): the new version is appended,
 a warning names the template, and the admin promotes it when the experiment ends. Template-level
-fields (`inputSchema`, `workspaceProvider`) are filled only where the row has none, so an admin's
-edit is never reverted; a release that changes one of them for an already-seeded built-in does not
-propagate it. A
+fields (`inputSchema`, `workspaceProvider`) are filled where the row has none, and an admin's edit
+is never reverted. A release that changes a built-in `inputSchema` records the outgoing value in
+`PREVIOUS_BUILTIN_INPUT_SCHEMAS` (`shared/src/lib/syncBuiltins.ts`), the same way model defaults
+are moved: a template whose stored schema still equals one an earlier release shipped (compared
+key-order-insensitively) is moved onto the new one, with or without a spec change, but only while
+it is active on its latest built-in version and runs no A/B experiment. Any other stored value is
+an admin's and stays. A
 built-in version is one with no author (`createdBy` and `generatedBy` both null). The same
 create-if-missing rule covers the GLOBAL agents and their skill refs: a ref an admin removed stays
 removed, and only a built-in skill new in this release is attached to an existing agent. The one
@@ -1054,10 +1058,14 @@ Current constraints of the system as built. Deliberate product boundaries are in
   `TENANT_GUARD_WARN=1` to warn instead of throw while triaging false positives. Single-row lookups
   are deliberately unguarded — `findUnique` by id is the normal fetch-then-check shape — and raw SQL
   bypasses the extension entirely. This is defence in depth, not the row-level security it stands in for.
-- **A built-in template's template-level fields follow its spec.** `inputSchema` and
-  `workspaceProvider` are updated only together with an auto-activated new built-in version, so a
-  release that changes one of them without changing the spec does not reach an existing
-  deployment.
+- **A built-in template's `workspaceProvider` follows its spec.** It is filled only where the row
+  has none, together with an auto-activated new built-in version; nothing records the value an
+  earlier release shipped, so a release that changes it for an already-seeded template does not
+  reach an existing deployment.
+- **A built-in `inputSchema` moves only from a value a release recorded.** A schema change that is
+  not added to `PREVIOUS_BUILTIN_INPUT_SCHEMAS` never reaches an existing deployment, and one that
+  is still skips a template an admin moved off its built-in version, archived, or is running an
+  A/B experiment on: those keep the old schema until an admin updates it.
 - **A `runUnscoped` exemption still covers repeat queries on the models it names.** It is an
   `AsyncLocalStorage` region, so everything awaited inside inherits it; naming the models bounds
   that — a query on anything else inside the block still fails — but a *second* query on an
