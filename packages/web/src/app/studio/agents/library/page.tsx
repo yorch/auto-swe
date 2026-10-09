@@ -10,6 +10,7 @@ import {
 import { AgentHistoryModal } from '@/components/agents/AgentHistoryModal';
 import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
 import { broaderFallbacks } from '@/components/agents/agentFallback';
+import { ModelSaveWarnings } from '@/components/agents/ModelSaveWarnings';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -29,6 +30,7 @@ import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import {
   type AgentRow,
+  type AgentSaveWarnings,
   type AgentScope,
   type AgentSkillRef,
   type CreateAgentBody,
@@ -146,6 +148,7 @@ interface SavedNotice {
   title: string;
   scanWarnings: string[];
   catalogWarnings: string[];
+  credentialWarnings: string[];
   /** Harness agents that inherit the newly saved model and cannot run on it. */
   runtimeWarnings: string[];
 }
@@ -190,16 +193,17 @@ export default function AgentLibraryPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
 
-  function finishSave(
-    title: string,
-    res: { scanWarnings?: string[]; catalogWarnings?: string[]; runtimeWarnings?: string[] }
-  ) {
+  function finishSave(title: string, res: AgentSaveWarnings & { runtimeWarnings?: string[] }) {
     const scanWarnings = res.scanWarnings ?? [];
     const catalogWarnings = res.catalogWarnings ?? [];
+    const credentialWarnings = res.credentialWarnings ?? [];
     const runtimeWarnings = res.runtimeWarnings ?? [];
     setSaved(
-      scanWarnings.length > 0 || catalogWarnings.length > 0 || runtimeWarnings.length > 0
-        ? { catalogWarnings, runtimeWarnings, scanWarnings, title }
+      scanWarnings.length > 0 ||
+        catalogWarnings.length > 0 ||
+        credentialWarnings.length > 0 ||
+        runtimeWarnings.length > 0
+        ? { catalogWarnings, credentialWarnings, runtimeWarnings, scanWarnings, title }
         : null
     );
   }
@@ -683,21 +687,11 @@ export default function AgentLibraryPage() {
                 </ul>
               </Alert>
             )}
-            {saved.catalogWarnings.length > 0 && (
-              <Alert variant="warning">Model catalog: {saved.catalogWarnings.join(' ')}</Alert>
-            )}
-            {saved.runtimeWarnings.length > 0 && (
-              <Alert variant="warning">
-                Saved, but agents on the Claude Code harness inherit this model, which the harness
-                cannot drive. Their runs fail until they get an Anthropic model of their own or move
-                to the Mastra loop:
-                <ul className="mt-1 list-disc pl-5">
-                  {saved.runtimeWarnings.map((w) => (
-                    <li key={w}>{w}</li>
-                  ))}
-                </ul>
-              </Alert>
-            )}
+            <ModelSaveWarnings
+              catalogWarnings={saved.catalogWarnings}
+              credentialWarnings={saved.credentialWarnings}
+              runtimeWarnings={saved.runtimeWarnings}
+            />
             <div className="flex justify-end">
               <Button onClick={() => setSaved(null)} variant="primary">
                 Done

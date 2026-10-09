@@ -5,6 +5,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { prisma } from '@auto-swe/shared/db';
 import { modelCallFetch } from '@auto-swe/shared/lib/modelDiscovery';
 import { embeddingProviderProblem, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { ApplicationFailure } from '@temporalio/activity';
 import { APICallError, embed } from 'ai';
 import {
   currentActivityType,
@@ -71,11 +72,15 @@ async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
     default: {
       const problem = embeddingProviderProblem(provider);
       if (problem) {
-        throw new Error(`${problem} Set it at /studio/models (Embeddings tab).`);
+        throw ApplicationFailure.nonRetryable(
+          `${problem} Set it at /studio/models (Embeddings tab).`,
+          'MODEL_CONFIG_INVALID'
+        );
       }
       if (!apiBase) {
-        throw new Error(
-          `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models (Embeddings tab).`
+        throw ApplicationFailure.nonRetryable(
+          `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models (Embeddings tab).`,
+          'MODEL_CONFIG_INVALID'
         );
       }
       model = createOpenAICompatible({

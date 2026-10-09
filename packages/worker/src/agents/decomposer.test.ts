@@ -10,9 +10,11 @@ vi.mock('@mastra/core/agent', () => ({
 vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: vi.fn(async () => {}) }));
 vi.mock('../lib/activityContext.js', () => ({ currentWorkflowId: vi.fn(() => 'wf-1') }));
 vi.mock('../lib/models.js', () => ({
-  getModel: vi.fn(async () => ({})),
-  getModelSpec: vi.fn(async () => 'anthropic/claude-x'),
-  resolveSystemPrompt: vi.fn(async (_role: string, base: string) => base),
+  getBoundModel: vi.fn(async () => ({
+    model: {},
+    spec: 'anthropic/claude-x',
+    systemPrompt: null as string | null,
+  })),
 }));
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),

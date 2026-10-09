@@ -29,7 +29,7 @@ import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
-import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
+import { getBoundModel } from '../lib/models.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { DECOMPOSER_AGENT_PROMPT } from './prompts.js';
 
@@ -68,14 +68,12 @@ export async function planDecomposition(
       try {
         // The decomposer persona: its own prompt row, and the planner's model
         // through `inheritsModelFrom` unless the row overrides it.
-        modelSpec = await getModelSpec('decomposer');
-        const model = await getModel('decomposer');
+        // Resolved once: the model called, the price checked, the cost recorded
+        // and the prompt used all come from this one resolution.
+        const { model, spec, systemPrompt: rowPrompt } = await getBoundModel('decomposer');
+        modelSpec = spec;
         span.setAttribute('llm.model', modelSpec);
-        const basePrompt = await resolveSystemPrompt(
-          'decomposer',
-          DECOMPOSER_AGENT_PROMPT,
-          systemPromptOverride
-        );
+        const basePrompt = systemPromptOverride || (rowPrompt ?? DECOMPOSER_AGENT_PROMPT);
         systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
         const agent = new Agent({
           id: 'feature-decomposer',
@@ -89,7 +87,7 @@ export async function planDecomposition(
           externalTicketId: request.externalTicketId,
           maxSubtasks: MAX_SUBTASKS,
         });
-        await assertRolePricedForUsdCap('decomposer');
+        await assertRolePricedForUsdCap('decomposer', spec);
         await assertBudgetAvailable('decomposer');
         const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
           structuredOutput: { schema: DecomposerOutputSchema },
@@ -101,7 +99,8 @@ export async function planDecomposition(
             currentWorkflowId(),
             'decomposer',
             result.usage,
-            'llm.decomposer'
+            'llm.decomposer',
+            spec
           );
         }
 

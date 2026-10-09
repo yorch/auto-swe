@@ -7,6 +7,7 @@ import {
   AgentFormFields,
   type AgentFormValue,
 } from '@/components/agents/AgentFormFields';
+import { ModelSaveWarnings } from '@/components/agents/ModelSaveWarnings';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -21,6 +22,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type AgentRow,
+  type AgentSaveWarnings,
   type AgentSkillRef,
   type CreateTeamAgentBody,
   type SkillRefInput,
@@ -90,11 +92,21 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const [deleteConfirm, setDeleteConfirm] = useState<AgentRow | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  // Advisories from the last save. The override is live; these only say what to check.
+  const [saveWarnings, setSaveWarnings] = useState<AgentSaveWarnings>({});
+
+  const hasSaveWarnings =
+    (saveWarnings.scanWarnings?.length ?? 0) > 0 ||
+    (saveWarnings.catalogWarnings?.length ?? 0) > 0 ||
+    (saveWarnings.credentialWarnings?.length ?? 0) > 0 ||
+    (saveWarnings.runtimeWarnings?.length ?? 0) > 0;
 
   async function submitCreate() {
     setCreateError(null);
     try {
-      await createAgent.mutateAsync(cleanAgentPayload({ ...form }) as CreateTeamAgentBody);
+      setSaveWarnings(
+        await createAgent.mutateAsync(cleanAgentPayload({ ...form }) as CreateTeamAgentBody)
+      );
       setCreateOpen(false);
       setForm(EMPTY);
     } catch (e) {
@@ -112,7 +124,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
         skillId: r.skillId,
         sortOrder: i,
       }));
-      await updateAgent.mutateAsync({
+      const res = await updateAgent.mutateAsync({
         body: {
           ...(cleanAgentPayload({
             description: editing.description ?? '',
@@ -127,6 +139,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
         },
         id: editing.id,
       });
+      setSaveWarnings(res);
       setEditing(null);
     } catch (e) {
       setEditError(errMsg(e, 'Update failed'));
@@ -159,6 +172,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   }
 
   const openCreate = () => {
+    setSaveWarnings({});
     setCreateError(null);
     setCreateOpen(true);
   };
@@ -178,6 +192,22 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
         Per-team agents override the global library for this team's runs. Leave a field blank to
         inherit the global value.
       </p>
+
+      {hasSaveWarnings && (
+        <div className="mb-4 space-y-2">
+          {(saveWarnings.scanWarnings?.length ?? 0) > 0 && (
+            <Alert variant="warning">
+              Saved, but the content scanner flagged the prompt. Review it before relying on the
+              agent: {saveWarnings.scanWarnings?.join('; ')}
+            </Alert>
+          )}
+          <ModelSaveWarnings
+            catalogWarnings={saveWarnings.catalogWarnings}
+            credentialWarnings={saveWarnings.credentialWarnings}
+            runtimeWarnings={saveWarnings.runtimeWarnings}
+          />
+        </div>
+      )}
 
       <QueryBoundary
         error={loadError}
@@ -247,6 +277,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
                       <Button
                         aria-label={`Edit ${a.key}`}
                         onClick={() => {
+                          setSaveWarnings({});
                           setEditError(null);
                           setEditing({ ...a });
                         }}

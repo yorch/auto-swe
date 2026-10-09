@@ -86,7 +86,10 @@ function markStale(predicate: (key: string) => boolean): void {
 
 export async function withCache<T>(
   key: string,
-  ttlMs: number,
+  // A number, or a function of the fetched value for results that deserve a
+  // shorter life than the rest (see `fallThroughCacheTtlMs`). Evaluated only
+  // when the value is about to be stored.
+  ttlMs: number | ((value: T) => number),
   fetcher: () => Promise<T>,
   // Optional predicate: when it returns false the freshly-fetched value is
   // returned but NOT stored. Lets callers skip caching negative/empty results
@@ -120,7 +123,8 @@ export async function withCache<T>(
         // Lazy sweep + cap enforcement only when we actually insert — avoids
         // O(n) work on every read.
         purgeExpired(now);
-        store.set(key, { expiresAt: now + ttlMs, value });
+        const ttl = typeof ttlMs === 'function' ? ttlMs(value) : ttlMs;
+        store.set(key, { expiresAt: now + ttl, value });
         enforceCap();
       }
       return value;
@@ -135,9 +139,10 @@ export async function withCache<T>(
 }
 
 /// Drops a single key from the cache. Used to keep negative results (missing
-/// credentials, cross-scope GLOBAL fallbacks for team lookups) from sticking
-/// around for the full TTL — operators expect DB inserts to take effect
-/// immediately on the next activity call. A fetch for the key already in
+/// credentials) from sticking around for the full TTL — operators expect DB
+/// inserts to take effect immediately on the next activity call. (Cross-scope
+/// fall-through results are not invalidated; they take the shorter
+/// `fallThroughCacheTtlMs()` instead.) A fetch for the key already in
 /// flight will not store its result.
 export function invalidate(key: string): void {
   store.delete(key);
@@ -153,6 +158,27 @@ export function configCacheTtlMs(): number {
     }
   }
   return DEFAULT_TTL_MS;
+}
+
+/// How long a cascade lookup that fell through to a broader scope may be
+/// cached. A team run that has no team-scope row of its own lands on GLOBAL on
+/// every call, so refusing to cache that answer re-queries (and re-decrypts a
+/// credential) on nearly every LLM call. But a full TTL would hide a row an
+/// operator inserts at the narrower scope for just as long, so the answer is
+/// cached under a shorter bound. Never longer than `configCacheTtlMs()`; override
+/// with `CONFIG_CACHE_FALLTHROUGH_TTL_MS` (0 disables caching of fall-through).
+const DEFAULT_FALLTHROUGH_TTL_MS = 5_000;
+
+export function fallThroughCacheTtlMs(): number {
+  const full = configCacheTtlMs();
+  const envValue = process.env.CONFIG_CACHE_FALLTHROUGH_TTL_MS;
+  if (envValue) {
+    const parsed = Number(envValue);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.min(parsed, full);
+    }
+  }
+  return Math.min(DEFAULT_FALLTHROUGH_TTL_MS, full);
 }
 
 /// Drops every entry whose key starts with `prefix`. The settings resolver

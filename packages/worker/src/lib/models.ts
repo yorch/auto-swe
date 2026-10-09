@@ -5,6 +5,7 @@ import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { modelCallFetch } from '@auto-swe/shared/lib/modelDiscovery';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { ApplicationFailure } from '@temporalio/activity';
 import { type LanguageModel as AiLanguageModel, wrapLanguageModel } from 'ai';
 import { resolveAgent } from './config/agentResolver.js';
 import { currentRequestContext } from './config/contextLookup.js';
@@ -64,15 +65,21 @@ export async function getModel(
  * `<provider>/<model>` spec it was built from. Callers that price their own
  * spend pass `spec` to `recordLlmUsage` so the call is charged at the model
  * that was bound here — re-resolving the role from the ambient activity context
- * cannot see the CHANNEL tier and would price a different model.
+ * cannot see the CHANNEL tier and would price a different model. `systemPrompt` is
+ * the same resolution's prompt (null when the row sets none), so a caller that
+ * needs the model, its price and its prompt reads config once, not three times.
  */
 export async function getBoundModel(
   role: AnySkillRole,
   ctx?: Partial<ResolveCtx>
-): Promise<{ model: LanguageModel; spec: string }> {
+): Promise<{ model: LanguageModel; spec: string; systemPrompt: string | null }> {
   const resolveCtx = { ...(await currentRequestContext()), ...ctx };
   const { model } = await resolveAgent(role, resolveCtx);
-  return { model: buildModel(model.spec, model.apiKey, model.apiBase), spec: model.spec };
+  return {
+    model: buildModel(model.spec, model.apiKey, model.apiBase),
+    spec: model.spec,
+    systemPrompt: model.systemPrompt ?? null,
+  };
 }
 
 /**
@@ -153,8 +160,10 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
       // so the operator notices the bad config rather than silently failing
       // with an unhelpful SDK error.
       if (!apiBase) {
-        throw new Error(
-          `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models.`
+        // Deterministic: retrying the activity cannot add the missing apiBase.
+        throw ApplicationFailure.nonRetryable(
+          `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models.`,
+          'MODEL_CONFIG_INVALID'
         );
       }
       // The adapter sends JSON mode without the schema; put the schema in the

@@ -23,7 +23,7 @@ vi.mock('../lib/codeSecurityScanner.js', () => ({
 }));
 
 const { assertRolePricedMock } = vi.hoisted(() => ({
-  assertRolePricedMock: vi.fn(async (_role: string) => {}),
+  assertRolePricedMock: vi.fn(async (_role: string, _spec?: string) => {}),
 }));
 vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: assertRolePricedMock }));
 const unpriced = () =>
@@ -37,8 +37,11 @@ vi.mock('../lib/costTracking.js', () => ({
 }));
 
 vi.mock('../lib/models.js', () => ({
-  getModel: vi.fn(async () => ({ sentinel: 'model' })),
-  getModelSpec: vi.fn(async () => 'anthropic/claude-x'),
+  getBoundModel: vi.fn(async (key: string) => ({
+    model: { sentinel: 'model' },
+    spec: `anthropic/${key}-model`,
+    systemPrompt: null,
+  })),
 }));
 
 import { Agent } from '@mastra/core/agent';
@@ -46,7 +49,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { ConfigMissingError } from '../lib/config/resolver.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
-import { getModel } from '../lib/models.js';
+import { getBoundModel } from '../lib/models.js';
 import { runReviewNetwork } from './reviewNetwork.js';
 
 const MockedAgent = vi.mocked(Agent);
@@ -94,6 +97,24 @@ describe('runReviewNetwork USD-cap guard', () => {
       'securityReviewer',
     ]);
     expect(generateMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('runReviewNetwork single resolution', () => {
+  it('prices and bills each persona at the model it resolved once', async () => {
+    await runReviewNetwork(CODE_RESULT);
+    // One resolution per persona, shared by the price check, the call and the cost record.
+    expect(getBoundModel).toHaveBeenCalledTimes(3);
+    for (const key of ['securityReviewer', 'domainLogicReviewer', 'performanceReviewer']) {
+      expect(assertRolePricedMock).toHaveBeenCalledWith(key, `anthropic/${key}-model`);
+      expect(recordLlmUsage).toHaveBeenCalledWith(
+        expect.anything(),
+        key,
+        expect.anything(),
+        expect.anything(),
+        `anthropic/${key}-model`
+      );
+    }
   });
 });
 
@@ -219,7 +240,7 @@ describe('runReviewNetwork per-persona configuration', () => {
 
   it("binds each reviewer's model and cost through its own persona key", async () => {
     await runReviewNetwork(CODE_RESULT);
-    const modelKeys = vi.mocked(getModel).mock.calls.map((c) => c[0]);
+    const modelKeys = vi.mocked(getBoundModel).mock.calls.map((c) => c[0]);
     expect(modelKeys.sort()).toEqual([
       'domainLogicReviewer',
       'performanceReviewer',
@@ -254,8 +275,29 @@ describe('runReviewNetwork reviewer failures', () => {
   });
 
   it('rethrows ConfigMissingError', async () => {
-    vi.mocked(getModel).mockRejectedValueOnce(new ConfigMissingError('no reviewer row'));
+    vi.mocked(getBoundModel).mockRejectedValueOnce(new ConfigMissingError('no reviewer row'));
     await expect(runReviewNetwork(CODE_RESULT)).rejects.toBeInstanceOf(ConfigMissingError);
+  });
+
+  it('fails the review when a persona model cannot be built, not a REVIEWER_CRASH verdict', async () => {
+    // The second persona bound (domain logic) cannot be built.
+    vi.mocked(getBoundModel)
+      .mockResolvedValueOnce({
+        model: { sentinel: 'model' },
+        spec: 'anthropic/a',
+        systemPrompt: null,
+      } as never)
+      .mockRejectedValueOnce(
+        ApplicationFailure.nonRetryable(
+          "Provider 'acme' is not built-in and requires an apiBase on its credential.",
+          'MODEL_CONFIG_INVALID'
+        )
+      );
+    await expect(runReviewNetwork(CODE_RESULT)).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'MODEL_CONFIG_INVALID',
+    });
+    expect(generateMock).not.toHaveBeenCalled();
   });
 
   it('throws a retryable failure when every reviewer crashed', async () => {

@@ -1,4 +1,9 @@
-import { configCacheTtlMs, invalidate, withCache } from '@auto-swe/shared/config/cache';
+import {
+  configCacheTtlMs,
+  fallThroughCacheTtlMs,
+  invalidate,
+  withCache,
+} from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
@@ -22,22 +27,28 @@ export class ConfigMissingError extends Error {
 export async function resolveProviderCredential(
   provider: string,
   ctx?: ResolveCtx
-): Promise<{ apiBase?: string; apiKey: string }> {
+): Promise<{ apiBase?: string; apiKey: string; fellThrough: boolean }> {
   const cacheKey = `cred:${provider}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}`;
-  const resolved = await withCache(cacheKey, configCacheTtlMs(), () =>
-    resolveProviderCredentialUncached(provider, ctx)
+  // A narrower-scope request that landed on a broader row (a TEAM request on
+  // ORG or GLOBAL, an ORG request on GLOBAL) is the common case for team runs,
+  // so it stays cached — but under the shorter fall-through TTL, so a row
+  // inserted at the requested scope is seen within seconds, not a full TTL.
+  const resolved = await withCache(
+    cacheKey,
+    (r) => (fellThrough(ctx, r._scope) ? fallThroughCacheTtlMs() : configCacheTtlMs()),
+    () => resolveProviderCredentialUncached(provider, ctx)
   );
-  // When a more-specific request fell through to a less-specific scope, we
-  // cached the broader credential under the narrower cache key. That would mask
-  // a subsequent narrower insert for the full TTL — bust the cache now so the
-  // next call re-queries and picks up the new row. (A TEAM request that landed
-  // on ORG or GLOBAL, or an ORG request that landed on GLOBAL.)
-  const fellThrough =
-    (ctx?.teamId && resolved._scope !== 'TEAM') || (ctx?.orgId && resolved._scope === 'GLOBAL');
-  if (fellThrough) {
-    invalidate(cacheKey);
-  }
-  return { apiBase: resolved.apiBase, apiKey: resolved.apiKey };
+  // `fellThrough` lets a caller that embeds this credential in a longer-lived
+  // entry (`resolveAgent`) bound that entry by the same short TTL.
+  return {
+    apiBase: resolved.apiBase,
+    apiKey: resolved.apiKey,
+    fellThrough: fellThrough(ctx, resolved._scope),
+  };
+}
+
+function fellThrough(ctx: ResolveCtx | undefined, scope: ResolvedCredentialInternal['_scope']) {
+  return Boolean((ctx?.teamId && scope !== 'TEAM') || (ctx?.orgId && scope === 'GLOBAL'));
 }
 
 interface ResolvedCredentialInternal {

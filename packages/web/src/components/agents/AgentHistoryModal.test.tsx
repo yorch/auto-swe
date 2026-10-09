@@ -75,4 +75,24 @@ describe('AgentHistoryModal', () => {
     await waitFor(() => expect(bodies).toEqual([{ versionId: 'v1' }]));
     expect(await screen.findByText(/Saved as version 3/)).toBeTruthy();
   });
+
+  it('shows the catalog and credential warnings a restore returns', async () => {
+    setupFetchMock({
+      'GET /api/v1/platform/agent-library/v2/versions': () => ({
+        data: [version(2), version(1)],
+      }),
+      'POST /api/v1/platform/agent-library/v2/restore': () => ({
+        catalogWarnings: ['No price for acme/x.'],
+        credentialWarnings: ['No credential for acme.'],
+        data: version(3),
+      }),
+    });
+    render(withQuery(<AgentHistoryModal agent={AGENT} onClose={vi.fn()} />));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Restore version 1 as a new version' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Restore as new version' }));
+    expect(await screen.findByText(/Model catalog: No price for acme\/x\./)).toBeTruthy();
+    expect(screen.getByText(/Credentials: No credential for acme\./)).toBeTruthy();
+  });
 });

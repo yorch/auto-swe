@@ -108,6 +108,13 @@ describe('resolveModel', () => {
 
   it('throws on unknown provider when no apiBase is supplied', () => {
     expect(() => resolveModel('mystery/some-model', 'sk-x')).toThrow(/apiBase/);
+    // A deterministic config error: retrying the activity cannot cure it.
+    try {
+      resolveModel('mystery/some-model', 'sk-x');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toMatchObject({ nonRetryable: true, type: 'MODEL_CONFIG_INVALID' });
+    }
   });
 
   it('rejects malformed specs', () => {
@@ -226,6 +233,13 @@ describe('getBoundModel', () => {
     const bound = await getBoundModel('commitToMemory');
     expect(bound.spec).toBe('anthropic/claude-haiku-4-5-20251001');
     expect(bound.model.modelId).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('returns the prompt of the same resolution, null when the row sets none', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ systemPrompt: 'row prompt' }));
+    expect((await getBoundModel('planner')).systemPrompt).toBe('row prompt');
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ systemPrompt: null }));
+    expect((await getBoundModel('planner')).systemPrompt).toBeNull();
   });
 
   it('resolves once, at the explicit ctx (the CHANNEL tier the ambient context cannot supply)', async () => {

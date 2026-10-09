@@ -141,21 +141,67 @@ describe('resolveEmbeddingConfig', () => {
 });
 
 describe('provider-credential cache', () => {
-  it('busts the team-scope credential cache when GLOBAL was used as fallback', async () => {
-    let teamHasCred = false;
-    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
-      if (args.where.scope === 'TEAM') {
-        return teamHasCred ? credRow('sk-team-new') : null;
-      }
-      return credRow('sk-global');
-    });
+  it('caches a GLOBAL fall-through for a team, but only for the short fall-through TTL', async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.CONFIG_CACHE_TTL_MS = '30000';
+      process.env.CONFIG_CACHE_FALLTHROUGH_TTL_MS = '5000';
+      let teamHasCred = false;
+      credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) => {
+        if (args.where.scope === 'TEAM') {
+          return teamHasCred ? credRow('sk-team-new') : null;
+        }
+        return credRow('sk-global');
+      });
 
-    const r1 = await resolveProviderCredential('anthropic', { teamId: 't1' });
-    expect(r1.apiKey).toBe('sk-global');
+      const r1 = await resolveProviderCredential('anthropic', { teamId: 't1' });
+      expect(r1.apiKey).toBe('sk-global');
 
-    teamHasCred = true;
-    const r2 = await resolveProviderCredential('anthropic', { teamId: 't1' });
-    expect(r2.apiKey).toBe('sk-team-new');
+      // Within the short TTL the fall-through answer is served from cache: no re-query.
+      teamHasCred = true;
+      vi.advanceTimersByTime(4_000);
+      const r2 = await resolveProviderCredential('anthropic', { teamId: 't1' });
+      expect(r2.apiKey).toBe('sk-global');
+      expect(credFindFirstMock).toHaveBeenCalledTimes(2); // TEAM + GLOBAL, once
+
+      // Past it, the newly inserted team row is picked up well before the full TTL.
+      vi.advanceTimersByTime(2_000);
+      const r3 = await resolveProviderCredential('anthropic', { teamId: 't1' });
+      expect(r3.apiKey).toBe('sk-team-new');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports whether the credential fell through to a broader scope', async () => {
+    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) =>
+      args.where.scope === 'TEAM' ? credRow('sk-team') : credRow('sk-global')
+    );
+    expect((await resolveProviderCredential('anthropic', { teamId: 't1' })).fellThrough).toBe(
+      false
+    );
+    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) =>
+      args.where.scope === 'TEAM' ? null : credRow('sk-global')
+    );
+    expect((await resolveProviderCredential('anthropic', { teamId: 't2' })).fellThrough).toBe(true);
+    expect((await resolveProviderCredential('anthropic')).fellThrough).toBe(false);
+  });
+
+  it('never lets the fall-through TTL exceed the full TTL', async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.CONFIG_CACHE_TTL_MS = '1000';
+      process.env.CONFIG_CACHE_FALLTHROUGH_TTL_MS = '60000';
+      credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) =>
+        args.where.scope === 'TEAM' ? null : credRow('sk-global')
+      );
+      await resolveProviderCredential('anthropic', { teamId: 't1' });
+      vi.advanceTimersByTime(1_500);
+      await resolveProviderCredential('anthropic', { teamId: 't1' });
+      expect(credFindFirstMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps caching when the team-scope row WAS the one returned', async () => {

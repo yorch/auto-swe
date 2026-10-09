@@ -177,7 +177,7 @@ async function consolidateLessonsImpl(
         .join('\n\n');
 
       const start = Date.now();
-      await assertRolePricedForUsdCap(CONSOLIDATOR_AGENT_KEY);
+      await assertRolePricedForUsdCap(CONSOLIDATOR_AGENT_KEY, bound.spec);
       const result = await agent.generate([{ content: prompt, role: 'user' }], {
         structuredOutput: { schema: ConsolidatorOutputSchema },
       });
