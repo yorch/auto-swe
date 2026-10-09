@@ -2,6 +2,7 @@ import { resolveSetting } from '../config/index.js';
 import type { PrismaClient } from '../index.js';
 import { BUILTIN_MODELS, builtinModelSpec } from './builtinModels.js';
 import { createGuardedFetch, SSRF_BLOCKED_CODE } from './guardedDispatcher.js';
+import { isBuiltInProvider } from './modelSpec.js';
 import { checkProbeUrl } from './ssrfGuard.js';
 import { runUnscoped } from './tenantGuard.js';
 
@@ -42,13 +43,24 @@ export function modelListRequest(args: {
   // replaces that endpoint (a proxy or gateway in front of the provider) but not the auth style.
   const adapters: Record<
     string,
-    { base: string; headers?: Record<string, string>; keyQuery?: boolean }
+    {
+      base: string;
+      customHeaders?: Record<string, string>;
+      headers?: Record<string, string>;
+      keyQuery?: boolean;
+    }
   > = {
     anthropic: {
       base: 'https://api.anthropic.com/v1',
       headers: { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey },
     },
-    google: { base: 'https://generativelanguage.googleapis.com/v1beta', keyQuery: true },
+    // The vendor endpoint takes the key as a query parameter; the worker sends the header, which is
+    // what a proxy expects and keeps the key out of its URL logs, so a custom base gets the header.
+    google: {
+      base: 'https://generativelanguage.googleapis.com/v1beta',
+      customHeaders: { 'x-goog-api-key': apiKey },
+      keyQuery: true,
+    },
     openai: {
       base: 'https://api.openai.com/v1',
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -77,14 +89,20 @@ export function modelListRequest(args: {
   if (safety.url.username || safety.url.password) {
     return { error: 'apiBase rejected: credentials in the URL are not allowed' };
   }
+  // `<base>/models` would land inside the query or fragment and reach the server without its path.
+  if (safety.url.search || safety.url.hash) {
+    return { error: 'apiBase rejected: a query or fragment is not allowed' };
+  }
   const base = safety.url.toString().replace(/\/+$/, '');
   return {
     // The guard checked `apiBase`, not wherever it redirects to.
     init: {
-      headers: adapter ? adapter.headers : { Authorization: `Bearer ${apiKey}` },
+      headers: adapter
+        ? (adapter.customHeaders ?? adapter.headers)
+        : { Authorization: `Bearer ${apiKey}` },
       redirect: 'manual',
     },
-    url: withQuery(`${base}/models`, extra),
+    url: withQuery(`${base}/models`),
   };
 }
 
@@ -417,7 +435,13 @@ export async function listProviderModels(args: {
     query = parsed.next;
   }
   return {
-    complete: query === null && !unfollowable && listedIds.size > 0,
+    // A built-in provider behind an `apiBase` lists what the proxy exposes (aliases, deployments),
+    // not the vendor's catalog, so its absences say nothing about the catalog's models.
+    complete:
+      query === null &&
+      !unfollowable &&
+      listedIds.size > 0 &&
+      !(isBuiltInProvider(args.provider) && args.apiBase),
     listedIds,
     models: models.filter((m) => !NON_TEXT_MODEL.test(m.modelId)),
     ok: true,

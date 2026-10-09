@@ -210,6 +210,25 @@ describe('discoverProviderModels', () => {
     ]);
   });
 
+  it("never calls a built-in provider's listing through a proxy complete, so it retires nothing", async () => {
+    // A proxy lists what it exposes (aliases, deployments), not the vendor's catalog: every vendor
+    // model it leaves out would otherwise be offered for retirement.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ data: [{ id: 'team-alias' }] }))
+    );
+    const [proxied] = await discoverProviderModels(
+      fakePrisma([credential('openai', 'https://proxy.example.com/v1')], [])
+    );
+    expect(proxied).toMatchObject({ complete: false, ok: true, retirementCandidates: [] });
+    expect(proxied?.models.map((m) => m.spec)).toEqual(['openai/team-alias']);
+
+    // The same listing from the vendor itself is authoritative.
+    const [direct] = await discoverProviderModels(fakePrisma([credential('openai')], []));
+    expect(direct).toMatchObject({ complete: true, ok: true });
+    expect(direct?.retirementCandidates.length).toBeGreaterThan(0);
+  });
+
   it('decrypts each key only to call its own provider', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ data: [] }));
     vi.stubGlobal('fetch', fetchMock);
@@ -480,7 +499,7 @@ describe('built-in providers with a custom apiBase', () => {
     });
   });
 
-  it('keeps the google key query against a custom apiBase', () => {
+  it("sends the google key as a header, as the worker does, never in a custom host's URL", () => {
     expect(
       modelListRequest({
         apiBase: 'https://proxy.example.com/v1beta',
@@ -488,8 +507,8 @@ describe('built-in providers with a custom apiBase', () => {
         provider: 'google',
       })
     ).toEqual({
-      init: { redirect: 'manual' },
-      url: 'https://proxy.example.com/v1beta/models?key=k',
+      init: { headers: { 'x-goog-api-key': 'k' }, redirect: 'manual' },
+      url: 'https://proxy.example.com/v1beta/models',
     });
   });
 
@@ -511,6 +530,19 @@ describe('built-in providers with a custom apiBase', () => {
         init: { headers: { Authorization: 'Bearer k' } },
         url: 'https://api.openai.com/v1/models',
       });
+    }
+  });
+
+  it('refuses an apiBase with a query or fragment, which would swallow the /models path', () => {
+    for (const provider of ['openai', 'anthropic', 'google', 'internal-llm']) {
+      for (const apiBase of [
+        'https://proxy.example.com/v1?x=1',
+        'https://proxy.example.com/v1#f',
+      ]) {
+        expect(modelListRequest({ apiBase, apiKey: 'k', provider })).toEqual({
+          error: expect.stringMatching(/query or fragment/),
+        });
+      }
     }
   });
 
