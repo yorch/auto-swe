@@ -24,7 +24,7 @@ builder and the decision ledger are shared by every event source and described i
 
 | Filter | Meaning | Dashboard default |
 |---|---|---|
-| `events` | `push` and/or `pull_request` | `push` |
+| `events` | Any of `push`, `pull_request` and `schedule`. A scheduled run (a nightly build) tests the head of a branch already in the repository, so it is handled like a push to that branch | `push` |
 | `branchPatterns` | Globs over the failing branch (`main`, `release/*`, `!release/legacy`). At least one pattern that is not a `!` exclusion | `main, release/*` |
 | `workflowPatterns` | Globs over the workflow **file path** (`.github/workflows/ci.yml`), never its display name, which a pull request can change | `.github/workflows/**` |
 
@@ -264,9 +264,13 @@ See [github-app-setup.md](./github-app-setup.md).
 
 ## Limitations
 
-- **Only `push` and `pull_request` runs.** A nightly `schedule` failure on `main`, a
-  `workflow_dispatch` run, a merge-queue run and anything a fork's code produced are never acted on.
-  Neither is a `startup_failure` (an invalid workflow file), which has no logs.
+- **Only `push`, `pull_request` and `schedule` runs.** A `workflow_dispatch` run, a merge-queue run
+  and anything a fork's code produced are never acted on. Neither is a `startup_failure` (an invalid
+  workflow file), which has no logs.
+- **A nightly that keeps failing is diagnosed once per commit.** A scheduled run's subject is the
+  commit it tested, so when the branch has not moved, the next night's failure is
+  `SUPPRESSED_SAME_SUBJECT`. Its cooldown and in-flight checks are shared with pushes to the same
+  branch.
 - **One run per commit per repository.** When several workflows fail on one commit, only the
   first to finish is diagnosed, whichever trigger it matched. A re-run that fails again on the same
   commit is not diagnosed again.

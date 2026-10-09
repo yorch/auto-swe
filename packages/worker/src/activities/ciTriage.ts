@@ -21,6 +21,7 @@ import { prisma } from '@auto-swe/shared/db';
 import {
   CI_FIXABLE_CATEGORIES,
   CI_TRIAGE_TEMPLATE_NAME,
+  CI_TRIGGER_EVENTS,
   type CiFixableCategory,
   type CiTriagePayload,
   CiTriagePayloadSchema,
@@ -172,7 +173,7 @@ export function refusalFor(
   if (r.status !== 'completed' || (r.conclusion !== 'failure' && r.conclusion !== 'timed_out')) {
     return `the run did not fail (status ${r.status ?? 'unknown'}, conclusion ${r.conclusion ?? 'none'})`;
   }
-  if (r.event !== 'push' && r.event !== 'pull_request') {
+  if (!(CI_TRIGGER_EVENTS as readonly string[]).includes(r.event)) {
     return `runs triggered by '${r.event}' are not acted on`;
   }
   if (

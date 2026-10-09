@@ -47,7 +47,6 @@ describe('normalizeWorkflowRunEvent', () => {
     ['a cancelled run', body({}, { conclusion: 'cancelled' })],
     ['a startup failure (no logs)', body({}, { conclusion: 'startup_failure' })],
     ['pull_request_target', body({}, { event: 'pull_request_target' })],
-    ['a schedule', body({}, { event: 'schedule' })],
     ['workflow_dispatch', body({}, { event: 'workflow_dispatch' })],
     ['merge_group', body({}, { event: 'merge_group' })],
     ['a fork', body({}, { head_repository: { full_name: 'mallory/api', id: 7 } })],
@@ -60,6 +59,15 @@ describe('normalizeWorkflowRunEvent', () => {
     ['a branch name that is not safe', body({}, { head_branch: '-x' })],
   ])('ignores %s', (_label, payload) => {
     expect(normalizeWorkflowRunEvent(payload).type).toBe('ignored');
+  });
+
+  it('maps a failed scheduled run like a push to its branch', () => {
+    expect(
+      normalizeWorkflowRunEvent(body({}, { event: 'schedule', head_branch: 'main' }))
+    ).toMatchObject({
+      facts: { branch: 'main', event: 'schedule', pullRequestNumber: null },
+      type: 'failed',
+    });
   });
 
   it('keeps a very long workflow path, bounded, rather than dropping the run', () => {

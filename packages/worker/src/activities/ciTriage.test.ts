@@ -142,12 +142,16 @@ describe('refusalFor', () => {
     expect(refusalFor(failure(), payload, 'acme/api')).toBeNull();
   });
 
+  it('accepts a failed scheduled run on that branch', () => {
+    expect(refusalFor(failure({ event: 'schedule' } as never), payload, 'acme/api')).toBeNull();
+  });
+
   it.each([
     ['another repository', { repositoryFullName: 'evil/api' }, /belongs to/],
     ['a run that did not fail', { conclusion: 'success' }, /did not fail/],
     ['a run still in progress', { conclusion: null, status: 'in_progress' }, /did not fail/],
     ['pull_request_target', { event: 'pull_request_target' }, /not acted on/],
-    ['a schedule', { event: 'schedule' }, /not acted on/],
+    ['workflow_dispatch', { event: 'workflow_dispatch' }, /not acted on/],
     ['a fork', { headRepositoryFullName: 'mallory/api' }, /fork/],
     ['a deleted fork', { headRepositoryFullName: null }, /fork/],
     ['another branch than the payload claims', { headBranch: 'main' }, /asked to target/],

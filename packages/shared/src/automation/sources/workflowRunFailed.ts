@@ -5,6 +5,7 @@ import {
   CI_TRIAGE_TEMPLATE_NAME,
   CI_TRIGGER_EVENTS,
   CiTriagePayloadSchema,
+  ciEventLabel,
   GlobListSchema,
   matchesPatterns,
 } from '../../lib/ciTrigger.js';
@@ -63,7 +64,7 @@ export const workflowRunFailedSource: EventSource<
   },
   defaultTemplate: { name: CI_TRIAGE_TEMPLATE_NAME },
   describe: (f) =>
-    `${f.events.map((e) => (e === 'pull_request' ? 'pull requests' : 'pushes')).join(' or ')} on ` +
+    `${f.events.map(ciEventLabel).join(' or ')} on ` +
     `${f.branchPatterns.join(', ')} · ${f.workflowPatterns.join(', ')}`,
   describeInputs(given) {
     // The built-in template's defaults under what is given: a summary of the default template.
@@ -102,6 +103,7 @@ export const workflowRunFailedSource: EventSource<
       options: [
         { label: 'Pushes', value: 'push' },
         { label: 'Pull requests from this repository', value: 'pull_request' },
+        { label: 'Scheduled runs', value: 'schedule' },
       ],
     },
     {
@@ -141,7 +143,7 @@ export const workflowRunFailedSource: EventSource<
   label: 'When CI fails',
   mismatch(f, x) {
     if (!(f.events as readonly string[]).includes(x.event)) {
-      return `it does not react to ${x.event === 'pull_request' ? 'pull requests' : `'${x.event}'`}`;
+      return `it does not react to ${ciEventLabel(x.event)}`;
     }
     if (!matchesPatterns(f.branchPatterns, x.branch)) {
       return `the branch '${x.branch}' is not selected by its branch patterns`;
@@ -181,7 +183,7 @@ export const workflowRunFailedSource: EventSource<
       workflowPath: '.github/workflows/ci.yml',
     })),
   summary:
-    'A GitHub Actions run of a push or pull request fails: diagnose it, and optionally fix it.',
+    'A GitHub Actions run of a push, pull request or schedule fails: diagnose it, and optionally fix it.',
   templateCompatible(schema: InputSchema) {
     if (!('githubRunId' in schema.properties)) {
       return false;
@@ -219,6 +221,7 @@ export const workflowRunFailedSource: EventSource<
         options: [
           { label: 'Push', value: 'push' },
           { label: 'Pull request', value: 'pull_request' },
+          { label: 'Scheduled run', value: 'schedule' },
         ],
       },
       { initial: 'main', key: 'branch', label: 'Branch' },

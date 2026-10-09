@@ -4,6 +4,7 @@
  * here, before any query.
  */
 import type { WorkflowRunFailedFacts } from '@auto-swe/shared/automation';
+import { CI_TRIGGER_EVENTS } from '@auto-swe/shared/lib/ciTrigger';
 import { isSafeGitBranchName } from '@auto-swe/shared/lib/gitRef';
 import { z } from 'zod';
 import type { Occurrence } from './engine.js';
@@ -56,7 +57,7 @@ export function normalizeWorkflowRunEvent(body: unknown): WorkflowRunEvent {
   if (run.conclusion !== 'failure' && run.conclusion !== 'timed_out') {
     return { reason: `conclusion ${run.conclusion ?? 'none'}`, type: 'ignored' };
   }
-  if (run.event !== 'push' && run.event !== 'pull_request') {
+  if (!(CI_TRIGGER_EVENTS as readonly string[]).includes(run.event)) {
     return { reason: `event ${run.event} is never acted on`, type: 'ignored' };
   }
   // A fork's code, a fork's logs: never. Compared by id, which a rename cannot change.

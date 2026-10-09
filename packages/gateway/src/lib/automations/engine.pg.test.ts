@@ -315,11 +315,24 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     ]);
   });
 
+  it('accepts scheduled runs as an event', async () => {
+    const row = await prisma.automation.create({
+      data: {
+        connectionId: repoId,
+        filters: filters({ events: ['push', 'schedule'] }),
+        name: 'nightly',
+        source: WORKFLOW_RUN_FAILED,
+      },
+    });
+    await prisma.automation.delete({ where: { id: row.id } });
+  });
+
   it('refuses an automation row with filters its source does not accept, or unknown sources', async () => {
     const base = { connectionId: repoId, name: 'bad', source: WORKFLOW_RUN_FAILED };
     for (const bad of [
       { ...base, filters: filters({ branchPatterns: [] }) },
       { ...base, filters: filters({ events: ['pull_request_target'] }) },
+      { ...base, filters: filters({ events: ['workflow_dispatch'] }) },
       { ...base, filters: filters({ events: [] }) },
       { ...base, filters: ['main'] },
       { ...base, filters: {} },

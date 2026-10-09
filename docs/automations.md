@@ -196,7 +196,7 @@ are environment-only ([configuration.md](./configuration.md)).
 
 | Source | When | Subject / scope | Default template | Kill switch |
 |---|---|---|---|---|
-| `github.workflow_run.failed` | A GitHub Actions run of a `push` or `pull_request` workflow fails ([ci-failure-triggers.md](./ci-failure-triggers.md)) | the commit / the branch | `ci-triage-and-fix` | `github.ciFailureTriggersEnabled` |
+| `github.workflow_run.failed` | A GitHub Actions run of a `push`, `pull_request` or `schedule` workflow fails ([ci-failure-triggers.md](./ci-failure-triggers.md)) | the commit / the branch | `ci-triage-and-fix` | `github.ciFailureTriggersEnabled` |
 
 A source is a pure descriptor (`EventSource` in `@auto-swe/shared/automation`) plus a webhook
 normalizer in the gateway. The descriptor declares:
