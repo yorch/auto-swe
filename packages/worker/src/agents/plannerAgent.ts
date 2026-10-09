@@ -7,7 +7,7 @@ import { currentWorkflowId } from '../lib/activityContext.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
-import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
+import { getBoundModel } from '../lib/models.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { PLANNER_AGENT_PROMPT } from './prompts.js';
 
@@ -88,10 +88,13 @@ export async function decomposeEpic(
       let modelSpec: string | undefined;
       let recorded: LlmAttribution | undefined;
       try {
-        modelSpec = await getModelSpec('planner');
-        const model = await getModel('planner');
+        // Resolve the role once: the model called, the price checked, the cost
+        // recorded and the prompt used all come from this one resolution, so a
+        // config edit mid-call cannot bill a different model than the one called.
+        const { model, spec, systemPrompt: rowPrompt } = await getBoundModel('planner');
+        modelSpec = spec;
         span.setAttribute('llm.model', modelSpec);
-        const basePrompt = await resolveSystemPrompt('planner', PLANNER_AGENT_PROMPT);
+        const basePrompt = rowPrompt ?? PLANNER_AGENT_PROMPT;
         systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
         const agent = new Agent({
           id: 'epic-planner',
@@ -101,7 +104,7 @@ export async function decomposeEpic(
         });
 
         llmUserMessage = JSON.stringify({ availableRepos, epicDescription });
-        await assertRolePricedForUsdCap('planner');
+        await assertRolePricedForUsdCap('planner', spec);
         await assertBudgetAvailable('planner');
         const result = await agent.generate([{ content: llmUserMessage, role: 'user' }], {
           structuredOutput: { schema: PlannerOutputSchema },
@@ -113,7 +116,8 @@ export async function decomposeEpic(
             currentWorkflowId(),
             'planner',
             result.usage,
-            'llm.epic_planner'
+            'llm.epic_planner',
+            spec
           );
         }
 

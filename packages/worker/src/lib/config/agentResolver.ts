@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { configCacheTtlMs, invalidate, withCache } from '@auto-swe/shared/config/cache';
+import { configCacheTtlMs, fallThroughCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { type ImplementerRuntimeKind, toImplementerRuntime } from '@auto-swe/shared/types/api';
@@ -405,16 +405,19 @@ export async function resolveAgent(key: string, ctx?: ResolveCtx): Promise<Resol
   // one entry for the child within the TTL.
   const pins = stablePins(ctx?.agentVersions);
   const cacheKey = `agent:${key}:${ctx?.workflowTemplateId ?? ''}:${ctx?.channelId ?? ''}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}:${pins}:${skillPinsDigest(ctx?.skillRevisions)}`;
-  const resolved = await withCache(cacheKey, configCacheTtlMs(), () =>
-    resolveAgentUncached(key, ctx)
-  );
-  // A lookup that fell through to a broader scope cached that broader row under
-  // the narrower key, which would hide a row inserted at the requested scope
-  // for the full TTL. Bust it so the next call re-queries (same pattern as
+  // A lookup that fell through to a broader scope than it asked for (a team run
+  // with no team override) is the common case, so it stays cached — but under
+  // the shorter fall-through TTL, so a row inserted at the requested scope is
+  // seen within seconds rather than after the full TTL (same rule as
   // resolveProviderCredential).
-  if (SCOPE_RANK[resolved.model.scope] > mostSpecificRequestedRank(ctx)) {
-    invalidate(cacheKey);
-  }
+  const resolved = await withCache(
+    cacheKey,
+    (r) =>
+      SCOPE_RANK[r.model.scope] > mostSpecificRequestedRank(ctx)
+        ? fallThroughCacheTtlMs()
+        : configCacheTtlMs(),
+    () => resolveAgentUncached(key, ctx)
+  );
   return resolved;
 }
 

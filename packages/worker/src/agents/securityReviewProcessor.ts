@@ -8,7 +8,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
-import { getModel, getModelSpec } from '../lib/models.js';
+import { getBoundModel } from '../lib/models.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { SECURITY_REVIEW_PROMPT } from './prompts.js';
 
@@ -49,8 +49,10 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
     let modelSpec: string | undefined;
     let recorded: LlmAttribution | undefined;
     try {
-      modelSpec = await getModelSpec('securityReview');
-      const model = await getModel('securityReview');
+      // Resolved once: the model called, the price checked and the cost recorded
+      // all come from this one resolution.
+      const { model, spec } = await getBoundModel('securityReview');
+      modelSpec = spec;
       span.setAttribute('llm.model', modelSpec);
       const agent = new Agent({
         id: 'security-review-gate',
@@ -59,7 +61,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
         name: 'security-review-gate',
       });
 
-      await assertRolePricedForUsdCap('securityReview');
+      await assertRolePricedForUsdCap('securityReview', spec);
       await assertBudgetAvailable('securityReview');
       const result = await agent.generate(
         [
@@ -77,7 +79,8 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
           currentWorkflowId(),
           'securityReview',
           result.usage,
-          'llm.security_scan'
+          'llm.security_scan',
+          spec
         );
       }
 

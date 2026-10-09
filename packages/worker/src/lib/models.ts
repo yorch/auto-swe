@@ -63,15 +63,21 @@ export async function getModel(
  * `<provider>/<model>` spec it was built from. Callers that price their own
  * spend pass `spec` to `recordLlmUsage` so the call is charged at the model
  * that was bound here — re-resolving the role from the ambient activity context
- * cannot see the CHANNEL tier and would price a different model.
+ * cannot see the CHANNEL tier and would price a different model. `systemPrompt` is
+ * the same resolution's prompt (null when the row sets none), so a caller that
+ * needs the model, its price and its prompt reads config once, not three times.
  */
 export async function getBoundModel(
   role: AnySkillRole,
   ctx?: Partial<ResolveCtx>
-): Promise<{ model: LanguageModel; spec: string }> {
+): Promise<{ model: LanguageModel; spec: string; systemPrompt: string | null }> {
   const resolveCtx = { ...(await currentRequestContext()), ...ctx };
   const { model } = await resolveAgent(role, resolveCtx);
-  return { model: buildModel(model.spec, model.apiKey, model.apiBase), spec: model.spec };
+  return {
+    model: buildModel(model.spec, model.apiKey, model.apiBase),
+    spec: model.spec,
+    systemPrompt: model.systemPrompt ?? null,
+  };
 }
 
 /**

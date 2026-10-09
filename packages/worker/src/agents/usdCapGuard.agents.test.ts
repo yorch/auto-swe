@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const { assertRolePricedMock, generateMock } = vi.hoisted(() => ({
-  assertRolePricedMock: vi.fn(async (_role: string) => {}),
+  assertRolePricedMock: vi.fn(async (_role: string, _spec?: string) => {}),
   generateMock: vi.fn(),
 }));
 
@@ -26,9 +26,11 @@ vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({})),
 }));
 vi.mock('../lib/models.js', () => ({
-  getModel: vi.fn(async () => ({})),
-  getModelSpec: vi.fn(async () => 'openrouter/unpriced'),
-  resolveSystemPrompt: vi.fn(async (_role: string, base: string) => base),
+  getBoundModel: vi.fn(async () => ({
+    model: {},
+    spec: 'openrouter/unpriced',
+    systemPrompt: null,
+  })),
 }));
 vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: vi.fn(async () => {}),
@@ -40,6 +42,8 @@ vi.mock('../lib/costTracking.js', () => ({
   })),
 }));
 
+import { recordLlmUsage } from '../lib/costTracking.js';
+import { getBoundModel } from '../lib/models.js';
 import { planDecomposition } from './decomposer.js';
 import { decomposeEpic } from './plannerAgent.js';
 import { scanDiffForSecurityIssues } from './securityReviewProcessor.js';
@@ -67,13 +71,45 @@ describe.each([
   it('refuses an unpriced model before the call is made', async () => {
     assertRolePricedMock.mockRejectedValueOnce(unpriced());
     await expect(call()).rejects.toMatchObject({ type: 'MODEL_UNPRICED' });
-    expect(assertRolePricedMock).toHaveBeenCalledWith(role);
+    expect(assertRolePricedMock).toHaveBeenCalledWith(role, 'openrouter/unpriced');
     expect(generateMock).not.toHaveBeenCalled();
   });
 
   it('proceeds to the model call when the guard passes (uncapped organization)', async () => {
     await call().catch(() => undefined);
-    expect(assertRolePricedMock).toHaveBeenCalledWith(role);
+    expect(assertRolePricedMock).toHaveBeenCalledWith(role, 'openrouter/unpriced');
     expect(generateMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe.each([
+  ['decomposer', () => planDecomposition(REQUEST), 'decomposer', 'llm.decomposer'],
+  ['planner', () => decomposeEpic('epic', []), 'planner', 'llm.epic_planner'],
+  [
+    'security gate',
+    () => scanDiffForSecurityIssues('diff --git a b'),
+    'securityReview',
+    'llm.security_scan',
+  ],
+])('%s binds its model once', (_name, call, role, span) => {
+  it('prices, calls and bills the model from a single resolution', async () => {
+    // A config edit lands between resolutions: the first answer is model A, any later one B.
+    vi.mocked(getBoundModel)
+      .mockResolvedValueOnce({ model: {}, spec: 'anthropic/model-a', systemPrompt: null } as never)
+      .mockResolvedValue({ model: {}, spec: 'anthropic/model-b', systemPrompt: null } as never);
+    generateMock.mockResolvedValue({
+      object: undefined,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    await call().catch(() => undefined);
+    expect(getBoundModel).toHaveBeenCalledTimes(1);
+    expect(assertRolePricedMock).toHaveBeenCalledWith(role, 'anthropic/model-a');
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      'wf-1',
+      role,
+      { inputTokens: 1, outputTokens: 1 },
+      span,
+      'anthropic/model-a'
+    );
   });
 });

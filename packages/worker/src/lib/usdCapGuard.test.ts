@@ -259,6 +259,17 @@ describe('assertRolePricedForUsdCap', () => {
   });
 });
 
+describe('assertRolePricedForUsdCap with a bound spec', () => {
+  it('prices the spec it is given and does not re-resolve the role', async () => {
+    getModelSpecMock.mockResolvedValue('openrouter/other-model');
+    findLedgerRow.mockResolvedValue(ledgerRowInOrg());
+    capOrg(100_000);
+    const err = await refusal(assertRolePricedForUsdCap('implementer', UNPRICED));
+    expect(getModelSpecMock).not.toHaveBeenCalled();
+    expect(err.message).toContain(UNPRICED);
+  });
+});
+
 describe('isUnpricedModelRefusal', () => {
   it('finds the refusal anywhere in a cause chain, as an activity failure wraps it', () => {
     const inner = ApplicationFailure.nonRetryable('m', MODEL_UNPRICED);

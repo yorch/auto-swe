@@ -3,6 +3,7 @@ import {
   _cacheSizeForTests,
   _resetConfigCacheForTests,
   configCacheTtlMs,
+  fallThroughCacheTtlMs,
   invalidate,
   invalidatePrefix,
   withCache,
@@ -59,6 +60,17 @@ describe('withCache', () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     const r = await withCache('k', 50, fetcher);
     expect(r).toBe('v2');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes the TTL from a function of the fetched value', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce('short').mockResolvedValueOnce('long');
+    const ttl = (v: string) => (v === 'short' ? 50 : 30_000);
+    await withCache('s', ttl, fetcher);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // The short-lived value expired; its replacement keeps its longer TTL.
+    expect(await withCache('s', ttl, fetcher)).toBe('long');
+    expect(await withCache('s', ttl, fetcher)).toBe('long');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
@@ -219,5 +231,36 @@ describe('withCache — invalidation during an in-flight fetch', () => {
     await expect(a).rejects.toThrow('db down');
     await expect(b).rejects.toThrow('db down');
     await expect(withCache('k', 30_000, fetcher)).resolves.toBe('ok');
+  });
+});
+
+describe('fallThroughCacheTtlMs', () => {
+  it('defaults to a few seconds, below the full TTL', () => {
+    delete process.env.CONFIG_CACHE_TTL_MS;
+    delete process.env.CONFIG_CACHE_FALLTHROUGH_TTL_MS;
+    expect(fallThroughCacheTtlMs()).toBe(5_000);
+    expect(fallThroughCacheTtlMs()).toBeLessThan(configCacheTtlMs());
+  });
+
+  it('honours an override', () => {
+    process.env.CONFIG_CACHE_FALLTHROUGH_TTL_MS = '2000';
+    expect(fallThroughCacheTtlMs()).toBe(2_000);
+    process.env.CONFIG_CACHE_FALLTHROUGH_TTL_MS = '0';
+    expect(fallThroughCacheTtlMs()).toBe(0);
+  });
+
+  it('is never longer than the full TTL', () => {
+    process.env.CONFIG_CACHE_TTL_MS = '1000';
+    process.env.CONFIG_CACHE_FALLTHROUGH_TTL_MS = '60000';
+    expect(fallThroughCacheTtlMs()).toBe(1_000);
+    delete process.env.CONFIG_CACHE_FALLTHROUGH_TTL_MS;
+    process.env.CONFIG_CACHE_TTL_MS = '0';
+    expect(fallThroughCacheTtlMs()).toBe(0);
+  });
+
+  it('ignores a malformed override', () => {
+    delete process.env.CONFIG_CACHE_TTL_MS;
+    process.env.CONFIG_CACHE_FALLTHROUGH_TTL_MS = 'soon';
+    expect(fallThroughCacheTtlMs()).toBe(5_000);
   });
 });

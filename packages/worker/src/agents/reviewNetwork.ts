@@ -14,7 +14,7 @@ import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
 import { ConfigMissingError } from '../lib/config/resolver.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
-import { getModel, getModelSpec } from '../lib/models.js';
+import { getBoundModel } from '../lib/models.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
@@ -54,10 +54,14 @@ export const REVIEWER_AGENT_KEYS: Record<ReviewVerdict['reviewer'], string> = {
   SECURITY: 'securityReviewer',
 };
 
+/** A reviewer persona's model, resolved once and used for the price check, the call and the cost. */
+type BoundReviewer = Awaited<ReturnType<typeof getBoundModel>>;
+
 async function runReviewerAgent(
   prompt: string,
   reviewerType: ReviewVerdict['reviewer'],
   codeResult: CodeResult,
+  bound: BoundReviewer,
   tracer?: AgentTracer
 ): Promise<ReviewVerdict> {
   const agentKey = REVIEWER_AGENT_KEYS[reviewerType];
@@ -70,8 +74,8 @@ async function runReviewerAgent(
       let modelSpec: string | undefined;
       let recorded: LlmAttribution | undefined;
       try {
-        modelSpec = await getModelSpec(agentKey);
-        const model = await getModel(agentKey);
+        const { model, spec } = bound;
+        modelSpec = spec;
         span.setAttribute('llm.model', modelSpec);
         const agent = new Agent({
           id: `${reviewerType.toLowerCase()}-reviewer`,
@@ -96,7 +100,8 @@ async function runReviewerAgent(
             currentWorkflowId(),
             agentKey,
             result.usage,
-            `llm.review.${reviewerType.toLowerCase()}`
+            `llm.review.${reviewerType.toLowerCase()}`,
+            spec
           );
         }
 
@@ -255,15 +260,34 @@ export async function runReviewNetwork(
   // the fan-out begins.
   // Before the fan-out, for the same reason: refuse an unpriced reviewer model
   // under a USD cap once, not three times concurrently.
+  // Each persona is resolved here, once, and that binding is what the reviewer
+  // calls and what its cost is recorded against: the price checked is the model
+  // called even if the config is edited while the reviewers run.
+  const bound = new Map<string, BoundReviewer>();
   for (const agentKey of new Set(Object.values(REVIEWER_AGENT_KEYS))) {
-    await assertRolePricedForUsdCap(agentKey);
+    const binding = await getBoundModel(agentKey);
+    await assertRolePricedForUsdCap(agentKey, binding.spec);
+    bound.set(agentKey, binding);
   }
+  const boundFor = (type: ReviewVerdict['reviewer']): BoundReviewer => {
+    const binding = bound.get(REVIEWER_AGENT_KEYS[type]);
+    if (!binding) {
+      throw new Error(`No bound model for the ${type} reviewer`);
+    }
+    return binding;
+  };
   await assertBudgetAvailable('review');
 
   const results = await Promise.allSettled([
-    runReviewerAgent(securityPrompt, 'SECURITY', codeResult, tracer),
-    runReviewerAgent(domainLogicPrompt, 'DOMAIN_LOGIC', codeResult, tracer),
-    runReviewerAgent(performancePrompt, 'PERFORMANCE', codeResult, tracer),
+    runReviewerAgent(securityPrompt, 'SECURITY', codeResult, boundFor('SECURITY'), tracer),
+    runReviewerAgent(
+      domainLogicPrompt,
+      'DOMAIN_LOGIC',
+      codeResult,
+      boundFor('DOMAIN_LOGIC'),
+      tracer
+    ),
+    runReviewerAgent(performancePrompt, 'PERFORMANCE', codeResult, boundFor('PERFORMANCE'), tracer),
   ]);
 
   // A failure the reviewer cannot recover from on its own is not a verdict on

@@ -1,22 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-  agentFindFirst,
-  cacheKeys,
-  inActivity,
-  invalidateMock,
-  persistTrace,
-  revisionFindMany,
-  warn,
-} = vi.hoisted(() => ({
-  agentFindFirst: vi.fn(),
-  cacheKeys: [] as string[],
-  inActivity: { value: false },
-  invalidateMock: vi.fn(),
-  persistTrace: vi.fn(async () => undefined),
-  revisionFindMany: vi.fn(),
-  warn: vi.fn(),
-}));
+const { agentFindFirst, cacheKeys, inActivity, persistTrace, ttls, revisionFindMany, warn } =
+  vi.hoisted(() => ({
+    agentFindFirst: vi.fn(),
+    cacheKeys: [] as string[],
+    inActivity: { value: false },
+    persistTrace: vi.fn(async () => undefined),
+    revisionFindMany: vi.fn(),
+    ttls: [] as number[],
+    warn: vi.fn(),
+  }));
 vi.mock('@temporalio/activity', () => ({
   asyncLocalStorage: { getStore: () => (inActivity.value ? {} : undefined) },
 }));
@@ -27,13 +20,16 @@ vi.mock('@auto-swe/shared/db', () => ({
 }));
 
 // Pass-through cache so resolution isn't memoized across cases; records the
-// keys so a test can assert what would (not) collide within the TTL.
+// keys so a test can assert what would (not) collide within the TTL, and the
+// TTL each result would be stored under.
 vi.mock('@auto-swe/shared/config/cache', () => ({
-  configCacheTtlMs: () => 0,
-  invalidate: invalidateMock,
-  withCache: (k: string, _t: number, fn: () => unknown) => {
+  configCacheTtlMs: () => 30_000,
+  fallThroughCacheTtlMs: () => 5_000,
+  withCache: async (k: string, ttl: number | ((v: unknown) => number), fn: () => unknown) => {
     cacheKeys.push(k);
-    return fn();
+    const value = await fn();
+    ttls.push(typeof ttl === 'function' ? ttl(value) : ttl);
+    return value;
   },
 }));
 
@@ -510,31 +506,34 @@ describe('resolveAgent — cache key', () => {
   });
 });
 
-describe('resolveAgent — cross-scope fall-through is not cached', () => {
-  it('busts the narrow key when a TEAM lookup lands on GLOBAL', async () => {
+describe('resolveAgent — cross-scope fall-through is cached briefly', () => {
+  beforeEach(() => {
+    ttls.length = 0;
+  });
+
+  it('stores a TEAM lookup that landed on GLOBAL under the short fall-through TTL', async () => {
     // biome-ignore lint/suspicious/noExplicitAny: arg inspection
     agentFindFirst.mockImplementation(async (args: any) =>
       args.where.scope === 'GLOBAL' ? agentRow() : null
     );
-    cacheKeys.length = 0;
     const r = await resolveAgent('reviewer', { teamId: 't1' });
     expect(r.model.scope).toBe('GLOBAL');
-    expect(invalidateMock).toHaveBeenCalledWith(cacheKeys[0]);
+    expect(ttls).toEqual([5_000]);
   });
 
-  it('keeps the entry when the requested scope itself answered', async () => {
+  it('stores a lookup the requested scope itself answered under the full TTL', async () => {
     // biome-ignore lint/suspicious/noExplicitAny: arg inspection
     agentFindFirst.mockImplementation(async (args: any) =>
       args.where.scope === 'TEAM' ? agentRow({ scope: 'TEAM' }) : agentRow()
     );
     await resolveAgent('reviewer', { teamId: 't1' });
-    expect(invalidateMock).not.toHaveBeenCalled();
+    expect(ttls).toEqual([30_000]);
   });
 
-  it('keeps a GLOBAL entry for a GLOBAL-only lookup', async () => {
+  it('stores a GLOBAL-only lookup under the full TTL', async () => {
     agentFindFirst.mockResolvedValue(agentRow());
     await resolveAgent('reviewer');
-    expect(invalidateMock).not.toHaveBeenCalled();
+    expect(ttls).toEqual([30_000]);
   });
 });
 

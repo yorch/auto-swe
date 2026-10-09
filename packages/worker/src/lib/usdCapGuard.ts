@@ -133,10 +133,14 @@ export async function assertModelPricedForUsdCap(
  * on the ambient run context. The one entry point for the paths that bind their
  * model by role (implementer and its fix sessions, the reviewers, planner,
  * decomposers, security gate, memory passes), so none of them can drift in how
- * it asks.
+ * it asks. Pass the `spec` of the model already bound for the call so the check prices
+ * that model rather than a second resolution of the role.
  */
-export async function assertRolePricedForUsdCap(role: string): Promise<void> {
-  await assertModelPricedForUsdCap(await getModelSpec(role));
+export async function assertRolePricedForUsdCap(role: string, boundSpec?: string): Promise<void> {
+  // `boundSpec` is the spec the caller bound for this very call (`getBoundModel`).
+  // Re-resolving `role` here would read config a second time, and an edit landing
+  // between the two reads would check one model's price and call another.
+  await assertModelPricedForUsdCap(boundSpec ?? (await getModelSpec(role)));
 }
 
 /** The {@link MODEL_UNPRICED} refusal `err` is, or wraps in its cause chain; else `null`. */

@@ -65,6 +65,10 @@ API keys are AES-256-GCM encrypted with a per-record 12-byte nonce. The master k
 
 The worker keeps a process-local 30-second cache of resolved `Agent`, `ProviderCredential`, and `EmbeddingConfig` rows (`packages/shared/src/config/cache.ts`). Tune the TTL with `CONFIG_CACHE_TTL_MS`. The cache holds decrypted plaintext API keys for its TTL window — if you rotate a credential, expect up to `CONFIG_CACHE_TTL_MS` of lag before workers pick it up.
 
+A lookup that falls through to a broader scope than it asked for — a team run with no team-level `Agent` or credential row, answered by the GLOBAL one — is the common case, so it is cached too, under a shorter bound: `CONFIG_CACHE_FALLTHROUGH_TTL_MS` (default 5000, never longer than `CONFIG_CACHE_TTL_MS`). A row an admin then adds at the narrower scope is seen within that bound rather than a full TTL.
+
+A role is resolved once per LLM call: the model that is called, the price checked against a USD cap, the cost recorded and (for the planner, decomposer and security gate) the system prompt all come from that one resolution, so an edit landing mid-call cannot bill a different model from the one called.
+
 ### Model catalog
 
 `model_catalog_entries` holds one row per `<provider>/<model-id>` spec: its `kind` (`CHAT` or
@@ -466,7 +470,7 @@ key that wrote them is gone.
 
 The only LLM-related env var is `CONFIG_ENCRYPTION_KEY` — required for the gateway and worker to start. It's a base64-encoded 32-byte AES-256-GCM master key used to encrypt/decrypt `provider_credentials.api_key_ciphertext`. Generate one with `openssl rand -base64 32` or `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`.
 
-`CONFIG_CACHE_TTL_MS` (optional, default 30000) tunes the resolver cache.
+`CONFIG_CACHE_TTL_MS` (optional, default 30000) tunes the resolver cache; `CONFIG_CACHE_FALLTHROUGH_TTL_MS` (optional, default 5000) bounds how long a cross-scope fall-through result may stay in it.
 
 There are no env vars for model selection, provider API keys, or embedding settings — all of those live in the DB. If you're upgrading from a previous version that read `*_MODEL` / `ANTHROPIC_API_KEY` / etc., nothing is migrated automatically: the DB seed creates the model-backed `Agent` rows (with default specs) + the `EmbeddingConfig` singleton (historical `openai/text-embedding-3-large` default); re-enter provider credentials in the dashboard.
 
@@ -580,6 +584,13 @@ server-side. Full endpoint table in [`agents.md` §9](./agents.md#9-skill--agent
 - **The config cache means edits are eventually consistent.** Model config is cached in-process with
   a ~30 s TTL (`CONFIG_CACHE_TTL_MS`) and gateway and worker are separate processes, so the two can
   briefly disagree after an edit. A `generate()` call already in flight keeps the model it bound.
+- **A fall-through result is cached for a shorter bound, not for the full TTL.** A row added at a
+  narrower scope than the one answering (a team override beside a GLOBAL agent) is seen within
+  `CONFIG_CACHE_FALLTHROUGH_TTL_MS` (5 s by default), not instantly.
+- **Only the planner, decomposer, reviewers and security gate bind their model once per call.** The
+  other model-calling paths (implementer sessions, fix and merge-conflict sessions, memory passes)
+  still resolve their role separately for the USD-cap check and for the call, so an edit landing
+  between the two can price a different model from the one called.
 - **Pricing is keyed on the resolved `provider/model` spec.** A model with no catalog row and no
   `BUILTIN_MODELS` entry records usage at **zero cost** — the span carries
   `llm.cost_pricing_known=false` — wherever no USD cap applies. Per-run budget tiers are enforced on

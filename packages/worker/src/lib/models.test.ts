@@ -215,6 +215,13 @@ describe('getBoundModel', () => {
     expect(bound.model.modelId).toBe('claude-haiku-4-5-20251001');
   });
 
+  it('returns the prompt of the same resolution, null when the row sets none', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ systemPrompt: 'row prompt' }));
+    expect((await getBoundModel('planner')).systemPrompt).toBe('row prompt');
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ systemPrompt: null }));
+    expect((await getBoundModel('planner')).systemPrompt).toBeNull();
+  });
+
   it('resolves once, at the explicit ctx (the CHANNEL tier the ambient context cannot supply)', async () => {
     mockedResolveAgent.mockResolvedValue(resolvedAgent());
     await getBoundModel('commitToMemory', { channelId: 'chan-1', orgId: 'o', teamId: 't' });
