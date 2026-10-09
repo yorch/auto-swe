@@ -23,7 +23,7 @@ const WorkflowRunWebhookSchema = z.object({
     head_sha: z.string(),
     html_url: z.string().optional(),
     id: z.number().int().positive(),
-    path: z.string().max(500),
+    path: z.string(),
     pull_requests: z
       .array(
         z.object({
@@ -88,7 +88,8 @@ export function normalizeWorkflowRunEvent(body: unknown): WorkflowRunEvent {
       pullRequestNumber,
       runAttempt: run.run_attempt ?? 1,
       runId: String(run.id),
-      workflowPath: run.path,
+      // Bounded for the ledger; a longer path is still the run's, and still triaged.
+      workflowPath: run.path.slice(0, 500),
     },
     org,
     repoFullName: repository.full_name,

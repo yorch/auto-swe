@@ -662,9 +662,8 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
       where: { outcome: 'STARTED', workRequestId: request.workRequestId },
     });
     if (
-      !fire ||
-      // An automation deleted since the fire leaves no trigger to ask: never pushed.
-      !fire.automation ||
+      // No fire, or its automation deleted since: no trigger to ask, so never pushed.
+      !fire?.automation ||
       fire.automation.source !== WORKFLOW_RUN_FAILED ||
       fire.automation.connectionId !== repoId ||
       fire.temporalWorkflowId === null ||

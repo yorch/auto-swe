@@ -147,6 +147,7 @@ interface Fire {
   scopeKey: string;
   subjectKey: string;
   producedKey?: string | null;
+  source: string;
   createdAt: Date;
   temporalWorkflowId?: string | null;
   reason?: string | null;
@@ -199,6 +200,7 @@ function harness(
       'subjectKey',
       'scopeKey',
       'producedKey',
+      'source',
     ] as const) {
       if (where[key] !== undefined && f[key] !== where[key]) {
         return false;
@@ -389,6 +391,37 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     expect(
       (h.started[0]?.input.request as { payload: { mode: string } } | undefined)?.payload.mode
     ).toBe('triage');
+  });
+
+  it('counts only its own source’s decisions on the repository', async () => {
+    const h = harness();
+    h.fires.push({
+      automationId: 'other',
+      createdAt: new Date(),
+      dedupeKey: 'x',
+      outcome: 'STARTED',
+      repoKey: 'github.com/acme/api',
+      scopeKey: 'release/1.4',
+      source: 'github.something.else',
+      subjectKey: failed.headSha,
+    });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'STARTED' });
+  });
+
+  it('recognises its own pushed fix even after the repository was renamed', async () => {
+    const h = harness();
+    h.fires.push({
+      automationId: 'a',
+      createdAt: new Date(0),
+      dedupeKey: 'y',
+      outcome: 'STARTED',
+      producedKey: failed.headSha,
+      repoKey: 'github.com/acme/old-name',
+      scopeKey: 'release/1.4',
+      source: 'github.workflow_run.failed',
+      subjectKey: 'b'.repeat(40),
+    });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'SUPPRESSED_OWN_OUTPUT' });
   });
 
   it('remembers decisions after the automation is deleted and recreated', async () => {

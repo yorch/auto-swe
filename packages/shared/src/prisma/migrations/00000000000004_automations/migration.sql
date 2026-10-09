@@ -37,15 +37,19 @@ ALTER TABLE "automations" ADD CONSTRAINT "automations_source_known"
   CHECK ("source" IN ('github.workflow_run.failed'));
 ALTER TABLE "automations" ADD CONSTRAINT "automations_filters_object"
   CHECK (jsonb_typeof("filters") = 'object');
+-- A CHECK that evaluates to NULL passes, and every term below is NULL when its key is missing;
+-- COALESCE makes a missing list fail the check instead of passing it.
 ALTER TABLE "automations" ADD CONSTRAINT "automations_workflow_run_failed_filters"
-  CHECK ("source" <> 'github.workflow_run.failed' OR (
-    jsonb_typeof("filters"->'events') = 'array'
+  CHECK ("source" <> 'github.workflow_run.failed' OR COALESCE(
+    "filters" ?& ARRAY['events', 'branchPatterns', 'workflowPatterns']
+    AND jsonb_typeof("filters"->'events') = 'array'
+    AND jsonb_typeof("filters"->'branchPatterns') = 'array'
+    AND jsonb_typeof("filters"->'workflowPatterns') = 'array'
     AND jsonb_array_length("filters"->'events') > 0
     AND ("filters"->'events') <@ '["push", "pull_request"]'::jsonb
-    AND jsonb_typeof("filters"->'branchPatterns') = 'array'
     AND jsonb_array_length("filters"->'branchPatterns') > 0
-    AND jsonb_typeof("filters"->'workflowPatterns') = 'array'
-    AND jsonb_array_length("filters"->'workflowPatterns') > 0
+    AND jsonb_array_length("filters"->'workflowPatterns') > 0,
+    false
   ));
 
 -- ── automation_fires ─────────────────────────────────────────────────────────

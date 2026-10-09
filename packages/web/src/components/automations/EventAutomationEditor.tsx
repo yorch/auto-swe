@@ -211,7 +211,8 @@ export function EventAutomationEditor({
       create.mutate({ ...body, source: source.key }, { onSuccess: onDone });
     }
   };
-  const describedInputs = source.describeInputs?.(options) ?? '';
+  // The source can only describe its own default template's options.
+  const describedInputs = templateId === null ? (source.describeInputs?.(options) ?? '') : '';
 
   return (
     <section className="space-y-4 border-ink-600 border-t pt-4">

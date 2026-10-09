@@ -394,7 +394,7 @@ export async function decideUnderLock<F, X>(
     automation: Pick<AutomationRow, 'id' | 'cooldownMinutes' | 'maxRunsPerDay'>;
     repoKey: string;
   },
-  source: Pick<EventSource<F, X>, 'inFlightLookbackMs'>,
+  source: Pick<EventSource<F, X>, 'inFlightLookbackMs' | 'key'>,
   keys: { scope: string; subject: string },
   now: Date,
   /** Whether Temporal says an execution is over. Throws when Temporal cannot say. */
@@ -406,14 +406,19 @@ export async function decideUnderLock<F, X>(
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`automation-repo:${repoKey}`}, 0))`;
 
   // Something a run of the platform produced (a pushed fix commit): acting on it would only
-  // answer the platform's own output with more of it.
-  if (await tx.automationFire.findFirst({ where: { producedKey: keys.subject, repoKey } })) {
+  // answer the platform's own output with more of it. Matched by the subject alone (a commit
+  // sha names one commit wherever it is), so a repository renamed since still recognises it.
+  if (
+    await tx.automationFire.findFirst({ where: { producedKey: keys.subject, source: source.key } })
+  ) {
     return {
       outcome: 'SUPPRESSED_OWN_OUTPUT',
       reason: 'it is the platform’s own output (a fix it pushed); it is not acted on again',
     };
   }
-  const startedOnRepo = { outcome: 'STARTED', repoKey } as const;
+  // Every other guard counts only this source's decisions on this repository: another
+  // source's subjects and scopes are other things, whatever their keys look like.
+  const startedOnRepo = { outcome: 'STARTED', repoKey, source: source.key } as const;
   if (
     await tx.automationFire.findFirst({ where: { ...startedOnRepo, subjectKey: keys.subject } })
   ) {

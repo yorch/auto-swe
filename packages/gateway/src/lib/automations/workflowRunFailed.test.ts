@@ -62,6 +62,15 @@ describe('normalizeWorkflowRunEvent', () => {
     expect(normalizeWorkflowRunEvent(payload).type).toBe('ignored');
   });
 
+  it('keeps a very long workflow path, bounded, rather than dropping the run', () => {
+    const long = `.github/workflows/${'x'.repeat(600)}.yml`;
+    const event = normalizeWorkflowRunEvent(body({}, { path: long }));
+    expect(event).toMatchObject({ type: 'failed' });
+    if (event.type === 'failed') {
+      expect(event.facts.workflowPath).toHaveLength(500);
+    }
+  });
+
   it('is unrecognized for another shape', () => {
     expect(normalizeWorkflowRunEvent({ check_run: {} }).type).toBe('unrecognized');
   });
