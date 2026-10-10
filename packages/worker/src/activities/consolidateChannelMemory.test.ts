@@ -77,8 +77,11 @@ vi.mock('../lib/embeddings.js', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { generateEmbeddingWithSpec } from '../lib/embeddings.js';
 import { getBoundModel } from '../lib/models.js';
 import { consolidateChannelMemory } from './consolidateChannelMemory.js';
 
@@ -223,6 +226,47 @@ describe('consolidateChannelMemory', () => {
       'llm.consolidate_channel_memory',
       'openrouter/channel-override'
     );
+  });
+
+  it('leaves the cluster as it was when the merged content scan is incomplete', async () => {
+    vi.mocked(scanSkillContent).mockResolvedValueOnce({
+      incomplete: true,
+      safe: true,
+      warnings: [],
+    });
+
+    await consolidateChannelMemory({ channelId: CHANNEL_ID });
+
+    // The merged rows are embedded only once the gate has passed them.
+    expect(vi.mocked(generateEmbeddingWithSpec)).not.toHaveBeenCalled();
+    const tracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addActivityEvent: ReturnType<typeof vi.fn>;
+    };
+    const events = tracer.addActivityEvent.mock.calls.map(
+      (c) => c[0] as { name: string; outputJson: { reason?: string } }
+    );
+    expect(events.find((e) => e.name === 'memory.consolidation_scan_unavailable')).toMatchObject({
+      outputJson: { reason: 'incomplete' },
+    });
+    expect(events.map((e) => e.name)).not.toContain('memory.consolidation_refused');
+  });
+
+  it('leaves the cluster as it was when the merged content matches an injection pattern', async () => {
+    vi.mocked(scanSkillContent).mockResolvedValueOnce({
+      incomplete: false,
+      safe: false,
+      warnings: ['injection:ignore-previous-instructions'],
+    });
+
+    await consolidateChannelMemory({ channelId: CHANNEL_ID });
+
+    // The merged rows are embedded only once the gate has passed them.
+    expect(vi.mocked(generateEmbeddingWithSpec)).not.toHaveBeenCalled();
+    const tracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addActivityEvent: ReturnType<typeof vi.fn>;
+    };
+    const names = tracer.addActivityEvent.mock.calls.map((c) => (c[0] as { name: string }).name);
+    expect(names).toContain('memory.consolidation_refused');
   });
 
   it('writes no usage row for an uncapped channel that spent nothing', async () => {

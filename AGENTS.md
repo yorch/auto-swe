@@ -700,7 +700,7 @@ Limitations of this arrangement, stated so nothing above reads as more than it i
   reports the skipped keys in `quarantinedPatternKeys` and does not mark those scans `incomplete`,
   so the caller decides: `scanShellCommand` and `checkSensitiveFilePath` block on a non-empty
   list (a rule they never ran cannot clear the input), while the advisory scanners proceed without
-  the rule. For a blocking scanner the quarantine therefore turns "two burned budgets per scan" into
+  the rule and the memory write gate (INJECTION rules only) refuses the write instead. For a blocking scanner the quarantine therefore turns "two burned budgets per scan" into
   an immediate block, and an admin must fix or disable the row at `/govern/scanner` to restore
   agent `bash` access; it does not silently drop the rule. It is logged loudly on every skip; the
   quarantine is per-process, so gateway and worker quarantine independently and both forget on

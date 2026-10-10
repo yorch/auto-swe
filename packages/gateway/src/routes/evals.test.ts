@@ -16,6 +16,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 }));
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
 
+import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { evalRoutes } from './evals.js';
 
 function newMockPrisma() {
@@ -167,6 +168,36 @@ describe('evalRoutes', () => {
     const body = JSON.parse(res.payload);
     expect(body.data.slug).toBe('code-review-quality');
     expect(body.scanWarnings).toEqual(['heads up']);
+  });
+
+  it('reports scan-incomplete, without refusing, when the rubric scan could not complete', async () => {
+    vi.mocked(scanSkillContent).mockResolvedValueOnce({
+      incomplete: true,
+      incompleteReason: 'load-failed',
+      safe: true,
+      warnings: [],
+    });
+    const { app, prisma } = await buildApp();
+    prisma.evalRubric.create.mockResolvedValue({
+      createdAt: new Date('2026-06-24T00:00:00Z'),
+      id: 'ru2',
+      isBuiltIn: false,
+      promptText: 'grade it',
+      scale: '0..1',
+      scope: 'GLOBAL',
+      slug: 'code-review-quality',
+      version: 1,
+    });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { promptText: 'grade it', slug: 'code-review-quality' },
+      url: '/api/v1/platform/evals/rubrics',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.payload).scanWarnings).toEqual([
+      expect.stringContaining('scan-incomplete'),
+    ]);
   });
 
   it('starts an eval run (202) after checking the dataset exists', async () => {

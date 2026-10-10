@@ -29,7 +29,11 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { calculateCostUsd } from '../lib/costTracking.js';
 import { withHeartbeat } from '../lib/execUtils.js';
-import { fenceRecalledMemory, MemoryContentRefusedError } from '../lib/memoryGuard.js';
+import {
+  fenceRecalledMemory,
+  MemoryContentRefusedError,
+  memoryWriteRefusalEvent,
+} from '../lib/memoryGuard.js';
 import { recordMemorySecurityEvent } from '../lib/memorySecurityEvent.js';
 import {
   fetchThreadReplies,
@@ -1155,11 +1159,11 @@ async function summarizeAndStoreChannelMemory(
       console.warn(
         `[channelAssistant] channel memory not stored for ${input.channelId}: ${err.message}`
       );
-      await recordMemorySecurityEvent(MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED, {
+      const refusal = memoryWriteRefusalEvent(err, MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED, {
         channelId: input.channelId,
-        patterns: err.patterns,
         source: 'turn-summary',
       });
+      await recordMemorySecurityEvent(refusal.name, refusal.outputJson);
       return costUsd;
     }
     // A refusal to spend is not a failure to fall back from: storing the raw
@@ -1191,11 +1195,12 @@ async function summarizeAndStoreChannelMemory(
       // The summary failed for another reason, but the raw text itself reads
       // as an instruction: a refusal like any other, so it is recorded.
       if (fallbackErr instanceof MemoryContentRefusedError) {
-        await recordMemorySecurityEvent(MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED, {
-          channelId: input.channelId,
-          patterns: fallbackErr.patterns,
-          source: 'turn-raw-exchange',
-        });
+        const refusal = memoryWriteRefusalEvent(
+          fallbackErr,
+          MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED,
+          { channelId: input.channelId, source: 'turn-raw-exchange' }
+        );
+        await recordMemorySecurityEvent(refusal.name, refusal.outputJson);
       }
       console.error(
         `[channelAssistant] fallback raw-exchange memory write failed for ${input.channelId}:`,

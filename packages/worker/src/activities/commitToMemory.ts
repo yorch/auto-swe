@@ -17,7 +17,7 @@ import {
   readLessonAttemptHistory,
 } from '../lib/lessonAttemptHistory.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
-import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
+import { MemoryContentRefusedError, WRITE_SCAN_UNAVAILABLE } from '../lib/memoryGuard.js';
 import { recordMemorySecurityEvent } from '../lib/memorySecurityEvent.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
 import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
@@ -390,6 +390,15 @@ export async function commitToMemory(
       if (!(err instanceof MemoryContentRefusedError)) {
         throw err;
       }
+      // A scan that did not complete is an outage, not a match: no pattern said
+      // the text was an instruction, so it is not a security event.
+      if (err.reason === 'incomplete') {
+        agentTracer.addActivityEvent({
+          name: WRITE_SCAN_UNAVAILABLE,
+          outputJson: { failureType: lesson.failureType, reason: 'incomplete' },
+        });
+        return '';
+      }
       agentTracer.addActivityEvent({
         // `MEMORY_SECURITY_EVENTS.LESSON_REFUSED`, spelled out: the platform
         // explorer cites this line by its text. A test keeps the two equal.
@@ -462,7 +471,12 @@ export async function recordLessonDirectly(input: {
     // Log so silent failures stay observable, but never propagate.
     // eslint-disable-next-line no-console
     console.warn(`recordLessonDirectly: ${err instanceof Error ? err.message : String(err)}`);
-    if (err instanceof MemoryContentRefusedError) {
+    if (err instanceof MemoryContentRefusedError && err.reason === 'incomplete') {
+      await recordMemorySecurityEvent(WRITE_SCAN_UNAVAILABLE, {
+        reason: 'incomplete',
+        writtenBy: input.agentKey ?? null,
+      });
+    } else if (err instanceof MemoryContentRefusedError) {
       await recordMemorySecurityEvent(MEMORY_SECURITY_EVENTS.LESSON_REFUSED, {
         failureType: input.failureType ?? null,
         patterns: err.patterns,

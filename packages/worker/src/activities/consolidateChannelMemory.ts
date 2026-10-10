@@ -5,6 +5,7 @@ import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
 import { persistActivityTrace } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { mapWithConcurrency } from '../lib/boundedMap.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
@@ -275,22 +276,28 @@ export async function consolidateChannelMemory(
 
         // Consolidated rows are inserted here rather than through `insertMemoryItem`,
         // so the memory gate is applied here: a merged note that reads as an
-        // instruction leaves the cluster as it was. A scan that fails refuses too,
-        // but is traced as an outage, not as a security event: no pattern matched.
-        const refused = await memoryInjectionMatches(
+        // instruction leaves the cluster as it was. A scan that fails or does not
+        // complete refuses too, but is traced as an outage, not as a security event:
+        // no pattern matched.
+        const scan = await memoryInjectionMatches(
           memories.flatMap((m) => [m.lessonSummary, m.rationale])
         ).catch(() => null);
-        if (refused === null) {
+        if (scan !== null && scan.matches.length > 0) {
+          logWarn('consolidation refused: merged content matched an injection pattern', {
+            reason: 'matched',
+          });
           tracer.addActivityEvent({
-            name: CONSOLIDATION_SCAN_UNAVAILABLE,
-            outputJson: { sourceIds },
+            name: MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED,
+            outputJson: { patterns: scan.matches, sourceIds },
           });
           return { consolidated: 0, created: 0 };
         }
-        if (refused.length > 0) {
+        if (scan === null || scan.incomplete) {
+          const reason = scan === null || scan.loadFailed ? 'failed' : 'incomplete';
+          logWarn('consolidation skipped: the content scan did not complete', { reason });
           tracer.addActivityEvent({
-            name: MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED,
-            outputJson: { patterns: refused, sourceIds },
+            name: CONSOLIDATION_SCAN_UNAVAILABLE,
+            outputJson: { reason, sourceIds },
           });
           return { consolidated: 0, created: 0 };
         }

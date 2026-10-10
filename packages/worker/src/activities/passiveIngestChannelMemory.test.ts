@@ -259,6 +259,24 @@ describe('passiveIngestChannelMemory', () => {
     });
   });
 
+  it('traces a fact refused for an incomplete scan as an outage, not a security event', async () => {
+    fetchChannelHistoryMock.mockResolvedValue([makeMsg('a message', '1700000001.000')]);
+    agentGenerateMock.mockResolvedValue({
+      object: { facts: [{ rationale: 'r', summary: 'unverifiable' }] },
+      usage: null,
+    });
+    insertMemoryItemMock.mockRejectedValueOnce(new MemoryContentRefusedError([], 'incomplete'));
+
+    const result = await passiveIngestChannelMemory({ channelId: CHANNEL_ID });
+    expect(result.factsWritten).toBe(0);
+    const tracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addActivityEvent: ReturnType<typeof vi.fn>;
+    };
+    const names = tracer.addActivityEvent.mock.calls.map((c) => (c[0] as { name: string }).name);
+    expect(names).toContain('memory.write_scan_unavailable');
+    expect(names).not.toContain('memory.channel_write_refused');
+  });
+
   it('prices the call at the model bound at the channel tier', async () => {
     fetchChannelHistoryMock.mockResolvedValue([makeMsg('team uses postgres', '1700000001.000')]);
     agentGenerateMock.mockResolvedValue({

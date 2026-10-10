@@ -1,6 +1,5 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { isAnthropicSpec, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
-import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   type ImplementerRuntimeKind,
@@ -9,6 +8,7 @@ import {
 } from '@auto-swe/shared/types/api';
 import { BUILTIN_PROVIDERS } from './credentialService.js';
 import { catalogWarnings } from './modelCatalogService.js';
+import { scanSkillAdvisory } from './skillScan.js';
 
 /**
  * Agent-library service (P1): create / version / list the first-class Agent
@@ -516,7 +516,7 @@ export async function createAgent(
   if ((await maxVersion(prisma, key)) > 0) {
     throw new AgentLineageExistsError(key.key, key.scope);
   }
-  const scan = base.systemPrompt ? await scanSkillContent(base.systemPrompt) : { warnings: [] };
+  const scanWarnings = base.systemPrompt ? await scanSkillAdvisory(null, base.systemPrompt) : [];
   // Create the row and its skill refs atomically so a failure mid-way cannot
   // leave a partial agent behind.
   const agent = await prisma.$transaction(async (tx) => {
@@ -563,7 +563,7 @@ export async function createAgent(
     agent,
     catalogWarnings: await agentCatalogWarnings(prisma, agent),
     credentialWarnings: await agentCredentialWarnings(prisma, agent),
-    scanWarnings: scan.warnings,
+    scanWarnings,
   };
 }
 
@@ -593,10 +593,8 @@ export async function updateAgent(
   };
   const nextVersion = (await maxVersion(prisma, key)) + 1;
   const promptChanged = base.systemPrompt !== undefined;
-  const scan =
-    promptChanged && base.systemPrompt
-      ? await scanSkillContent(base.systemPrompt)
-      : { warnings: [] };
+  const scanWarnings =
+    promptChanged && base.systemPrompt ? await scanSkillAdvisory(null, base.systemPrompt) : [];
 
   const pick = <T>(next: T | undefined, prev: T): T => (next === undefined ? prev : next);
 
@@ -662,7 +660,7 @@ export async function updateAgent(
     agent,
     catalogWarnings: await agentCatalogWarnings(prisma, agent),
     credentialWarnings: await agentCredentialWarnings(prisma, agent),
-    scanWarnings: scan.warnings,
+    scanWarnings,
   };
 }
 

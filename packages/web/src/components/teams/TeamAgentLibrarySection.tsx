@@ -38,6 +38,7 @@ import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useTeamSkills } from '@/hooks/useSkills';
 import { modelLabel } from '@/lib/agentDisplay';
 import { errMsg } from '@/lib/errors';
+import { scanWarningLead } from '@/lib/scanWarnings';
 
 const EMPTY: CreateTeamAgentBody = {
   description: '',
@@ -197,8 +198,8 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
         <div className="mb-4 space-y-2">
           {(saveWarnings.scanWarnings?.length ?? 0) > 0 && (
             <Alert variant="warning">
-              Saved, but the content scanner flagged the prompt. Review it before relying on the
-              agent: {saveWarnings.scanWarnings?.join('; ')}
+              {scanWarningLead(saveWarnings.scanWarnings ?? [])}{' '}
+              {saveWarnings.scanWarnings?.join('; ')}
             </Alert>
           )}
           <ModelSaveWarnings

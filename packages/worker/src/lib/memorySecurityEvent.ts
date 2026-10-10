@@ -22,13 +22,11 @@ export async function recordMemorySecurityEvent(
     tracer.addActivityEvent({ name, outputJson });
     const written = await persistActivityTrace(tracer, 'memoryGuard');
     if (written === false) {
-      console.warn(`[memoryGuard] ${name} not recorded as a security event: the write failed`);
+      console.warn(`[memoryGuard] ${name} not recorded: the write failed`);
     }
   } catch (err) {
     console.warn(
-      `[memoryGuard] ${name} not recorded as a security event: ${
-        err instanceof Error ? err.message : String(err)
-      }`
+      `[memoryGuard] ${name} not recorded: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 }

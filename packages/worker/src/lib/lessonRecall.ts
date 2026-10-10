@@ -164,10 +164,16 @@ export async function explainLesson(
         }),
       ])
   );
-  const gate = async (text: string) =>
-    (await memoryInjectionMatches([text]).catch(() => ['scan unavailable'])).length > 0
-      ? '[withheld: matched an injection pattern]'
-      : text;
+  // A read gates on the patterns that ran: a partial scan alone withholds
+  // nothing, but a scan that throws, or whose pattern set could not load, withholds
+  // the text.
+  const gate = async (text: string) => {
+    const scan = await memoryInjectionMatches([text]).catch(() => null);
+    if (scan === null || scan.loadFailed) {
+      return '[withheld: could not be scanned]';
+    }
+    return scan.matches.length > 0 ? '[withheld: matched an injection pattern]' : text;
+  };
   const evidence = metadata.evidence as { quote?: unknown } | undefined;
   return {
     confidence: row.confidence,

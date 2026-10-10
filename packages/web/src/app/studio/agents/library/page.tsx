@@ -58,6 +58,7 @@ import {
 import { buildAgentUpdate } from '@/lib/agentEditPatch';
 import { errMsg } from '@/lib/errors';
 import { originLabel } from '@/lib/originLabel';
+import { scanWarningLead } from '@/lib/scanWarnings';
 
 const EMPTY_CREATE: CreateAgentBody = {
   channelId: undefined,
@@ -678,8 +679,7 @@ export default function AgentLibraryPage() {
           <div className="space-y-4">
             {saved.scanWarnings.length > 0 && (
               <Alert variant="warning">
-                Saved, but the content scanner flagged the prompt. Review it before relying on the
-                agent:
+                {scanWarningLead(saved.scanWarnings)}
                 <ul className="mt-1 list-disc pl-5">
                   {saved.scanWarnings.map((w) => (
                     <li key={w}>{w}</li>
