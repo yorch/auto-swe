@@ -39,7 +39,7 @@ const AuditLogQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).exten
   action: z.enum(['CREATE', 'DELETE', 'UPDATE']).optional(),
   actorId: z.string().uuid().optional(),
   entityType: z.string().min(1).max(100).optional(),
-  /** Free text over the actor's email or name, the entity type and the entity id. */
+  /** Free text over the actor's email or name, the entity type and (in full) the entity id. */
   search: z.string().trim().min(1).max(100).optional(),
   /** Inclusive UTC calendar days, `YYYY-MM-DD` — what a date input produces. */
   since: z.iso.date().optional(),
@@ -308,7 +308,9 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
       searchClause = {
         OR: [
-          { entityId: { contains: search, mode: 'insensitive' } },
+          // `entity_id` is a uuid column, which Prisma will not run `contains` on (the query
+          // fails with a validation error), so an id matches only when typed in full.
+          ...(UUID_RE.test(search) ? [{ entityId: search.toLowerCase() }] : []),
           { entityType: { contains: search, mode: 'insensitive' } },
           ...(people.length ? [{ actorId: { in: people.map((u) => u.id) } }] : []),
         ],

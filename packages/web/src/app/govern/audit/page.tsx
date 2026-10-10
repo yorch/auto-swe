@@ -139,10 +139,12 @@ function AuditWorkspace() {
     setExportError(null);
     setExportNotice(null);
     try {
-      const { csv, truncated } = await exportAuditLog(filters);
+      const { csv, limit, truncated } = await exportAuditLog(filters);
       setExportNotice(
         truncated
-          ? 'More entries matched than one export can hold, so the file has only the newest ones. Narrow the filters or the date range to export the rest.'
+          ? `More entries matched than one export can hold, so the file has only the newest ${
+              limit ? `${limit.toLocaleString('en-US')} ` : ''
+            }of them. Narrow the filters or the date range to export the rest.`
           : null
       );
       const href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));

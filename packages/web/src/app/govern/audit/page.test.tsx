@@ -143,4 +143,38 @@ describe('GovernAuditPage', () => {
 
     await waitFor(() => expect(urls(spy).some((u) => u.includes('/audit-log/export'))).toBe(true));
   });
+
+  it('tells the person, with the limit, when the file holds only the newest entries', async () => {
+    const list = {
+      data: [row(1, null)],
+      meta: { entityTypes: ['User'], limit: 50, offset: 0, total: 70_000 },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes('/audit-log/export')) {
+          return new Response('time,action\n', {
+            headers: {
+              'content-type': 'text/csv',
+              'x-export-row-limit': '50000',
+              'x-export-truncated': 'true',
+            },
+            status: 200,
+          });
+        }
+        return new Response(JSON.stringify(list), {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        });
+      })
+    );
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    render(withQuery(<GovernAuditPage />));
+    await screen.findByText(/of 70,?000/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+
+    expect(await screen.findByText(/only the newest 50,000 of them/)).toBeTruthy();
+  });
 });
