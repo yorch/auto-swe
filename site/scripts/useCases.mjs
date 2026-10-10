@@ -154,9 +154,12 @@ export const USE_CASES = {
     maturity: 'composed',
     source: 'packages/shared/src/workflow/templates/ciTriageAndFix.ts',
     summary:
-      'Started when a GitHub Actions workflow fails on a watched branch or pull request. The ' +
-      'run is diagnosed from its logs; in fix mode a code-fixable failure gets a draft pull ' +
-      'request into the branch that failed, and the diagnosis is posted on the pull request.',
+      'Started when a GitHub Actions workflow fails on a watched branch or pull request, or by ' +
+      'hand with a run id. The run is diagnosed from its logs and the diagnosis can be posted ' +
+      'on the pull request; in fix mode a code-fixable failure gets a draft pull request into ' +
+      'the branch that failed, checked against the failing step’s own command when there is ' +
+      'one and revised while its CI fails. Where an admin allows it, a pull request’s fix can ' +
+      'instead be pushed onto its own branch. Never changes workflow files and never merges.',
     title: 'CI failure triage and fix',
   },
   'agent-reviewed-pr': {

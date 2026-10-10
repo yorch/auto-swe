@@ -1705,7 +1705,7 @@
     {
       "body": "A stored input can be reused across executions; the acting launcher can change.",
       "category": "Identity",
-      "detail": "RunInput.requestedById is submission history. WorkflowRun.launchedById identifies this launch; temporalRunId prevents trusting a reused workflow ID across executions. An Idempotency-Key on a work request binds to that user’s first submission and replays the run it started. A ticket’s workflow id is allocated with every row of the same repository (same host, owner and name compared case-insensitively, active or not) counted as one repository, so a run in flight on any of them conflicts; when the conflicting run belongs to another row, the response says the ticket is running without naming its workflow id. A retry or agent re-run keeps the request identity and adds an execution, which the Requests view groups under it.",
+      "detail": "RunInput.requestedById is submission history. WorkflowRun.launchedById identifies this launch; temporalRunId prevents trusting a reused workflow ID across executions. An Idempotency-Key on a work request binds to that user’s first submission and replays the run it started. A ticket’s workflow id is allocated with every row of the same repository (same host, owner and name compared case-insensitively, active or not) counted as one repository, so a run in flight on any of them conflicts; when the conflicting run belongs to another row, the response says the ticket is running without naming its workflow id. A retry or agent re-run keeps the request identity and adds an execution, which the Requests view groups under it. A run an event automation starts is nobody’s launch: it carries no launchedById and uses the platform credential, never a user’s saved token. A run started by labelling an issue is the one exception, and only in attribution: the labeller’s linked GitHub account must resolve to an active platform user who is a member of the repository and passes the same launch decision as any launch, and that user is recorded as requestedById; the run still acts as the platform.",
       "id": "request",
       "refs": [
         "schema",
@@ -1714,7 +1714,8 @@
         "sameIdentity",
         "conflictOther",
         "requestGroup",
-        "agentRerun"
+        "agentRerun",
+        "automationActor"
       ],
       "status": "Implemented",
       "title": "Request ≠ launch identity"
@@ -1722,7 +1723,7 @@
     {
       "body": "Spec and run-pinned settings are captured, but not every configuration read is frozen.",
       "category": "Reproducibility",
-      "detail": "GLOBAL agent version maps, skill revisions and run-pinned settings are captured at run start; more-specific agent rows resolve their current active versions. A run-pinned key missing from a run’s snapshot is pinned the first time an activity’s request context reads it, at the value that read resolves, and a value already pinned is never replaced; a channel turn’s run is pinned at its own start and backfilled at its Slack channel’s scope, and a failed backfill falls back to the live value until the next lookup. Each agent’s runtime is pinned on the run at start, or at first resolution for an agent the start snapshot lacks. Non-run-pinned settings and credentials can change. This is selective reproducibility, not a hermetically frozen run.",
+      "detail": "GLOBAL agent version maps, skill revisions and run-pinned settings are captured at run start; more-specific agent rows resolve their current active versions. A run-pinned key missing from a run’s snapshot is pinned the first time an activity’s request context reads it, at the value that read resolves, and a value already pinned is never replaced; a channel turn’s run is pinned at its own start and backfilled at its Slack channel’s scope, and a failed backfill falls back to the live value until the next lookup. Each agent’s runtime is pinned on the run at start, or at first resolution for an agent the start snapshot lacks. Non-run-pinned settings and credentials can change. This is selective reproducibility, not a hermetically frozen run. A credential pinned by an agent is not frozen either: the worker checks it on each call and falls back, with a warning, to the provider cascade if the pin is missing, belongs to another provider, or is out of scope for the run. A lookup that fell through to a broader scope (the usual case for a team run) is cached for CONFIG_CACHE_FALLTHROUGH_TTL_MS (5 s by default, never above the full window, 0 disables) rather than the full window, so a narrower row inserted later is seen within seconds.",
       "id": "version",
       "refs": [
         "agents",
@@ -1732,7 +1733,9 @@
         "pinCas",
         "agentRuntimeSnapshot",
         "agentRuntimePin",
-        "channelRunRow"
+        "channelRunRow",
+        "credentialPin",
+        "fallThroughTtl"
       ],
       "status": "Implemented",
       "title": "Snapshots ≠ total immutability"
@@ -1772,6 +1775,15 @@
       "refs": ["bundles", "sdk", "bundleConnTypes", "bundleRuntime"],
       "status": "Implemented",
       "title": "Trust ≠ verification of behavior"
+    },
+    {
+      "body": "Every automation decision is a row that outlives the automation, the connection and often the run.",
+      "category": "Governance",
+      "detail": "AutomationFire records one decision about one occurrence. An event automation’s rows are keyed on the repository (host/owner/repo, lowercased), not on the automation or its repository row, and the guards read that repository’s whole ledger for the source: deleting and recreating an automation cannot forget what was done, and two automations matching two workflows that fail on one push cannot open two fixes. Four keys do the work: dedupeKey names the occurrence on its host (a redelivery is decided once), subjectKey is what one run is enough for (a commit, an issue), scopeKey is what cooldown and in-flight count over (a branch, an issue), and producedKey is what a run produced (a pushed fix commit), matched by itself so a renamed repository still recognises its own output. A schedule fire and a template webhook call write rows of their own into the same table, best-effort and without a repository key, so the Automations page can say what came of each; no event guard reads them. The daily prune deletes rows that started no run once past retention and keeps STARTED rows and any row with a producedKey.",
+      "id": "automationLedger",
+      "refs": ["automationFireModel", "automationDecide", "ledgerActivity", "pruneActivity"],
+      "status": "Implemented",
+      "title": "Decision ledger ≠ run history"
     }
   ],
   "features": [
@@ -1814,7 +1826,7 @@
     {
       "body": "Agent identity, model, runtime, prompt, skills, tool keys and optional MCP connection are data.",
       "category": "Agents",
-      "detail": "Template → channel → team → organization → global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live. Skill text is pinned separately, by revision. A team member can list only the keys, names and models an override may name, without prompts, tools or connections; the full team library stays team-admin or ADMIN. In the library table an admin sees a No credential badge on a platform-wide agent that is not pinned to its own credential and whose provider has no usable credential (a sub-role persona takes its parent’s status); team, organization and template overrides are never badged. A version may set its runtime (the Mastra loop or the Claude Code harness); only a platform ADMIN can set or change it, and the library form shows the picker only on the platform-admin page. Saving the harness runtime is refused when the version’s own model, or the model it inherits along the platform-wide chain, is not Anthropic; saving a model that harness agents inherit is allowed and lists them. A new scoped override that names no runtime starts on the platform-wide row’s, which a team admin may restate but not change, unless the harness cannot drive the override’s own model. Restoring a version restores its runtime, and a seeded default-model move keeps it. An agent pinned to its own credential shows that credential’s provider and last four characters instead.",
+      "detail": "Template → channel → team → organization → global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live. Skill text is pinned separately, by revision. A team member can list only the keys, names and models an override may name, without prompts, tools or connections; the full team library stays team-admin or ADMIN. In the library table an admin sees a No credential badge on a platform-wide agent that is not pinned to its own credential and whose provider the setup readiness check marks as lacking a credential an agent can use (none reachable, or a custom provider’s credential without an apiBase; a sub-role persona takes its parent’s status); team, organization and template overrides are never badged. A version may set its runtime (the Mastra loop or the Claude Code harness); only a platform ADMIN can set or change it, and the library form shows the picker only on the platform-admin page. Saving the harness runtime is refused when the version’s own model, or the model it inherits along the platform-wide chain, is not Anthropic; saving a model that harness agents inherit is allowed and lists them. A new scoped override that names no runtime starts on the platform-wide row’s, which a team admin may restate but not change, unless the harness cannot drive the override’s own model. Restoring a version restores its runtime, and a seeded default-model move keeps it. An agent pinned to its own credential shows that credential’s provider and last four characters instead. Saving requires a <provider>/<model-id> spec and stores the provider lowercased; an empty string still clears the model. A credential pin is checked at save: it must exist, be for the provider the model routes to, and be reachable from the agent’s scope (a team agent may pin a GLOBAL credential, its team’s, or its team’s organization’s; an organization agent a GLOBAL one or its own organization’s), otherwise the save answers 400 INVALID_CREDENTIAL. The response carries advisory catalog and credential warnings that the dashboard shows after create, edit and restore on the platform and team libraries; a model with no reachable credential, or a custom provider whose reachable credentials lack an apiBase, saves with a warning rather than a refusal.",
       "id": "agentLibrary",
       "refs": [
         "agents",
@@ -1825,7 +1837,10 @@
         "runtimeAdminOnly",
         "runtimeModelCheck",
         "inheritedModelCheck",
-        "overrideRuntime"
+        "overrideRuntime",
+        "modelSpecSchema",
+        "credentialRefCheck",
+        "credentialCoverage"
       ],
       "status": "Implemented",
       "title": "Versioned agent library"
@@ -1833,7 +1848,7 @@
     {
       "body": "Run a launchable library agent in a throwaway repository workspace, optionally publishing a branch or draft PR.",
       "category": "Engineering",
-      "detail": "Separate from the engineering template. The agent runs on the Mastra loop unless its own runtime is claude-code. Step and wall-clock caps and admission limits apply. On Mastra the run is debited per step. On the harness it is one turn capped at the step ceiling: the budget is checked before the turn, each model call is debited with the budget re-checked after every debit, the wall-clock deadline stops the turn rather than failing it, toolKeys grant only the named workspace tools (none set gives the read-only tools, an empty list gives none), and its MCP connection, if it binds one, is relayed from the worker. A runtime no harness serves, or a model the harness cannot drive, is refused before any container is created. Delivery uses a fresh trusted container. A draft pull request it opens is recorded as a PullRequest row on the run’s own ledger row; a failed write appears as a pr.record_failed event on the run. No-delivery diffs are explicitly unverified.",
+      "detail": "Separate from the engineering template. The agent runs on the Mastra loop unless its own runtime is claude-code. Step and wall-clock caps and admission limits apply. On Mastra the run is debited per step. On the harness it is one turn capped at the step ceiling: the budget is checked before the turn, each model call is debited with the budget re-checked after every debit, the wall-clock deadline stops the turn rather than failing it, toolKeys grant only the named workspace tools (none set gives the read-only tools, an empty list gives none), and its MCP connection, if it binds one, is relayed from the worker. A runtime no harness serves, or a model the harness cannot drive, is refused before any container is created. Delivery uses a fresh trusted container. A draft pull request it opens is recorded as a PullRequest row on the run’s own ledger row; a failed write appears as a pr.record_failed event on the run. No-delivery diffs are explicitly unverified. A launch may name a base branch (the CLI’s --base, or baseBranch in the request): it must be a valid branch name and not one of the platform’s own work branches, and the checkout is cut from it and the draft pull request opens into it; unset, the repository’s default branch is used.",
       "id": "agentRun",
       "refs": [
         "agentRun",
@@ -1842,7 +1857,9 @@
         "agentRunLoop",
         "agentRunHarness",
         "harnessPerCall",
-        "mcpRelay"
+        "mcpRelay",
+        "launchBase",
+        "runBase"
       ],
       "status": "Implemented",
       "title": "One-off repository agent runs"
@@ -1922,11 +1939,19 @@
       "title": "Policy-gated outcome publication"
     },
     {
-      "body": "Sensitive-file, shell-command, content, diff, skill/LLM-output, memory-content and PII-related scanning paths.",
+      "body": "Sensitive-file, shell-command, content, diff, skill/LLM-output, memory-content, CI-log and PII-related scanning paths.",
       "category": "Security",
-      "detail": "A skill’s description and text are scanned in full on create, edit and bundle install, advisorily, and the result is marked incomplete if a pattern is quarantined or the scanner fails. Some checks block tool calls; others only annotate findings. The memory gate is blocking but INJECTION-only: it refuses a memory write that matches or whose INJECTION scan did not complete, and drops a recalled item that matches. Administrator regexes execute in a budgeted worker thread. Scanning is defense-in-depth, not proof that generated code is safe.",
+      "detail": "A skill’s description and text, an agent’s system prompt (on create and on a version that sets one) and an eval rubric’s text (on create) are scanned in full, advisorily, as are skills in a bundle install and a skill import. A pattern that overran or is quarantined, a scanner that fails, or a pattern set that cannot be read yields a scan-incomplete warning, never a clean result. Some checks block tool calls; others only annotate findings. The memory gate is blocking but INJECTION-only (a slow or quarantined EXFILTRATION pattern cannot stop a memory write): it refuses a memory write that matches or whose INJECTION scan did not complete, fails a lesson step when no pattern could be loaded, and drops a recalled item that matches. CI log text is a further consumer of the INJECTION patterns only: in the CI triage template a log is redacted for common token shapes and screened in full, and a log that matches, or whose scan did not complete, is diagnosed but never fixed from. Administrator regexes execute in a budgeted worker thread. Scanning is defense-in-depth, not proof that generated code is safe.",
       "id": "scanning",
-      "refs": ["regex", "push", "scorers", "skillScanFull", "memoryGuard"],
+      "refs": [
+        "regex",
+        "push",
+        "scorers",
+        "skillScanFull",
+        "memoryGuard",
+        "scanAdvisory",
+        "ciLogScreen"
+      ],
       "status": "Implemented",
       "title": "Layered runtime scanning"
     },
@@ -1995,7 +2020,7 @@
     {
       "body": "Store lessons and channel memory with run/agent lineage and evidence; recall them for every agent that works on a repository; supersede, consolidate and forget them through their provenance.",
       "category": "Knowledge",
-      "detail": "MemoryItem supports generic scopes and entities plus repo/channel/team/org links. Storage uses vector(1536); a row is compared only with rows embedded by the same model, and after a model change an admin starts a re-embed of the stale rows. Scoped searches set pgvector's iterative index scan (strict order), so a small repository beside a crowded one still gets its nearest rows; on pgvector before 0.8 the worker logs once and searches without it. Every built-in engineering template with a review or CI loop writes a lesson when that loop runs out of attempts, and default-engineering also after a merge and after a merge-wait timeout that followed a rejection; the release templates and the four-eyes sign-off loop write none, and a step that throws writes none. commitToMemory is given bounded evidence chosen by outcome (a CI failure lesson gets the CI log, a review failure lesson the rejection), records the outcome by code, cites the pull requests, head commit and a short quote of that evidence, and grades its confidence; a low-confidence lesson is labelled on recall, not filtered. It also rebuilds the run's earlier review rejections and CI failures from its traces — grouped by Temporal activity id so a retry counts once, capped at five entries and 4,000 characters per kind — and fences them with the evidence. A new item at or above memory.supersedeThreshold similarity to older active items in the same repository or channel marks them superseded; they are kept but not recalled. Consolidation soft-deletes merged items and keeps the sources' ids. An optional memory.lessonMaxAgeDays setting (off by default) keeps older lessons out of recall, searchLessons and consolidation through a SQL filter before the limit; nothing is deleted. The implementer, the three fixers and the review personas recall their repository's lessons by the text of what they are working on, and the Mastra loop also gets read-only searchLessons and explainLesson tools bound to that repository. Deleting a lesson or channel item forgets every merged copy of it and a merged item's own sources, restores the rows only the deleted merge or supersession hid, and audits both id lists in the same transaction; an API-only admin route erases one Slack user's attributed channel memory the same way. Recalled memory is text a later run reads, so the worker gates it on injection patterns: a write through insertMemoryItem is refused before it is embedded when its lesson or rationale matches an INJECTION scanner pattern, and the two consolidation passes apply the same check to their merged notes before inserting, leaving the cluster as it was. Lesson and channel-memory retrieval drop any recalled item that matches, which also covers rows written before the gate and an admin’s edit: PATCH /slack-channels/:id/memory/:memoryId saves edited text without the check. A write is refused when its INJECTION scan is incomplete (a pattern overran its budget or is quarantined), and a pattern store that cannot be read fails the step so it is retried; recall gates only on the patterns that ran, so an incomplete scan alone drops nothing, while a scan that throws recalls nothing. Every prompt that carries memory — recalled lessons, and channel memory in a mention turn, a reactive interjection, an ambient digest and both lists of an org-flagging check — wraps it in a block that labels the notes reference data, not instructions. The gate does not use the EXFILTRATION patterns, and passing the gate is not proof that recalled text is benign. A shell step’s command text is masked for credential-shaped values before it becomes an auto-commit message or a stored lesson. The lessons routes list and delete only repository lessons (scope swe-lessons), not channel memory, and a lesson delete writes an audit row carrying the deleted content.",
+      "detail": "MemoryItem supports generic scopes and entities plus repo/channel/team/org links. Storage uses vector(1536); a row is compared only with rows embedded by the same model, and after a model change an admin starts a re-embed of the stale rows. Scoped searches set pgvector's iterative index scan (strict order), so a small repository beside a crowded one still gets its nearest rows; on pgvector before 0.8 the worker logs once and searches without it. Every built-in engineering template with a review or CI loop writes a lesson when that loop runs out of attempts, and default-engineering also after a merge and after a merge-wait timeout that followed a rejection; the release templates and the four-eyes sign-off loop write none, and a step that throws writes none. commitToMemory is given bounded evidence chosen by outcome (a CI failure lesson gets the CI log, a review failure lesson the rejection), records the outcome by code, cites the pull requests, head commit and a short quote of that evidence, and grades its confidence; a low-confidence lesson is labelled on recall, not filtered. It also rebuilds the run's earlier review rejections and CI failures from its traces — grouped by Temporal activity id so a retry counts once, capped at five entries and 4,000 characters per kind — and fences them with the evidence. A new item at or above memory.supersedeThreshold similarity to older active items in the same repository or channel marks them superseded; they are kept but not recalled. Consolidation soft-deletes merged items and keeps the sources' ids. An optional memory.lessonMaxAgeDays setting (off by default) keeps older lessons out of recall, searchLessons and consolidation through a SQL filter before the limit; nothing is deleted. The implementer, the three fixers and the review personas recall their repository's lessons by the text of what they are working on, and the Mastra loop also gets read-only searchLessons and explainLesson tools bound to that repository. Deleting a lesson or channel item forgets every merged copy of it and a merged item's own sources, restores the rows only the deleted merge or supersession hid, and audits both id lists in the same transaction; an API-only admin route erases one Slack user's attributed channel memory the same way. Recalled memory is text a later run reads, so the worker gates it on injection patterns: a write through insertMemoryItem is refused before it is embedded when its lesson or rationale matches an INJECTION scanner pattern, and the two consolidation passes apply the same check to their merged notes before inserting, leaving the cluster as it was. Lesson and channel-memory retrieval drop any recalled item that matches, which also covers rows written before the gate and an admin’s edit: PATCH /slack-channels/:id/memory/:memoryId saves edited text without the check. A write is refused when its INJECTION scan is incomplete (a pattern overran its budget or is quarantined), and the two consolidation passes treat an incomplete, failed or unloadable scan the same way and leave the cluster as it was. A pattern set that cannot be read is different, because no rule ran: the lesson step fails and is retried, while a direct lesson write is logged and dropped and a channel turn’s summary or passively ingested fact is not stored. Recall gates only on the patterns that ran, so an incomplete scan alone drops nothing; a scan that throws, or a pattern set that cannot be loaded, recalls nothing, and a lesson’s explanation is then withheld as could-not-be-scanned rather than as an injection match. Every prompt that carries memory — recalled lessons, and channel memory in a mention turn, a reactive interjection, an ambient digest and both lists of an org-flagging check — wraps it in a block that labels the notes reference data, not instructions. The gate does not use the EXFILTRATION patterns, and passing the gate is not proof that recalled text is benign. A shell step’s command text is masked for credential-shaped values before it becomes an auto-commit message or a stored lesson. The lessons routes list and delete only repository lessons (scope swe-lessons), not channel memory, and a lesson delete writes an audit row carrying the deleted content.",
       "id": "memory",
       "refs": [
         "memory",
@@ -2017,7 +2042,10 @@
         "adminMemoryEdit",
         "lessonsScope",
         "maskShell",
-        "schema"
+        "schema",
+        "memoryRefusalEvent",
+        "memoryScanLoadFailed",
+        "lessonWithheld"
       ],
       "status": "Implemented",
       "title": "Scoped semantic memory"
@@ -2141,9 +2169,9 @@
       "title": "Audit and security-event review"
     },
     {
-      "body": "Launch scheduled repository work, template webhooks, GitHub event handling and maintenance sweeps.",
+      "body": "Launch scheduled repository work, template webhook calls and GitHub-event automations, and run maintenance sweeps.",
       "category": "Operations",
-      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration (repository access sync, eval regression and revalidation); lesson consolidation, repository dependency scans, provider model discovery, the run reaper and the skill-source update check, by contrast, are on by default. The schedule settings are read at gateway startup, and the system-wide schedules are synchronized once the gateway’s Temporal connection is up, which may be later than boot (see the gateway-without-Temporal card). Schedules of a Slack channel or a scheduled work request are reconciled when their own rows are written, not at startup, and a write that needs one is refused with 503 TEMPORAL_UNAVAILABLE until the gateway’s first connection. After that connection a Slack channel write stands when its schedule sync fails (logged) and a channel delete tears its schedules down best-effort, while a scheduled work request syncs Temporal first or rolls its rows back. The scheduled-work list reports exists: null with unavailable: true for a schedule whose live state could not be asked, which differs from exists: false. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. The skill-source check is one system-wide schedule (daily by default) that asks each tracked source’s host which commit its ref names and only flags a different one; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow. While a re-run (or any other non-fire run) of a schedule’s standing request is in flight, each fire is skipped as a refused execution with reason request-in-flight, logged at info and audited (event fire-skipped, action UPDATE) at most once an hour, and the schedule resumes on the first tick after the run ends. A re-run is refused with 409 WORKFLOW_ALREADY_EXISTS while any live ledger row of the request exists: a fire’s, an earlier run’s, or a child run that carries the request’s id. Both read the request’s non-terminal ledger rows, the schedule’s anchor excluded, and confirm each with Temporal before refusing: a finished or absent workflow has its stale row closed with the status Temporal reports (COMPLETED, TIMED_OUT, CANCELLED for terminated or cancelled, else FAILED) and does not block (closing the row is best-effort: a failed close is ignored and the next check asks again), a row written in the last five minutes is trusted, and when Temporal cannot be asked or does not answer within three seconds the row blocks and the refusal says so. The re-run also confirms the row its workflow id allocator refuses on, which reads only the ticket’s eng- family and never asks Temporal itself, and allocates again once that row is closed. A run ended by a SKIPPED terminate node closes its ledger row as COMPLETED, so it never reads as in flight. Between the read and the start there is no lock.",
+      "detail": "Temporal schedules also drive eval regression/revalidation, lesson consolidation, repository dependency scans and permission sync. Some jobs are off by default and need explicit operator configuration (repository access sync, eval regression and revalidation); lesson consolidation, repository dependency scans, provider model discovery, the run reaper, the skill-source update check and the automation-decision prune, by contrast, are on by default. The schedule settings are read at gateway startup, and the system-wide schedules are synchronized once the gateway’s Temporal connection is up, which may be later than boot (see the gateway-without-Temporal card). Schedules of a Slack channel or a scheduled work request are reconciled when their own rows are written, not at startup, and a write that needs one is refused with 503 TEMPORAL_UNAVAILABLE until the gateway’s first connection. After that connection a Slack channel write stands when its schedule sync fails (logged) and a channel delete tears its schedules down best-effort, while a scheduled work request syncs Temporal first or rolls its rows back. The scheduled-work list reports exists: null with unavailable: true for a schedule whose live state could not be asked, which differs from exists: false. Edits to a scheduled work request are compare-and-set on a row version and retry a few times when a competing write changed only the acting user or fire bookkeeping; any other competing change is a 409. When a repository share is removed or the repository moves, each schedule of a team left with no claim is deactivated and audited on its own (the acting user is the actor), before its Temporal schedule is paused; an audit failure is logged and does not skip the pause. The run reaper is one system-wide schedule (every 15 minutes by default) that finalizes runs whose Temporal execution is over; it is paused, not removed, when disabled. The skill-source check is one system-wide schedule (daily by default) that asks each tracked source’s host which commit its ref names and only flags a different one; it is paused, not removed, when disabled. A scheduled fire is a run like any other for budgets: it gets a ledger row and run connection at its first activity, and the pull request it opens links to that execution’s own ledger row so CI signals reach the right workflow. While a re-run (or any other non-fire run) of a schedule’s standing request is in flight, each fire is skipped as a refused execution with reason request-in-flight, logged at info and audited (event fire-skipped, action UPDATE) at most once an hour, and the schedule resumes on the first tick after the run ends. A re-run is refused with 409 WORKFLOW_ALREADY_EXISTS while any live ledger row of the request exists: a fire’s, an earlier run’s, or a child run that carries the request’s id. Both read the request’s non-terminal ledger rows, the schedule’s anchor excluded, and confirm each with Temporal before refusing: a finished or absent workflow has its stale row closed with the status Temporal reports (COMPLETED, TIMED_OUT, CANCELLED for terminated or cancelled, else FAILED) and does not block (closing the row is best-effort: a failed close is ignored and the next check asks again), a row written in the last five minutes is trusted, and when Temporal cannot be asked or does not answer within three seconds the row blocks and the refusal says so. The re-run also confirms the row its workflow id allocator refuses on, which reads only the ticket’s eng- family and never asks Temporal itself, and allocates again once that row is closed. A run ended by a SKIPPED terminate node closes its ledger row as COMPLETED, so it never reads as in flight. Between the read and the start there is no lock. The automation-decision prune is one system-wide schedule (daily at 04:37 by default; AUTOMATION_DECISION_PRUNE_ENABLED and AUTOMATION_DECISION_PRUNE_CRON, read at gateway start) that deletes decision-ledger rows which started no run once they are older than workflow.automationDecisionRetentionDays (90 days by default, at least 7, GLOBAL scope only); it is paused, not removed, when disabled. Rows that started a run, and rows naming a commit the platform produced, are never deleted. A scheduled fire and a template webhook call also leave a row in that ledger (started, or refused with a reason, a refusal recorded once an hour per reason) so the Automations page can say what came of each; recording is best-effort and never fails the fire or the call, and no event-source guard reads these rows.",
       "id": "schedules",
       "refs": [
         "gateway",
@@ -2170,7 +2198,13 @@
         "skippedClose",
         "startupScheduleSync",
         "slackChannelScheduleRefusal",
-        "scheduledUnknownStatus"
+        "scheduledUnknownStatus",
+        "pruneActivity",
+        "pruneSchedule",
+        "pruneEnv",
+        "settingRetention",
+        "ledgerActivity",
+        "ledgerRefusalKey"
       ],
       "status": "Implemented",
       "title": "Scheduled automation & webhooks"
@@ -2178,7 +2212,7 @@
     {
       "body": "The gateway starts and serves while Temporal is unreachable, connecting in the background; routes that need a workflow client answer a retryable 503.",
       "category": "Operations",
-      "detail": "The Temporal plugin registers at once and retries the connection with a doubling delay from one second up to thirty, logging the first attempts at warn and later ones at debug. Until the first connection succeeds, every call through the gateway’s Temporal helpers raises a dedicated error. Where a route does not handle it, the global handler answers 503 with the code TEMPORAL_UNAVAILABLE and a Retry-After of five seconds (logged at warn, not error); routes that handle Temporal failures keep their own answers (the GitHub webhook signal paths answer 503 SIGNAL_FAILED, Slack shows a temporarily-unavailable message, and the scheduled-work list degrades). That error is not a workflow-not-found error: callers that signal or look up a workflow treat it as could-not-confirm, roll back and ask for a retry. Routes that would persist a row whose consistency depends on a Temporal call check the connection first and refuse before writing: eval launches (so an outage is not recorded as a failed eval), Slack channel registration with a digest or poll, a change to a Slack channel’s active flag, digest or poll enablement or cron, and channel deletion (an edit that leaves those values as stored goes through), and the saves of system settings that synchronize a schedule. The Slack approval path answers a temporarily-unavailable message. A channel knowledge edit’s re-embedding is deliberately not gated on Temporal. System-wide Temporal schedules (lesson consolidation, repository dependency scan, permission sync, model discovery, run reaper, skill-source check, eval regression and revalidation) are synchronized once the connection comes up, each best-effort: a failure is logged. Only consolidation, eval regression and revalidation have an admin save route that re-syncs them; the environment-driven ones (repository dependency scan, repository access sync, model discovery, run reaper, skill-source check) are next synced at the following gateway start. GET /health always answers 200 with status ok while the process serves requests and adds temporal: connecting or connected, so a container healthcheck keyed on it does not depend on Temporal. The per-client request limit is read once at boot from RATE_LIMIT_MAX (default 200) and RATE_LIMIT_WINDOW_SECONDS (default 60); a value that is not a positive integer fails the boot instead of falling back to the default.",
+      "detail": "The Temporal plugin registers at once and retries the connection with a doubling delay from one second up to thirty, logging the first attempts at warn and later ones at debug. Until the first connection succeeds, every call through the gateway’s Temporal helpers raises a dedicated error. Where a route does not handle it, the global handler answers 503 with the code TEMPORAL_UNAVAILABLE and a Retry-After of five seconds (logged at warn, not error); routes that handle Temporal failures keep their own answers (the GitHub webhook signal paths answer 503 SIGNAL_FAILED, an event-automation delivery whose run could not be started after three attempts answers 503 AUTOMATION_START_FAILED so the delivery can be sent again, Slack shows a temporarily-unavailable message, and the scheduled-work list degrades). That error is not a workflow-not-found error: callers that signal or look up a workflow treat it as could-not-confirm, roll back and ask for a retry. Routes that would persist a row whose consistency depends on a Temporal call check the connection first and refuse before writing: eval launches (so an outage is not recorded as a failed eval), Slack channel registration with a digest or poll, a change to a Slack channel’s active flag, digest or poll enablement or cron, and channel deletion (an edit that leaves those values as stored goes through), and the saves of system settings that synchronize a schedule. The Slack approval path answers a temporarily-unavailable message. A channel knowledge edit’s re-embedding is deliberately not gated on Temporal. System-wide Temporal schedules (lesson consolidation, repository dependency scan, permission sync, model discovery, run reaper, skill-source check, automation-decision prune, eval regression and revalidation) are synchronized once the connection comes up, each best-effort: a failure is logged. Only consolidation, eval regression and revalidation have an admin save route that re-syncs them; the environment-driven ones (repository dependency scan, repository access sync, model discovery, run reaper, skill-source check, automation-decision prune) are next synced at the following gateway start. GET /health always answers 200 with status ok while the process serves requests and adds temporal: connecting or connected, so a container healthcheck keyed on it does not depend on Temporal. The per-client request limit is read once at boot from RATE_LIMIT_MAX (default 200) and RATE_LIMIT_WINDOW_SECONDS (default 60); a value that is not a positive integer fails the boot instead of falling back to the default.",
       "id": "gatewayWithoutTemporal",
       "refs": [
         "temporalBackgroundConnect",
@@ -2187,7 +2221,10 @@
         "startupScheduleSync",
         "slackChannelScheduleRefusal",
         "scheduledUnknownStatus",
-        "rateLimitConfig"
+        "rateLimitConfig",
+        "webhookSourceDelivery",
+        "automationStart",
+        "pruneSchedule"
       ],
       "status": "Implemented",
       "title": "Gateway boots without Temporal"
@@ -2251,7 +2288,7 @@
     {
       "body": "Requests to operator-supplied URLs resolve the host once, refuse the request if any answer is internal, and connect only to an address from that checked answer.",
       "category": "Integrations",
-      "detail": "The text guard reads only the URL, so a public name that resolves to an internal address passes it. createGuardedFetch closes that at connection time: it drives undici’s own fetch with a dispatcher whose connect lookup resolves the name once (bounded to 5 s), classifies every returned address with the text guard’s rules, and refuses the request if any one is refused; a resolver error, timeout or empty answer also refuses, with a fixed message. The socket is handed only addresses from that checked answer, so the check and the connection share one resolution. They are ordered IPv4 first and tried in turn with a 300 ms per-attempt wait, over HTTP/1.1 only, while TLS server name and Host stay the hostname. A literal IP never reaches the lookup, so it is classified before the request. Private ranges (RFC 1918, CGNAT, unique-local IPv6, and 198.18.0.0/15, which fake-IP proxy tools answer every name with) pass only with the call site’s opt-in. Loopback, link-local, unspecified and cloud-metadata addresses (GCP’s fd20:ce::254 and OCI’s 192.0.0.192 included), multicast, and the reserved, IETF protocol, documentation, 6to4 relay, Teredo and discard ranges never pass, whether written as a literal or returned by DNS. The call sites are bundle install-from-URL, the provider credential test, model discovery and the catalog refresh (strict unless the apiBase host is listed in models.privateNetworkHosts, which waives only the private-range refusal), the Jira and Confluence (Atlassian) and GitHub Issues connectors, the worker’s Jira connector, the worker’s MCP transports and the gateway’s MCP connection test, skill-source fetches, the CI-log download, and the GitHub connection test when its API URL is typed and unsaved. createOriginScopedFetch applies a private-network waiver only to named origins, which is how the MCP opt-in and the CI-log allowance cover the configured host while any other hop is strict; GitHub Issues does the same by choosing a permissive or a strict fetch per hop. A refused resolution carries the ESSRF_BLOCKED code: model discovery and the credential test report it as blocked address and the MCP test says the address resolves to a network the connection may not reach, never resolver detail. The repository’s invariant check fails a bare fetch (a call, a default parameter or a passed value) in the modules whose every request is operator-supplied, so an injectable fetch cannot silently default back to the text-only path.",
+      "detail": "The text guard reads only the URL, so a public name that resolves to an internal address passes it. createGuardedFetch closes that at connection time: it drives undici’s own fetch with a dispatcher whose connect lookup resolves the name once (bounded to 5 s), classifies every returned address with the text guard’s rules, and refuses the request if any one is refused; a resolver error, timeout or empty answer also refuses, with a fixed message. The socket is handed only addresses from that checked answer, so the check and the connection share one resolution. They are ordered IPv4 first and tried in turn with a 300 ms per-attempt wait, over HTTP/1.1 only, while TLS server name and Host stay the hostname. A literal IP never reaches the lookup, so it is classified before the request. Private ranges (RFC 1918, CGNAT, unique-local IPv6, and 198.18.0.0/15, which fake-IP proxy tools answer every name with) pass only with the call site’s opt-in. Loopback, link-local, unspecified and cloud-metadata addresses (GCP’s fd20:ce::254 and OCI’s 192.0.0.192 included), multicast, and the reserved, IETF protocol, documentation, 6to4 relay, Teredo and discard ranges never pass, whether written as a literal or returned by DNS. The call sites are bundle install-from-URL, the provider credential test, model discovery and the catalog refresh (strict unless the apiBase host is listed in models.privateNetworkHosts, which waives only the private-range refusal), the worker’s chat-model and embedding calls and the Claude Code model proxy’s upstream calls (the same listed-host rule, with redirects refused), the Jira and Confluence (Atlassian) and GitHub Issues connectors, the worker’s Jira connector, the worker’s MCP transports and the gateway’s MCP connection test, skill-source fetches, the CI-log download, and the GitHub connection test when its API URL is typed and unsaved. createOriginScopedFetch applies a private-network waiver only to named origins, which is how the MCP opt-in and the CI-log allowance cover the configured host while any other hop is strict; GitHub Issues does the same by choosing a permissive or a strict fetch per hop. A refused resolution carries the ESSRF_BLOCKED code: model discovery and the credential test report it as blocked address and the MCP test says the address resolves to a network the connection may not reach, never resolver detail. Under an environment proxy the guarded fetch dispatches through Node’s own fetch so the proxy’s routing is used; the host is still checked up front but the connection is not pinned. The repository’s invariant check fails a bare fetch (a call, a default parameter or a passed value) in the modules whose every request is operator-supplied, so an injectable fetch cannot silently default back to the text-only path.",
       "id": "outboundGuard",
       "refs": [
         "guardResolve",
@@ -2264,7 +2301,9 @@
         "connectorCiLog",
         "jiraPinned",
         "mcpProbeBlocked",
-        "bundleUrlFetch"
+        "bundleUrlFetch",
+        "modelCallFetch",
+        "proxiedFetch"
       ],
       "status": "Implemented",
       "title": "Operator URLs are resolved and pinned at connection time"
@@ -2272,7 +2311,7 @@
     {
       "body": "Package agents, skills, scanner patterns and templates for export/install and SDK authoring.",
       "category": "Extensibility",
-      "detail": "Manifest v2 hashes identity and content; detached Ed25519 signatures are checked against deployment trust keys. Unverified install is denied unless allowed. Installing a skill over an existing one cuts a new revision when its text or description differs, always clears its verification, and scans it; a concurrent edit to that skill rolls back the whole install. Credentials and connection instances are not portable bundle content. An ADMIN installs a bundle inline (the CLI’s bundles install <path>, or a .json file picked or dropped in Studio) or from a URL (Studio or the CLI). The URL path text-checks every hop as public-only, resolves and pins it with no private-network opt-in, follows at most five redirects, times out after 15 s and caps the streamed body at BUNDLE_MAX_BYTES (5 MB by default); the inline preview and install routes accept a request body of that cap plus 64 KiB. Studio’s file flow parses the file in the browser (invalid JSON, a non-object or a file over the gateway’s cap — read from GET /platform/bundles/limits, 5 MB while that answer loads — is reported without sending anything), previews the parsed bundle and installs that same object; both install routes take an optional expectedContentHash and answer 409 BUNDLE_CHANGED when the bundle’s declared hash differs from it, and the install then re-derives the hash, so whatever the hash covers is what was previewed. Studio sends the hash on both paths; the CLI sends none and installs without a preview.",
+      "detail": "Manifest v2 hashes identity and content; detached Ed25519 signatures are checked against deployment trust keys. Unverified install is denied unless allowed. Installing a skill over an existing one cuts a new revision when its text or description differs, always clears its verification, and scans it; a concurrent edit to that skill rolls back the whole install. Credentials and connection instances are not portable bundle content. An ADMIN installs a bundle inline (the CLI’s bundles install <path>, or a .json file picked or dropped in Studio) or from a URL (Studio or the CLI). The URL path text-checks every hop as public-only, resolves and pins it with no private-network opt-in, follows at most five redirects, times out after 15 s and caps the streamed body at BUNDLE_MAX_BYTES (5 MB by default); the inline preview and install routes accept a request body of that cap plus 64 KiB. Studio’s file flow parses the file in the browser (invalid JSON, a non-object or a file over the gateway’s cap — read from GET /platform/bundles/limits, 5 MB while that answer loads or is unavailable — is reported without sending anything), previews the parsed bundle and installs that same object; both install routes take an optional expectedContentHash and answer 409 BUNDLE_CHANGED when the bundle’s declared hash differs from it, and the install then re-derives the hash, so whatever the hash covers is what was previewed. Studio sends the hash on both paths; the CLI sends none and installs without a preview.",
       "id": "distribution",
       "refs": [
         "bundles",
@@ -2282,7 +2321,8 @@
         "bundleLimits",
         "bundleUrlFetch",
         "bundleFileRead",
-        "bundleWebInstall"
+        "bundleWebInstall",
+        "bundleLimitsRoute"
       ],
       "status": "Implemented",
       "title": "Portable signed bundles"
@@ -2290,7 +2330,7 @@
     {
       "body": "Price models from a catalog, and on a schedule ask each provider which models it lists, storing unreviewed suggestions instead of catalog rows.",
       "category": "Operations",
-      "detail": "The gateway upserts one Temporal schedule, auto-swe-model-discovery, once the Temporal connection is up; it runs ScheduledModelDiscoveryWorkflow, a single discoverModels activity that lists models through every GLOBAL provider credential. It is on by default (MODEL_DISCOVERY_ENABLED, MODEL_DISCOVERY_CRON, read when the schedule is synchronized once the Temporal connection is up); disabling pauses the schedule rather than deleting it. Results go to model_suggestions (NEW: listed but priced nowhere; RETIREMENT_CANDIDATE: a priced model missing from a complete listing) and model_discovery_provider_status, never to catalog rows, so a suggestion cannot make a model known at $0. A failed provider changes only its status row; an incomplete listing (page cap, empty result, an unfollowable continuation) still records new suggestions but deletes nothing and flags no retirement candidates; a dismissal survives refreshes; deleting a provider’s GLOBAL credential removes only the credential: the next discovery pass, scheduled or on demand, removes that provider’s suggestion and status rows, and until then the suggestions endpoint still serves them. Every failure is reduced to a fixed string (HTTP <status>, timed out, request failed (<name>, <code>; the code is omitted when absent), credential could not be decrypted, blocked address, apiBase required, unrecognised response), so no fetch or provider text reaches the status row, logs or Temporal history, and a credential save rejects a key with whitespace or control characters and an apiBase carrying a username or password. An OpenAI-compatible apiBase on a private network is refused on the credential Test button, model discovery and the catalog refresh (which also check every resolved address) and, as URL text only, on credential save, unless its host (or host:port, as the URL spells it) is listed in the ADMIN-only, GLOBAL-only setting models.privateNetworkHosts; the listing waives only the private-range refusal, and loopback, localhost, link-local and cloud-metadata addresses stay refused whatever is listed. A setting that cannot be read leaves the list empty, so the strict guard applies. The list does not apply to the model and embedding calls that agents make, which this guard does not cover. Admins read the suggestions in the Catalog tab, where the on-demand discover route refreshes the same rows. Nothing is added to the catalog or retired automatically.",
+      "detail": "The gateway upserts one Temporal schedule, auto-swe-model-discovery, once the Temporal connection is up; it runs ScheduledModelDiscoveryWorkflow, a single discoverModels activity that lists models through every GLOBAL provider credential. It is on by default (MODEL_DISCOVERY_ENABLED, MODEL_DISCOVERY_CRON, read when the schedule is synchronized once the Temporal connection is up); disabling pauses the schedule rather than deleting it. Results go to model_suggestions (NEW: listed but priced nowhere; RETIREMENT_CANDIDATE: a priced model missing from a complete listing) and model_discovery_provider_status, never to catalog rows, so a suggestion cannot make a model known at $0. A failed provider changes only its status row; an incomplete listing (page cap, empty result, an unfollowable continuation) still records new suggestions but deletes nothing and flags no retirement candidates; a dismissal survives refreshes; deleting a provider’s GLOBAL credential removes only the credential: the next discovery pass, scheduled or on demand, removes that provider’s suggestion and status rows, and until then the suggestions endpoint still serves them. Every failure is reduced to a fixed string (HTTP <status>, timed out, request failed (<name>, <code>; the code is omitted when absent), credential could not be decrypted, blocked address, apiBase required, unrecognised response), so no fetch or provider text reaches the status row, logs or Temporal history, and a credential save rejects a key with whitespace or control characters and an apiBase carrying a username or password. An apiBase on a private network (any provider’s) is refused on the credential Test button, model discovery and the catalog refresh (which also check every resolved address) and, as URL text only, on credential save, unless its host (or host:port, as the URL spells it) is listed in the ADMIN-only, GLOBAL-only setting models.privateNetworkHosts; the listing waives only the private-range refusal, and loopback, localhost, link-local and cloud-metadata addresses stay refused whatever is listed. A setting that cannot be read leaves the list empty, so the strict guard applies. The list also applies to the model and embedding calls agents make, and a call to an unlisted host that resolves to a private address fails before any request is sent; those calls refuse redirects, so a provider that answers with a 30x must be pointed at its final URL. The list is read per request behind the settings cache, so a client built earlier picks up a change, and an unreadable setting leaves it empty. A built-in provider (anthropic, openai, google) with an apiBase is probed and listed at that base instead of the vendor’s, keeping the provider’s auth style (a Google probe against a custom base sends the key in x-goog-api-key, not in the URL). Because a proxy exposes aliases rather than the vendor catalog, such a listing is never marked complete: it still proposes new models but never proposes retiring one. An apiBase carrying a query or fragment is rejected for every provider, since /models would land inside it. Admins read the suggestions in the Catalog tab, where the on-demand discover route refreshes the same rows. Nothing is added to the catalog or retired automatically.",
       "id": "modelCatalog",
       "refs": [
         "modelDiscoverySchedule",
@@ -2304,7 +2344,10 @@
         "privateModelHostsSetting",
         "privateHostListed",
         "modelListFetch",
-        "credentialApiBaseCheck"
+        "credentialApiBaseCheck",
+        "builtInApiBaseListing",
+        "listRequestAdapters",
+        "modelCallFetch"
       ],
       "status": "Implemented",
       "title": "Model catalog & scheduled discovery"
@@ -2442,7 +2485,7 @@
     {
       "body": "Each agent runs on the platform’s Mastra tool loop or the Claude Code harness, and a run never switches an agent’s loop partway through.",
       "category": "Agents",
-      "detail": "Resolution order: a caller-supplied pin (an eval side’s override), then the run’s own pin in WorkflowRun.agentRuntimes (an empty pin means the default, without reading the Agent), then the Agent version’s runtime (inherited along inheritsModelFrom, through the usual scope cascade and GLOBAL version pin), then the caller’s default. The implementer family and eval cases default to the run-pinned workspace.implementerRuntime setting; agent runs and generic agent nodes default to Mastra. A run, a channel-assistant turn included, snapshots every visible agent’s own runtime at start, resolved in the run’s scope under its version pins; an agent the snapshot lacks (one created later, or an agent run’s) is pinned at its first resolution with a compare-and-set, so parallel activities agree on whichever pinned first; code outside an activity, and an eval, which has no run, pin nothing. The run page shows what each agent ran on. Generic agent nodes resolve and pin their runtime the same way, defaulting to Mastra. Without a workspace they run on Mastra and trace agent.runtime_not_applicable when their agent is pinned to the harness; a node with workspace: true clones the run’s repository (the run’s branch once pushed, else the default branch) and runs the pinned runtime there, harness included, committing and pushing nothing and destroying the checkout afterwards. A node’s @version ref does not choose its runtime: the pin is per agent key. Every runtime other than Mastra is served by a registered harness: a runtime value no harness serves fails non-retryably with HARNESS_UNAVAILABLE, and the implementer family, agent runs and checkout agent nodes select the harness and bind the agent’s model before building it (agent runs and checkout nodes before cloning).",
+      "detail": "Resolution order: a caller-supplied pin (an eval side’s override), then the run’s own pin in WorkflowRun.agentRuntimes (an empty pin means the default, without reading the Agent), then the Agent version’s runtime (inherited along inheritsModelFrom, through the usual scope cascade and GLOBAL version pin), then the caller’s default. The implementer family and eval cases default to the run-pinned workspace.implementerRuntime setting; agent runs and generic agent nodes default to Mastra. A run, a channel-assistant turn included, snapshots every visible agent’s own runtime at start, resolved in the run’s scope under its version pins; an agent the snapshot lacks (one created later, or an agent run’s) is pinned at its first resolution with a compare-and-set, so parallel activities agree on whichever pinned first; code outside an activity, and an eval, which has no run, pin nothing. The run page shows what each agent ran on. Generic agent nodes resolve and pin their runtime the same way, defaulting to Mastra. Without a workspace they run on Mastra and trace agent.runtime_not_applicable when their agent is pinned to the harness; a node with workspace: true clones the run’s repository (the run’s branch once pushed, else the run’s base branch: payload.baseBranch when the launch named one, otherwise the repository’s default branch) and runs the pinned runtime there, harness included, committing and pushing nothing and destroying the checkout afterwards. A node’s @version ref does not choose its runtime: the pin is per agent key. Every runtime other than Mastra is served by a registered harness: a runtime value no harness serves fails non-retryably with HARNESS_UNAVAILABLE, and the implementer family, agent runs and checkout agent nodes select the harness and bind the agent’s model before building it (agent runs and checkout nodes before cloning).",
       "id": "agentRuntime",
       "refs": [
         "agentRuntimeResolve",
@@ -2454,7 +2497,8 @@
         "runtimeNodeMastra",
         "runtimeNodeCheckout",
         "harnessRegistry",
-        "channelRuntimeSnapshot"
+        "channelRuntimeSnapshot",
+        "runBase"
       ],
       "status": "Implemented",
       "title": "Per-agent runtime, pinned per run"
@@ -2488,6 +2532,143 @@
       "refs": ["reviewOutcome", "reviewSummary", "review"],
       "status": "Implemented",
       "title": "Review failures are not verdicts"
+    },
+    {
+      "body": "A repository’s team can attach rules that start a template when a signed GitHub delivery matches: a failed Actions run, or a label added to an issue.",
+      "category": "Operations",
+      "detail": "An Automation row holds the when (an event source and its filters), the what (a template and its options) and the limits (a cooldown, 30 minutes by default, and a daily cap, 10 runs by default). Two sources exist: github.workflow_run.failed (a completed, failed or timed-out run of a push, pull-request or scheduled workflow, from a branch of the repository itself, never a fork) and github.issues.labeled (a person labelling an open issue; bots, Apps and pull requests are ignored before any query). A signed webhook is normalized into an occurrence and handed to an engine that decides from the delivery alone, without calling the host. It takes the first matching enabled automation (oldest repository row, then oldest automation), so one occurrence starts at most one run however many rows match. Before the limits, the source’s own ignore rule applies (the platform’s own work branches never react), the per-team or per-organization kill switch must be on (github.ciFailureTriggersEnabled is on by default, github.issueLabelAutomationsEnabled off), a source precondition holds (a pull-request failure needs an open pull request), a source that acts for a person finds one, the organization is within its monthly budget, and the automation names an active template its source can start. The limits are then judged under a per-repository advisory lock across the repository’s whole ledger: not a commit the platform itself produced, not a subject (a commit, an issue) that already started a run, not inside the cooldown for its scope (a branch, an issue), no earlier run for that scope still open (the ledger row is confirmed against Temporal, and a Temporal that cannot answer counts as running), and the automation’s rolling 24-hour cap. Each decision is one AutomationFire row: STARTED, a SUPPRESSED_* outcome or FAILED_TO_START. The workflow start is tried three times; if it never lands, the row becomes FAILED_TO_START and the delivery answers 503 so it can be sent again, and a redelivery or a manager’s retry takes a FAILED_TO_START decision again. A manager can retry any decision that started no run; every limit applies again and the earlier row stays, marked retried. One builder makes a run’s options at save time and at fire time and checks them against the template’s input schema. Saving an enabled automation, or enabling one, is a launch decision for the saver; managing needs ADMIN or a LEAD of the owning team, and reading needs repository membership, a shared team included.",
+      "id": "eventAutomations",
+      "refs": [
+        "automationEngine",
+        "automationDecide",
+        "automationStart",
+        "automationRelease",
+        "automationOutcomes",
+        "automationSource",
+        "automationAccess",
+        "automationSave",
+        "webhookSourceDelivery",
+        "workflowRunNormalize",
+        "issueLabelNormalize",
+        "ciSourceKeys",
+        "settingCiTriggers",
+        "settingLabels"
+      ],
+      "status": "Implemented",
+      "title": "Event automations start runs from GitHub events"
+    },
+    {
+      "body": "A failed GitHub Actions run is diagnosed from its logs; in fix mode a code-fixable failure gets a draft pull request into the branch that failed.",
+      "category": "Engineering",
+      "detail": "ci-triage-and-fix is library content: an ordinary spec the interpreter runs, started by a CI-failure automation or by hand with a run id. Its first step, triageCiFailure, takes the run by id, never a URL, and reads the run, its failed jobs and their logs from the run’s own repository. It reports instead of acting when the run belongs to another repository, did not fail, was triggered by something other than a push, pull request or schedule, comes from a fork commit, is for a branch other than the payload’s, is a tag or a deleted branch, or is a pull-request failure whose pull request is no longer open from that branch. Log text is redacted for common token shapes, screened in full with the INJECTION patterns, and given to the ciTriager agent (no tools, model inherited from the planner), which returns a typed verdict. Code, not the model, decides fix or report, so the model can veto a fix but cannot start one the rules refuse. Code reports instead of fixing when the mode is not fix (the default mode is triage, diagnose only), no log could be read, the logs look like injection or the screen did not complete, a pull request’s head has moved since the failure, the category is not regression, test_bug, configuration or dependency (flaky, infrastructure and unknown are never fixed, and a trigger can only narrow that set), or confidence is below the trigger’s floor (0.6 by default, between 0.3 and 1). On the fix path the implementer receives the diagnosis fenced as untrusted data, and a change touching .github/workflows or .github/actions, or adding a symlink or a submodule, is refused before anything is pushed. Lint, typecheck and tests follow, then verifyCiFix labels the fix, then a draft pull request opens into the failing branch. Its CI is waited on by signal or poll and the fix is revised while that CI fails, up to maxCiFixAttempts times (2 by default, at most 5), with the draft’s own CI logs redacted, screened and fenced; a first attempt that changes no file ends the run as a report, and a revision that changed nothing counts as a spent attempt instead of waiting out CI. For a failure on a pull request the platform edits one marked comment, rendered from structured fields with model text neutralized (no markdown structure, links or mentions). Nothing is merged, and the template has no approval node.",
+      "id": "ciTriage",
+      "refs": [
+        "ciTriageSpec",
+        "ciTriageDraft",
+        "ciTriageRefusal",
+        "ciTriageDecide",
+        "ciTriageComment",
+        "ciLogScreen",
+        "ciLogFence",
+        "ciDiagnosisFence",
+        "ciWorkflowGuard",
+        "agentCiTriager"
+      ],
+      "status": "Implemented",
+      "title": "CI failure triage and draft fix"
+    },
+    {
+      "body": "For a failing pull request, a trigger may ask that the fix land as a commit on the author’s branch instead of a draft; a setting that is off by default and several refusals stand between the request and the push.",
+      "category": "Governance",
+      "detail": "pullRequestDelivery: push is a request, not a grant. An automation cannot save it unless the built-in template is its template and github.ciFixPushToPullRequestEnabled is on for its team (default off). pushCiFixToPullRequest then pushes only if all of these hold at the moment of the push: this execution is the one a CI-failure automation started (its ledger row names this request and workflow id, so a re-run or a hand-started run never qualifies, and a run with a launching user is refused); the run’s template is the built-in one and the automation, not the payload, asks for push; the setting is on; the failure is a pull-request run whose pull request is still open from this repository with the failing branch as its head; the branch is not the default, not protected and not matched by github.ciFixNeverPushBranches (main, master, develop, trunk, release/**, releases/** and hotfix/** by default); the commit is on the run’s own work branch and is a fast-forward of the branch tip; and it touches no workflow file. Anything else returns pushed: false with a reason and the template opens the draft instead. The ref moves with force: false. The commit is recorded on the ledger row before the push, so its later CI failure is suppressed as the platform’s own output (SUPPRESSED_OWN_OUTPUT) even if the activity dies right after pushing. The run then polls the pull request’s CI on the pushed commit; on failure it makes at most one follow-up (none when the trigger allows no revisions, whatever maxCiFixAttempts is above 1), then reports and leaves the pull request to a person. The work branch is deleted afterwards unless a follow-up could not be pushed.",
+      "id": "ciFixPush",
+      "refs": [
+        "ciTriagePush",
+        "ciTriageFF",
+        "ciTriageRoute",
+        "ciTriagePushRetry",
+        "settingPush",
+        "settingNever",
+        "automationDecide"
+      ],
+      "status": "Implemented",
+      "title": "A CI fix can be pushed onto a pull request’s own branch"
+    },
+    {
+      "body": "The command the triager says reproduces the failure is run on the failing branch and on the fix; the result labels the fix and never blocks it.",
+      "category": "Quality",
+      "detail": "The command is model output read from untrusted logs. It runs only if it is the whole run: of a step the host reports as failed in a failed job, read from the workflow file in the workspace, contains no ${{ }} expression, is at most 1,000 characters (a longer one is dropped, never cut) and is cleared by the shell command scanner. The fix branch is fetched before the command runs, so no credential is used after the branch’s code has run. The command runs on the failing branch, the tree is reset and cleaned, and it runs again on the fix, each with an 8-minute limit; both outputs are stored as an artifact. The status is verified, not_reproduced, still_failing or unverified, shown as a Verified or Unverified line in the pull request and the run result. Nothing is installed first, so a command that needs the workflow’s setup steps fails both times; that is reported, not read as proof the fix is wrong. The step is a warning-on-failure node, and delivery proceeds whatever the status.",
+      "id": "ciFixVerification",
+      "refs": ["ciVerifyCommand", "ciVerifyRun"],
+      "status": "Implemented",
+      "title": "A CI fix is reproduced before and after, but only labelled"
+    },
+    {
+      "body": "A launch may name payload.baseBranch; the checkout, the diff and the pull request target follow it.",
+      "category": "Engineering",
+      "detail": "The gateway validates it on template launches, template webhook calls and retries (and agent runs, with the same error): it must be a valid git branch name and must not be one of the platform’s own work branches, otherwise 400 INVALID_BASE_BRANCH. The work-branch rule is decided once, at launch, so changing the branch prefix mid-run cannot fail a run part-way. The worker re-checks the name in every activity that clones for a run (BASE_BRANCH_REFUSED, non-retryable), because the clone is single-branch and every activity must agree on which branch it holds. The payload is the one place a base is recorded, so a retry or re-run of a fix for release/1.4 is still a fix for it. CodeResult.baseBranch carries it into fix sessions and makes the pull-request step open into the branch the change was cut from. A CI-failure automation sets it to the failing branch.",
+      "id": "baseBranch",
+      "refs": ["launchBase", "runBase", "ciSourceKeys"],
+      "status": "Implemented",
+      "title": "A run can be based on a branch other than the default"
+    },
+    {
+      "body": "One row-based coverage model decides whether every agent and the embedding model can reach a credential; the same model refuses a credential delete that would strand one and fails setup readiness only for what keeps the worker from starting.",
+      "category": "Operations",
+      "detail": "credentialGaps derives, from rows alone and without decrypting any key, which agents and the embedding model have no credential they can call. An agent’s model comes from its own spec or its inheritsModelFrom chain. A pinned credential counts when it exists, is for that provider and is reachable from the agent’s scope; otherwise the TEAM, ORGANIZATION, GLOBAL cascade picks the first reachable credential, as the worker does, and an unusable pin falls back to the cascade. A provider that is not built in also needs an apiBase on it. A channel or workflow-template agent runs for whichever team owns the run, so any credential for its provider counts. The embedding model follows the worker’s own rules, including that a pin to a credential of another provider is used as-is and is therefore a gap of its own. Deleting a credential answers 409 CREDENTIAL_IN_USE with the dependents unless force=true; a forced delete records what it left uncovered in the audit entry, and a team admin is refused, and shown dependents, only for its own team’s agents. GET /credentials adds usage.leavesWithoutCredential for the same question, and the dashboard’s delete confirmation lists it and then sends the forced delete. The admin-only readiness route reports four items (credentials, embeddings, GitHub access, a real repository connection) and computes the agent set the worker’s boot check resolves from the same shared code: the steps of every installed template’s active and experiment versions, plus channelAssistant when a Slack channel exists. The credentials item fails only on a gap in that set or a required key with no platform-wide agent; every other gap, at any scope, is returned in gaps with a blocking flag. The worker, for its part, refuses to start until assertConfigReady has resolved each of those agents and the embedding model for real.",
+      "id": "credentialCoverage",
+      "refs": [
+        "credentialCoverage",
+        "credentialDeleteGuard",
+        "readinessBlocking",
+        "deploymentAgentSet",
+        "workerBootGate",
+        "credentialForceFromDashboard"
+      ],
+      "status": "Implemented",
+      "title": "Credential coverage, delete guard and setup readiness"
+    },
+    {
+      "body": "An agent’s pinned credential is used for its model call only if it exists, matches the model’s provider and is in the run’s scope; otherwise the provider cascade runs.",
+      "category": "Agents",
+      "detail": "The resolver tries the agent’s own pin, then the pin on the row its model was inherited from. A pin is accepted only when the row exists, its provider (trimmed, lowercased) equals the provider the spec routes to, and its scope is GLOBAL, the run’s organization or the run’s team. A miss logs that the pin is not usable and falls back to the provider-name cascade (TEAM, ORGANIZATION, GLOBAL), so a stale pin cannot send one vendor’s key to another vendor’s API. The gateway checks reachability when an agent is created, edited or restored, and the client cache is keyed on a SHA-256 digest of the whole key and bounded with least-recently-used eviction.",
+      "id": "credentialPin",
+      "refs": ["credentialPin", "pinnedCredential", "credentialRefCheck"],
+      "status": "Implemented",
+      "title": "A credential pin is honoured only where the run could reach it"
+    },
+    {
+      "body": "Chat, embedding and Claude Code proxy calls resolve the provider host, connect only to a checked address and refuse redirects.",
+      "category": "Security",
+      "detail": "modelCallFetch wraps the list guard: each connection is resolved, every answer checked and the socket pinned to a checked address, with redirects refused because a model call carries the prompt and the API key. Every built-in client (anthropic, openai, google) and every OpenAI-compatible client is constructed with it whether or not the credential sets an apiBase, as are the embedding clients and the Claude Code model proxy’s upstream fetch. A host that is, or resolves to, a private address is reachable only if it is listed in models.privateNetworkHosts; loopback, link-local and cloud-metadata addresses stay refused whatever is listed. The list is read on every request behind the settings cache and an unreadable setting degrades to empty, so an unlisted in-cluster model server fails before any request is sent. This closes the gap between the text check at credential save and the call: a name that later resolves, or redirects, to an internal host no longer receives the prompt and the key.",
+      "id": "modelCallGuard",
+      "refs": [
+        "modelCallFetch",
+        "modelRuntimeFetch",
+        "embeddingFetch",
+        "modelProxyUpstream",
+        "privateModelHostsSetting"
+      ],
+      "status": "Implemented",
+      "title": "Every model and embedding call goes through the outbound guard"
+    },
+    {
+      "body": "Agents may sit on different providers at once; adapters make structured output, proxied OpenAI and embeddings behave across them.",
+      "category": "Agents",
+      "detail": "OpenAI-compatible providers (OpenRouter, Ollama, vLLM and others) are wrapped by schemaInPromptMiddleware: the adapter sends plain json_object mode and drops the response schema, so for a structured call the middleware appends the JSON schema and a return-only-the-JSON instruction to the system prompt, while built-in providers, which enforce schemas natively, are untouched. An openai credential with an apiBase uses Chat Completions (most proxies serve nothing else); without one it uses the Responses API. Agent saves and the embedding config require <provider>/<model-id> and store the provider lowercased, so pricing, the catalog and the harness check read one canonical form. Embeddings accept openai, google and OpenAI-compatible endpoints, always requested 1536 wide; on a 400 the call is retried once without the dimensions parameter and the endpoint remembered as refusing it, so only a model natively 1536 wide still works there. Anthropic is refused as an embedding provider. A model that cannot be built (a non-built-in provider with no apiBase) throws a non-retryable MODEL_CONFIG_INVALID.",
+      "id": "multiProvider",
+      "refs": ["schemaInPrompt", "embedDimensions", "modelSpecSchema"],
+      "status": "Implemented",
+      "title": "Providers side by side: structured output, OpenAI endpoints and embeddings"
+    },
+    {
+      "body": "Agent repository workspaces start with the resolvers in WORKSPACE_DNS, public by default.",
+      "category": "Operations",
+      "detail": "createWorkspace adds one --dns flag per entry, each shell-quoted, to docker run. The list is read from the worker’s environment (comma-separated IPs): unset or empty gives 1.1.1.1 and 8.8.8.8, and an invalid list falls back to that default with one logged warning. At worker boot the environment check stops the worker on an entry that is not an IP, is zoned IPv6, is loopback or unspecified, or, while WORKSPACE_BLOCK_METADATA is on, is one of the metadata addresses the workspace blackholes. It exists for split-horizon repository hosts whose public answer is unreachable from the cluster. Like the other workspace infrastructure settings it is environment-only: not a registry setting and not an admin form. Only repository workspaces made by createWorkspace are described here.",
+      "id": "workspaceDns",
+      "refs": ["workspaceDns", "workspaceDnsBoot", "workspaceDnsRun"],
+      "status": "Implemented",
+      "title": "Workspace containers get a configurable list of DNS resolvers"
     }
   ],
   "limits": [
@@ -2539,9 +2720,9 @@
     {
       "body": "Opt-in egress uses bridge networking, unreachable DNS and add-host entries.",
       "category": "Isolation",
-      "detail": "Direct-IP traffic is not blocked by this allowlist; wildcard entries are skipped. Docker shares the host kernel, and the worker holds the daemon socket. Treat that host as a privileged trust boundary.",
+      "detail": "Direct-IP traffic is not blocked by this allowlist; wildcard entries are skipped. The resolvers an agent repository workspace is given come from WORKSPACE_DNS, a deployer’s choice and not a boundary: pointing them at an internal resolver lets code in the workspace resolve every name that resolver knows. Docker shares the host kernel, and the worker holds the daemon socket. Treat that host as a privileged trust boundary.",
       "id": "egress",
-      "refs": ["sandbox", "infra"],
+      "refs": ["sandbox", "infra", "workspaceDnsRun"],
       "status": "Confirmed boundary",
       "title": "DNS egress filtering is not a network firewall"
     },
@@ -2663,7 +2844,7 @@
     {
       "body": "With the claude-code runtime and no model proxy, the harness receives the model key inside the container the agent controls; through the proxy it holds a token good only for its own turn’s model calls.",
       "category": "Isolation",
-      "detail": "The key, or the proxy’s turn token, stays off command lines and every tool call passes the worker-side policy, but what the agent runs in that container can read it. The token spends only on the Messages API, against the run’s budget, at the credential’s own host, until the turn ends. The shipped compose files run the proxy (HARNESS_MODEL_PROXY_PORT); a deployment that sets no port hands the harness the key. This applies to implementer-family sessions and to agent runs whose agent selects the harness; an agent run’s diff is still judged and published from a fresh container. The repository’s own CLAUDE.md, .claude settings and hooks load, but managed settings make the harness ignore the repository’s permission allow rules, so a tool call the policy does not approve is refused, and writes to .claude/, CLAUDE.md, CLAUDE.local.md and .mcp.json are refused. Only anthropic/<model> specs are supported; any other fails non-retryably with HARNESS_UNSUPPORTED_MODEL. A credential base URL can route through a gateway.",
+      "detail": "The key, or the proxy’s turn token, stays off command lines and every tool call passes the worker-side policy, but what the agent runs in that container can read it. The token spends only on the Messages API, against the run’s budget, at the credential’s own host, until the turn ends. The proxy’s upstream calls to that host are resolved, checked and pinned like other model calls; only the no-proxy path, where the container reaches the host directly, is outside that check. The shipped compose files run the proxy (HARNESS_MODEL_PROXY_PORT); a deployment that sets no port hands the harness the key. This applies to implementer-family sessions and to agent runs whose agent selects the harness; an agent run’s diff is still judged and published from a fresh container. The repository’s own CLAUDE.md, .claude settings and hooks load, but managed settings make the harness ignore the repository’s permission allow rules, so a tool call the policy does not approve is refused, and writes to .claude/, CLAUDE.md, CLAUDE.local.md and .mcp.json are refused. Only anthropic/<model> specs are supported; any other fails non-retryably with HARNESS_UNSUPPORTED_MODEL. A credential base URL can route through a gateway.",
       "id": "harnessKey",
       "refs": [
         "harnessKey",
@@ -2674,7 +2855,8 @@
         "harnessUnsupported",
         "agentRunHarness",
         "harnessKeySource",
-        "modelProxy"
+        "modelProxy",
+        "modelProxyUpstream"
       ],
       "status": "Confirmed boundary",
       "title": "Without the model proxy, the Claude Code runtime puts a model key in the workspace"
@@ -2700,14 +2882,15 @@
     {
       "body": "Discovery lists ids from the keys the platform holds; it supplies no prices and judges retirement by what one key can see.",
       "category": "Coverage",
-      "detail": "Discovery reads no price from a listing, so an admin still enters every number that feeds USD budgets. Only GLOBAL credentials are asked, so a model reachable through a team or organization key is not found. Listings follow a bounded number of pages and drop non-text models by a name filter; a listing past the cap, empty, or with a continuation it cannot follow is incomplete: it still records new suggestions but deletes nothing and flags no retirement candidates. A retirement flag is a hint measured against one key’s view, and an OpenAI-compatible apiBase on a private address is refused as blocked address unless its host is listed in models.privateNetworkHosts. The list is matched against the apiBase host text. The fetch still resolves the name and connects only to an address it checked, but nothing verifies that a listed name points at the intended server, so a listed name may reach any private-range address it resolves to; loopback, link-local and metadata answers stay refused. The list applies to every provider credential, not to one. The schedule’s cron and enabled flag take effect only after a gateway restart.",
+      "detail": "Discovery reads no price from a listing, so an admin still enters every number that feeds USD budgets. Only GLOBAL credentials are asked, so a model reachable through a team or organization key is not found. Listings follow a bounded number of pages and drop non-text models by a name filter; a listing past the cap, empty, or with a continuation it cannot follow is incomplete: it still records new suggestions but deletes nothing and flags no retirement candidates. A retirement flag is a hint measured against one key’s view, and an apiBase on a private address is refused as blocked address unless its host is listed in models.privateNetworkHosts. The list is matched against the apiBase host text. The fetch still resolves the name and connects only to an address it checked, but nothing verifies that a listed name points at the intended server, so a listed name may reach any private-range address it resolves to; loopback, link-local and metadata answers stay refused. A built-in provider behind an apiBase never yields retirement candidates, because its listing is the proxy’s, not the vendor’s. The list applies to every provider credential, and to run-time model and embedding calls too, not to one credential. The schedule’s cron and enabled flag take effect only after a gateway restart.",
       "id": "modelDiscoveryBounds",
       "refs": [
         "discoveryAll",
         "discoveryList",
         "modelDiscoveryEnv",
         "privateModelHostsSetting",
-        "modelListFetch"
+        "modelListFetch",
+        "builtInApiBaseListing"
       ],
       "status": "Confirmed boundary",
       "title": "Model discovery finds ids, not prices"
@@ -2715,7 +2898,7 @@
     {
       "body": "Connected means the first connection was made, not that Temporal is reachable now, and while it is pending workflow operations are refused.",
       "category": "Operations",
-      "detail": "The health body reports connecting until the first connection succeeds and connected afterwards; after that the SDK’s channel reconnects on its own and the gateway does not probe, so connected does not mean reachable at this moment. While the state is connecting no workflow start, signal, cancel or schedule operation can run, and nothing queues them: the caller gets a retryable refusal (usually 503). Per-channel and per-work-request schedules are not re-synchronized when the connection comes up, so a schedule that diverged while Temporal was down is corrected only by the next write to its row; the environment-driven system schedules are corrected at the next gateway start. Only the scheduled-work list reports an unknown state (exists: null, unavailable: true) instead of a missing schedule; other reads that need Temporal, including the status of the system schedule settings, answer 503.",
+      "detail": "The health body reports connecting until the first connection succeeds and connected afterwards; after that the SDK’s channel reconnects on its own and the gateway does not probe, so connected does not mean reachable at this moment. While the state is connecting no workflow start, signal, cancel or schedule operation can run, and nothing queues them: the caller gets a retryable refusal (usually 503). Per-channel and per-work-request schedules are not re-synchronized when the connection comes up, so a schedule that diverged while Temporal was down is corrected only by the next write to its row; the environment-driven system schedules are corrected at the next gateway start. Only the scheduled-work list reports an unknown state (exists: null, unavailable: true) instead of a missing schedule; other reads that need Temporal, including the status of the system schedule settings, answer 503. The shipped app Compose file still starts the gateway only after Temporal reports healthy, so the background connection protects other deployments and later outages, not a Compose start.",
       "id": "temporalConnectionBounds",
       "refs": [
         "temporalBackgroundConnect",
@@ -2738,9 +2921,9 @@
     {
       "body": "The pull request exists, ready for review, before any person has signed off; in consensus-review it also precedes every reviewer agent (four-eyes runs its agent review loop first).",
       "category": "Publication order",
-      "detail": "four-eyes and consensus-review open a non-draft pull request and run CI before their gate, so opening it can notify Slack, sync trackers and request CODEOWNERS reviewers early, and a run that ends FAILED or TIMED_OUT leaves it open. Of the built-in templates only model-catalog-refresh requests a draft pull request, and there is no step that marks a draft ready. Only these two templates guard a no-op CI fix with retryIfUnchanged; the other repush templates can still wait out a CI signal that never comes.",
+      "detail": "four-eyes and consensus-review open a non-draft pull request and run CI before their gate, so opening it can notify Slack, sync trackers and request CODEOWNERS reviewers early, and a run that ends FAILED or TIMED_OUT leaves it open. Of the built-in templates only model-catalog-refresh and ci-triage-and-fix request a draft pull request, and there is no step that marks a draft ready. Only these two templates and ci-triage-and-fix guard a no-op CI fix with retryIfUnchanged; the other repush templates can still wait out a CI signal that never comes.",
       "id": "readyPrBeforeGate",
-      "refs": ["fourEyes", "consensus", "ciNoop", "catalogScope"],
+      "refs": ["fourEyes", "consensus", "ciNoop", "catalogScope", "ciTriageDraft"],
       "status": "Confirmed boundary",
       "title": "Gated templates open a ready PR before the gate"
     },
@@ -2819,9 +3002,9 @@
       "title": "The connector SSRF guard resolves and pins, and the opt-in is coarse"
     },
     {
-      "body": "The pin covers the call sites that use the guarded fetch; a proxy, the model SDKs and the GitHub API clients sit outside it.",
+      "body": "The pin covers the call sites that use the guarded fetch; a proxy, a Claude Code harness run without the model proxy, and the GitHub API clients sit outside it.",
       "category": "Integrations",
-      "detail": "With a process-wide environment proxy (NODE_USE_ENV_PROXY, or --use-env-proxy on the command line or in NODE_OPTIONS) the host is resolved and checked locally first, but the proxy resolves it again, so the connection is not pinned to the checked answer; a network that resolves names only through its proxy fails closed. The worker’s run-time model and embedding calls go through the provider SDKs’ own fetch: a credential’s apiBase is text-checked when it is saved, so a public name that resolves to a private address is refused by the credential test and by model discovery but not by an agent’s model calls. Octokit and GitHub Enterprise API calls, the GitHub connection test against the saved API URL (a GitHub Enterprise host is often private), the sign-in organization-membership check that auto-approves a GitHub sign-up (it sends the platform credential to the instance’s API URL and follows no redirect), and the sign-in library’s Okta discovery fetch use a plain fetch; fixed public hosts such as Slack, Linear, Notion and Figma are not pinned either. For a repository on a GitHub Enterprise host every hop of the CI-log download may reach a private address, so a redirect from that host can aim the worker at another internal service (without the token). 198.18.0.0/15 is treated as private, so behind a fake-IP proxy tool every connector needs its opt-in, and provider probes, model discovery and the catalog refresh need the host listed in models.privateNetworkHosts, and bundle URLs, which have no opt-in, are refused. The bare-fetch invariant is a text tripwire over a fixed module list and does not see an aliased fetch or another HTTP client.",
+      "detail": "With a process-wide environment proxy (NODE_USE_ENV_PROXY, or --use-env-proxy on the command line or in NODE_OPTIONS) the host is resolved and checked locally first, but the proxy resolves it again, so the connection is not pinned to the checked answer; a network that resolves names only through its proxy fails closed. The worker’s chat and embedding clients and the Claude Code model proxy’s upstream calls take the same guard (modelCallFetch), so a public apiBase name that resolves to a private address is refused on an agent’s model call as well as on the credential test. A Claude Code harness run without the model proxy calls the credential’s host from inside the workspace container, outside the worker and outside that guard. Octokit and GitHub Enterprise API calls, the GitHub connection test against the saved API URL (a GitHub Enterprise host is often private), the sign-in organization-membership check that auto-approves a GitHub sign-up (it sends the platform credential to the instance’s API URL and follows no redirect), and the sign-in library’s Okta discovery fetch use a plain fetch; fixed public hosts such as Slack, Linear, Notion and Figma are not pinned either. For a repository on a GitHub Enterprise host every hop of the CI-log download may reach a private address, so a redirect from that host can aim the worker at another internal service (without the token). 198.18.0.0/15 is treated as private, so behind a fake-IP proxy tool every connector needs its opt-in, and provider probes, model discovery, the catalog refresh and the model and embedding calls need the host listed in models.privateNetworkHosts, and bundle URLs, which have no opt-in, are refused. The bare-fetch invariant is a text tripwire over a fixed module list and does not see an aliased fetch or another HTTP client.",
       "id": "outboundGuardCoverage",
       "refs": [
         "guardCreate",
@@ -2829,7 +3012,10 @@
         "modelRuntimeFetch",
         "githubTestFetch",
         "connectorCiLog",
-        "guardRanges"
+        "guardRanges",
+        "modelCallFetch",
+        "modelProxyUpstream",
+        "proxiedFetch"
       ],
       "status": "Confirmed boundary",
       "title": "Resolve-and-pin covers listed call sites, not every outbound request"
@@ -2846,7 +3032,7 @@
     {
       "body": "A pull-request webhook updates a row; of those events only a merge reaches the workflow, and only a delivered webhook updates anything.",
       "category": "Reliability",
-      "detail": "Only pull requests that a workflow’s pull-request step or an Agent Run’s draft delivery opens get a row. CLOSED and MERGED come only from signed pull_request webhooks, so without delivery (polling-only CI, a lost delivery) the row stays OPEN, and the list and the PR_CLOSED_BY_REVIEWER refusal both depend on delivery. An Agent Run’s own execution has ended by the time its pull request merges, so a merge is recorded without a signal, and its generated ticket id is never synced to the tracker. If an older row still holds the pull request’s number in that repository, the new row is not written. A run waiting on its merge keeps waiting after its pull request is closed unmerged, until a merge arrives or the wait ends; the refusal appears only when a later push step reaches the pull-request activity. A webhook for a pull request the platform did not open finds no row and changes nothing. Reopening restores only CLOSED to OPEN, and event times come from the host’s payload when it parses, else the time of receipt. The ticket list shows the tracker’s title, status and link as captured when a request was submitted, from the newest visible request that holds an answer; they are not refreshed. RunInput.ticketIsSynthetic marks an id the platform generated: the template launch and template webhook fallbacks, PRD runs (PRD-… ids), scheduled work requests (…-SCHED-… ids) and PRD stories the tracker gave no id; it defaults to false, so a user- or tracker-supplied id is never flagged. Agent runs and channel tasks are flagged and also recognised by template origin, template name or channel id; the channel assistant files no request of its own. An adopted pull request is re-linked only when the executing workflow has a ledger row of its own; without one it stays linked to its earlier execution, whose workflow receives the CI signal, and the close check does not cover it. Adoption matches by request and repository only and no head branch is stored, so after a branch prefix change or a missed close webhook the adopted pull request can have a different head branch than the one pushed. A retry is refused while a live ledger row of its request exists, a scheduled fire’s or a template-launched run’s included, and a fire is skipped while a live non-fire row does; each row is confirmed with Temporal before it blocks (the allocator’s own conflict row included), and each check reads the ledger and then acts, so a retry and a fire that both read before either writes its row can still push the same branch, and the later one to reach the pull-request step adopts and re-links the other’s pull request, so the other waits for a CI signal that now goes to the adopter until its wait ends.",
+      "detail": "Only pull requests that a workflow’s pull-request step or an Agent Run’s draft delivery opens get a row. CLOSED and MERGED come only from signed pull_request webhooks, so without delivery (polling-only CI, a lost delivery) the row stays OPEN, and the list and the PR_CLOSED_BY_REVIEWER refusal both depend on delivery. An Agent Run’s own execution has ended by the time its pull request merges, so a merge is recorded without a signal, and its generated ticket id is never synced to the tracker. If an older row still holds the pull request’s number in that repository, the new row is not written. A run waiting on its merge keeps waiting after its pull request is closed unmerged, until a merge arrives or the wait ends; the refusal appears only when a later push step reaches the pull-request activity. A webhook for a pull request the platform did not open finds no row and changes nothing. Reopening restores only CLOSED to OPEN, and event times come from the host’s payload when it parses, else the time of receipt. The ticket list shows the tracker’s title, status and link as captured when a request was submitted, from the newest visible request that holds an answer; they are not refreshed. RunInput.ticketIsSynthetic marks an id the platform generated: the template launch and template webhook fallbacks, PRD runs (PRD-… ids), scheduled work requests (…-SCHED-… ids), event-automation runs (ci-<run>-<attempt> for a failed Actions run, issue-<number>-<hash> for a labelled issue) and PRD stories the tracker gave no id; it defaults to false, so a user- or tracker-supplied id is never flagged. Agent runs and channel tasks are flagged and also recognised by template origin, template name or channel id; the channel assistant files no request of its own. An adopted pull request is re-linked only when the executing workflow has a ledger row of its own; without one it stays linked to its earlier execution, whose workflow receives the CI signal, and the close check does not cover it. Adoption matches by request and repository only and no head branch is stored, so after a branch prefix change or a missed close webhook the adopted pull request can have a different head branch than the one pushed. A retry is refused while a live ledger row of its request exists, a scheduled fire’s or a template-launched run’s included, and a fire is skipped while a live non-fire row does; each row is confirmed with Temporal before it blocks (the allocator’s own conflict row included), and each check reads the ledger and then acts, so a retry and a fire that both read before either writes its row can still push the same branch, and the later one to reach the pull-request step adopts and re-links the other’s pull request, so the other waits for a CI signal that now goes to the adopter until its wait ends.",
       "id": "prTrackingBounds",
       "refs": [
         "prEvents",
@@ -2861,7 +3047,9 @@
         "agentRunPr",
         "retryInFlight",
         "fireInFlight",
-        "inFlightConfirm"
+        "inFlightConfirm",
+        "workflowRunNormalize",
+        "issueLabelNormalize"
       ],
       "status": "Confirmed boundary",
       "title": "Pull-request tracking records the host’s state; it does not steer the run"
@@ -2929,17 +3117,115 @@
     {
       "body": "Memory gate refusals and recall drops are security events, but a drop is reported at most hourly per row and per process, and the gate matches patterns, not intent.",
       "category": "Trust boundary",
-      "detail": "Lesson, consolidation and channel writes refused for a match are MEMORY_WRITE_REFUSED events and dropped recalled items MEMORY_RECALL_DROPPED, carrying ids and pattern names, never the text. A drop is reported once per memory id per hour per worker process, written in the background so recall does not wait; a drop of another team’s channel row records only a count. An event raised outside an activity, or whose trace write fails, is only logged, and a write refused because an INJECTION pattern overran or is quarantined is traced as an outage, not a refusal. A consolidation whose scan failed is traced the same way, while a write whose pattern set could not load is thrown (commitToMemory) or logged, not traced. On such a load failure recall returns nothing. The fence labels memory as reference data; it does not stop a reworded instruction that no INJECTION pattern matches.",
+      "detail": "Lesson, consolidation and channel writes refused for a match are MEMORY_WRITE_REFUSED events and dropped recalled items MEMORY_RECALL_DROPPED, carrying ids and pattern names, never the text. A drop is reported once per memory id per hour per worker process, written in the background so recall does not wait; a drop of another team’s channel row records only a count. An event raised outside an activity, or whose trace write fails, is only logged, and a write refused because an INJECTION pattern overran or is quarantined is traced as an outage (memory.write_scan_unavailable), not a refusal. A consolidation whose scan failed, did not complete or could not load is traced the same way (memory.consolidation_scan_unavailable). These outage events are ordinary activity events in the run’s trace; the security-events view lists and counts only matches and recall drops, so a pattern outage that is stopping memory writes appears in no security count. A write whose pattern set could not load is thrown (commitToMemory) or logged, not traced. On such a load failure recall returns nothing. The fence labels memory as reference data; it does not stop a reworded instruction that no INJECTION pattern matches.",
       "id": "memoryGateCoverage",
       "refs": [
         "memoryGuard",
         "memoryFence",
         "memorySecurityEvent",
         "lessonRefused",
-        "consolidationGuard"
+        "consolidationGuard",
+        "memoryRefusalEvent",
+        "securityEventsView",
+        "memoryScanLoadFailed"
       ],
       "status": "Confirmed boundary",
-      "title": "Memory refusals are pattern-based and drop reports are throttled"
+      "title": "Memory refusals are pattern-based, drop reports are throttled, and a scan outage is not a security event"
+    },
+    {
+      "body": "The saver passes a launch decision when an enabled automation is saved or enabled; when it fires, nothing re-checks the saver.",
+      "category": "Governance",
+      "detail": "A fire checks the repository, the kill switch, the organization’s monthly budget and the limits, not the saver’s continued access or role. The run carries no launchedById and uses the platform credential. The label source is the exception in attribution only: the person who added the label must be an active platform user whose linked GitHub account matches, a member of the repository, and pass the launch decision at that moment; that user is recorded as requestedById and the run still acts as the platform. The check exists because an issue form adds labels on behalf of whoever opens the issue, so the label alone says nothing about who asked.",
+      "id": "automationSavedByNotRechecked",
+      "refs": ["automationSave", "automationActor", "automationEngine"],
+      "status": "Confirmed boundary",
+      "title": "An automation runs as the platform, not as the person who saved it"
+    },
+    {
+      "body": "Nothing polls the host for a failure or a label the platform was not told about.",
+      "category": "Reliability",
+      "detail": "The engine retries a start three times (after one and two seconds) and then answers 503, so a host that redelivers recovers; one that does not leaves a FAILED_TO_START decision for a manager to retry. Turning a kill switch off stops later decisions; it does not stop runs already started.",
+      "id": "automationWebhookOnly",
+      "refs": ["automationStart", "webhookSourceDelivery", "settingLabels"],
+      "status": "Confirmed boundary",
+      "title": "Automation decisions rest on the webhook; a missed delivery is not recovered"
+    },
+    {
+      "body": "The template has no human node and no review network; the fix is reviewed only as part of the pull request it lands on.",
+      "category": "Governance",
+      "detail": "Before the push a fix passes the implementer’s path guard (workflow and action files, symlinks and submodules refused), the implementer’s security gate, lint, typecheck and tests, the push step’s own checks, and its own workflow-path check on the pushed range. Verification labels the fix but does not gate it. The push step re-checks workflow paths only, not symlinks; that refusal lives in the implementer’s guard. Draft fixes are revised up to maxCiFixAttempts, while a pushed fix gets at most one follow-up.",
+      "id": "ciFixPushUnreviewed",
+      "refs": ["ciTriagePush", "ciTriagePushRetry", "ciWorkflowGuard", "ciVerifyRun"],
+      "status": "Confirmed boundary",
+      "title": "A pushed CI fix has no approval step"
+    },
+    {
+      "body": "A log that evades the INJECTION patterns reaches the implementer fenced as data, with the path guard behind it.",
+      "category": "Trust boundary",
+      "detail": "Redaction covers common token shapes only. The screen uses INJECTION patterns only, and the template-injection pattern is excluded because ordinary build output matches it. A scan that cannot complete counts as not clean, so such a log is diagnosed but never fixed from.",
+      "id": "ciTriageTrust",
+      "refs": ["ciLogScreen", "ciLogFence", "ciDiagnosisFence"],
+      "status": "Confirmed boundary",
+      "title": "CI log screening is pattern-based"
+    },
+    {
+      "body": "Only the whole run: of a failed step without Actions expressions is run, and nothing is installed first.",
+      "category": "Quality",
+      "detail": "Setup-dependent failures read as unverified or still failing; a command that passes before the fix reads as not reproduced. The workflow file is read from the failing branch’s tip in the workspace, not from the failing commit.",
+      "id": "ciVerifyScope",
+      "refs": ["ciVerifyCommand", "ciVerifyRun"],
+      "status": "Code-derived caveat",
+      "title": "Verification runs only a whole failed step’s command"
+    },
+    {
+      "body": "A changed built-in input schema reaches an existing deployment only if its stored schema equals one recorded in the previous-schemas map.",
+      "category": "Operations",
+      "detail": "Sync moves a built-in template’s input schema only while the template is active on its latest built-in version, runs no A/B experiment, and stores a schema an earlier release shipped; anything else is treated as an admin edit and kept. A built-in schema change not added to that map reaches fresh databases only. ci-triage-and-fix has no entry in the map.",
+      "id": "builtinSchemaForward",
+      "refs": ["builtinSchemaForward"],
+      "status": "Confirmed boundary",
+      "title": "Built-in input schemas move forward only from a schema a release shipped"
+    },
+    {
+      "body": "STARTED rows and rows naming something the platform produced are kept for good.",
+      "category": "Operations",
+      "detail": "The ledger’s growth from them is bounded only by each automation’s daily cap. The sweep deletes the rest in batches of 2,000, up to 50 batches a run, and continues the next day; it covers every source, so old schedule and webhook refusals go with the event suppressions.",
+      "id": "automationRetention",
+      "refs": ["pruneActivity", "settingRetention", "ledgerRefusalKey"],
+      "status": "Confirmed boundary",
+      "title": "Started decisions are never pruned"
+    },
+    {
+      "body": "The coverage model never decrypts a key or calls a provider, and the dashboard’s delete sends force.",
+      "category": "Operations",
+      "detail": "A revoked or wrong key reads as covered. The worker’s boot gate resolves each agent and the embedding model for real, so the two implementations of one rule can disagree on an edge (the coverage check also requires an apiBase on a non-built-in embedding credential, which the boot gate does not). A channel or workflow-template agent counts any credential for its provider. The delete guard protects API callers: the dashboard’s delete confirmation lists what the delete would strand and then sends force=true, and a forced delete by a team admin audits only the dependents that admin may see.",
+      "id": "credentialCoverageBounds",
+      "refs": [
+        "credentialCoverage",
+        "credentialDeleteGuard",
+        "credentialForceFromDashboard",
+        "workerBootGate"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Coverage checks rows, not keys, and the dashboard always forces"
+    },
+    {
+      "body": "A model or embedding call to a host that resolves to a private address fails unless the host is listed, and so does a provider that answers with a redirect.",
+      "category": "Integrations",
+      "detail": "A host that resolved publicly when a credential was saved and privately later is caught now, but an admin must list a legitimate internal host. A listed name is trusted to mean the server intended: any private-range address it resolves to is reachable, and only loopback, link-local and metadata addresses stay refused. The list is global to every credential, and under an environment proxy the check is not pinned.",
+      "id": "modelCallBounds",
+      "refs": ["modelCallFetch", "privateModelHostsSetting", "proxiedFetch"],
+      "status": "Confirmed boundary",
+      "title": "Guarded model calls fail closed for in-cluster and redirecting providers"
+    },
+    {
+      "body": "Custom providers get the response schema as prompt text, which a model can ignore.",
+      "category": "Agents",
+      "detail": "Compatible embedding endpoints without truncation support only work at a native 1536 width. Pricing keys off the resolved provider/model spec text, so a model reached through a proxy is priced by the spec, not by what the proxy actually serves.",
+      "id": "providerParity",
+      "refs": ["schemaInPrompt", "embedDimensions"],
+      "status": "Confirmed boundary",
+      "title": "Provider differences are bridged, not erased"
     }
   ],
   "modelDescriptions": {
@@ -2948,6 +3234,8 @@
     "Agent": "Versioned scoped agent persona, model/prompt/tools and skill attachments.",
     "AgentSkillRef": "Ordered agent-to-skill attachment.",
     "AgentTrace": "Tool call, LLM response or activity event with spend, spec-node link, span correlation and owning team/org.",
+    "Automation": "A rule on a repository: when an occurrence of an event source matches its filters, start a template with its options, within a cooldown and a daily cap.",
+    "AutomationFire": "One decision about one occurrence (a run started, or suppressed and why); an event automation’s decisions are keyed on the repository so they outlive the automation, and every limit is judged on them. Schedule fires and template webhook calls also leave rows here.",
     "AutonomyDecision": "Audit record of publish and human approval/rejection decisions.",
     "AutonomyPolicy": "Risk-class rules selected by template/team/global fallback.",
     "ChannelBudgetHold": "Schema entity; inspect fields and relationship declarations below.",
@@ -2961,7 +3249,7 @@
     "ConnectionCredential": "Schema entity; inspect fields and relationship declarations below.",
     "ConnectionTeamShare": "Schema entity; inspect fields and relationship declarations below.",
     "ContextSnapshot": "Captured request context: ticket, knowledge, Figma design and success criteria.",
-    "EmbeddingConfig": "Singleton embedding model and credential selection.",
+    "EmbeddingConfig": "Singleton embedding model and credential selection; the provider must be openai, google or compatible, and vectors are 1536 wide.",
     "EvalCase": "Fixture repository and baseline SHA, golden test and quarantine flags.",
     "EvalDataset": "Benchmark dataset containing frozen cases.",
     "EvalResult": "Normalized per-axis score linked to online or offline evaluation.",
@@ -2993,7 +3281,7 @@
     "OrganizationMembership": "Schema entity; inspect fields and relationship declarations below.",
     "OrgMonthlyUsage": "Schema entity; inspect fields and relationship declarations below.",
     "PersonalAccessToken": "Hashed long-lived bearer token, expiry and revocation tracking.",
-    "ProviderCredential": "Scoped encrypted LLM provider key and optional compatible API base.",
+    "ProviderCredential": "Scoped encrypted LLM provider key and optional API base: required by a compatible provider, and for a built-in provider a proxy base it is tested, listed and called at, through the outbound guard.",
     "PullRequest": "SCM pull-request tracking linked to a workflow and connection: OPEN/MERGED/CLOSED state, draft flag, capped title, and open, merge and close times.",
     "RepoAccess": "Schema entity; inspect fields and relationship declarations below.",
     "RepoDependency": "Directed repository dependency with source/provenance and contracts.",
@@ -3109,7 +3397,9 @@
       "AutonomyPolicy",
       "WorkflowTemplateVersion",
       "ScannerPattern",
-      "WorkflowShellAudit"
+      "WorkflowShellAudit",
+      "Automation",
+      "AutomationFire"
     ]
   },
   "reviewedCommit": "ad23270164df39f449efa870a17a5a7cfca7cec5",
@@ -5831,12 +6121,12 @@
       "title": "The GitHub test pins a typed URL; the saved URL keeps a plain fetch"
     },
     {
-      "anchor": "function buildModelUncached(spec: string, apiKey: string, apiBase?: string): LanguageModel {",
-      "before": 0,
+      "anchor": "const modelFetch = modelCallFetch();",
+      "before": 9,
       "id": "modelRuntimeFetch",
-      "lines": 22,
+      "lines": 40,
       "path": "packages/worker/src/lib/models.ts",
-      "title": "Run-time model clients are built by the provider SDKs with the credential’s apiBase"
+      "title": "Every chat client is built with the guarded model-call fetch"
     },
     {
       "anchor": "export async function fetchBundleJson(",
@@ -6445,6 +6735,582 @@
       "lines": 60,
       "path": "packages/worker/src/lib/memorySecurityEvent.ts",
       "title": "Memory refusals and drops recorded as security events, drops throttled per id"
+    },
+    {
+      "anchor": "export async function handleOccurrence<F, X>(",
+      "before": 0,
+      "id": "automationEngine",
+      "lines": 62,
+      "path": "packages/gateway/src/lib/automations/engine.ts",
+      "title": "One occurrence: the first matching automation, one decision, at most one run"
+    },
+    {
+      "anchor": "export async function decideUnderLock<F, X>(",
+      "before": 0,
+      "id": "automationDecide",
+      "lines": 105,
+      "path": "packages/gateway/src/lib/automations/engine.ts",
+      "title": "Limits are judged under a per-repository advisory lock across the repository’s whole ledger"
+    },
+    {
+      "anchor": "for (let attempt = 1; ; attempt++) {",
+      "before": 8,
+      "id": "automationStart",
+      "lines": 24,
+      "path": "packages/gateway/src/lib/automations/engine.ts",
+      "title": "A start is retried three times; a start that never lands is recorded FAILED_TO_START"
+    },
+    {
+      "anchor": "export async function actorLaunchDecision(",
+      "before": 0,
+      "id": "automationActor",
+      "lines": 48,
+      "path": "packages/gateway/src/lib/automations/engine.ts",
+      "title": "A labelling starts a run only for a linked, active repository member who passes the launch decision"
+    },
+    {
+      "anchor": "async function releaseDecision(",
+      "before": 0,
+      "id": "automationRelease",
+      "lines": 44,
+      "path": "packages/gateway/src/lib/automations/engine.ts",
+      "title": "A redelivery or a manager’s retry takes an undecided occurrence again; the earlier row stays, marked retried"
+    },
+    {
+      "anchor": "export const AUTOMATION_OUTCOMES = [",
+      "before": 0,
+      "id": "automationOutcomes",
+      "lines": 12,
+      "path": "packages/shared/src/automation/types.ts",
+      "title": "The outcomes a decision can take"
+    },
+    {
+      "anchor": "export interface EventSource<Filters = unknown, Facts = unknown> {",
+      "before": 0,
+      "id": "automationSource",
+      "lines": 60,
+      "path": "packages/shared/src/automation/types.ts",
+      "title": "An event source is a pure shared descriptor the gateway decides with"
+    },
+    {
+      "anchor": "export async function repoAutomationAccess(",
+      "before": 0,
+      "id": "automationAccess",
+      "lines": 28,
+      "path": "packages/gateway/src/lib/automations/access.ts",
+      "title": "Reading needs repository membership; managing needs ADMIN or LEAD of the owning team"
+    },
+    {
+      "anchor": "async function mayLaunch(",
+      "before": 8,
+      "id": "automationSave",
+      "lines": 18,
+      "path": "packages/gateway/src/routes/automations.ts",
+      "title": "Saving an enabled automation is a launch decision for the saver"
+    },
+    {
+      "anchor": "async function handleSourceDelivery<F, X>(",
+      "before": 0,
+      "id": "webhookSourceDelivery",
+      "lines": 42,
+      "path": "packages/gateway/src/routes/webhooks.ts",
+      "title": "A verified delivery reaches the engine; a start that failed answers 503 AUTOMATION_START_FAILED"
+    },
+    {
+      "anchor": "export function normalizeWorkflowRunEvent(",
+      "before": 0,
+      "id": "workflowRunNormalize",
+      "lines": 55,
+      "path": "packages/gateway/src/lib/automations/workflowRunFailed.ts",
+      "title": "Only a completed failed or timed-out run of this repository’s own branch becomes an occurrence"
+    },
+    {
+      "anchor": "export function normalizeIssueLabeledEvent(",
+      "before": 0,
+      "id": "issueLabelNormalize",
+      "lines": 45,
+      "path": "packages/gateway/src/lib/automations/issueLabeled.ts",
+      "title": "Only a person labelling an open issue becomes an occurrence"
+    },
+    {
+      "anchor": "keys: (x) => ({ scope: x.branch, subject: x.headSha }),",
+      "before": 6,
+      "id": "ciSourceKeys",
+      "lines": 10,
+      "path": "packages/shared/src/automation/sources/workflowRunFailed.ts",
+      "title": "A CI failure’s subject is its commit and its scope its branch"
+    },
+    {
+      "anchor": "model AutomationFire {",
+      "before": 6,
+      "id": "automationFireModel",
+      "lines": 36,
+      "path": "packages/shared/src/prisma/schema.prisma",
+      "title": "AutomationFire is keyed on the repository, not on the automation"
+    },
+    {
+      "anchor": "export async function recordAutomationActivity(",
+      "before": 4,
+      "id": "ledgerActivity",
+      "lines": 28,
+      "path": "packages/shared/src/lib/automationLedger.ts",
+      "title": "Schedule fires and template webhook calls leave best-effort ledger rows"
+    },
+    {
+      "anchor": "export function refusalKey(",
+      "before": 1,
+      "id": "ledgerRefusalKey",
+      "lines": 5,
+      "path": "packages/shared/src/lib/automationLedger.ts",
+      "title": "A refusal is recorded once an hour per reason"
+    },
+    {
+      "anchor": "export async function pruneAutomationDecisions(",
+      "before": 14,
+      "id": "pruneActivity",
+      "lines": 38,
+      "path": "packages/worker/src/activities/pruneAutomationDecisions.ts",
+      "title": "The daily sweep deletes decisions that started no run, never STARTED or produced ones"
+    },
+    {
+      "anchor": ".syncAutomationDecisionPruneSchedule(sweeps.automationDecisionPrune)",
+      "before": 3,
+      "id": "pruneSchedule",
+      "lines": 4,
+      "path": "packages/gateway/src/lib/startupScheduleSync.ts",
+      "title": "The prune is one system-wide schedule synchronized with the others"
+    },
+    {
+      "anchor": "cronExpression: envCron('AUTOMATION_DECISION_PRUNE_CRON', '37 4 * * *'),",
+      "before": 2,
+      "id": "pruneEnv",
+      "lines": 4,
+      "path": "packages/shared/src/lib/systemConfig.ts",
+      "title": "The prune schedule is environment-driven and on by default"
+    },
+    {
+      "anchor": "'workflow.automationDecisionRetentionDays': defineSetting({",
+      "before": 0,
+      "id": "settingRetention",
+      "lines": 14,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "Decision retention is a GLOBAL-only setting"
+    },
+    {
+      "anchor": "'github.ciFailureTriggersEnabled': defineSetting({",
+      "before": 0,
+      "id": "settingCiTriggers",
+      "lines": 12,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "The CI-failure kill switch is on by default"
+    },
+    {
+      "anchor": "'github.ciFixPushToPullRequestEnabled': defineSetting({",
+      "before": 0,
+      "id": "settingPush",
+      "lines": 13,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "Pushing a CI fix to a pull request’s branch is off by default"
+    },
+    {
+      "anchor": "'github.ciFixNeverPushBranches': defineSetting({",
+      "before": 0,
+      "id": "settingNever",
+      "lines": 12,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "Branches a CI fix is never pushed to"
+    },
+    {
+      "anchor": "'github.issueLabelAutomationsEnabled': defineSetting({",
+      "before": 0,
+      "id": "settingLabels",
+      "lines": 12,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "Issue-label automations are off by default"
+    },
+    {
+      "anchor": "export const CI_TRIAGE_AND_FIX_SPEC: WorkflowSpec = {",
+      "before": 0,
+      "id": "ciTriageSpec",
+      "lines": 20,
+      "path": "packages/shared/src/workflow/templates/ciTriageAndFix.ts",
+      "title": "ci-triage-and-fix is an ordinary spec the interpreter runs"
+    },
+    {
+      "anchor": "openPullRequest({ draft: true, next: 'reportFix', resetCiRetries: true }),",
+      "before": 2,
+      "id": "ciTriageDraft",
+      "lines": 40,
+      "path": "packages/shared/src/workflow/templates/ciTriageAndFix.ts",
+      "title": "The fix opens as a draft into the branch that failed; the CI loop revises it"
+    },
+    {
+      "anchor": "routeDelivery: {",
+      "before": 4,
+      "id": "ciTriageRoute",
+      "lines": 32,
+      "path": "packages/shared/src/workflow/templates/ciTriageAndFix.ts",
+      "title": "A pull request’s fix can be asked to land on its own branch; a refusal opens the draft"
+    },
+    {
+      "anchor": "checkPushRetries: {",
+      "before": 2,
+      "id": "ciTriagePushRetry",
+      "lines": 10,
+      "path": "packages/shared/src/workflow/templates/ciTriageAndFix.ts",
+      "title": "A pushed fix gets one follow-up at most"
+    },
+    {
+      "anchor": "export function refusalFor(",
+      "before": 0,
+      "id": "ciTriageRefusal",
+      "lines": 32,
+      "path": "packages/worker/src/activities/ciTriage.ts",
+      "title": "The run is re-read by id from the run’s own repository and refused on any mismatch"
+    },
+    {
+      "anchor": "export function decide(input: {",
+      "before": 6,
+      "id": "ciTriageDecide",
+      "lines": 50,
+      "path": "packages/worker/src/activities/ciTriage.ts",
+      "title": "Code, not the model, decides fix or report; the model can only narrow it"
+    },
+    {
+      "anchor": "export function neutralizeCommentText(",
+      "before": 4,
+      "id": "ciTriageComment",
+      "lines": 22,
+      "path": "packages/worker/src/activities/ciTriage.ts",
+      "title": "Model text is neutralized before the platform posts it"
+    },
+    {
+      "anchor": "export async function pushCiFixToPullRequest(",
+      "before": 0,
+      "id": "ciTriagePush",
+      "lines": 130,
+      "path": "packages/worker/src/activities/ciTriage.ts",
+      "title": "A fix is pushed onto a pull request’s branch only when every check holds at that moment"
+    },
+    {
+      "anchor": "async fastForwardBranch(",
+      "before": 0,
+      "id": "ciTriageFF",
+      "lines": 22,
+      "path": "packages/worker/src/lib/scm/github.ts",
+      "title": "The ref moves with force: false"
+    },
+    {
+      "anchor": "export function reproCommandProblem(",
+      "before": 0,
+      "id": "ciVerifyCommand",
+      "lines": 26,
+      "path": "packages/worker/src/activities/ciVerify.ts",
+      "title": "A reproduction command runs only as the whole run: of a step that failed"
+    },
+    {
+      "anchor": "const before = await workspace.execCapture(command, { timeoutMs: RUN_TIMEOUT_MS });",
+      "before": 8,
+      "id": "ciVerifyRun",
+      "lines": 30,
+      "path": "packages/worker/src/activities/ciVerify.ts",
+      "title": "The command runs on the failing branch, then on the fix, with the tree reset between"
+    },
+    {
+      "anchor": "export async function ciLogIsUsable(",
+      "before": 8,
+      "id": "ciLogScreen",
+      "lines": 12,
+      "path": "packages/shared/src/lib/ciLogScreen.ts",
+      "title": "A log is usable for a fix only if no INJECTION pattern matched and the scan completed"
+    },
+    {
+      "anchor": "export function fenceCiLogs(",
+      "before": 0,
+      "id": "ciLogFence",
+      "lines": 14,
+      "path": "packages/worker/src/lib/ciLogGuard.ts",
+      "title": "CI logs are fenced as data before the fixer sees them"
+    },
+    {
+      "anchor": "export function formatUntrustedCiDiagnosis(",
+      "before": 5,
+      "id": "ciDiagnosisFence",
+      "lines": 20,
+      "path": "packages/worker/src/workflows/runnableSteps.ts",
+      "title": "The diagnosis reaches the implementer fenced as untrusted data"
+    },
+    {
+      "anchor": "async function assertNoWorkflowChanges(",
+      "before": 6,
+      "id": "ciWorkflowGuard",
+      "lines": 36,
+      "path": "packages/worker/src/activities/allowedPaths.ts",
+      "title": "A change to workflow or action files, a symlink or a submodule is refused before anything is pushed"
+    },
+    {
+      "anchor": "key: 'ciTriager',",
+      "before": 6,
+      "id": "agentCiTriager",
+      "lines": 8,
+      "path": "packages/shared/src/lib/syncBuiltins.ts",
+      "title": "ciTriager is a seeded persona that inherits the planner’s model"
+    },
+    {
+      "anchor": "const schemaMove =",
+      "before": 4,
+      "id": "builtinSchemaForward",
+      "lines": 12,
+      "path": "packages/shared/src/lib/syncBuiltins.ts",
+      "title": "A built-in input schema moves forward only from one a release shipped"
+    },
+    {
+      "anchor": "export async function launchBaseBranch(",
+      "before": 0,
+      "id": "launchBase",
+      "lines": 28,
+      "path": "packages/gateway/src/lib/launchBaseBranch.ts",
+      "title": "A launch’s base branch must be a branch name and not a platform work branch"
+    },
+    {
+      "anchor": "export async function resolveRunBaseBranch(",
+      "before": 0,
+      "id": "runBase",
+      "lines": 20,
+      "path": "packages/worker/src/lib/runBaseBranch.ts",
+      "title": "Every cloning activity resolves the same base branch"
+    },
+    {
+      "anchor": "export function modelCallFetch(",
+      "before": 9,
+      "id": "modelCallFetch",
+      "lines": 12,
+      "path": "packages/shared/src/lib/modelDiscovery.ts",
+      "title": "modelCallFetch is the list guard plus redirect refusal, with the host list read per request"
+    },
+    {
+      "anchor": "const embeddingFetch = modelCallFetch();",
+      "before": 1,
+      "id": "embeddingFetch",
+      "lines": 45,
+      "path": "packages/worker/src/lib/embeddings.ts",
+      "title": "Embedding clients use the same guarded fetch"
+    },
+    {
+      "anchor": "const upstreamFetch = options.upstreamFetch ?? modelCallFetch();",
+      "before": 3,
+      "id": "modelProxyUpstream",
+      "lines": 8,
+      "path": "packages/worker/src/agents/claudeCode/modelProxy.ts",
+      "title": "The harness model proxy sends upstream calls through the guard"
+    },
+    {
+      "anchor": "function proxiedFetch(): typeof fetch {",
+      "before": 1,
+      "id": "proxiedFetch",
+      "lines": 4,
+      "path": "packages/shared/src/lib/guardedDispatcher.ts",
+      "title": "Under an environment proxy the guarded fetch uses Node’s fetch: checked, not pinned"
+    },
+    {
+      "anchor": "!(isBuiltInProvider(args.provider) && args.apiBase)",
+      "before": 6,
+      "id": "builtInApiBaseListing",
+      "lines": 10,
+      "path": "packages/shared/src/lib/modelDiscovery.ts",
+      "title": "A built-in provider behind an apiBase is never a complete listing"
+    },
+    {
+      "anchor": "customHeaders?: Record<string, string>;",
+      "before": 8,
+      "id": "listRequestAdapters",
+      "lines": 35,
+      "path": "packages/shared/src/lib/modelDiscovery.ts",
+      "title": "A custom apiBase keeps the provider’s auth style; a query or fragment in it is refused"
+    },
+    {
+      "anchor": "async function credentialForModel(",
+      "before": 8,
+      "id": "credentialPin",
+      "lines": 30,
+      "path": "packages/worker/src/lib/config/agentResolver.ts",
+      "title": "The agent’s pin, then the pin on the row its model came from, then the provider cascade"
+    },
+    {
+      "anchor": "export async function resolvePinnedCredential(",
+      "before": 8,
+      "id": "pinnedCredential",
+      "lines": 30,
+      "path": "packages/worker/src/lib/config/resolver.ts",
+      "title": "A pin is used only if it exists, matches the provider and is in the run’s scope"
+    },
+    {
+      "anchor": "export async function validateCredentialRef",
+      "before": 6,
+      "id": "credentialRefCheck",
+      "lines": 42,
+      "path": "packages/gateway/src/lib/agentLibraryService.ts",
+      "title": "A credential pin is checked at save for provider and reach"
+    },
+    {
+      "anchor": "export const schemaInPromptMiddleware",
+      "before": 12,
+      "id": "schemaInPrompt",
+      "lines": 35,
+      "path": "packages/worker/src/lib/schemaInPrompt.ts",
+      "title": "Compatible providers get the response schema as prompt text"
+    },
+    {
+      "anchor": "async function embedWithDimensions(",
+      "before": 7,
+      "id": "embedDimensions",
+      "lines": 25,
+      "path": "packages/worker/src/lib/embeddings.ts",
+      "title": "Embeddings are requested at 1536 wide and retried once without the parameter"
+    },
+    {
+      "anchor": "export const ModelSpecSchema = z",
+      "before": 9,
+      "id": "modelSpecSchema",
+      "lines": 12,
+      "path": "packages/gateway/src/lib/modelSpecSchema.ts",
+      "title": "A model spec is stored with its provider lowercased"
+    },
+    {
+      "anchor": "export function fallThroughCacheTtlMs()",
+      "before": 8,
+      "id": "fallThroughTtl",
+      "lines": 14,
+      "path": "packages/shared/src/config/cache.ts",
+      "title": "A lookup that fell through to a broader scope is cached for a shorter bound"
+    },
+    {
+      "anchor": "const bound = new Map<string, BoundReviewer>();",
+      "before": 4,
+      "id": "boundOnce",
+      "lines": 12,
+      "path": "packages/worker/src/agents/reviewNetwork.ts",
+      "title": "The review network binds each persona once, before fan-out"
+    },
+    {
+      "anchor": "function workspaceDnsFromEnv()",
+      "before": 2,
+      "id": "workspaceDns",
+      "lines": 18,
+      "path": "packages/shared/src/lib/systemConfig.ts",
+      "title": "WORKSPACE_DNS defaults to public resolvers; an invalid list falls back with a warning"
+    },
+    {
+      "anchor": "check('WORKSPACE_DNS', (raw) => parseDnsList(raw) !== null, DNS_HINT);",
+      "before": 2,
+      "id": "workspaceDnsBoot",
+      "lines": 14,
+      "path": "packages/shared/src/lib/systemConfig.ts",
+      "title": "The worker refuses to boot on an unusable resolver list"
+    },
+    {
+      "anchor": "const dns = infra.dns.map((server) => `--dns=${shellQuote(server)}`).join(' ');",
+      "before": 5,
+      "id": "workspaceDnsRun",
+      "lines": 12,
+      "path": "packages/worker/src/activities/workspace.ts",
+      "title": "createWorkspace adds one shell-quoted --dns flag per resolver"
+    },
+    {
+      "anchor": "export function memoryWriteRefusalEvent(",
+      "before": 6,
+      "id": "memoryRefusalEvent",
+      "lines": 14,
+      "path": "packages/worker/src/lib/memoryGuard.ts",
+      "title": "An incomplete scan is traced as an outage, a match as a security event"
+    },
+    {
+      "anchor": "export function agentCoverageGap(",
+      "before": 1,
+      "id": "credentialCoverage",
+      "lines": 50,
+      "path": "packages/shared/src/lib/credentialCoverage.ts",
+      "title": "Coverage is computed from rows, mirroring the worker’s resolution"
+    },
+    {
+      "anchor": "async function deleteCredentialAndAudit(",
+      "before": 8,
+      "id": "credentialDeleteGuard",
+      "lines": 40,
+      "path": "packages/gateway/src/routes/modelConfig.ts",
+      "title": "A credential delete that would strand an agent is refused unless forced"
+    },
+    {
+      "anchor": "const isBlocking = (gap: CoverageGap) =>",
+      "before": 8,
+      "id": "readinessBlocking",
+      "lines": 20,
+      "path": "packages/gateway/src/routes/readiness.ts",
+      "title": "Readiness fails only on gaps among agents the worker’s boot gate resolves"
+    },
+    {
+      "anchor": "export async function deploymentAgentRequirements(",
+      "before": 0,
+      "id": "deploymentAgentSet",
+      "lines": 37,
+      "path": "packages/shared/src/lib/deploymentAgents.ts",
+      "title": "The deployment’s required agents come from installed template steps plus channelAssistant"
+    },
+    {
+      "anchor": "export async function assertConfigReady(): Promise<void> {",
+      "before": 0,
+      "id": "workerBootGate",
+      "lines": 25,
+      "path": "packages/worker/src/lib/config/assertReady.ts",
+      "title": "The worker resolves every required agent and the embedding model before polling"
+    },
+    {
+      "anchor": "?force=true",
+      "before": 4,
+      "id": "credentialForceFromDashboard",
+      "lines": 8,
+      "path": "packages/web/src/hooks/useModelConfig.ts",
+      "title": "The dashboard’s confirmed delete sends force=true"
+    },
+    {
+      "anchor": "export async function scanSkillAdvisory(",
+      "before": 8,
+      "id": "scanAdvisory",
+      "lines": 14,
+      "path": "packages/gateway/src/lib/skillScan.ts",
+      "title": "Advisory scans of skill, prompt and rubric text"
+    },
+    {
+      "anchor": "throw new Error('pattern set could not be loaded');",
+      "before": 8,
+      "id": "memoryScanLoadFailed",
+      "lines": 14,
+      "path": "packages/worker/src/lib/memoryGuard.ts",
+      "title": "Recall returns nothing when the pattern set cannot load"
+    },
+    {
+      "anchor": "return '[withheld: could not be scanned]';",
+      "before": 6,
+      "id": "lessonWithheld",
+      "lines": 8,
+      "path": "packages/worker/src/lib/lessonRecall.ts",
+      "title": "A lesson’s explanation is withheld when it could not be scanned"
+    },
+    {
+      "anchor": "MEMORY_WRITE_REFUSED: activityEvent({ in: [...MEMORY_WRITE_REFUSED_EVENTS] }),",
+      "before": 4,
+      "id": "securityEventsView",
+      "lines": 8,
+      "path": "packages/gateway/src/routes/securityEvents.ts",
+      "title": "The security-events view lists only matches and recall drops"
+    },
+    {
+      "anchor": "app.get('/bundles/limits'",
+      "before": 2,
+      "id": "bundleLimitsRoute",
+      "lines": 6,
+      "path": "packages/gateway/src/routes/bundles.ts",
+      "title": "The effective bundle size cap is served to admins"
     }
   ],
   "usecases": [
@@ -6573,6 +7439,15 @@
       "refs": ["fourEyes", "fourEyesReject", "consensus", "consensusNoop", "ciNoop"],
       "status": "Seeded + executable",
       "title": "Two-person sign-off on green code"
+    },
+    {
+      "body": "Turn a failed GitHub Actions run into a diagnosis, and optionally a draft pull request into the branch that failed.",
+      "category": "Engineering",
+      "detail": "ci-triage-and-fix is seeded library content, started by a CI-failure automation on a repository or by hand with a run id, and run by the ordinary interpreter with the flagship steps; it is not separately exercised end to end here. The default mode only diagnoses and, for a pull request, comments; fix mode adds a draft pull request into the failing branch, labelled by a reproduce-before-and-after check, and where an admin allows it a pull request’s fix can be pushed onto its own branch instead. Workflow files are never changed and nothing is merged.",
+      "id": "ciTriageUse",
+      "refs": ["ciTriageSpec", "ciTriageDecide"],
+      "status": "Seeded + executable",
+      "title": "Diagnose and fix a failing CI run"
     }
   ]
 }
