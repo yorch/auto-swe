@@ -1,14 +1,18 @@
 import { cn } from '@/lib/utils';
+import { DocLink } from './DocLink';
 
 export function PageHeader({
   title,
   subtitle,
   actions,
+  learnMore,
   className,
 }: {
   title: string;
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
+  /** A link under the subtitle to the doc that explains this page. */
+  learnMore?: { slug: string; anchor?: string; label?: string };
   className?: string;
 }) {
   return (
@@ -24,6 +28,11 @@ export function PageHeader({
         </h1>
         {subtitle && (
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-paper-400">{subtitle}</p>
+        )}
+        {learnMore && (
+          <p className="mt-2">
+            <DocLink anchor={learnMore.anchor} label={learnMore.label} slug={learnMore.slug} />
+          </p>
         )}
       </div>
       {actions && (
