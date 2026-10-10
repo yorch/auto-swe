@@ -14,6 +14,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type BundlePreview,
+  useBundleMaxBytes,
   useExportBundle,
   useInstallBundleFromFile,
   useInstallBundleFromUrl,
@@ -41,6 +42,7 @@ export default function StudioBundlesPage() {
   const previewBundle = usePreviewBundle();
   const exportBundle = useExportBundle();
 
+  const maxBytes = useBundleMaxBytes();
   const [url, setUrl] = useState('');
   const [preview, setPreview] = useState<BundlePreview | null>(null);
   // Where the previewed bundle came from, so the install sends the same thing the admin reviewed.
@@ -77,7 +79,7 @@ export default function StudioBundlesPage() {
     try {
       setInstallError(null);
       setInstallDone(null);
-      const read = await readBundleFile(file);
+      const read = await readBundleFile(file, maxBytes ?? undefined);
       if (!read.ok) {
         setInstallError(read.message);
         return;

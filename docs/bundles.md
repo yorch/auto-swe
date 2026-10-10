@@ -65,7 +65,9 @@ refused with `400`. Likewise a bundle that declares a dependency on a connection
 `BUNDLE_TRUSTED_KEYS` is env-only (a JSON array of `{ id, publicKeyPem }`) so that DB write access
 does not let an attacker mark arbitrary content as verified. `BUNDLE_MAX_BYTES` caps the size of a
 bundle, whether fetched from a URL or sent inline by a file upload (default 5 MB; the inline routes
-accept a request body of that size plus a small envelope).
+accept a request body of that size plus a small envelope). `GET /api/v1/platform/bundles/limits`
+(ADMIN) returns the effective cap as `{ data: { maxBytes } }`, which Studio's file picker checks
+against.
 
 ## Authoring a bundle
 
@@ -167,8 +169,8 @@ previewed.
 ### Installing from a file in Studio
 
 Studio's bundles page also installs from a local `.json` file, picked or dropped onto the page. The
-browser reads and parses the file (invalid JSON, a non-object, or a file over 5 MB is reported
-without sending anything), sends the parsed bundle to `preview`, and shows the same dialog as a URL
+browser reads and parses the file (invalid JSON, a non-object, or a file over the server's cap
+(5 MB unless `BUNDLE_MAX_BYTES` says otherwise) is reported without sending anything), sends the parsed bundle to `preview`, and shows the same dialog as a URL
 install: trust state, what is created or replaced, the protected-content checkbox, and the second
 "Install unverified bundle" confirmation. The install then posts the bundle to `bundles/install`
 with the previewed content hash, under the same validation, trust, scan and protected-replace rules

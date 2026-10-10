@@ -24,6 +24,17 @@ export function useInstalledBundles() {
   });
 }
 
+/** The server's bundle size cap in bytes, or null while it is loading or unavailable. */
+export function useBundleMaxBytes(): number | null {
+  const { data } = useQuery({
+    queryFn: () =>
+      api.get<{ data: { maxBytes: number } }>(`${BASE}/limits`).then((r) => r.data.maxBytes),
+    queryKey: [...KEY, 'limits'],
+    staleTime: 5 * 60_000,
+  });
+  return data ?? null;
+}
+
 /** What installing one bundle entry would do to the library. */
 export interface BundlePreviewEntry {
   action: 'create' | 'replace';
