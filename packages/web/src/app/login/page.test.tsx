@@ -46,6 +46,23 @@ function renderWithQuery(query: string) {
   return render(<LoginPage />);
 }
 
+describe('login page: what it is and how to get in', () => {
+  it('says what auto-swe does and points a new user to an administrator', async () => {
+    renderWithQuery('');
+
+    const line = await screen.findByText(
+      'auto-swe turns a ticket into a pull request for you to review and merge.'
+    );
+    // The brand aside is `hidden lg:flex`; jsdom ignores CSS, so assert the line is not in it.
+    expect(line.closest('aside')).toBeNull();
+    expect(
+      screen.getByText(
+        'New here? New accounts usually need an administrator’s approval, or ask an administrator for an invite.'
+      )
+    ).toBeTruthy();
+  });
+});
+
 describe('login page: a failed sign-in callback', () => {
   it('explains a profile failure in plain language', async () => {
     renderWithQuery('error=unable_to_get_user_info');

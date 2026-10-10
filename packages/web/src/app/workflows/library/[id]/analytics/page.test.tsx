@@ -103,6 +103,21 @@ describe('TemplateAnalyticsPage', () => {
     expect(screen.getByText(/fewer than 30 runs, so this comparison is unreliable/)).toBeTruthy();
   });
 
+  it('offers a definition beside each derived metric', async () => {
+    renderPage();
+    await screen.findByText('Success rate');
+    for (const name of [
+      'About Success rate',
+      'About p50 duration',
+      'About p95 duration',
+      'About Time saved',
+      'About Autonomy rate',
+      'About Human review rate',
+    ]) {
+      expect(screen.getByRole('button', { name })).toBeTruthy();
+    }
+  });
+
   it('names outcomes in words', async () => {
     renderPage();
     expect(await screen.findByText('Pr opened')).toBeTruthy();

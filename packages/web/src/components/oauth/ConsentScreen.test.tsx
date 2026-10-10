@@ -67,6 +67,29 @@ describe('ConsentScreen', () => {
     expect(screen.queryByText(/runs on your own computer/i)).toBeNull();
   });
 
+  it('explains MCP in plain words and says how to disconnect later', async () => {
+    mockGateway();
+    render(withQuery(<ConsentScreen search={signed('mcp:read offline_access')} />));
+
+    expect(
+      await screen.findByText(
+        'MCP (Model Context Protocol) lets an AI app use auto-swe on your behalf.'
+      )
+    ).toBeTruthy();
+    expect(screen.getByRole('link', { name: /learn more about mcp/i }).getAttribute('href')).toBe(
+      '/docs/mcp-server'
+    );
+    expect(screen.getByRole('link', { name: /learn more about mcp/i }).getAttribute('target')).toBe(
+      '_blank'
+    );
+    expect(screen.getByText(/You can disconnect this at any time under/)).toBeTruthy();
+    const settings = screen.getByRole('link', {
+      name: 'Settings > Connected apps (opens in a new tab)',
+    });
+    expect(settings.getAttribute('href')).toBe('/settings');
+    expect(settings.getAttribute('target')).toBe('_blank');
+  });
+
   it('offers read only, in plain language, when the app asked for read', async () => {
     mockGateway({ writeToolsEnabled: true });
     render(withQuery(<ConsentScreen search={signed('mcp:read offline_access')} />));

@@ -24,6 +24,7 @@ import {
   useUpdateGithubInstallation,
 } from '@/hooks/useGithubInstallations';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 
 function CreateInstallationModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const [installationId, setInstallationId] = useState('');
@@ -178,6 +179,7 @@ export default function StudioGithubInstallationsPage() {
             Add installation
           </Button>
         }
+        learnMore={{ ...HELP_LINKS.githubAppSetup, label: 'GitHub App setup guide' }}
         subtitle={
           <>
             Where the GitHub App is installed. The app&apos;s own credentials are instance-wide and

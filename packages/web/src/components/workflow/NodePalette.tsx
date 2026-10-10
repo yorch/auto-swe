@@ -12,6 +12,7 @@ import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { SearchInput } from '@/components/ui/Toolbar';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -32,6 +33,8 @@ type GroupLabel = (typeof GROUP_ORDER)[number];
 
 type PrimitiveDef = {
   hint: string;
+  /** A short worked example, shown under the hint. */
+  example?: string;
   group: GroupLabel;
   elevated?: boolean;
 };
@@ -55,8 +58,9 @@ const PRIMITIVES: Record<SpecNode['type'], PrimitiveDef> = {
     hint: 'Run a library Agent by reference',
   },
   cond: {
+    example: 'e.g. nodes.review.output.approved == true',
     group: 'Control flow',
-    hint: 'Branch on an expression',
+    hint: 'Branch on an expression: true goes one way, false the other',
   },
   containerStep: {
     elevated: true,
@@ -98,8 +102,9 @@ const PRIMITIVES: Record<SpecNode['type'], PrimitiveDef> = {
     hint: 'Run a shell command in a container',
   },
   signal: {
+    example: 'e.g. name humanMergeSignal, timeout 7d',
     group: 'Control flow',
-    hint: 'Wait for an external signal',
+    hint: 'Wait for an external signal, or time out',
   },
   step: {
     group: 'Execution',
@@ -168,6 +173,7 @@ function PrimitiveGroup({
             <PaletteItem
               dragPayload={{ kind: 'primitive', nodeType: p.type }}
               elevated={p.elevated}
+              example={p.example}
               hint={p.hint}
               key={p.type}
               label={p.label}
@@ -213,7 +219,10 @@ export function NodePalette({ steps, onAdd }: Props) {
       className="flex h-full w-64 flex-col overflow-y-auto border-r border-ink-600 bg-ink-950"
     >
       <div className="border-b border-ink-600 px-4 py-3">
-        <h2 className="text-sm font-semibold text-paper-100">Add a node</h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-sm font-semibold text-paper-100">Add a node</h2>
+          <HelpTip term="node" />
+        </div>
         <p className="mt-0.5 text-xs leading-snug text-paper-500">
           Drag onto the canvas, or focus and press Enter
         </p>
@@ -279,6 +288,7 @@ export function NodePalette({ steps, onAdd }: Props) {
 function PaletteItem({
   label,
   hint,
+  example,
   swatch,
   dragPayload,
   title,
@@ -288,6 +298,7 @@ function PaletteItem({
 }: {
   label: string;
   hint?: string;
+  example?: string;
   swatch: string;
   dragPayload: PaletteDragKind;
   title?: string;
@@ -332,7 +343,12 @@ function PaletteItem({
           >
             {label}
           </div>
-          {hint && <div className="truncate text-[11px] text-paper-500">{hint}</div>}
+          {hint && (
+            <div className={cn('text-[11px] text-paper-500', !example && 'truncate')}>{hint}</div>
+          )}
+          {example && (
+            <div className="mt-0.5 break-words font-mono text-[11px] text-paper-400">{example}</div>
+          )}
         </div>
         {elevated && (
           <span

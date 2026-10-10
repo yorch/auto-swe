@@ -17,8 +17,8 @@ import { validateRouteParam } from '@/lib/routeParams';
 import { formatCost } from '@/lib/utils';
 
 /**
- * A workflow's detail now lives in the request panel. This address is kept for
- * old links: it resolves the workflow's request and forwards to it.
+ * A run's detail now lives in the request panel. This address is kept for
+ * old links: it resolves the run's request and forwards to it.
  */
 export default function WorkflowDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: rawId } = use(params);
@@ -94,8 +94,8 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
             )}
           </>
         }
-        subtitle="The request this workflow came from is no longer available, so only its own details are shown."
-        title={repo ? `${repo.organizationName}/${repo.repoName}` : 'Workflow'}
+        subtitle="The request this run came from is no longer available, so only the run’s own details are shown."
+        title={repo ? `${repo.organizationName}/${repo.repoName}` : 'Run'}
       />
       <Card className="max-w-3xl">
         <dl className="grid gap-5 text-sm sm:grid-cols-3">

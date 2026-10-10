@@ -145,10 +145,23 @@ type NumericKey = {
 }[keyof FormState];
 
 /** A grouped block of Tier-2 fields under a small heading. */
-function FieldGroup({ label, children }: { label: string; children: ReactNode }) {
+function FieldGroup({
+  label,
+  help,
+  children,
+}: {
+  label: string;
+  help?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div>
-      <h3 className="mb-3 text-[13px] font-semibold text-paper-200">{label}</h3>
+      <h3 className="text-[13px] font-semibold text-paper-200">{label}</h3>
+      {help ? (
+        <p className="mt-1 mb-3 max-w-2xl text-[13px] leading-relaxed text-paper-400">{help}</p>
+      ) : (
+        <div className="mb-3" />
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>
     </div>
   );
@@ -236,7 +249,10 @@ export function WorkflowDefaultsForm() {
           <CardTitle eyebrow="Resources &amp; tuning">Resource &amp; tuning defaults</CardTitle>
         </CardHeader>
         <div className="space-y-6">
-          <FieldGroup label="Per-tier token budgets">
+          <FieldGroup
+            help="A run that reaches its tier's input or output token cap is stopped with BUDGET_EXCEEDED."
+            label="Per-tier token budgets"
+          >
             <NumberField
               hint="Standard tier input-token cap."
               id="budget-standard-input"
@@ -287,7 +303,10 @@ export function WorkflowDefaultsForm() {
             />
           </FieldGroup>
 
-          <FieldGroup label="CI wait strategy">
+          <FieldGroup
+            help="How a run waits for CI on its pull request. In signal mode (the default) it waits up to 4 hours for the CI webhook, then ends as timed out; the poll settings are not used. In poll mode, if no checks appear within the grace period, CI counts as passed, and polling gives up at the deadline."
+            label="CI wait strategy"
+          >
             <Select
               hint="`signal` waits for a GitHub webhook. Use `poll` only where no inbound webhook can reach the gateway (local dev, air-gapped)."
               id="ci-wait-mode"

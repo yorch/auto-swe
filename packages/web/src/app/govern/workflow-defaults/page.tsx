@@ -7,6 +7,7 @@ import { CanaryForm } from '@/components/workflow/CanaryForm';
 import { ConsolidationForm } from '@/components/workflow/ConsolidationForm';
 import { RevalidationForm } from '@/components/workflow/RevalidationForm';
 import { WorkflowDefaultsForm } from '@/components/workflow/WorkflowDefaultsForm';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
 import { FOCUS_RING } from '@/lib/utils';
 
@@ -30,6 +31,7 @@ export default function GovernWorkflowPage() {
   return (
     <div>
       <PageHeader
+        learnMore={{ ...HELP_LINKS.configuration, label: 'About workflow defaults' }}
         subtitle={
           <>
             System-wide defaults applied to every new work request. Each section saves on its own.

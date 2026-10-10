@@ -32,4 +32,18 @@ describe('approvals page cap label', () => {
     fireEvent.click(screen.getByText('All'));
     expect(screen.getByText('1 step total')).toBeTruthy();
   });
+
+  it('describes each gate type and the timeout behaviour', () => {
+    steps.rows = [];
+    render(<GovernApprovalsPage />);
+    for (const type of ['humanApproval', 'humanDecision', 'humanInput', 'humanReview']) {
+      expect(screen.getByText(type)).toBeTruthy();
+    }
+    expect(screen.getByText(/If nobody answers in time/)).toBeTruthy();
+    expect(screen.getByText(/marked timed out and the run follows/)).toBeTruthy();
+    // No interactive control may sit inside the <summary>.
+    expect(
+      screen.getByText('What these steps are').closest('summary')?.querySelector('button')
+    ).toBeNull();
+  });
 });

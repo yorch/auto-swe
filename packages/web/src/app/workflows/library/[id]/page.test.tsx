@@ -99,6 +99,15 @@ describe('workflow editor with lint errors', () => {
     expect(screen.getByTestId('spec-errors').children.length).toBeGreaterThan(0);
   });
 
+  it('says saving makes an immutable version and defines Draft, Active and Promote', async () => {
+    await renderPage();
+    const note = await screen.findByText(/Saving creates a new immutable version/);
+    expect(note.textContent).toMatch(/in flight stay on the version they started with/);
+    expect(note.textContent).toMatch(/Draft\s*means the template cannot be launched yet/);
+    expect(note.textContent).toMatch(/Promote\s*makes a version the active one/);
+    expect(screen.getByRole('button', { name: 'What is a version?' })).toBeTruthy();
+  });
+
   it('keeps Save enabled in JSON mode, asks first, then saves the draft', async () => {
     await renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'JSON' }));

@@ -274,8 +274,8 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
               {event.externalTicketId ?? 'view run'}
             </Link>
           ) : (
-            // Workflows that keep no run (evals, workflow authoring) have no page to link to.
-            <span className="font-mono text-paper-500" title="This workflow keeps no run record">
+            // Runs that keep no run record (evals, workflow authoring) have no page to link to.
+            <span className="font-mono text-paper-500" title="No run page for this activity">
               {event.workflowId}
             </span>
           )}

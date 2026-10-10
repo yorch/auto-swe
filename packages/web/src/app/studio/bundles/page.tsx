@@ -23,6 +23,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { readBundleFile } from '@/lib/bundleFile';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 import { BundlePreviewModal } from './BundlePreviewModal';
@@ -124,6 +125,7 @@ export default function StudioBundlesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        learnMore={{ ...HELP_LINKS.bundles, label: 'About bundles' }}
         subtitle={
           <>
             Distribute library content (Agents, Skills, scanner patterns, Templates) across

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
 import { EpicLaunchForm } from '@/components/epics/EpicLaunchForm';
+import { HowItWorks } from '@/components/help/HowItWorks';
 import { WorkflowLaunchForm } from '@/components/requests/WorkflowLaunchForm';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
@@ -17,6 +18,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { requestHref } from '@/lib/requestDisplay';
 import { cn } from '@/lib/utils';
 import { useTeamStore } from '@/stores/teamStore';
@@ -43,9 +45,9 @@ const GUIDE: Record<Mode, { title: string; points: string[] }> = {
   },
   epic: {
     points: [
-      'A planner splits your brief into one request per repository.',
+      'A planner splits your brief into one run per repository.',
       'Requests run in dependency order, each with its own checks.',
-      'Each repository gets its own draft pull request to review.',
+      'Each repository gets its own pull request to review.',
     ],
     title: 'Running an epic',
   },
@@ -53,7 +55,7 @@ const GUIDE: Record<Mode, { title: string; points: string[] }> = {
     points: [
       'The workflow runs its steps, checks and approvals in order.',
       'You are asked when a step needs a person.',
-      'Any pull request it opens is a draft for you to review.',
+      'A pull request it opens is for you to review and merge.',
     ],
     title: 'Running a workflow',
   },
@@ -229,9 +231,11 @@ export function StartWork({
             View requests
           </ButtonLink>
         }
+        learnMore={{ ...HELP_LINKS.concepts, label: 'What happens after you start work' }}
         subtitle="Choose how to work, enter the details, then review before launching."
         title="Start work"
       />
+      <HowItWorks />
       <div className="grid gap-8 xl:grid-cols-[minmax(0,48rem)_18rem]">
         <div className="min-w-0 space-y-8">
           <SetupBanner items={['credentials', 'github', 'connections']} />
@@ -243,6 +247,12 @@ export function StartWork({
           )}
           <Step number={1} title="How do you want to work?">
             <WorkModePicker onChange={setMode} options={options} value={mode} />
+            <p className="text-[13px] leading-relaxed text-paper-400" data-testid="mode-hint">
+              <span className="font-medium text-paper-300">Not sure?</span> Pick a workflow when a
+              process in the library fits the job. Use an agent for a one-off task that needs no
+              defined process.
+              {canStartEpic ? ' Use an epic when the change spans several repositories.' : ''}
+            </p>
           </Step>
           <div className="space-y-8" hidden={mode !== 'workflow'}>
             <Step
@@ -328,8 +338,8 @@ export function StartWork({
             </Step>
           </div>
         </div>
-        <aside aria-label="What happens next" className="space-y-4 max-xl:hidden">
-          <Card className="sticky top-20 p-5" variant="inset">
+        <aside aria-label="What happens next" className="space-y-4">
+          <Card className="p-5 xl:sticky xl:top-20" variant="inset">
             <div className="kicker mb-1">What happens next</div>
             <h2 className="text-sm font-semibold text-paper-100">{guide.title}</h2>
             <ul className="mt-3 space-y-2.5">
@@ -341,7 +351,7 @@ export function StartWork({
               ))}
             </ul>
             <p className="mt-4 border-t border-ink-600 pt-3 text-xs text-paper-500">
-              Nothing is merged automatically. Follow progress from Requests.
+              No built-in step or template merges a pull request. Follow progress from Requests.
             </p>
           </Card>
         </aside>

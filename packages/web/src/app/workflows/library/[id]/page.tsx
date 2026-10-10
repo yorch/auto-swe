@@ -18,6 +18,7 @@ import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { SparkleIcon, SparkleTextIcon } from '@/components/ui/icons';
@@ -60,6 +61,7 @@ import {
 } from '@/hooks/useTemplates';
 import { useTransientFlag } from '@/hooks/useTransientFlag';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { estimatorPricing } from '@/lib/modelCatalog';
 import { validateRouteParam } from '@/lib/routeParams';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
@@ -284,11 +286,14 @@ function EditSchemaModal({
 function RailCard({
   action,
   children,
+  help,
   hint,
   title,
 }: {
   action?: React.ReactNode;
   children: React.ReactNode;
+  /** A HelpTip beside the title. */
+  help?: React.ReactNode;
   hint?: string;
   title: string;
 }) {
@@ -298,6 +303,7 @@ function RailCard({
         <h2 className="text-sm font-semibold text-paper-100">
           {title}
           {hint && <span className="ml-2 font-normal text-paper-500">{hint}</span>}
+          {help && <span className="ml-1">{help}</span>}
         </h2>
         {action}
       </div>
@@ -975,6 +981,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
             </>
           }
           className="mt-3 mb-0"
+          learnMore={{ ...HELP_LINKS.architectureNodeTypes, label: 'About node types' }}
           subtitle={
             template.description ||
             'A workflow: its versions, launch inputs, experiment and triggers.'
@@ -1001,6 +1008,15 @@ export default function TemplateDetailPage({ params }: PageProps) {
       </div>
 
       <TemplateSubNav active="editor" templateId={id} />
+
+      <p className="max-w-3xl text-[13px] leading-relaxed text-paper-400" id="versioning-note">
+        Saving creates a new immutable version; it never edits an old one, and runs already in
+        flight stay on the version they started with.{' '}
+        <strong className="text-paper-200">Draft</strong> means the template cannot be launched yet.{' '}
+        <strong className="text-paper-200">Active</strong> means it can be launched, using its
+        active version. <strong className="text-paper-200">Promote</strong> makes a version the
+        active one, so new runs use it.
+      </p>
 
       {saveError && mode !== 'edit' && (
         <Alert className="whitespace-pre-line" title="Could not save">
@@ -1117,6 +1133,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
           {/* Right rail */}
           <aside aria-label="Workflow settings" className="space-y-4">
             <RailCard
+              help={<HelpTip term="version" />}
               hint={template.versions.length > 1 ? String(template.versions.length) : undefined}
               title={template.versions.length > 1 ? 'Versions' : 'Version'}
             >

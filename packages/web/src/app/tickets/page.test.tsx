@@ -55,4 +55,16 @@ describe('Tickets page', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /Hide automated runs/ }));
     expect(nav.replace).toHaveBeenCalledWith('/tickets?automated=1', { scroll: false });
   });
+
+  it('explains a ticket id honestly and captions the automated-runs filter once', () => {
+    nav.search = '';
+    useTickets.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
+    const { rerender } = render(<TicketsPage />);
+    expect(screen.getByText(/the label work is filed under/)).toBeTruthy();
+    expect(screen.queryByText(/come from the issue tracker/)).toBeNull();
+    expect(screen.getByText(/^Hidden: agent runs, channel tasks/)).toBeTruthy();
+    nav.search = 'automated=1';
+    rerender(<TicketsPage />);
+    expect(screen.getByText(/^Including agent runs, channel tasks/)).toBeTruthy();
+  });
 });

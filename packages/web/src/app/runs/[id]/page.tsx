@@ -13,6 +13,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useCallback, useMemo, useRef, useState } from 'react';
+import { HowItWorks } from '@/components/help/HowItWorks';
 import { LayoutToggle } from '@/components/LayoutToggle';
 import { FlightRecorder } from '@/components/runs/layouts/FlightRecorder';
 import { SplitConsole } from '@/components/runs/layouts/SplitConsole';
@@ -25,6 +26,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Skeleton } from '@/components/ui/LoadingState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -116,6 +118,9 @@ interface PageProps {
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────────
+
+const CANCEL_HINT = 'Stop this run now. In-flight steps are aborted.';
+const RE_RUN_HINT = 'Start a new run of the same request. This run is kept as it is.';
 
 export default function RunDetailPage({ params }: PageProps) {
   const { id: rawId } = use(params);
@@ -380,10 +385,12 @@ export default function RunDetailPage({ params }: PageProps) {
             )}
             {!isTerminalWorkflowRunStatus(run.status) && (
               <Button
+                aria-describedby="cancel-run-hint"
                 className={TOUCH_SM}
                 disabled={cancelRun.isPending}
                 onClick={() => setShowCancelConfirm(true)}
                 size="sm"
+                title={CANCEL_HINT}
                 variant="danger"
               >
                 {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
@@ -391,19 +398,35 @@ export default function RunDetailPage({ params }: PageProps) {
             )}
             {canReRun && (
               <Button
+                aria-describedby="re-run-hint"
                 className={TOUCH_SM}
                 disabled={reRunLocked}
                 onClick={handleReRun}
                 size="sm"
+                title={RE_RUN_HINT}
                 variant="secondary"
               >
                 <Icon name="refresh" size={13} />
                 {retryRun.isPending ? 'Re-running…' : 'Re-run'}
               </Button>
             )}
+            <span className="sr-only" id="cancel-run-hint">
+              {CANCEL_HINT}
+            </span>
+            <span className="sr-only" id="re-run-hint">
+              {RE_RUN_HINT}
+            </span>
             <LayoutToggle onChange={setLayout} value={layout} />
           </div>
         </div>
+
+        <p className="mt-3 flex flex-wrap items-center gap-x-1 text-[13px] text-paper-500">
+          Below: the run's trace
+          <HelpTip term="trace" />, every step and agent action, and any gate where it is waiting on
+          a person.
+        </p>
+
+        <HowItWorks className="mt-3" />
 
         {(fullTracesFailed || retryRun.isSuccess || retryRun.errorView) && (
           <div className="mt-3 space-y-2">

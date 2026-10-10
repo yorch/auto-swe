@@ -179,4 +179,26 @@ describe('run page summary band', () => {
     fireEvent.click(screen.getByRole('button', { name: /jump to failure/i }));
     expect(scrolled).toHaveBeenCalled();
   });
+
+  it('describes Cancel and Re-run to assistive tech as well as on hover', async () => {
+    state.layout = 'A';
+    await renderPage();
+    const rerun = screen
+      .getAllByRole('button', { name: /Re-run/ })
+      .find((button) => button.hasAttribute('aria-describedby')) as HTMLElement;
+    expect(rerun.getAttribute('title')).toMatch(/new run of the same request/);
+    expect(rerun.getAttribute('aria-describedby')).toBe('re-run-hint');
+    expect(document.getElementById('re-run-hint')?.textContent).toMatch(/This run is kept/);
+    expect(document.getElementById('cancel-run-hint')?.textContent).toMatch(/aborted/);
+  });
+
+  it('explains gates once on the page and offers the collapsed explainer', async () => {
+    state.layout = 'A';
+    await renderPage();
+    expect(screen.getAllByRole('button', { name: /What is a gate/ })).toHaveLength(1);
+    const summary = screen.getByText('How auto-swe works');
+    const details = summary.closest('details');
+    expect(details).not.toBeNull();
+    expect(details?.hasAttribute('open')).toBe(false);
+  });
 });

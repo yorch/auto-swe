@@ -71,4 +71,44 @@ describe('Pull requests page', () => {
     render(<PullRequestsPage />);
     expect(usePullRequests).toHaveBeenCalledWith(expect.objectContaining({ state: 'all' }));
   });
+
+  it('always says no built-in step merges, with a link to the docs', () => {
+    nav.search = '';
+    usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
+    render(<PullRequestsPage />);
+    expect(screen.getByText(/No built-in step or template merges a pull request/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Learn more' }).getAttribute('href')).toBe(
+      '/docs/concepts'
+    );
+  });
+
+  it('keeps the never-merges note visible with many pull requests, and explains State and CI', () => {
+    nav.search = '';
+    const row = (id: string) => ({
+      ciStatus: 'PENDING',
+      closedAt: null,
+      costUsd: 0,
+      id,
+      isDraft: false,
+      latestRun: null,
+      mergedAt: null,
+      openedAt: new Date().toISOString(),
+      prNumber: 1,
+      repository: { id: 'r', name: 'api', org: 'acme' },
+      status: 'OPEN',
+      ticketId: null,
+      title: `PR ${id}`,
+      url: null,
+      workRequestId: null,
+    });
+    usePullRequests.mockReturnValue({
+      ...settled,
+      data: [row('a'), row('b'), row('c')],
+      meta: { total: 3 },
+    });
+    render(<PullRequestsPage />);
+    expect(screen.getByTestId('never-merges-note')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'About State and CI' })).toBeTruthy();
+    expect(screen.queryByText(/draft pull request/i)).toBeNull();
+  });
 });

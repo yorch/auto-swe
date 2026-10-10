@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
@@ -57,6 +58,7 @@ import {
 } from '@/lib/agentDisplay';
 import { buildAgentUpdate } from '@/lib/agentEditPatch';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { originLabel } from '@/lib/originLabel';
 import { scanWarningLead } from '@/lib/scanWarnings';
 
@@ -375,6 +377,7 @@ export default function AgentLibraryPage() {
             New agent
           </Button>
         }
+        learnMore={{ ...HELP_LINKS.agentLibrary, label: 'About the agent library' }}
         subtitle="Versioned agents. Saving an edit creates a new version; runs already in progress keep the version they started with, and History lets you compare or restore any version."
         title="Agent library"
       />
@@ -413,6 +416,7 @@ export default function AgentLibraryPage() {
             ]}
             value={scopeFilter}
           />
+          <HelpTip term="scopeCascade" />
           {filtering && (
             <Button
               onClick={() => {

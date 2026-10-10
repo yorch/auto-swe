@@ -13,6 +13,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/LoadingState';
@@ -37,6 +38,7 @@ import {
 } from '@/hooks/useSkills';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { originLabel } from '@/lib/originLabel';
 import { cn, FOCUS_RING, formatCost, formatDate, formatPercent } from '@/lib/utils';
 import { visibleOrNull, visibleText } from '@/lib/visibleText';
@@ -595,7 +597,14 @@ export default function StudioSkillsPage() {
             Create skill
           </Button>
         }
-        subtitle="Reusable prompt-fragment instructions injected into an agent's system prompt. Attach them to agents in the Agent library. Every text change is saved as a revision you can compare and restore."
+        learnMore={{ ...HELP_LINKS.skills, label: 'About skills' }}
+        subtitle={
+          <>
+            Reusable instructions added to an agent&apos;s system prompt <HelpTip term="skill" />.
+            Attach skills to agents in the Agent library. Every text change is saved as a revision
+            you can compare and restore.
+          </>
+        }
         title="Skill library"
       />
 

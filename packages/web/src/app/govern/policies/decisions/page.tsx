@@ -20,6 +20,7 @@ import { useAutonomyDecisions, useAutonomyPolicies } from '@/hooks/useAutonomyPo
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { useUsers } from '@/hooks/useUsers';
 import { eventLabel, KNOWN_AUTONOMY_EVENTS, riskClassLabel } from '@/lib/autonomyEvents';
+import { HELP_LINKS } from '@/lib/helpLinks';
 
 const LIMIT = 50;
 
@@ -85,6 +86,7 @@ export default function AutonomyDecisionsPage() {
     <div className="space-y-6">
       <BackLink href="/govern/policies" label="Autonomy policies" />
       <PageHeader
+        learnMore={{ ...HELP_LINKS.autonomyPolicyDecisionLog, label: 'About the decision log' }}
         subtitle="Every automatic or approval-required decision the autonomy policies made, newest first."
         title="Autonomy decisions"
       />

@@ -10,6 +10,7 @@ import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/LoadingState';
@@ -29,6 +30,7 @@ import {
   useUpdateScannerPattern,
 } from '@/hooks/useAdmin';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import {
   SCANNER_PATTERN_TYPE_INFO,
   SCANNER_PATTERN_TYPE_ORDER,
@@ -584,9 +586,20 @@ export default function GovernScannerPage() {
             New pattern
           </Button>
         }
+        learnMore={{
+          ...HELP_LINKS.scannerWriteToolChain,
+          label: 'About the write-tool security chain',
+        }}
         subtitle="Regex patterns behind the runtime scanners: skill-content and LLM-output injection/exfiltration checks, shell command and sensitive-file blocking, advisory code security findings, and the PII eval scorer. Built-in patterns can be toggled but not deleted."
         title="Scanner patterns"
       />
+
+      <p className="max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        A scanner pattern <HelpTip term="scannerPattern" /> is checked against what agents write and
+        run. Turning a built-in pattern off stops scanners from checking for it, so whatever it
+        would have blocked or flagged is no longer caught. A change can take up to a minute to reach
+        running services.
+      </p>
 
       <QueryBoundary
         error={loadError}

@@ -4,20 +4,23 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
+import { HowItWorks } from '@/components/help/HowItWorks';
 import { RequestList } from '@/components/requests/RequestList';
 import { SetupReadiness } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { Skeleton, SkeletonRows } from '@/components/ui/LoadingState';
-import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { useApprovals } from '@/hooks/useApprovals';
 import { type RequestScope, type RequestState, useRequests } from '@/hooks/useRequests';
 import { deniedMessage } from '@/lib/accessDenied';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 /** One request bucket on Home: its list section and its overview tile share this. */
@@ -229,22 +232,28 @@ function WaitingOnYou() {
   }
   return (
     <section>
-      <SectionHeader
-        actions={
-          <Link
-            className={cn(
-              'inline-flex items-center gap-1 rounded-sm text-[13px] text-ember-400 hover:underline',
-              FOCUS_RING
-            )}
-            href="/govern/approvals"
-          >
-            Open inbox
-            <Icon name="arrowRight" size={13} />
-          </Link>
-        }
-        hint={steps.length > 5 ? `Showing 5 of ${steps.length}` : undefined}
-        title="Waiting on you"
-      />
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-ink-600 pb-3">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
+          <h2 className="text-lg font-semibold tracking-tight text-paper-100">Waiting on you</h2>
+          <HelpTip label="Waiting on you">
+            Runs that have stopped at a gate and need a person to approve, answer, or review before
+            they continue. Answer them in the approvals inbox.
+          </HelpTip>
+          {steps.length > 5 && (
+            <span className="text-[12.5px] text-paper-500">Showing 5 of {steps.length}</span>
+          )}
+        </div>
+        <Link
+          className={cn(
+            'inline-flex items-center gap-1 rounded-sm text-[13px] text-ember-400 hover:underline',
+            FOCUS_RING
+          )}
+          href="/govern/approvals"
+        >
+          Open inbox
+          <Icon name="arrowRight" size={13} />
+        </Link>
+      </div>
       <div className="space-y-3">
         {steps.slice(0, 5).map((step) => (
           <HumanStepCard key={step.id} step={step} />
@@ -372,6 +381,24 @@ function AccessDeniedNotice() {
   ) : null;
 }
 
+/**
+ * Open for a user with no requests at all; the cached bucket queries tell us. The default is
+ * decided once, on the first settled read, so switching Mine/Team never discards a toggle.
+ */
+function HomeHowItWorks({ scope }: { scope: RequestScope }) {
+  const queries = [
+    useBucket(scope, 'attention'),
+    useBucket(scope, 'active'),
+    useBucket(scope, 'success'),
+  ];
+  const [openByDefault, setOpenByDefault] = useState<boolean | null>(null);
+  const settled = queries.every((query) => query.isSuccess);
+  if (openByDefault === null && settled) {
+    setOpenByDefault(queries.every((query) => query.data?.meta.total === 0));
+  }
+  return <HowItWorks defaultOpen={openByDefault === true} />;
+}
+
 export default function HomePage() {
   const [scope, setScope] = useState<RequestScope>('MINE');
   return (
@@ -391,9 +418,11 @@ export default function HomePage() {
             </ButtonLink>
           </>
         }
+        learnMore={{ ...HELP_LINKS.concepts, label: 'Requests, runs and gates explained' }}
         subtitle="See what needs your attention, follow your work, and review the results."
         title="Home"
       />
+      <HomeHowItWorks scope={scope} />
       <SetupReadiness />
       <section aria-label="Overview" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">

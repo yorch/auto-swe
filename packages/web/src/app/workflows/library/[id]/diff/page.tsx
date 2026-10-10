@@ -360,6 +360,8 @@ function TemplateDiffContent({ params }: PageProps) {
               {parseError && <Alert>{parseError}</Alert>}
               {diffPayload && !parseError && specPair && (
                 <DiffBody
+                  after={after}
+                  before={before}
                   changedNodeDiffs={changedNodeDiffs}
                   diffPayload={diffPayload}
                   specPair={specPair}
@@ -374,6 +376,8 @@ function TemplateDiffContent({ params }: PageProps) {
 }
 
 function DiffBody({
+  before,
+  after,
   diffPayload,
   specPair,
   changedNodeDiffs,
@@ -384,6 +388,8 @@ function DiffBody({
     specB: ReturnType<typeof parseWorkflowSpec>;
   };
   changedNodeDiffs: Array<{ nodeId: string; before: unknown; after: unknown }>;
+  before: number | null;
+  after: number | null;
 }) {
   const { diff } = diffPayload;
   const presentationOnly = diff.presentationOnlyNodes ?? [];
@@ -407,6 +413,10 @@ function DiffBody({
             </Badge>
           </div>
         </CardHeader>
+        <p className="mb-3 text-[13px] text-paper-400">
+          Added nodes exist only in v{after}, removed nodes only in v{before}, and changed nodes
+          exist in both but differ in at least one field.
+        </p>
         <dl className="divide-y divide-ink-600 text-[13px]">
           <DiffStat ids={diff.addedNodes} label="Added" tone="moss" />
           <DiffStat ids={diff.removedNodes} label="Removed" tone="brick" />

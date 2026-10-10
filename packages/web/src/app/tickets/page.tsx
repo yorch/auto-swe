@@ -5,6 +5,7 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
@@ -47,7 +48,13 @@ function Tickets() {
   return (
     <div className="space-y-6">
       <PageHeader
-        subtitle="Everything filed under one ticket: its requests, runs, pull requests and cost."
+        subtitle={
+          <>
+            Everything filed under one ticket <HelpTip term="ticket" />: its requests, runs, pull
+            requests and cost. A ticket id is the label work is filed under: usually your tracker’s
+            issue key, or a generated id when none was given.
+          </>
+        }
         title="Tickets"
       />
       <div className="space-y-4">
@@ -79,9 +86,13 @@ function Tickets() {
               onChange={(event) =>
                 update({ automated: event.target.checked ? null : '1', offset: null })
               }
-              title="Agent runs, channel tasks and launches that have no ticket of their own."
             />
           </Toolbar>
+          <p className="border-b border-ink-600 px-4 py-2 text-xs text-paper-500">
+            {includeAutomated
+              ? 'Including agent runs, channel tasks and launches that have no ticket of their own.'
+              : 'Hidden: agent runs, channel tasks and launches that have no ticket of their own.'}
+          </p>
           <QueryBoundary
             error={error}
             isError={isError}

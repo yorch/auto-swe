@@ -5,6 +5,7 @@ import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Skeleton } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -14,6 +15,7 @@ import { Select } from '@/components/ui/Select';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Toolbar } from '@/components/ui/Toolbar';
 import { type ApprovalFilter, type ApprovalSort, useApprovals } from '@/hooks/useApprovals';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
 
 const TABS: { id: ApprovalFilter; label: string }[] = [
@@ -67,6 +69,7 @@ export default function GovernApprovalsPage() {
             {isFetching ? 'Refreshing…' : 'Refresh'}
           </Button>
         }
+        learnMore={{ ...HELP_LINKS.approvals, label: 'About approvals' }}
         subtitle={
           isLoading || isError
             ? INTRO
@@ -80,6 +83,40 @@ export default function GovernApprovalsPage() {
         }
         title={navLabel('/govern/approvals')}
       />
+
+      <details className="rounded-lg border border-ink-500/70 bg-ink-800/60">
+        <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
+          What these steps are
+        </summary>
+        <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-[13px] leading-relaxed text-paper-300">
+          <p>
+            Each is a gate <HelpTip term="gate" /> that waits for a person.
+          </p>
+          <ul className="list-disc space-y-1 pl-4">
+            <li>
+              <span className="font-mono text-paper-200">humanApproval</span>: approve or reject{' '}
+              <HelpTip term="approval" />.
+            </li>
+            <li>
+              <span className="font-mono text-paper-200">humanDecision</span>: choose one of 2 to 10
+              options; the choice picks the next step.
+            </li>
+            <li>
+              <span className="font-mono text-paper-200">humanInput</span>: fill in a form; the
+              values are available to later steps.
+            </li>
+            <li>
+              <span className="font-mono text-paper-200">humanReview</span>: read content such as a
+              diff and submit notes; the run then continues.
+            </li>
+          </ul>
+          <p>
+            Every one of these steps has a timeout. If nobody answers in time, the step is marked
+            timed out and the run follows the node's timeout route, such as ending as timed out or
+            opening the pull request. The run itself does not end unless that route ends it.
+          </p>
+        </div>
+      </details>
 
       <div>
         <TabBar

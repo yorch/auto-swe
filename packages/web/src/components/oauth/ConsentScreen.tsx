@@ -1,16 +1,19 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { AuthHeading, AuthLayout } from '@/components/layout/AuthLayout';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { DocLink } from '@/components/ui/DocLink';
 import { Icon } from '@/components/ui/Icon';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { useMcpGrants } from '@/hooks/useMcpGrants';
 import { useConsentDecision, useOAuthClientName } from '@/hooks/useOAuthConsent';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import {
   describeRedirect,
   grantedScopes,
@@ -149,6 +152,10 @@ function ConsentDecision({ search }: { search: string }) {
         <span className="font-semibold text-paper-100">{name ?? 'An app'}</span> wants to act on
         your behalf in auto-swe.
       </AuthHeading>
+      <p className="-mt-2 mb-4 text-[13px] leading-relaxed text-paper-500">
+        MCP (Model Context Protocol) lets an AI app use auto-swe on your behalf.{' '}
+        <DocLink label="Learn more about MCP" newTab {...HELP_LINKS.mcpServer} />
+      </p>
 
       <div className="divide-y divide-ink-600 rounded-xl border border-ink-400/60 bg-ink-900/60">
         <div className="p-4">
@@ -238,7 +245,20 @@ function ConsentDecision({ search }: { search: string }) {
         {error && <Alert>{error}</Alert>}
       </div>
 
-      <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row">
+      <p className="mt-6 text-[13px] leading-relaxed text-paper-500">
+        You can disconnect this at any time under{' '}
+        <Link
+          className="text-ember-300 underline hover:text-ember-200"
+          href="/settings"
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          Settings &gt; Connected apps <span className="sr-only">(opens in a new tab)</span>
+        </Link>
+        .
+      </p>
+
+      <div className="mt-4 flex flex-col-reverse gap-3 sm:flex-row">
         <Button
           className="sm:flex-1"
           disabled={decide.isPending}

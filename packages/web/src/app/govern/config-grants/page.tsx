@@ -29,6 +29,7 @@ import { useTeams } from '@/hooks/useTeams';
 import { useEligibleUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 import { platformRoleLabel } from '@/lib/govLabels';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 
@@ -116,6 +117,7 @@ export default function GovernConfigGrantsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        learnMore={{ ...HELP_LINKS.configGrants, label: 'About config grants' }}
         subtitle="Delegate fine-grained permission to change platform settings. Grants are bounded to known keys or groups — they never grant generic IAM or the ability to mint further grants."
         title={navLabel('/govern/config-grants')}
       />
@@ -127,6 +129,12 @@ export default function GovernConfigGrantsPage() {
         <p className="mb-5 text-[13px] text-paper-400">
           Choose which settings, who may change them, and where. The preview shows exactly which
           keys the pattern covers.
+        </p>
+        <p className="mb-5 text-[13px] text-paper-400">
+          A key pattern is an exact setting key, a group prefix such as{' '}
+          <span className="font-mono text-paper-200">channel.*</span>, or{' '}
+          <span className="font-mono text-paper-200">*</span> for every setting. It is not a glob:
+          no other wildcards are supported.
         </p>
         {formError && <Alert className="mb-4">{formError}</Alert>}
         {formSuccess && (

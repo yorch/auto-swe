@@ -13,6 +13,7 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { SparkleIcon } from '@/components/ui/icons';
@@ -37,6 +38,7 @@ import {
   useWorkflowTemplates,
 } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { requestHref } from '@/lib/requestDisplay';
 import { requiresRoleTitle } from '@/lib/roles';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
@@ -568,7 +570,13 @@ function TemplateRow({
       </Td>
       <Td align="right" className="py-3 pr-3 pl-4 sm:pr-4">
         <div className="flex items-center justify-end gap-1.5 max-sm:justify-start">
-          <RunAction template={t} />
+          {systemManaged ? (
+            <span className="max-w-[14rem] text-xs text-paper-500 max-sm:max-w-none">
+              No Run button: the platform starts this one itself, for channel assistants.
+            </span>
+          ) : (
+            <RunAction template={t} />
+          )}
           <ActionMenu items={menuItems} label={`More actions for ${t.name}`} />
         </div>
       </Td>
@@ -671,9 +679,11 @@ export default function TemplatesPage() {
 
       <PageHeader
         actions={newWorkflowButton}
+        learnMore={{ ...HELP_LINKS.conceptsWorkflows, label: 'About workflows' }}
         subtitle={
           <>
-            Your reusable workflows. Pick one, run it with your inputs, and follow the request.
+            Your reusable workflow templates <HelpTip term="workflowTemplate" />. Pick one, run it
+            with your inputs, and follow the request.
             {manageTitle && (
               <span className="mt-1 block text-xs text-paper-500" id="manage-reason">
                 {manageTitle}.
@@ -722,6 +732,11 @@ export default function TemplatesPage() {
             value={statusFilter}
           />
         </Toolbar>
+        <p className="border-b border-ink-600 px-4 py-2 text-xs text-paper-500 sm:px-5">
+          Active templates can be launched once a version is promoted. Drafts are still being edited
+          and cannot be launched until someone activates them. Archived templates are hidden from
+          the default list and cannot be launched.
+        </p>
         <QueryBoundary
           error={loadError}
           isError={isError}
