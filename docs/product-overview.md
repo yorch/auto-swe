@@ -12,7 +12,7 @@ Docker workspaces, human approval gates wherever a team wants them, and cost, se
 observability applied to every run.
 
 The flagship use case — and the one the default template ships for — is **ticket in, reviewed and
-tested draft pull request out.** That flow is not privileged runtime code: it is an ordinary
+tested pull request out.** That flow is not privileged runtime code: it is an ordinary
 workflow template composed of the same node types any team can author, so it is a starting point
 rather than the boundary of what the platform does. Other automations (dependency sweeps,
 release-note generation, scheduled audits, PRD decomposition) are the same engine with a different
@@ -145,7 +145,7 @@ flowchart LR
 
 ### 5.2 Multi-repo epic
 
-A planner agent decomposes a brief spanning ≥2 repos into a per-repo dependency graph; `EpicOrchestratorWorkflow` fans out child workflows in dependency order, each running the full standard flow, with auto merge-conflict resolution. Surfaced as a dependency graph at `/epics/:id`.
+A planner agent decomposes a brief spanning ≥2 repos into a per-repo dependency graph; `EpicOrchestratorWorkflow` fans out child runs in dependency order, each running the full standard flow, with auto merge-conflict resolution. Surfaced as a dependency graph at `/epics/:id`.
 
 ### 5.3 Human-in-the-loop approvals
 
