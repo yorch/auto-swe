@@ -201,9 +201,9 @@ function AuditWorkspace() {
           }
         >
           <SearchInput
-            label="Search by person or entity"
+            label="Search by person, entity type or full entity ID. Partial IDs do not match."
             onChange={setSearchDraft}
-            placeholder="Search person or entity…"
+            placeholder="Person, type or full entity ID…"
             value={searchDraft}
           />
           <Select

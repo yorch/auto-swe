@@ -176,6 +176,21 @@ permission model whose holders can mint further grants widens itself.
 
 Every write, and every grant and revocation, lands in `ConfigAuditLog` with its before-state.
 
+### The audit log
+
+`/govern/audit` (ADMIN only) lists the log newest first, 50 per page, filtered by action, actor,
+entity type and a UTC date range. Free-text search matches a person's email or name (as their actor
+ids), the entity type as a substring, and an entity or actor id only when the whole UUID is typed —
+both id columns are `uuid`, which a substring match cannot reach. The table shortens ids, so a
+copied prefix finds nothing.
+
+`GET /api/v1/platform/audit-log/export` returns the same filter as a streamed CSV
+(`time,action,actor,entity_type,entity_id,before,after`), newest first, one row per entry. It holds
+at most 50,000 rows. `X-Export-Row-Limit` carries that cap and `X-Export-Truncated` is `true` only
+when more entries matched than the cap, in which case the file is the newest part of the result and
+the page says so with the limit. A cell starting with `=`, `+`, `-`, `@`, tab or carriage return is
+prefixed with `'` so a spreadsheet does not run it.
+
 ---
 
 ## 4. Run-pinned settings
@@ -294,6 +309,10 @@ from the definition.
 
 ## Limitations
 
+- **The audit log's entity-id search is exact.** Only a complete UUID matches an entity or actor id;
+  a prefix or fragment returns nothing. The CSV export stops at 50,000 rows, newest first, and the
+  rest of a larger result is reachable only by narrowing the filters or date range and exporting
+  again. The browser holds the whole file in memory before saving it.
 - **Pinning needs a direct connection.** With a process-wide proxy (`NODE_USE_ENV_PROXY`,
   `--use-env-proxy` on the command line or in `NODE_OPTIONS`) the proxy resolves the target, so the
   host is resolved and checked beforehand but the connection cannot be pinned to that answer. The

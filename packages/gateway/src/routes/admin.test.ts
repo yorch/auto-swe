@@ -530,7 +530,7 @@ describe('adminRoutes', () => {
       });
     });
 
-    it('matches a full entity id exactly, since the column is a uuid', async () => {
+    it('matches a full id exactly against the entity and the actor, since the columns are uuids', async () => {
       const id = 'ABCDEF01-2345-4678-89AB-CDEF01234567';
       const res = await ctx.app.inject({
         headers: AUTH,
@@ -542,6 +542,7 @@ describe('adminRoutes', () => {
         where: {
           OR: [
             { entityId: id.toLowerCase() },
+            { actorId: id.toLowerCase() },
             { entityType: { contains: id, mode: 'insensitive' } },
           ],
         },

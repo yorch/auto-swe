@@ -108,7 +108,7 @@ describe('GovernAuditPage', () => {
     render(withQuery(<GovernAuditPage />));
     await screen.findByText('1–2 of 2');
 
-    fireEvent.change(screen.getByLabelText('Search by person or entity'), {
+    fireEvent.change(screen.getByLabelText(/Search by person/), {
       target: { value: 'alice' },
     });
 

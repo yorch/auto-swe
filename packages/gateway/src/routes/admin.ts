@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream';
+import type { Prisma } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -286,14 +287,16 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // ── Audit log ─────────────────────────────────────────────────────────────
 
   /** One filter for the list and the export, so a file always matches what was on screen. */
-  async function auditWhere(q: z.infer<typeof AuditLogExportQuery>) {
+  async function auditWhere(
+    q: z.infer<typeof AuditLogExportQuery>
+  ): Promise<Prisma.ConfigAuditLogWhereInput> {
     const { action, actorId, entityType, search, since, until } = q;
     const createdAt = {
       ...(since ? { gte: new Date(`${since}T00:00:00.000Z`) } : {}),
       // `until` names a whole day, so the bound is the start of the next one.
       ...(until ? { lt: new Date(Date.parse(`${until}T00:00:00.000Z`) + DAY_MS) } : {}),
     };
-    let searchClause = {};
+    let searchClause: Prisma.ConfigAuditLogWhereInput = {};
     if (search) {
       // The log has no relation to User, so an actor match is a lookup of their ids.
       const people = await fastify.prisma.user.findMany({
@@ -308,9 +311,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
       searchClause = {
         OR: [
-          // `entity_id` is a uuid column, which Prisma will not run `contains` on (the query
-          // fails with a validation error), so an id matches only when typed in full.
-          ...(UUID_RE.test(search) ? [{ entityId: search.toLowerCase() }] : []),
+          // `entity_id` and `actor_id` are uuid columns, which Prisma will not run `contains`
+          // on (the query fails with a validation error), so an id matches only when typed in full.
+          ...(UUID_RE.test(search)
+            ? [{ entityId: search.toLowerCase() }, { actorId: search.toLowerCase() }]
+            : []),
           { entityType: { contains: search, mode: 'insensitive' } },
           ...(people.length ? [{ actorId: { in: people.map((u) => u.id) } }] : []),
         ],
