@@ -169,9 +169,10 @@ export async function explainLesson(
   // the text.
   const gate = async (text: string) => {
     const scan = await memoryInjectionMatches([text]).catch(() => null);
-    return scan === null || scan.loadFailed || scan.matches.length > 0
-      ? '[withheld: matched an injection pattern]'
-      : text;
+    if (scan === null || scan.loadFailed) {
+      return '[withheld: could not be scanned]';
+    }
+    return scan.matches.length > 0 ? '[withheld: matched an injection pattern]' : text;
   };
   const evidence = metadata.evidence as { quote?: unknown } | undefined;
   return {

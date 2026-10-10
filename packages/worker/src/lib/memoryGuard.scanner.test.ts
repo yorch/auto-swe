@@ -108,9 +108,9 @@ describe('memory recall with the real scanner', () => {
     });
     memoryFindMany.mockResolvedValue([]);
     const out = await explainLesson('repo-1', 'l1');
-    expect(out?.rationale).toBe('[withheld: matched an injection pattern]');
+    expect(out?.rationale).toBe('[withheld: could not be scanned]');
     expect((out?.evidence as { quote?: string } | null)?.quote).toBe(
-      '[withheld: matched an injection pattern]'
+      '[withheld: could not be scanned]'
     );
   });
 });
