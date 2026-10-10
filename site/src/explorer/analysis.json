@@ -2272,7 +2272,7 @@
     {
       "body": "Package agents, skills, scanner patterns and templates for export/install and SDK authoring.",
       "category": "Extensibility",
-      "detail": "Manifest v2 hashes identity and content; detached Ed25519 signatures are checked against deployment trust keys. Unverified install is denied unless allowed. Installing a skill over an existing one cuts a new revision when its text or description differs, always clears its verification, and scans it; a concurrent edit to that skill rolls back the whole install. Credentials and connection instances are not portable bundle content. An ADMIN installs a bundle inline (the CLI’s bundles install <path>, or a .json file picked or dropped in Studio) or from a URL (Studio or the CLI). The URL path text-checks every hop as public-only, resolves and pins it with no private-network opt-in, follows at most five redirects, times out after 15 s and caps the streamed body at BUNDLE_MAX_BYTES (5 MB by default); the inline preview and install routes accept a request body of that cap plus 64 KiB. Studio’s file flow parses the file in the browser (invalid JSON, a non-object or a file over 5 MB is reported without sending anything), previews the parsed bundle and installs that same object; both install routes take an optional expectedContentHash and answer 409 BUNDLE_CHANGED when the bundle’s declared hash differs from it, and the install then re-derives the hash, so whatever the hash covers is what was previewed. Studio sends the hash on both paths; the CLI sends none and installs without a preview.",
+      "detail": "Manifest v2 hashes identity and content; detached Ed25519 signatures are checked against deployment trust keys. Unverified install is denied unless allowed. Installing a skill over an existing one cuts a new revision when its text or description differs, always clears its verification, and scans it; a concurrent edit to that skill rolls back the whole install. Credentials and connection instances are not portable bundle content. An ADMIN installs a bundle inline (the CLI’s bundles install <path>, or a .json file picked or dropped in Studio) or from a URL (Studio or the CLI). The URL path text-checks every hop as public-only, resolves and pins it with no private-network opt-in, follows at most five redirects, times out after 15 s and caps the streamed body at BUNDLE_MAX_BYTES (5 MB by default); the inline preview and install routes accept a request body of that cap plus 64 KiB. Studio’s file flow parses the file in the browser (invalid JSON, a non-object or a file over the gateway’s cap — read from GET /platform/bundles/limits, 5 MB while that answer loads — is reported without sending anything), previews the parsed bundle and installs that same object; both install routes take an optional expectedContentHash and answer 409 BUNDLE_CHANGED when the bundle’s declared hash differs from it, and the install then re-derives the hash, so whatever the hash covers is what was previewed. Studio sends the hash on both paths; the CLI sends none and installs without a preview.",
       "id": "distribution",
       "refs": [
         "bundles",
@@ -5863,7 +5863,7 @@
       "title": "Inline install refuses a bundle whose declared hash differs from the previewed one"
     },
     {
-      "anchor": "export async function readBundleFile(file: File): Promise<BundleFileResult> {",
+      "anchor": "export async function readBundleFile(",
       "before": 3,
       "id": "bundleFileRead",
       "lines": 26,
