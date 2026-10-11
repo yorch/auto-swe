@@ -13,7 +13,7 @@ const run = {
   endedAt: '2026-10-01T12:05:00Z',
   id: 'run-1',
   implementerRuntime: null as string | null,
-  result: null,
+  result: null as unknown,
   specSnapshot: {},
   startedAt: '2026-10-01T12:00:00Z',
   status: 'FAILED',
@@ -200,5 +200,60 @@ describe('run page summary band', () => {
     const details = summary.closest('details');
     expect(details).not.toBeNull();
     expect(details?.hasAttribute('open')).toBe(false);
+  });
+});
+
+describe('run page verdict and reading guide', () => {
+  afterEach(() => {
+    run.status = 'FAILED';
+    run.result = null;
+  });
+
+  it('states a failed run in plain language and points at the failed step', async () => {
+    state.layout = 'A';
+    await renderPage();
+    expect(screen.getByText(/does not recognise this error/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Jump to the failed step' })).toBeTruthy();
+  });
+
+  it('says a finished run without a pull request has none', async () => {
+    state.layout = 'A';
+    run.status = 'SUCCESS';
+    await renderPage();
+    expect(screen.getByText('Finished')).toBeTruthy();
+    expect(screen.getByText(/recorded no pull request link/)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Open the pull request' })).toBeNull();
+  });
+
+  it('links the pull request of a finished run', async () => {
+    state.layout = 'A';
+    run.status = 'SUCCESS';
+    run.result = { prUrl: 'https://github.com/acme/api/pull/7' };
+    await renderPage();
+    const link = screen.getByRole('link', { name: 'Open the pull request' });
+    expect(link.getAttribute('href')).toBe('https://github.com/acme/api/pull/7');
+  });
+
+  it('names the open gate while the run waits on a person', async () => {
+    state.layout = 'A';
+    run.status = 'RUNNING';
+    await renderPage();
+    expect(screen.getByText('Waiting on a person')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Go to the gate' }).getAttribute('href')).toBe(
+      '#run-needs-response'
+    );
+    expect(document.getElementById('run-needs-response')).not.toBeNull();
+  });
+
+  it('offers the reading guide collapsed, distinct from the lifecycle explainer', async () => {
+    state.layout = 'A';
+    await renderPage();
+    const details = screen.getByText('How to read this page').closest('details');
+    expect(details).not.toBeNull();
+    expect(details?.hasAttribute('open')).toBe(false);
+    for (const name of ['Split', 'Transcript', 'Timeline']) {
+      expect(details?.textContent).toContain(name);
+    }
+    expect(details).not.toBe(screen.getByText('How auto-swe works').closest('details'));
   });
 });
