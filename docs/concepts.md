@@ -189,8 +189,9 @@ Guided paths build on those pieces:
   so the `m` and `s` flags can be tried.
 - **The docs reader** filters titles and summaries as you type and, once you pause, asks the server
   to search the text of every served doc. A word matches another form of the same word (plurals
-  and the common -ing and -ed endings, so `cases` finds `case` but `speed` never finds `spend`),
-  and the best 20 sections are listed with a link to the section.
+  and the common -ing and -ed endings, so `cases` finds `case` and `approved` finds `approve`, but
+  `speed` never finds `spend` and `rate` never finds `rat`), and
+  the best 20 sections are listed with a link to the section.
 
 ### Workspace limitations
 
@@ -216,8 +217,10 @@ Guided paths build on those pieces:
 - The run verdict cannot say who a gate is waiting on, because gate records carry no assignee.
 - Docs search needs a signed-in session. Matching is English-only and stem-based, so irregular
   forms and synonyms are not found, there is no typo tolerance, and every word must appear in one
-  section. Queries are cut at 100 characters and 8 words. The first search after the server starts
-  builds the index: about a second of processing on a development machine, more on a small
-  container, done a document at a time so other requests are still served, but that first search
-  waits for it. The server needs the docs on disk beside it. If the text search fails, the reader
-  keeps filtering by title and summary and says the text search is unavailable.
+  section. Queries are cut at 100 characters and 8 words. The server starts building the index when
+  it starts, in the background and a document at a time so other requests are still served and
+  start-up is not delayed. That takes under a second on a development machine, more on a
+  small container, and a search that arrives before it finishes waits for it. If the build fails,
+  it is logged and the first search tries again. The server needs the docs on disk beside it. If
+  the text search fails, the reader keeps filtering by title and summary and says the text search
+  is unavailable.
