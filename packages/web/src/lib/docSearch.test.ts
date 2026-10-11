@@ -3,8 +3,11 @@ import {
   buildSearchIndex,
   highlight,
   indexDoc,
+  MAX_QUERY_CHARS,
+  MAX_QUERY_TERMS,
   MAX_RESULTS,
   searchDocs,
+  stem,
   tokenize,
 } from './docSearch';
 import { extractToc } from './docToc';
@@ -186,5 +189,181 @@ describe('highlight', () => {
 describe('tokenize', () => {
   it('lowercases, splits on whitespace and de-duplicates', () => {
     expect(tokenize(' Foo  bar FOO ')).toEqual(['foo', 'bar']);
+  });
+
+  it('cuts a long query and keeps at most MAX_QUERY_TERMS terms', () => {
+    expect(tokenize('a'.repeat(MAX_QUERY_CHARS + 20))).toEqual(['a'.repeat(MAX_QUERY_CHARS)]);
+    const many = Array.from({ length: 20 }, (_, i) => `w${i}`).join(' ');
+    expect(tokenize(many)).toHaveLength(MAX_QUERY_TERMS);
+  });
+});
+
+describe('stem', () => {
+  it('joins singular and plural', () => {
+    expect(stem('skills')).toBe(stem('skill'));
+    expect(stem('policies')).toBe(stem('policy'));
+    expect(stem('boxes')).toBe(stem('box'));
+    expect(stem('branches')).toBe(stem('branch'));
+    expect(stem('queues')).toBe(stem('queue'));
+  });
+
+  it('joins approve, approves, approved and approving', () => {
+    const forms = ['approve', 'approves', 'approved', 'approving'].map(stem);
+    expect(new Set(forms).size).toBe(1);
+  });
+
+  it('joins -ing and -ed forms of a doubled consonant, but keeps ll, ss and zz', () => {
+    expect(stem('running')).toBe(stem('run'));
+    expect(stem('stopped')).toBe(stem('stop'));
+    expect(stem('skilled')).toBe('skill');
+    expect(stem('passed')).toBe('pass');
+  });
+
+  it('leaves short words and non-words alone', () => {
+    for (const w of ['is', 'ids', 'bus', 'was', 'ing', 'ed', 'sed', 'gas']) {
+      expect(stem(w), w).toBe(w);
+    }
+    for (const w of ['AUTO_SWE_TOKEN', 'v2', 'ciWait-Mode', 'a.b', 'x86s']) {
+      expect(stem(w), w).toBe(w.toLowerCase());
+    }
+  });
+
+  it('does not damage words that merely end like a suffix', () => {
+    for (const w of ['status', 'access', 'process', 'analysis', 'this', 'bed', 'sing', 'string']) {
+      expect(stem(w), w).toBe(w);
+    }
+    // `-ing`/`-ed` need a vowel left in the stem.
+    expect(stem('strengthed')).not.toBe('str');
+  });
+
+  it('is deterministic and lower-cases', () => {
+    expect(stem('Approving')).toBe(stem('approving'));
+    expect(stem(stem('policies'))).toBe(stem('policies'));
+  });
+});
+
+describe('searchDocs with stemming', () => {
+  const idx = buildSearchIndex([
+    {
+      content:
+        '# Reviews\n\n## Approvals\n\nA reviewer approved the change, then approving again.\n\n' +
+        '## Config\n\nSet AUTO_SWE_TOKEN and ciWaitMode.\n',
+      slug: 'reviews',
+      title: 'Reviews',
+    },
+    { content: '# Agents\n\n## Skills\n\nOne skill per file.\n', slug: 'agents', title: 'Agents' },
+  ]);
+  const ids = (q: string) => searchDocs(idx, q).map((r) => `${r.slug}#${r.anchor}`);
+
+  it('finds the singular from a plural and the plural from a singular', () => {
+    expect(ids('skills')).toContain('agents#skills');
+    expect(ids('skill')).toContain('agents#skills');
+    expect(ids('reviewers')).toEqual(['reviews#approvals']);
+  });
+
+  it('finds every inflection of approve', () => {
+    for (const q of ['approve', 'approves', 'approved', 'approving', 'approval']) {
+      expect(ids(q), q).toContain('reviews#approvals');
+    }
+  });
+
+  it('highlights the text as written, not the query', () => {
+    const [r] = searchDocs(idx, 'approves');
+    const marked = r?.snippet.filter((s) => s.match).map((s) => s.text);
+    expect(marked).toEqual(['approved', 'approving']);
+    expect(r?.snippet.map((s) => s.text).join('')).toContain('A reviewer approved the change');
+  });
+
+  it('still matches identifiers and partial words by substring', () => {
+    expect(ids('wait')).toEqual(['reviews#config']);
+    expect(ids('auto_swe')).toEqual(['reviews#config']);
+    expect(ids('ciwaitmode')).toEqual(['reviews#config']);
+  });
+
+  it('does not match unrelated words through a short stem', () => {
+    expect(ids('bus')).toEqual([]);
+    expect(ids('zebras')).toEqual([]);
+  });
+
+  it('keeps AND semantics across stemmed terms', () => {
+    expect(ids('skills file')).toEqual(['agents#skills']);
+    expect(ids('skills approving')).toEqual([]);
+  });
+});
+
+describe('highlight with stems', () => {
+  it('marks a word reached only through its stem, whole', () => {
+    expect(highlight('Several skills here', ['skill'])).toEqual([
+      { match: false, text: 'Several ' },
+      { match: true, text: 'skill' },
+      { match: false, text: 's here' },
+    ]);
+    expect(highlight('One skill here', ['skills'])).toEqual([
+      { match: false, text: 'One ' },
+      { match: true, text: 'skill' },
+      { match: false, text: ' here' },
+    ]);
+  });
+});
+
+describe('stem equality, not stem prefix', () => {
+  const idx = buildSearchIndex([
+    {
+      content:
+        '# Guide\n\n## Spending\n\nTo spend less, and with a specific cascade, use the user guide. ' +
+        'The bash tool runs commands.\n\n## Cases\n\nEach case is a test. Two cases fail.\n\n' +
+        '## Using\n\nIt uses the policy. Use it. A series of runs. It does work.\n',
+      slug: 'guide',
+      title: 'Guide',
+    },
+  ]);
+  const marked = (q: string) =>
+    searchDocs(idx, q).flatMap((r) => r.snippet.filter((s) => s.match).map((s) => s.text));
+
+  it('gives case and cases, use and uses, one stem each', () => {
+    expect(stem('cases')).toBe(stem('case'));
+    expect(stem('uses')).toBe(stem('use'));
+    expect(stem('sizes')).toBe(stem('size'));
+    expect(stem('based')).toBe(stem('base'));
+    expect(stem('boxes')).toBe(stem('box'));
+  });
+
+  it('keeps speed apart from spend, and does and series intact', () => {
+    expect(stem('speed')).not.toBe(stem('spend'));
+    expect(stem('does')).toBe('does');
+    expect(stem('series')).toBe('series');
+    expect(stem('based')).not.toBe(stem('bash'));
+  });
+
+  it('finds nothing for speed, although spend and specific start the same way', () => {
+    expect(searchDocs(idx, 'speed')).toEqual([]);
+  });
+
+  it('matches cases with case and highlights both', () => {
+    expect(marked('cases')).toEqual(expect.arrayContaining(['case', 'cases']));
+    expect(marked('case')).toEqual(expect.arrayContaining(['case']));
+    expect(searchDocs(idx, 'case').length).toBeGreaterThan(0);
+  });
+
+  it('matches uses with use, but never user', () => {
+    expect(marked('uses')).toEqual(expect.arrayContaining(['uses', 'Use']));
+    expect(marked('uses')).not.toContain('user');
+  });
+
+  it('does not reach bash from based, and marks only the word itself for does and series', () => {
+    expect(searchDocs(idx, 'based')).toEqual([]);
+    expect(marked('does')).toEqual(['does']);
+    expect(marked('series')).toEqual(['series']);
+  });
+});
+
+describe('highlight ranges with characters that change length when lower-cased', () => {
+  it('keeps the marked run on the original letters after an İ', () => {
+    // `İ`.toLowerCase() is two code units; offsets from the lowered copy would drift by one.
+    expect(highlight('İİ budget here', ['budget'])).toEqual([
+      { match: false, text: 'İİ ' },
+      { match: true, text: 'budget' },
+      { match: false, text: ' here' },
+    ]);
   });
 });

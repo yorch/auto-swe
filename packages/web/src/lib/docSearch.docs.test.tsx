@@ -57,6 +57,19 @@ describe('the real docs index', () => {
     }
   });
 
+  it('has no doc whose slug the /docs/search route would shadow', () => {
+    // A static `search` segment wins over `[slug]`, so such a doc would be unreachable.
+    expect(docs.map((d) => d.slug)).not.toContain('search');
+  });
+
+  it('finds the same section for singular, plural and -ing forms', () => {
+    const ids = (q: string) => searchDocs(index, q).map((r) => `${r.slug}#${r.anchor}`);
+    expect(ids('workflows').length).toBeGreaterThan(0);
+    expect(ids('workflow').length).toBeGreaterThan(0);
+    expect(ids('approving').length).toBeGreaterThan(0);
+    expect(ids('approved').length).toBeGreaterThan(0);
+  });
+
   it('finds text that only appears in a doc body', () => {
     const results = searchDocs(index, 'autonomy policy');
     expect(results.length).toBeGreaterThan(0);
