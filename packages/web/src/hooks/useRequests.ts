@@ -21,9 +21,11 @@ export function useRequests(
     offset?: number;
     limit?: number;
   },
-  options: { enabled?: boolean } = {}
+  /** `ignoreTeam` skips the shell's selected-team filter, for a list about the viewer themselves. */
+  options: { enabled?: boolean; ignoreTeam?: boolean } = {}
 ) {
-  const teamId = useTeamStore((state) => state.selectedTeamId);
+  const selectedTeamId = useTeamStore((state) => state.selectedTeamId);
+  const teamId = options.ignoreTeam ? null : selectedTeamId;
   const scoped = { ...filters, ...(teamId ? { teamId } : {}) };
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(scoped)) {

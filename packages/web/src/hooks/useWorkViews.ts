@@ -22,17 +22,20 @@ function queryString(
   return params.toString();
 }
 
-export function usePullRequests(filters: {
-  scope: WorkScope;
-  state: PullRequestState | 'all';
-  draft: 'any' | 'draft' | 'ready';
-  repoId?: string;
-  ticket?: string;
-  limit: number;
-  offset: number;
-}) {
-  const teamId = useTeamStore((state) => state.selectedTeamId);
-  const qs = queryString(filters, teamId);
+export function usePullRequests(
+  filters: {
+    scope: WorkScope;
+    state: PullRequestState | 'all';
+    draft: 'any' | 'draft' | 'ready';
+    repoId?: string;
+    ticket?: string;
+    limit: number;
+    offset: number;
+  },
+  options: { ignoreTeam?: boolean } = {}
+) {
+  const selectedTeamId = useTeamStore((state) => state.selectedTeamId);
+  const qs = queryString(filters, options.ignoreTeam ? null : selectedTeamId);
   return useListQuery<PullRequestListItem>({
     queryFn: () => api.get(`/api/v1/pull-requests?${qs}`),
     queryKey: ['pull-requests', qs],

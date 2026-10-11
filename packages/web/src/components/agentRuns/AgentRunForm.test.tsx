@@ -256,6 +256,36 @@ describe('AgentRunForm', () => {
     );
   });
 
+  it('fills a read-only sample prompt without launching, then protects typed text', async () => {
+    const { launches } = stubGateway();
+    render(withQuery(<AgentRunForm reviewBeforeLaunch />));
+    fireEvent.click(screen.getByRole('button', { name: 'Try a sample task' }));
+    const prompt = screen.getByLabelText(/Prompt/) as HTMLTextAreaElement;
+    expect(prompt.value).toMatch(/Do not change any files/);
+    expect(launches).toEqual([]);
+    expect(
+      (screen.getByRole('button', { name: 'Try a sample task' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    fireEvent.change(prompt, { target: { value: 'my own text' } });
+    expect(prompt.value).toBe('my own text');
+  });
+
+  it('does not overwrite a prompt the user typed', () => {
+    stubGateway();
+    render(withQuery(<AgentRunForm reviewBeforeLaunch />));
+    fireEvent.change(screen.getByLabelText(/Prompt/), { target: { value: 'mine' } });
+    expect(
+      (screen.getByRole('button', { name: 'Try a sample task' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect((screen.getByLabelText(/Prompt/) as HTMLTextAreaElement).value).toBe('mine');
+  });
+
+  it('offers no sample outside the guided Start work page', () => {
+    stubGateway();
+    render(withQuery(<AgentRunForm />));
+    expect(screen.queryByRole('button', { name: 'Try a sample task' })).toBeNull();
+  });
+
   it('offers version pins for the chosen agent', async () => {
     stubGateway();
     render(withQuery(<AgentRunForm />));

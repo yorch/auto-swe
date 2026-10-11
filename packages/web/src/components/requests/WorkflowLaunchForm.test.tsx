@@ -91,6 +91,42 @@ describe('workflow launch', () => {
   });
 });
 
+describe('workflow launch sample', () => {
+  it('fills the task name and the free-text field without launching', async () => {
+    const bodies = gateway();
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={template} />));
+    fireEvent.click(screen.getByRole('button', { name: 'Try a sample task' }));
+    expect((screen.getByLabelText(/Task name/) as HTMLInputElement).value).toBe('Sample task');
+    expect((screen.getByLabelText(/Description/) as HTMLInputElement).value).toMatch(
+      /Troubleshooting/
+    );
+    expect(bodies).toEqual([]);
+    expect(
+      (screen.getByRole('button', { name: 'Try a sample task' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+  });
+
+  it('offers no sample when the workflow has no free-text field to fill', () => {
+    gateway();
+    render(
+      withQuery(
+        <WorkflowLaunchForm
+          onLaunched={vi.fn()}
+          template={{
+            ...template,
+            inputSchema: {
+              properties: { count: { type: 'number' } },
+              required: [],
+              type: 'object',
+            },
+          }}
+        />
+      )
+    );
+    expect(screen.queryByRole('button', { name: 'Try a sample task' })).toBeNull();
+  });
+});
+
 describe('workflow launch with a provider that needs a connection', () => {
   it('asks for a matching connection and sends it as connectionId', async () => {
     const bodies: unknown[] = [];

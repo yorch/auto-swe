@@ -1,0 +1,193 @@
+'use client';
+
+import Link from 'next/link';
+import type { ReactNode } from 'react';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { Icon } from '@/components/ui/Icon';
+import { useHasRole } from '@/hooks/useHasRole';
+import { useRepositories } from '@/hooks/useRepositories';
+import { useRequests } from '@/hooks/useRequests';
+import { usePullRequests } from '@/hooks/useWorkViews';
+import { focusMainContent, useDismissed } from '@/lib/dismissed';
+import { cn, FOCUS_RING } from '@/lib/utils';
+
+export const FIRST_RUN_DISMISS_KEY = 'first-run-checklist';
+
+interface Step {
+  id: string;
+  title: string;
+  /** What the step is and where to do it; shown while the step is open. */
+  body: ReactNode;
+  done: boolean;
+  /**
+   * False for a step the platform cannot verify from data the viewer can read. It never ticks and
+   * never counts toward "N done" or toward hiding the card; it stays as a pointer.
+   */
+  tracked: boolean;
+  href: string;
+  action: string;
+}
+
+/**
+ * Home checklist for someone who is not an admin: the path from "I can sign in" to "I merged my
+ * first agent-written change". Every tracked tick comes from data the person can already read,
+ * never from a click. Answering a gate is a pointer, not a tracked step: a viewer's answer is
+ * visible only on some gate records, so no honest tick exists for it. Admins do not see it: they have the setup card and the governance guide, and
+ * their first run depends on that setup being finished.
+ */
+export function FirstRunChecklist() {
+  const isAdmin = useHasRole('ADMIN');
+  if (isAdmin) {
+    return null;
+  }
+  return <FirstRunChecklistBody />;
+}
+
+function FirstRunChecklistBody() {
+  const isLead = useHasRole('LEAD');
+  const { ready, dismissed, dismiss } = useDismissed(FIRST_RUN_DISMISS_KEY);
+  // Personal progress, so the shell's selected-team filter does not apply to the two lists.
+  // Connections of every type come back, so the repository step looks for a git repository.
+  const repos = useRepositories({ limit: 500 });
+  const requests = useRequests({ limit: 1, scope: 'MINE', state: 'all' }, { ignoreTeam: true });
+  const merged = usePullRequests(
+    { draft: 'any', limit: 1, offset: 0, scope: 'MINE', state: 'MERGED' },
+    { ignoreTeam: true }
+  );
+
+  const queries = [repos, requests, merged];
+  const settled = queries.every((q) => !q.isLoading);
+  // A query that failed cannot say a step is open, so show nothing rather than a false prompt.
+  if (!ready || dismissed || !settled || queries.some((q) => q.isError)) {
+    return null;
+  }
+
+  const hasRepo = (repos.data ?? []).some((r) => r.type === 'git_repo');
+  const steps: Step[] = [
+    {
+      action: hasRepo ? 'View repositories' : isLead ? 'Connect a repository' : 'Open connections',
+      body: 'No repository is visible to you yet. If you lead a team, connect one; otherwise ask a lead or an admin to connect one or share one with your team.',
+      done: hasRepo,
+      href: '/connections',
+      id: 'repository',
+      title: 'See a repository you can work on',
+      tracked: true,
+    },
+    {
+      action: 'Start work',
+      body: 'Describe the work and pick a repository. You review it before it launches.',
+      done: (requests.data?.meta.total ?? 0) > 0,
+      href: '/start',
+      id: 'task',
+      title: 'Start your first task',
+      tracked: true,
+    },
+    {
+      action: 'Open approvals',
+      body: 'When a run reaches a gate, it waits for a person. Answer it in Approvals. This step is not tracked here, and a workflow with no gates never needs it.',
+      done: false,
+      href: '/govern/approvals',
+      id: 'gate',
+      title: 'Answer a gate when a run reaches one',
+      tracked: false,
+    },
+    {
+      action: 'Open pull requests',
+      body: 'The run opens a pull request on the repository. Review it and merge it yourself: nothing merges it for you. This step ticks when the platform records the merge, which needs the GitHub webhook to be set up.',
+      done: (merged.meta?.total ?? 0) > 0,
+      href: '/pull-requests',
+      id: 'merge',
+      title: 'A pull request from your request is merged',
+      tracked: true,
+    },
+  ];
+  const tracked = steps.filter((step) => step.tracked);
+  // Hide only when every tracked step is verified done; an unreadable query never counts as done.
+  if (tracked.every((step) => step.done)) {
+    return null;
+  }
+  const nextId = tracked.find((step) => !step.done)?.id;
+  const doneCount = tracked.filter((step) => step.done).length;
+
+  return (
+    <Card data-testid="first-run-checklist">
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
+        <div className="min-w-0">
+          <div className="kicker mb-1">Getting started</div>
+          <h2 className="text-[17px] font-semibold tracking-tight text-paper-50">Your first run</h2>
+          <p className="mt-1 text-sm text-paper-400">
+            Steps tick themselves off from what the platform records for you. One step is a pointer
+            and is not tracked.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="tabular text-sm text-paper-300">
+            {doneCount} of {tracked.length} done
+          </span>
+          <Button
+            aria-label="Dismiss the first-run checklist"
+            onClick={() => {
+              dismiss();
+              focusMainContent();
+            }}
+            size="sm"
+            variant="ghost"
+          >
+            Dismiss
+          </Button>
+        </div>
+      </div>
+      <ol className="mt-5 divide-y divide-ink-600 overflow-hidden rounded-lg border border-ink-500/60">
+        {steps.map((step, index) => (
+          <li
+            className={cn(
+              'flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3',
+              !step.done && 'bg-ink-800/40'
+            )}
+            key={step.id}
+          >
+            <span
+              aria-hidden="true"
+              className={cn(
+                'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs tabular',
+                step.done
+                  ? 'border-moss-400/40 bg-moss-400/15 text-moss-400'
+                  : 'border-ink-400 text-paper-400'
+              )}
+            >
+              {step.done ? <Icon name="check" size={13} strokeWidth={2.4} /> : index + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div
+                className={cn(
+                  'text-sm font-medium',
+                  step.done ? 'text-paper-400' : 'text-paper-100'
+                )}
+              >
+                {step.title}
+                <span className="sr-only">
+                  {step.done ? ' (done)' : step.tracked ? ' (to do)' : ' (not tracked)'}
+                </span>
+              </div>
+              {!step.done && <div className="mt-0.5 text-xs text-paper-400">{step.body}</div>}
+            </div>
+            {!step.done && (
+              <Link
+                className={cn(
+                  'inline-flex shrink-0 items-center gap-1 rounded-sm text-[13px] hover:underline',
+                  step.id === nextId ? 'font-medium text-ember-400' : 'text-paper-300',
+                  FOCUS_RING
+                )}
+                href={step.href}
+              >
+                {step.action}
+                <Icon name="arrowRight" size={13} />
+              </Link>
+            )}
+          </li>
+        ))}
+      </ol>
+    </Card>
+  );
+}

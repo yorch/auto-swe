@@ -162,6 +162,32 @@ describe('EpicLaunchForm', () => {
     await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/epics/e2'));
   });
 
+  it('fills a sample without launching or choosing repositories, and protects typed text', async () => {
+    const spy = setupFetchMock({
+      'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
+      'GET /api/v1/repositories': () => ({ data: REPOS }),
+    });
+    render(withQuery(<EpicLaunchForm onLaunched={pushSpy} reviewBeforeLaunch />));
+    await screen.findAllByRole('checkbox');
+    fireEvent.click(screen.getByRole('button', { name: 'Try a sample task' }));
+    expect((screen.getByLabelText(/external ticket id/i) as HTMLInputElement).value).toMatch(
+      /^DOCS-SAMPLE-[0-9A-Z]{6}$/
+    );
+    expect((screen.getByLabelText(/^description/i) as HTMLTextAreaElement).value).toMatch(
+      /Troubleshooting/
+    );
+    for (const box of screen.getAllByRole('checkbox')) {
+      expect((box as HTMLInputElement).checked).toBe(false);
+    }
+    expect(
+      (screen.getByRole('button', { name: 'Try a sample task' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect(
+      spy.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'POST')
+    ).toBe(false);
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+
   it('explains why launching is disabled with fewer than two repositories', async () => {
     setupFetchMock({
       'GET /api/v1/repositories': () => ({ data: [REPOS[0]] }),

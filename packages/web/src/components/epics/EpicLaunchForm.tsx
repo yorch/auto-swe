@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
+import { SampleTaskButton } from '@/components/requests/SampleTaskButton';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -14,6 +15,7 @@ import { useCreateEpic } from '@/hooks/useEpics';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
+import { EPIC_SAMPLE, sampleEpicTicketId } from '@/lib/sampleTasks';
 
 /**
  * Launches a multi-repository epic; `onLaunched` receives the epic's page path.
@@ -133,6 +135,16 @@ export function EpicLaunchForm({
             description="Name the epic, describe the change, and pick the repositories it spans."
             stage="details"
             title="Epic details"
+          />
+        )}
+        {reviewBeforeLaunch && (
+          <SampleTaskButton
+            blocked={externalTicketId.trim() !== '' || description.trim() !== ''}
+            caption="Fills in a new placeholder ticket ID and a small documentation request. Replace the ticket ID if you have a real one, and pick at least two repositories yourself."
+            onFill={() => {
+              setExternalTicketId(sampleEpicTicketId());
+              setDescription(EPIC_SAMPLE.description);
+            }}
           />
         )}
         <Input
