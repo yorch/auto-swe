@@ -1898,7 +1898,7 @@
     {
       "body": "Agent identity, model, runtime, prompt, skills, tool keys and optional MCP connection are data.",
       "category": "Agents",
-      "detail": "Template → channel → team → organization → global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live. Skill text is pinned separately, by revision. A team member can list only the keys, names and models an override may name, without prompts, tools or connections; the full team library stays team-admin or ADMIN. In the library table an admin sees a No credential badge on a platform-wide agent that is not pinned to its own credential and whose provider the setup readiness check marks as lacking a credential an agent can use (none reachable, or a custom provider’s credential without an apiBase; a sub-role persona takes its parent’s status); team, organization and template overrides are never badged. A version may set its runtime (the Mastra loop or the Claude Code harness); only a platform ADMIN can set or change it, and the library form shows the picker only on the platform-admin page. Saving the harness runtime is refused when the version’s own model, or the model it inherits along the platform-wide chain, is not Anthropic; saving a model that harness agents inherit is allowed and lists them. A new scoped override that names no runtime starts on the platform-wide row’s, which a team admin may restate but not change, unless the harness cannot drive the override’s own model. Restoring a version restores its runtime, and a seeded default-model move keeps it. An agent pinned to its own credential shows that credential’s provider and last four characters instead. Saving requires a <provider>/<model-id> spec and stores the provider lowercased; an empty string still clears the model. A credential pin is checked at save: it must exist, be for the provider the model routes to, and be reachable from the agent’s scope (a team agent may pin a GLOBAL credential, its team’s, or its team’s organization’s; an organization agent a GLOBAL one or its own organization’s), otherwise the save answers 400 INVALID_CREDENTIAL. The response carries advisory catalog and credential warnings that the dashboard shows after create, edit and restore on the platform and team libraries; an inheriting agent’s pin is not provider-checked, and a platform-wide, channel or template agent’s pin is not scope-checked at save (the worker falls back to the cascade at run time); a model with no reachable credential, or a custom provider whose reachable credentials lack an apiBase, saves with a warning rather than a refusal.",
+      "detail": "Template → channel → team → organization → global resolution selects the most-specific active version. GLOBAL lineage pins are frozen at run start; scoped overrides remain live. Skill text is pinned separately, by revision. A team member can list only the keys, names and models an override may name, without prompts, tools or connections; the full team library stays team-admin or ADMIN. In the library table an admin sees a No credential badge on a platform-wide agent that is not pinned to its own credential and whose provider the setup readiness check marks as lacking a credential an agent can use (none reachable, or a custom provider’s credential without an apiBase; a mispinned embedding model does not make its provider count as lacking one; a sub-role persona takes its parent’s status); team, organization and template overrides are never badged. A version may set its runtime (the Mastra loop or the Claude Code harness); only a platform ADMIN can set or change it, and the library form shows the picker only on the platform-admin page. Saving the harness runtime is refused when the version’s own model, or the model it inherits along the platform-wide chain, is not Anthropic; saving a model that harness agents inherit is allowed and lists them. A new scoped override that names no runtime starts on the platform-wide row’s, which a team admin may restate but not change, unless the harness cannot drive the override’s own model. Restoring a version restores its runtime, and a seeded default-model move keeps it. An agent pinned to its own credential shows that credential’s provider and last four characters instead. Saving requires a <provider>/<model-id> spec and stores the provider lowercased; an empty string still clears the model. A credential pin is checked at save: it must exist, be for the provider the model routes to, and be reachable from the agent’s scope (a team agent may pin a GLOBAL credential, its team’s, or its team’s organization’s; an organization agent a GLOBAL one or its own organization’s), otherwise the save answers 400 INVALID_CREDENTIAL. The response carries advisory catalog and credential warnings that the dashboard shows after create, edit and restore on the platform and team libraries; an inheriting agent’s pin is not provider-checked, and a platform-wide, channel or template agent’s pin is not scope-checked at save (the worker falls back to the cascade at run time); a model with no reachable credential, or a custom provider whose reachable credentials lack an apiBase, saves with a warning rather than a refusal.",
       "id": "agentLibrary",
       "refs": [
         "agents",
@@ -1912,7 +1912,8 @@
         "overrideRuntime",
         "modelSpecSchema",
         "credentialRefCheck",
-        "credentialCoverage"
+        "credentialCoverage",
+        "readinessEmbeddingFault"
       ],
       "status": "Implemented",
       "title": "Versioned agent library"
@@ -2226,7 +2227,7 @@
     {
       "body": "Filter and page the configuration audit log and runtime security events.",
       "category": "Governance",
-      "detail": "Audit rows name actors by email, and a deleted actor keeps its id. Security events page on the server. A separate summary route returns per-type counts: all time when no window is given, otherwise for the window plus the equal-length window before it. The dashboard always sends its selected date range (30 days by default), shows each count against the previous window, and filters the list when a type is selected. Both views are ADMIN-only. On the audit route, a WorkflowRun row also carries the id of the request it belongs to. Template, team and organization administration is recorded in the same log: template create (including a generated draft), edit, new version, promote and webhook enable or revoke; team create, update, deactivation, memberships and the shell-image and egress allowlists; organization rename and membership changes. Agent library create, version update and deletion are recorded at platform and team scope; an update entry holds the model, runtime and version before and after (the team entry also its key, scope and team), not the prompt. Refining a template into a new version, a draft saved by an asynchronous generation job, and the review mark that gates promoting an AI-generated version write no audit row. A template entry holds identity, status, version and routing fields, never the spec text, and a webhook entry records only whether one exists, never the token. Template, team, organization and agent entries are written after the change as a separate statement, not in its transaction, so a failed audit insert errors after the change has applied.",
+      "detail": "Audit rows name actors by email, and a deleted actor keeps its id. Security events page on the server. A separate summary route returns per-type counts: all time when no window is given, otherwise for the window plus the equal-length window before it. The dashboard always sends its selected date range (30 days by default), shows each count against the previous window, and filters the list when a type is selected. Both views are ADMIN-only. The audit search box matches the actor’s email or name and the entity type as substrings; an entity id (or actor id) matches only when the whole uuid is typed, because a partial id is not matched at all, and a search that matches more than 200 people considers only 200 of them. The CSV export applies the same filter as the list, writes newest first in batches, and holds at most a fixed number of rows: when more match, the response says so in a header and the dashboard tells the admin the file holds only the newest rows and states the limit, so a larger history needs narrower filters or a shorter date range. On the audit route, a WorkflowRun row also carries the id of the request it belongs to. Template, team and organization administration is recorded in the same log: template create (including a generated draft), edit, new version, promote and webhook enable or revoke; team create, update, deactivation, memberships and the shell-image and egress allowlists; organization rename and membership changes. Agent library create, version update and deletion are recorded at platform and team scope; an update entry holds the model, runtime and version before and after (the team entry also its key, scope and team), not the prompt. Refining a template into a new version, a draft saved by an asynchronous generation job, and the review mark that gates promoting an AI-generated version write no audit row. A template entry holds identity, status, version and routing fields, never the spec text, and a webhook entry records only whether one exists, never the token. Template, team, organization and agent entries are written after the change as a separate statement, not in its transaction, so a failed audit insert errors after the change has applied.",
       "id": "reviewViews",
       "refs": [
         "auditLog",
@@ -2237,7 +2238,11 @@
         "auditTeamFields",
         "auditTemplateRefine",
         "auditTemplateReview",
-        "teamAgentUpdateAudit"
+        "teamAgentUpdateAudit",
+        "auditSearch",
+        "auditExportCap",
+        "auditExportHeaders",
+        "auditExportNotice"
       ],
       "status": "Implemented",
       "title": "Audit and security-event review"
@@ -2691,7 +2696,7 @@
     {
       "body": "One row-based coverage model decides whether every agent and the embedding model can reach a credential; the same model refuses a credential delete that would strand one and fails the credentials item of setup readiness on gaps in the agent set the worker’s boot gate resolves, plus a missing apiBase on a custom provider, which boot does not check (the embeddings item fails on any embedding gap).",
       "category": "Operations",
-      "detail": "credentialGaps derives, from rows alone and without decrypting any key, which agents and the embedding model have no credential they can call. An agent’s model comes from its own spec or its inheritsModelFrom chain. A pinned credential counts when it exists, is for that provider and is reachable from the agent’s scope; otherwise the TEAM, ORGANIZATION, GLOBAL cascade picks the first reachable credential, as the worker does, and an unusable pin falls back to the cascade. A provider that is not built in also needs an apiBase on it. A channel or workflow-template agent runs for whichever team owns the run, so any credential for its provider counts. The embedding model follows the worker’s own rules, including that a pin to a credential of another provider is used as-is and is therefore a gap of its own. Deleting a credential answers 409 CREDENTIAL_IN_USE with the dependents unless force=true; a forced delete records what it left uncovered in the audit entry, and a team admin is refused, and shown dependents, only for its own team’s agents. GET /credentials adds usage.leavesWithoutCredential for the same question, and the dashboard’s delete confirmation lists it and then sends the forced delete. The admin-only readiness route reports four items (credentials, embeddings, GitHub access, a real repository connection) and computes the agent set the worker’s boot check resolves from the same shared code: the steps of every installed template’s active and experiment versions, plus channelAssistant when a Slack channel exists. The credentials item fails only on a gap in that set or a required key with no platform-wide agent; every other gap, at any scope, is returned in gaps with a blocking flag. The worker, for its part, refuses to start until assertConfigReady has resolved each of those GLOBAL agents for real (decrypting its key) and checked the embedding model’s rows only.",
+      "detail": "credentialGaps derives, from rows alone and without decrypting any key, which agents and the embedding model have no credential they can call. An agent’s model comes from its own spec or its inheritsModelFrom chain. A pinned credential counts when it exists, is for that provider and is reachable from the agent’s scope; otherwise the TEAM, ORGANIZATION, GLOBAL cascade picks the first reachable credential, as the worker does, and an unusable pin falls back to the cascade. A provider that is not built in also needs an apiBase on it. A channel or workflow-template agent runs for whichever team owns the run, so any credential for its provider counts. The embedding model follows the worker’s own rules, including that a pin to a credential of another provider is used as-is and is therefore a gap of its own. Deleting a credential answers 409 CREDENTIAL_IN_USE with the dependents unless force=true; a forced delete records what it left uncovered in the audit entry, and a team admin is refused, and shown dependents, only for its own team’s agents. GET /credentials adds usage.leavesWithoutCredential for the same question, and the dashboard’s delete confirmation lists it and then sends the forced delete. The admin-only readiness route reports four items (credentials, embeddings, GitHub access, a real repository connection) and computes the agent set the worker’s boot check resolves from the same shared code: the steps of every installed template’s active and experiment versions, plus channelAssistant when a Slack channel exists. The credentials item fails only on a gap in that set or a required key with no platform-wide agent; every other gap, at any scope, is returned in gaps with a blocking flag. The same route lists each provider with the GLOBAL agents that call it and whether any of them lacks a usable credential. The embedding model is counted toward its provider only when the provider is what is missing: no credential at all, or a custom provider with no apiBase on an embedding that pins no credential. A spec the platform cannot embed with, no embedding config, or a credential pinned to another provider (or pinned and lacking an apiBase) is reported on the embeddings item and does not mark the provider as uncovered. The worker, for its part, refuses to start until assertConfigReady has resolved each of those GLOBAL agents for real (decrypting its key) and checked the embedding model’s rows only.",
       "id": "credentialCoverage",
       "refs": [
         "credentialCoverage",
@@ -2699,7 +2704,8 @@
         "readinessBlocking",
         "deploymentAgentSet",
         "workerBootGate",
-        "credentialForceFromDashboard"
+        "credentialForceFromDashboard",
+        "readinessEmbeddingFault"
       ],
       "status": "Implemented",
       "title": "Credential coverage, delete guard and setup readiness"
@@ -2716,7 +2722,7 @@
     {
       "body": "Chat, embedding and Claude Code proxy calls resolve the provider host, connect only to a checked address and refuse redirects.",
       "category": "Security",
-      "detail": "modelCallFetch wraps the list guard: each connection is resolved, every answer checked and the socket pinned to a checked address, with redirects refused because a model call carries the prompt and the API key. Every built-in client (anthropic, openai, google) and every OpenAI-compatible client is constructed with it whether or not the credential sets an apiBase, as are the embedding clients and the Claude Code model proxy’s upstream fetch. A host that is, or resolves to, a private address is reachable only if it is listed in models.privateNetworkHosts; loopback, link-local and cloud-metadata addresses stay refused whatever is listed. The list is read on every request behind the settings cache and an unreadable setting degrades to empty, so an unlisted in-cluster model server fails before any request is sent. This closes the gap between the text check at credential save and the call: a name that later resolves, or redirects, to an internal host no longer receives the prompt and the key.",
+      "detail": "modelCallFetch wraps the list guard: each connection is resolved, every answer checked and the socket pinned to a checked address, with redirects refused because a model call carries the prompt and the API key. Every built-in client (anthropic, openai, google) and every OpenAI-compatible client is constructed with it whether or not the credential sets an apiBase, as are the embedding clients and the Claude Code model proxy’s upstream fetch. A host that is, or resolves to, a private address is reachable only if it is listed in models.privateNetworkHosts; loopback, link-local, cloud-metadata, unspecified, multicast and reserved addresses stay refused whatever is listed. Saving a credential checks its apiBase as text only; the resolve-and-pin happens at the test, discovery, refresh and call. The list is read on every request behind the settings cache and an unreadable setting degrades to empty, so an unlisted in-cluster model server fails before any request is sent. This closes the gap between the text check at credential save and the call: a name that later resolves, or redirects, to an internal host no longer receives the prompt and the key.",
       "id": "modelCallGuard",
       "refs": [
         "modelCallFetch",
@@ -2745,6 +2751,27 @@
       "refs": ["workspaceDns", "workspaceDnsBoot", "workspaceDnsRun"],
       "status": "Implemented",
       "title": "Workspace containers get a configurable list of DNS resolvers"
+    },
+    {
+      "body": "Dashboard pages explain the product inline: help tips, page-header links and a lifecycle overview that link to a built-in docs reader.",
+      "category": "Collaboration",
+      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither makes a request or reads server data. A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The Home page opens a collapsible request-to-merge overview by default only when the cached request lists for the current Mine or Team scope are all empty, and Start work always renders it collapsed; the node palette, forms and governance pages carry tips of the same kind. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant.",
+      "id": "inAppGuidance",
+      "refs": [
+        "helpTip",
+        "glossaryTable",
+        "helpLinks",
+        "docLinkHref",
+        "docsReader",
+        "docsStatic",
+        "homeHowItWorks",
+        "glossaryLookup",
+        "startWorkOverview",
+        "consentDocLink",
+        "nodePaletteTip"
+      ],
+      "status": "Implemented",
+      "title": "In-app guided help"
     }
   ],
   "limits": [
@@ -3274,13 +3301,14 @@
     {
       "body": "The coverage model never decrypts a key or calls a provider, and the dashboard’s delete sends force.",
       "category": "Operations",
-      "detail": "A revoked or wrong key reads as covered. The worker’s boot gate resolves each GLOBAL agent for real and checks the embedding model’s rows only, so the two implementations of one rule can disagree on an edge (the coverage check also requires an apiBase on any non-built-in provider’s credential, agent or embedding, which the boot gate does not check). A channel or workflow-template agent counts any credential for its provider. The delete guard protects API callers: the dashboard’s delete confirmation lists what the delete would strand and then sends force=true, and a forced delete by a team admin audits only the dependents that admin may see.",
+      "detail": "A revoked or wrong key reads as covered. The worker’s boot gate resolves each GLOBAL agent for real and checks the embedding model’s rows only, so the two implementations of one rule can disagree on an edge (the coverage check also requires an apiBase on any non-built-in provider’s credential, agent or embedding, which the boot gate does not check). A channel or workflow-template agent counts any credential for its provider. The delete guard protects API callers: the dashboard’s delete confirmation lists what the delete would strand and then sends force=true, and a forced delete by a team admin audits only the dependents that admin may see. The per-provider flag on the readiness route is derived from the same rows, so it inherits that blindness and also follows the embedding rule above: an embedding fault that is not a missing credential or an unpinned apiBase never marks a provider, so an agent on that provider shows no badge for it.",
       "id": "credentialCoverageBounds",
       "refs": [
         "credentialCoverage",
         "credentialDeleteGuard",
         "credentialForceFromDashboard",
-        "workerBootGate"
+        "workerBootGate",
+        "readinessEmbeddingFault"
       ],
       "status": "Confirmed boundary",
       "title": "Coverage checks rows, not keys, and the dashboard always forces"
@@ -3320,6 +3348,15 @@
       "refs": ["sdkConstructors", "modelCallFetch"],
       "status": "Confirmed boundary",
       "title": "Nothing enforces the guard on a new provider client"
+    },
+    {
+      "body": "Glossary definitions and inline help are static prose; a test checks that their doc links resolve, not that the sentences are true.",
+      "category": "Surfaces",
+      "detail": "The glossary says its definitions are written to agree with the concepts doc, and the link table says a test checks each entry against the docs files and headings. Neither derives a definition from the code, so a behaviour change can leave a tip stale while every link still resolves. The reader shows the docs baked in at build time, so a running deployment can show docs older than its gateway, and it serves only the top-level docs, so a link to anything else would not resolve. Tips are shown in the dashboard only; the CLI and API have no equivalent.",
+      "id": "guidanceStaticCopy",
+      "refs": ["glossaryTable", "helpLinks", "docsReader", "docsStatic"],
+      "status": "Confirmed boundary",
+      "title": "Help text is hand-written and only its links are checked"
     }
   ],
   "modelDescriptions": {
@@ -7504,6 +7541,134 @@
       "lines": 5,
       "path": "packages/worker/src/lib/models.ts",
       "title": "Raw provider constructors are re-exported; nothing forces a fetch on them"
+    },
+    {
+      "anchor": "// The log has no relation to User, so an actor match is a lookup of their ids.",
+      "before": 0,
+      "id": "auditSearch",
+      "lines": 32,
+      "path": "packages/gateway/src/routes/admin.ts",
+      "title": "Audit search: actor by substring, entity type by substring, ids only when typed in full"
+    },
+    {
+      "anchor": "const AUDIT_EXPORT_MAX_ROWS = 50_000;",
+      "before": 0,
+      "id": "auditExportCap",
+      "lines": 2,
+      "path": "packages/gateway/src/routes/admin.ts",
+      "title": "The audit export holds at most a fixed number of rows"
+    },
+    {
+      "anchor": "// Known before streaming starts, so the header can say the file is cut short.",
+      "before": 0,
+      "id": "auditExportHeaders",
+      "lines": 60,
+      "path": "packages/gateway/src/routes/admin.ts",
+      "title": "Audit export streams newest first and reports a truncated file in response headers"
+    },
+    {
+      "anchor": "More entries matched than one export can hold",
+      "before": 3,
+      "id": "auditExportNotice",
+      "lines": 6,
+      "path": "packages/web/src/app/govern/audit/page.tsx",
+      "title": "The dashboard states the export limit when the file was cut"
+    },
+    {
+      "anchor": "// The embedding model counts toward its provider only when the provider is what is wrong:",
+      "before": 0,
+      "id": "readinessEmbeddingFault",
+      "lines": 30,
+      "path": "packages/gateway/src/routes/readiness.ts",
+      "title": "The embedding model badges its provider only for a missing credential or an unpinned custom provider without an apiBase"
+    },
+    {
+      "anchor": "export function HelpTip(props: HelpTipProps) {",
+      "before": 0,
+      "id": "helpTip",
+      "lines": 8,
+      "path": "packages/web/src/components/ui/HelpTip.tsx",
+      "title": "A help tip reads a glossary entry or its own children; nothing is fetched"
+    },
+    {
+      "anchor": "export const GLOSSARY = {",
+      "before": 12,
+      "id": "glossaryTable",
+      "lines": 15,
+      "path": "packages/web/src/lib/glossary.ts",
+      "title": "The glossary is a hand-written constant whose definitions are kept to agree with the docs by convention"
+    },
+    {
+      "anchor": "export const HELP_LINKS = {",
+      "before": 6,
+      "id": "helpLinks",
+      "lines": 7,
+      "path": "packages/web/src/lib/helpLinks.ts",
+      "title": "Inline documentation links are a constant table; a test checks them against the docs files"
+    },
+    {
+      "anchor": "export function docHref(slug: string, anchor?: string): string {",
+      "before": 1,
+      "id": "docLinkHref",
+      "lines": 4,
+      "path": "packages/web/src/components/ui/DocLink.tsx",
+      "title": "A doc link is an in-app /docs route"
+    },
+    {
+      "anchor": "const DOCS_DIR = path.resolve(process.cwd(),",
+      "before": 6,
+      "id": "docsReader",
+      "lines": 11,
+      "path": "packages/web/src/lib/docs.ts",
+      "title": "The in-app reader serves only the top level of the docs directory"
+    },
+    {
+      "anchor": "export const dynamic = 'force-static';",
+      "before": 0,
+      "id": "docsStatic",
+      "lines": 6,
+      "path": "packages/web/src/app/docs/[slug]/page.tsx",
+      "title": "Doc pages are generated statically from the docs on disk"
+    },
+    {
+      "anchor": "function HomeHowItWorks({ scope }: { scope: RequestScope }) {",
+      "before": 4,
+      "id": "homeHowItWorks",
+      "lines": 12,
+      "path": "packages/web/src/app/page.tsx",
+      "title": "Home opens the lifecycle overview by default only for a user with no requests"
+    },
+    {
+      "anchor": "export function glossaryEntry(term: GlossaryTerm): GlossaryEntry {",
+      "before": 0,
+      "id": "glossaryLookup",
+      "lines": 3,
+      "path": "packages/web/src/lib/glossary.ts",
+      "title": "Looking up a glossary term indexes the constant table"
+    },
+    {
+      "anchor": "<HowItWorks />",
+      "before": 2,
+      "id": "startWorkOverview",
+      "lines": 3,
+      "path": "packages/web/src/components/requests/StartWork.tsx",
+      "title": "Start work renders the overview at its collapsed default"
+    },
+    {
+      "anchor": "<DocLink label=\"Learn more about MCP\" newTab",
+      "before": 2,
+      "id": "consentDocLink",
+      "lines": 3,
+      "path": "packages/web/src/components/oauth/ConsentScreen.tsx",
+      "title": "The consent screen opens its docs link in a new tab"
+    },
+    {
+      "anchor": "<HelpTip term=\"node\" />",
+      "before": 2,
+      "id": "nodePaletteTip",
+      "lines": 5,
+      "path": "packages/web/src/components/workflow/NodePalette.tsx",
+      "title": "The workflow node palette carries a help tip"
     }
   ],
   "usecases": [
