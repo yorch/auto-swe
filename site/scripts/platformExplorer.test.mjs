@@ -65,6 +65,47 @@ function input(dom, id, value) {
   element.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 }
 
+/** Anything that would make the browser fetch or navigate beyond the document; data: icons pass. */
+function externalAssetViolations(document) {
+  const found = [];
+  const remote = (value) => /^\s*(https?:)?\/\//i.test(value ?? '');
+  const bad = (value) => value != null && !/^\s*(data:|#)/i.test(value) && value.trim() !== '';
+  for (const element of document.querySelectorAll(
+    'script[src],link[href]:not([rel="icon"][href^="data:"]),iframe,form[action],img,source,video,audio,embed,object'
+  )) {
+    found.push(element.outerHTML.slice(0, 80));
+  }
+  for (const element of document.querySelectorAll('img[src],img[srcset],source[srcset]')) {
+    for (const value of [element.getAttribute('src'), element.getAttribute('srcset')]) {
+      if (bad(value)) {
+        found.push(`img/srcset ${value}`);
+      }
+    }
+  }
+  for (const element of document.querySelectorAll('image,use')) {
+    for (const name of ['href', 'xlink:href']) {
+      if (bad(element.getAttribute(name))) {
+        found.push(`svg ${name}`);
+      }
+    }
+  }
+  for (const meta of document.querySelectorAll('meta[http-equiv]')) {
+    if (/refresh/i.test(meta.getAttribute('http-equiv'))) {
+      found.push('meta refresh');
+    }
+  }
+  const css = [...document.querySelectorAll('style')].map((n) => n.textContent).join('\n');
+  for (const m of css.matchAll(/url\(\s*['"]?([^)'"]+)/gi)) {
+    if (remote(m[1]) || /^https?:/i.test(m[1])) {
+      found.push(`css url ${m[1]}`);
+    }
+  }
+  for (const m of css.matchAll(/@import\s+(?:url\()?\s*['"]?([^'")\s;]+)/gi)) {
+    found.push(`css @import ${m[1]}`);
+  }
+  return found;
+}
+
 describe('platform explorer source extraction', () => {
   it('derives complete inventories from the checked-out code, without frozen counts', async () => {
     const schema = await readFile(
@@ -288,10 +329,24 @@ describe('public explorer interactions', () => {
     }
     expect(dom.window.document.getElementById('site-home').pathname).toBe('/auto-swe/');
     expect(dom.window.document.querySelectorAll('a[href^="../"]')).toHaveLength(0);
-    expect(
-      dom.window.document.querySelectorAll('script[src],link[href],iframe,form[action]')
-    ).toHaveLength(0);
+    expect(externalAssetViolations(dom.window.document)).toEqual([]);
     expect(errors).toEqual([]);
+    dom.window.close();
+  }, 30_000);
+
+  it('keeps keyboard focus on the activated graph node and edge control after a re-render', () => {
+    const { dom } = browser();
+    const document = visit(dom, '#workflows/default-engineering');
+    const node = document.querySelectorAll('.graphnode')[1];
+    node.focus();
+    node.dispatchEvent(new dom.window.KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
+    expect(document.activeElement.dataset.node).toBe(node.dataset.node);
+    document.querySelector('[data-edge]').focus();
+    document.querySelector('[data-edge]').click();
+    expect(document.activeElement.hasAttribute('data-edge')).toBe(true);
+    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toMatch(
+      /^data:image\/svg\+xml,/
+    );
     dom.window.close();
   }, 30_000);
 
@@ -320,6 +375,41 @@ describe('public explorer interactions', () => {
     );
     expect(errors).toEqual([]);
     dom.window.close();
+  }, 30_000);
+
+  it('detects every kind of external asset and tolerates only the inline icon', () => {
+    const page = (body, head = '') =>
+      new JSDOM(`<!doctype html><head>${head}</head><body>${body}</body>`).window.document;
+    expect(
+      externalAssetViolations(page('', '<link rel="icon" href="data:image/svg+xml,%3Csvg%3E">'))
+    ).toEqual([]);
+    const planted = [
+      page('<img src="https://x.test/a.png">'),
+      page('<img srcset="//x.test/a.png 2x">'),
+      page('<svg><image href="https://x.test/a.png"/></svg>'),
+      page('', '<meta http-equiv="refresh" content="0;url=https://x.test">'),
+      page('', '<style>body{background:url(https://x.test/a.png)}</style>'),
+      page('', '<style>@import "//x.test/a.css";</style>'),
+      page('', '<link rel="stylesheet" href="https://x.test/a.css">'),
+    ];
+    for (const document of planted) {
+      expect(externalAssetViolations(document), document.documentElement.outerHTML).not.toEqual([]);
+    }
+  });
+
+  it('restores focus after a walk into a terminal node, and not across templates', () => {
+    const { dom } = browser();
+    const document = visit(dom, '#workflows/default-engineering');
+    for (let i = 0; i < 200 && document.querySelector('[data-edge]'); i += 1) {
+      document.querySelector('[data-edge]').focus();
+      document.querySelector('[data-edge]').click();
+    }
+    expect(document.querySelector('[data-edge]')).toBeNull();
+    expect(document.activeElement.hasAttribute('data-reset-flow')).toBe(true);
+    const node = document.querySelectorAll('.graphnode')[1];
+    node.focus();
+    visit(dom, '#workflows/hotfix');
+    expect(document.activeElement.tagName).toBe('BODY');
   }, 30_000);
 
   // Heavy: boots the explorer in jsdom; a loaded full-suite run overshoots the 5 s default.
