@@ -176,9 +176,13 @@ Guided paths build on those pieces:
   saving and promoting add the server-side checks.
 - **A run's page** opens with a plain-language verdict derived from the run's recorded status,
   open gates, failed step, and result, and has a collapsed guide to reading the page.
-- **The scanner page** can try a pattern against sample text on the server, under the scanner's
-  time limit, without saving anything.
-- **The docs reader** searches the text of every served doc, not only titles.
+- **The scanner page** can try a pattern against several samples on the server, under the
+  scanner's time limit, without saving anything. Each sample is its own field and may span lines,
+  so the `m` and `s` flags can be tried.
+- **The docs reader** filters titles and summaries as you type and, once you pause, asks the server
+  to search the text of every served doc. A word matches another form of the same word (plurals
+  and the common -ing and -ed endings, so `cases` finds `case` but `speed` never finds `spend`),
+  and the best 20 sections are listed with a link to the section.
 
 ### Workspace limitations
 
@@ -199,4 +203,10 @@ Guided paths build on those pieces:
   record only for some approvals, so no reliable tick exists. The repository step looks at the
   first 500 connections the viewer can see.
 - The run verdict cannot say who a gate is waiting on, because gate records carry no assignee.
-- Docs search matches substrings with no stemming, and needs a signed-in session to load its index.
+- Docs search needs a signed-in session. Matching is English-only and stem-based, so irregular
+  forms and synonyms are not found, there is no typo tolerance, and every word must appear in one
+  section. Queries are cut at 100 characters and 8 words. The first search after the server starts
+  builds the index: about a second of processing on a development machine, more on a small
+  container, done a document at a time so other requests are still served, but that first search
+  waits for it. The server needs the docs on disk beside it. If the text search fails, the reader
+  keeps filtering by title and summary and says the text search is unavailable.
