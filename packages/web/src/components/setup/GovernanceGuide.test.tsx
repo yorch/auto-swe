@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NAV_ITEMS, visibleNavGroups } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
+import { installMemoryStorage } from '@/test/memoryStorage';
 import { GOVERNANCE_GROUPS, GovernanceGuide } from './GovernanceGuide';
 
 let isAdmin = true;
@@ -13,12 +14,13 @@ vi.mock('@/hooks/useReadiness', () => ({ useReadiness: () => readiness }));
 beforeEach(() => {
   isAdmin = true;
   readiness = { data: { ready: true } };
-  localStorage.clear();
+  installMemoryStorage();
   useAuthStore.setState({ user: { role: 'ADMIN', sub: 'a1' } });
 });
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   useAuthStore.setState({ user: null });
 });
 

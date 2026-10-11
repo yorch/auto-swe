@@ -2,6 +2,7 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
+import { installMemoryStorage } from '@/test/memoryStorage';
 import {
   clearDismissed,
   dismissedStorageKey,
@@ -11,13 +12,14 @@ import {
 } from './dismissed';
 
 beforeEach(() => {
-  localStorage.clear();
+  installMemoryStorage();
   useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'u1' } });
 });
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   useAuthStore.setState({ user: null });
 });
 

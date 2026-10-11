@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
+import { installMemoryStorage } from '@/test/memoryStorage';
 import { FirstRunChecklist } from './FirstRunChecklist';
 
 let role = 'ENGINEER';
@@ -61,12 +62,13 @@ function reset() {
 beforeEach(() => {
   reset();
   role = 'ENGINEER';
-  localStorage.clear();
+  installMemoryStorage();
   useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'u1' } });
 });
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   useAuthStore.setState({ user: null });
 });
 
