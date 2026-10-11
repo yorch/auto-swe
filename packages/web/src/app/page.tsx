@@ -9,6 +9,7 @@ import { RequestList } from '@/components/requests/RequestList';
 import { FirstRunChecklist } from '@/components/setup/FirstRunChecklist';
 import { GovernanceGuide } from '@/components/setup/GovernanceGuide';
 import { SetupReadiness } from '@/components/setup/SetupReadiness';
+import { TourLauncher } from '@/components/tour/TourLauncher';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -428,6 +429,7 @@ export default function HomePage() {
       <SetupReadiness />
       <GovernanceGuide />
       <FirstRunChecklist />
+      <TourLauncher />
       <section aria-label="Overview" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-paper-300">Overview</h2>

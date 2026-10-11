@@ -161,6 +161,11 @@ function useNavDrawer(pathname: string) {
       if (e.key !== 'Tab') {
         return;
       }
+      // The product tour card lives outside the drawer and the inert page; Tab inside it must
+      // reach its buttons rather than be pulled back into the drawer.
+      if (document.activeElement?.closest('[data-tour-card]')) {
+        return;
+      }
       const drawer = closeButtonRef.current?.closest('aside');
       if (!drawer) {
         return;

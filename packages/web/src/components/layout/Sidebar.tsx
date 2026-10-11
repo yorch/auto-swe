@@ -62,6 +62,7 @@ function NavLink({
           ? 'bg-ink-600 text-paper-50 before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[3px] before:rounded-r-full before:bg-ember-400'
           : 'text-paper-500 hover:bg-ink-700/70 hover:text-paper-200'
       )}
+      data-tour={`nav:${item.href}`}
       href={item.href}
     >
       <Icon
@@ -257,6 +258,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           ? 'max-md:visible max-md:translate-x-0 max-md:transition-transform'
           : 'max-md:invisible max-md:-translate-x-full max-md:transition-[transform,visibility]'
       )}
+      data-tour="sidebar"
       id={SIDEBAR_ID}
     >
       <div className="flex items-center justify-between">
@@ -328,6 +330,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
               'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-2 text-[13px] font-semibold text-white no-underline shadow-[0_8px_20px_-10px_var(--color-ember-500)] transition hover:brightness-110',
               FOCUS_RING
             )}
+            data-tour="nav:/start"
             href="/start"
           >
             <Icon name="plus" size={14} strokeWidth={2.4} />

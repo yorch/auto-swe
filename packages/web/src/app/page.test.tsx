@@ -29,6 +29,15 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe('Home product tour', () => {
+  it('offers the tour as a button and never opens it on its own', () => {
+    useRequests.mockReturnValue(bucket(0));
+    render(<HomePage />);
+    expect(screen.getByRole('button', { name: /^Take the tour/ })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
 describe('Home "How auto-swe works"', () => {
   it('is open for a user with no requests in any bucket', () => {
     useRequests.mockReturnValue(bucket(0));
