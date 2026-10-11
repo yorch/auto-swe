@@ -26,7 +26,7 @@ export interface ReadinessProvider {
   provider: string;
   /** Agent keys (and `embeddings`) that call this provider. */
   usedBy: string[];
-  /** False when one of those is left without a credential it can use. */
+  /** False when one of those is left without a credential it can use (a mispinned embedding does not count). */
   present: boolean;
   /** Whether a caller the worker needs at boot (or the embedding model) uses it. */
   required: boolean;
@@ -84,11 +84,27 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
         usedBy.set(provider, (usedBy.get(provider) ?? new Set()).add(agent.key));
       }
     }
-    const embeddingProvider = providerOf(coverage.embedding?.modelSpec);
+    // The embedding model counts toward its provider only when the provider is what is wrong:
+    // a spec the platform cannot embed with, or a credential pinned to another provider (or
+    // pinned and lacking an apiBase), is the embedding config's fault. Agents use the
+    // credential cascade, so their provider may be fully covered.
+    const embeddingFault =
+      embeddingGap &&
+      (embeddingGap.problem === 'no-credential' ||
+        (embeddingGap.problem === 'no-api-base' && !coverage.embedding?.credentialId))
+        ? 'provider'
+        : embeddingGap
+          ? 'config'
+          : null;
+    const embeddingProvider =
+      embeddingFault === 'config' ? null : providerOf(coverage.embedding?.modelSpec);
     if (embeddingProvider) {
       usedBy.set(embeddingProvider, (usedBy.get(embeddingProvider) ?? new Set()).add('embeddings'));
     }
     for (const gap of gaps) {
+      if (gap.subject === 'embeddings' && embeddingFault !== 'provider') {
+        continue;
+      }
       if (gap.scope === 'GLOBAL' && gap.provider && usedBy.has(gap.provider)) {
         uncovered.add(gap.provider);
       }
