@@ -1058,6 +1058,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
             serverError={saveError}
             spec={editorSpec}
             stepRegistry={stepRegistry as StepMetadata[]}
+            teamId={template?.team?.id}
+            templateId={id}
           />
         </div>
       )}
