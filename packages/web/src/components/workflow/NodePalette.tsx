@@ -15,7 +15,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { SearchInput } from '@/components/ui/Toolbar';
+import { nodeHelp } from '@/lib/nodeHelp';
 import { cn, FOCUS_RING } from '@/lib/utils';
+import { CONTAINER_AUTHORING_RULE } from './containerNodes';
 import { NODE_TYPE_LABEL, NODE_TYPE_TONE } from './nodeTypeTone';
 
 export const PaletteDragSchema = z.union([
@@ -116,6 +118,9 @@ const PRIMITIVES: Record<SpecNode['type'], PrimitiveDef> = {
   },
 };
 
+/** Saving a shell or container-step node is gated by the gateway (see `CONTAINER_AUTHORING_RULE`). */
+const ELEVATED_NOTE = `Elevated. ${CONTAINER_AUTHORING_RULE}`;
+
 const PRIMITIVE_TYPES = Object.keys(PRIMITIVES) as SpecNode['type'][];
 
 export const PRIMITIVE_GROUPS: PrimitiveGroup[] = GROUP_ORDER.map((label) => ({
@@ -174,6 +179,10 @@ function PrimitiveGroup({
               dragPayload={{ kind: 'primitive', nodeType: p.type }}
               elevated={p.elevated}
               example={p.example}
+              help={{
+                label: p.label,
+                text: `${nodeHelp(p.type).what} Use it when: ${nodeHelp(p.type).when}`,
+              }}
               hint={p.hint}
               key={p.type}
               label={p.label}
@@ -293,6 +302,7 @@ function PaletteItem({
   dragPayload,
   title,
   elevated,
+  help,
   mono = false,
   onAdd,
 }: {
@@ -303,18 +313,20 @@ function PaletteItem({
   dragPayload: PaletteDragKind;
   title?: string;
   elevated?: boolean;
+  /** A "?" beside the item (a sibling of it, never inside the button) explaining the node type. */
+  help?: { label: string; text: string };
   /** The label is an identifier (a registered step name), shown in mono. */
   mono?: boolean;
   onAdd: (payload: PaletteDragKind) => void;
 }) {
   return (
-    <li>
+    <li className="flex items-start gap-1">
       {/* biome-ignore lint/a11y/useSemanticElements: <button draggable> does not reliably fire drag events across browsers; div uses role="button" for accessibility. */}
       <div
         aria-label={`Add ${label} node`}
         aria-roledescription="draggable palette item"
         className={cn(
-          'group flex cursor-grab items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors hover:border-ink-300 hover:bg-ink-700 focus-visible:border-ember-400 focus-visible:bg-ink-700 active:cursor-grabbing',
+          'group flex min-w-0 flex-1 cursor-grab items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors hover:border-ink-300 hover:bg-ink-700 focus-visible:border-ember-400 focus-visible:bg-ink-700 active:cursor-grabbing',
           FOCUS_RING,
           elevated ? 'border-brick-400/30 bg-brick-400/5' : 'border-ink-600 bg-ink-800/50'
         )}
@@ -351,15 +363,17 @@ function PaletteItem({
           )}
         </div>
         {elevated && (
-          <span
-            className="shrink-0 text-brick-400"
-            title="Elevated: only team leads and admins can author it"
-          >
+          <span className="shrink-0 text-brick-400" title={ELEVATED_NOTE}>
             <Icon name="lock" size={13} />
-            <span className="sr-only">Elevated: only team leads and admins can author it</span>
+            <span className="sr-only">{ELEVATED_NOTE}</span>
           </span>
         )}
       </div>
+      {help && (
+        <HelpTip className="mt-1.5 shrink-0" label={`${help.label} nodes`}>
+          {help.text}
+        </HelpTip>
+      )}
     </li>
   );
 }

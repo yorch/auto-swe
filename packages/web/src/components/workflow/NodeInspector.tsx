@@ -42,6 +42,7 @@ import {
   StepConfigSection,
   TerminateSection,
 } from './inspectorSections';
+import { NodeHelpPanel } from './NodeHelpPanel';
 import { NODE_TYPE_LABEL, NODE_TYPE_TONE } from './nodeTypeTone';
 import { isEdgeFieldRequired } from './specEdits';
 
@@ -179,6 +180,7 @@ export function NodeInspector({
       </header>
 
       <div className="flex-1 overflow-y-auto pb-4 [&>section:first-child]:border-t-0">
+        <NodeHelpPanel type={node.type} />
         <NodeMetaFields
           knownGroups={knownGroups}
           node={node}

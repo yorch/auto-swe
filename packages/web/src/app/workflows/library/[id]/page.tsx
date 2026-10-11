@@ -32,6 +32,10 @@ import { Slider } from '@/components/ui/Slider';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import {
+  CONTAINER_AUTHORING_RULE,
+  countContainerNodes,
+} from '@/components/workflow/containerNodes';
 import { InputSchemaBuilder } from '@/components/workflow/InputSchemaBuilder';
 import { KeyValueRow } from '@/components/workflow/KeyValueRow';
 import { PromoteVersionModal } from '@/components/workflow/PromoteVersionModal';
@@ -64,6 +68,7 @@ import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { estimatorPricing } from '@/lib/modelCatalog';
 import { validateRouteParam } from '@/lib/routeParams';
+import { schemaIssues } from '@/lib/specSchemaIssues';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
 import {
   cn,
@@ -693,7 +698,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   // The selected version's own lint, dirty or not: a draft saved with errors keeps them, and
   // promoting or activating it stays blocked until they are fixed.
   const lintErrors = useMemo(
-    () => (visualSpec ? validateSpec(visualSpec).errors : []),
+    () => (visualSpec ? [...schemaIssues(visualSpec), ...validateSpec(visualSpec).errors] : []),
     [visualSpec]
   );
   const lintErrorCount = lintErrors.length;
@@ -763,7 +768,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
   };
 
   const continueSave = async (specToSave: WorkflowSpec) => {
-    const shellCount = Object.values(specToSave.nodes).filter((n) => n.type === 'shell').length;
+    const shellCount = countContainerNodes(specToSave);
     if (shellCount > 0) {
       setPendingShellSpec(specToSave);
       return;
@@ -1340,7 +1345,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       <ConfirmModal
         confirmLabel="Save draft"
-        message={`This workflow has ${lintErrorCount} error${lintErrorCount === 1 ? '' : 's'}. It is saved as an inactive draft: nothing runs it, and it cannot be promoted, activated or used in an experiment until the errors are fixed.`}
+        message={`This workflow has ${lintErrorCount} error${lintErrorCount === 1 ? '' : 's'}. It is saved as an inactive draft: nothing runs it, and it cannot be promoted, activated or used in an experiment until the errors are fixed. The server refuses a save whose structure is broken, such as a blank title or an empty agent reference, until that is fixed.`}
         onClose={() => setPendingErrorSpec(null)}
         onConfirm={() => {
           if (pendingErrorSpec) {
@@ -1355,7 +1360,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       <ConfirmModal
         confirmLabel="Save with shell steps"
-        message={`This version contains ${Object.values(pendingShellSpec?.nodes ?? {}).filter((n) => n.type === 'shell').length} shell step(s). Shell steps run commands in an isolated container, so only team leads and admins can author or approve a version that contains them.`}
+        message={`This version contains ${countContainerNodes(pendingShellSpec)} shell or container step(s). They run team-authored code in an isolated container. ${CONTAINER_AUTHORING_RULE}`}
         onClose={() => setPendingShellSpec(null)}
         onConfirm={() => {
           if (pendingShellSpec) {

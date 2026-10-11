@@ -139,7 +139,8 @@ describe('NodeInspector title and group', () => {
   it('round-trips every field in the raw JSON, the ones with no form included', () => {
     renderInspector(STEP);
     fireEvent.click(screen.getByText('Raw JSON'));
-    const shown = document.querySelector('details pre')?.textContent ?? '';
+    const shown =
+      screen.getByText('Raw JSON').closest('details')?.querySelector('pre')?.textContent ?? '';
     expect(JSON.parse(shown)).toEqual(STEP);
   });
 });
