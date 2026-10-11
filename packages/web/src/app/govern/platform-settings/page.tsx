@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
+import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { SkeletonRows } from '@/components/ui/LoadingState';
@@ -182,6 +183,23 @@ export default function GovernSettingsPage() {
         title={navLabel('/govern/platform-settings')}
       />
 
+      <Alert
+        action={
+          <DocLink
+            anchor={HELP_LINKS.configGrants.anchor}
+            label="Who may change these"
+            slug={HELP_LINKS.configGrants.slug}
+          />
+        }
+        title="Platform-wide saves reach every scope below"
+        variant="warning"
+      >
+        A value saved while viewing platform-wide is the live value for every team, channel and
+        template that has no override for that key. Check the view scope before you save: a save
+        made while viewing a team or channel changes only that scope, but one made while viewing an
+        organization reaches every team in it that has no override of its own.
+      </Alert>
+
       <details className="mb-6 rounded-lg border border-ink-500/70 bg-ink-800/60">
         <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
           How settings resolve
@@ -199,10 +217,7 @@ export default function GovernSettingsPage() {
               A value saved at global scope applies wherever no more specific level (workflow
               template, channel, team, organization) sets it.
             </li>
-            <li>
-              A saved change can take about 30 seconds to apply, because settings are cached. A
-              setting badged "Restart required" needs a restart of the service that reads it.
-            </li>
+            <li>A saved change can take about 30 seconds to apply, because settings are cached.</li>
             <li>
               A setting badged "Frozen per run" is fixed when a run starts, so a change does not
               reach runs already in flight.

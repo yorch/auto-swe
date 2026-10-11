@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { CanaryForm } from '@/components/workflow/CanaryForm';
 import { ConsolidationForm } from '@/components/workflow/ConsolidationForm';
@@ -34,7 +35,7 @@ export default function GovernWorkflowPage() {
         learnMore={{ ...HELP_LINKS.configuration, label: 'About workflow defaults' }}
         subtitle={
           <>
-            System-wide defaults applied to every new work request. Each section saves on its own.
+            System-wide defaults applied to every team and template. Each section saves on its own.
             For the settings a team or channel can override, see{' '}
             <Link className="text-ember-400 hover:underline" href="/govern/platform-settings">
               Platform settings
@@ -44,6 +45,11 @@ export default function GovernWorkflowPage() {
         }
         title={navLabel('/govern/workflow-defaults')}
       />
+      <Alert title="Only admins edit these, and the changes are platform-wide" variant="warning">
+        Run defaults apply to every team and workflow template, with no per-team override, and a
+        change reaches runs already in progress: a budget ceiling within about 30 seconds (settings
+        are cached), and the CI wait settings from the run's CI step onward.
+      </Alert>
       <div className="grid gap-10 xl:grid-cols-[minmax(0,56rem)_200px]">
         <div className="min-w-0 space-y-6">
           <Section id="defaults">
