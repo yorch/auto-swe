@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils';
 import { type DiffKind, type EdgeKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
 import type { FoldedGroup } from './foldGroups';
 import { nodeDisplayName, nodeGroupOf } from './nodeDisplay';
-import { NODE_TYPE_TONE } from './nodeTypeTone';
+import { isKnownNodeType, nodeTypeLabel, nodeTypeTone } from './nodeTypeTone';
 
 /** The source-handle ids a node exposes are exactly the edge kinds the layout
  *  emits for it — one name, so the two cannot disagree. */
@@ -99,6 +99,10 @@ export interface HandlePort {
 }
 
 export function handlePortsFor(node: SpecNode): HandlePort[] {
+  // A type this build does not know has no edges it can name: a leaf, not a crash.
+  if (!isKnownNodeType(node.type)) {
+    return [];
+  }
   if (node.type === 'humanDecision') {
     return [
       port('onTimeout'),
@@ -190,6 +194,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
   const handles: HandlePort[] = folded
     ? folded.exits.map((e) => ({ id: e.port, kind: 'next' as const, label: e.label }))
     : handlePortsFor(d.node);
+  const unknown = !folded && !isKnownNodeType(d.node.type);
   const name = folded ? folded.group : nodeDisplayName(d.node, id);
   const group = folded ? undefined : nodeGroupOf(d.node);
   const stripeClass = d.status ? STATUS_STRIPE[d.status.status] : null;
@@ -202,7 +207,8 @@ export function DagNode({ id, data, selected }: NodeProps) {
         'group relative flex flex-col rounded-md border bg-ink-800 transition-colors',
         'border-l-[3px]',
         folded && 'border-dashed',
-        NODE_TYPE_TONE[d.node.type].border,
+        nodeTypeTone(d.node.type).border,
+        unknown && 'border-dashed',
         selected
           ? 'border-ember-400 shadow-[0_0_0_1px_var(--color-ember-400)]'
           : diffBorder
@@ -248,13 +254,18 @@ export function DagNode({ id, data, selected }: NodeProps) {
                 <Icon name="lock" size={11} />
               </span>
             )}
-            {folded ? 'Group' : CATEGORY_LABEL[d.node.type]}
+            {folded ? 'Group' : unknown ? 'Unknown' : CATEGORY_LABEL[d.node.type]}
           </span>
         </div>
         {folded && (
           <div className="truncate text-[11px] text-paper-400">
             {folded.memberIds.length} steps
             {folded.ran !== undefined && ` · ${folded.ran} ran`}
+          </div>
+        )}
+        {unknown && (
+          <div className="truncate text-[11px] font-medium text-brick-400">
+            {nodeTypeLabel(d.node.type)}
           </div>
         )}
         {d.subLabel && (

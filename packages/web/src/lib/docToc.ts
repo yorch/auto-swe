@@ -80,7 +80,15 @@ function collectHeadings(node: MdNode, out: MdNode[]) {
  * treated exactly as they are rendered. Document order matches render order.
  */
 export function extractToc(markdown: string): TocEntry[] {
-  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown) as unknown as MdNode;
+  return tocFromTree(unified().use(remarkParse).use(remarkGfm).parse(markdown));
+}
+
+/**
+ * The same list from a tree already parsed with `remark-parse` + `remark-gfm`, for a caller that
+ * needs the tree too and should not parse the document twice.
+ */
+export function tocFromTree(parsed: unknown): TocEntry[] {
+  const tree = parsed as MdNode;
   const headings: MdNode[] = [];
   collectHeadings(tree, headings);
   const nextId = headingIdFactory();

@@ -10,6 +10,17 @@ import { useAuthStore } from '@/stores/authStore';
 /** The "tour seen" flag, kept with the other per-viewer flags in `lib/dismissed.ts`. */
 export const TOUR_SEEN_KEY = 'product-tour';
 
+/** The first link or button of the sidebar drawer, when it is outside any inert region. */
+function focusOpenDrawer(): void {
+  const drawer = document.querySelector<HTMLElement>('[data-tour="sidebar"]');
+  if (!drawer || drawer.closest('[inert]')) {
+    return;
+  }
+  drawer
+    .querySelector<HTMLElement>('a[href], button:not([disabled])')
+    ?.focus({ preventScroll: true });
+}
+
 /**
  * A quiet button on Home that starts the product tour. Only a click starts it. Ending the tour
  * any way (Done, Skip tour, Escape) records it as seen, so the label becomes "Take the tour
@@ -40,13 +51,22 @@ export function TourLauncher() {
     setRunning(false);
     dismiss();
     // The button stays mounted, so focus goes back to where the tour was started; if it is
-    // gone, the main region keeps the user's place.
+    // gone, the main region keeps the user's place. A focus call can also be a silent no-op: with
+    // the mobile menu open the whole page, launcher and main region included, is `inert`. Check
+    // each call took, and last fall back to the open drawer, which sits outside the inert page.
     const button = buttonRef.current;
     if (button?.isConnected) {
       button.focus();
-    } else {
-      focusMainContent();
+      if (document.activeElement === button) {
+        return;
+      }
     }
+    focusMainContent();
+    const main = document.getElementById('main-content');
+    if (main && document.activeElement === main) {
+      return;
+    }
+    focusOpenDrawer();
   }, [dismiss]);
 
   if (!ready) {

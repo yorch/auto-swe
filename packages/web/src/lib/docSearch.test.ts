@@ -6,8 +6,9 @@ import {
   MAX_QUERY_CHARS,
   MAX_QUERY_TERMS,
   MAX_RESULTS,
+  sameStem,
   searchDocs,
-  stem,
+  stemForms,
   tokenize,
 } from './docSearch';
 import { extractToc } from './docToc';
@@ -199,46 +200,192 @@ describe('tokenize', () => {
 });
 
 describe('stem', () => {
+  const allSame = (words: string[]) => words.every((a) => words.every((b) => sameStem(a, b)));
+
   it('joins singular and plural', () => {
-    expect(stem('skills')).toBe(stem('skill'));
-    expect(stem('policies')).toBe(stem('policy'));
-    expect(stem('boxes')).toBe(stem('box'));
-    expect(stem('branches')).toBe(stem('branch'));
-    expect(stem('queues')).toBe(stem('queue'));
+    for (const [a, b] of [
+      ['skills', 'skill'],
+      ['policies', 'policy'],
+      ['boxes', 'box'],
+      ['branches', 'branch'],
+      ['queues', 'queue'],
+    ] as const) {
+      expect(sameStem(a, b), `${a}/${b}`).toBe(true);
+    }
   });
 
-  it('joins approve, approves, approved and approving', () => {
-    const forms = ['approve', 'approves', 'approved', 'approving'].map(stem);
-    expect(new Set(forms).size).toBe(1);
+  it('joins every inflection of approve, create and use', () => {
+    expect(allSame(['approve', 'approves', 'approved', 'approving'])).toBe(true);
+    expect(allSame(['create', 'creates', 'created', 'creating'])).toBe(true);
+    expect(allSame(['use', 'uses', 'used', 'using'])).toBe(true);
+    expect(allSame(['rate', 'rates', 'rated', 'rating'])).toBe(true);
+  });
+
+  it('does not collapse a bare word onto a different, shorter word', () => {
+    for (const [a, b] of [
+      ['rate', 'rat'],
+      ['base', 'bas'],
+      ['here', 'her'],
+      ['name', 'nam'],
+      ['rates', 'rat'],
+      ['names', 'nam'],
+    ] as const) {
+      expect(sameStem(a, b), `${a}/${b}`).toBe(false);
+      expect(sameStem(b, a), `${b}/${a}`).toBe(false);
+    }
+  });
+
+  it('does not read seed, feed, being or doing as inflections of a two-letter word', () => {
+    for (const [a, b] of [
+      ['seed', 'see'],
+      ['feed', 'fee'],
+      ['being', 'bee'],
+      ['doing', 'doe'],
+    ] as const) {
+      expect(sameStem(a, b), `${a}/${b}`).toBe(false);
+    }
   });
 
   it('joins -ing and -ed forms of a doubled consonant, but keeps ll, ss and zz', () => {
-    expect(stem('running')).toBe(stem('run'));
-    expect(stem('stopped')).toBe(stem('stop'));
-    expect(stem('skilled')).toBe('skill');
-    expect(stem('passed')).toBe('pass');
+    expect(sameStem('running', 'run')).toBe(true);
+    expect(sameStem('stopped', 'stop')).toBe(true);
+    expect(stemForms('skilled')).toContain('skill');
+    expect(stemForms('passed')).toContain('pass');
   });
 
   it('leaves short words and non-words alone', () => {
     for (const w of ['is', 'ids', 'bus', 'was', 'ing', 'ed', 'sed', 'gas']) {
-      expect(stem(w), w).toBe(w);
+      expect(stemForms(w), w).toEqual([w]);
     }
     for (const w of ['AUTO_SWE_TOKEN', 'v2', 'ciWait-Mode', 'a.b', 'x86s']) {
-      expect(stem(w), w).toBe(w.toLowerCase());
+      expect(stemForms(w), w).toEqual([w.toLowerCase()]);
     }
   });
 
   it('does not damage words that merely end like a suffix', () => {
     for (const w of ['status', 'access', 'process', 'analysis', 'this', 'bed', 'sing', 'string']) {
-      expect(stem(w), w).toBe(w);
+      expect(stemForms(w), w).toEqual([w]);
     }
     // `-ing`/`-ed` need a vowel left in the stem.
-    expect(stem('strengthed')).not.toBe('str');
+    expect(stemForms('strengthed')).not.toContain('str');
+  });
+
+  it('does not read an -ed or -ing word as an unrelated bare word', () => {
+    for (const [a, b] of [
+      ['noted', 'not'],
+      ['rated', 'rat'],
+      ['hoped', 'hop'],
+      ['mined', 'min'],
+      ['sited', 'sit'],
+      ['sitting', 'site'],
+      ['planning', 'plane'],
+      ['running', 'rune'],
+      ['setting', 'sete'],
+    ] as const) {
+      expect(sameStem(a, b), `${a}/${b}`).toBe(false);
+      expect(sameStem(b, a), `${b}/${a}`).toBe(false);
+    }
+    expect(stemForms('noted')).toEqual(['note']);
+    expect(stemForms('sitting')).toEqual(['sit']);
+  });
+
+  it('still joins an -ed or -ing word with its own base', () => {
+    for (const [a, b] of [
+      ['noted', 'note'],
+      ['noting', 'notes'],
+      ['hoped', 'hope'],
+      ['mined', 'mine'],
+      ['sited', 'site'],
+      ['sitting', 'sit'],
+      ['planned', 'plan'],
+      ['planning', 'plan'],
+      ['scanned', 'scan'],
+      ['opened', 'open'],
+      ['listed', 'list'],
+    ] as const) {
+      expect(sameStem(a, b), `${a}/${b}`).toBe(true);
+    }
+  });
+
+  it('joins -ied with the -y form', () => {
+    for (const [a, b] of [
+      ['applied', 'apply'],
+      ['verified', 'verify'],
+      ['copied', 'copy'],
+      ['retried', 'retry'],
+      ['denied', 'deny'],
+      ['classified', 'classify'],
+      ['notified', 'notify'],
+      ['tried', 'try'],
+      ['supplied', 'supply'],
+      ['carried', 'carry'],
+      ['applied', 'applies'],
+    ] as const) {
+      expect(sameStem(a, b), `${a}/${b}`).toBe(true);
+    }
+    expect(sameStem('applied', 'apple')).toBe(false);
+  });
+
+  it('joins the plural of an -ing noun with its singular, and the singular with nothing shorter', () => {
+    for (const [a, b] of [
+      ['settings', 'setting'],
+      ['findings', 'finding'],
+      ['warnings', 'warning'],
+      ['bindings', 'binding'],
+      ['headings', 'heading'],
+      ['embeddings', 'embedding'],
+      ['mappings', 'mapping'],
+      ['listings', 'listing'],
+    ] as const) {
+      expect(sameStem(a, b), `${a}/${b}`).toBe(true);
+    }
+    // The noun `setting` is not the verb `set`, nor `heading` the noun `head`.
+    expect(sameStem('setting', 'set')).toBe(false);
+    expect(sameStem('settings', 'set')).toBe(false);
+    expect(sameStem('settings', 'sets')).toBe(false);
+    expect(sameStem('heading', 'head')).toBe(false);
+  });
+
+  it('does not cut an -ed that belongs to the word', () => {
+    for (const [a, b] of [
+      ['speed', 'speeds'],
+      ['embed', 'embeds'],
+      ['embed', 'embedded'],
+      ['embed', 'embedding'],
+    ] as const) {
+      expect(sameStem(a, b), `${a}/${b}`).toBe(true);
+    }
+    for (const w of ['speed', 'exceed', 'proceed', 'succeed']) {
+      expect(stemForms(w), w).toEqual([w]);
+    }
+    expect(sameStem('exceeds', 'exceed')).toBe(true);
+    expect(sameStem('succeeds', 'succeed')).toBe(true);
+    expect(sameStem('embed', 'emb')).toBe(false);
+    expect(sameStem('speed', 'spee')).toBe(false);
+  });
+
+  it('joins -ses plurals with the singular without breaking use, case and base', () => {
+    for (const [a, b] of [
+      ['statuses', 'status'],
+      ['aliases', 'alias'],
+      ['canvases', 'canvas'],
+      ['buses', 'bus'],
+      ['addresses', 'address'],
+      ['classes', 'class'],
+    ] as const) {
+      expect(sameStem(a, b), `${a}/${b}`).toBe(true);
+    }
+    expect(sameStem('uses', 'use')).toBe(true);
+    expect(sameStem('cases', 'case')).toBe(true);
+    expect(sameStem('bases', 'base')).toBe(true);
+    expect(sameStem('causes', 'cause')).toBe(true);
+    expect(sameStem('causes', 'caus')).toBe(false);
+    expect(sameStem('statuses', 'statuse')).toBe(false);
   });
 
   it('is deterministic and lower-cases', () => {
-    expect(stem('Approving')).toBe(stem('approving'));
-    expect(stem(stem('policies'))).toBe(stem('policies'));
+    expect(stemForms('Approving')).toEqual(stemForms('approving'));
+    expect(sameStem('Approving', 'approved')).toBe(true);
   });
 });
 
@@ -291,6 +438,32 @@ describe('searchDocs with stemming', () => {
   });
 });
 
+describe('searchDocs does not conflate a bare word with a shorter one', () => {
+  // Substring matching is separate and intended (`rat` is in `rate`), so the shorter word is
+  // the one in the document and the longer one is the query.
+  const idx = buildSearchIndex([
+    { content: '# A\n\n## Short\n\nA rat, a bas, her, nam.\n', slug: 'short', title: 'A' },
+    {
+      content: '# B\n\n## Long\n\nThe rated, based, naming and hereby.\n',
+      slug: 'long',
+      title: 'B',
+    },
+  ]);
+  const ids = (q: string) => searchDocs(idx, q).map((r) => r.slug);
+
+  it('does not find rat, bas, her or nam from rate, base, here or name', () => {
+    for (const q of ['rate', 'base', 'here', 'name']) {
+      expect(ids(q), q).not.toContain('short');
+    }
+  });
+
+  it('still finds the inflected forms of the longer word', () => {
+    expect(ids('rate')).toEqual(['long']);
+    expect(ids('base')).toEqual(['long']);
+    expect(ids('name')).toEqual(['long']);
+  });
+});
+
 describe('highlight with stems', () => {
   it('marks a word reached only through its stem, whole', () => {
     expect(highlight('Several skills here', ['skill'])).toEqual([
@@ -321,18 +494,20 @@ describe('stem equality, not stem prefix', () => {
     searchDocs(idx, q).flatMap((r) => r.snippet.filter((s) => s.match).map((s) => s.text));
 
   it('gives case and cases, use and uses, one stem each', () => {
-    expect(stem('cases')).toBe(stem('case'));
-    expect(stem('uses')).toBe(stem('use'));
-    expect(stem('sizes')).toBe(stem('size'));
-    expect(stem('based')).toBe(stem('base'));
-    expect(stem('boxes')).toBe(stem('box'));
+    expect(sameStem('cases', 'case')).toBe(true);
+    expect(sameStem('uses', 'use')).toBe(true);
+    expect(sameStem('sizes', 'size')).toBe(true);
+    expect(sameStem('based', 'base')).toBe(true);
+    expect(sameStem('boxes', 'box')).toBe(true);
   });
 
   it('keeps speed apart from spend, and does and series intact', () => {
-    expect(stem('speed')).not.toBe(stem('spend'));
-    expect(stem('does')).toBe('does');
-    expect(stem('series')).toBe('series');
-    expect(stem('based')).not.toBe(stem('bash'));
+    expect(sameStem('speed', 'spend')).toBe(false);
+    expect(stemForms('does')).toEqual(['does']);
+    expect(stemForms('series')).toEqual(['series']);
+    expect(sameStem('based', 'bash')).toBe(false);
+    expect(sameStem('cases', 'cascade')).toBe(false);
+    expect(sameStem('uses', 'user')).toBe(false);
   });
 
   it('finds nothing for speed, although spend and specific start the same way', () => {

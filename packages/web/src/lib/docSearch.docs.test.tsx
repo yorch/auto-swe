@@ -2,9 +2,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { render } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { Markdown } from '@/components/docs/Markdown';
-import { buildSearchIndex, searchDocs } from './docSearch';
+import { buildSearchIndex, type SearchIndex, searchDocs } from './docSearch';
 import { extractToc } from './docToc';
 
 // The same set `lib/docs.ts` serves: top-level docs/*.md with a valid slug.
@@ -18,10 +18,27 @@ const docs = readdirSync(DOCS_DIR)
     return { content, slug, title: content.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? slug };
   });
 
-// These tests index and render every served doc, which takes several seconds when CI runs the
-// whole suite under coverage; the 5 s default timed them out there.
-describe('the real docs index', { timeout: 60_000 }, () => {
-  const index = buildSearchIndex(docs);
+// Indexing and rendering every served doc is the expensive part, so it happens once, in
+// `beforeAll`, and the tests below only read what it produced. Under coverage in CI it takes a
+// few seconds, which the 5 s default would not survive.
+describe('the real docs index', () => {
+  let index: SearchIndex;
+  const renderedIds = new Map<string, Set<string>>();
+
+  beforeAll(() => {
+    index = buildSearchIndex(docs);
+    const servedSlugs = new Set(docs.map((d) => d.slug));
+    for (const doc of docs) {
+      const { container, unmount } = render(
+        <Markdown servedSlugs={servedSlugs}>{doc.content}</Markdown>
+      );
+      renderedIds.set(
+        doc.slug,
+        new Set([...container.querySelectorAll('h2[id], h3[id]')].map((h) => h.id))
+      );
+      unmount();
+    }
+  }, 30_000);
 
   it('indexes every served doc and nothing else', () => {
     expect(index.docs.map((d) => d.slug).sort()).toEqual(docs.map((d) => d.slug).sort());
@@ -48,14 +65,10 @@ describe('the real docs index', { timeout: 60_000 }, () => {
   it('every indexed anchor is the id of a heading in the rendered doc', () => {
     for (const doc of docs) {
       const i = index.docs.findIndex((d) => d.slug === doc.slug);
-      const { container, unmount } = render(
-        <Markdown servedSlugs={new Set(docs.map((d) => d.slug))}>{doc.content}</Markdown>
-      );
-      const ids = new Set([...container.querySelectorAll('h2[id], h3[id]')].map((h) => h.id));
+      const ids = renderedIds.get(doc.slug) ?? new Set<string>();
       for (const s of index.sections.filter((x) => x.doc === i && x.anchor !== null)) {
         expect(ids.has(s.anchor as string), `${doc.slug}#${s.anchor}`).toBe(true);
       }
-      unmount();
     }
   });
 

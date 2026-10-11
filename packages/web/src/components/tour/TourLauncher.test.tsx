@@ -1,20 +1,40 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readDismissed } from '@/lib/dismissed';
+import { focusMainContent, readDismissed } from '@/lib/dismissed';
 import { useAuthStore } from '@/stores/authStore';
 import { installMemoryStorage } from '@/test/memoryStorage';
 import { TOUR_SEEN_KEY, TourLauncher } from './TourLauncher';
 
+// Pass-through spy: the real focusMainContent still runs, so tests can assert on both the call
+// and the resulting focus.
+vi.mock('@/lib/dismissed', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/dismissed')>();
+  return { ...actual, focusMainContent: vi.fn(actual.focusMainContent) };
+});
+
 beforeEach(() => {
   installMemoryStorage();
   useAuthStore.setState({ user: { email: 'a@x.dev', role: 'ENGINEER', sub: 'u1' } } as never);
+  vi.mocked(focusMainContent).mockClear();
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  document.getElementById('main-content')?.remove();
 });
+
+/** The shell's focusable main landmark, as focusMainContent looks it up. */
+function renderWithMain(ui: ReactElement) {
+  const main = document.createElement('main');
+  main.id = 'main-content';
+  main.tabIndex = -1;
+  document.body.appendChild(main);
+  return { main, ...render(ui, { container: main }) };
+}
 
 describe('TourLauncher', () => {
   it('offers the tour but never starts it by itself', () => {
@@ -148,5 +168,115 @@ describe('TourLauncher', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Take the tour' }));
     fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }));
     expect(screen.getByRole('button', { name: 'Take the tour again' })).toBeTruthy();
+  });
+
+  describe('focus when the tour ends', () => {
+    it('returns focus to the launcher button and does not use the main-region fallback', () => {
+      renderWithMain(<TourLauncher />);
+      const button = screen.getByRole('button', { name: 'Take the tour' });
+      fireEvent.click(button);
+      for (let i = 0; i < 6; i++) {
+        fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+      expect(document.activeElement).toBe(button);
+      expect(focusMainContent).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the main region when the button focus call does not take', () => {
+      const { main } = renderWithMain(<TourLauncher />);
+      const button = screen.getByRole('button', { name: 'Take the tour' });
+      // Simulates an inert page (open mobile menu): focus() runs but activeElement is unchanged.
+      const focus = vi.spyOn(button, 'focus').mockImplementation(() => {});
+      fireEvent.click(button);
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }));
+      expect(focus).toHaveBeenCalledTimes(1);
+      expect(focusMainContent).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(main);
+      expect(readDismissed(TOUR_SEEN_KEY, 'u1')).toBe(true);
+    });
+
+    it('lands in the open drawer when the mobile menu makes the launcher and main inert', () => {
+      // jsdom has no `inert`: make focus() a no-op for anything under an [inert] ancestor.
+      const realFocus = HTMLElement.prototype.focus;
+      const spy = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (
+        this: HTMLElement,
+        options?: FocusOptions
+      ) {
+        if (this.closest('[inert]')) {
+          return;
+        }
+        realFocus.call(this, options);
+      });
+      const drawer = document.createElement('aside');
+      drawer.setAttribute('data-tour', 'sidebar');
+      const close = document.createElement('button');
+      close.textContent = 'Close menu';
+      drawer.appendChild(close);
+      document.body.appendChild(drawer);
+      const page = document.createElement('div');
+      page.setAttribute('inert', '');
+      document.body.appendChild(page);
+      const main = document.createElement('main');
+      main.id = 'main-content';
+      main.tabIndex = -1;
+      page.appendChild(main);
+      render(<TourLauncher />, { container: main });
+      const button = screen.getByRole('button', { name: 'Take the tour' });
+      fireEvent.click(button);
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }));
+      expect(document.activeElement).not.toBe(button);
+      expect(document.activeElement).not.toBe(main);
+      expect(document.activeElement).toBe(close);
+      expect(readDismissed(TOUR_SEEN_KEY, 'u1')).toBe(true);
+      spy.mockRestore();
+      cleanup();
+      drawer.remove();
+      page.remove();
+    });
+
+    it('does not move focus into a drawer that is itself inert', () => {
+      const drawer = document.createElement('aside');
+      drawer.setAttribute('data-tour', 'sidebar');
+      drawer.setAttribute('inert', '');
+      const close = document.createElement('button');
+      drawer.appendChild(close);
+      document.body.appendChild(drawer);
+      const focus = vi.spyOn(close, 'focus');
+      const { main } = renderWithMain(<TourLauncher />);
+      const button = screen.getByRole('button', { name: 'Take the tour' });
+      vi.spyOn(button, 'focus').mockImplementation(() => {});
+      main.removeAttribute('id');
+      fireEvent.click(button);
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }));
+      expect(focus).not.toHaveBeenCalled();
+      drawer.remove();
+    });
+
+    it('uses the main region when the launcher button is no longer in the document', () => {
+      const { main } = renderWithMain(<TourLauncher />);
+      const button = screen.getByRole('button', { name: 'Take the tour' });
+      fireEvent.click(button);
+      button.remove();
+      expect(button.isConnected).toBe(false);
+      fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }));
+      expect(focusMainContent).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(main);
+    });
+
+    it('never throws when neither the button nor the main region can take focus', () => {
+      const { main } = renderWithMain(<TourLauncher />);
+      const button = screen.getByRole('button', { name: 'Take the tour' });
+      vi.spyOn(button, 'focus').mockImplementation(() => {});
+      fireEvent.click(button);
+      // No main region to find: focusMainContent has nothing to focus.
+      main.removeAttribute('id');
+      expect(() => {
+        fireEvent.click(screen.getByRole('button', { name: 'Skip tour' }));
+      }).not.toThrow();
+      expect(focusMainContent).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).not.toBe(main);
+      expect(screen.getByRole('button', { name: 'Take the tour again' })).toBeTruthy();
+    });
   });
 });

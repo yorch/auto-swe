@@ -15,6 +15,7 @@ import {
   setNodeEdge,
 } from '@auto-swe/shared/workflow';
 import { useEffect, useId, useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
@@ -43,7 +44,7 @@ import {
   TerminateSection,
 } from './inspectorSections';
 import { NodeHelpPanel } from './NodeHelpPanel';
-import { NODE_TYPE_LABEL, NODE_TYPE_TONE } from './nodeTypeTone';
+import { isKnownNodeType, nodeTypeLabel, nodeTypeTone } from './nodeTypeTone';
 import { isEdgeFieldRequired } from './specEdits';
 
 interface InspectorProps {
@@ -132,6 +133,8 @@ export function NodeInspector({
     );
   }
 
+  const unknownType = !isKnownNodeType(node.type);
+
   return (
     <aside
       aria-label="Node inspector"
@@ -141,10 +144,10 @@ export function NodeInspector({
         <div className="flex items-center gap-2">
           <span
             aria-hidden
-            className={cn('h-2 w-2 shrink-0 rounded-full', NODE_TYPE_TONE[node.type].swatch)}
+            className={cn('h-2 w-2 shrink-0 rounded-full', nodeTypeTone(node.type).swatch)}
           />
           <h2 className="text-sm font-semibold text-paper-100">
-            {NODE_TYPE_LABEL[node.type]} node
+            {unknownType ? 'Unknown node type' : `${nodeTypeLabel(node.type)} node`}
           </h2>
           {isEntry && (
             <Badge title="The workflow starts here" tone="ember" variant="outline">
@@ -180,15 +183,26 @@ export function NodeInspector({
       </header>
 
       <div className="flex-1 overflow-y-auto pb-4 [&>section:first-child]:border-t-0">
-        <NodeHelpPanel type={node.type} />
-        <NodeMetaFields
-          knownGroups={knownGroups}
-          node={node}
-          nodeId={nodeId}
-          onChange={onChangeNode}
-        />
+        {unknownType && (
+          <div className="px-4 pt-3">
+            <Alert announce={false} title={`Unknown node type "${String(node.type ?? '')}"`}>
+              This build does not know this type, so there are no fields to edit and no connections
+              are drawn for it. A save is refused until its <code>type</code> is corrected in JSON
+              mode, or the node is deleted.
+            </Alert>
+          </div>
+        )}
+        {!unknownType && <NodeHelpPanel type={node.type} />}
+        {!unknownType && (
+          <NodeMetaFields
+            knownGroups={knownGroups}
+            node={node}
+            nodeId={nodeId}
+            onChange={onChangeNode}
+          />
+        )}
 
-        {HAS_CONFIG_SECTION[node.type] && (
+        {!unknownType && HAS_CONFIG_SECTION[node.type] && (
           <InspectorSection title="Configuration">
             <NodeConfig
               node={node}
@@ -198,17 +212,18 @@ export function NodeInspector({
             />
           </InspectorSection>
         )}
-        {(node.type === 'step' ||
-          node.type === 'shell' ||
-          node.type === 'agent' ||
-          node.type === 'mcp' ||
-          node.type === 'containerStep') && (
-          <InputsBindingsSection
-            inputs={(node as { inputs?: Record<string, Binding> }).inputs}
-            onChange={(inputs) => onChangeNode({ ...node, inputs } as SpecNode)}
-          />
-        )}
-        {!HAS_CONFIG_SECTION[node.type] && (
+        {!unknownType &&
+          (node.type === 'step' ||
+            node.type === 'shell' ||
+            node.type === 'agent' ||
+            node.type === 'mcp' ||
+            node.type === 'containerStep') && (
+            <InputsBindingsSection
+              inputs={(node as { inputs?: Record<string, Binding> }).inputs}
+              onChange={(inputs) => onChangeNode({ ...node, inputs } as SpecNode)}
+            />
+          )}
+        {!unknownType && !HAS_CONFIG_SECTION[node.type] && (
           <InspectorSection title="Configuration">
             <InspectorNote>
               There are no form fields for this node type yet. Edit its settings in JSON mode; its
@@ -220,19 +235,21 @@ export function NodeInspector({
         {/* Outgoing-edge connections — explicit dropdowns alongside the
             canvas drag-to-connect. On big graphs with tiny nodes the
             dropdowns are often the only practical way to retarget an edge. */}
-        <EdgeConnectionsSection
-          allNodeIds={allNodeIds}
-          node={node}
-          nodeId={nodeId}
-          // A handle id is the spec field the edge leaves through, and a
-          // decision option's is `options[i].next` — an indexed path, not a
-          // top-level key. Assigning it directly wrote a literal
-          // `"options[0].next"` property onto the node and left the real
-          // routing untouched, so the write goes through `setNodeEdge`.
-          // `Not connected` is only offered for fields the schema lets us clear
-          // (see EdgeConnectionsSection), so a null here is always safe.
-          onSetEdge={(field, target) => onChangeNode(setNodeEdge(node, field, target))}
-        />
+        {!unknownType && (
+          <EdgeConnectionsSection
+            allNodeIds={allNodeIds}
+            node={node}
+            nodeId={nodeId}
+            // A handle id is the spec field the edge leaves through, and a
+            // decision option's is `options[i].next` — an indexed path, not a
+            // top-level key. Assigning it directly wrote a literal
+            // `"options[0].next"` property onto the node and left the real
+            // routing untouched, so the write goes through `setNodeEdge`.
+            // `Not connected` is only offered for fields the schema lets us clear
+            // (see EdgeConnectionsSection), so a null here is always safe.
+            onSetEdge={(field, target) => onChangeNode(setNodeEdge(node, field, target))}
+          />
+        )}
 
         {/* Raw JSON escape hatch */}
         <details className="group border-t border-ink-600 px-4 pt-4">

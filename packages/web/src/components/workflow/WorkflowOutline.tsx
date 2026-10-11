@@ -27,7 +27,7 @@ import { Icon } from '@/components/ui/Icon';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import type { DiffKind } from '@/lib/workflowLayout';
 import { hasDisplayTitle, nodeDisplayName } from './nodeDisplay';
-import { NODE_TYPE_LABEL, NODE_TYPE_TONE } from './nodeTypeTone';
+import { nodeTypeLabel, nodeTypeTone } from './nodeTypeTone';
 import { buildOutline, nextOutlineId, type OutlineKey } from './outline';
 
 interface Props {
@@ -218,7 +218,7 @@ export function WorkflowOutline({
                             className={cn(
                               'flex min-h-[44px] w-full items-center gap-2 border-l-[3px] px-3 py-1.5 text-left transition-colors lg:min-h-0',
                               FOCUS_RING,
-                              NODE_TYPE_TONE[node.type].border,
+                              nodeTypeTone(node.type).border,
                               selected
                                 ? 'bg-ember-400/10 text-paper-50'
                                 : 'text-paper-200 hover:bg-ink-700/60',
@@ -237,7 +237,7 @@ export function WorkflowOutline({
                                 {nodeDisplayName(node, id)}
                               </span>
                               <span className="mt-0.5 block truncate text-[11px] text-paper-500">
-                                {NODE_TYPE_LABEL[node.type]}
+                                {nodeTypeLabel(node.type)}
                                 {node.type === 'step' && (
                                   <span className="font-mono"> · {node.step}</span>
                                 )}

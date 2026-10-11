@@ -137,22 +137,36 @@ export const getDoc = cache(async (slug: string): Promise<Doc | null> => {
   }
 });
 
-let searchIndex: Promise<SearchIndex> | undefined;
+/**
+ * Held on `globalThis` rather than in a module variable: Next bundles `instrumentation.ts` apart
+ * from the route handlers, so each would get its own copy of this module and the start-up
+ * warm-up would build an index the search route never reads.
+ */
+const INDEX_KEY = Symbol.for('auto-swe.docSearchIndex');
+const holder = globalThis as { [INDEX_KEY]?: Promise<SearchIndex> };
 
 /**
  * The search index over every served doc, built from the same files `/docs/[slug]` renders.
- * Built on first use and kept for the life of the process (the docs ship in the image and do not
- * change while it runs), so it is a module-level memo rather than React's per-request `cache`.
+ * Built at start-up (`instrumentation.ts`) or on first use, and kept for the life of the process
+ * (the docs ship in the image and do not change while it runs), so it is a process-wide memo
+ * rather than React's per-request `cache`.
  * A failed build is not kept: the next search tries again.
  */
 export function loadDocSearchIndex(): Promise<SearchIndex> {
-  searchIndex ??= (async () => {
+  const kept = holder[INDEX_KEY];
+  if (kept) {
+    return kept;
+  }
+  const building: Promise<SearchIndex> = (async () => {
     const metas = await listDocs();
     const docs = await Promise.all(metas.map((m) => getDoc(m.slug)));
     return buildSearchIndexAsync(docs.filter((d): d is Doc => d !== null));
   })().catch((error: unknown) => {
-    searchIndex = undefined;
+    if (holder[INDEX_KEY] === building) {
+      holder[INDEX_KEY] = undefined;
+    }
     throw error;
   });
-  return searchIndex;
+  holder[INDEX_KEY] = building;
+  return building;
 }

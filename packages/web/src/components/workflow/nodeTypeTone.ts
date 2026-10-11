@@ -41,3 +41,29 @@ export const NODE_TYPE_LABEL: Record<SpecNode['type'], string> = {
   step: 'Step',
   terminate: 'Terminate',
 };
+
+/**
+ * Whether `type` is a node type this build knows. A spec can carry one it does not (hand-edited
+ * JSON, a typo, a version authored by another release), and every table in this file is indexed by
+ * the known union: an unguarded lookup yields `undefined` and the first property read on it throws
+ * during render.
+ */
+export function isKnownNodeType(type: unknown): type is SpecNode['type'] {
+  return typeof type === 'string' && Object.hasOwn(NODE_TYPE_TONE, type);
+}
+
+/** Tone for a node whose type is not known: red, so it reads as "not a real kind". */
+export const UNKNOWN_NODE_TONE = { border: 'border-l-brick-400', swatch: 'bg-brick-400' };
+
+/** `NODE_TYPE_TONE[type]`, safe for a type this build does not know. */
+export function nodeTypeTone(type: unknown): { border: string; swatch: string } {
+  return isKnownNodeType(type) ? NODE_TYPE_TONE[type] : UNKNOWN_NODE_TONE;
+}
+
+/** The type's human name; an unknown type is named as such, with the raw text quoted. */
+export function nodeTypeLabel(type: unknown): string {
+  if (isKnownNodeType(type)) {
+    return NODE_TYPE_LABEL[type];
+  }
+  return typeof type === 'string' && type !== '' ? `Unknown type "${type}"` : 'Unknown type';
+}

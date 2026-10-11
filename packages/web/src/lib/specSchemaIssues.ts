@@ -1,6 +1,21 @@
 import type { ValidationIssue, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { findInvalidPresentation, WorkflowSpecSchema } from '@auto-swe/shared/workflow';
 
+/** Zod's "Invalid discriminator value" does not say which node or which value; this does. */
+function unknownTypeMessage(spec: WorkflowSpec, nodeId: string, zodMessage: string): string {
+  const node = spec.nodes?.[nodeId] as { type?: unknown } | undefined;
+  const type = node?.type;
+  let named: string;
+  if (typeof type === 'string') {
+    named = `unknown type "${type}"`;
+  } else if (type === undefined) {
+    named = 'no type';
+  } else {
+    named = 'a non-text type';
+  }
+  return `node '${nodeId}' has ${named}. ${zodMessage}`;
+}
+
 /**
  * The problems the save will refuse on that `validateSpec` cannot see: it assumes a spec that
  * already parses (an empty title, agentRef or command is a schema failure, not a lint finding).
@@ -29,7 +44,10 @@ export function schemaIssues(spec: WorkflowSpec): ValidationIssue[] {
         severity: 'error',
         ...(nodeId ? { nodeId } : {}),
         ...(field ? { field } : {}),
-        message: issue.message,
+        message:
+          nodeId && field === 'type'
+            ? unknownTypeMessage(spec, nodeId, issue.message)
+            : issue.message,
       });
     }
   }

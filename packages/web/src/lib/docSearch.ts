@@ -11,7 +11,7 @@
 import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
-import { extractToc } from './docToc';
+import { tocFromTree } from './docToc';
 
 export interface SearchIndex {
   docs: { slug: string; title: string }[];
@@ -103,7 +103,7 @@ function tidy(text: string): string {
 /** Cut one doc's Markdown into heading-anchored plain-text sections. */
 export function indexDoc(markdown: string): Omit<SearchSection, 'doc'>[] {
   const root = unified().use(remarkParse).use(remarkGfm).parse(markdown) as unknown as MdNode;
-  const toc = extractToc(markdown);
+  const toc = tocFromTree(root);
   const sections: Omit<SearchSection, 'doc'>[] = [];
   let heading: string | null = null;
   let anchor: string | null = null;
@@ -192,34 +192,121 @@ const VOWELS = /[aeiou]/;
 /** Words the suffix rules would damage: they are their own singular, or end like a plural. */
 const UNSTEMMED = new Set(['series', 'species', 'news', 'does', 'goes']);
 
+/** Words ending -ed that are not a past tense (`embed`, not `emb` + `ed`). */
+const NOT_PAST_TENSE = new Set(['embed', 'hundred', 'indeed', 'naked', 'sacred', 'shred']);
+
 /**
- * A light, deterministic English stem: plural (-s, -es, -ies), -ing, -ed, then a trailing -e, so
- * `approve`, `approves`, `approved` and `approving` all become `approv`, and `case` and `cases`
- * both become `cas`. `-es` is dropped whole only after `ss`, `x`, `zz`, `ch` or `sh`
- * (`boxes`, `passes`); anywhere else only the `s` goes (`cases`, `sizes`, `uses`). It is only
- * ever used to compare two words for equality, never shown. Anything that is not a plain run of
- * letters (an identifier such as `AUTO_SWE_TOKEN` or `v2`), any word of three letters or fewer
- * and the few words in `UNSTEMMED` is returned unchanged, and a suffix is only removed when a
- * stem with a vowel remains.
+ * Nouns ending -ing that are not read as the verb's gerund, so `setting` is not the verb `set`
+ * and `heading` is not `head`. They and their plurals match each other and nothing shorter.
  */
-export function stem(word: string): string {
+const NOUNS_IN_ING = new Set(['setting', 'heading', 'ending', 'meeting']);
+
+/**
+ * Singulars ending -as or -us whose plural adds `es` (`aliases`, `statuses`). A closed list,
+ * because the ending alone cannot tell them from `cases`, `bases`, `causes` or `uses`.
+ */
+const SES_SINGULARS = new Set([
+  'alias',
+  'atlas',
+  'bias',
+  'bonus',
+  'bus',
+  'campus',
+  'canvas',
+  'census',
+  'corpus',
+  'focus',
+  'radius',
+  'status',
+  'virus',
+]);
+
+/**
+ * The forms a word is compared by: plural (-s, -es, -ies), -ing, -ed and -ied are removed, and
+ * two words match when their form lists share a form (`sameStem`). `-ing` and `-ed` hide whether
+ * the base ended in `e`, which is settled the way the Porter stemmer does: a doubled consonant
+ * means there was none (`sitting` and `planned` come from `sit` and `plan`, never `site` or
+ * `plane`); a one-syllable consonant-vowel-consonant base had one (`noted` is `note`, `rated` is
+ * `rate`, `hoped` is `hope`, never `not`, `rat` or `hop`); any other base could be either, so
+ * `approved` and `approving` carry `approv` and `approve`. A bare word is never reduced onto a
+ * shorter one: `rate` is not `rat`, `base` is not `bas`, `here` is not `her`. `-ied` becomes `-y`
+ * (`applied` is `apply`), `-ings` takes the forms of its `-ing` singular (`findings` and
+ * `finding`), and `-es` is dropped whole after `ss`, `x`, `zz`, `ch`, `sh` and on a short list
+ * of `-as`/`-us` nouns (`statuses`, `aliases`); anywhere else only the `s` goes (`cases`, `sizes`,
+ * `uses`, `causes`). A few words that merely end like an inflection are left whole (`embed`,
+ * `speed`, `setting`). Forms are only ever compared, never shown. Anything that is not a plain
+ * run of letters (an identifier such as `AUTO_SWE_TOKEN` or `v2`), any word of three letters or
+ * fewer and the few words in `UNSTEMMED` is its own only form, and a suffix is only removed when
+ * a stem with a vowel remains.
+ */
+export function stemForms(word: string): string[] {
   const w = word.toLowerCase();
   if (w.length <= 3 || !/^[a-z]+$/.test(w) || UNSTEMMED.has(w)) {
-    return w;
+    return [w];
   }
-  let s = w;
-  if (s.endsWith('ies') && s.length > 4) {
-    s = `${s.slice(0, -3)}y`;
-  } else if (s.endsWith('ing') && s.length >= 6 && VOWELS.test(s.slice(0, -3))) {
-    s = undouble(s.slice(0, -3));
-  } else if (s.endsWith('ed') && s.length >= 5 && VOWELS.test(s.slice(0, -2))) {
-    s = undouble(s.slice(0, -2));
-  } else if (/(?:ss|zz|x|ch|sh)es$/.test(s)) {
-    s = s.slice(0, -2);
-  } else if (s.endsWith('s') && !/(?:ss|us|is)$/.test(s)) {
-    s = s.slice(0, -1);
+  if ((w.endsWith('ies') || w.endsWith('ied')) && w.length > 4) {
+    return [`${w.slice(0, -3)}y`];
   }
-  return s.length >= 4 && s.endsWith('e') ? s.slice(0, -1) : s;
+  if (NOT_PAST_TENSE.has(w) || (w.endsWith('s') && NOT_PAST_TENSE.has(w.slice(0, -1)))) {
+    return [w.endsWith('s') ? w.slice(0, -1) : w];
+  }
+  if (w.endsWith('ings') && w.length > 5) {
+    return [...new Set([...stemForms(w.slice(0, -1)), w])];
+  }
+  if (NOUNS_IN_ING.has(w) || SES_SINGULARS.has(w)) {
+    return [w];
+  }
+  const base = inflectionBase(w);
+  if (base !== null) {
+    return base;
+  }
+  if (/(?:ss|zz|x|ch|sh)es$/.test(w)) {
+    return [w.slice(0, -2)];
+  }
+  if (w.endsWith('es') && SES_SINGULARS.has(w.slice(0, -2))) {
+    return [w.slice(0, -2)];
+  }
+  if (w.endsWith('s') && !/(?:ss|us|is)$/.test(w)) {
+    return [w.slice(0, -1)];
+  }
+  return [w];
+}
+
+/**
+ * The candidate bases of `w` without its -ing or -ed, or null when it has neither or nothing
+ * word-like would remain. A vowel must remain, an `-eed` word (`speed`, `succeed`) is not a past
+ * tense, and a base of two letters (`used`, `using`) must end in a consonant: `seed`, `being` and
+ * `doing` are not `se`, `be` and `do` inflected.
+ */
+function inflectionBase(w: string): string[] | null {
+  const cut = w.endsWith('ing') ? 3 : w.endsWith('ed') ? 2 : 0;
+  if (cut === 0) {
+    return null;
+  }
+  const raw = w.slice(0, -cut);
+  if (!VOWELS.test(raw) || (cut === 2 && raw.endsWith('e'))) {
+    return null;
+  }
+  const base = undouble(raw);
+  if (base.length < 2 || (base.length < 3 && VOWELS.test(base.slice(-1)))) {
+    return null;
+  }
+  if (base !== raw) {
+    return [base];
+  }
+  // One syllable, consonant-vowel-consonant (`not`, `rat`, `hop`): only the `e` form is a word
+  // that takes -ed or -ing without doubling.
+  if (/^[^aeiou]+[aeiou][^aeiouwxy]$/.test(raw)) {
+    return [`${raw}e`];
+  }
+  // A base shorter than three letters (`used` -> `us`) is not a word to match on its own.
+  return base.length >= 3 ? [base, `${base}e`] : [`${base}e`];
+}
+
+/** True when two words share a stem form: `approved` and `approves`, but not `rate` and `rat`. */
+export function sameStem(a: string, b: string): boolean {
+  const forms = new Set(stemForms(a));
+  return stemForms(b).some((f) => forms.has(f));
 }
 
 /** `runn` -> `run`, but `skill`, `pass` and `buzz` keep their double letter. */
@@ -255,22 +342,22 @@ function fold(text: string): string {
 }
 
 function field(text: string): Field {
-  return { lower: fold(text), stems: new Set(words(text).map((w) => stem(w.word))) };
+  return { lower: fold(text), stems: new Set(words(text).flatMap((w) => stemForms(w.word))) };
 }
 
 /** A term matches a field as a substring (identifiers, partial words) or as a word with the same stem. */
-function fieldHas(f: Field, term: string, termStem: string): boolean {
-  return f.lower.includes(term) || f.stems.has(termStem);
+function fieldHas(f: Field, term: string, termForms: string[]): boolean {
+  return f.lower.includes(term) || termForms.some((form) => f.stems.has(form));
 }
 
 /**
  * Merged `[start, end)` ranges of `text` that match a term: every literal occurrence, and every
- * whole word whose stem equals the term's stem. Both are taken from the original text, so
+ * whole word that shares a stem form with the term. Both are taken from the original text, so
  * the highlight shows what the author wrote (`approving` for a search of `approved`).
  */
 function matchRanges(text: string, terms: string[]): [number, number][] {
   const lower = fold(text);
-  const termStems = terms.map(stem);
+  const termForms = terms.map(stemForms);
   const found: [number, number][] = [];
   for (const term of terms) {
     for (let at = lower.indexOf(term); at >= 0; at = lower.indexOf(term, at + 1)) {
@@ -280,9 +367,13 @@ function matchRanges(text: string, terms: string[]): [number, number][] {
   // A word that already contains a term literally keeps the exact-text highlight (`budg` in
   // `budget`); only a word matched through its stem alone is marked whole.
   for (const w of words(text)) {
-    const ws = stem(w.word);
+    const ws = stemForms(w.word);
     const lowerWord = fold(w.word);
-    if (terms.some((t, i) => ws === termStems[i] && !lowerWord.includes(t))) {
+    if (
+      terms.some(
+        (t, i) => !lowerWord.includes(t) && ws.some((f) => (termForms[i] as string[]).includes(f))
+      )
+    ) {
       found.push([w.start, w.end]);
     }
   }
@@ -357,7 +448,7 @@ export function searchDocs(index: SearchIndex, query: string, limit = MAX_RESULT
   if (terms.length === 0) {
     return [];
   }
-  const termStems = terms.map(stem);
+  const termForms = terms.map(stemForms);
   const scored: { score: number; order: number; section: SearchSection }[] = [];
   index.sections.forEach((section, order) => {
     const title = index.prepared.titles[section.doc];
@@ -368,7 +459,7 @@ export function searchDocs(index: SearchIndex, query: string, limit = MAX_RESULT
     }
     let score = 0;
     for (const [i, term] of terms.entries()) {
-      const ts = termStems[i] as string;
+      const ts = termForms[i] as string[];
       const inTitle = fieldHas(title, term, ts);
       const inHeading = fieldHas(heading, term, ts);
       const inBody = fieldHas(body, term, ts);
