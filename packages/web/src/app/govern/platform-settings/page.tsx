@@ -191,6 +191,7 @@ export default function GovernSettingsPage() {
             slug={HELP_LINKS.configGrants.slug}
           />
         }
+        announce={false}
         title="Platform-wide saves reach every scope below"
         variant="warning"
       >

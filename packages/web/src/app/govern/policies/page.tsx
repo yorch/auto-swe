@@ -472,6 +472,7 @@ export default function AutonomyPoliciesPage() {
             slug={HELP_LINKS.autonomyPolicyDecisionLog.slug}
           />
         }
+        announce={false}
         title="Auto means no policy approval"
         variant="warning"
       >

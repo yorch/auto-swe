@@ -45,7 +45,11 @@ export default function GovernWorkflowPage() {
         }
         title={navLabel('/govern/workflow-defaults')}
       />
-      <Alert title="Only admins edit these, and the changes are platform-wide" variant="warning">
+      <Alert
+        announce={false}
+        title="Only admins edit these, and the changes are platform-wide"
+        variant="warning"
+      >
         Run defaults apply to every team and workflow template, with no per-team override, and a
         change reaches runs already in progress: a budget ceiling within about 30 seconds (settings
         are cached), and the CI wait settings from the run's CI step onward.

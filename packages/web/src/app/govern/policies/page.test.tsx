@@ -44,8 +44,9 @@ describe('autonomy policies page help', () => {
     });
     render(withQuery(<AutonomyPoliciesPage />));
     const heading = screen.getByText('Auto means no policy approval');
-    const callout = heading.closest('[role="status"]');
+    const callout = heading.closest('[role="note"]');
     expect(callout).not.toBeNull();
+    expect(heading.closest('[role="status"], [role="alert"]')).toBeNull();
     expect(callout?.textContent).toMatch(
       /External communication or Mass communication to Auto lets a run send messages outside the team, or to many people, with no policy approval/
     );

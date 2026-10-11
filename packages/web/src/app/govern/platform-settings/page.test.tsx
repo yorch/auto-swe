@@ -71,10 +71,10 @@ describe('platform settings page', () => {
 
   it('warns that a platform-wide save reaches every scope without an override', () => {
     render(<Page />);
-    const callout = screen
-      .getByText('Platform-wide saves reach every scope below')
-      .closest('[role="status"]');
+    const heading = screen.getByText('Platform-wide saves reach every scope below');
+    const callout = heading.closest('[role="note"]');
     expect(callout).not.toBeNull();
+    expect(heading.closest('[role="status"], [role="alert"]')).toBeNull();
     expect(callout?.textContent).toMatch(/live value for every team, channel and template/);
     expect(callout?.textContent).toMatch(/team or channel changes only that scope/);
     expect(callout?.textContent).toMatch(

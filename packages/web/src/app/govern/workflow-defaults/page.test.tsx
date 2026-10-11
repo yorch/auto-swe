@@ -15,10 +15,10 @@ const { default: Page } = await import('./page');
 describe('workflow defaults page warning', () => {
   it('warns that admin edits are platform-wide and reach runs already in progress', () => {
     render(<Page />);
-    const callout = screen
-      .getByText('Only admins edit these, and the changes are platform-wide')
-      .closest('[role="status"]');
+    const heading = screen.getByText('Only admins edit these, and the changes are platform-wide');
+    const callout = heading.closest('[role="note"]');
     expect(callout).not.toBeNull();
+    expect(heading.closest('[role="status"], [role="alert"]')).toBeNull();
     expect(callout?.textContent).toMatch(/apply to every team and workflow template/);
     expect(callout?.textContent).toMatch(/with no per-team override/);
     expect(callout?.textContent).toMatch(/budget ceiling within about 30 seconds/);
