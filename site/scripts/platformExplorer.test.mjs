@@ -289,9 +289,25 @@ describe('public explorer interactions', () => {
     expect(dom.window.document.getElementById('site-home').pathname).toBe('/auto-swe/');
     expect(dom.window.document.querySelectorAll('a[href^="../"]')).toHaveLength(0);
     expect(
-      dom.window.document.querySelectorAll('script[src],link[href],iframe,form[action]')
+      dom.window.document.querySelectorAll(
+        'script[src],link[href]:not([rel="icon"][href^="data:"]),iframe,form[action]'
+      )
     ).toHaveLength(0);
     expect(errors).toEqual([]);
+    dom.window.close();
+  }, 30_000);
+
+  it('keeps keyboard focus on the activated graph node and edge control after a re-render', () => {
+    const { dom } = browser();
+    const document = visit(dom, '#workflows/default-engineering');
+    const node = document.querySelectorAll('.graphnode')[1];
+    node.focus();
+    node.dispatchEvent(new dom.window.KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
+    expect(document.activeElement.dataset.node).toBe(node.dataset.node);
+    document.querySelector('[data-edge]').focus();
+    document.querySelector('[data-edge]').click();
+    expect(document.activeElement.hasAttribute('data-edge')).toBe(true);
+    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('data:,');
     dom.window.close();
   }, 30_000);
 
