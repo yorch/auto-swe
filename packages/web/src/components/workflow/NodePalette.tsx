@@ -9,7 +9,7 @@
  */
 
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { z } from 'zod';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
@@ -132,6 +132,15 @@ export const PRIMITIVE_GROUPS: PrimitiveGroup[] = GROUP_ORDER.map((label) => ({
   label,
 }));
 
+/** What the shared "Node help" panel shows for the item the pointer or keyboard focus is on. */
+type ActiveHelp = { id: string; label: string; text?: string; note?: string; mono?: boolean };
+
+/**
+ * Reports which item is hovered or focused; the palette keeps one help panel for all of them.
+ * Clearing names the item (`id`) so an item that is leaving cannot clear another one's help.
+ */
+type Activate = (source: 'hover' | 'focus', help: ActiveHelp | null, clearedId?: string) => void;
+
 interface StepEntry {
   name: string;
   label: string;
@@ -148,9 +157,11 @@ interface Props {
 function PrimitiveGroup({
   group,
   onAdd,
+  onActivate,
 }: {
   group: PrimitiveGroup;
   onAdd: (payload: PaletteDragKind) => void;
+  onActivate: Activate;
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -176,16 +187,14 @@ function PrimitiveGroup({
         <ul className="space-y-1 pb-1">
           {group.items.map((p) => (
             <PaletteItem
+              description={`${nodeHelp(p.type).what} Use it when: ${nodeHelp(p.type).when}`}
               dragPayload={{ kind: 'primitive', nodeType: p.type }}
               elevated={p.elevated}
               example={p.example}
-              help={{
-                label: p.label,
-                text: `${nodeHelp(p.type).what} Use it when: ${nodeHelp(p.type).when}`,
-              }}
               hint={p.hint}
               key={p.type}
               label={p.label}
+              onActivate={onActivate}
               onAdd={onAdd}
               swatch={NODE_TYPE_TONE[p.type].swatch}
             />
@@ -198,6 +207,22 @@ function PrimitiveGroup({
 
 export function NodePalette({ steps, onAdd }: Props) {
   const [query, setQuery] = useState('');
+  // One help panel for every item (a "?" beside each of the 15 node types was 15 extra tab stops).
+  // The most recent interaction (hover or focus) wins; each clears on leave/blur, and an item
+  // that unmounts (filtered out, group collapsed) clears itself, since it gets neither event.
+  const [hovered, setHovered] = useState<ActiveHelp | null>(null);
+  const [focused, setFocused] = useState<ActiveHelp | null>(null);
+  const [latest, setLatest] = useState<'hover' | 'focus'>('focus');
+  const activate: Activate = useCallback((source, help, clearedId) => {
+    const set = source === 'hover' ? setHovered : setFocused;
+    if (help) {
+      set(help);
+      setLatest(source);
+    } else {
+      set((cur) => (cur && (clearedId === undefined || cur.id === clearedId) ? null : cur));
+    }
+  }, []);
+  const activeHelp = latest === 'hover' ? (hovered ?? focused) : (focused ?? hovered);
 
   const filteredSteps = useMemo(() => {
     if (!query.trim()) {
@@ -225,72 +250,109 @@ export function NodePalette({ steps, onAdd }: Props) {
   return (
     <aside
       aria-label="Add a node"
-      className="flex h-full w-64 flex-col overflow-y-auto border-r border-ink-600 bg-ink-950"
+      className="flex h-full w-64 flex-col border-r border-ink-600 bg-ink-950"
     >
-      <div className="border-b border-ink-600 px-4 py-3">
-        <div className="flex items-center gap-1.5">
-          <h2 className="text-sm font-semibold text-paper-100">Add a node</h2>
-          <HelpTip term="node" />
+      {/* Only this region scrolls. The help panel below is a sibling that takes its own height,
+          not a sticky overlay on the scroller, so keyboard focus never scrolls an item behind it. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="border-b border-ink-600 px-4 py-3">
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-sm font-semibold text-paper-100">Add a node</h2>
+            <HelpTip term="node" />
+          </div>
+          <p className="mt-0.5 text-xs leading-snug text-paper-500">
+            Drag onto the canvas, or focus and press Enter
+          </p>
         </div>
-        <p className="mt-0.5 text-xs leading-snug text-paper-500">
-          Drag onto the canvas, or focus and press Enter
-        </p>
-      </div>
 
-      {/* Primitives — grouped */}
-      <div className="border-b border-ink-600 px-3 py-3">
-        <h3 className="mb-1 px-1 text-[13px] font-semibold text-paper-200">Node types</h3>
-        {PRIMITIVE_GROUPS.map((g) => (
-          <PrimitiveGroup group={g} key={g.label} onAdd={onAdd} />
-        ))}
-      </div>
-
-      {/* Steps */}
-      <div className="flex flex-col">
-        <div className="sticky top-0 z-10 border-b border-ink-600 bg-ink-950 px-3 py-3">
-          <h3 className="mb-2 px-1 text-[13px] font-semibold text-paper-200">
-            Registered steps
-            <span className="ml-1.5 font-normal text-paper-500 tabular-nums">{steps.length}</span>
-          </h3>
-          <SearchInput
-            className="sm:w-full"
-            label="Filter the step registry"
-            onChange={setQuery}
-            placeholder="Filter steps…"
-            value={query}
-          />
-        </div>
-        <div className="px-3 py-3">
-          {groupedSteps.length === 0 && (
-            <EmptyState
-              className="py-4"
-              hint="Try a step name or category."
-              icon={null}
-              title="No steps match"
-            />
-          )}
-          {groupedSteps.map(([category, items]) => (
-            <div className="mb-4 last:mb-0" key={category}>
-              <div className="mb-1 px-1 text-xs font-medium text-paper-500">{category}</div>
-              <ul className="space-y-1">
-                {items.map((s) => (
-                  <PaletteItem
-                    dragPayload={{ kind: 'step', step: s.name }}
-                    hint={s.label}
-                    key={s.name}
-                    label={s.name}
-                    mono
-                    onAdd={onAdd}
-                    swatch={NODE_TYPE_TONE.step.swatch}
-                    title={s.description}
-                  />
-                ))}
-              </ul>
-            </div>
+        {/* Primitives — grouped */}
+        <div className="border-b border-ink-600 px-3 py-3">
+          <h3 className="mb-1 px-1 text-[13px] font-semibold text-paper-200">Node types</h3>
+          {PRIMITIVE_GROUPS.map((g) => (
+            <PrimitiveGroup group={g} key={g.label} onActivate={activate} onAdd={onAdd} />
           ))}
         </div>
+
+        {/* Steps */}
+        <div className="flex flex-col">
+          <div className="sticky top-0 z-10 border-b border-ink-600 bg-ink-950 px-3 py-3">
+            <h3 className="mb-2 px-1 text-[13px] font-semibold text-paper-200">
+              Registered steps
+              <span className="ml-1.5 font-normal text-paper-500 tabular-nums">{steps.length}</span>
+            </h3>
+            <SearchInput
+              className="sm:w-full"
+              label="Filter the step registry"
+              onChange={setQuery}
+              placeholder="Filter steps…"
+              value={query}
+            />
+          </div>
+          <div className="px-3 py-3">
+            {groupedSteps.length === 0 && (
+              <EmptyState
+                className="py-4"
+                hint="Try a step name or category."
+                icon={null}
+                title="No steps match"
+              />
+            )}
+            {groupedSteps.map(([category, items]) => (
+              <div className="mb-4 last:mb-0" key={category}>
+                <div className="mb-1 px-1 text-xs font-medium text-paper-500">{category}</div>
+                <ul className="space-y-1">
+                  {items.map((s) => (
+                    <PaletteItem
+                      description={s.description}
+                      dragPayload={{ kind: 'step', step: s.name }}
+                      hint={s.label}
+                      key={s.name}
+                      label={s.name}
+                      mono
+                      onActivate={activate}
+                      onAdd={onAdd}
+                      swatch={NODE_TYPE_TONE.step.swatch}
+                    />
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
+
+      <NodeHelpRegion active={activeHelp} />
     </aside>
+  );
+}
+
+function NodeHelpRegion({ active }: { active: ActiveHelp | null }) {
+  return (
+    <section
+      aria-labelledby="palette-help-heading"
+      className="max-h-48 shrink-0 overflow-y-auto border-t border-ink-600 bg-ink-950 px-4 py-3 text-xs leading-snug"
+      data-testid="palette-help"
+    >
+      <h3 className="mb-1 text-[13px] font-semibold text-paper-200" id="palette-help-heading">
+        Node help
+      </h3>
+      {active ? (
+        <>
+          <p className={cn('font-medium text-paper-100', active.mono && 'font-mono')}>
+            {active.label}
+          </p>
+          {active.text && <p className="mt-0.5 text-paper-400">{active.text}</p>}
+          {active.note && (
+            <p className="mt-1 flex items-start gap-1 text-brick-400">
+              <Icon className="mt-px shrink-0" name="lock" size={12} />
+              <span>{active.note}</span>
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-paper-500">Focus or hover a node to read what it does.</p>
+      )}
+    </section>
   );
 }
 
@@ -300,10 +362,10 @@ function PaletteItem({
   example,
   swatch,
   dragPayload,
-  title,
+  description,
   elevated,
-  help,
   mono = false,
+  onActivate,
   onAdd,
 }: {
   label: string;
@@ -311,18 +373,40 @@ function PaletteItem({
   example?: string;
   swatch: string;
   dragPayload: PaletteDragKind;
-  title?: string;
+  /** What the item is, read as its accessible description and shown in the palette's help panel. */
+  description?: string;
   elevated?: boolean;
-  /** A "?" beside the item (a sibling of it, never inside the button) explaining the node type. */
-  help?: { label: string; text: string };
   /** The label is an identifier (a registered step name), shown in mono. */
   mono?: boolean;
+  onActivate: Activate;
   onAdd: (payload: PaletteDragKind) => void;
 }) {
+  const id = useId();
+  const descId = `${id}-desc`;
+  const lockId = `${id}-lock`;
+  const help: ActiveHelp = {
+    id,
+    label,
+    mono,
+    ...(description ? { text: description } : {}),
+    ...(elevated ? { note: ELEVATED_NOTE } : {}),
+  };
+  // An unmounting item gets no blur or mouseleave; leave no help behind for it.
+  useEffect(
+    () => () => {
+      onActivate('hover', null, id);
+      onActivate('focus', null, id);
+    },
+    [id, onActivate]
+  );
+  const describedBy = [description ? descId : null, elevated ? lockId : null]
+    .filter(Boolean)
+    .join(' ');
   return (
     <li className="flex items-start gap-1">
       {/* biome-ignore lint/a11y/useSemanticElements: <button draggable> does not reliably fire drag events across browsers; div uses role="button" for accessibility. */}
       <div
+        aria-describedby={describedBy || undefined}
         aria-label={`Add ${label} node`}
         aria-roledescription="draggable palette item"
         className={cn(
@@ -331,19 +415,22 @@ function PaletteItem({
           elevated ? 'border-brick-400/30 bg-brick-400/5' : 'border-ink-600 bg-ink-800/50'
         )}
         draggable
+        onBlur={() => onActivate('focus', null, id)}
         onDragStart={(e) => {
           e.dataTransfer.setData(PALETTE_MIME, JSON.stringify(dragPayload));
           e.dataTransfer.effectAllowed = 'copy';
         }}
+        onFocus={() => onActivate('focus', help)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             onAdd(dragPayload);
           }
         }}
+        onMouseEnter={() => onActivate('hover', help)}
+        onMouseLeave={() => onActivate('hover', null, id)}
         role="button"
         tabIndex={0}
-        title={title}
       >
         <span aria-hidden className={cn('h-2 w-2 shrink-0 rounded-full', swatch)} />
         <div className="min-w-0 flex-1">
@@ -363,16 +450,18 @@ function PaletteItem({
           )}
         </div>
         {elevated && (
-          <span className="shrink-0 text-brick-400" title={ELEVATED_NOTE}>
+          <span className="shrink-0 text-brick-400">
             <Icon name="lock" size={13} />
-            <span className="sr-only">{ELEVATED_NOTE}</span>
+            <span hidden id={lockId}>
+              {ELEVATED_NOTE}
+            </span>
           </span>
         )}
       </div>
-      {help && (
-        <HelpTip className="mt-1.5 shrink-0" label={`${help.label} nodes`}>
-          {help.text}
-        </HelpTip>
+      {description && (
+        <span hidden id={descId}>
+          {description}
+        </span>
       )}
     </li>
   );

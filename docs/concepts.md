@@ -171,9 +171,11 @@ Guided paths build on those pieces:
 - **Policies**, **Platform settings**, and **Workflow defaults** open with a warning that states
   the blast radius of a change there.
 - **The workflow editor** explains each node type in the inspector and the palette, and its
-  **Check workflow** button reports the structural and expression-syntax check that already runs
-  as you edit. It does not run the workflow and does not check that agents or connections exist;
-  saving and promoting add the server-side checks.
+  **Check workflow** button reports the structural and expression-syntax check that runs as you
+  edit and also asks the server for the checks a save would run, including whether the agents and
+  MCP connections it names exist. It never runs the workflow, and when the server check cannot run
+  it says so and shows the editor result only. The palette shows a node's help in one shared panel
+  instead of a tab stop per node.
 - **A run's page** opens with a plain-language verdict derived from the run's recorded status,
   open gates, failed step, and result, and has a collapsed guide to reading the page.
 - **The scanner page** can try a pattern against sample text on the server, under the scanner's

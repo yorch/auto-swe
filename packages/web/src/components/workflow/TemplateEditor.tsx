@@ -40,6 +40,9 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { useTokens } from '@/hooks/useTokens';
+import { type ServerWorkflowIssue, useValidateWorkflow } from '@/hooks/useValidateWorkflow';
+import { ApiError } from '@/lib/api';
+import { errMsg } from '@/lib/errors';
 import { schemaIssues } from '@/lib/specSchemaIssues';
 import { cn, FOCUS_RING, formatCost, plural } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
@@ -55,6 +58,64 @@ import { WorkflowOutline } from './WorkflowOutline';
 
 const NODE_TYPES = { dag: DagNode };
 
+/** What the server's save-time checks said about the spec at the click. */
+type ServerCheck =
+  | { state: 'pending' }
+  | { state: 'done'; issues: ServerWorkflowIssue[] }
+  | { state: 'failed'; reason: string };
+
+const SERVER_SCHEMA_CODES = new Set([
+  'SCHEMA_INVALID',
+  'INVALID_PRESENTATION',
+  'SCHEMA_VERSION',
+  'SPEC_NOT_OBJECT',
+]);
+
+/** Two findings are the same when they name the same problem on the same node and field. */
+function issueKey(i: { code: string; nodeId?: string; field?: string }): string {
+  // The editor's schema pass reports every parse failure as 'SCHEMA'; the server names the
+  // same failures with these codes (specCheck.ts parseSpec). Its INTERNAL_STEP matches the
+  // editor's lint finding of that name as is, so it is deliberately not in this set.
+  const code = SERVER_SCHEMA_CODES.has(i.code) ? 'SCHEMA' : i.code;
+  return `${code}|${i.nodeId ?? ''}|${i.field ?? ''}`;
+}
+
+/** The server findings not already among `client`, each reported once. */
+function newServerIssues(
+  server: ServerWorkflowIssue[],
+  client: { code: string; nodeId?: string; field?: string }[]
+): ServerWorkflowIssue[] {
+  const seen = new Set(client.map(issueKey));
+  const out: ServerWorkflowIssue[] = [];
+  for (const issue of server) {
+    const key = issueKey(issue);
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(issue);
+    }
+  }
+  return out;
+}
+
+const NOT_RUN = 'This does not run the workflow.';
+
+/** The announced outcome of "Check workflow": truthful about which checks actually ran. */
+function checkMessage(server: ServerCheck, errors: number, warnings: number): string {
+  if (server.state === 'pending') {
+    return 'Checking with the server…';
+  }
+  const failed =
+    server.state === 'failed'
+      ? `The server check could not run (${server.reason}); showing the editor check only. `
+      : '';
+  if (errors + warnings === 0) {
+    return server.state === 'failed'
+      ? `${failed}The editor check found no problems. ${NOT_RUN}`
+      : `No problems found by the editor's checks or the server's save checks. ${NOT_RUN}`;
+  }
+  return `${failed}${plural(errors, 'error')}, ${plural(warnings, 'warning')}. Details are listed below. ${NOT_RUN}`;
+}
+
 interface Props {
   spec: WorkflowSpec;
   stepRegistry: StepMetadata[];
@@ -66,6 +127,10 @@ interface Props {
   parseError?: string | null;
   /** A save the server rejected; listed beside the live lint results rather than in a separate banner. */
   serverError?: string | null;
+  /** The saved template being edited, so the server check can apply that template's scope. */
+  templateId?: string;
+  /** The owning team of that template (absent for a platform-wide one). */
+  teamId?: string | null;
   /** Action bar shown above the canvas — parent supplies Save/Cancel CTAs. */
   actions?: React.ReactNode;
 }
@@ -88,6 +153,8 @@ function EditorInner({
   observedCostUsd,
   parseError,
   serverError,
+  templateId,
+  teamId,
   actions,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -196,32 +263,91 @@ function EditorInner({
   }, [spec]);
   const issues = useMemo(() => [...lint.errors, ...lint.warnings], [lint]);
   // "Check workflow": a snapshot of the live lint at the click, tied to the spec it was taken on so
-  // an edit makes the result stale (and hides it) instead of leaving a wrong "no problems".
+  // an edit makes the result stale (and hides it) instead of leaving a wrong "no problems". The
+  // live lint above stays client-only; the server is asked once per click, never per keystroke.
   const [checked, setChecked] = useState<{
     spec: WorkflowSpec;
-    errors: number;
-    warnings: number;
     /** Bumped per click so the live region's text node changes and is announced again. */
     seq: number;
+    server: ServerCheck;
   } | null>(null);
   const issuesRef = useRef<HTMLDetailsElement>(null);
   const issuesSummaryRef = useRef<HTMLElement>(null);
+  // The spec a server check is running for. A click on the same spec waits for it; an edit since
+  // then is a different question and starts its own.
+  const checkInFlight = useRef<WorkflowSpec | null>(null);
+  const seqRef = useRef(0);
+  const { mutateAsync: validateAsync } = useValidateWorkflow();
   const checkResult = checked && checked.spec === spec ? checked : null;
-  const runCheck = useCallback(() => {
-    setChecked((prev) => ({
-      errors: lint.errors.length,
-      seq: (prev?.seq ?? 0) + 1,
-      spec,
-      warnings: lint.warnings.length,
-    }));
-    if (lint.errors.length + lint.warnings.length > 0) {
-      // Open the panel (a warnings-only one starts collapsed) and move focus into it.
-      if (issuesRef.current) {
-        issuesRef.current.open = true;
-      }
-      issuesSummaryRef.current?.focus();
+  // Server findings the editor's own lint did not already report.
+  const serverExtra = useMemo(
+    () =>
+      checkResult?.server.state === 'done'
+        ? newServerIssues(checkResult.server.issues, issues)
+        : [],
+    [checkResult, issues]
+  );
+  const shownErrors = lint.errors.length + serverExtra.filter((i) => i.severity === 'error').length;
+  const shownWarnings =
+    lint.warnings.length + serverExtra.filter((i) => i.severity !== 'error').length;
+  const openIssuesPanel = useCallback(() => {
+    // A warnings-only panel starts collapsed: open it and move focus into it.
+    if (issuesRef.current) {
+      issuesRef.current.open = true;
     }
-  }, [lint, spec]);
+    issuesSummaryRef.current?.focus();
+  }, []);
+  const runCheck = useCallback(() => {
+    if (checkInFlight.current === spec) {
+      return;
+    }
+    checkInFlight.current = spec;
+    seqRef.current += 1;
+    const seq = seqRef.current;
+    const clientIssues = [...lint.errors, ...lint.warnings];
+    setChecked({ seq, server: { state: 'pending' }, spec });
+    if (clientIssues.length > 0) {
+      openIssuesPanel();
+    }
+    validateAsync({
+      spec,
+      ...(templateId ? { templateId } : {}),
+      ...(teamId ? { teamId } : {}),
+    })
+      .then((res): ServerCheck => {
+        if (!res || !Array.isArray(res.issues)) {
+          return { reason: 'the server sent an unexpected answer', state: 'failed' };
+        }
+        return { issues: res.issues, state: 'done' };
+      })
+      .catch(
+        (err: unknown): ServerCheck => ({
+          reason:
+            err instanceof ApiError && err.status === 403
+              ? 'you are not permitted to run it'
+              : errMsg(err, 'the request failed'),
+          state: 'failed',
+        })
+      )
+      .then((server) => {
+        if (seqRef.current === seq) {
+          checkInFlight.current = null;
+        }
+        setChecked((prev) => (prev && prev.seq === seq ? { ...prev, server } : prev));
+        // Findings only the server has land after the click: bring the author to them, but only
+        // while focus is still on the button (or nowhere), so a later move is never overridden.
+        if (
+          server.state === 'done' &&
+          clientIssues.length === 0 &&
+          newServerIssues(server.issues, clientIssues).length > 0
+        ) {
+          const active = document.activeElement;
+          if (!active || active === document.body || active.hasAttribute('data-check-workflow')) {
+            setTimeout(openIssuesPanel, 0);
+          }
+        }
+      });
+  }, [lint, spec, templateId, teamId, validateAsync, openIssuesPanel]);
   const serverIssues = useMemo(
     () =>
       (serverError ?? '')
@@ -585,7 +711,13 @@ function EditorInner({
             <Icon name="plus" size={13} />
             Add node
           </Button>
-          <Button onClick={runCheck} size="sm" variant="secondary">
+          <Button
+            aria-busy={checkResult?.server.state === 'pending'}
+            data-check-workflow=""
+            onClick={runCheck}
+            size="sm"
+            variant="secondary"
+          >
             <Icon name="checkCircle" size={13} />
             Check workflow
           </Button>
@@ -618,9 +750,7 @@ function EditorInner({
       >
         {checkResult && (
           <span key={checkResult.seq}>
-            {checkResult.errors + checkResult.warnings === 0
-              ? 'No problems found. This checks the shape of the workflow, its connections and expression syntax as edited here. It does not run the workflow, and it does not check that agents and connections exist or that you may save it; saving does that and reports a warning for each agent or connection it cannot find.'
-              : `${plural(checkResult.errors, 'error')}, ${plural(checkResult.warnings, 'warning')}. Details are listed below. This is a structural check; it does not run the workflow.`}
+            {checkMessage(checkResult.server, shownErrors, shownWarnings)}
           </span>
         )}
       </div>
@@ -629,10 +759,10 @@ function EditorInner({
         <Alert className="rounded-none border-x-0 border-t-0 font-mono text-xs">{parseError}</Alert>
       )}
 
-      {(issues.length > 0 || serverIssues.length > 0) && (
+      {(issues.length > 0 || serverIssues.length > 0 || serverExtra.length > 0) && (
         <details
           className="group border-b border-ink-600 bg-ink-800/60 px-4 py-2 text-xs"
-          open={lint.errors.length > 0 || serverIssues.length > 0}
+          open={shownErrors > 0 || serverIssues.length > 0}
           ref={issuesRef}
         >
           <summary
@@ -649,9 +779,7 @@ function EditorInner({
             />
             <Icon
               className={
-                lint.errors.length > 0 || serverIssues.length > 0
-                  ? 'text-brick-400'
-                  : 'text-amber-400'
+                shownErrors > 0 || serverIssues.length > 0 ? 'text-brick-400' : 'text-amber-400'
               }
               name="warning"
               size={13}
@@ -661,16 +789,16 @@ function EditorInner({
                 Save rejected: {serverIssues.length} problem{serverIssues.length === 1 ? '' : 's'}
               </span>
             )}
-            {serverIssues.length > 0 && issues.length > 0 && ' · '}
-            {lint.errors.length > 0 && (
+            {serverIssues.length > 0 && shownErrors + shownWarnings > 0 && ' · '}
+            {shownErrors > 0 && (
               <span className="text-brick-400">
-                {lint.errors.length} error{lint.errors.length === 1 ? '' : 's'}
+                {shownErrors} error{shownErrors === 1 ? '' : 's'}
               </span>
             )}
-            {lint.errors.length > 0 && lint.warnings.length > 0 && ' · '}
-            {lint.warnings.length > 0 && (
+            {shownErrors > 0 && shownWarnings > 0 && ' · '}
+            {shownWarnings > 0 && (
               <span className="text-amber-400">
-                {lint.warnings.length} warning{lint.warnings.length === 1 ? '' : 's'}
+                {shownWarnings} warning{shownWarnings === 1 ? '' : 's'}
               </span>
             )}
           </summary>
@@ -691,6 +819,34 @@ function EditorInner({
                   onClick={() => issue.nodeId && onSelect(issue.nodeId)}
                   type="button"
                 >
+                  <span
+                    className={cn(
+                      'font-mono text-[11px]',
+                      issue.severity === 'error' ? 'text-brick-400' : 'text-amber-400'
+                    )}
+                  >
+                    {issue.code}
+                  </span>{' '}
+                  {formatValidationIssue(issue)}
+                </button>
+              </li>
+            ))}
+            {serverExtra.map((issue) => (
+              <li
+                key={`check:${issue.source}:${issue.code}:${issue.nodeId ?? ''}:${issue.field ?? ''}:${issue.message}`}
+              >
+                <button
+                  className={cn(
+                    'rounded-sm text-left text-paper-300 hover:text-paper-100 disabled:hover:text-paper-300',
+                    FOCUS_RING
+                  )}
+                  disabled={!issue.nodeId || !spec.nodes[issue.nodeId]}
+                  onClick={() => issue.nodeId && onSelect(issue.nodeId)}
+                  type="button"
+                >
+                  <span className="mr-1 rounded-sm border border-ink-400 px-1 text-[10px] font-medium text-paper-300 uppercase">
+                    server: {issue.source}
+                  </span>{' '}
                   <span
                     className={cn(
                       'font-mono text-[11px]',
