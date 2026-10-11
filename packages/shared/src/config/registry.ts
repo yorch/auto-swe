@@ -358,7 +358,7 @@ export const SETTING_DEFINITIONS = {
   'models.privateNetworkHosts': defineSetting({
     defaultValue: [],
     description:
-      "Hosts a provider credential's apiBase may point at even though the host is, or resolves to, a private-network address (comma-separated host or host:port, e.g. internal.example.com or 10.0.0.5:8000). This lifts the refusal on the credential Test button, model discovery and the catalog refresh, and on saving a credential. Loopback and localhost, link-local and cloud metadata addresses (169.254.0.0/16, fd00:ec2::254, 100.100.100.200) stay refused whatever is listed. The text-level address check does not resolve DNS, so a listed name is trusted to mean the server you intend.",
+      "Hosts a provider credential's apiBase may point at even though the host is, or resolves to, a private-network address (comma-separated host or host:port, e.g. internal.example.com or 10.0.0.5:8000). This lifts the refusal on saving a credential, its Test button, model discovery and the catalog refresh, and on run-time chat, embedding and Claude Code model-proxy calls, which resolve and pin the connection to a checked address and refuse redirects. Loopback and localhost, link-local and cloud metadata addresses (169.254.0.0/16, fd00:ec2::254, 100.100.100.200) stay refused whatever is listed. If the setting cannot be read, no host is listed. Under an environment proxy (NODE_USE_ENV_PROXY) the host is checked but the connection is not pinned, and a Claude Code harness run without the model proxy is outside the guard. A listed name is trusted to mean the server you intend.",
     group: 'models',
     label: 'Private-network model provider hosts',
     overridableAt: [],

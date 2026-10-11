@@ -45,8 +45,10 @@ per request, so they take effect within the settings cache's ~30 s with no resta
 
 The `models` group holds `models.privateNetworkHosts` (ADMIN-only, GLOBAL only, default empty): hosts a
 provider credential's `apiBase` may name even though they are, or resolve to, a private address. It lifts
-the refusal on saving a credential, on its **Test** button, and on model discovery; loopback and
-link-local / cloud-metadata addresses stay refused whatever is listed. See
+the refusal on saving a credential, on its **Test** button, on model discovery and the catalog refresh,
+and on run-time chat, embedding and Claude Code model-proxy calls (which also refuse redirects);
+loopback and link-local / cloud-metadata addresses stay refused whatever is listed, an unreadable
+setting lists no host, and a Claude Code harness run without the model proxy is outside the guard. See
 [model-configuration.md](./model-configuration.md#troubleshooting).
 
 The `skills` group holds two settings, both ADMIN-only and GLOBAL only. `skills.import.privateNetworkHosts`
