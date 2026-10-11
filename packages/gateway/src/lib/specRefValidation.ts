@@ -23,7 +23,26 @@ export async function validateSpecRefs(
   prisma: PrismaClient,
   spec: WorkflowSpec
 ): Promise<string[]> {
-  const warnings: string[] = [];
+  return (await findSpecRefProblems(prisma, spec)).map((p) => p.message);
+}
+
+/** One unresolved reference, located on its node. */
+export interface SpecRefProblem {
+  code: 'AGENT_REF_UNRESOLVED' | 'MCP_REF_UNRESOLVED';
+  nodeId: string;
+  field: 'agentRef' | 'connectionRef';
+  message: string;
+}
+
+/**
+ * The structured form of `validateSpecRefs` (which returns only the messages): the same lookups
+ * and the same text, with the node and field kept so a caller can point at them.
+ */
+export async function findSpecRefProblems(
+  prisma: PrismaClient,
+  spec: WorkflowSpec
+): Promise<SpecRefProblem[]> {
+  const warnings: SpecRefProblem[] = [];
   const agentRefs: { id: string; key: string }[] = [];
   const mcpRefs: { id: string; connectionRef: string }[] = [];
 
@@ -47,9 +66,12 @@ export async function validateSpecRefs(
     const present = new Set(found.map((a) => a.key));
     for (const r of agentRefs) {
       if (!present.has(r.key)) {
-        warnings.push(
-          `Node '${r.id}': agent '${r.key}' has no active Agent at any scope — create it at /studio/agents/library or this node will fail at run time.`
-        );
+        warnings.push({
+          code: 'AGENT_REF_UNRESOLVED',
+          field: 'agentRef',
+          message: `Node '${r.id}': agent '${r.key}' has no active Agent at any scope — create it at /studio/agents/library or this node will fail at run time.`,
+          nodeId: r.id,
+        });
       }
     }
   }
@@ -70,9 +92,12 @@ export async function validateSpecRefs(
     const present = new Set(found.map((c) => c.id));
     for (const r of mcpRefs) {
       if (!present.has(r.connectionRef)) {
-        warnings.push(
-          `Node '${r.id}': mcp connection '${r.connectionRef}' is not an active mcp connection — create one at /studio/mcp or this node will fail at run time.`
-        );
+        warnings.push({
+          code: 'MCP_REF_UNRESOLVED',
+          field: 'connectionRef',
+          message: `Node '${r.id}': mcp connection '${r.connectionRef}' is not an active mcp connection — create one at /studio/mcp or this node will fail at run time.`,
+          nodeId: r.id,
+        });
       }
     }
   }

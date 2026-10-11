@@ -99,6 +99,7 @@ dynamic catalog + the user's intent go in the user message.
 | **Explain** | `POST /api/v1/workflow-templates/:id/explain` → `{ data: { explanation } }` (Markdown), CLI `auto-swe workflows explain <name>`, web "Explain" button. The inverse of authoring. |
 | **Refine (web)** | Template page (`/templates/[id]`) → **"Refine with AI"** → a chat panel where each plain-language change calls `POST /api/v1/workflow-templates/:id/refine` `{ prompt }` → `{ data: version, spec, summary, attempts, warnings? }`. Each turn saves a **new DRAFT version** off the latest and updates the canvas. Gated on ADMIN/LEAD. |
 | **Refine (Slack)** | A follow-up in the same thread ("also add a security review step") → the channel assistant's `refineWorkflow` tool → applies the change to the draft that thread generated (linked via `ChannelThreadSession.lastGeneratedTemplateId`) and saves a new version. Budget-gated; refuses shell nodes; replies with the new version (or "nothing to refine yet"). |
+| **Check without saving** | `POST /api/v1/workflow-templates/validate` `{ spec, templateId?, teamId? }` → `{ data: { ok, issues: [{ code, severity, message, nodeId?, field?, source }] } }`. Requires LEAD. Runs the checks a save runs and writes nothing (no template, version or audit row). `source` is `schema` (the strict parse a save answers `400 INVALID_SPEC` for), `lint` (`validateSpec`), `refs` (unresolved agent or MCP references, warnings) or `authoring` (the shell-authoring role gate and the shell image allowlist, which a save answers with `403`/`400`). `ok` is true when no issue has `severity: "error"`. A well-formed request is `200` unless the scope ids are refused (`403` for a `teamId` the caller cannot author for, `404` for a `templateId` it cannot write); only a malformed body is `400`. With neither id, the spec is judged as a global template, so a non-admin gets an `authoring` issue `FORBIDDEN`, as create answers `403`. |
 | **CLI** | `auto-swe workflows generate "<description>" [--name=NAME] [--team=<slug>]` |
 | **Slack** | The channel assistant's `generateWorkflow` tool: ask it to "create a workflow that…" and it drafts one (scoped to the channel's team, `allowShell: false`) and replies in-thread with the draft name + a pointer to the Workflow library. The draft is **budget-gated** like a delegated task, and the channel path is never shell-authorized — a generated spec containing `shell`/`containerStep` nodes is refused (those require canvas authoring with the proper RBAC + audit). |
 
@@ -174,11 +175,24 @@ dynamic catalog + the user's intent go in the user message.
   work-in-progress draft is never rejected) and it's ready to back a **canvas
   live-lint** panel. Graph-edge enumeration lives once in `nodeEdges` (`spec.ts`),
   shared by the schema's ref check and `validateSpec`.
+- **One set of checks for save and check.** `POST /validate` and the save routes call the same
+  functions in `packages/gateway/src/lib/specCheck.ts` (`parseSpec`, `validateSpec`,
+  `findSpecRefProblems`, the shell gates), so the endpoint cannot disagree with what a save does.
+  `templateId` supplies the template's owning team; `teamId` is for a template not saved yet; with
+  neither, the spec is judged as a global template, where only a platform admin may use shell nodes.
 
 ---
 
 ## 6. Limitations
 
+- **`POST /validate` reports; it does not predict every refusal of a save.** A lint error is
+  `severity: "error"` there, yet a save still accepts it (with a warning); only promote, activate
+  and experiment arms refuse it (`409 SPEC_HAS_ERRORS`). Template name conflicts and whether the
+  model, credential or connection a node needs resolves at run time are not checked. A non-admin
+  naming a `teamId` it cannot author for gets `403`, and a `templateId` it cannot write is `404`,
+  as on save. The `refs` check is an existence test at any scope, as on save. A check leaves no audit
+  trail (a save writes the template, version and audit rows), and it does not reproduce a save's
+  concurrent-write conflict (`409 VERSION_CONFLICT`).
 - **Shell nodes are refused on the async and channel paths.** Shell authoring requires an audit
   trail, and neither the background generation job nor the Slack path has one. Only the synchronous
   web/API path can generate a spec containing `shell` nodes, and only when the team's allowlist
