@@ -1,8 +1,13 @@
 import { SCANNER_PATTERN_TYPES } from '@auto-swe/shared/bundle';
-import { probeRegexBacktracking } from '@auto-swe/shared/lib/regexExec';
+import {
+  probeRegexBacktracking,
+  resolveRegexBudgetMs,
+  runRegexBatch,
+} from '@auto-swe/shared/lib/regexExec';
 import {
   checkRegexSafety,
   MAX_PATTERN_SOURCE_LENGTH,
+  MAX_SCAN_TEXT_LENGTH,
   type RegexSafetyIssue,
   SAFE_FLAGS_MESSAGE,
   SAFE_FLAGS_RE,
@@ -40,6 +45,36 @@ const UpdatePatternSchema = z.object({
   label: z.string().min(1).max(200).optional(),
   pattern: z.string().min(1).max(MAX_PATTERN_SOURCE_LENGTH).optional(),
   type: z.enum(PATTERN_TYPES).optional(),
+});
+
+interface TestSampleResult {
+  index: number;
+  matched: boolean;
+  match: { excerpt: string; length: number; truncated: boolean } | null;
+  /**
+   * `timed_out`: overran the budget twice, so the sample could not be evaluated. `error`: the
+   * executor failed without blaming the pattern. `not_run`: the request's total time cap was
+   * reached before this sample started.
+   */
+  status: 'matched' | 'no_match' | 'timed_out' | 'error' | 'not_run';
+}
+
+/** Bounds on a "try it" request: it is a stress surface, so count and size are capped. */
+export const MAX_TEST_SAMPLES = 10;
+/**
+ * A request stops starting new samples once this many budgets of its own executor time have
+ * been spent. One overrunning sample costs two budgets (the run and its confirmation), and the
+ * executor is a serialized queue that real scans share, so the whole request is bounded.
+ */
+export const TEST_TOTAL_BUDGETS = 3;
+/** Longest excerpt of a match echoed back; the full match may be far longer. */
+export const MAX_TEST_EXCERPT_LENGTH = 200;
+
+const TestPatternSchema = z.object({
+  flags: safeFlags.default(''),
+  pattern: z.string().min(1).max(MAX_PATTERN_SOURCE_LENGTH),
+  // Same ceiling the advisory scanners cap their input at.
+  samples: z.array(z.string().max(MAX_SCAN_TEXT_LENGTH)).min(1).max(MAX_TEST_SAMPLES),
 });
 
 /**
@@ -80,6 +115,71 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
     });
     return { data: patterns };
   });
+
+  // POST /api/v1/platform/scanner-patterns/test
+  //
+  // Dry run: validates the candidate exactly as create/update do, then executes it
+  // through the scanners' own executor (pooled worker thread, wall-clock budget),
+  // one sample at a time so an overrun is attributable to a sample. Writes no row and no audit
+  // entry, and runs with `quarantine: false`, so a dry run neither skips a quarantined rule nor
+  // quarantines the one under test: what real scans enforce is unchanged.
+  // The executor reports the FIRST match per sample only.
+  app.post(
+    '/scanner-patterns/test',
+    {
+      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { body: TestPatternSchema },
+    },
+    async (request, reply) => {
+      const { pattern, flags, samples } = request.body;
+
+      const regexError = await validateRegex(pattern, flags);
+      if (regexError) {
+        return reply.status(400).send({ error: regexError });
+      }
+
+      const budgetMs = resolveRegexBudgetMs();
+      const spec = [{ flags, key: 'candidate', source: pattern }];
+      const results: TestSampleResult[] = [];
+      const cap = TEST_TOTAL_BUDGETS * budgetMs;
+      let spent = 0;
+      for (const [index, text] of samples.entries()) {
+        if (spent >= cap) {
+          results.push({ index, match: null, matched: false, status: 'not_run' });
+          continue;
+        }
+        const startedAt = Date.now();
+        const batch = await runRegexBatch(spec, [{ key: 'sample', text }], {
+          budgetMs,
+          label: 'scanner-pattern-test',
+          quarantine: false,
+        });
+        spent += Date.now() - startedAt;
+        if (batch.timedOutPatternKeys.length > 0) {
+          results.push({ index, match: null, matched: false, status: 'timed_out' });
+        } else if (batch.incomplete) {
+          results.push({ index, match: null, matched: false, status: 'error' });
+        } else {
+          const hit = batch.hits[0];
+          results.push(
+            hit
+              ? {
+                  index,
+                  match: {
+                    excerpt: hit.match.slice(0, MAX_TEST_EXCERPT_LENGTH),
+                    length: hit.match.length,
+                    truncated: hit.match.length > MAX_TEST_EXCERPT_LENGTH,
+                  },
+                  matched: true,
+                  status: 'matched',
+                }
+              : { index, match: null, matched: false, status: 'no_match' }
+          );
+        }
+      }
+      return { data: { budgetMs, results, totalCapMs: cap } };
+    }
+  );
 
   // POST /api/v1/platform/scanner-patterns
   app.post(

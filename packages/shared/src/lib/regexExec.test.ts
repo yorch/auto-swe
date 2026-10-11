@@ -232,6 +232,30 @@ describe('runRegexBatch — the execution budget is the actual containment', () 
     expect(second.hits.map((h) => h.patternKey)).toEqual(['ok']);
   });
 
+  it('with quarantine:false neither records an overrun nor skips a quarantined rule', async () => {
+    const first = await runRegexBatch([EVIL], [{ key: 't', text: EVIL_INPUT }], {
+      budgetMs: 150,
+      quarantine: false,
+    });
+    expect(first.timedOutPatternKeys).toEqual(['evil']);
+    expect(isRegexQuarantined(EVIL.source, EVIL.flags)).toBe(false);
+
+    // A normal scan afterwards still runs the rule (and is the one that quarantines it).
+    const normal = await runRegexBatch([EVIL], [{ key: 't', text: EVIL_INPUT }], {
+      budgetMs: 150,
+    });
+    expect(normal.timedOutPatternKeys).toEqual(['evil']);
+    expect(isRegexQuarantined(EVIL.source, EVIL.flags)).toBe(true);
+
+    // Already quarantined: a dry run still runs it instead of reporting it skipped.
+    const dry = await runRegexBatch([EVIL], [{ key: 't', text: 'aaa' }], {
+      budgetMs: 150,
+      quarantine: false,
+    });
+    expect(dry.quarantinedPatternKeys).toEqual([]);
+    expect(dry.incomplete).toBe(false);
+  });
+
   it('lets the quarantine lapse after its TTL so a fixed host or pattern is enforced again', async () => {
     await runRegexBatch([EVIL], [{ key: 't', text: EVIL_INPUT }], { budgetMs: 150 });
     expect(isRegexQuarantined(EVIL.source, EVIL.flags)).toBe(true);

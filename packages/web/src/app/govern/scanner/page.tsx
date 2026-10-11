@@ -37,6 +37,7 @@ import {
   type ScannerPatternType,
 } from '@/lib/scannerPatternTypes';
 import { cn, FOCUS_RING, formatDate } from '@/lib/utils';
+import { PatternTester } from './PatternTester';
 
 type PatternType = ScannerPatternType;
 
@@ -114,6 +115,12 @@ function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => v
           onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
           placeholder="i"
           value={form.flags}
+        />
+        <PatternTester
+          flags={form.flags}
+          idPrefix="scanner-new"
+          pattern={form.pattern}
+          type={form.type}
         />
         {error && <Alert>{error}</Alert>}
         <ModalFooter
@@ -229,6 +236,12 @@ function PatternDetailModal({
             onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
             value={form.flags}
           />
+          <PatternTester
+            flags={form.flags}
+            idPrefix="scanner-edit"
+            pattern={form.pattern}
+            type={form.type}
+          />
           {error && <Alert>{error}</Alert>}
           <ModalFooter
             isPending={update.isPending}
@@ -266,6 +279,13 @@ function PatternDetailModal({
               <span className="text-ember-300">{pattern.flags}</span>
             </pre>
           </div>
+
+          <PatternTester
+            flags={pattern.flags}
+            idPrefix="scanner-view"
+            pattern={pattern.pattern}
+            type={pattern.type as PatternType}
+          />
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-600 pt-4">
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
