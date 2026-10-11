@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream';
+import type { Prisma } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -39,7 +40,7 @@ const AuditLogQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).exten
   action: z.enum(['CREATE', 'DELETE', 'UPDATE']).optional(),
   actorId: z.string().uuid().optional(),
   entityType: z.string().min(1).max(100).optional(),
-  /** Free text over the actor's email or name, the entity type and the entity id. */
+  /** Free text over the actor's email or name, the entity type and (in full) the entity id. */
   search: z.string().trim().min(1).max(100).optional(),
   /** Inclusive UTC calendar days, `YYYY-MM-DD` — what a date input produces. */
   since: z.iso.date().optional(),
@@ -286,14 +287,16 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // ── Audit log ─────────────────────────────────────────────────────────────
 
   /** One filter for the list and the export, so a file always matches what was on screen. */
-  async function auditWhere(q: z.infer<typeof AuditLogExportQuery>) {
+  async function auditWhere(
+    q: z.infer<typeof AuditLogExportQuery>
+  ): Promise<Prisma.ConfigAuditLogWhereInput> {
     const { action, actorId, entityType, search, since, until } = q;
     const createdAt = {
       ...(since ? { gte: new Date(`${since}T00:00:00.000Z`) } : {}),
       // `until` names a whole day, so the bound is the start of the next one.
       ...(until ? { lt: new Date(Date.parse(`${until}T00:00:00.000Z`) + DAY_MS) } : {}),
     };
-    let searchClause = {};
+    let searchClause: Prisma.ConfigAuditLogWhereInput = {};
     if (search) {
       // The log has no relation to User, so an actor match is a lookup of their ids.
       const people = await fastify.prisma.user.findMany({
@@ -308,7 +311,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
       searchClause = {
         OR: [
-          { entityId: { contains: search, mode: 'insensitive' } },
+          // `entity_id` and `actor_id` are uuid columns, which Prisma will not run `contains`
+          // on (the query fails with a validation error), so an id matches only when typed in full.
+          ...(UUID_RE.test(search)
+            ? [{ entityId: search.toLowerCase() }, { actorId: search.toLowerCase() }]
+            : []),
           { entityType: { contains: search, mode: 'insensitive' } },
           ...(people.length ? [{ actorId: { in: people.map((u) => u.id) } }] : []),
         ],

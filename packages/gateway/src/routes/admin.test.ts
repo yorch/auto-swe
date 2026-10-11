@@ -512,7 +512,7 @@ describe('adminRoutes', () => {
       expect(ctx.mockPrisma.user.findMany).not.toHaveBeenCalled();
     });
 
-    it('matches free text against the actor, the entity type and the entity id', async () => {
+    it('matches free text against the actor and the entity type, and an entity id only in full', async () => {
       ctx.mockPrisma.user.findMany.mockResolvedValueOnce([{ id: 'u-1' }]);
       const res = await ctx.app.inject({
         headers: AUTH,
@@ -523,9 +523,27 @@ describe('adminRoutes', () => {
       expect(ctx.mockPrisma.configAuditLog.count).toHaveBeenCalledWith({
         where: {
           OR: [
-            { entityId: { contains: 'alice', mode: 'insensitive' } },
             { entityType: { contains: 'alice', mode: 'insensitive' } },
             { actorId: { in: ['u-1'] } },
+          ],
+        },
+      });
+    });
+
+    it('matches a full id exactly against the entity and the actor, since the columns are uuids', async () => {
+      const id = 'ABCDEF01-2345-4678-89AB-CDEF01234567';
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/platform/audit-log/export?search=${id}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.configAuditLog.count).toHaveBeenCalledWith({
+        where: {
+          OR: [
+            { entityId: id.toLowerCase() },
+            { actorId: id.toLowerCase() },
+            { entityType: { contains: id, mode: 'insensitive' } },
           ],
         },
       });

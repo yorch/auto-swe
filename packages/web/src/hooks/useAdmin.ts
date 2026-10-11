@@ -205,11 +205,12 @@ export function useAuditLog(filters: AuditLogFilters & { limit: number; offset: 
 
 /**
  * The audit log as CSV text, under the same filters as the list. `truncated` is true when more
- * rows matched than the export carries, so the file is only the newest part of the result.
+ * rows matched than the export carries, so the file is only the newest part of the result;
+ * `limit` is the most rows one export holds, when the server says.
  */
 export async function exportAuditLog(
   filters: AuditLogFilters
-): Promise<{ csv: string; truncated: boolean }> {
+): Promise<{ csv: string; limit: number | null; truncated: boolean }> {
   const qs = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
     if (value !== undefined && value !== '') {
@@ -217,10 +218,13 @@ export async function exportAuditLog(
     }
   }
   let truncated = false;
+  let limit: number | null = null;
   const csv = await api.get<string>(`/api/v1/platform/audit-log/export?${qs}`, (res) => {
     truncated = res.headers.get('x-export-truncated') === 'true';
+    const rows = Number(res.headers.get('x-export-row-limit'));
+    limit = Number.isInteger(rows) && rows > 0 ? rows : null;
   });
-  return { csv, truncated };
+  return { csv, limit, truncated };
 }
 
 export type SecurityEventType =
