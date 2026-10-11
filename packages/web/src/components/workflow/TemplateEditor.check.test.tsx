@@ -277,8 +277,16 @@ describe('Check workflow', () => {
       specOf({ end: DONE }, 'end', { schemaVersion: 0 }),
       srv('SCHEMA_VERSION', undefined, 'schemaVersion'),
     ],
-    // A bad node type is pinned in the gateway contract test: the canvas itself cannot render
-    // a node of an unknown type, so there is no editor to merge into.
+    [
+      'an unknown node type',
+      specOf({ b: { next: 'end', type: 'bogus' }, end: DONE }, 'b'),
+      srv('SCHEMA_INVALID', 'b', 'type'),
+    ],
+    [
+      'a missing node type',
+      specOf({ b: { next: 'end' }, end: DONE }, 'b'),
+      srv('SCHEMA_INVALID', 'b', 'type'),
+    ],
     [
       'an empty shell image',
       specOf({ end: DONE, sh: { command: 'x', image: '', next: 'end', type: 'shell' } }, 'sh'),

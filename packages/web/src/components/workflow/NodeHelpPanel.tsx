@@ -5,7 +5,7 @@ import { DocLink } from '@/components/ui/DocLink';
 import { Icon } from '@/components/ui/Icon';
 import { nodeHelp } from '@/lib/nodeHelp';
 import { cn, FOCUS_RING } from '@/lib/utils';
-import { NODE_TYPE_LABEL } from './nodeTypeTone';
+import { isKnownNodeType, NODE_TYPE_LABEL } from './nodeTypeTone';
 
 /**
  * Collapsed-by-default explanation of the selected node's type: what it does, when to use it, the
@@ -13,6 +13,10 @@ import { NODE_TYPE_LABEL } from './nodeTypeTone';
  * inside it); the docs link lives in the body.
  */
 export function NodeHelpPanel({ type }: { type: SpecNode['type'] }) {
+  // A type this build does not know has no help entry; render nothing rather than read through undefined.
+  if (!isKnownNodeType(type)) {
+    return null;
+  }
   const help = nodeHelp(type);
   const label = NODE_TYPE_LABEL[type];
   return (

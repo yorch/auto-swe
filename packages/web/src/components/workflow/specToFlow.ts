@@ -14,6 +14,7 @@ import { type DiffKind, type EdgeKind, type LayoutEdge, layoutSpec } from '@/lib
 import type { DagNodeData } from './dagNode';
 import type { FoldedGroup } from './foldGroups';
 import { hasDisplayTitle, nodeDisplayName, nodeGroupOf } from './nodeDisplay';
+import { isKnownNodeType } from './nodeTypeTone';
 
 /**
  * How far "fit view" may zoom, for both the initial view and the toolbar's fit
@@ -147,7 +148,7 @@ export function specToFlow(
     // generic default.
     const group = nodeGroupOf(n.node);
     const ariaLabel = [
-      `${n.node.type} node ${nodeDisplayName(n.node, n.id)}${
+      `${isKnownNodeType(n.node.type) ? n.node.type : 'unknown type'} node ${nodeDisplayName(n.node, n.id)}${
         hasDisplayTitle(n.node, n.id) ? ` (${n.id})` : ''
       }`,
       group ? `group ${group}` : null,
