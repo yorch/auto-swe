@@ -18,7 +18,9 @@ const docs = readdirSync(DOCS_DIR)
     return { content, slug, title: content.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? slug };
   });
 
-describe('the real docs index', () => {
+// These tests index and render every served doc, which takes several seconds when CI runs the
+// whole suite under coverage; the 5 s default timed them out there.
+describe('the real docs index', { timeout: 60_000 }, () => {
   const index = buildSearchIndex(docs);
 
   it('indexes every served doc and nothing else', () => {
