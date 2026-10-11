@@ -19,6 +19,7 @@ import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
 import { isRecord } from '@/lib/utils';
+import { CONTAINER_AUTHORING_RULE } from './containerNodes';
 import { InspectorNote, OnFailSection, SchemaAwareForm } from './inspectorFields';
 
 export function StepConfigSection({
@@ -239,7 +240,7 @@ export function ShellSection({
   return (
     <div className="space-y-3">
       <Alert className="text-xs" title="Elevated node" variant="warning">
-        Runs a command in a container. Only team leads and admins can author it.
+        Runs a command in a container. {CONTAINER_AUTHORING_RULE}
       </Alert>
       <Input
         compact
@@ -317,7 +318,7 @@ export function ContainerStepSection({
   return (
     <div className="space-y-3">
       <Alert className="text-xs" title="Elevated node" variant="warning">
-        Runs a coded capability in a container. Only team leads and admins can author it.
+        Runs a coded capability in a container. {CONTAINER_AUTHORING_RULE}
       </Alert>
       <Input
         compact

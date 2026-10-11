@@ -19,7 +19,9 @@ import { FlightRecorder } from '@/components/runs/layouts/FlightRecorder';
 import { SplitConsole } from '@/components/runs/layouts/SplitConsole';
 import { Transcript } from '@/components/runs/layouts/Transcript';
 import type { RunLayoutProps } from '@/components/runs/layouts/types';
+import { RunReadingGuide } from '@/components/runs/RunReadingGuide';
 import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
+import { RunVerdictBanner } from '@/components/runs/RunVerdictBanner';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -42,6 +44,7 @@ import { IMPLEMENTER_RUNTIME_LABELS } from '@/lib/evalRuntime';
 import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
+import { deriveRunVerdict } from '@/lib/runVerdict';
 import { buildTraceLinker } from '@/lib/traceLinkage';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 
@@ -290,6 +293,7 @@ export default function RunDetailPage({ params }: PageProps) {
   const traces = run.traces ?? [];
   const Layout = LAYOUTS[layout];
   const failedStep = findFailedStep(run.status, run.steps);
+  const verdict = deriveRunVerdict(run, pendingSteps);
   const tracesTrimmed = traces.some((t) => t.trimmed);
   // Hidden from the failure card once a re-run is in flight or started; the
   // header shows its progress.
@@ -427,6 +431,7 @@ export default function RunDetailPage({ params }: PageProps) {
         </p>
 
         <HowItWorks className="mt-3" />
+        <RunReadingGuide className="mt-2" />
 
         {(fullTracesFailed || retryRun.isSuccess || retryRun.errorView) && (
           <div className="mt-3 space-y-2">
@@ -460,6 +465,8 @@ export default function RunDetailPage({ params }: PageProps) {
           </div>
         )}
       </header>
+
+      <RunVerdictBanner onJumpToFailure={handleJumpToFailure} verdict={verdict} />
 
       {/* ── Pending approvals + result or failure, whichever layout is chosen ── */}
       <RunSummaryBand

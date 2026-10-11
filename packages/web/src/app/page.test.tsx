@@ -15,6 +15,8 @@ vi.mock('@/hooks/useApprovals', () => ({
   useApprovals: () => ({ data: [], isLoading: false }),
 }));
 vi.mock('@/components/setup/SetupReadiness', () => ({ SetupReadiness: () => null }));
+vi.mock('@/components/setup/GovernanceGuide', () => ({ GovernanceGuide: () => null }));
+vi.mock('@/components/setup/FirstRunChecklist', () => ({ FirstRunChecklist: () => null }));
 
 import HomePage from './page';
 

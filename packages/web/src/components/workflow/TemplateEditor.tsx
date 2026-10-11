@@ -40,6 +40,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { useTokens } from '@/hooks/useTokens';
+import { schemaIssues } from '@/lib/specSchemaIssues';
 import { cn, FOCUS_RING, formatCost, plural } from '@/lib/utils';
 import { adjacentNodeId, type NavDirection } from './dagKeyboardNav';
 import { DagNode, type DagNodeData, handlePortsFor } from './dagNode';
@@ -189,8 +190,38 @@ function EditorInner({
 
   // Live lint. The save path is advisory and the run-start path hard-gates, so
   // an author only found out a spec was broken after saving it. Pure and cheap.
-  const lint = useMemo(() => validateSpec(spec), [spec]);
+  const lint = useMemo(() => {
+    const report = validateSpec(spec);
+    return { errors: [...schemaIssues(spec), ...report.errors], warnings: report.warnings };
+  }, [spec]);
   const issues = useMemo(() => [...lint.errors, ...lint.warnings], [lint]);
+  // "Check workflow": a snapshot of the live lint at the click, tied to the spec it was taken on so
+  // an edit makes the result stale (and hides it) instead of leaving a wrong "no problems".
+  const [checked, setChecked] = useState<{
+    spec: WorkflowSpec;
+    errors: number;
+    warnings: number;
+    /** Bumped per click so the live region's text node changes and is announced again. */
+    seq: number;
+  } | null>(null);
+  const issuesRef = useRef<HTMLDetailsElement>(null);
+  const issuesSummaryRef = useRef<HTMLElement>(null);
+  const checkResult = checked && checked.spec === spec ? checked : null;
+  const runCheck = useCallback(() => {
+    setChecked((prev) => ({
+      errors: lint.errors.length,
+      seq: (prev?.seq ?? 0) + 1,
+      spec,
+      warnings: lint.warnings.length,
+    }));
+    if (lint.errors.length + lint.warnings.length > 0) {
+      // Open the panel (a warnings-only one starts collapsed) and move focus into it.
+      if (issuesRef.current) {
+        issuesRef.current.open = true;
+      }
+      issuesSummaryRef.current?.focus();
+    }
+  }, [lint, spec]);
   const serverIssues = useMemo(
     () =>
       (serverError ?? '')
@@ -554,6 +585,10 @@ function EditorInner({
             <Icon name="plus" size={13} />
             Add node
           </Button>
+          <Button onClick={runCheck} size="sm" variant="secondary">
+            <Icon name="checkCircle" size={13} />
+            Check workflow
+          </Button>
           <Button
             aria-pressed={showOutline}
             className={cn(showOutline && 'border-ember-400/50 bg-ember-400/10 text-ember-300')}
@@ -571,6 +606,25 @@ function EditorInner({
         </div>
       </div>
 
+      {/* Always mounted so assistive tech announces the text when it changes. */}
+      <div
+        aria-live="polite"
+        className={
+          checkResult
+            ? 'border-b border-ink-600 bg-ink-950/60 px-4 py-1.5 text-xs text-paper-300'
+            : 'sr-only'
+        }
+        role="status"
+      >
+        {checkResult && (
+          <span key={checkResult.seq}>
+            {checkResult.errors + checkResult.warnings === 0
+              ? 'No problems found. This checks the shape of the workflow, its connections and expression syntax as edited here. It does not run the workflow, and it does not check that agents and connections exist or that you may save it; saving does that and reports a warning for each agent or connection it cannot find.'
+              : `${plural(checkResult.errors, 'error')}, ${plural(checkResult.warnings, 'warning')}. Details are listed below. This is a structural check; it does not run the workflow.`}
+          </span>
+        )}
+      </div>
+
       {parseError && (
         <Alert className="rounded-none border-x-0 border-t-0 font-mono text-xs">{parseError}</Alert>
       )}
@@ -579,12 +633,14 @@ function EditorInner({
         <details
           className="group border-b border-ink-600 bg-ink-800/60 px-4 py-2 text-xs"
           open={lint.errors.length > 0 || serverIssues.length > 0}
+          ref={issuesRef}
         >
           <summary
             className={cn(
               'flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-paper-300 select-none [&::-webkit-details-marker]:hidden',
               FOCUS_RING
             )}
+            ref={issuesSummaryRef}
           >
             <Icon
               className="text-paper-500 transition-transform group-open:rotate-90"

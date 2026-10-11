@@ -247,6 +247,21 @@ lessons carry their ids, so the agent can ask about one. See
 1. **Sensitive file scanner** (`checkSensitiveFilePath`) — hard-block. Rejects `.env`, PEM/key files, SSH private keys, credential JSON files. Returns the block message to the agent and records a trace with `error: 'blocked by sensitive file scanner'`.
 2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/govern/security` can classify the event without raw SQL. Every trace tag (including the shell scanner's `'blocked by shell command scanner'`) is defined once, in `SECURITY_TRACE_ERRORS` (`@auto-swe/shared/lib/scannerCache`), which the tools write and the security-events endpoint and the eval trajectory scorer's guardrail count both read.
 
+**Trying a scanner pattern.** The pattern editor at `/govern/scanner` has a "Try this pattern" area
+backed by `POST /api/v1/platform/scanner-patterns/test` (ADMIN). The body is `{ pattern, flags?,
+samples }` with 1–10 samples of at most 20,000 characters each. The route applies the same checks as
+create and update: the flag set is checked by the request schema, so `g` or `y` is a validation
+error from the schema rather than an `UNSAFE_FLAGS` code; `checkRegexSafety` and the backtracking
+probe then give `INVALID_REGEX` and `REDOS_RISK`. It then runs the pattern against each sample
+through `runRegexBatch` with `resolveRegexBudgetMs()`, the executor the scanners use, with
+`quarantine: false`, so a test neither skips a quarantined rule nor quarantines the one under test.
+It writes nothing: no pattern row, no audit entry. Each sample comes back as `matched`,
+`no_match`, `timed_out` (overran twice), `error` (the executor failed, no verdict on the pattern)
+or `not_run`, with the first match's excerpt (at most 200 characters) and full length; a budget
+overrun is a result, not an error response. A request stops starting new samples after three
+budgets of wall time spent in the executor (`totalCapMs` in the response) and reports the rest as `not_run`;
+the sample in progress still finishes, so a request can spend up to two budgets past the cap.
+
 ### 3.5 MCP Tools (first-class `mcp` Connection, opt-in)
 
 **File:** `packages/worker/src/agents/mcpTools.ts` (`loadMcpTools`, `isMcpToolEnabled`, `MCP_TOOL_KEY`, `parseMcpServerRef`)
@@ -1447,6 +1462,13 @@ template override is never badged, because it may use a different model or crede
   advisory scanners proceed without the rule, and the memory write gate refuses the write instead
   (§6.4). It is logged on every skip, and quarantine is
   per-process, so gateway and worker decide independently and both forget on restart.
+- **The pattern tester runs the raw pattern on the raw sample.** It does not reproduce a scanner's
+  input shaping (the shell scanner's segment windows and whitespace-collapsed spellings, the
+  sensitive-file scanner's overlapping windows), so a miss in the tester does not prove the
+  scanner would miss it. The executor reports the first match in a sample only, so the tester shows
+  one excerpt per sample, and a multi-line input cannot be tested as one sample from the dashboard
+  (the form takes one sample per line). A test shares the gateway's serialized executor with real
+  scans, so a slow pattern holds that queue for up to five budgets per request.
 - **The write-time backtracking probe is sound but incomplete.** `POST /admin/scanner-patterns`
   executes a candidate against repetition-heavy input built from its own alphabet and rejects it if
   it overruns the budget. It cannot see a merely polynomial pattern (`a+a+$` is fine at 40

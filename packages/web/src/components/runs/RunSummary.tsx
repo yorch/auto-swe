@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import type { useApprovals } from '@/hooks/useApprovals';
 import { classifyAgentRunFailure } from '@/lib/agentRun';
+import { NEEDS_RESPONSE_ANCHOR } from '@/lib/runVerdict';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { AgentRunFailureNote } from './AgentRunOutcomeCard';
 import { FailureCard } from './FailureCard';
@@ -93,7 +94,11 @@ export function RunSummary({
   return (
     <div className="space-y-4">
       {pendingSteps.length > 0 && (
-        <section aria-label="Needs a response" className="space-y-3">
+        <section
+          aria-label="Needs a response"
+          className="space-y-3"
+          id={full ? NEEDS_RESPONSE_ANCHOR : undefined}
+        >
           <SummaryHeading count={pendingSteps.length} tone="amber">
             Needs a response
           </SummaryHeading>

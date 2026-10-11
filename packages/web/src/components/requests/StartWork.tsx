@@ -6,6 +6,7 @@ import { type ReactNode, useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
 import { EpicLaunchForm } from '@/components/epics/EpicLaunchForm';
 import { HowItWorks } from '@/components/help/HowItWorks';
+import { ModeChooser } from '@/components/requests/ModeChooser';
 import { WorkflowLaunchForm } from '@/components/requests/WorkflowLaunchForm';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
@@ -247,12 +248,7 @@ export function StartWork({
           )}
           <Step number={1} title="How do you want to work?">
             <WorkModePicker onChange={setMode} options={options} value={mode} />
-            <p className="text-[13px] leading-relaxed text-paper-400" data-testid="mode-hint">
-              <span className="font-medium text-paper-300">Not sure?</span> Pick a workflow when a
-              process in the library fits the job. Use an agent for a one-off task that needs no
-              defined process.
-              {canStartEpic ? ' Use an epic when the change spans several repositories.' : ''}
-            </p>
+            <ModeChooser canStartEpic={canStartEpic} current={mode} onChoose={setMode} />
           </Step>
           <div className="space-y-8" hidden={mode !== 'workflow'}>
             <Step

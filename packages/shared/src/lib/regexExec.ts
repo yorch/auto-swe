@@ -486,15 +486,18 @@ export const __evaluatePerTargetForTests = (
 export async function runRegexBatch(
   patterns: RegexSpec[],
   targets: RegexTarget[],
-  opts: { budgetMs?: number; label?: string } = {}
+  opts: { budgetMs?: number; label?: string; quarantine?: boolean } = {}
 ): Promise<RegexBatchResult> {
   const budgetMs = opts.budgetMs ?? DEFAULT_REGEX_BUDGET_MS;
+  // `quarantine: false` is for dry runs: the batch neither skips a quarantined pattern nor
+  // records a new one, so testing a rule cannot change what real scans enforce.
+  const useQuarantine = opts.quarantine !== false;
   const scope = opts.label ?? 'regexExec';
   const runnable: RegexSpec[] = [];
   const skipped: string[] = [];
   const now = Date.now();
   for (const p of patterns) {
-    if (isQuarantined(identity(p.source, p.flags), now)) {
+    if (useQuarantine && isQuarantined(identity(p.source, p.flags), now)) {
       skipped.push(p.key);
     } else {
       runnable.push(p);
@@ -513,7 +516,7 @@ export async function runRegexBatch(
 
   const result = await enqueue(() => evaluatePerTarget(runnable, targets, budgetMs));
 
-  if (result.timedOutPatternKeys.length > 0) {
+  if (useQuarantine && result.timedOutPatternKeys.length > 0) {
     const until = Date.now() + REGEX_QUARANTINE_TTL_MS;
     for (const key of result.timedOutPatternKeys) {
       const spec = runnable.find((p) => p.key === key);

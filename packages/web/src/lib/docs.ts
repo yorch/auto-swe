@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { cache } from 'react';
+import { buildSearchIndex, type SearchIndex } from './docSearch';
 
 export type DocMeta = {
   slug: string;
@@ -134,4 +135,14 @@ export const getDoc = cache(async (slug: string): Promise<Doc | null> => {
   } catch {
     return null;
   }
+});
+
+/**
+ * The search index over every served doc, built from the same files `/docs/[slug]` renders.
+ * Served as JSON by `app/docs/search-index.json/route.ts` so the docs page does not carry it.
+ */
+export const loadDocSearchIndex = cache(async (): Promise<SearchIndex> => {
+  const metas = await listDocs();
+  const docs = await Promise.all(metas.map((m) => getDoc(m.slug)));
+  return buildSearchIndex(docs.filter((d): d is Doc => d !== null));
 });

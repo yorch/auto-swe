@@ -329,7 +329,7 @@ The spec supports 15 node types.
 | `fanOut` | Run a subgraph once per item in an array | `over`, `subgraph`, `join`, `itemKey`, `concurrency`, `onBranchFail`, `exports`, `pluck` |
 | `shell` | Run a user-authored command in an ephemeral container | `image`, `command`, `network`, `timeoutMs`, `memory`, `cpus` |
 | `containerStep` | Coded capability — an image with a JSON in/out contract | `image`, `command`, `inputs`, `transport` (`stdout`/`ndjson`/`sidecar`), `sidecar` |
-| `humanApproval` | Pause for a binary approve/reject | `timeout`, `onTimeout`, `contentFrom`, `storeAs` |
+| `humanApproval` | Pause for a binary approve/reject | `title`, `contextFrom`, `onApprove`, `onReject`, `onTimeout`, `timeout` |
 | `humanDecision` | Pause for a 2–10 option branch | `options`, `timeout`, `onTimeout` |
 | `humanInput` | Pause for a typed form, written back into context | `fields`, `timeout`, `onTimeout`, `storeAs` |
 | `humanReview` | Pause for an annotated review of displayed content | `contentFrom`, `timeout`, `onTimeout`, `storeAs` |

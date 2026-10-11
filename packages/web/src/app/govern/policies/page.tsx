@@ -9,6 +9,7 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
@@ -462,6 +463,23 @@ export default function AutonomyPoliciesPage() {
         subtitle="Which risk classes an agent may act on automatically and which need human approval — globally, per team, or per workflow template."
         title="Autonomy policies"
       />
+
+      <Alert
+        action={
+          <DocLink
+            anchor={HELP_LINKS.autonomyPolicyDecisionLog.anchor}
+            label="Review the decision log"
+            slug={HELP_LINKS.autonomyPolicyDecisionLog.slug}
+          />
+        }
+        title="Auto means no policy approval"
+        variant="warning"
+      >
+        Setting External communication or Mass communication to Auto lets a run send messages
+        outside the team, or to many people, with no policy approval (a human-gate node in the
+        workflow still waits for a person). A policy applies only to the runs its scope matches, and
+        a global policy covers every run that no team or template policy matches.
+      </Alert>
 
       <Card className="space-y-3 p-4 text-[13px] leading-relaxed text-paper-300">
         <p>

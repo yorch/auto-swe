@@ -65,7 +65,7 @@ options:                                                   # required; 2–10 it
   - label: "No — looks good, open PR"
     value: "skip"
     next: openPR
-storeAs: context.applyFeedbackChoice                      # optional; stores selected value
+storeAs: context.applyFeedbackChoice                      # optional; stores the whole response payload
 onTimeout: openPR                                         # required
 timeout: "30m"                                            # required
 ```
@@ -93,7 +93,7 @@ fields:                                                   # required; 1–20 ite
   - key: dryRun
     label: "Dry run only?"
     type: boolean
-storeAs: context.deployConfig                            # optional; stores submitted object
+storeAs: context.deployConfig                            # optional; stores the whole response payload
 onSubmit: runDeploy                                      # required; node to route to after submit
 onTimeout: terminateTimedOut                             # required
 timeout: "1h"                                            # required
@@ -112,7 +112,7 @@ type: humanReview
 title: "Review the implementation diff"                  # required
 description: "Leave notes for the agent. Submit to continue."  # optional
 contentFrom: context.currentCodeResult.diff              # required; workflow context path to show
-storeAs: context.reviewFeedback                         # optional; stores submitted text
+storeAs: context.reviewFeedback                         # optional; stores the whole response payload
 onSubmit: storeFeedback                                 # required
 onTimeout: openPR                                       # required
 timeout: "8h"                                           # required
@@ -226,7 +226,7 @@ approve: {
 
 - Keep `timeout` realistic. `24h` is reasonable for approvals; `8h` for reviews during a working day; `30m` for a quick decision during active iteration. Long timeouts don't hurt throughput — the workflow parks cheaply inside Temporal.
 - Always route `onTimeout` to a sensible default. For approvals, `terminateTimedOut` (non-blocking team) or `openPR` (auto-proceed) are the two common choices.
-- Use `storeAs` when downstream nodes need the human's response. The stored value is available as `context.<path>` in later node `inputs`.
+- Use `storeAs` when downstream nodes need the human's response. The stored response payload is written to whatever path you name (for example `context.reviewNotes`), and later nodes read it from there.
 - Use `contextFrom` / `contentFrom` to give the human relevant context. The value is fetched from the workflow context at the time the node executes and included in the step's `context` field.
 
 ---

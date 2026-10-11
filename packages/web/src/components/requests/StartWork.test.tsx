@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 
@@ -15,6 +15,7 @@ vi.mock('@/components/agentRuns/AgentRunForm', () => ({
   AgentRunForm: () => <div>agent form</div>,
 }));
 
+import { modeChoices } from './ModeChooser';
 import { StartWork } from './StartWork';
 
 function gateway() {
@@ -68,8 +69,53 @@ describe('StartWork', () => {
     auth.role = 'LEAD';
     gateway();
     render(withQuery(<StartWork />));
-    expect(screen.getByText('Not sure?')).toBeTruthy();
+    expect(screen.getByText(/Not sure\?/)).toBeTruthy();
     expect(screen.getByText('How auto-swe works')).toBeTruthy();
+  });
+
+  it('lets a lead pick each mode from the chooser with one click', () => {
+    auth.role = 'LEAD';
+    gateway();
+    render(withQuery(<StartWork />));
+    const chooser = within(screen.getByTestId('mode-hint'));
+    const checked = (name: RegExp) =>
+      (screen.getByRole('radio', { name }) as HTMLInputElement).checked;
+    fireEvent.click(chooser.getByRole('button', { name: 'Run an agent' }));
+    expect(checked(/run an agent/i)).toBe(true);
+    // The chooser's pressed state follows the same mode as the radio group.
+    expect(chooser.getByRole('button', { name: 'Run an agent' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    expect(
+      chooser.getByRole('button', { name: 'Pick a workflow' }).getAttribute('aria-pressed')
+    ).toBe('false');
+    fireEvent.click(screen.getByRole('radio', { name: /run a workflow/i }));
+    expect(
+      chooser.getByRole('button', { name: 'Pick a workflow' }).getAttribute('aria-pressed')
+    ).toBe('true');
+    fireEvent.click(chooser.getByRole('button', { name: 'Run an agent' }));
+    fireEvent.click(chooser.getByRole('button', { name: 'Run an epic' }));
+    expect(checked(/multi-repo epic/i)).toBe(true);
+    fireEvent.click(chooser.getByRole('button', { name: 'Pick a workflow' }));
+    expect(checked(/run a workflow/i)).toBe(true);
+  });
+
+  it('never offers or recommends an epic to an engineer, and says why', () => {
+    auth.role = 'ENGINEER';
+    gateway();
+    render(withQuery(<StartWork />));
+    const chooser = within(screen.getByTestId('mode-hint'));
+    expect(chooser.queryByRole('button', { name: /epic/i })).toBeNull();
+    expect(chooser.getByText(/Only team leads and administrators can start an epic/)).toBeTruthy();
+    expect(chooser.getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Pick a workflow',
+      'Run an agent',
+    ]);
+  });
+
+  it('describes the chooser rows from the mode table', () => {
+    expect(modeChoices(true).every((c) => c.action)).toBe(true);
+    expect(modeChoices(false).find((c) => c.mode === 'epic')?.action).toBeUndefined();
   });
 
   it('never promises a draft pull request or a per-repository request in the side rail', () => {

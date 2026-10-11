@@ -35,4 +35,25 @@ describe('autonomy policies page help', () => {
       screen.getAllByRole('link', { name: /About autonomy policies/ })[0]?.getAttribute('href')
     ).toBe('/docs/autonomy-policies');
   });
+
+  it('warns that auto external or mass communication skips human approval', () => {
+    setupFetchMock({
+      '/api/v1/platform/autonomy-policies': () => ({ data: [] }),
+      '/api/v1/platform/teams': () => ({ data: [] }),
+      '/api/v1/platform/workflow-templates': () => ({ data: [] }),
+    });
+    render(withQuery(<AutonomyPoliciesPage />));
+    const heading = screen.getByText('Auto means no policy approval');
+    const callout = heading.closest('[role="status"]');
+    expect(callout).not.toBeNull();
+    expect(callout?.textContent).toMatch(
+      /External communication or Mass communication to Auto lets a run send messages outside the team, or to many people, with no policy approval/
+    );
+    expect(callout?.textContent).toMatch(
+      /a global policy covers every run that no team or template policy matches/
+    );
+    expect(screen.getByRole('link', { name: /Review the decision log/ }).getAttribute('href')).toBe(
+      '/docs/autonomy-policies#5-the-decision-log'
+    );
+  });
 });

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRef, useState } from 'react';
 import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
+import { SampleTaskButton } from '@/components/requests/SampleTaskButton';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -30,6 +31,7 @@ import {
 } from '@/lib/agentRun';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { requestHref } from '@/lib/requestDisplay';
+import { AGENT_SAMPLE_PROMPT } from '@/lib/sampleTasks';
 
 const LATEST = 'latest';
 
@@ -257,6 +259,13 @@ export function AgentRunForm({
           description="Pick a repository and an agent, then say what it should do."
           stage="details"
           title="Task details"
+        />
+      )}
+      {reviewBeforeLaunch && (
+        <SampleTaskButton
+          blocked={values.prompt.trim() !== ''}
+          caption="Fills in the prompt with a read-only request to explain a repository. You still choose the repository and agent."
+          onFill={() => set('prompt', AGENT_SAMPLE_PROMPT)}
         />
       )}
       {disabledByPlatform && (

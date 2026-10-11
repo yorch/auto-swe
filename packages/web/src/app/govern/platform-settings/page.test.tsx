@@ -69,6 +69,22 @@ describe('platform settings page', () => {
     ).toBe('/docs/configuration#2-resolution-order');
   });
 
+  it('warns that a platform-wide save reaches every scope without an override', () => {
+    render(<Page />);
+    const callout = screen
+      .getByText('Platform-wide saves reach every scope below')
+      .closest('[role="status"]');
+    expect(callout).not.toBeNull();
+    expect(callout?.textContent).toMatch(/live value for every team, channel and template/);
+    expect(callout?.textContent).toMatch(/team or channel changes only that scope/);
+    expect(callout?.textContent).toMatch(
+      /organization reaches every team in it that has no override/
+    );
+    expect(screen.getByRole('link', { name: /Who may change these/ }).getAttribute('href')).toBe(
+      '/docs/configuration#3-who-may-change-what'
+    );
+  });
+
   it('records a save that settles in the view it started in', async () => {
     render(<Page />);
     fireEvent.click(screen.getByText('save'));

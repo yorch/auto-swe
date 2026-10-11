@@ -8,6 +8,7 @@ import {
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import { useId, useRef, useState } from 'react';
 import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
+import { SampleTaskButton } from '@/components/requests/SampleTaskButton';
 import { WorkflowLaunchSummary } from '@/components/requests/WorkflowLaunchSummary';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -24,6 +25,7 @@ import { useRepositories } from '@/hooks/useRepositories';
 import { useRunTemplate } from '@/hooks/useTemplates';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
+import { pickSampleField, WORKFLOW_SAMPLE } from '@/lib/sampleTasks';
 
 /** `targetBranch` → "Target branch". */
 function humanize(key: string) {
@@ -32,6 +34,10 @@ function humanize(key: string) {
     .replace(/[_-]+/g, ' ')
     .trim();
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
+}
+
+function hasText(value: unknown) {
+  return typeof value === 'string' && value.trim() !== '';
 }
 
 export function WorkflowLaunchForm({
@@ -52,6 +58,7 @@ export function WorkflowLaunchForm({
   const lock = useRef(false);
   const launch = useRunTemplate(template.id);
   const { data: connections = [] } = useRepositories();
+  const sampleField = pickSampleField(schema);
   const errors = schema ? validatePayload(schema, payload) : {};
   const required = new Set(schema?.required ?? []);
   // A workspace provider can need a target connection the input schema never asks for; the
@@ -152,6 +159,16 @@ export function WorkflowLaunchForm({
         </>
       ) : (
         <>
+          {sampleField && (
+            <SampleTaskButton
+              blocked={label.trim() !== '' || hasText(payload[sampleField])}
+              caption={`Fills in the task name and the “${humanize(sampleField)}” field with a small documentation request. Other fields stay as they are.`}
+              onFill={() => {
+                setLabel(WORKFLOW_SAMPLE.label);
+                setPayload((prev) => ({ ...prev, [sampleField]: WORKFLOW_SAMPLE.text }));
+              }}
+            />
+          )}
           <Input
             error={attempted && !label.trim() ? 'Name this task before continuing' : undefined}
             hint="A short name to find this request later."
