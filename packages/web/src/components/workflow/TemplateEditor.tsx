@@ -15,12 +15,7 @@
  * change required).
  */
 
-import type {
-  Node as SpecNode,
-  StepMetadata,
-  ValidationIssue,
-  WorkflowSpec,
-} from '@auto-swe/shared/workflow';
+import type { Node as SpecNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
 import {
   formatValidationIssue,
   nodeEdges,
