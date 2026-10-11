@@ -162,6 +162,12 @@ Guided paths build on those pieces:
   answering a gate, is a pointer to Approvals that never ticks and does not count toward the list
   hiding itself once the three tracked steps are done. Dismissal is remembered in the viewer's
   browser only.
+- **Home** also offers a short, optional product tour. Take the tour starts it, and nothing starts
+  it automatically. The tour is a card that walks through the sidebar pages the viewer's role can
+  open, from Start work and Requests to Approvals and Docs; leads and administrators also see the
+  Platform settings step, and administrators the Studio and Autonomy policies steps. Next and Back
+  move between steps, Skip tour, Done or Escape ends it, and Take the tour again replays it. The tour
+  never blocks the page, and ending it returns focus to the button that started it.
 - **Start work** carries a "Not sure?" chooser that recommends a mode, and a "Try a sample task"
   button on each form that only fills the fields, never launches, and leaves the review screen in
   place. The agent sample asks for a read-only explanation; the epic and workflow samples ask for a
@@ -193,6 +199,9 @@ Guided paths build on those pieces:
 - Launch drafts are kept within the mounted page; leaving or reloading the page discards them.
 - The guided paths are per viewer: dismissing one is stored in that browser and does not follow
   the person to another browser.
+- The product tour points only at the sidebar. A step whose page link is hidden, because its
+  sidebar section is collapsed or the mobile menu is closed, appears as a centered card instead.
+  Opening another page ends the tour, and it counts as seen.
 - None of the "Your first run" steps follow the selected team. The merged-pull-request step ticks
   only when the webhook that records a merge is configured, and it ticks when anyone merges a pull
   request from the viewer's request. The gate step is never tracked: the viewer's own answer is recorded on the gate
