@@ -26,7 +26,7 @@ export interface ReadinessProvider {
   provider: string;
   /** Agent keys (and `embeddings`) that call this provider. */
   usedBy: string[];
-  /** False when one of those is left without a credential it can use. */
+  /** False when one of those is left without a credential it can use (a mispinned embedding does not count). */
   present: boolean;
   /** Whether a caller the worker needs at boot (or the embedding model) uses it. */
   required: boolean;
@@ -89,6 +89,11 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
       usedBy.set(embeddingProvider, (usedBy.get(embeddingProvider) ?? new Set()).add('embeddings'));
     }
     for (const gap of gaps) {
+      // An embedding pinned to another provider's credential is the embedding config's fault,
+      // not the named provider's: that provider may well have a credential every agent can use.
+      if (gap.problem === 'pin-provider-mismatch') {
+        continue;
+      }
       if (gap.scope === 'GLOBAL' && gap.provider && usedBy.has(gap.provider)) {
         uncovered.add(gap.provider);
       }

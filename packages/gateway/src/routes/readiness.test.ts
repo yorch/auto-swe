@@ -159,6 +159,22 @@ describe('GET /readiness', () => {
     ]);
   });
 
+  it('does not mark a provider uncovered for an embedding pinned to another provider credential', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.embeddingConfig.findUnique.mockResolvedValue({
+      credentialId: 'c1',
+      modelSpec: 'openai/text-embedding-3-large',
+    });
+    const { data } = (await app.inject({ headers: AUTH, method: 'GET', url: URL })).json();
+    expect(data.gaps).toEqual([
+      expect.objectContaining({ problem: 'pin-provider-mismatch', subject: 'embeddings' }),
+    ]);
+    expect(item(data, 'embeddings').ok).toBe(false);
+    expect(data.providers.find((p: { provider: string }) => p.provider === 'openai')).toMatchObject(
+      { present: true }
+    );
+  });
+
   it('reports a team override with no reachable credential as advisory', async () => {
     const { app, prisma } = await buildApp();
     prisma.agent.findMany.mockResolvedValue([

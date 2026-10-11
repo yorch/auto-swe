@@ -1131,7 +1131,7 @@ The single governed surface for per-key config. An Agent payload carries
 Writes cut a new immutable `version`.
 
 For admins, each row of the library table carries a "No credential" badge on its Model cell when the
-provider it calls has no usable credential (and the row is not pinned to its own `credentialId`).
+provider it calls has no usable credential (and the row is not pinned to its own `credentialId`). An embedding model pinned to another provider's credential fails the embeddings readiness item but does not badge the provider it names.
 The status comes from the one `GET /api/v1/platform/readiness` response the page already shares with
 the setup banner, and a sub-role persona takes its parent's status. Readiness describes only the
 platform-wide agents, so the badge appears on platform-wide rows alone; a team, organization or
