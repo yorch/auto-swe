@@ -29,6 +29,9 @@ export const MAX_PATTERN_SOURCE_LENGTH = 2000;
  */
 export const MAX_SCAN_TEXT_LENGTH = 20_000;
 
+/** Most samples one "try this pattern" request may carry; the admin API and the tester share it. */
+export const MAX_TEST_SAMPLES = 10;
+
 /**
  * Overlap between the windows {@link chunkScanText} produces. A match longer
  * than this can straddle a window boundary and be missed, so it must exceed the

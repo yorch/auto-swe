@@ -8,6 +8,7 @@ import {
   checkRegexSafety,
   MAX_PATTERN_SOURCE_LENGTH,
   MAX_SCAN_TEXT_LENGTH,
+  MAX_TEST_SAMPLES,
   type RegexSafetyIssue,
   SAFE_FLAGS_MESSAGE,
   SAFE_FLAGS_RE,
@@ -59,8 +60,7 @@ interface TestSampleResult {
   status: 'matched' | 'no_match' | 'timed_out' | 'error' | 'not_run';
 }
 
-/** Bounds on a "try it" request: it is a stress surface, so count and size are capped. */
-export const MAX_TEST_SAMPLES = 10;
+/** A "try it" request is a stress surface, so its sample count (`MAX_TEST_SAMPLES`) and size are capped. */
 /**
  * A request stops starting new samples once this many budgets of its own executor time have
  * been spent. One overrunning sample costs two budgets (the run and its confirmation), and the
