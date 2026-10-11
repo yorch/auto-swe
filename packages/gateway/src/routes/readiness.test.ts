@@ -159,20 +159,95 @@ describe('GET /readiness', () => {
     ]);
   });
 
-  it('does not mark a provider uncovered for an embedding pinned to another provider credential', async () => {
+  const openai = (data: { providers: { provider: string }[] }) =>
+    data.providers.find((p) => p.provider === 'openai');
+
+  it('keeps an agent-covered provider present under a mispinned embedding', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findMany.mockResolvedValue([
+      agentRow({ key: 'implementer', modelSpec: 'anthropic/claude-opus-5-5' }),
+      agentRow({ key: 'evalJudge', modelSpec: 'openai/gpt-6-luna' }),
+    ]);
+    prisma.embeddingConfig.findUnique.mockResolvedValue({
+      credentialId: 'c1',
+      modelSpec: 'openai/text-embedding-3-large',
+    });
+    const { data } = (await app.inject({ headers: AUTH, method: 'GET', url: URL })).json();
+    expect(openai(data)).toMatchObject({ present: true, usedBy: ['evalJudge'] });
+  });
+
+  it('still flags a provider with a real agent gap under a mispinned embedding', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findMany.mockResolvedValue([
+      agentRow({ key: 'implementer', modelSpec: 'anthropic/claude-opus-5-5' }),
+      agentRow({ key: 'evalJudge', modelSpec: 'openai/gpt-6-luna' }),
+    ]);
+    prisma.providerCredential.findMany.mockResolvedValue([credRow('c1', 'anthropic')]);
+    prisma.embeddingConfig.findUnique.mockResolvedValue({
+      credentialId: 'c1',
+      modelSpec: 'openai/text-embedding-3-large',
+    });
+    const { data } = (await app.inject({ headers: AUTH, method: 'GET', url: URL })).json();
+    expect(openai(data)).toMatchObject({ present: false });
+  });
+
+  it('does not report a mispinned embedding-only provider as present', async () => {
     const { app, prisma } = await buildApp();
     prisma.embeddingConfig.findUnique.mockResolvedValue({
       credentialId: 'c1',
       modelSpec: 'openai/text-embedding-3-large',
     });
     const { data } = (await app.inject({ headers: AUTH, method: 'GET', url: URL })).json();
-    expect(data.gaps).toEqual([
-      expect.objectContaining({ problem: 'pin-provider-mismatch', subject: 'embeddings' }),
-    ]);
+    expect(openai(data)).toBeUndefined();
     expect(item(data, 'embeddings').ok).toBe(false);
-    expect(data.providers.find((p: { provider: string }) => p.provider === 'openai')).toMatchObject(
-      { present: true }
-    );
+  });
+
+  it('does not flag agents for an unsupported embedding provider', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.embeddingConfig.findUnique.mockResolvedValue({
+      credentialId: null,
+      modelSpec: 'anthropic/embed-1',
+    });
+    const { data } = (await app.inject({ headers: AUTH, method: 'GET', url: URL })).json();
+    expect(data.gaps).toEqual([
+      expect.objectContaining({ problem: 'unsupported-embedding-provider' }),
+    ]);
+    expect(
+      data.providers.find((p: { provider: string }) => p.provider === 'anthropic')
+    ).toMatchObject({ present: true, usedBy: ['implementer'] });
+    expect(item(data, 'embeddings').ok).toBe(false);
+  });
+
+  it('treats a pinned embedding credential without an apiBase as the embedding config', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findMany.mockResolvedValue([
+      agentRow({ key: 'implementer', modelSpec: 'anthropic/claude-opus-5-5' }),
+      agentRow({ key: 'evalJudge', modelSpec: 'acme/model-1' }),
+    ]);
+    prisma.providerCredential.findMany.mockResolvedValue([
+      credRow('c1', 'anthropic'),
+      credRow('c4', 'acme', { apiBase: 'https://acme.test' }),
+      credRow('c5', 'acme'),
+    ]);
+    prisma.embeddingConfig.findUnique.mockResolvedValue({
+      credentialId: 'c5',
+      modelSpec: 'acme/embed-1',
+    });
+    const { data } = (await app.inject({ headers: AUTH, method: 'GET', url: URL })).json();
+    expect(data.gaps).toEqual([expect.objectContaining({ problem: 'no-api-base' })]);
+    expect(data.providers.find((p: { provider: string }) => p.provider === 'acme')).toMatchObject({
+      present: true,
+    });
+  });
+
+  it('still flags a provider when an unpinned embedding has no credential', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.providerCredential.findMany.mockResolvedValue([
+      credRow('c1', 'anthropic'),
+      credRow('c2', 'google'),
+    ]);
+    const { data } = (await app.inject({ headers: AUTH, method: 'GET', url: URL })).json();
+    expect(openai(data)).toMatchObject({ present: false, usedBy: ['embeddings'] });
   });
 
   it('reports a team override with no reachable credential as advisory', async () => {
