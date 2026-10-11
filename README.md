@@ -6,7 +6,7 @@
 
 A durable, governed multi-agent workflow platform for engineering and non-engineering teams. Workflows are versioned JSON DAGs executed on Temporal; agents run inside isolated Docker workspaces, with human approval gates, security scanning, and cost control applied to every run.
 
-Its flagship use case — and what the default template ships for — is **ticket in, reviewed and tested draft pull request out**. That flow is an ordinary workflow template built from the same node types any team can author, not privileged runtime code, so it is a starting point rather than the boundary.
+Its flagship use case — and what the default template ships for — is **ticket in, reviewed and tested pull request out**. That flow is an ordinary workflow template built from the same node types any team can author, not privileged runtime code, so it is a starting point rather than the boundary.
 
 Teams drive all of it from the **Slack channel teammate**: a channel-resident assistant with its own memory and persona that answers questions with repo and run context, and also starts, watches, and gates the workflows themselves.
 
@@ -153,7 +153,7 @@ Four equivalent entry points — pick the one that fits the workflow:
 
 `budgetTier` controls the LLM token budget: `STANDARD` (2M/500K tokens), `LARGE` (8M/2M), `EPIC` (20M/5M). The workflow is terminated with `BUDGET_EXCEEDED` if the limit is breached.
 
-For multi-repo changes, use **Epics** (the Epics type under Requests in the dashboard, or `POST /api/v1/epics`) — the Planner agent decomposes the brief into per-repo child workflows.
+For multi-repo changes, use **Epics** (the Epics type under Requests in the dashboard, or `POST /api/v1/epics`) — the Planner agent decomposes the brief into per-repo child runs.
 
 ### Monitor
 

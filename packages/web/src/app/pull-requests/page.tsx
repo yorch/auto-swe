@@ -5,7 +5,9 @@ import { Suspense, useEffect, useState } from 'react';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
+import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
@@ -17,6 +19,7 @@ import { PullRequestTable } from '@/components/work/PullRequestTable';
 import { useRepositories } from '@/hooks/useRepositories';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { usePullRequests } from '@/hooks/useWorkViews';
+import { HELP_LINKS } from '@/lib/helpLinks';
 
 const PAGE_SIZE = 30;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -81,6 +84,15 @@ function PullRequests() {
         subtitle="Pull requests the platform opened, with their state on the host, CI and the run behind them."
         title="Pull requests"
       />
+      <p
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-500/70 bg-ink-800/60 px-4 py-3 text-[13px] text-paper-300"
+        data-testid="never-merges-note"
+      >
+        <span>
+          No built-in step or template merges a pull request; you review and merge it on the host.
+        </span>
+        <DocLink {...HELP_LINKS.concepts} />
+      </p>
       <div className="space-y-4">
         <Card className="overflow-hidden p-0">
           <Toolbar
@@ -111,6 +123,11 @@ function PullRequests() {
               prefix="State:"
               value={state}
             />
+            <HelpTip label="State and CI">
+              The pull request’s state on the host: Open, Draft (open but not yet asking for
+              review), Merged or Closed. For an open pull request the CI badge is the latest check
+              result the host reported; “pending” means no result yet.
+            </HelpTip>
             <Select
               appearance="pill"
               aria-label="Draft"
@@ -166,7 +183,7 @@ function PullRequests() {
                 hint={
                   filtered
                     ? 'Try another state or clear the filters.'
-                    : 'Pull requests the platform opens for your requests appear here, as drafts for you to review.'
+                    : 'Pull requests the platform opens for your requests appear here for you to review.'
                 }
                 icon={filtered ? 'search' : 'pullRequest'}
                 title={filtered ? 'No pull requests match these filters' : 'No open pull requests'}

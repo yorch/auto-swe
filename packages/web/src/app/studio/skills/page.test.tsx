@@ -104,6 +104,14 @@ describe('Skills studio page', () => {
     expect(within(rowOf('trusted')).getByText('Verified')).toBeTruthy();
   });
 
+  it('says what skills are and where to attach them', () => {
+    render(<StudioSkillsPage />);
+    expect(screen.getByText(/Reusable instructions added to an agent/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'About skills' }).getAttribute('href')).toBe(
+      '/docs/agents#6-skills'
+    );
+  });
+
   const open = (name: string) => fireEvent.click(within(rowOf(name)).getByText('Open'));
 
   it('offers no Verify in the list: only after opening the skill and its text', () => {

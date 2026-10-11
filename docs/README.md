@@ -1,7 +1,7 @@
 # Documentation
 
 auto-swe is a durable, governed multi-agent workflow platform for software engineering teams. Its
-flagship use case — ticket in, reviewed draft pull request out — is one workflow template built from
+flagship use case — ticket in, reviewed pull request out — is one workflow template built from
 the same node types any team can author, and the Slack channel teammate is both a headline
 capability and the surface teams drive the platform from.
 

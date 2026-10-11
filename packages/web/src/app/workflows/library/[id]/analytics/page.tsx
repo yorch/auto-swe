@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Skeleton } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -154,6 +155,12 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
               <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4">
                 <Stat label="Total runs" tone="ember" unit="runs" value={stats.totalRuns} />
                 <Stat
+                  hint={
+                    <HelpTip label="Success rate">
+                      Succeeded runs divided by runs that finished as a success or a failure.
+                      Skipped and still-running runs are not counted.
+                    </HelpTip>
+                  }
                   label="Success rate"
                   tone={successTone(stats.successRate)}
                   value={formatPercent(stats.successRate)}
@@ -164,11 +171,34 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                   tone={stats.failed > 0 ? 'brick' : 'default'}
                   value={stats.failed}
                 />
-                <Stat label="p50 duration" value={formatDuration(stats.p50DurationMs)} />
-                <Stat label="p95 duration" value={formatDuration(stats.p95DurationMs)} />
+                <Stat
+                  hint={
+                    <HelpTip label="p50 duration">
+                      The median run time: half of finished runs took this long or less.
+                    </HelpTip>
+                  }
+                  label="p50 duration"
+                  value={formatDuration(stats.p50DurationMs)}
+                />
+                <Stat
+                  hint={
+                    <HelpTip label="p95 duration">
+                      19 in 20 finished runs took this long or less. It shows the slow tail.
+                    </HelpTip>
+                  }
+                  label="p95 duration"
+                  value={formatDuration(stats.p95DurationMs)}
+                />
                 <Stat label="Avg cost / run" tone="amber" value={formatCost(stats.avgCostPerRun)} />
                 <Stat label="Total cost" value={formatCost(stats.totalCost)} />
                 <Stat
+                  hint={
+                    <HelpTip label="Time saved">
+                      The template’s “Estimated human time saved” per run, added up over the runs in
+                      this window. Each run records the estimate when it starts, so it counts only
+                      runs started after someone sets it under Edit details.
+                    </HelpTip>
+                  }
                   label="Time saved"
                   tone="moss"
                   value={
@@ -177,8 +207,26 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                       : formatDuration(stats.estimatedHumanTimeSavedTotal * 60_000)
                   }
                 />
-                <Stat label="Autonomy rate" value={formatPercent(stats.autonomyRate)} />
-                <Stat label="Human review rate" value={formatPercent(stats.humanReviewRate)} />
+                <Stat
+                  hint={
+                    <HelpTip label="Autonomy rate">
+                      The share of finished runs that had no human step, made at least one autonomy
+                      decision, and had every publish action allowed automatically by the policy.
+                    </HelpTip>
+                  }
+                  label="Autonomy rate"
+                  value={formatPercent(stats.autonomyRate)}
+                />
+                <Stat
+                  hint={
+                    <HelpTip label="Human review rate">
+                      The share of finished runs that stopped at a human step, such as an approval
+                      or a review.
+                    </HelpTip>
+                  }
+                  label="Human review rate"
+                  value={formatPercent(stats.humanReviewRate)}
+                />
               </div>
             </Card>
 

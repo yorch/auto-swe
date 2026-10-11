@@ -11,6 +11,7 @@ import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
+import { HELP_LINKS } from '@/lib/helpLinks';
 
 type Tab = 'credentials' | 'catalog' | 'embeddings' | 'audit';
 
@@ -44,6 +45,7 @@ function StudioModelConfigPageInner() {
   return (
     <div className="space-y-6">
       <PageHeader
+        learnMore={{ ...HELP_LINKS.modelConfiguration, label: 'About model configuration' }}
         subtitle={
           <>
             Encrypted provider credentials, the embedding model, and the audit trail. Each agent's
@@ -56,6 +58,11 @@ function StudioModelConfigPageInner() {
         }
         title="Model configuration"
       />
+      <p className="max-w-3xl rounded-lg border border-ink-500/70 bg-ink-900/30 px-4 py-3 text-[13px] leading-relaxed text-paper-300">
+        <strong className="text-paper-100">Start here:</strong> add a provider credential first.
+        Without one, no agent can call a model, and the worker will not start until the required
+        credentials exist, so no run can begin.
+      </p>
       <SetupBanner here={`/studio/models?tab=${active}`} items={['credentials', 'embeddings']} />
       <MidRunWarning />
       <TabBar

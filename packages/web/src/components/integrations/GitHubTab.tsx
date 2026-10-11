@@ -1,9 +1,9 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { DocLink } from '@/components/ui/DocLink';
 import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -19,6 +19,7 @@ import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { API_BASE } from '@/lib/config';
 import { clearableField, countChanges } from '@/lib/configFieldPatch';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { ConfigField } from './ConfigField';
 import { ConfigStatusBadge, fieldState, groupState } from './ConfigStatusBadge';
 import { GitHubHostCredentialsCard } from './GitHubHostCredentialsCard';
@@ -210,10 +211,7 @@ export function GitHubTab() {
             <>
               GitHub App installation tokens are short-lived and scoped. Fill in the App ID, private
               key and installation ID to enable App auth. See the{' '}
-              <Link className="text-ember-400 hover:underline" href="/docs/github-app-setup">
-                GitHub App setup guide
-              </Link>
-              .
+              <DocLink label="GitHub App setup guide" {...HELP_LINKS.githubAppSetup} />.
             </>
           }
           eyebrow="GitHub App"

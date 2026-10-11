@@ -18,7 +18,9 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
@@ -36,6 +38,7 @@ import { useMyCredentials, useRepositories } from '@/hooks/useRepositories';
 import { useLedTeamIds } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -148,7 +151,20 @@ export default function ConnectionsPage() {
             </>
           ) : undefined
         }
-        subtitle="External systems — git repos, REST APIs, and other integrations — available to your workflows."
+        subtitle={
+          <>
+            A connection <HelpTip term="connection" /> is a configured link to an outside system: a
+            git repository, an issue tracker, a REST API, an MCP server, Notion, Slack and so on.
+            Workflows use connections to read and change things.
+            {isAdmin && (
+              <>
+                {' '}
+                For a repository, see{' '}
+                <DocLink label="GitHub App setup" {...HELP_LINKS.githubAppSetup} />.
+              </>
+            )}
+          </>
+        }
         title="Connections"
       />
       <SetupBanner
@@ -226,7 +242,7 @@ export default function ConnectionsPage() {
                     ? 'Try a different search.'
                     : canManage
                       ? 'Connect a git repository or an external API so workflows have somewhere to run.'
-                      : 'Ask a team lead or admin to add one.'
+                      : 'Ask a lead of the owning team or an administrator to add one. They will need the repository’s organization and name (or the system’s URL) and the credentials it needs. For a repository, the platform needs a GitHub App installation or token with push access.'
                 }
                 icon={query ? 'search' : 'connections'}
                 title={query ? 'No connections match your search' : 'No connections yet'}

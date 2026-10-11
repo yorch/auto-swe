@@ -6,6 +6,7 @@ import { ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -84,7 +85,12 @@ export default function EpicDetailPage({ params }: PageProps) {
             </ButtonLink>
           )
         }
-        subtitle="A multi-repository change and the child workflows it fans out to."
+        subtitle={
+          <>
+            An epic <HelpTip term="epic" /> is a multi-repository change. The planner splits it into
+            the child runs listed below, one per repository.
+          </>
+        }
         title={epic.externalTicketId}
       />
 
@@ -101,7 +107,7 @@ export default function EpicDetailPage({ params }: PageProps) {
 
           <Card className="overflow-hidden p-0">
             <CardHeader className="mb-0 px-5 pt-5 pb-3">
-              <CardTitle>Child workflows</CardTitle>
+              <CardTitle>Child runs</CardTitle>
               <span className="tabular text-[13px] text-paper-400">
                 {done} of {epic.children.length} finished
               </span>
@@ -121,7 +127,7 @@ export default function EpicDetailPage({ params }: PageProps) {
                     <EmptyState
                       hint="The planner is still splitting the epic into per-repository work."
                       icon="clock"
-                      title="No child workflows yet"
+                      title="No child runs yet"
                     />
                   </TableStatusRow>
                 )}
@@ -206,7 +212,7 @@ export default function EpicDetailPage({ params }: PageProps) {
               <dd className="tabular mt-1 text-paper-200">{epic.children.length}</dd>
             </div>
             <div>
-              <dt className="label-mono">Epic workflow ID</dt>
+              <dt className="label-mono">Epic ID</dt>
               <dd className="mt-1 flex items-start gap-1">
                 <span className="min-w-0 break-all font-mono text-xs text-paper-300">
                   {epic.epicWorkflowId}

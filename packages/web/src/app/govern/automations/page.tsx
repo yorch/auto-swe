@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -29,6 +30,7 @@ import {
 import { useRepositories } from '@/hooks/useRepositories';
 import { useSchedules } from '@/hooks/useSchedules';
 import { connectionLabel } from '@/lib/connectionDisplay';
+import { HELP_LINKS } from '@/lib/helpLinks';
 
 const KIND_LABEL: Record<AutomationKind, string> = {
   event: 'Event',
@@ -186,9 +188,21 @@ export default function GovernAutomationsPage() {
             </Link>
           </div>
         }
+        learnMore={{ ...HELP_LINKS.automations, label: 'About automations' }}
         subtitle="Everything that starts a run without a person pressing run: rules that react to events on a repository, such as a failed CI run, cron schedules, template webhook URLs and the issue-tracker hook. Each says when it fires, what it starts and what it last did."
         title="Automations"
       />
+      <p className="max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        Event automations are limited by a cooldown and a daily cap{' '}
+        <HelpTip label="automations">
+          The cooldown is the minimum time between runs for the same branch or other scope; the
+          daily cap is the most runs one automation starts in 24 hours. The first matching
+          automation decides, and records a decision: started, or suppressed with the reason. Events
+          that no automation matches, and events that arrive while the kill switch is off, are
+          ignored and not recorded. Schedules and webhooks follow their own rules.
+        </HelpTip>
+        .
+      </p>
       <Card>
         <QueryBoundary
           error={all.error ?? schedules.error}

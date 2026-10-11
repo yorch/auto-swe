@@ -8,6 +8,7 @@ import { RequestPanel } from '@/components/requests/RequestPanel';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -98,7 +99,12 @@ function RequestsWorkspace() {
             </ButtonLink>
           </>
         }
-        subtitle="Everything you asked for, with retries kept together."
+        subtitle={
+          <>
+            Every request <HelpTip term="request" /> you made, with retries kept together. “Needs
+            attention” means a person is needed (a gate or a merge), or a run failed or timed out.
+          </>
+        }
         title="Requests"
       />
       <div>

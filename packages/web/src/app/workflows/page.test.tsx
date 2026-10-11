@@ -58,4 +58,15 @@ describe('Requests page epics', () => {
     expect(useRequests.mock.calls[0][1]).toEqual({ enabled: false });
     expect(useEpics.mock.calls[0][1]).toEqual({ enabled: true });
   });
+
+  it('says what Needs attention covers, including merges and timeouts', () => {
+    nav.search = '';
+    useRequests.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+    useEpics.mockReturnValue({ ...settled, data: undefined });
+    render(<RequestsPage />);
+    expect(
+      screen.getByText(/a person is needed \(a gate or a merge\), or a run failed or timed out/)
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: /What is a request/ })).toBeTruthy();
+  });
 });

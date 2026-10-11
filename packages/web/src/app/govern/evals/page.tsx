@@ -28,6 +28,7 @@ import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { customRangeIgnored, dateRangePatch, describeRange, parseDateRange } from '@/lib/dateRange';
 import { formatArm } from '@/lib/evalRuntime';
 import { latestMean, scorerChange, worstMovingScorer } from '@/lib/evalTrend';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime, scoreColor } from '@/lib/utils';
 
 const BREAKDOWN_OPTIONS = [
@@ -257,6 +258,7 @@ function EvalsWorkspace() {
             value={range}
           />
         }
+        learnMore={{ ...HELP_LINKS.evals, label: 'About evals' }}
         subtitle="Per-scorer quality signals over time, every captured result with a link to the run it scored, and the datasets offline runs score against. Days are UTC."
         title="Evals"
       />

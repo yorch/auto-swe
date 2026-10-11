@@ -2,6 +2,7 @@
 
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { DocLink } from '@/components/ui/DocLink';
 import { Input } from '@/components/ui/Input';
 import { SectionHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -14,6 +15,7 @@ import {
   useUpdateCanaryConfig,
 } from '@/hooks/useAdminConfig';
 import { useConfigForm } from '@/hooks/useConfigForm';
+import { HELP_LINKS } from '@/lib/helpLinks';
 
 interface CanaryFormState {
   enabled: boolean;
@@ -80,7 +82,8 @@ export function CanaryForm() {
       <p className="mb-5 text-sm text-paper-400">
         Routes a configurable fraction of work-requests to a candidate agent version for A/B
         comparison. Routing is deterministic — the same work-request ID always lands in the same
-        arm. Takes effect immediately; no Temporal schedule needed.
+        arm. Takes effect immediately; no Temporal schedule needed.{' '}
+        <DocLink label="How canary routing works" {...HELP_LINKS.canaryRouting} />
       </p>
 
       <QueryBoundary
@@ -136,7 +139,7 @@ export function CanaryForm() {
               </div>
 
               <Input
-                hint="Share of work-requests routed to the candidate. 0 = off, 100 = all."
+                hint="Share of work-requests routed to the candidate. 0 = off (no runs are routed to the candidate), 100 = all."
                 id="canary-percent"
                 label="Canary percent"
                 max={100}

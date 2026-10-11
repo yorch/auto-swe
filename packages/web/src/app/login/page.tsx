@@ -99,7 +99,8 @@ const HIGHLIGHTS: { icon: IconName; title: string; detail: string }[] = [
     title: 'Sandboxed and scanned',
   },
   {
-    detail: 'Approval gates pause a run where it matters, and nothing merges without a person.',
+    detail:
+      'Approval gates pause a run where it matters, and no built-in step or template merges a pull request.',
     icon: 'gavel',
     title: 'Humans stay in charge',
   },
@@ -663,6 +664,13 @@ function LoginPageInner() {
             </Button>
           </form>
         )}
+        <p className="mt-6 text-center text-[13px] leading-relaxed text-paper-500">
+          New here? New accounts usually need an administrator’s approval, or ask an administrator
+          for an invite.
+        </p>
+        <p className="mt-3 text-center text-[13px] leading-relaxed text-paper-500 lg:hidden">
+          auto-swe turns a ticket into a pull request for you to review and merge.
+        </p>
       </AuthLayout>
     </div>
   );

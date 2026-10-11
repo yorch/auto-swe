@@ -231,7 +231,7 @@ export function AgentRunForm({
             : values.deliver === 'branch'
               ? 'A new branch may be pushed after checks pass.'
               : 'A new branch and draft pull request may be published after checks pass.'}{' '}
-          Nothing is merged automatically.
+          No built-in step or template merges a pull request.
         </Alert>
         {failure && <LaunchErrorAlert view={failure} />}
         <div className="flex flex-wrap justify-end gap-3 border-t border-ink-600 pt-4">

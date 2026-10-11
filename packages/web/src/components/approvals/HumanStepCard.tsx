@@ -638,7 +638,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
       >
         <p className="text-sm text-paper-400">
           {dialog === 'reject'
-            ? 'The workflow is told this step was rejected and continues down its rejection path. This cannot be undone.'
+            ? 'The run is told this step was rejected and continues down its rejection path. This cannot be undone.'
             : approveConsequence(step)}
         </p>
         <Textarea

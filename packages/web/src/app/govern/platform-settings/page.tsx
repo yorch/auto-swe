@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -25,6 +26,7 @@ import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
 import { GROUP_BLURBS, GROUP_TITLES } from '@/lib/settingGroups';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -175,9 +177,39 @@ export default function GovernSettingsPage() {
   return (
     <div>
       <PageHeader
+        learnMore={{ ...HELP_LINKS.platformSettingsCascade, label: 'About the settings cascade' }}
         subtitle="Operator policy for agents, channels and workflows. Values shown are what this scope resolves to; each row says where its value came from."
         title={navLabel('/govern/platform-settings')}
       />
+
+      <details className="mb-6 rounded-lg border border-ink-500/70 bg-ink-800/60">
+        <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
+          How settings resolve
+        </summary>
+        <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-[13px] leading-relaxed text-paper-300">
+          <p>
+            Each setting resolves through a cascade of scopes <HelpTip term="scopeCascade" />.
+          </p>
+          <ul className="list-disc space-y-1.5 pl-4">
+            <li>
+              A run reads a setting from the most specific level that sets it: workflow template,
+              then channel, then team, then organization, then global, then the built-in default.
+            </li>
+            <li>
+              A value saved at global scope applies wherever no more specific level (workflow
+              template, channel, team, organization) sets it.
+            </li>
+            <li>
+              A saved change can take about 30 seconds to apply, because settings are cached. A
+              setting badged "Restart required" needs a restart of the service that reads it.
+            </li>
+            <li>
+              A setting badged "Frozen per run" is fixed when a run starts, so a change does not
+              reach runs already in flight.
+            </li>
+          </ul>
+        </div>
+      </details>
 
       <div
         className={cn(

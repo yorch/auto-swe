@@ -9,6 +9,7 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/LoadingState';
@@ -30,6 +31,7 @@ import {
 import { useTeams } from '@/hooks/useTeams';
 import { scopeLabel } from '@/lib/agentDisplay';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { parseOptionalPositiveInt } from '@/lib/parseIntInput';
 
 /**
@@ -584,11 +586,16 @@ export default function StudioMcpConnectionsPage() {
             </Button>
           ) : undefined
         }
+        learnMore={{ ...HELP_LINKS.agentToolAccess, label: 'About agent tool access' }}
         subtitle={
           <>
-            MCP servers whose tools an agent can call. Choose one in an agent&apos;s MCP connection
-            field in the Agent library. A bearer token and custom headers, if the server needs them,
-            are stored encrypted and never shown again.
+            MCP servers whose tools an agent can call.{' '}
+            <HelpTip label="MCP">
+              Model Context Protocol: a standard for exposing tools to agents.
+            </HelpTip>{' '}
+            Choose one in an agent&apos;s MCP connection field in the Agent library. A bearer token
+            and custom headers, if the server needs them, are stored encrypted and never shown
+            again.
           </>
         }
         title="MCP connections"

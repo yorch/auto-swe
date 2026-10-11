@@ -4,6 +4,7 @@ import { EpicList } from '@/components/epics/EpicList';
 import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -33,7 +34,12 @@ export default function EpicsPage() {
             </ButtonLink>
           )
         }
-        subtitle="Changes that span several repositories, split by the planner into ordered per-repository work."
+        subtitle={
+          <>
+            An epic <HelpTip term="epic" /> is a change that spans several repositories, split by
+            the planner into ordered per-repository work.
+          </>
+        }
         title="Epics"
       />
 
@@ -62,7 +68,7 @@ export default function EpicsPage() {
             bordered
             hint={
               canCreate
-                ? 'Describe one change once and the planner fans it out across your repositories.'
+                ? 'Describe one change once and the planner fans it out across your repositories. For example: “Migrate auth /v1 to /v2 across 5 services” becomes one run per service, in dependency order, each ending in its own pull request for you to review.'
                 : 'A team lead or administrator can start one to fan work out across repositories.'
             }
             icon="epics"

@@ -12,6 +12,7 @@ import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
+import { HELP_LINKS } from '@/lib/helpLinks';
 
 type Tab = 'github' | 'slack' | 'tracker' | 'knowledge-base' | 'figma' | 'audit-log';
 
@@ -64,6 +65,7 @@ function StudioIntegrationsPageInner() {
   return (
     <div className="space-y-6">
       <PageHeader
+        learnMore={{ ...HELP_LINKS.configuration, label: 'About integration settings' }}
         subtitle={
           <>
             Credentials for GitHub, Slack, your issue tracker, knowledge base and Figma. Stored

@@ -105,7 +105,7 @@ export function EpicLaunchForm({
         />
         <Alert variant="info">
           A planner will split this into per-repository requests and run them in dependency order.
-          Nothing is merged automatically.
+          No built-in step or template merges a pull request.
         </Alert>
         {error && <Alert>{error}</Alert>}
         <div className="flex flex-wrap justify-end gap-3 border-t border-ink-600 pt-4">

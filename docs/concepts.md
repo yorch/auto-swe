@@ -132,11 +132,26 @@ re-checked as well. The attempt still runs the template version the request reco
 schema are read from the template as it is now. A refused retry answers `TEMPLATE_NOT_FOUND` (404)
 or `INVALID_INPUT` (400), as a launch does.
 
-**Start work** (`/start`) offers **Run a workflow** and **Run an agent**. Both paths collect inputs,
-show a review screen, and open the launched request. Workflow input drafts remain available when
+**Start work** (`/start`) offers three modes: **Run a workflow**, **Run an agent**, and **Run a
+multi-repo epic** (a planner splits one brief into a child run per repository; team leads and
+administrators only). Every mode collects inputs, shows a review screen, and opens the launched
+request. Workflow input drafts remain available when
 switching templates or paths within the page. **Approvals**, the **Workflow library**, and
 **Connections** remain directly available in the main navigation. `/runs` remains a linkable
 execution-history screen for diagnostics.
+
+### In-app help
+
+Terms in this vocabulary are defined once, in the dashboard's glossary, and surfaced where they
+appear. A **help tip** is a small question-mark button beside a label; hovering, focusing, or
+clicking it opens a popover with the plain-language definition and a link to the doc that owns the
+term, named for it ("Learn more about <term>", for example "Learn more about gate"). It closes on Escape, an outside click, or when focus
+leaves. The popover is positioned against the button, so a table or scrolling panel does not clip it; inside a modal dialog it is placed within that dialog, and Escape there
+closes only the tip, leaving the dialog open. A page header can carry a **Learn more** link to the
+doc that explains the page, and a collapsible **How auto-swe works** overview walks through the
+request, run, gate, pull request, and merge lifecycle, stating that no built-in step or template
+merges a pull request. Definitions in the glossary agree with this document, and a test checks that every doc
+and heading they link to exists.
 
 ### Workspace limitations
 

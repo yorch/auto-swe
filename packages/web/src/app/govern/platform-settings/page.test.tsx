@@ -56,6 +56,19 @@ beforeEach(() => {
 });
 
 describe('platform settings page', () => {
+  it('explains how settings resolve and links to the doc', () => {
+    render(<Page />);
+    expect(screen.getByText('How settings resolve')).toBeTruthy();
+    expect(screen.getByText(/about 30 seconds/)).toBeTruthy();
+    expect(screen.getByText(/does not reach runs already in flight/)).toBeTruthy();
+    expect(
+      screen.getByText('How settings resolve').closest('summary')?.querySelector('button')
+    ).toBeNull();
+    expect(
+      screen.getAllByRole('link', { name: /About the settings cascade/ })[0]?.getAttribute('href')
+    ).toBe('/docs/configuration#2-resolution-order');
+  });
+
   it('records a save that settles in the view it started in', async () => {
     render(<Page />);
     fireEvent.click(screen.getByText('save'));

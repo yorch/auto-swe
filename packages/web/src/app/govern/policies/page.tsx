@@ -10,6 +10,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/LoadingState';
@@ -30,6 +31,7 @@ import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { riskClassLabel } from '@/lib/autonomyEvents';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 
 type RuleRow = {
   action: 'auto' | 'require_approval';
@@ -317,7 +319,10 @@ function PolicyModal({
         )}
         <Card variant="inset">
           <CardHeader>
-            <CardTitle>Risk-class rules</CardTitle>
+            <div className="flex items-center gap-1.5">
+              <CardTitle>Risk-class rules</CardTitle>
+              <HelpTip term="riskClass" />
+            </div>
           </CardHeader>
           <div className="space-y-3">
             {form.rules.map((r, i) => (
@@ -381,6 +386,7 @@ function PolicyModal({
             <p className="text-xs text-paper-500">
               A risk class with no rule here requires approval.
             </p>
+            <RiskClassGuide />
           </div>
         </Card>
         {error && <Alert>{error}</Alert>}
@@ -392,6 +398,25 @@ function PolicyModal({
         />
       </form>
     </Modal>
+  );
+}
+
+/** What each known risk class means, from the same list the editor offers. */
+function RiskClassGuide() {
+  return (
+    <details className="text-[13px]">
+      <summary className="cursor-pointer select-none text-paper-200">
+        What the risk classes mean
+      </summary>
+      <dl className="mt-2 space-y-1.5">
+        {KNOWN_RISK_CLASSES.map((c) => (
+          <div key={c.key}>
+            <dt className="inline font-medium text-paper-200">{c.label}: </dt>
+            <dd className="inline text-paper-400">{c.description}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   );
 }
 
@@ -433,9 +458,25 @@ export default function AutonomyPoliciesPage() {
             </Button>
           </>
         }
+        learnMore={{ ...HELP_LINKS.autonomyPolicies, label: 'About autonomy policies' }}
         subtitle="Which risk classes an agent may act on automatically and which need human approval — globally, per team, or per workflow template."
         title="Autonomy policies"
       />
+
+      <Card className="space-y-3 p-4 text-[13px] leading-relaxed text-paper-300">
+        <p>
+          An autonomy policy <HelpTip term="autonomyPolicy" /> sets, for each risk class{' '}
+          <HelpTip term="riskClass" />, whether a run may act on its own or must wait for approval.
+        </p>
+        <p>
+          When policies exist at several scopes, the most specific one applies: template override,
+          then team default, then global default. Policies are not merged. With no policy at all,
+          built-in rules apply: internal reads and writes run automatically, external communication
+          needs approval, and mass communication needs 2 approvers. A risk class with no rule, such
+          as external write, requires approval, so the system fails closed.
+        </p>
+        <RiskClassGuide />
+      </Card>
 
       <QueryBoundary
         error={error}
@@ -459,7 +500,7 @@ export default function AutonomyPoliciesPage() {
               </Button>
             }
             bordered
-            hint="Without a policy every risk class needs human approval. A policy lets low-risk actions run automatically."
+            hint="With no policy, built-in rules apply: internal reads and writes run automatically; external and mass communication need approval."
             icon="gavel"
             title="No autonomy policies yet"
           />

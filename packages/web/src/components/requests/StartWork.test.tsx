@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 
@@ -53,5 +53,40 @@ describe('StartWork', () => {
     gateway();
     render(withQuery(<StartWork initialTemplateId="missing" />));
     expect(await screen.findByText(/not available to run/i)).toBeTruthy();
+  });
+
+  it('shows the what-happens-next aside at every breakpoint', () => {
+    auth.role = 'LEAD';
+    gateway();
+    render(withQuery(<StartWork />));
+    const aside = screen.getByLabelText('What happens next');
+    expect(aside.className).not.toContain('hidden');
+    expect(screen.getByText('Running a workflow')).toBeTruthy();
+  });
+
+  it('helps choose between a workflow, an agent and an epic', () => {
+    auth.role = 'LEAD';
+    gateway();
+    render(withQuery(<StartWork />));
+    expect(screen.getByText('Not sure?')).toBeTruthy();
+    expect(screen.getByText('How auto-swe works')).toBeTruthy();
+  });
+
+  it('never promises a draft pull request or a per-repository request in the side rail', () => {
+    auth.role = 'LEAD';
+    gateway();
+    render(withQuery(<StartWork />));
+    for (const mode of [/Run a workflow/, /Run an agent/, /multi-repo epic/]) {
+      fireEvent.click(screen.getByRole('radio', { name: mode }));
+      const text = screen.getByLabelText('What happens next').textContent ?? '';
+      // An agent run may deliver a draft pull request by choice; workflows and epics never promise one.
+      if (!/Run an agent/.test(String(mode))) {
+        expect(text).not.toMatch(/draft/i);
+      }
+    }
+    fireEvent.click(screen.getByRole('radio', { name: /multi-repo epic/ }));
+    const epic = screen.getByLabelText('What happens next').textContent ?? '';
+    expect(epic).toMatch(/one run per repository/);
+    expect(epic).not.toMatch(/draft/i);
   });
 });
