@@ -7,7 +7,7 @@ import { Alert } from '@/components/ui/Alert';
  */
 export function MidRunWarning() {
   return (
-    <Alert variant="info">
+    <Alert announce={false} variant="info">
       Changes here take effect on the next LLM call: workflows already in progress pick up the new
       model or credentials mid-run.
     </Alert>

@@ -31,6 +31,7 @@ const VARIANT_ICON: Record<AlertVariant, IconName> = {
  */
 export function Alert({
   action,
+  announce = true,
   children,
   className,
   title,
@@ -38,12 +39,25 @@ export function Alert({
 }: {
   /** A trailing control — a "Fix this" link or a retry button. */
   action?: React.ReactNode;
+  /**
+   * true (default): the notice is a live region — `alert` for `error`, `status` otherwise —
+   * so a message that appears after an action is announced. false: a static callout that is on
+   * the page at load; it carries `role="note"`, which is not a live region, so nothing is
+   * announced on render.
+   */
+  announce?: boolean;
   children: React.ReactNode;
   className?: string;
   /** A heading line; the body then renders in body text rather than the tone colour. */
   title?: string;
   variant?: AlertVariant;
 }) {
+  let role: 'alert' | 'status' | 'note';
+  if (!announce) {
+    role = 'note';
+  } else {
+    role = variant === 'error' ? 'alert' : 'status';
+  }
   return (
     <div
       className={cn(
@@ -51,7 +65,7 @@ export function Alert({
         VARIANT_CLASSES[variant],
         className
       )}
-      role={variant === 'error' ? 'alert' : 'status'}
+      role={role}
     >
       <Icon className={cn('mt-0.5', VARIANT_ACCENT[variant])} name={VARIANT_ICON[variant]} />
       <div className="min-w-0 flex-1">

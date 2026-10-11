@@ -1,36 +1,48 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { docHref } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
-import { type SearchIndex, type Segment, searchDocs } from '@/lib/docSearch';
+import { MAX_QUERY_CHARS, type SearchResult, type Segment } from '@/lib/docSearch';
 import type { DocMeta } from '@/lib/docs';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 
-/** Where the prebuilt full-text index is served (`app/docs/search-index.json/route.ts`). */
-export const SEARCH_INDEX_URL = '/docs/search-index.json';
+/** Where the server-side full-text search answers (`app/docs/search/route.ts`). */
+export const SEARCH_URL = '/docs/search';
 
-/** Fetch the index. Rejects on a non-OK status or a body that is not an index (a login redirect, say). */
-export async function fetchSearchIndex(): Promise<SearchIndex> {
-  const res = await fetch(SEARCH_INDEX_URL, { credentials: 'same-origin' });
-  if (!res.ok) {
-    throw new Error(`search index request failed: ${res.status}`);
+/** How long typing must pause before the text search is requested. */
+export const SEARCH_DEBOUNCE_MS = 200;
+
+/**
+ * Ask the server for the best sections for `query`. Rejects on a non-OK status or a body that is
+ * not a result list (a login page after a redirect, say), and when `signal` aborts.
+ */
+export async function fetchSearchResults(
+  query: string,
+  signal?: AbortSignal
+): Promise<SearchResult[]> {
+  const res = await fetch(`${SEARCH_URL}?${new URLSearchParams({ q: query })}`, {
+    credentials: 'same-origin',
+    signal,
+  });
+  if (!(res.ok && res.headers.get('content-type')?.includes('application/json'))) {
+    throw new Error(`doc search request failed: ${res.status}`);
   }
-  const body = (await res.json()) as Partial<SearchIndex>;
-  if (!(Array.isArray(body.docs) && Array.isArray(body.sections))) {
-    throw new Error('search index has an unexpected shape');
+  const body = (await res.json()) as { results?: unknown };
+  if (!Array.isArray(body.results)) {
+    throw new Error('doc search returned an unexpected shape');
   }
-  return body as SearchIndex;
+  return body.results as SearchResult[];
 }
 
-type IndexState =
+type TextSearch =
   | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'ready'; index: SearchIndex }
-  | { status: 'error' };
+  | { status: 'searching' }
+  | { status: 'ready'; query: string; results: SearchResult[] }
+  | { status: 'error'; query: string };
 
 /** Text with the matched runs in `<mark>`; built from segments, never from HTML. */
 function Highlighted({ segments }: { segments: Segment[] }) {
@@ -106,44 +118,54 @@ function DocCard({ doc, featured = false }: { doc: DocMeta; featured?: boolean }
 /**
  * The docs index: the start-here docs as feature cards, then every doc in a
  * searchable grid. Search matches titles and one-line descriptions instantly;
- * the first focus or keystroke also fetches the full-text index, after which
- * the doc text is searched too, section by section.
+ * once typing pauses, the server is also asked for the sections of the doc text
+ * that match, and only those few results are downloaded. A newer keystroke
+ * cancels the request in flight, and every keystroke starts a fresh attempt, so
+ * a failure is retried by the next one.
  *
- * `loadIndex` is injectable so tests need no network.
+ * `search` and `debounceMs` are injectable so tests need no network or timers.
  */
 export function DocsIndex({
   docs,
-  loadIndex = fetchSearchIndex,
+  search = fetchSearchResults,
+  debounceMs = SEARCH_DEBOUNCE_MS,
 }: {
   docs: DocMeta[];
-  loadIndex?: () => Promise<SearchIndex>;
+  search?: (query: string, signal: AbortSignal) => Promise<SearchResult[]>;
+  debounceMs?: number;
 }) {
   const [query, setQuery] = useState('');
-  const [indexState, setIndexState] = useState<IndexState>({ status: 'idle' });
-  const started = useRef(false);
+  const [text, setText] = useState<TextSearch>({ status: 'idle' });
   const q = query.trim().toLowerCase();
-
-  const ensureIndex = useCallback(() => {
-    if (started.current) {
-      return;
-    }
-    started.current = true;
-    setIndexState({ status: 'loading' });
-    loadIndex().then(
-      (index) => setIndexState({ index, status: 'ready' }),
-      () => {
-        // Allow the next focus or keystroke to try again; never retried in a loop.
-        started.current = false;
-        setIndexState({ status: 'error' });
-      }
-    );
-  }, [loadIndex]);
+  // What the server is asked: the same text, cut to the length it considers.
+  const request = query.trim().slice(0, MAX_QUERY_CHARS);
 
   useEffect(() => {
-    if (q) {
-      ensureIndex();
+    if (!request) {
+      setText({ status: 'idle' });
+      return;
     }
-  }, [q, ensureIndex]);
+    setText({ status: 'searching' });
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      search(request, controller.signal).then(
+        (results) => {
+          if (!controller.signal.aborted) {
+            setText({ query: request, results, status: 'ready' });
+          }
+        },
+        () => {
+          if (!controller.signal.aborted) {
+            setText({ query: request, status: 'error' });
+          }
+        }
+      );
+    }, debounceMs);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [request, search, debounceMs]);
 
   const featured = docs.filter((d) => d.slug in FEATURED);
   const rest = docs.filter((d) => !(d.slug in FEATURED));
@@ -152,25 +174,27 @@ export function DocsIndex({
         (d) => d.title.toLowerCase().includes(q) || d.description.toLowerCase().includes(q)
       )
     : rest;
-  const textResults = useMemo(
-    () => (q && indexState.status === 'ready' ? searchDocs(indexState.index, q) : []),
-    [q, indexState]
-  );
+  // An answer is for the text it was asked about; until the new one arrives, the old is not shown.
+  const answer = text.status === 'ready' || text.status === 'error' ? text : null;
+  const current = q !== '' && answer?.query === request ? answer : null;
+  const textResults = current?.status === 'ready' ? current.results : [];
 
   let status: string;
+  let searching = false;
   if (!q) {
     status = plural(docs.length, 'doc');
   } else {
     const titles = `${matches.length} ${matches.length === 1 ? 'title match' : 'title matches'}`;
-    if (indexState.status === 'ready') {
+    if (current?.status === 'ready') {
       status = `${titles}, ${plural(textResults.length, 'section')} in the text`;
-    } else if (indexState.status === 'error') {
-      status = `${titles}. Searching the doc text is unavailable.`;
+    } else if (current?.status === 'error') {
+      status = `${titles}. Searching the doc text is unavailable; edit the search to try again.`;
     } else {
       status = `${titles}. Searching the doc text…`;
+      searching = true;
     }
   }
-  const settled = indexState.status === 'ready' || indexState.status === 'error';
+  const settled = current !== null;
   const nothing = q !== '' && matches.length === 0 && textResults.length === 0 && settled;
 
   return (
@@ -191,23 +215,25 @@ export function DocsIndex({
       <section aria-labelledby="docs-all">
         <Toolbar
           end={
-            <span aria-live="polite" className="text-[13px] text-paper-500 tabular" role="status">
-              {status}
+            // The live region speaks only once the search settles: while typing it is empty and
+            // busy, and the visible "searching" text beside it is hidden from assistive tech.
+            <span className="text-[13px] text-paper-500 tabular">
+              <span aria-busy={searching} aria-live="polite" role="status">
+                {searching ? '' : status}
+              </span>
+              {searching && <span aria-hidden="true">{status}</span>}
             </span>
           }
         >
           <h2 className="mr-3 text-base font-semibold text-paper-100" id="docs-all">
             {q ? 'Search results' : 'All docs'}
           </h2>
-          {/* Focus moves into the input, so focusing it is what starts the index download. */}
-          <div className="contents" onFocusCapture={ensureIndex}>
-            <SearchInput
-              label="Search docs"
-              onChange={setQuery}
-              placeholder="Search titles, summaries and text…"
-              value={query}
-            />
-          </div>
+          <SearchInput
+            label="Search docs"
+            onChange={setQuery}
+            placeholder="Search titles, summaries and text…"
+            value={query}
+          />
         </Toolbar>
 
         {nothing ? (

@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { cache } from 'react';
-import { buildSearchIndex, type SearchIndex } from './docSearch';
+import { buildSearchIndexAsync, type SearchIndex } from './docSearch';
 
 export type DocMeta = {
   slug: string;
@@ -137,12 +137,22 @@ export const getDoc = cache(async (slug: string): Promise<Doc | null> => {
   }
 });
 
+let searchIndex: Promise<SearchIndex> | undefined;
+
 /**
  * The search index over every served doc, built from the same files `/docs/[slug]` renders.
- * Served as JSON by `app/docs/search-index.json/route.ts` so the docs page does not carry it.
+ * Built on first use and kept for the life of the process (the docs ship in the image and do not
+ * change while it runs), so it is a module-level memo rather than React's per-request `cache`.
+ * A failed build is not kept: the next search tries again.
  */
-export const loadDocSearchIndex = cache(async (): Promise<SearchIndex> => {
-  const metas = await listDocs();
-  const docs = await Promise.all(metas.map((m) => getDoc(m.slug)));
-  return buildSearchIndex(docs.filter((d): d is Doc => d !== null));
-});
+export function loadDocSearchIndex(): Promise<SearchIndex> {
+  searchIndex ??= (async () => {
+    const metas = await listDocs();
+    const docs = await Promise.all(metas.map((m) => getDoc(m.slug)));
+    return buildSearchIndexAsync(docs.filter((d): d is Doc => d !== null));
+  })().catch((error: unknown) => {
+    searchIndex = undefined;
+    throw error;
+  });
+  return searchIndex;
+}

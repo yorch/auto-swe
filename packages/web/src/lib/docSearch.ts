@@ -1,6 +1,7 @@
 /**
- * Full-text search over the served docs. Pure: no file access, so the index is built on the
- * server (see `loadDocSearchIndex` in `docs.ts`) and searched in the browser.
+ * Full-text search over the served docs. Pure: no file access. The index is built once per server
+ * process (see `loadDocSearchIndex` in `docs.ts`) and searched there by `app/docs/search/route.ts`;
+ * the browser only ever receives the top results.
  *
  * Each doc is cut into sections at its h2/h3 headings. A section carries the heading id the
  * renderer gives that heading (`extractToc` walks the same parse and de-duplicates the same
@@ -15,6 +16,18 @@ import { extractToc } from './docToc';
 export interface SearchIndex {
   docs: { slug: string; title: string }[];
   sections: SearchSection[];
+  /** Lower-cased text and stemmed word sets: one entry per doc (titles) or per section. */
+  prepared: {
+    titles: Field[];
+    headings: Field[];
+    bodies: Field[];
+  };
+}
+
+/** A searchable string: its lower-cased text and the stems of its words. */
+interface Field {
+  lower: string;
+  stems: Set<string>;
 }
 
 export interface SearchSection {
@@ -124,52 +137,181 @@ export function indexDoc(markdown: string): Omit<SearchSection, 'doc'>[] {
   return sections;
 }
 
+function emptyIndex(): SearchIndex {
+  return { docs: [], prepared: { bodies: [], headings: [], titles: [] }, sections: [] };
+}
+
+function addDoc(index: SearchIndex, doc: { slug: string; title: string; content: string }): void {
+  const i = index.docs.push({ slug: doc.slug, title: doc.title }) - 1;
+  index.prepared.titles.push(field(doc.title));
+  for (const section of indexDoc(doc.content)) {
+    index.sections.push({ doc: i, ...section });
+    index.prepared.headings.push(field(section.heading ?? ''));
+    index.prepared.bodies.push(field(section.text));
+  }
+}
+
 export function buildSearchIndex(
   docs: { slug: string; title: string; content: string }[]
 ): SearchIndex {
-  const index: SearchIndex = { docs: [], sections: [] };
+  const index = emptyIndex();
   for (const doc of docs) {
-    const i = index.docs.push({ slug: doc.slug, title: doc.title }) - 1;
-    for (const section of indexDoc(doc.content)) {
-      index.sections.push({ doc: i, ...section });
-    }
+    addDoc(index, doc);
   }
   return index;
 }
 
-/** Lower-cased, de-duplicated, whitespace-separated terms. */
+/**
+ * The same index, built one doc at a time with a turn of the event loop between docs, so the
+ * first search does not hold the server's other requests for the whole build.
+ */
+export async function buildSearchIndexAsync(
+  docs: { slug: string; title: string; content: string }[]
+): Promise<SearchIndex> {
+  const index = emptyIndex();
+  for (const doc of docs) {
+    addDoc(index, doc);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  return index;
+}
+
+/** Longest query the search considers; the route and the client both cut to this. */
+export const MAX_QUERY_CHARS = 100;
+/** Most terms a query is split into; later ones are ignored. */
+export const MAX_QUERY_TERMS = 8;
+
+/** Lower-cased, de-duplicated, whitespace-separated terms, at most `MAX_QUERY_TERMS`. */
 export function tokenize(query: string): string[] {
-  return [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))];
+  const terms = query.slice(0, MAX_QUERY_CHARS).toLowerCase().split(/\s+/).filter(Boolean);
+  return [...new Set(terms)].slice(0, MAX_QUERY_TERMS);
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const VOWELS = /[aeiou]/;
+
+/** Words the suffix rules would damage: they are their own singular, or end like a plural. */
+const UNSTEMMED = new Set(['series', 'species', 'news', 'does', 'goes']);
+
+/**
+ * A light, deterministic English stem: plural (-s, -es, -ies), -ing, -ed, then a trailing -e, so
+ * `approve`, `approves`, `approved` and `approving` all become `approv`, and `case` and `cases`
+ * both become `cas`. `-es` is dropped whole only after `ss`, `x`, `zz`, `ch` or `sh`
+ * (`boxes`, `passes`); anywhere else only the `s` goes (`cases`, `sizes`, `uses`). It is only
+ * ever used to compare two words for equality, never shown. Anything that is not a plain run of
+ * letters (an identifier such as `AUTO_SWE_TOKEN` or `v2`), any word of three letters or fewer
+ * and the few words in `UNSTEMMED` is returned unchanged, and a suffix is only removed when a
+ * stem with a vowel remains.
+ */
+export function stem(word: string): string {
+  const w = word.toLowerCase();
+  if (w.length <= 3 || !/^[a-z]+$/.test(w) || UNSTEMMED.has(w)) {
+    return w;
+  }
+  let s = w;
+  if (s.endsWith('ies') && s.length > 4) {
+    s = `${s.slice(0, -3)}y`;
+  } else if (s.endsWith('ing') && s.length >= 6 && VOWELS.test(s.slice(0, -3))) {
+    s = undouble(s.slice(0, -3));
+  } else if (s.endsWith('ed') && s.length >= 5 && VOWELS.test(s.slice(0, -2))) {
+    s = undouble(s.slice(0, -2));
+  } else if (/(?:ss|zz|x|ch|sh)es$/.test(s)) {
+    s = s.slice(0, -2);
+  } else if (s.endsWith('s') && !/(?:ss|us|is)$/.test(s)) {
+    s = s.slice(0, -1);
+  }
+  return s.length >= 4 && s.endsWith('e') ? s.slice(0, -1) : s;
 }
 
-/** Split `text` into runs, flagging every occurrence of a term. Never builds HTML. */
+/** `runn` -> `run`, but `skill`, `pass` and `buzz` keep their double letter. */
+function undouble(s: string): string {
+  const last = s.at(-1) ?? '';
+  const doubled = s.length > 3 && last === s.at(-2) && /[b-df-hj-np-tv-xz]/.test(last);
+  return doubled && !'lsz'.includes(last) ? s.slice(0, -1) : s;
+}
+
+/** Every run of letters in `text`, with its position. */
+function words(text: string): { start: number; end: number; word: string }[] {
+  return [...text.matchAll(/[A-Za-z]+/g)].map((m) => ({
+    end: m.index + m[0].length,
+    start: m.index,
+    word: m[0],
+  }));
+}
+
+/**
+ * Lower-case `text` without changing its length, so an offset found in the result is an offset
+ * in the original. `toLowerCase` can grow a string (`İ` becomes two code units); a character
+ * that would grow is kept as written.
+ */
+function fold(text: string): string {
+  const lower = text.toLowerCase();
+  if (lower.length === text.length) {
+    return lower;
+  }
+  return text.replace(/[\s\S]/g, (c) => {
+    const l = c.toLowerCase();
+    return l.length === c.length ? l : c;
+  });
+}
+
+function field(text: string): Field {
+  return { lower: fold(text), stems: new Set(words(text).map((w) => stem(w.word))) };
+}
+
+/** A term matches a field as a substring (identifiers, partial words) or as a word with the same stem. */
+function fieldHas(f: Field, term: string, termStem: string): boolean {
+  return f.lower.includes(term) || f.stems.has(termStem);
+}
+
+/**
+ * Merged `[start, end)` ranges of `text` that match a term: every literal occurrence, and every
+ * whole word whose stem equals the term's stem. Both are taken from the original text, so
+ * the highlight shows what the author wrote (`approving` for a search of `approved`).
+ */
+function matchRanges(text: string, terms: string[]): [number, number][] {
+  const lower = fold(text);
+  const termStems = terms.map(stem);
+  const found: [number, number][] = [];
+  for (const term of terms) {
+    for (let at = lower.indexOf(term); at >= 0; at = lower.indexOf(term, at + 1)) {
+      found.push([at, at + term.length]);
+    }
+  }
+  // A word that already contains a term literally keeps the exact-text highlight (`budg` in
+  // `budget`); only a word matched through its stem alone is marked whole.
+  for (const w of words(text)) {
+    const ws = stem(w.word);
+    const lowerWord = fold(w.word);
+    if (terms.some((t, i) => ws === termStems[i] && !lowerWord.includes(t))) {
+      found.push([w.start, w.end]);
+    }
+  }
+  found.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  const merged: [number, number][] = [];
+  for (const r of found) {
+    const prev = merged.at(-1);
+    if (prev && r[0] <= prev[1]) {
+      prev[1] = Math.max(prev[1], r[1]);
+    } else {
+      merged.push([r[0], r[1]]);
+    }
+  }
+  return merged;
+}
+
+/** Split `text` into runs, flagging every match of a term (or of its stem). Never builds HTML. */
 export function highlight(text: string, terms: string[]): Segment[] {
   if (text === '') {
     return [];
   }
-  if (terms.length === 0) {
-    return [{ match: false, text }];
-  }
-  // Longest first so a term that contains another is matched whole.
-  const pattern = new RegExp(
-    [...terms]
-      .sort((a, b) => b.length - a.length)
-      .map(escapeRegExp)
-      .join('|'),
-    'gi'
-  );
   const out: Segment[] = [];
   let last = 0;
-  for (const m of text.matchAll(pattern)) {
-    if (m.index > last) {
-      out.push({ match: false, text: text.slice(last, m.index) });
+  for (const [start, end] of matchRanges(text, terms)) {
+    if (start > last) {
+      out.push({ match: false, text: text.slice(last, start) });
     }
-    out.push({ match: true, text: m[0] });
-    last = m.index + m[0].length;
+    out.push({ match: true, text: text.slice(start, end) });
+    last = end;
   }
   if (last < text.length) {
     out.push({ match: false, text: text.slice(last) });
@@ -182,9 +324,7 @@ function snippetOf(text: string, terms: string[]): string {
   if (text.length <= SNIPPET_CHARS) {
     return text;
   }
-  const lower = text.toLowerCase();
-  const hits = terms.map((t) => lower.indexOf(t)).filter((i) => i >= 0);
-  const at = hits.length > 0 ? Math.min(...hits) : 0;
+  const at = matchRanges(text, terms)[0]?.[0] ?? 0;
   let start = Math.max(0, at - 50);
   let end = Math.min(text.length, start + SNIPPET_CHARS);
   if (start > 0) {
@@ -202,57 +342,36 @@ function snippetOf(text: string, terms: string[]): string {
   return `${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`;
 }
 
-interface Lowered {
-  titles: string[];
-  headings: string[];
-  bodies: string[];
-}
-
-/** Lower-cased corpus, built once per loaded index rather than on every keystroke. */
-const loweredCache = new WeakMap<SearchIndex, Lowered>();
-
-function lowered(index: SearchIndex): Lowered {
-  let cached = loweredCache.get(index);
-  if (!cached) {
-    cached = {
-      bodies: index.sections.map((s) => s.text.toLowerCase()),
-      headings: index.sections.map((s) => (s.heading ?? '').toLowerCase()),
-      titles: index.docs.map((d) => d.title.toLowerCase()),
-    };
-    loweredCache.set(index, cached);
-  }
-  return cached;
-}
-
 const TITLE_WEIGHT = 10;
 const HEADING_WEIGHT = 5;
 const BODY_WEIGHT = 1;
 
 /**
  * Sections that contain every term (in the doc title, the heading or the body, in any mix),
- * best first. A term in the title outranks one in the heading, which outranks the body; ties
- * keep document order. At most `limit` results.
+ * best first. A term matches as a substring or by word stem, so `skills` finds `skill` and
+ * `approved` finds `approving`. A term in the title outranks one in the heading, which outranks
+ * the body; ties keep document order. At most `limit` results.
  */
 export function searchDocs(index: SearchIndex, query: string, limit = MAX_RESULTS): SearchResult[] {
   const terms = tokenize(query);
   if (terms.length === 0) {
     return [];
   }
-  const low = lowered(index);
+  const termStems = terms.map(stem);
   const scored: { score: number; order: number; section: SearchSection }[] = [];
   index.sections.forEach((section, order) => {
-    const doc = index.docs[section.doc];
-    if (!doc) {
+    const title = index.prepared.titles[section.doc];
+    const heading = index.prepared.headings[order];
+    const body = index.prepared.bodies[order];
+    if (!(title && heading && body)) {
       return;
     }
-    const title = low.titles[section.doc] ?? '';
-    const heading = low.headings[order] ?? '';
-    const body = low.bodies[order] ?? '';
     let score = 0;
-    for (const term of terms) {
-      const inTitle = title.includes(term);
-      const inHeading = heading.includes(term);
-      const inBody = body.includes(term);
+    for (const [i, term] of terms.entries()) {
+      const ts = termStems[i] as string;
+      const inTitle = fieldHas(title, term, ts);
+      const inHeading = fieldHas(heading, term, ts);
+      const inBody = fieldHas(body, term, ts);
       if (!(inTitle || inHeading || inBody)) {
         return;
       }

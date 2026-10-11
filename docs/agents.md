@@ -262,6 +262,12 @@ overrun is a result, not an error response. A request stops starting new samples
 budgets of wall time spent in the executor (`totalCapMs` in the response) and reports the rest as `not_run`;
 the sample in progress still finishes, so a request can spend up to two budgets past the cap.
 
+The dashboard form is a list of separate sample fields (add and remove, at most ten), each its own
+textarea. A sample may span several lines and is sent unchanged as one array element, which the
+executor runs as one target, so the `m` flag makes `^` and `$` match at each line and `s` lets `.`
+cross a line break. Blank fields are skipped. Results are listed by field number with a preview of
+the sample. The hint above the fields says what a sample stands for in the selected category.
+
 ### 3.5 MCP Tools (first-class `mcp` Connection, opt-in)
 
 **File:** `packages/worker/src/agents/mcpTools.ts` (`loadMcpTools`, `isMcpToolEnabled`, `MCP_TOOL_KEY`, `parseMcpServerRef`)
@@ -1466,8 +1472,9 @@ template override is never badged, because it may use a different model or crede
   input shaping (the shell scanner's segment windows and whitespace-collapsed spellings, the
   sensitive-file scanner's overlapping windows), so a miss in the tester does not prove the
   scanner would miss it. The executor reports the first match in a sample only, so the tester shows
-  one excerpt per sample, and a multi-line input cannot be tested as one sample from the dashboard
-  (the form takes one sample per line). A test shares the gateway's serialized executor with real
+  one excerpt per sample, and a multi-line input is tested as a single piece of text even for a
+  category whose scanner splits its input (the code-security scanner tests each added diff line on
+  its own). A test shares the gateway's serialized executor with real
   scans, so a slow pattern holds that queue for up to five budgets per request.
 - **The write-time backtracking probe is sound but incomplete.** `POST /admin/scanner-patterns`
   executes a candidate against repetition-heavy input built from its own alphabet and rejects it if

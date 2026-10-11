@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
 import { COOKIE_SESSION_MARKER } from '@/lib/config';
-import { proxy } from './proxy';
+import { config, proxy } from './proxy';
 
 const req = (path: string, withMarker = false) =>
   new NextRequest(`http://localhost:3000${path}`, {
@@ -13,6 +13,21 @@ describe('proxy', () => {
     const res = proxy(req('/settings'));
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toContain('/login?redirect=%2Fsettings');
+  });
+
+  it('puts the docs and the docs search behind the same session check', () => {
+    for (const path of ['/docs', '/docs/agents', '/docs/search?q=skills']) {
+      const res = proxy(req(path));
+      expect(res.status, path).toBe(307);
+      expect(res.headers.get('location'), path).toContain('/login?redirect=');
+      expect(proxy(req(path, true)).status, path).toBe(200);
+    }
+  });
+
+  it('runs on the docs search path (the matcher does not exclude it)', () => {
+    const matcher = new RegExp(`^${config.matcher[0]}$`);
+    expect(matcher.test('/docs/search')).toBe(true);
+    expect(matcher.test('/_next/static/chunk.js')).toBe(false);
   });
 
   it('lets the consent page load without the session marker, so a social sign-in can land on it', () => {
