@@ -1890,7 +1890,7 @@
     {
       "body": "Create, version, activate, import, export, compare and run reusable workflow templates.",
       "category": "Authoring",
-      "detail": "A template declares an input contract and workspace provider. The dashboard offers an editor and an outline view; nodes may carry optional group and title labels for display. The API validates node edges and references, refuses wait and human-step timeouts that are not positive durations, and flags context write paths through reserved segments (__proto__, prototype, constructor); a draft with such errors can be saved but not promoted, activated or used as an experiment arm. Generated versions require review before activation. When a template’s workspace provider needs a target connection that its inputs do not declare, the launch form shows a connection picker and will not submit without a choice. In the library list a workflow that cannot run shows a disabled Run with the reason (activate a draft, or promote a version).",
+      "detail": "A template declares an input contract and workspace provider. The dashboard offers an editor and an outline view; nodes may carry optional group and title labels for display. The API validates node edges and references, refuses wait and human-step timeouts that are not positive durations, and flags context write paths through reserved segments (__proto__, prototype, constructor); a draft with such errors can be saved but not promoted, activated or used as an experiment arm. Generated versions require review before activation. When a template’s workspace provider needs a target connection that its inputs do not declare, the launch form shows a connection picker and will not submit without a choice. In the library list a workflow that cannot run shows a disabled Run with the reason (activate a draft, or promote a version). In the editor, Check workflow asks the gateway (team lead or above) to run the checks a save runs, as data: the strict parse, lint, whether the referenced agents and MCP connections exist, and the shell-authoring role and image allowlist for the template’s team. It writes no template, version or audit row and never executes the workflow, and the editor merges those findings with its own live lint, saying so when the server check could not run. It is a preview, not a promise that a save succeeds: it judges the spec alone, so it does not reproduce a save’s name checks (RESERVED_TEMPLATE_NAME, NAME_CONFLICT) or its VERSION_CONFLICT, and a result belongs to the spec at the click and is hidden once the spec is edited. Selecting a node shows collapsed help for its type (what it does, when to use it, a gotcha, a JSON example), the palette shows only the type’s what and when on hover or focus; a node whose type this build does not know is drawn as unknown instead of breaking the canvas. The save confirmation counts shell, container-step and shell-category step nodes, the same set the gateway gates on a save by the shell-authoring rule (an admin, or a team admin who is also a lead).",
       "id": "library",
       "refs": [
         "web",
@@ -1900,7 +1900,12 @@
         "nodeMeta",
         "launchConnection",
         "waitDuration",
-        "reservedPath"
+        "reservedPath",
+        "validateRoute",
+        "specCheckAll",
+        "nodeHelpTable",
+        "checkWorkflowClient",
+        "containerCount"
       ],
       "status": "Implemented",
       "title": "Workflow library & visual authoring"
@@ -2006,7 +2011,7 @@
     {
       "body": "Approval, decision, input form and editable review nodes pause a run until response or timeout.",
       "category": "Governance",
-      "detail": "WorkflowHumanStep stores context, deadlines and response data. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the web inbox and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the web inbox, the API and Slack alike: the REST route answers 400 REASON_REQUIRED and the Slack modal shows the error in the form. An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal.",
+      "detail": "WorkflowHumanStep stores context, deadlines and response data. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the web inbox and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the web inbox, the API and Slack alike: the REST route answers 400 REASON_REQUIRED and the Slack modal shows the error in the form. An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal. The REST list of steps shows pending steps by default, so resolved answers need status=ALL; actionable narrows it to pending, unexpired steps the caller may answer and has not yet answered, and answeredByMe (with status=ALL, or it finds only pending steps the caller has approved) to steps the caller resolved or approved. limit and offset page the list, and a total is counted and returned in meta only when one of those three is asked for. myResponse is the caller’s own answer: their approval row, else the stored action when they resolved the step, and null for a step resolved by a timeout or by someone else.",
       "id": "hitl",
       "refs": [
         "spec",
@@ -2017,7 +2022,9 @@
         "hitlSlackModalOpen",
         "hitlSlackModalSign",
         "hitlSlackModalSubmit",
-        "hitlReasonRequired"
+        "hitlReasonRequired",
+        "humanStepList",
+        "humanStepMyResponse"
       ],
       "status": "Implemented",
       "title": "Four human interaction types"
@@ -2034,7 +2041,7 @@
     {
       "body": "Sensitive-file, shell-command, content, diff, skill/LLM-output, memory-content, CI-log and PII-related scanning paths.",
       "category": "Security",
-      "detail": "A skill’s description and text, an agent’s system prompt (on create and on a version that sets one) and an eval rubric’s text (on create) are scanned in full, advisorily, as are skills in a bundle install and a skill import. A pattern that overran or is quarantined, a scanner that fails, or a pattern set that cannot be read yields a scan-incomplete warning, never a clean result. Some checks block tool calls; others only annotate findings. The memory gate is blocking but INJECTION-only (a slow or quarantined EXFILTRATION pattern cannot stop a memory write): it refuses a memory write that matches or whose INJECTION scan did not complete, fails a lesson step when no pattern could be loaded, and drops a recalled item that matches. CI log text is a further consumer of the INJECTION patterns only, and only in the CI triage template (the default graph’s CI fix does not screen logs): there the log tail given to the triager is redacted for common token shapes and screened with the INJECTION patterns except template-injection (which ordinary build output matches), and a log that matches, or whose scan did not complete, is diagnosed but never fixed from. Administrator regexes execute in a budgeted worker thread. Scanning is defense-in-depth, not proof that generated code is safe.",
+      "detail": "A skill’s description and text, an agent’s system prompt (on create and on a version that sets one) and an eval rubric’s text (on create) are scanned in full, advisorily, as are skills in a bundle install and a skill import. A pattern that overran or is quarantined, a scanner that fails, or a pattern set that cannot be read yields a scan-incomplete warning, never a clean result. Some checks block tool calls; others only annotate findings. The memory gate is blocking but INJECTION-only (a slow or quarantined EXFILTRATION pattern cannot stop a memory write): it refuses a memory write that matches or whose INJECTION scan did not complete, fails a lesson step when no pattern could be loaded, and drops a recalled item that matches. CI log text is a further consumer of the INJECTION patterns only, and only in the CI triage template (the default graph’s CI fix does not screen logs): there the log tail given to the triager is redacted for common token shapes and screened with the INJECTION patterns except template-injection (which ordinary build output matches), and a log that matches, or whose scan did not complete, is diagnosed but never fixed from. Administrator regexes execute in a budgeted worker thread. Scanning is defense-in-depth, not proof that generated code is safe. An administrator can try a candidate pattern against pasted samples before saving it: the test route validates it as a create does, then runs it through the same budgeted executor one sample at a time, writes no pattern or audit row, and neither skips a quarantined rule nor quarantines the one under test. It stops starting samples once about three budgets of wall-clock time have passed, which includes time queued behind the gateway’s other scans (the rest are reported not run), and it runs under the gateway process’s budget and reports only the first match in each sample. A sample is run as one piece of text, so the tester does not reproduce the code-security scanner’s per-line scan or the shell scanner’s segment windows and collapsed spelling; it shows whether a regex matches, not what a scanner would do with the result.",
       "id": "scanning",
       "refs": [
         "regex",
@@ -2044,7 +2051,8 @@
         "memoryGuard",
         "scanAdvisory",
         "ciLogScreen",
-        "ciLogNotForLogs"
+        "ciLogNotForLogs",
+        "scannerPatternTest"
       ],
       "status": "Implemented",
       "title": "Layered runtime scanning"
@@ -2772,9 +2780,9 @@
       "title": "Workspace containers get a configurable list of DNS resolvers"
     },
     {
-      "body": "Dashboard pages explain the product inline: help tips, page-header links and a lifecycle overview that link to a built-in docs reader.",
+      "body": "Dashboard pages explain the product inline: help tips, page-header links, a lifecycle overview, a first-run checklist, an optional tour, node help and a run verdict, with a built-in docs reader and text search.",
       "category": "Collaboration",
-      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither calls the gateway or reads platform data (the link is a Next.js Link, which may prefetch the static doc page from the web server). A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The Home page opens the overview by default when, on the first load (Mine scope unless already switched), the attention, active and succeeded request lists are all empty; switching scope does not re-decide it. Start work renders it collapsed; the node palette and governance pages carry tips of the same kind, and some forms carry static help text and doc links. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant.",
+      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither calls the gateway or reads platform data (the link is a Next.js Link, which may prefetch the static doc page from the web server). A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The reader’s index also searches the doc text: once typing pauses, the browser asks a route of the web server (behind the web proxy’s sign-in redirect, which checks only that a session cookie is present, as for the docs pages themselves; the query is cut to a bounded length) for the best matching sections, which return as highlight segments rather than HTML, so only those few results are downloaded. The server builds the index once per process from the same files, begins it at start-up without delaying start-up, and does not keep a failed build; if the request fails, title and summary matching still works and the next edit retries. The Home page opens the overview by default when, on the first load (Mine scope unless already switched), the attention, active and succeeded request lists are all empty; switching scope does not re-decide it. Start work renders it collapsed; the node palette and governance pages carry tips of the same kind, and some forms carry static help text and doc links. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant. Home also shows people who are not admins a first-run checklist whose steps tick from data the person can already read (a visible repository, a request of theirs, a gate they answered, a merged pull request from their request), and shows admins a governance guide once the setup readiness check passes; each can be dismissed, and the dismissal is kept in that browser’s local storage only. A Take the tour button starts a short role-dependent tour that points at the sidebar and its links (one step points at nothing and is centred); it never starts by itself and is recorded as seen when it ends, in the same browser storage. In the workflow editor, selecting a node shows its type’s help. Each run page opens with a verdict banner derived from the run record and the run’s visible open gates, with a collapsed guide to reading the page: it names a cause only for an error the dashboard classifies, otherwise says none is stated, and it cannot say who a gate waits on. Start work offers a chooser between modes and a sample-task button that only fills fields and never launches.",
       "id": "inAppGuidance",
       "refs": [
         "helpTip",
@@ -2788,7 +2796,17 @@
         "startWorkOverview",
         "consentDocLink",
         "nodePaletteTip",
-        "howItWorksDefault"
+        "howItWorksDefault",
+        "docSearchRoute",
+        "docSearchIndex",
+        "firstRunChecklist",
+        "tourSteps",
+        "nodeHelpTable",
+        "runVerdict",
+        "webProxy",
+        "dismissedStore",
+        "tourLauncher",
+        "docSearchWarmup"
       ],
       "status": "Implemented",
       "title": "In-app guided help"
@@ -3370,13 +3388,21 @@
       "title": "Nothing enforces the guard on a new provider client"
     },
     {
-      "body": "Glossary definitions and inline help are static prose; a test checks that their doc links resolve, not that the sentences are true.",
+      "body": "Glossary definitions, node help and inline help are static prose; tests check that their doc links resolve and that examples parse, not that the sentences are true.",
       "category": "Surfaces",
-      "detail": "The glossary says its definitions are written to agree with the concepts doc, and the link table says a test checks each entry against the docs files and headings. Neither derives a definition from the code, so a behaviour change can leave a tip stale while every link still resolves. The reader shows the docs baked in at build time, so a running deployment can show docs older than its gateway, and it serves only the top-level docs, so a link to anything else would not resolve. Tips are shown in the dashboard only; the CLI and API have no equivalent.",
+      "detail": "The glossary says its definitions are written to agree with the concepts doc, and the link table says a test checks each entry against the docs files and headings. Neither derives a definition from the code, so a behaviour change can leave a tip stale while every link still resolves. Node help, the tour steps and the run verdict sentences are hand-written constants too; tests parse each node example with the real schema, assert a few of the node gotchas and check that every tour anchor exists in the sidebar, but most sentences are not checked against behaviour. The reader and its search show the docs shipped with the web app, so a running deployment can show docs older than its gateway, and both cover only the top-level docs, so a link to or a search for anything else would not resolve. Tips, the checklist, the tour, node help and the verdict are shown in the dashboard only; the CLI and API have no equivalent.",
       "id": "guidanceStaticCopy",
-      "refs": ["glossaryTable", "helpLinks", "docsReader", "docsStatic"],
+      "refs": [
+        "glossaryTable",
+        "helpLinks",
+        "docsReader",
+        "docsStatic",
+        "nodeHelpTable",
+        "tourSteps",
+        "runVerdict"
+      ],
       "status": "Confirmed boundary",
-      "title": "Help text is hand-written and only its links are checked"
+      "title": "Help text is hand-written and only its links and examples are checked"
     }
   ],
   "modelDescriptions": {
@@ -7709,6 +7735,142 @@
       "lines": 12,
       "path": "packages/web/src/components/help/HowItWorks.tsx",
       "title": "The overview is collapsed unless a caller passes defaultOpen"
+    },
+    {
+      "anchor": "'/validate',",
+      "before": 12,
+      "id": "validateRoute",
+      "lines": 50,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "Check a spec without saving it: the save checks as data, no write"
+    },
+    {
+      "anchor": "export async function checkSpec(",
+      "before": 12,
+      "id": "specCheckAll",
+      "lines": 60,
+      "path": "packages/gateway/src/lib/specCheck.ts",
+      "title": "The save path’s schema, lint, reference and authoring checks, collected as issues"
+    },
+    {
+      "anchor": "export const NODE_HELP: Record<SpecNode['type'], NodeHelp> = {",
+      "before": 0,
+      "id": "nodeHelpTable",
+      "lines": 14,
+      "path": "packages/web/src/lib/nodeHelp.ts",
+      "title": "Node help is a hand-written constant keyed by node type"
+    },
+    {
+      "anchor": "const where: Prisma.WorkflowHumanStepWhereInput = {",
+      "before": 0,
+      "id": "humanStepList",
+      "lines": 45,
+      "path": "packages/gateway/src/routes/humanSteps.ts",
+      "title": "The step list counts a total only when asked, and answeredByMe only narrows"
+    },
+    {
+      "anchor": "function myResponseOf(",
+      "before": 5,
+      "id": "humanStepMyResponse",
+      "lines": 25,
+      "path": "packages/gateway/src/routes/humanSteps.ts",
+      "title": "myResponse is the caller’s own approval row or stored action"
+    },
+    {
+      "anchor": "'/scanner-patterns/test',",
+      "before": 10,
+      "id": "scannerPatternTest",
+      "lines": 66,
+      "path": "packages/gateway/src/routes/scannerPatterns.ts",
+      "title": "Pattern dry run: same executor, no row, no quarantine change, first match per sample"
+    },
+    {
+      "anchor": "export async function GET(request: NextRequest) {",
+      "before": 0,
+      "id": "docSearchRoute",
+      "lines": 20,
+      "path": "packages/web/src/app/docs/search/route.ts",
+      "title": "Doc text search is answered by the web server from a process-wide index"
+    },
+    {
+      "anchor": "export function loadDocSearchIndex()",
+      "before": 0,
+      "id": "docSearchIndex",
+      "lines": 20,
+      "path": "packages/web/src/lib/docs.ts",
+      "title": "The search index is built once per process from the served docs; a failed build is dropped"
+    },
+    {
+      "anchor": "function FirstRunChecklistBody() {",
+      "before": 0,
+      "id": "firstRunChecklist",
+      "lines": 68,
+      "path": "packages/web/src/components/setup/FirstRunChecklist.tsx",
+      "title": "First-run steps tick from data the person can read; a failed query shows nothing"
+    },
+    {
+      "anchor": "export const TOUR_STEPS: TourStep[] = [",
+      "before": 0,
+      "id": "tourSteps",
+      "lines": 25,
+      "path": "packages/web/src/lib/tourSteps.ts",
+      "title": "Tour steps are constants anchored to the sidebar or to nothing"
+    },
+    {
+      "anchor": "export function deriveRunVerdict(",
+      "before": 5,
+      "id": "runVerdict",
+      "lines": 45,
+      "path": "packages/web/src/lib/runVerdict.ts",
+      "title": "The run verdict is derived from the run record and its open gates"
+    },
+    {
+      "anchor": "const PUBLIC_PATHS = [",
+      "before": 0,
+      "id": "webProxy",
+      "lines": 20,
+      "path": "packages/web/src/proxy.ts",
+      "title": "The web proxy redirects to sign-in on a missing session cookie; /docs is not public"
+    },
+    {
+      "anchor": "export function writeDismissed(",
+      "before": 1,
+      "id": "dismissedStore",
+      "lines": 12,
+      "path": "packages/web/src/lib/dismissed.ts",
+      "title": "Dismissed and tour-seen flags live in this browser’s localStorage only"
+    },
+    {
+      "anchor": "export function TourLauncher() {",
+      "before": 0,
+      "id": "tourLauncher",
+      "lines": 30,
+      "path": "packages/web/src/components/tour/TourLauncher.tsx",
+      "title": "Only a click starts the tour; ending it records it as seen"
+    },
+    {
+      "anchor": "const runCheck = useCallback(",
+      "before": 0,
+      "id": "checkWorkflowClient",
+      "lines": 60,
+      "path": "packages/web/src/components/workflow/TemplateEditor.tsx",
+      "title": "Check workflow asks the server once per click and reports when it could not run"
+    },
+    {
+      "anchor": "export function register(): void {",
+      "before": 0,
+      "id": "docSearchWarmup",
+      "lines": 14,
+      "path": "packages/web/src/instrumentation.ts",
+      "title": "The docs search index warms up in the background at start-up"
+    },
+    {
+      "anchor": "export function countContainerNodes(",
+      "before": 0,
+      "id": "containerCount",
+      "lines": 10,
+      "path": "packages/web/src/components/workflow/containerNodes.ts",
+      "title": "The save confirmation counts the nodes the gateway gates as team-authored code"
     }
   ],
   "usecases": [
