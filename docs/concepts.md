@@ -153,6 +153,33 @@ request, run, gate, pull request, and merge lifecycle, stating that no built-in 
 merges a pull request. Definitions in the glossary agree with this document, and a test checks that every doc
 and heading they link to exists.
 
+Guided paths build on those pieces:
+
+- **Home** shows an administrator the setup card until the platform is ready, then a dismissible
+  guide to the governance pages in the order an administrator meets them. An engineer or team lead
+  sees a dismissible "Your first run" list. Three of its steps tick from real data (a visible
+  repository, a started request, a merged pull request from the viewer's own requests); the fourth,
+  answering a gate, is a pointer to Approvals that never ticks and does not count toward the list
+  hiding itself once the three tracked steps are done. Dismissal is remembered in the viewer's
+  browser only.
+- **Start work** carries a "Not sure?" chooser that recommends a mode, and a "Try a sample task"
+  button on each form that only fills the fields, never launches, and leaves the review screen in
+  place. The agent sample asks for a read-only explanation; the epic and workflow samples ask for a
+  small README change, which a launched run can turn into a real pull request. The epic sample gets
+  a new placeholder ticket id on every fill, and the workflow sample is offered only when the
+  workflow has a free-text field to fill. The epic mode is offered to team leads and administrators only.
+- **Policies**, **Platform settings**, and **Workflow defaults** open with a warning that states
+  the blast radius of a change there.
+- **The workflow editor** explains each node type in the inspector and the palette, and its
+  **Check workflow** button reports the structural and expression-syntax check that already runs
+  as you edit. It does not run the workflow and does not check that agents or connections exist;
+  saving and promoting add the server-side checks.
+- **A run's page** opens with a plain-language verdict derived from the run's recorded status,
+  open gates, failed step, and result, and has a collapsed guide to reading the page.
+- **The scanner page** can try a pattern against sample text on the server, under the scanner's
+  time limit, without saving anything.
+- **The docs reader** searches the text of every served doc, not only titles.
+
 ### Workspace limitations
 
 - Requests without a recorded execution attempt do not appear in the request list yet. After a
@@ -164,3 +191,12 @@ and heading they link to exists.
   `description` field when it has one. A custom workflow reading a different input field must
   explicitly consume the description to use these instructions.
 - Launch drafts are kept within the mounted page; leaving or reloading the page discards them.
+- The guided paths are per viewer: dismissing one is stored in that browser and does not follow
+  the person to another browser.
+- None of the "Your first run" steps follow the selected team. The merged-pull-request step ticks
+  only when the webhook that records a merge is configured, and it ticks when anyone merges a pull
+  request from the viewer's request. The gate step is never tracked: the viewer's own answer is recorded on the gate
+  record only for some approvals, so no reliable tick exists. The repository step looks at the
+  first 500 connections the viewer can see.
+- The run verdict cannot say who a gate is waiting on, because gate records carry no assignee.
+- Docs search matches substrings with no stemming, and needs a signed-in session to load its index.
