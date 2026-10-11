@@ -157,11 +157,12 @@ Guided paths build on those pieces:
 
 - **Home** shows an administrator the setup card until the platform is ready, then a dismissible
   guide to the governance pages in the order an administrator meets them. An engineer or team lead
-  sees a dismissible "Your first run" list. Three of its steps tick from real data (a visible
-  repository, a started request, a merged pull request from the viewer's own requests); the fourth,
-  answering a gate, is a pointer to Approvals that never ticks and does not count toward the list
-  hiding itself once the three tracked steps are done. Dismissal is remembered in the viewer's
-  browser only.
+  sees a dismissible "Your first run" list. Its four steps tick from real data (a visible
+  repository, a started request, a gate the viewer has answered, a merged pull request from the
+  viewer's own requests), and the list hides itself once all four are done. A viewer whose runs
+  never reach a gate keeps the list until they dismiss it. A gate answered on a run the viewer can
+  no longer see does not count, so the step can untick after a team change. Dismissal is
+  remembered in the viewer's browser only.
 - **Home** also offers a short, optional product tour. Take the tour starts it, and nothing starts
   it automatically. The tour is a card that walks through the sidebar pages the viewer's role can
   open, from Start work and Requests to Approvals and Docs; leads and administrators also see the
@@ -210,8 +211,7 @@ Guided paths build on those pieces:
   Opening another page ends the tour, and it counts as seen.
 - None of the "Your first run" steps follow the selected team. The merged-pull-request step ticks
   only when the webhook that records a merge is configured, and it ticks when anyone merges a pull
-  request from the viewer's request. The gate step is never tracked: the viewer's own answer is recorded on the gate
-  record only for some approvals, so no reliable tick exists. The repository step looks at the
+  request from the viewer's request. The repository step looks at the
   first 500 connections the viewer can see.
 - The run verdict cannot say who a gate is waiting on, because gate records carry no assignee.
 - Docs search needs a signed-in session. Matching is English-only and stem-based, so irregular

@@ -258,7 +258,19 @@ Returns up to 100 `PENDING` steps visible to the authenticated user, ordered by 
 unexpired steps the caller may answer and has not already answered; it is what the sidebar count and
 the Home "Waiting on you" section read.
 
-Each step also carries `myResponse` (the caller's own answer, or `null`), `responses` (every recorded
+`answeredByMe=true` narrows the list to steps the caller answered, of any kind and outcome: the step's
+`resolvedBy` is the caller (an approval, reject, decision, input or review, including the response that
+completed a multi-approver step) or the caller has a recorded approval on it. A step resolved by a
+timeout or by someone else does not match. It only narrows, so visibility and `status` still apply
+(pass `status=ALL` for resolved steps). It is disjoint from `actionable`, which needs a `PENDING`
+step and a `PENDING` step has no `resolvedBy`, so combining them returns nothing. `limit` (1-200, default 100
+for `PENDING` and 200 for `ALL`) and `offset` page the list, and `meta` carries `{ limit, offset, total }`
+where `total` counts every matching step, so `limit=1` is enough to ask whether any exist. `meta` is
+present only when the request sets `answeredByMe`, `limit` or `offset`; a default request runs no count
+query and omits it.
+
+Each step also carries `myResponse` (the action the caller answered with: their approval row's action,
+else the stored action of a step they resolved; `null` otherwise), `responses` (every recorded
 answer as `{ action, byName, comment, resolvedAt, value }`, oldest first), and `run.workRequestId`.
 
 Response:
@@ -287,9 +299,12 @@ Response:
         }
       }
     }
-  ]
+  ],
+  "meta": { "limit": 100, "offset": 0, "total": 1 }
 }
 ```
+
+`meta` appears only when a total was asked for (see above).
 
 ### `GET /api/v1/human-steps/:id`
 
@@ -374,6 +389,15 @@ lifecycle changes and delegated configuration grants are managed under `/govern/
 - **`humanInput` supports four field types** — `text`, `number`, `boolean`, `select`. There is no
   file upload, no multi-select, and no cross-field validation beyond what the spec declares.
 - **`humanDecision` takes 2–10 options.** Wider branching needs a `cond` chain downstream.
+- **`answeredByMe` reads who resolved the step, not an audit trail.** It matches the step's single
+  `resolvedBy` or the caller's recorded approval, so on a multi-approver step it includes only
+  approvers whose approval was recorded and the user who completed it. If the resolver's account is
+  later deleted, `resolvedBy` is cleared and the step no longer matches.
+- **`answeredByMe` is a scan.** It filters on `resolved_by` and on an approval row's `resolved_by`,
+  and neither has a usable index, so each such request scans the caller's visible steps. The Home
+  checklist's request is cached client-side for five minutes for that reason.
+- **A gate answered on a run the viewer can no longer see does not count.** Visibility still applies,
+  so after a team change the checklist's gate step can untick.
 - **A parked run holds a Temporal workflow open for its whole timeout.** Long timeouts are cheap but
   not free; a 7-day approval keeps the workflow alive for 7 days unless it is cancelled.
 - **Some runs are visible only to their requester and platform ADMINs.** Resolving a step, like

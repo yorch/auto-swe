@@ -66,6 +66,8 @@ describe('human step routes', () => {
   let updateManyCount = 1;
   const updateManyCalls: UpdateManyCall[] = [];
   const findManyCalls: Array<Record<string, unknown>> = [];
+  const countCalls: Array<Record<string, unknown>> = [];
+  let listTotal: number | null = null;
   let signalError: Error | null = null;
   const signalCalls: Array<{ workflowId: string; signalName: string; args: unknown[] }> = [];
 
@@ -93,6 +95,10 @@ describe('human step routes', () => {
         create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
       },
       workflowHumanStep: {
+        count: async (args: Record<string, unknown>) => {
+          countCalls.push(args);
+          return listTotal ?? listRows.length;
+        },
         findFirst: async () => stepRow,
         findMany: async (args: Record<string, unknown>) => {
           findManyCalls.push(args);
@@ -128,6 +134,8 @@ describe('human step routes', () => {
     updateManyCount = 1;
     updateManyCalls.length = 0;
     findManyCalls.length = 0;
+    countCalls.length = 0;
+    listTotal = null;
     signalError = null;
     signalCalls.length = 0;
   });
@@ -313,6 +321,169 @@ describe('human step routes', () => {
       const where = await listWhere('/api/v1/human-steps');
       expect(where.humanApprovals).toBeUndefined();
       expect(where.status).toBe('PENDING');
+    });
+  });
+
+  describe('GET / answeredByMe', () => {
+    const OTHER = 'user-2';
+    const resolved = (resolvedBy: string | null, payload: unknown, extra = {}) =>
+      pendingStep({
+        payload,
+        resolvedAt: new Date('2026-06-01T02:00:00Z'),
+        resolvedBy,
+        status: 'RESOLVED',
+        ...extra,
+      });
+    const list = async (query: string) => {
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/human-steps?${query}`,
+      });
+      return { body: JSON.parse(res.payload), res };
+    };
+    const lastWhere = () => (findManyCalls.at(-1)?.where ?? {}) as Record<string, unknown>;
+    const andOf = () => lastWhere().AND as Array<{ OR: unknown[] }>;
+
+    it('restricts to a step the caller resolved, or holds an approval row on', async () => {
+      await list('answeredByMe=true&status=ALL');
+      expect(andOf()).toEqual([
+        {
+          OR: [{ resolvedBy: USER_ID }, { humanApprovals: { some: { resolvedBy: USER_ID } } }],
+        },
+      ]);
+      expect(countCalls.at(-1)?.where).toEqual(findManyCalls.at(-1)?.where);
+    });
+
+    it.each([
+      ['APPROVAL', 'approve'],
+      ['APPROVAL', 'reject'],
+      ['DECISION', 'choose'],
+      ['INPUT', 'submit'],
+      ['REVIEW', 'submit'],
+    ])('reports myResponse for a %s step the caller resolved with %s', async (kind, action) => {
+      listRows = [resolved(USER_ID, { action, resolvedBy: USER_ID }, { kind })];
+      const { body } = await list('answeredByMe=true&status=ALL');
+      expect(body.data[0].myResponse).toBe(action);
+    });
+
+    it('leaves myResponse null for a step someone else or a timeout resolved', async () => {
+      listRows = [
+        resolved(OTHER, { action: 'approve', resolvedBy: OTHER }),
+        resolved(null, null, { id: '00000000-0000-4000-8000-000000000009' }),
+      ];
+      const { body } = await list('status=ALL');
+      expect(body.data.map((d: { myResponse: string | null }) => d.myResponse)).toEqual([
+        null,
+        null,
+      ]);
+    });
+
+    it('keeps a multi-approver row action as myResponse, even when another user completed it', async () => {
+      listRows = [
+        resolved(
+          OTHER,
+          { action: 'approve', resolvedBy: OTHER },
+          {
+            humanApprovals: [
+              {
+                action: 'approve',
+                resolvedAt: new Date('2026-06-01T01:00:00Z'),
+                resolvedBy: USER_ID,
+                resolvedByUser: { name: 'Ada' },
+                value: null,
+              },
+            ],
+            requiredApprovers: 2,
+          }
+        ),
+      ];
+      const { body } = await list('answeredByMe=true&status=ALL');
+      expect(body.data[0].myResponse).toBe('approve');
+    });
+
+    it('does not read the string false as true', async () => {
+      await list('answeredByMe=false');
+      expect(lastWhere().AND).toBeUndefined();
+      const bad = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/human-steps?answeredByMe=1',
+      });
+      expect(bad.statusCode).toBe(400);
+    });
+
+    it('absent leaves the list unfiltered', async () => {
+      await list('status=ALL');
+      expect(lastWhere().AND).toBeUndefined();
+    });
+
+    it('only narrows: the visibility filter and status still apply', async () => {
+      await list('answeredByMe=true');
+      const where = findManyCalls.at(-1)?.where as Record<string, unknown>;
+      const actor = { role: 'ENGINEER', sub: USER_ID } as never;
+      expect(where.run).toEqual(buildWorkflowRunVisibilityFilter(actor, undefined));
+      expect(where.status).toBe('PENDING');
+    });
+
+    it('is disjoint from actionable: both constraints apply, so nothing can match both', async () => {
+      await list('answeredByMe=true&actionable=true');
+      const both = lastWhere();
+      // actionable requires a PENDING step with no approval row of the caller; answeredByMe
+      // requires the caller's resolvedBy or approval row. A PENDING step never has either.
+      expect(both.status).toBe('PENDING');
+      expect(both.humanApprovals).toEqual({ none: { resolvedBy: USER_ID } });
+      expect(andOf()).toHaveLength(1);
+    });
+
+    it('runs no count for a default request, the sidebar poll, or actionable', async () => {
+      const calls = countCalls.length;
+      const { body } = await list('');
+      await list('actionable=true');
+      await list('status=ALL');
+      expect(countCalls).toHaveLength(calls);
+      expect(body.meta).toBeUndefined();
+    });
+
+    it('counts when only limit or only offset is given', async () => {
+      const { body } = await list('limit=5');
+      expect(body.meta).toMatchObject({ limit: 5, offset: 0 });
+      const off = await list('offset=3');
+      expect(off.body.meta).toMatchObject({ limit: 100, offset: 3 });
+    });
+
+    it.each(['limit=0', 'limit=201', 'limit=abc', 'offset=-1', 'offset=abc'])(
+      'rejects %s with 400',
+      async (query) => {
+        const res = await app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: `/api/v1/human-steps?${query}`,
+        });
+        expect(res.statusCode).toBe(400);
+      }
+    );
+
+    it('accepts limit=200 and offset=0', async () => {
+      const { res } = await list('limit=200&offset=0');
+      expect(res.statusCode).toBe(200);
+      expect(findManyCalls.at(-1)).toMatchObject({ skip: 0, take: 200 });
+    });
+
+    it('reports the true total with limit=1', async () => {
+      listRows = [resolved(USER_ID, { action: 'approve', resolvedBy: USER_ID })];
+      listTotal = 7;
+      const { body } = await list('answeredByMe=true&status=ALL&limit=1&offset=2');
+      expect(body.data).toHaveLength(1);
+      expect(body.meta).toEqual({ limit: 1, offset: 2, total: 7 });
+      expect(findManyCalls.at(-1)).toMatchObject({ skip: 2, take: 1 });
+    });
+
+    it('keeps the default page sizes', async () => {
+      await list('status=ALL');
+      expect(findManyCalls.at(-1)).toMatchObject({ skip: 0, take: 200 });
+      await list('');
+      expect(findManyCalls.at(-1)).toMatchObject({ take: 100 });
     });
   });
 

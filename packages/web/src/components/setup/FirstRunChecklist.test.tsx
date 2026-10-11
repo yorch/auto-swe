@@ -19,16 +19,24 @@ interface Q {
   data?: unknown;
   meta?: { total: number };
 }
-const state: { repos: Q; requests: Q; merged: Q } = {
+const state: { repos: Q; requests: Q; merged: Q; answered: Q } = {
+  answered: { data: { meta: { total: 0 } }, isLoading: false },
   merged: { isLoading: false, meta: { total: 0 } },
   repos: { data: [], isLoading: false },
   requests: { data: { meta: { total: 0 } }, isLoading: false },
 };
 const calls = {
+  answered: vi.fn(),
   merged: vi.fn(),
   repos: vi.fn(),
   requests: vi.fn(),
 };
+vi.mock('@/hooks/useAnsweredGate', () => ({
+  useAnsweredGate: (...args: unknown[]) => {
+    calls.answered(...args);
+    return state.answered;
+  },
+}));
 vi.mock('@/hooks/useRepositories', () => ({
   useRepositories: (...args: unknown[]) => {
     calls.repos(...args);
@@ -54,6 +62,7 @@ function reset() {
   state.repos = { data: [], isLoading: false };
   state.requests = { data: { meta: { total: 0 } }, isLoading: false };
   state.merged = { isLoading: false, meta: { total: 0 } };
+  state.answered = { data: { meta: { total: 0 } }, isLoading: false };
   for (const fn of Object.values(calls)) {
     fn.mockClear();
   }
@@ -75,13 +84,13 @@ afterEach(() => {
 const hrefs = () => screen.getAllByRole('link').map((a) => a.getAttribute('href'));
 
 describe('FirstRunChecklist', () => {
-  it('shows three tracked steps and one untracked pointer with their links', () => {
+  it('shows four tracked steps with their links', () => {
     render(<FirstRunChecklist />);
-    expect(screen.getByText('0 of 3 done')).toBeTruthy();
+    expect(screen.getByText('0 of 4 done')).toBeTruthy();
     expect(hrefs()).toEqual(['/connections', '/start', '/govern/approvals', '/pull-requests']);
     expect(screen.getByText(/nothing merges it for you/)).toBeTruthy();
-    expect(screen.getByText(/This step is not tracked here/)).toBeTruthy();
-    expect(screen.getByText(/\(not tracked\)/)).toBeTruthy();
+    expect(screen.getByText(/A workflow with no gates never needs this step/)).toBeTruthy();
+    expect(screen.queryByText(/not tracked/)).toBeNull();
   });
 
   it('asks for personal progress without the selected-team filter', () => {
@@ -91,6 +100,7 @@ describe('FirstRunChecklist', () => {
       { limit: 1, scope: 'MINE', state: 'all' },
       { ignoreTeam: true }
     );
+    expect(calls.answered).toHaveBeenCalled();
     expect(calls.merged).toHaveBeenCalledWith(
       { draft: 'any', limit: 1, offset: 0, scope: 'MINE', state: 'MERGED' },
       { ignoreTeam: true }
@@ -112,28 +122,45 @@ describe('FirstRunChecklist', () => {
   it('counts only git repositories, not other connection types', () => {
     state.repos = { data: [{ id: 'c1', type: 'issue_tracker' }], isLoading: false };
     render(<FirstRunChecklist />);
-    expect(screen.getByText('0 of 3 done')).toBeTruthy();
+    expect(screen.getByText('0 of 4 done')).toBeTruthy();
     cleanup();
     state.repos = { data: [{ id: 'c1', type: 'issue_tracker' }, GIT], isLoading: false };
     render(<FirstRunChecklist />);
-    expect(screen.getByText('1 of 3 done')).toBeTruthy();
+    expect(screen.getByText('1 of 4 done')).toBeTruthy();
   });
 
   it('derives each tick from data, not from clicks', () => {
     state.repos = { data: [GIT], isLoading: false };
     state.requests = { data: { meta: { total: 1 } }, isLoading: false };
     render(<FirstRunChecklist />);
-    expect(screen.getByText('2 of 3 done')).toBeTruthy();
+    expect(screen.getByText('2 of 4 done')).toBeTruthy();
     expect(hrefs()).toEqual(['/govern/approvals', '/pull-requests']);
   });
 
-  it('never ticks the gate step, and hides once the three tracked steps are done', () => {
+  it('ticks the gate step only when the viewer has answered a gate', () => {
+    render(<FirstRunChecklist />);
+    expect(screen.getByText(/Answer a gate when a run reaches one/).textContent).toContain(
+      '(to do)'
+    );
+    cleanup();
+    state.answered = { data: { meta: { total: 1 } }, isLoading: false };
+    render(<FirstRunChecklist />);
+    expect(screen.getByText('1 of 4 done')).toBeTruthy();
+    expect(screen.getByText(/Answer a gate when a run reaches one/).textContent).toContain(
+      '(done)'
+    );
+    expect(hrefs()).not.toContain('/govern/approvals');
+  });
+
+  it('stays while the gate step is open, and hides once all four steps are done', () => {
     state.repos = { data: [GIT], isLoading: false };
     state.requests = { data: { meta: { total: 1 } }, isLoading: false };
+    state.merged = { isLoading: false, meta: { total: 1 } };
     render(<FirstRunChecklist />);
+    expect(screen.getByText('3 of 4 done')).toBeTruthy();
     expect(screen.getByRole('link', { name: /Open approvals/ })).toBeTruthy();
     cleanup();
-    state.merged = { isLoading: false, meta: { total: 1 } };
+    state.answered = { data: { meta: { total: 2 } }, isLoading: false };
     render(<FirstRunChecklist />);
     expect(screen.queryByTestId('first-run-checklist')).toBeNull();
   });
@@ -141,11 +168,12 @@ describe('FirstRunChecklist', () => {
   it('does not treat an unreadable result as done', () => {
     state.requests = { data: undefined, isLoading: false };
     state.merged = { isLoading: false, meta: undefined };
+    state.answered = { data: undefined, isLoading: false };
     render(<FirstRunChecklist />);
-    expect(screen.getByText('0 of 3 done')).toBeTruthy();
+    expect(screen.getByText('0 of 4 done')).toBeTruthy();
   });
 
-  it.each(['repos', 'requests', 'merged'] as const)(
+  it.each(['repos', 'requests', 'merged', 'answered'] as const)(
     'shows nothing, not a false prompt, when the %s query errors',
     (which) => {
       state[which] = { isError: true, isLoading: false };

@@ -1,3 +1,4 @@
+import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -17,6 +18,15 @@ const StepIdParam = z.object({ id: z.string().uuid() });
 const ListQuery = z.object({
   /** Only pending steps the caller may answer and has not already answered. */
   actionable: booleanQueryParam(false),
+  /**
+   * Only steps the caller answered, of any kind and outcome: the step's `resolvedBy` is the caller
+   * (single-approver answers, rejects, decisions, inputs, reviews, and the response that completed a
+   * multi-approver step) or the caller has a recorded approval row on it. Only narrows the list.
+   */
+  answeredByMe: booleanQueryParam(false),
+  /** Page size; defaults to 100 for `PENDING` and 200 for `ALL`. */
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
   overdue: booleanQueryParam(false),
   runId: z.string().uuid().optional(),
   sort: z
@@ -66,7 +76,10 @@ const HumanStepListItemSchema = z.object({
   fields: z.unknown().nullable(),
   id: z.string().uuid(),
   kind: z.string(),
-  /** What the caller already answered on this step, or null. */
+  /**
+   * The action the caller answered with, or null: their recorded approval row's action, else the
+   * stored action when the caller resolved the step.
+   */
   myResponse: z.string().nullable(),
   nodeId: z.string(),
   options: z.unknown().nullable(),
@@ -111,7 +124,18 @@ const HumanStepDetailSchema = z.object({
   title: z.string(),
 });
 
-const StepListResponseSchema = z.object({ data: z.array(HumanStepListItemSchema) });
+const StepListResponseSchema = z.object({
+  data: z.array(HumanStepListItemSchema),
+  /** Present only when the request asked for a total: `answeredByMe`, `limit` or `offset`. */
+  meta: z
+    .object({
+      limit: z.number().int(),
+      offset: z.number().int(),
+      /** Rows matching the filters, not capped by `limit`. */
+      total: z.number().int().min(0),
+    })
+    .optional(),
+});
 const StepDetailResponseSchema = z.object({ data: HumanStepDetailSchema });
 
 const RespondResponseSchema = z.object({
@@ -216,6 +240,31 @@ function stepResponses(s: {
   ];
 }
 
+/**
+ * What the caller answered. A multi-approver approval is a `humanApprovals` row; every other answer
+ * (and the approval that completes the step) resolves through the step itself, whose stored payload
+ * holds the action. A step resolved by a timeout or by someone else is not the caller's.
+ */
+function myResponseOf(
+  s: {
+    humanApprovals: { action: string; resolvedBy: string | null }[];
+    payload: unknown;
+    resolvedBy: string | null;
+    status: string;
+  },
+  userId: string
+): string | null {
+  const row = s.humanApprovals.find((a) => a.resolvedBy === userId);
+  if (row) {
+    return row.action;
+  }
+  if (s.status !== 'RESOLVED' || s.resolvedBy !== userId) {
+    return null;
+  }
+  const action = (s.payload as { action?: unknown } | null)?.action;
+  return typeof action === 'string' && action ? action : 'respond';
+}
+
 /** The answer text a requester can read: a review's notes or the option a decision picked. */
 function answerValue(kind: string, payload: unknown): string | null {
   if (kind !== 'REVIEW' && kind !== 'DECISION') {
@@ -238,7 +287,9 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { actionable, overdue, sort, status, runId } = request.query;
+      const { actionable, answeredByMe, limit, offset, overdue, sort, status, runId } =
+        request.query;
+      const pageSize = limit ?? (status === 'ALL' ? 200 : 100);
       const orderBy =
         sort === 'requestedAt:asc'
           ? { requestedAt: 'asc' as const }
@@ -247,49 +298,72 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             : sort === 'timeoutAt:desc'
               ? { timeoutAt: 'desc' as const }
               : { requestedAt: 'desc' as const };
-      const steps = await fastify.prisma.workflowHumanStep.findMany({
-        include: {
-          _count: { select: { humanApprovals: true } },
-          humanApprovals: {
-            orderBy: { resolvedAt: 'asc' },
-            select: {
-              action: true,
-              resolvedAt: true,
-              resolvedBy: true,
-              resolvedByUser: { select: { email: true, name: true } },
-              value: true,
+      const where: Prisma.WorkflowHumanStepWhereInput = {
+        ...(status === 'ALL' ? {} : { status: 'PENDING' as const }),
+        ...(runId ? { runId } : {}),
+        ...(overdue ? { timeoutAt: { lt: new Date() } } : {}),
+        // "Actionable" is control, not visibility: a step on a run the caller can
+        // see but not answer is not waiting on them. A step they already approved
+        // is waiting on someone else, and an expired one cannot be answered.
+        ...(actionable
+          ? {
+              humanApprovals: { none: { resolvedBy: user.sub } },
+              OR: [{ timeoutAt: null }, { timeoutAt: { gt: new Date() } }],
+              status: 'PENDING' as const,
+              ...buildWorkflowHumanStepControlFilter(user, request.repoAccessGate),
+            }
+          : buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate)),
+        // Under AND so it can only narrow, whatever the filters above spread. A timeout or
+        // someone else's answer leaves neither `resolvedBy` nor an approval row for the caller.
+        ...(answeredByMe
+          ? {
+              AND: [
+                {
+                  OR: [
+                    { resolvedBy: user.sub },
+                    { humanApprovals: { some: { resolvedBy: user.sub } } },
+                  ],
+                },
+              ],
+            }
+          : {}),
+      };
+      // The count is a second query on the hottest HITL read (the sidebar badge polls it), so it
+      // runs only for a caller that asked for a total.
+      const wantsTotal = answeredByMe || limit !== undefined || offset !== undefined;
+      const skip = offset ?? 0;
+      const [total, steps] = await Promise.all([
+        wantsTotal ? fastify.prisma.workflowHumanStep.count({ where }) : Promise.resolve(null),
+        fastify.prisma.workflowHumanStep.findMany({
+          include: {
+            _count: { select: { humanApprovals: true } },
+            humanApprovals: {
+              orderBy: { resolvedAt: 'asc' },
+              select: {
+                action: true,
+                resolvedAt: true,
+                resolvedBy: true,
+                resolvedByUser: { select: { email: true, name: true } },
+                value: true,
+              },
+            },
+            resolvedByUser: { select: { email: true, name: true } },
+            run: {
+              select: {
+                id: true,
+                status: true,
+                workflowId: true,
+                workRequest: { select: { description: true, externalTicketId: true } },
+                workRequestId: true,
+              },
             },
           },
-          resolvedByUser: { select: { email: true, name: true } },
-          run: {
-            select: {
-              id: true,
-              status: true,
-              workflowId: true,
-              workRequest: { select: { description: true, externalTicketId: true } },
-              workRequestId: true,
-            },
-          },
-        },
-        orderBy,
-        take: status === 'ALL' ? 200 : 100,
-        where: {
-          ...(status === 'ALL' ? {} : { status: 'PENDING' }),
-          ...(runId ? { runId } : {}),
-          ...(overdue ? { timeoutAt: { lt: new Date() } } : {}),
-          // "Actionable" is control, not visibility: a step on a run the caller can
-          // see but not answer is not waiting on them. A step they already approved
-          // is waiting on someone else, and an expired one cannot be answered.
-          ...(actionable
-            ? {
-                humanApprovals: { none: { resolvedBy: user.sub } },
-                OR: [{ timeoutAt: null }, { timeoutAt: { gt: new Date() } }],
-                status: 'PENDING',
-                ...buildWorkflowHumanStepControlFilter(user, request.repoAccessGate),
-              }
-            : buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate)),
-        },
-      });
+          orderBy,
+          skip,
+          take: pageSize,
+          where,
+        }),
+      ]);
       return {
         data: steps.map((s) => ({
           approvalsRemaining: Math.max(0, s.requiredApprovers - s._count.humanApprovals),
@@ -299,7 +373,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           fields: s.fields,
           id: s.id,
           kind: s.kind,
-          myResponse: s.humanApprovals.find((a) => a.resolvedBy === user.sub)?.action ?? null,
+          myResponse: myResponseOf(s, user.sub),
           nodeId: s.nodeId,
           options: s.options,
           requestedAt: formatDate(s.requestedAt),
@@ -312,6 +386,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           timeoutAt: formatDate(s.timeoutAt),
           title: s.title,
         })),
+        ...(total === null ? {} : { meta: { limit: pageSize, offset: skip, total } }),
       };
     }
   );

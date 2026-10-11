@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Icon } from '@/components/ui/Icon';
+import { useAnsweredGate } from '@/hooks/useAnsweredGate';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRequests } from '@/hooks/useRequests';
@@ -20,20 +21,14 @@ interface Step {
   /** What the step is and where to do it; shown while the step is open. */
   body: ReactNode;
   done: boolean;
-  /**
-   * False for a step the platform cannot verify from data the viewer can read. It never ticks and
-   * never counts toward "N done" or toward hiding the card; it stays as a pointer.
-   */
-  tracked: boolean;
   href: string;
   action: string;
 }
 
 /**
  * Home checklist for someone who is not an admin: the path from "I can sign in" to "I merged my
- * first agent-written change". Every tracked tick comes from data the person can already read,
- * never from a click. Answering a gate is a pointer, not a tracked step: a viewer's answer is
- * visible only on some gate records, so no honest tick exists for it. Admins do not see it: they have the setup card and the governance guide, and
+ * first agent-written change". Every tick comes from data the person can already read, never from
+ * a click. Admins do not see it: they have the setup card and the governance guide, and
  * their first run depends on that setup being finished.
  */
 export function FirstRunChecklist() {
@@ -55,8 +50,10 @@ function FirstRunChecklistBody() {
     { draft: 'any', limit: 1, offset: 0, scope: 'MINE', state: 'MERGED' },
     { ignoreTeam: true }
   );
+  // Gates are not filtered by the selected team, so this needs no opt-out.
+  const answered = useAnsweredGate();
 
-  const queries = [repos, requests, merged];
+  const queries = [repos, requests, answered, merged];
   const settled = queries.every((q) => !q.isLoading);
   // A query that failed cannot say a step is open, so show nothing rather than a false prompt.
   if (!ready || dismissed || !settled || queries.some((q) => q.isError)) {
@@ -72,7 +69,6 @@ function FirstRunChecklistBody() {
       href: '/connections',
       id: 'repository',
       title: 'See a repository you can work on',
-      tracked: true,
     },
     {
       action: 'Start work',
@@ -81,16 +77,14 @@ function FirstRunChecklistBody() {
       href: '/start',
       id: 'task',
       title: 'Start your first task',
-      tracked: true,
     },
     {
       action: 'Open approvals',
-      body: 'When a run reaches a gate, it waits for a person. Answer it in Approvals. This step is not tracked here, and a workflow with no gates never needs it.',
-      done: false,
+      body: 'When a run reaches a gate, it waits for a person. Answer it in Approvals. A workflow with no gates never needs this step, so the card stays until you dismiss it.',
+      done: (answered.data?.meta.total ?? 0) > 0,
       href: '/govern/approvals',
       id: 'gate',
       title: 'Answer a gate when a run reaches one',
-      tracked: false,
     },
     {
       action: 'Open pull requests',
@@ -99,16 +93,14 @@ function FirstRunChecklistBody() {
       href: '/pull-requests',
       id: 'merge',
       title: 'A pull request from your request is merged',
-      tracked: true,
     },
   ];
-  const tracked = steps.filter((step) => step.tracked);
-  // Hide only when every tracked step is verified done; an unreadable query never counts as done.
-  if (tracked.every((step) => step.done)) {
+  // Hide only when every step is verified done; an unreadable query never counts as done.
+  if (steps.every((step) => step.done)) {
     return null;
   }
-  const nextId = tracked.find((step) => !step.done)?.id;
-  const doneCount = tracked.filter((step) => step.done).length;
+  const nextId = steps.find((step) => !step.done)?.id;
+  const doneCount = steps.filter((step) => step.done).length;
 
   return (
     <Card data-testid="first-run-checklist">
@@ -117,13 +109,12 @@ function FirstRunChecklistBody() {
           <div className="kicker mb-1">Getting started</div>
           <h2 className="text-[17px] font-semibold tracking-tight text-paper-50">Your first run</h2>
           <p className="mt-1 text-sm text-paper-400">
-            Steps tick themselves off from what the platform records for you. One step is a pointer
-            and is not tracked.
+            Steps tick themselves off from what the platform records for you.
           </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="tabular text-sm text-paper-300">
-            {doneCount} of {tracked.length} done
+            {doneCount} of {steps.length} done
           </span>
           <Button
             aria-label="Dismiss the first-run checklist"
@@ -166,9 +157,7 @@ function FirstRunChecklistBody() {
                 )}
               >
                 {step.title}
-                <span className="sr-only">
-                  {step.done ? ' (done)' : step.tracked ? ' (to do)' : ' (not tracked)'}
-                </span>
+                <span className="sr-only">{step.done ? ' (done)' : ' (to do)'}</span>
               </div>
               {!step.done && <div className="mt-0.5 text-xs text-paper-400">{step.body}</div>}
             </div>
