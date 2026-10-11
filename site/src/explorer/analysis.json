@@ -2409,7 +2409,7 @@
     {
       "body": "Price models from a catalog, and on a schedule ask each provider which models it lists, storing unreviewed suggestions instead of catalog rows.",
       "category": "Operations",
-      "detail": "The gateway upserts one Temporal schedule, auto-swe-model-discovery, once the Temporal connection is up; it runs ScheduledModelDiscoveryWorkflow, a single discoverModels activity that lists models through every GLOBAL provider credential. It is on by default (MODEL_DISCOVERY_ENABLED, MODEL_DISCOVERY_CRON, read when the schedule is synchronized once the Temporal connection is up); disabling pauses the schedule rather than deleting it. Results go to model_suggestions (NEW: listed but priced nowhere; RETIREMENT_CANDIDATE: a priced model missing from a complete listing) and model_discovery_provider_status, never to catalog rows, so a suggestion cannot make a model known at $0. A failed provider changes only its status row; an incomplete listing (page cap, empty result, an unfollowable continuation) still records new suggestions but deletes nothing and flags no retirement candidates; a dismissal survives refreshes; deleting a provider’s GLOBAL credential removes only the credential: the next discovery pass, scheduled or on demand, removes that provider’s suggestion and status rows, and until then the suggestions endpoint still serves them. Every failure is reduced to a fixed string (HTTP <status>, timed out, request failed (<name>, <code>; the code is omitted when absent), credential could not be decrypted, blocked address, apiBase required, unrecognised response), so no fetch or provider text reaches the status row, logs or Temporal history, and a credential save rejects a key with whitespace or control characters and an apiBase carrying a username or password. An apiBase on a private network (any provider’s) is refused on the credential Test button, model discovery and the catalog refresh (which also check every resolved address) and, as URL text only, on credential save, unless its host (or host:port, as the URL spells it) is listed in the ADMIN-only, GLOBAL-only setting models.privateNetworkHosts; the listing waives only the private-range refusal, and loopback, localhost, link-local and cloud-metadata addresses stay refused whatever is listed. A setting that cannot be read leaves the list empty, so the strict guard applies. The list also applies to the model and embedding calls agents make, and a call to an unlisted host that resolves to a private address fails before any request is sent; those calls refuse redirects, so a provider that answers with a 30x must be pointed at its final URL. The list is read per request behind the settings cache, so a client built earlier picks up a change, and an unreadable setting leaves it empty. A built-in provider (anthropic, openai, google) with an apiBase is probed and listed at that base instead of the vendor’s, keeping the provider’s auth style (a Google probe against a custom base sends the key in x-goog-api-key, not in the URL). Because a proxy exposes aliases rather than the vendor catalog, such a listing is never marked complete: it still proposes new models but never proposes retiring one. An apiBase carrying a query or fragment is rejected for every provider, since /models would land inside it. Admins read the suggestions in the Catalog tab, where the on-demand discover route refreshes the same rows. Nothing is added to the catalog or retired automatically.",
+      "detail": "The gateway upserts one Temporal schedule, auto-swe-model-discovery, once the Temporal connection is up; it runs ScheduledModelDiscoveryWorkflow, a single discoverModels activity that lists models through every GLOBAL provider credential. It is on by default (MODEL_DISCOVERY_ENABLED, MODEL_DISCOVERY_CRON, read when the schedule is synchronized once the Temporal connection is up); disabling pauses the schedule rather than deleting it. Results go to model_suggestions (NEW: listed but priced nowhere; RETIREMENT_CANDIDATE: a priced model missing from a complete listing) and model_discovery_provider_status, never to catalog rows, so a suggestion cannot make a model known at $0. A failed provider changes only its status row; an incomplete listing (page cap, empty result, an unfollowable continuation) still records new suggestions but deletes nothing and flags no retirement candidates; a dismissal survives refreshes; deleting a provider’s GLOBAL credential removes only the credential: the next discovery pass, scheduled or on demand, removes that provider’s suggestion and status rows, and until then the suggestions endpoint still serves them. Every failure is reduced to a fixed string (HTTP <status>, timed out, request failed (<name>, <code>; the code is omitted when absent), credential could not be decrypted, blocked address, apiBase required, unrecognised response), so no fetch or provider text reaches the status row, logs or Temporal history, and a credential save rejects a key with whitespace or control characters and an apiBase carrying a username or password. An apiBase on a private network (any provider’s) is refused on the credential Test button, model discovery and the catalog refresh (which also check every resolved address) and, as URL text only, on credential save, unless its host (or host:port, as the URL spells it) is listed in the ADMIN-only, GLOBAL-only setting models.privateNetworkHosts; the listing waives only the private-range refusal, and loopback, localhost, link-local, cloud-metadata, unspecified, multicast and reserved addresses stay refused whatever is listed. A setting that cannot be read leaves the list empty, so the strict guard applies. The list also applies to the model and embedding calls agents make, and a call to an unlisted host that resolves to a private address fails before any request is sent; those calls refuse redirects, so a provider that answers with a 30x must be pointed at its final URL. The list is read per request behind the settings cache, so a client built earlier picks up a change, and an unreadable setting leaves it empty. A built-in provider (anthropic, openai, google) with an apiBase is probed and listed at that base instead of the vendor’s, keeping the provider’s auth style (a Google probe against a custom base sends the key in x-goog-api-key, not in the URL). Because a proxy exposes aliases rather than the vendor catalog, such a listing is never marked complete: it still proposes new models but never proposes retiring one. An apiBase carrying a query or fragment is rejected for every provider, since /models would land inside it. Admins read the suggestions in the Catalog tab, where the on-demand discover route refreshes the same rows. Nothing is added to the catalog or retired automatically.",
       "id": "modelCatalog",
       "refs": [
         "modelDiscoverySchedule",
@@ -2755,7 +2755,7 @@
     {
       "body": "Dashboard pages explain the product inline: help tips, page-header links and a lifecycle overview that link to a built-in docs reader.",
       "category": "Collaboration",
-      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither makes a request or reads server data. A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The Home page opens a collapsible request-to-merge overview by default only when the cached request lists for the current Mine or Team scope are all empty, and Start work always renders it collapsed; the node palette, forms and governance pages carry tips of the same kind. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant.",
+      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither calls the gateway or reads platform data (the link is a Next.js Link, which may prefetch the static doc page from the web server). A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The Home page opens the overview by default when, on the first load (Mine scope unless already switched), the attention, active and succeeded request lists are all empty; switching scope does not re-decide it. Start work renders it collapsed; the node palette and governance pages carry tips of the same kind, and some forms carry static help text and doc links. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant.",
       "id": "inAppGuidance",
       "refs": [
         "helpTip",
@@ -2768,7 +2768,8 @@
         "glossaryLookup",
         "startWorkOverview",
         "consentDocLink",
-        "nodePaletteTip"
+        "nodePaletteTip",
+        "howItWorksDefault"
       ],
       "status": "Implemented",
       "title": "In-app guided help"
@@ -7588,7 +7589,7 @@
       "id": "helpTip",
       "lines": 8,
       "path": "packages/web/src/components/ui/HelpTip.tsx",
-      "title": "A help tip reads a glossary entry or its own children; nothing is fetched"
+      "title": "A help tip reads a glossary entry or its own children; it calls no API"
     },
     {
       "anchor": "export const GLOSSARY = {",
@@ -7634,9 +7635,9 @@
       "anchor": "function HomeHowItWorks({ scope }: { scope: RequestScope }) {",
       "before": 4,
       "id": "homeHowItWorks",
-      "lines": 12,
+      "lines": 16,
       "path": "packages/web/src/app/page.tsx",
-      "title": "Home opens the lifecycle overview by default only for a user with no requests"
+      "title": "Home opens the lifecycle overview by default when its three request buckets are empty on first load"
     },
     {
       "anchor": "export function glossaryEntry(term: GlossaryTerm): GlossaryEntry {",
@@ -7669,6 +7670,14 @@
       "lines": 5,
       "path": "packages/web/src/components/workflow/NodePalette.tsx",
       "title": "The workflow node palette carries a help tip"
+    },
+    {
+      "anchor": "defaultOpen = false,",
+      "before": 3,
+      "id": "howItWorksDefault",
+      "lines": 12,
+      "path": "packages/web/src/components/help/HowItWorks.tsx",
+      "title": "The overview is collapsed unless a caller passes defaultOpen"
     }
   ],
   "usecases": [
