@@ -1147,7 +1147,7 @@
     "packages/web/src/components/workflow/specToFlow.test.ts": "d5ec9d44060f16b0a54637cfe95a7d6d4e8bf3495d90dc7452b7efb8e423f01d",
     "packages/web/src/components/workflow/specToFlow.ts": "4c1965c620c0f96e885d2576b9817a927867ac90751ed5c71ca909390ba0362c",
     "packages/web/src/components/workflow/starterTemplates.ts": "526d29bcbd1bbf0902960313b36702a9b6ec127680d7a272d75ce05bfcafcef6",
-    "packages/web/src/components/workflow/TemplateEditor.check.test.tsx": "03d1cdc1a7a7dae404a7cedbfe7f15fc0211b28c4c2324411a4211cfa554971f",
+    "packages/web/src/components/workflow/TemplateEditor.check.test.tsx": "cd3e829f637ecbdfb72e05bfbf2d3d16a9f74b36b41ddc34d4ace998465a2d75",
     "packages/web/src/components/workflow/TemplateEditor.tsx": "e6d89cd97b1a8983665c83422ca76308eda7463fea6c3ef5c059d0bee2dd7215",
     "packages/web/src/components/workflow/templateNav.tsx": "595550bb2774978d4e0294aa5ec08e7a9903fbebf440e7d975dd347cd575850d",
     "packages/web/src/components/workflow/tolerantPresentation.test.ts": "2b14c5ccef44c0876bbf9ffc44a770e364b74e975845fbc217977aa43caccd4a",
@@ -1279,7 +1279,7 @@
     "packages/web/src/lib/dismissed.ts": "4f1b75ea4e7471114cf873474857b99cdd174ac60001ace8092ab20259884e04",
     "packages/web/src/lib/docLinks.test.ts": "8451aeb109e4f8d7189af9ed39499fa89a7fb66cbe4ff6bf3341a18320c0d255",
     "packages/web/src/lib/docLinks.ts": "86053b990dddcde7fbec034dd831738ef8462eb3e913c96b1e04ff22f0901f8e",
-    "packages/web/src/lib/docSearch.docs.test.tsx": "8a01432eafb011af8e8efe0ff819717c44904969d6fffabe6cbe33b791f4311d",
+    "packages/web/src/lib/docSearch.docs.test.tsx": "92438fa084ccf264304fb9b81baaf95fc7e32f8413f42952eb3c89757600644a",
     "packages/web/src/lib/docSearch.test.ts": "35ce93efd59196307c8310aa8c3e64498bed5343d7bd3ea7ba0b208a767b07b3",
     "packages/web/src/lib/docSearch.ts": "ba1dbc61481e8ee4313e8d3bf4d3284c9bf1c77f76e9b104150a1cd9500fe597",
     "packages/web/src/lib/docs.test.ts": "70ea7839954307cb56909ffb0ebf2e7b14661168937037dc1b8f737e97b64dc3",
@@ -3633,7 +3633,7 @@
       "AutomationFire"
     ]
   },
-  "reviewedCommit": "48c00813e0c556699bc16660a8b0121deed4112f",
+  "reviewedCommit": "303625f6565a7378f69d4f6001c9b48ade6d5960",
   "sourceHashes": {
     "docker-compose.app.yml": "7c84a4f978f697ed6d3eb5dd2d8ae9a578e694621b87a51235eee2eb26909daa",
     "packages/cli/src/commands/evals.ts": "8174a8870f6784e5760c020ef7de01cbfd062bf27e8723ac5f0fbcc04af43e9a",
