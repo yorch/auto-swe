@@ -2837,7 +2837,7 @@
     {
       "body": "Dashboard pages explain the product inline: help tips, page-header links, a lifecycle overview, a first-run checklist, an optional tour, node help and a run verdict, with a built-in docs reader and text search.",
       "category": "Collaboration",
-      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither calls the gateway or reads platform data (the link is a Next.js Link, which may prefetch the static doc page from the web server). A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The reader’s index also searches the doc text: once typing pauses, the browser asks a route of the web server (behind the web proxy’s sign-in redirect, which checks only that a session cookie is present, as for the docs pages themselves; the query is cut to a bounded length) for the best matching sections, which return as highlight segments rather than HTML, so only those few results are downloaded. The server builds the index once per process from the same files, begins it at start-up without delaying start-up, and does not keep a failed build; if the request fails, title and summary matching still works and the next edit retries. The Home page opens the overview by default when, on the first load (Mine scope unless already switched), the attention, active and succeeded request lists are all empty; switching scope does not re-decide it. Start work renders it collapsed; the node palette and governance pages carry tips of the same kind, and some forms carry static help text and doc links. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant. Home also shows people who are not admins a first-run checklist whose steps tick from data the person can already read (a visible repository, a request of theirs, a gate they answered, a merged pull request from their request), and shows admins a governance guide once the setup readiness check passes; each can be dismissed, and the dismissal is kept in that browser’s local storage only. A Take the tour button starts a short role-dependent tour that points at the sidebar and its links (one step points at nothing and is centred); it never starts by itself and is recorded as seen when it ends, in the same browser storage. In the workflow editor, selecting a node shows its type’s help. Each run page opens with a verdict banner derived from the run record and the run’s visible open gates, with a collapsed guide to reading the page: it names a cause only for an error the dashboard classifies, otherwise says none is stated, and it cannot say who a gate waits on. Start work offers a chooser between modes and a sample-task button that only fills fields and never launches.",
+      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither calls the gateway or reads platform data (the link is a Next.js Link, which may prefetch the static doc page from the web server). A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The reader’s index also searches the doc text: once typing pauses, the browser asks a route of the web server (behind the web proxy’s sign-in redirect, which checks only that a session cookie is present, as for the docs pages themselves; the query is cut to a bounded length) for the best matching sections, which return as highlight segments rather than HTML, so only those few results are downloaded. The server builds the index once per process from the same files, begins it at start-up without delaying start-up, logs once when it is ready (or logs the failure), and does not keep a failed build; if the request fails, title and summary matching still works and the next edit retries. The Home page opens the overview by default when, on the first load (Mine scope unless already switched), the attention, active and succeeded request lists are all empty; switching scope does not re-decide it. Start work renders it collapsed; the node palette and governance pages carry tips of the same kind, and some forms carry static help text and doc links. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant. Home also shows people who are not admins a first-run checklist whose steps tick from data the person can already read (a visible repository, a request of theirs, a gate they answered, a merged pull request from their request), and shows admins a governance guide once the setup readiness check passes; each can be dismissed, and the dismissal is kept in that browser’s local storage only. A Take the tour button starts a short role-dependent tour that points at the sidebar and its links (one step points at nothing and is centred); it never starts by itself and is recorded as seen when it ends, in the same browser storage. In the workflow editor, selecting a node shows its type’s help. Each run page opens with a verdict banner derived from the run record and the run’s visible open gates, with a collapsed guide to reading the page: it names a cause only for an error the dashboard classifies, otherwise says none is stated, and it cannot say who a gate waits on. Start work offers a chooser between modes and a sample-task button that only fills fields and never launches. Standing warnings on the platform settings, workflow defaults and autonomy policy pages, and the models page’s mid-run notice, are fixed text shown at page load as notes rather than live announcements; they do not read the settings they describe.",
       "id": "inAppGuidance",
       "refs": [
         "helpTip",
@@ -2861,7 +2861,8 @@
         "webProxy",
         "dismissedStore",
         "tourLauncher",
-        "docSearchWarmup"
+        "docSearchWarmup",
+        "standingCallout"
       ],
       "status": "Implemented",
       "title": "In-app guided help"
@@ -3445,7 +3446,7 @@
     {
       "body": "Glossary definitions, node help and inline help are static prose; tests check that their doc links resolve and that examples parse, not that the sentences are true.",
       "category": "Surfaces",
-      "detail": "The glossary says its definitions are written to agree with the concepts doc, and the link table says a test checks each entry against the docs files and headings. Neither derives a definition from the code, so a behaviour change can leave a tip stale while every link still resolves. Node help, the tour steps and the run verdict sentences are hand-written constants too; tests parse each node example with the real schema, assert a few of the node gotchas and check that every tour anchor exists in the sidebar, but most sentences are not checked against behaviour. The reader and its search show the docs shipped with the web app, so a running deployment can show docs older than its gateway, and both cover only the top-level docs, so a link to or a search for anything else would not resolve. Tips, the checklist, the tour, node help and the verdict are shown in the dashboard only; the CLI and API have no equivalent.",
+      "detail": "The glossary says its definitions are written to agree with the concepts doc, and the link table says a test checks each entry against the docs files and headings. Neither derives a definition from the code, so a behaviour change can leave a tip stale while every link still resolves. Node help, the tour steps and the run verdict sentences are hand-written constants too; tests parse each node example with the real schema, assert a few of the node gotchas and check that every tour anchor exists in the sidebar, but most sentences are not checked against behaviour. The reader and its search show the docs shipped with the web app, so a running deployment can show docs older than its gateway, and both cover only the top-level docs, so a link to or a search for anything else would not resolve. The standing warnings on the governance pages are likewise fixed text that nothing keeps in step with the behaviour it describes. Tips, the checklist, the tour, node help and the verdict are shown in the dashboard only; the CLI and API have no equivalent.",
       "id": "guidanceStaticCopy",
       "refs": [
         "glossaryTable",
@@ -3454,7 +3455,8 @@
         "docsStatic",
         "nodeHelpTable",
         "tourSteps",
-        "runVerdict"
+        "runVerdict",
+        "standingCallout"
       ],
       "status": "Confirmed boundary",
       "title": "Help text is hand-written and only its links and examples are checked"
@@ -7928,9 +7930,17 @@
       "anchor": "export function register(): void {",
       "before": 0,
       "id": "docSearchWarmup",
-      "lines": 14,
+      "lines": 24,
       "path": "packages/web/src/instrumentation.ts",
       "title": "The docs search index warms up in the background at start-up"
+    },
+    {
+      "anchor": "title=\"Auto means no policy approval\"",
+      "before": 8,
+      "id": "standingCallout",
+      "lines": 16,
+      "path": "packages/web/src/app/govern/policies/page.tsx",
+      "title": "A governance page shows a fixed warning as a note, not a live announcement"
     },
     {
       "anchor": "export function countContainerNodes(",
