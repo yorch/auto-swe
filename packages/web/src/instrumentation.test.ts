@@ -24,6 +24,26 @@ describe('register', () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
+  it('logs once when the index is ready', async () => {
+    vi.stubEnv('NEXT_RUNTIME', 'nodejs');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    load.mockResolvedValue({ docs: [{}, {}], sections: [{}, {}, {}] });
+    register();
+    await flush();
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info.mock.calls[0]?.[0]).toMatch(/index ready: 2 docs, 3 sections, \d+ ms/);
+  });
+
+  it('does not log readiness when the build fails', async () => {
+    vi.stubEnv('NEXT_RUNTIME', 'nodejs');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    load.mockRejectedValue(new Error('no docs'));
+    register();
+    await flush();
+    expect(info).not.toHaveBeenCalled();
+  });
+
   it('does nothing on the edge runtime', async () => {
     vi.stubEnv('NEXT_RUNTIME', 'edge');
     register();

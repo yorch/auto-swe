@@ -10,8 +10,15 @@ export function register(): void {
   if (process.env.NEXT_RUNTIME !== 'nodejs') {
     return;
   }
+  const started = performance.now();
   void import('@/lib/docs')
     .then(({ loadDocSearchIndex }) => loadDocSearchIndex())
+    .then((index) => {
+      // The only sign a deployment gives that the index is ready before the first search.
+      console.info(
+        `[instrumentation] docs search index ready: ${index.docs.length} docs, ${index.sections.length} sections, ${Math.round(performance.now() - started)} ms`
+      );
+    })
     .catch((error: unknown) => {
       console.error('[instrumentation] docs search warm-up failed', error);
     });
