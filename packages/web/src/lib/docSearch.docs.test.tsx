@@ -1,7 +1,6 @@
-// @vitest-environment jsdom
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { render } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Markdown } from '@/components/docs/Markdown';
 import { buildSearchIndex, type SearchIndex, searchDocs } from './docSearch';
@@ -19,8 +18,9 @@ const docs = readdirSync(DOCS_DIR)
   });
 
 // Indexing and rendering every served doc is the expensive part, so it happens once, in
-// `beforeAll`, and the tests below only read what it produced. Under coverage in CI it takes a
-// few seconds, which the 5 s default would not survive.
+// `beforeAll`, and the tests below only read what it produced. It is a few seconds of work on a
+// laptop and several times that on a loaded CI runner under coverage, so the hook's budget is
+// far larger than the work, not close to it.
 describe('the real docs index', () => {
   let index: SearchIndex;
   const renderedIds = new Map<string, Set<string>>();
@@ -36,16 +36,16 @@ describe('the real docs index', () => {
     }
     const servedSlugs = new Set(docs.map((d) => d.slug));
     for (const doc of docs) {
-      const { container, unmount } = render(
+      // A server render reads the same heading ids as a DOM render without building a DOM.
+      const html = renderToStaticMarkup(
         <Markdown servedSlugs={servedSlugs}>{doc.content}</Markdown>
       );
       renderedIds.set(
         doc.slug,
-        new Set([...container.querySelectorAll('h2[id], h3[id]')].map((h) => h.id))
+        new Set([...html.matchAll(/<h[23]\b[^>]*?\bid="([^"]*)"/g)].map((m) => m[1] as string))
       );
-      unmount();
     }
-  }, 30_000);
+  }, 120_000);
 
   it('indexes every served doc and nothing else', () => {
     expect(index.docs.map((d) => d.slug).sort()).toEqual(docs.map((d) => d.slug).sort());

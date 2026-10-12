@@ -297,6 +297,12 @@ function EditorInner({
     }
     issuesSummaryRef.current?.focus();
   }, []);
+  const [revealIssues, setRevealIssues] = useState(0);
+  useEffect(() => {
+    if (revealIssues > 0) {
+      openIssuesPanel();
+    }
+  }, [revealIssues, openIssuesPanel]);
   const runCheck = useCallback(() => {
     if (checkInFlight.current === spec) {
       return;
@@ -343,7 +349,9 @@ function EditorInner({
         ) {
           const active = document.activeElement;
           if (!active || active === document.body || active.hasAttribute('data-check-workflow')) {
-            setTimeout(openIssuesPanel, 0);
+            // The panel is not in the DOM until this answer renders, so ask for it to open after
+            // that commit (a timer would race React's render).
+            setRevealIssues((n) => n + 1);
           }
         }
       });
