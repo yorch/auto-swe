@@ -24,9 +24,16 @@ const docs = readdirSync(DOCS_DIR)
 describe('the real docs index', () => {
   let index: SearchIndex;
   const renderedIds = new Map<string, Set<string>>();
+  const tocIds = new Map<string, string[]>();
 
   beforeAll(() => {
     index = buildSearchIndex(docs);
+    for (const doc of docs) {
+      tocIds.set(
+        doc.slug,
+        extractToc(doc.content).map((t) => t.id)
+      );
+    }
     const servedSlugs = new Set(docs.map((d) => d.slug));
     for (const doc of docs) {
       const { container, unmount } = render(
@@ -47,11 +54,10 @@ describe('the real docs index', () => {
 
   it('gives each doc the anchors extractToc lists, in order', () => {
     index.docs.forEach((doc, i) => {
-      const source = docs.find((d) => d.slug === doc.slug);
       const anchors = index.sections
         .filter((s) => s.doc === i && s.anchor !== null)
         .map((s) => s.anchor);
-      expect(anchors, doc.slug).toEqual(extractToc(source?.content ?? '').map((t) => t.id));
+      expect(anchors, doc.slug).toEqual(tocIds.get(doc.slug));
     });
   });
 
