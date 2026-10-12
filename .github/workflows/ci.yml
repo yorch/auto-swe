@@ -276,6 +276,14 @@ jobs:
           WORK_VIEWS_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/workViews.pg.test.ts
 
+      # The human-step list's `answeredByMe` filter: an OR over the step's own
+      # resolver and its approval rows, ANDed with visibility, status and run
+      # filters, which a mocked Prisma would not evaluate.
+      - name: Human-step list (database-backed tests)
+        env:
+          HUMAN_STEPS_PG_TEST: '1'
+        run: yarn test packages/gateway/src/routes/humanSteps.pg.test.ts
+
       # The read tools against the real route plugins and the same tables: what a
       # tool returns for a team member, an outsider, an ADMIN and a deactivated
       # user is what REST returns for them. Its own step, for the same reason: it
