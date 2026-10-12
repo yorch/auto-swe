@@ -1148,8 +1148,8 @@
     "packages/web/src/components/workflow/specToFlow.test.ts": "d5ec9d44060f16b0a54637cfe95a7d6d4e8bf3495d90dc7452b7efb8e423f01d",
     "packages/web/src/components/workflow/specToFlow.ts": "4c1965c620c0f96e885d2576b9817a927867ac90751ed5c71ca909390ba0362c",
     "packages/web/src/components/workflow/starterTemplates.ts": "526d29bcbd1bbf0902960313b36702a9b6ec127680d7a272d75ce05bfcafcef6",
-    "packages/web/src/components/workflow/TemplateEditor.check.test.tsx": "cd3e829f637ecbdfb72e05bfbf2d3d16a9f74b36b41ddc34d4ace998465a2d75",
-    "packages/web/src/components/workflow/TemplateEditor.tsx": "e6d89cd97b1a8983665c83422ca76308eda7463fea6c3ef5c059d0bee2dd7215",
+    "packages/web/src/components/workflow/TemplateEditor.check.test.tsx": "60540c38a3e47e1402495492ee6b12d8fe4f5fab1f14c4dfc9c23794c06385b8",
+    "packages/web/src/components/workflow/TemplateEditor.tsx": "7fe886a73d4639b5b97f323c0b3bd3df857cc1110b9443127badbb77e0fc7f99",
     "packages/web/src/components/workflow/templateNav.tsx": "595550bb2774978d4e0294aa5ec08e7a9903fbebf440e7d975dd347cd575850d",
     "packages/web/src/components/workflow/tolerantPresentation.test.ts": "2b14c5ccef44c0876bbf9ffc44a770e364b74e975845fbc217977aa43caccd4a",
     "packages/web/src/components/workflow/unknownType.test.tsx": "07bc2db34906051d7f2b2e1b36d3bd4315e25008ed562caca4cb87c461b23cb1",
@@ -3634,7 +3634,7 @@
       "AutomationFire"
     ]
   },
-  "reviewedCommit": "d93371c64383b3aa459fc3db400478b5174f7eea",
+  "reviewedCommit": "43cbdc83b97eaf6d658d601dc532eea8b8d83847",
   "sourceHashes": {
     "docker-compose.app.yml": "7c84a4f978f697ed6d3eb5dd2d8ae9a578e694621b87a51235eee2eb26909daa",
     "packages/cli/src/commands/evals.ts": "8174a8870f6784e5760c020ef7de01cbfd062bf27e8723ac5f0fbcc04af43e9a",
@@ -3791,7 +3791,7 @@
     "packages/web/src/components/ui/HelpTip.tsx": "cf5735f6d1e8c8a3a74b72ed0dafed8d5f3db2548005168872953cb59173995d",
     "packages/web/src/components/workflow/containerNodes.ts": "115a614bb38bdb38f1f10dfd82363bbe25fb6402879b734a0aca12fcf96d0acc",
     "packages/web/src/components/workflow/NodePalette.tsx": "1c7846e0dc24dfd5e724424269a9168917f222b540a334b311485455d366bf11",
-    "packages/web/src/components/workflow/TemplateEditor.tsx": "e6d89cd97b1a8983665c83422ca76308eda7463fea6c3ef5c059d0bee2dd7215",
+    "packages/web/src/components/workflow/TemplateEditor.tsx": "7fe886a73d4639b5b97f323c0b3bd3df857cc1110b9443127badbb77e0fc7f99",
     "packages/web/src/hooks/useModelConfig.ts": "de4b086b85ef37a1d69f3d9460f7b297e4c1ba488d25e2d6bd822308744c526f",
     "packages/web/src/hooks/useRuns.ts": "78befb2fdfaee58e9807a235639a607879db04d8d87be8787d4d5f9796f9006d",
     "packages/web/src/instrumentation.ts": "6767b4146c50b7cc611e5d51dfa2e778b43031cc2c55ee3347577d29b984b923",
