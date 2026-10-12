@@ -193,9 +193,9 @@ describe('Check workflow', () => {
     validate.mockResolvedValue({ issues: [MISSING_AGENT], ok: true });
     const { container } = renderEditor(WITH_AGENT);
     await check();
+    // The panel does not exist until the server answer renders, so look it up when asserting.
+    await waitFor(() => expect(container.querySelector('details')?.open).toBe(true));
     const details = container.querySelector('details') as HTMLDetailsElement;
-    // The panel opens once the server answer lands, which a fixed delay raced on a loaded runner.
-    await waitFor(() => expect(details.open).toBe(true));
     expect(document.activeElement).toBe(details.querySelector('summary'));
   });
 
