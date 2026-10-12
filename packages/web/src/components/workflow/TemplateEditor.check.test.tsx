@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ValidateWorkflowResult } from '@/hooks/useValidateWorkflow';
 import { ApiError } from '@/lib/api';
@@ -193,11 +193,9 @@ describe('Check workflow', () => {
     validate.mockResolvedValue({ issues: [MISSING_AGENT], ok: true });
     const { container } = renderEditor(WITH_AGENT);
     await check();
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 5));
-    });
     const details = container.querySelector('details') as HTMLDetailsElement;
-    expect(details.open).toBe(true);
+    // The panel opens once the server answer lands, which a fixed delay raced on a loaded runner.
+    await waitFor(() => expect(details.open).toBe(true));
     expect(document.activeElement).toBe(details.querySelector('summary'));
   });
 
