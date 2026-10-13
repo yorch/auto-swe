@@ -15,7 +15,7 @@ import type {
   RepoWorkRequest,
   Subtask,
 } from '@auto-swe/shared/types/workflow';
-import { ApplicationFailure, heartbeat } from '@temporalio/activity';
+import { heartbeat } from '@temporalio/activity';
 import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import {
@@ -43,6 +43,7 @@ import { getModelSpec, resolveSystemPrompt } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import {
@@ -383,37 +384,8 @@ async function scanResolvedMerge(
     return;
   }
 
-  try {
-    const findings = await scanDiffForCodeIssues(diff);
-    if (findings.length > 0) {
-      tracer.addActivityEvent({
-        name: 'code_security.scan',
-        outputJson: { count: findings.length, findings },
-      });
-    }
-  } catch (err) {
-    tracer.addActivityEvent({
-      error: getErrorMessage(err),
-      name: 'code_security.scan',
-      outputJson: { degraded: true },
-    });
-  }
-
   heartbeat('resolveMergeConflict: running security scan');
-  const securityResult = await scanDiffForSecurityIssues(diff);
-  if (!securityResult.passed) {
-    const findingsSummary = securityResult.findings
-      .map(
-        (f) =>
-          `[${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''} — ${f.category}: ${f.description}`
-      )
-      .join('\n');
-    throw ApplicationFailure.nonRetryable(
-      `Security scan failed with critical findings:\n${findingsSummary}`,
-      'SECURITY_GATE_FAILURE',
-      { findings: securityResult.findings }
-    );
-  }
+  await runPostDiffSecurityGate(diff, tracer, { scanDiffForCodeIssues, scanDiffForSecurityIssues });
 }
 
 /**

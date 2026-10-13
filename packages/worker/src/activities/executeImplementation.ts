@@ -7,12 +7,11 @@ import {
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type {
   CodeResult,
-  CodeSecurityFinding,
   RepoWorkRequest,
   Subtask,
   TestRunResult,
 } from '@auto-swe/shared/types/workflow';
-import { ApplicationFailure, heartbeat } from '@temporalio/activity';
+import { heartbeat } from '@temporalio/activity';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import {
   buildImplementerTurnRunner,
@@ -39,6 +38,7 @@ import {
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
@@ -394,42 +394,15 @@ export async function executeImplementation(
       outputJson: { branch, commitMessage: commitSummary, headSha },
     });
 
-    // Static code security scan — advisory findings passed to the review network.
-    // Not blocking here; the security reviewer agent decides severity — and an
-    // advisory scanner that cannot run must degrade, never abort a pushed run.
-    let codeSecurityFindings: CodeSecurityFinding[] = [];
-    try {
-      codeSecurityFindings = await scanDiffForCodeIssues(diff);
-    } catch (err) {
-      tracer.addActivityEvent({
-        error: err instanceof Error ? err.message : String(err),
-        name: 'code_security.scan',
-        outputJson: { degraded: true },
-      });
-    }
-    if (codeSecurityFindings.length > 0) {
-      tracer.addActivityEvent({
-        name: 'code_security.scan',
-        outputJson: { count: codeSecurityFindings.length, findings: codeSecurityFindings },
-      });
-    }
-
-    // Security scan — gate before returning code result
+    // Static code security scan (advisory findings passed to the review network,
+    // degrading if the scanner cannot run), then the security gate before
+    // returning the code result. A gate that cannot complete fails non-retryable:
+    // a retry would re-run the whole paid session after the push.
     heartbeat('running security scan');
-    const securityResult = await scanDiffForSecurityIssues(diff);
-    if (!securityResult.passed) {
-      const findingsSummary = securityResult.findings
-        .map(
-          (f) =>
-            `[${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''} — ${f.category}: ${f.description}`
-        )
-        .join('\n');
-      throw ApplicationFailure.nonRetryable(
-        `Security scan failed with critical findings:\n${findingsSummary}`,
-        'SECURITY_GATE_FAILURE',
-        { findings: securityResult.findings }
-      );
-    }
+    const codeSecurityFindings = await runPostDiffSecurityGate(diff, tracer, {
+      scanDiffForCodeIssues,
+      scanDiffForSecurityIssues,
+    });
 
     return {
       baseBranch,

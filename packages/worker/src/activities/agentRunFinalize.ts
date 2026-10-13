@@ -17,6 +17,7 @@ import {
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { execShellAsync, spawnToFileCapped, throwIfActivityCancelled } from '../lib/execUtils.js';
+import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
 import { parseDiffToFileChanges } from './utils.js';
 import { shellQuote, type Workspace } from './workspace.js';
@@ -348,52 +349,9 @@ export async function gateTrustedCommit(
     );
   }
 
-  // Advisory: a scanner that cannot run costs findings, never the run.
-  let codeSecurityFindings: CodeSecurityFinding[] = [];
-  try {
-    codeSecurityFindings = await deps.scanDiffForCodeIssues(diff);
-  } catch (err) {
-    tracer.addActivityEvent({
-      error: err instanceof Error ? err.message : String(err),
-      name: 'code_security.scan',
-      outputJson: { degraded: true },
-    });
-  }
-  if (codeSecurityFindings.length > 0) {
-    tracer.addActivityEvent({
-      name: 'code_security.scan',
-      outputJson: { count: codeSecurityFindings.length, findings: codeSecurityFindings },
-    });
-  }
-
-  let securityResult: Awaited<ReturnType<typeof scanDiffForSecurityIssues>>;
-  try {
-    securityResult = await deps.scanDiffForSecurityIssues(diff);
-  } catch (err) {
-    // A gate that errors is not a gate that passed. Typed so it is never
-    // retried into a second spend, and so nothing is pushed on the way out.
-    // A budget stop keeps its own type: it is the more specific truth.
-    if (err instanceof ApplicationFailure && err.type === 'BUDGET_EXCEEDED') {
-      throw err;
-    }
-    throw ApplicationFailure.nonRetryable(
-      `Security gate could not complete: ${err instanceof Error ? err.message : String(err)}`,
-      'SECURITY_GATE_UNAVAILABLE'
-    );
-  }
-  if (!securityResult.passed) {
-    const findingsSummary = securityResult.findings
-      .map(
-        (f) =>
-          `[${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''} — ${f.category}: ${f.description}`
-      )
-      .join('\n');
-    throw ApplicationFailure.nonRetryable(
-      `Security scan failed with critical findings:\n${findingsSummary}`,
-      'SECURITY_GATE_FAILURE',
-      { findings: securityResult.findings }
-    );
-  }
+  // Advisory code scan, then the LLM gate; see runPostDiffSecurityGate for the
+  // failure types. Nothing is pushed unless this returns.
+  const codeSecurityFindings = await runPostDiffSecurityGate(diff, tracer, deps);
 
   return mintGated({
     baseSha,

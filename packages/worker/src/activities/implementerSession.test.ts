@@ -365,6 +365,15 @@ describe('runImplementerFixSession', () => {
     expect(destroyMock).toHaveBeenCalled();
   });
 
+  it('fails non-retryable when the security gate itself errors after the push', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    scanDiffForSecurityIssuesMock.mockRejectedValueOnce(new Error('provider 500'));
+    await expect(runImplementerFixSession(input())).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'SECURITY_GATE_UNAVAILABLE',
+    });
+  });
+
   it('persists the trace and destroys the workspace when the agent throws', async () => {
     findRepo.mockResolvedValue(REPO as never);
     generateMock.mockRejectedValueOnce(new Error('LLM exploded'));

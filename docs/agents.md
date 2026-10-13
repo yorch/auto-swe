@@ -60,6 +60,10 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 > `scanDiffForSecurityIssues`, which `executeImplementation` and all three fix paths call on the
 > committed diff, and which throws a non-retryable `SECURITY_GATE_FAILURE` when any finding is
 > CRITICAL (the processor forces `passed: false` in that case regardless of what the model returned).
+> A gate call that errors (provider failure, unreadable config) fails the step with a non-retryable
+> `SECURITY_GATE_UNAVAILABLE` instead of retrying the whole paid session; a budget stop keeps its
+> `BUDGET_EXCEEDED` type. Every caller runs the same `runPostDiffSecurityGate`
+> (`worker/src/lib/securityGate.ts`).
 > It complements the review network rather than being replaced by it: the network gives three
 > personas an opinion and routes on their verdicts, this one fails the activity outright.
 
