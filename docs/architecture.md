@@ -1221,8 +1221,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   registered. The generic trigger endpoints propagate the validated `payload` and `connectionId`
   through `RunInput` and the `RepoWorkRequest` that starts `RunnableWorkflow`, and the interpreter
   dispatches `resolveWorkspace`, `readSource`, `writeOutcome`, and `runTool` as built-in steps.
-  `writeOutcome` keys its idempotency ledger on the Temporal workflow execution ID so retries do
-  not duplicate external writes. Notion, Zendesk, Slack, and issue-tracker outcomes are concrete;
+  `writeOutcome` keys its idempotency ledger on the run, the node's recording id (its visit number
+  on a loop's later passes) and the connection, so a retry does not duplicate an external write
+  while two write nodes, two fan-out branches, or two passes of a loop each write. A write node
+  that names no explicit payload writes its own inputs, less `connectionId`. Notion, Zendesk, Slack, and issue-tracker outcomes are concrete;
   `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
   activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
 - **The run page polls; nothing is pushed.** A running run's page learns of a new trace, step, or

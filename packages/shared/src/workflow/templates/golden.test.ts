@@ -644,6 +644,17 @@ const INTENDED_CHANGES: Record<
       'the result is reported with the fix; a fix pushed onto a pull request has its CI ' +
       'watched, with one follow-up attempt and a comment when it still fails',
   },
+  // `writes: 'split'` names the two write nodes autoWrite/manualWrite, so the
+  // result's `nodes.writeOutcome` reference pointed at a node that never runs.
+  ...Object.fromEntries(
+    ['create-issue', 'create-issue-from-brief'].map((name) => [
+      name,
+      {
+        apply: (g: WorkflowSpec) => issueUrlFromSplitWrites(g),
+        reason: 'the issue URL is read from whichever split write node ran',
+      },
+    ])
+  ),
   'four-eyes': {
     apply: (g: WorkflowSpec) =>
       failureLessons(fourEyesAfterCiFirst(removePassThrough(g, 'setCompleted')), ['review', 'ci']),
@@ -654,6 +665,15 @@ const INTENDED_CHANGES: Record<
       'review and CI loops store a lesson when they run out of attempts (the sign-off loop does not)',
   },
 };
+
+/** Point `done`'s issueUrl at the split write nodes instead of the absent `writeOutcome`. */
+function issueUrlFromSplitWrites(spec: WorkflowSpec): WorkflowSpec {
+  const done = structuredClone(spec.nodes.done) as Node & { result: Record<string, unknown> };
+  done.result.issueUrl = {
+    expr: 'nodes.autoWrite.output.reference ?? nodes.manualWrite.output.reference',
+  };
+  return { ...spec, nodes: { ...spec.nodes, done } };
+}
 
 describe('built-in templates match their pre-helper golden specs', () => {
   it('has a golden file for every built-in template, and no stray ones', () => {

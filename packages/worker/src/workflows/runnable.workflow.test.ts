@@ -1044,6 +1044,45 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     }
   }, 120_000);
 
+  it('writes the node inputs as the payload, keyed per node and per loop visit', async () => {
+    calls.writeOutcome.length = 0;
+    currentSpec = makeSpec(
+      {
+        bump: {
+          next: 'check',
+          type: 'set',
+          values: { 'context.n': { expr: '(context.n ?? 0) + 1' } },
+        },
+        check: { expr: 'context.n < 2', onFalse: 'notify', onTrue: 'post', type: 'cond' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        notify: {
+          config: {},
+          inputs: { channelId: { literal: 'C1' }, text: { literal: 'done' } },
+          next: 'done',
+          step: 'writeOutcome',
+          type: 'step',
+        },
+        post: {
+          config: {},
+          inputs: { description: { literal: 'body' }, title: { literal: 'Bug' } },
+          next: 'bump',
+          step: 'writeOutcome',
+          type: 'step',
+        },
+      },
+      'post'
+    );
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-write-keys', GENERIC_REQUEST)
+    )) as { status: string };
+    expect(result.status).toBe('SUCCESS');
+    const writes = calls.writeOutcome as { data: unknown; nodeId: string }[];
+    expect(writes.map((w) => w.nodeId)).toEqual(['post', 'post#2', 'notify']);
+    expect(writes[0]?.data).toEqual({ description: 'body', title: 'Bug' });
+    expect(writes[2]?.data).toEqual({ channelId: 'C1', text: 'done' });
+  }, 120_000);
+
   it('defaults resolveWorkspace/readSource/writeOutcome from the run-level workspace', async () => {
     calls.resolveWorkspace.length = 0;
     calls.readSource.length = 0;

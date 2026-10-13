@@ -42,7 +42,10 @@ export const CREATE_ISSUE_SPEC: WorkflowSpec = {
       done: terminate('SUCCESS', {
         result: {
           description: { from: 'request.payload.description' },
-          issueUrl: { from: 'nodes.writeOutcome.output.reference' },
+          // `writes: 'split'` names the write nodes autoWrite/manualWrite; one ran.
+          issueUrl: {
+            expr: 'nodes.autoWrite.output.reference ?? nodes.manualWrite.output.reference',
+          },
           projectKey: { from: 'request.payload.projectKey' },
           title: { from: 'request.payload.title' },
         },
