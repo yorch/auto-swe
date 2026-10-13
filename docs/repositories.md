@@ -276,6 +276,11 @@ longer fit.
   target repository's own `.auto-swe/Dockerfile` when it has one and writes the result to the
   connection with an admin token, so anyone who can merge to that repository's default branch decides
   what the next rebuilt image runs, and that image receives the run's GitHub credential.
+- **Executor images are not rebuilt on a schedule.** `build-executor.yml` builds one repository per
+  run and only when dispatched with that repository's id (`workflow_dispatch` or a
+  `build-executor` `repository_dispatch`); a run without one fails. Nothing lists the repositories
+  and dispatches a periodic rebuild, so an image picks up base-image fixes only when someone
+  triggers it.
 
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an
