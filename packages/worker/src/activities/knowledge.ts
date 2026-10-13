@@ -1,4 +1,7 @@
 import type { KnowledgeEvidence } from '@auto-swe/shared';
+import { ApplicationFailure } from '@temporalio/activity';
+import { LEARNING_REFUSED_MESSAGE } from '../agents/knowledgeTools.js';
+import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import {
   resolveWorkflowKnowledgeEvidence,
   searchWorkflowKnowledge,
@@ -17,6 +20,15 @@ export async function captureLearning(input: {
   idempotencyKey: string;
   evidence: KnowledgeEvidence[];
 }) {
-  const result = await submitWorkflowLearning(input, resolveWorkflowKnowledgeEvidence);
+  let result: Awaited<ReturnType<typeof submitWorkflowLearning>>;
+  try {
+    result = await submitWorkflowLearning(input, resolveWorkflowKnowledgeEvidence);
+  } catch (err) {
+    // The same text will match again on a retry; only an incomplete scan is worth one.
+    if (err instanceof MemoryContentRefusedError && err.reason === 'matched') {
+      throw ApplicationFailure.nonRetryable(LEARNING_REFUSED_MESSAGE, 'MEMORY_CONTENT_REFUSED');
+    }
+    throw err;
+  }
   return { id: result.id, status: 'UNREVIEWED' as const, version: result.version };
 }

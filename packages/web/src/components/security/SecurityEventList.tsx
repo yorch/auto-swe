@@ -54,6 +54,7 @@ export function SecurityEventBadge({ type }: { type: SecurityEventType }) {
 const MEMORY_WRITE_LABELS: Record<string, string> = {
   [MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED]: 'Channel memory',
   [MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED]: 'Consolidated memory',
+  [MEMORY_SECURITY_EVENTS.KNOWLEDGE_LEARNING_REFUSED]: 'Knowledge learning',
   [MEMORY_SECURITY_EVENTS.LESSON_REFUSED]: 'Lesson',
 };
 

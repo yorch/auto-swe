@@ -14,10 +14,18 @@ import {
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
+import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { activityInfo } from '@temporalio/activity';
 import { currentNodeTag } from './activityNodeTag.js';
 import { assertBudgetAvailable } from './costTracking.js';
 import { currentEmbeddingSpec, generateEmbeddingWithSpec } from './embeddings.js';
+import {
+  assertMemoryContentAllowed,
+  MemoryContentRefusedError,
+  memoryWriteRefusalEvent,
+  withoutFlaggedMemory,
+} from './memoryGuard.js';
+import { recordMemorySecurityEvent } from './memorySecurityEvent.js';
 
 const MAX_RESULTS = 10;
 const MAX_CANDIDATES = 500;
@@ -195,7 +203,12 @@ export async function searchWorkflowKnowledge(
         .map((row) => ({ row, similarity: byId.get(row.id) ?? 0 }))
         .sort((a, b) => b.similarity - a.similarity || a.row.id.localeCompare(b.row.id));
       const results = boundedProjection(
-        result.map(({ row, similarity }) => ({ ...toKnowledgeScalarProjection(row), similarity })),
+        await withoutFlaggedKnowledge(
+          result.map(({ row, similarity }) => ({
+            ...toKnowledgeScalarProjection(row),
+            similarity,
+          }))
+        ),
         limit,
         maxChars
       );
@@ -210,7 +223,32 @@ export async function searchWorkflowKnowledge(
   const matches = fallback.filter((item) =>
     `${item.title}\n${item.content}`.toLocaleLowerCase().includes(text.toLocaleLowerCase())
   );
-  return { mode: 'text', results: boundedProjection(matches, limit, maxChars) };
+  return {
+    mode: 'text',
+    // Scan only what can be returned: up to 100 candidates of 12k characters each
+    // would otherwise all pass through the single regex worker on every search.
+    results: boundedProjection(
+      await withoutFlaggedKnowledge(matches.slice(0, limit)),
+      limit,
+      maxChars
+    ),
+  };
+}
+
+/**
+ * Knowledge is replayed into later runs exactly as memory is, and an
+ * UNREVIEWED learning reaches them before anyone has read it, so recall drops
+ * an item matching an injection pattern before it can reach a prompt (see
+ * `memoryGuard.ts`). Items can be shared across teams, so the drop event
+ * records only a count, never ids.
+ */
+function withoutFlaggedKnowledge<T extends { id: string; title: string; content: string }>(
+  rows: T[]
+): Promise<T[]> {
+  return withoutFlaggedMemory(rows, (row) => `${row.title}\n${row.content}`, {
+    idOf: (row) => row.id,
+    recordIds: false,
+  });
 }
 
 export async function indexKnowledgeCandidates(
@@ -321,6 +359,23 @@ export async function submitWorkflowLearning(
   const { principal, sourceAuthorized } = await resolveKnowledgeExecutionScope();
   if (principal.repoId && !sourceAuthorized) {
     throw new KnowledgeAccessError('Source repository access required to capture learning');
+  }
+  // A learning is model-written text that later runs recall, so it passes the
+  // same fail-closed injection gate as every memory write.
+  const { title, content } = input as { title?: unknown; content?: unknown };
+  try {
+    await assertMemoryContentAllowed([
+      typeof title === 'string' ? title : '',
+      typeof content === 'string' ? content : '',
+    ]);
+  } catch (err) {
+    if (err instanceof MemoryContentRefusedError) {
+      const event = memoryWriteRefusalEvent(err, MEMORY_SECURITY_EVENTS.KNOWLEDGE_LEARNING_REFUSED, {
+        nodeId: tag.specNodeId,
+      });
+      await recordMemorySecurityEvent(event.name, event.outputJson);
+    }
+    throw err;
   }
   return submitKnowledgeLearning(prisma, principal, input, resolveEvidence, {
     recordingId: tag.recordingId,

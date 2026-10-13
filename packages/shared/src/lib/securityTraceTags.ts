@@ -46,6 +46,8 @@ export function isSecurityBlockTraceError(error: string | null | undefined): boo
 export const MEMORY_SECURITY_EVENTS = {
   /** A channel-memory item (a turn summary or a passively ingested fact) was refused. */
   CHANNEL_WRITE_REFUSED: 'memory.channel_write_refused',
+  /** A knowledge learning an agent or a captureLearning step submitted was refused. */
+  KNOWLEDGE_LEARNING_REFUSED: 'memory.knowledge_learning_refused',
   /** A consolidated lesson or channel-memory item was refused; the cluster stays as it was. */
   CONSOLIDATION_REFUSED: 'memory.consolidation_refused',
   /** A lesson `commitToMemory` wrote was refused. */
@@ -59,4 +61,5 @@ export const MEMORY_WRITE_REFUSED_EVENTS: readonly string[] = [
   MEMORY_SECURITY_EVENTS.LESSON_REFUSED,
   MEMORY_SECURITY_EVENTS.CONSOLIDATION_REFUSED,
   MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED,
+  MEMORY_SECURITY_EVENTS.KNOWLEDGE_LEARNING_REFUSED,
 ];

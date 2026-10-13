@@ -2,6 +2,7 @@ import { KnowledgeEvidenceSchema } from '@auto-swe/shared';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { AgentTracer } from '../lib/agentTracer.js';
+import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import {
   resolveWorkflowKnowledgeEvidence,
   searchWorkflowKnowledge,
@@ -10,6 +11,8 @@ import {
 
 export const SEARCH_KNOWLEDGE_TOOL = 'searchKnowledge';
 export const SUBMIT_LEARNING_TOOL = 'submitLearning';
+/** What a refused learning reports, to the model and to a run, without the patterns it matched. */
+export const LEARNING_REFUSED_MESSAGE = 'learning refused by the content policy';
 
 export const SEARCH_KNOWLEDGE_INPUT_SCHEMA = z.object({
   limit: z.number().int().min(1).max(10).optional(),
@@ -67,7 +70,17 @@ export function buildKnowledgeTools(tracer?: AgentTracer) {
     description: 'Submit a local unreviewed learning grounded in evidence from this workflow run.',
     execute: async (input) => {
       const started = Date.now();
-      const result = await submitWorkflowLearning(input, resolveWorkflowKnowledgeEvidence);
+      let result: Awaited<ReturnType<typeof submitWorkflowLearning>>;
+      try {
+        result = await submitWorkflowLearning(input, resolveWorkflowKnowledgeEvidence);
+      } catch (err) {
+        // The refusal names the patterns it matched. The model must not see them,
+        // or it can rephrase until nothing matches; the security event keeps them.
+        if (err instanceof MemoryContentRefusedError) {
+          throw new Error(LEARNING_REFUSED_MESSAGE);
+        }
+        throw err;
+      }
       const output = { id: result.id, status: 'UNREVIEWED', version: result.version };
       tracer?.addToolCall({
         durationMs: Date.now() - started,
