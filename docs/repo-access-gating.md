@@ -363,6 +363,7 @@ steering.
 | Slack run-status buttons (`canSeeRun`) | yes | `read` |
 | Slack channel assistant code task | yes, when the gate is on | `write` |
 | Slack thread steer of a running code task | yes, when the gate is on | `write` |
+| `POST /repositories` (onboarding), and a `PATCH` that moves a repository to another host | yes, whatever the mode ([`repositories.md`](./repositories.md#who-may-onboard)) | `read` |
 
 Platform `ADMIN`s bypass the gate, consistent with every other check in the gateway.
 

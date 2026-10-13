@@ -38,6 +38,17 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveGitHubConfig: async () => ({ ...instance }),
 }));
 
+// The caller's own GitHub access, asked before a non-admin onboards. Defaults
+// to a linked login with read access; the onboarding-access tests override it.
+const github = vi.hoisted(() => ({
+  lookupRepoPermission: vi.fn(),
+  verifiedGithubLoginFor: vi.fn(),
+}));
+vi.mock('@auto-swe/shared/lib/repoPermission', () => ({
+  lookupRepoPermission: (...a: unknown[]) => github.lookupRepoPermission(...a),
+  verifiedGithubLoginFor: (...a: unknown[]) => github.verifiedGithubLoginFor(...a),
+}));
+
 import { repositoryRoutes } from './repositories.js';
 
 interface AuthState {
@@ -130,6 +141,8 @@ describe('repositoryRoutes', () => {
     ctx.mockPrisma.connection.update.mockReset();
     ctx.mockPrisma.team.findUnique.mockReset();
     ctx.mockPrisma.teamMembership.findUnique.mockReset();
+    github.verifiedGithubLoginFor.mockReset().mockResolvedValue('octocat');
+    github.lookupRepoPermission.mockReset().mockResolvedValue({ ok: true, permission: 'read' });
   });
 
   describe('GET /api/v1/repositories', () => {
@@ -573,6 +586,104 @@ describe('repositoryRoutes', () => {
         url: '/api/v1/repositories',
       });
       expect(res.statusCode).toBe(401);
+    });
+
+    describe("the caller's own GitHub access", () => {
+      const onboardAsTeamLead = () => {
+        ctx.authState.role = 'LEAD';
+        ctx.authState.sub = 'lead-1';
+        ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+        ctx.mockPrisma.teamMembership.findUnique.mockResolvedValueOnce({
+          role: 'LEAD',
+          team: { isActive: true },
+        });
+        ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(null);
+        ctx.mockPrisma.connection.create.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+        return ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'POST',
+          payload: validBody,
+          url: '/api/v1/repositories',
+        });
+      };
+
+      it('is not asked of a platform admin', async () => {
+        ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+        ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(null);
+        ctx.mockPrisma.connection.create.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'POST',
+          payload: validBody,
+          url: '/api/v1/repositories',
+        });
+
+        expect(res.statusCode).toBe(201);
+        expect(github.verifiedGithubLoginFor).not.toHaveBeenCalled();
+        expect(github.lookupRepoPermission).not.toHaveBeenCalled();
+      });
+
+      it('lets a team lead who can read the repository on GitHub onboard it', async () => {
+        const res = await onboardAsTeamLead();
+
+        expect(res.statusCode).toBe(201);
+        expect(github.verifiedGithubLoginFor).toHaveBeenCalledWith(ctx.mockPrisma, 'lead-1');
+        expect(github.lookupRepoPermission).toHaveBeenCalledWith(
+          {
+            githubApiUrl: null,
+            githubUrl: null,
+            installation: null,
+            organizationName: 'acme',
+            repoName: 'widgets',
+          },
+          'octocat'
+        );
+      });
+
+      it('refuses a team lead GitHub reports has no access (403)', async () => {
+        github.lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'none' });
+
+        const res = await onboardAsTeamLead();
+
+        expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.payload).error.code).toBe('GITHUB_ACCESS_DENIED');
+        expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+        // Refused before the duplicate check, so the answer says nothing about
+        // whether the repository is already onboarded.
+        expect(ctx.mockPrisma.connection.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('refuses a team lead with no linked GitHub identity (403)', async () => {
+        github.verifiedGithubLoginFor.mockResolvedValue(null);
+
+        const res = await onboardAsTeamLead();
+
+        expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.payload).error.code).toBe('GITHUB_ACCESS_UNVERIFIED');
+        expect(github.lookupRepoPermission).not.toHaveBeenCalled();
+        expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+      });
+
+      it('fails closed when GitHub cannot be asked', async () => {
+        github.lookupRepoPermission.mockResolvedValue({ failure: 'unavailable', ok: false });
+        const outage = await onboardAsTeamLead();
+        expect(outage.statusCode).toBe(503);
+        expect(JSON.parse(outage.payload).error.code).toBe('GITHUB_UNAVAILABLE');
+
+        github.lookupRepoPermission.mockRejectedValue(new Error('database down'));
+        const thrown = await onboardAsTeamLead();
+        expect(thrown.statusCode).toBe(503);
+
+        // The platform credential cannot see the repository: not an outage, and
+        // not a yes either.
+        github.lookupRepoPermission.mockResolvedValue({ failure: 'repo-not-found', ok: false });
+        const unseen = await onboardAsTeamLead();
+        expect(unseen.statusCode).toBe(403);
+        expect(JSON.parse(unseen.payload).error.code).toBe('GITHUB_ACCESS_UNVERIFIED');
+
+        expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+      });
     });
   });
 

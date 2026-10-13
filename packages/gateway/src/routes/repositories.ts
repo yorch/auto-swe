@@ -1,6 +1,12 @@
 import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma, Role } from '@auto-swe/shared';
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
+import {
+  lookupRepoPermission,
+  type PermissionRepo,
+  verifiedGithubLoginFor,
+} from '@auto-swe/shared/lib/repoPermission';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
@@ -200,6 +206,79 @@ function executorImageProblem(
   return {
     code: 'EXECUTOR_IMAGE_NOT_ALLOWED',
     message: 'Only a platform admin may set an executor image',
+    status: 403,
+  };
+}
+
+/**
+ * Why `user` may not put the repository `repo` on the platform (or move it to
+ * another host), or null when they may.
+ *
+ * Onboarding is what makes a repository reachable through the platform's own
+ * credential: once the row exists, its team's members can launch runs that
+ * clone and push with it. A team LEAD naming any `owner/name` that credential
+ * can see would otherwise hand their team a repository nobody on it can open on
+ * GitHub, and with `repoAccess.mode` at its default of `off` no later check
+ * notices. So a non-admin must hold at least read access themselves, asked of
+ * GitHub live, whatever the gate's mode.
+ *
+ * The caller's identity is their recorded GitHub login, verified to still be
+ * theirs: the identity the launch gate asks about. A saved per-repository token
+ * cannot stand in, because it belongs to a connection that does not exist yet.
+ * The question is asked with the platform credential for the repository's host
+ * (`lookupRepoPermission`), which applies the host allowlist and never sends a
+ * credential to a host it is not valid on.
+ *
+ * Fails closed: a question GitHub did not answer is not a yes.
+ */
+async function onboardingAccessProblem(
+  prisma: FastifyInstance['prisma'],
+  user: { sub: string; role: string },
+  repo: PermissionRepo & { organizationName: string; repoName: string }
+): Promise<{ code: string; message: string; status: 403 | 503 } | null> {
+  if (user.role === Role.ADMIN) {
+    return null;
+  }
+  const slug = `${repo.organizationName}/${repo.repoName}`;
+  const unavailable = {
+    code: 'GITHUB_UNAVAILABLE',
+    message: `Your GitHub access to ${slug} could not be confirmed right now. Try again shortly.`,
+    status: 503 as const,
+  };
+  let login: string | null;
+  let lookup: PermissionLookup;
+  try {
+    login = await verifiedGithubLoginFor(prisma, user.sub);
+    if (!login) {
+      return {
+        code: 'GITHUB_ACCESS_UNVERIFIED',
+        message:
+          'No GitHub account is linked to you, so your access to this repository cannot be checked. Sign in with GitHub once to link your account, or ask a platform admin to onboard it.',
+        status: 403,
+      };
+    }
+    lookup = await lookupRepoPermission(repo, login);
+  } catch {
+    return unavailable;
+  }
+  if (lookup.ok) {
+    return permissionMeets(lookup.permission, 'read')
+      ? null
+      : {
+          code: 'GITHUB_ACCESS_DENIED',
+          message: `GitHub reports that ${login} has no access to ${slug}. Only someone who can read a repository on GitHub may onboard it; a platform admin can onboard it instead.`,
+          status: 403,
+        };
+  }
+  if (lookup.failure === 'rate-limited' || lookup.failure === 'unavailable') {
+    return unavailable;
+  }
+  return {
+    code: 'GITHUB_ACCESS_UNVERIFIED',
+    message:
+      lookup.failure === 'host-mismatch'
+        ? `No platform GitHub credential applies to the host of ${slug}, so your access to it cannot be checked. Ask a platform admin to onboard it.`
+        : `GitHub did not confirm your access to ${slug}: the repository does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`,
     status: 403,
   };
 }
@@ -570,6 +649,24 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'INSTALLATION_HOST_MISMATCH', message: installationProblem } });
       }
 
+      // Before the duplicate check, so someone without access to a repository
+      // does not learn whether it is already onboarded.
+      if (type === 'git_repo' && organizationName && repoName) {
+        const accessProblem = await onboardingAccessProblem(fastify.prisma, user, {
+          githubApiUrl: urls.githubApiUrl ?? null,
+          githubUrl: urls.githubUrl ?? null,
+          // Only a platform admin may choose one, and an admin is not asked.
+          installation: null,
+          organizationName,
+          repoName,
+        });
+        if (accessProblem) {
+          return reply
+            .status(accessProblem.status)
+            .send({ error: { code: accessProblem.code, message: accessProblem.message } });
+        }
+      }
+
       // Check for duplicate. Identity is (host, owner, name) — a partial,
       // expression-based unique index scoped to git_repo connections — so query
       // by fields rather than a compound unique. The host is the normalised web
@@ -654,6 +751,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           githubApiUrl: true,
           githubUrl: true,
           id: true,
+          installation: { select: { host: true, installationId: true } },
           installationId: true,
           organizationName: true,
           repoName: true,
@@ -750,6 +848,28 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           return reply
             .status(400)
             .send({ error: { code: 'INSTALLATION_HOST_MISMATCH', message: installationProblem } });
+        }
+      }
+
+      // The same owner/name on another host is another repository, so moving a
+      // repository there is onboarding that one: the caller must be able to
+      // read it. A non-admin cannot change the installation, so the row's own
+      // is the one that will answer.
+      const movesHost =
+        (githubUrl !== undefined && githubUrl !== repo.githubUrl) ||
+        (githubApiUrl !== undefined && githubApiUrl !== repo.githubApiUrl);
+      if (movesHost && repo.type === 'git_repo' && repo.organizationName && repo.repoName) {
+        const accessProblem = await onboardingAccessProblem(fastify.prisma, user, {
+          githubApiUrl: githubApiUrl === undefined ? repo.githubApiUrl : githubApiUrl,
+          githubUrl: githubUrl === undefined ? repo.githubUrl : githubUrl,
+          installation: repo.installation ?? null,
+          organizationName: repo.organizationName,
+          repoName: repo.repoName,
+        });
+        if (accessProblem) {
+          return reply
+            .status(accessProblem.status)
+            .send({ error: { code: accessProblem.code, message: accessProblem.message } });
         }
       }
 

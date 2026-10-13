@@ -28,6 +28,12 @@ vi.mock('@auto-swe/shared/lib/connectionCredential', async (importOriginal) => (
   repositoryHostsAllowed: (...a: unknown[]) => repositoryHostsAllowed(...a),
 }));
 
+const lookupRepoPermission = vi.fn();
+vi.mock('@auto-swe/shared/lib/repoPermission', () => ({
+  lookupRepoPermission: (...a: unknown[]) => lookupRepoPermission(...a),
+  verifiedGithubLoginFor: async () => 'octocat',
+}));
+
 const listGitHubRepos = vi.fn();
 vi.mock('../lib/github.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/github.js')>()),
@@ -268,6 +274,33 @@ describe('repository URL overrides', () => {
       const res = await patch({ description: 'x' });
       expect(res.statusCode).toBe(200);
       expect(ctx.prisma.connection.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("asks a team lead's own GitHub access on the new host, as onboarding does", async () => {
+      ctx.auth.role = 'LEAD';
+      ctx.prisma.teamMembership.findUnique.mockResolvedValue({
+        role: 'LEAD',
+        team: { isActive: true },
+      });
+      const ghe = { githubApiUrl: 'https://ghe.corp/api/v3', githubUrl: 'https://ghe.corp' };
+
+      lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'none' });
+      const denied = await patch(ghe);
+      expect(denied.statusCode).toBe(403);
+      expect(JSON.parse(denied.payload).error.code).toBe('GITHUB_ACCESS_DENIED');
+      expect(lookupRepoPermission).toHaveBeenCalledWith(
+        expect.objectContaining({ ...ghe, organizationName: 'Acme', repoName: 'My_API' }),
+        'octocat'
+      );
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+
+      lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'read' });
+      expect((await patch(ghe)).statusCode).toBe(200);
+
+      // Edits that keep the host ask nothing.
+      lookupRepoPermission.mockClear();
+      expect((await patch({ description: 'x' })).statusCode).toBe(200);
+      expect(lookupRepoPermission).not.toHaveBeenCalled();
     });
   });
 
