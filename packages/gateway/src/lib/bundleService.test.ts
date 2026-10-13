@@ -82,7 +82,7 @@ describe('exportBundle and system templates', () => {
 });
 
 describe('exportBundle', () => {
-  it('reads each template's active spec in two queries, honouring a pinned version', async () => {
+  it("reads each template's active spec in two queries, honouring a pinned version", async () => {
     const versionFindMany = vi.fn().mockResolvedValue([
       { spec: { ...RUNNABLE_SPEC, name: 'pinned-v2' }, templateId: 't-pinned' },
       { spec: { ...RUNNABLE_SPEC, name: 'head-v7' }, templateId: 't-head' },
