@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { Prisma as PrismaTypes } from '@auto-swe/shared';
 import {
   type LatestActivity,
   latestActivity,
@@ -190,8 +191,19 @@ async function passesLaunchAuthorization(
 const isLead = (m: { role: string } | undefined): boolean =>
   !!m && (m.role === 'LEAD' || m.role === 'ADMIN');
 
+/**
+ * What the management rules read from a repository: the caller's membership in
+ * its owning team and in each team it is shared with. Both the launch-path row
+ * (`RepoWithMembership`) and a listed schedule's repository satisfy it.
+ */
+interface RepoManagementView {
+  shares: { team: { memberships: { role: string }[] }; teamId: string }[];
+  team: { memberships: { role: string }[] };
+  teamId: string;
+}
+
 /** Whether the caller leads the repository's owning team. */
-function leadsOwner(repo: RepoWithMembership): boolean {
+function leadsOwner(repo: RepoManagementView): boolean {
   return isLead(repo.team.memberships[0]);
 }
 
@@ -200,7 +212,7 @@ function leadsOwner(repo: RepoWithMembership): boolean {
  * owning team and the teams it is shared with. Platform ADMIN's own membership
  * is irrelevant here; callers check the role first.
  */
-function ledScheduleTeamIds(repo: RepoWithMembership): string[] {
+function ledScheduleTeamIds(repo: RepoManagementView): string[] {
   return [
     ...(leadsOwner(repo) ? [repo.teamId] : []),
     ...repo.shares.filter((s) => isLead(s.team.memberships[0])).map((s) => s.teamId),
@@ -225,7 +237,7 @@ function canCreate(user: { role: string }, repo: RepoWithMembership): boolean {
  */
 function canManage(
   user: { role: string },
-  repo: RepoWithMembership,
+  repo: RepoManagementView,
   schedule: { teamId: string | null }
 ): boolean {
   if (user.role === 'ADMIN' || leadsOwner(repo)) {
@@ -416,26 +428,25 @@ const scheduleListInclude = (userId: string) =>
     },
   }) as const;
 
+/** A schedule as the write routes return it. */
+type ScheduleRow = PrismaTypes.ScheduledWorkRequestGetPayload<{ include: typeof scheduleInclude }>;
+
+/** A schedule as the list returns it, with what `canManage` reads. */
+type ScheduleListRow = PrismaTypes.ScheduledWorkRequestGetPayload<{
+  include: ReturnType<typeof scheduleListInclude>;
+}>;
+
 /**
  * Whether the caller may edit, fire, pause or delete a listed schedule — the
  * same `canManage` rule the write routes apply, so the dashboard can offer only
- * what will not 403. A row without the membership data answers ADMIN-only.
+ * what will not 403.
  */
-// biome-ignore lint/suspicious/noExplicitAny: row shape comes from scheduleListInclude
-function rowCanManage(user: { role: string }, row: any): boolean {
-  if (user.role === 'ADMIN') {
-    return true;
-  }
-  const repo = row.repository;
-  if (!repo?.team || !Array.isArray(repo.shares)) {
-    return false;
-  }
-  return canManage(user, repo as unknown as RepoWithMembership, { teamId: row.teamId ?? null });
+function rowCanManage(user: { role: string }, row: ScheduleListRow): boolean {
+  return canManage(user, row.repository, { teamId: row.teamId });
 }
 
 function serializeSchedule(
-  // biome-ignore lint/suspicious/noExplicitAny: row shape comes from the include above; serialized explicitly
-  row: any,
+  row: ScheduleRow,
   schedule: unknown,
   mayManage: boolean,
   lastDecision: LatestActivity | null = null
@@ -491,7 +502,7 @@ const PATCH_LOST_RACE = Symbol('patch-lost-race');
 
 /** A PATCH attempt that wrote the row. */
 class PatchSaved {
-  constructor(readonly row: { id: string; isActive: boolean }) {}
+  constructor(readonly row: ScheduleRow) {}
 }
 
 /**
@@ -1060,7 +1071,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         // meanwhile is a conflict, never silently overwritten. The transaction is
         // interactive so the count can be checked before the standing request and
         // the audit row are written.
-        let row: Awaited<ReturnType<typeof fastify.prisma.scheduledWorkRequest.findUniqueOrThrow>>;
+        let row: ScheduleRow;
         try {
           row = await fastify.prisma.$transaction(async (tx) => {
             const claimed = await tx.scheduledWorkRequest.updateMany({
