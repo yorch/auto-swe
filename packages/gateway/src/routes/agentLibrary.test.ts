@@ -1386,6 +1386,25 @@ describe('concurrent agent edits', () => {
     await app.close();
   });
 
+  it('refuses a skill listed twice as bad input, before any write', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    const skillId = '33333333-3333-4333-8333-333333333333';
+    const res = await app.inject({
+      body: {
+        skillRefs: [
+          { skillId, sortOrder: 0 },
+          { skillId, sortOrder: 1 },
+        ],
+      },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('answers 409, not 500, when a concurrent edit cut the same version first', async () => {
     const { app, mockPrisma } = await buildAdminApp();
     mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ scope: 'GLOBAL', teamId: null }));

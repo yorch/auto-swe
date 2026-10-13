@@ -51,8 +51,13 @@ const AgentBaseFields = {
     .optional(),
   name: z.string().min(1).max(200),
   runtime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
+  // A skill listed twice would hit the (agent, skill) unique index, which the
+  // write reports as a conflicting edit; refuse it here as the bad input it is.
   skillRefs: z
     .array(z.object({ skillId: z.string().uuid(), sortOrder: z.number().int().min(0) }))
+    .refine((refs) => new Set(refs.map((r) => r.skillId)).size === refs.length, {
+      message: 'a skill may be listed only once',
+    })
     .nullable()
     .optional(),
   systemPrompt: z.string().max(50_000).nullable().optional(),
