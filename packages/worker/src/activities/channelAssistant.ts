@@ -67,10 +67,6 @@ function unpricedModelReply(refusal: Error): string {
  *  the LLM turn runs; later edited in place with the reply via chat.update. */
 export const CHANNEL_PLACEHOLDER_TEXT = ':hourglass_flowing_sand: _Working on it…_';
 
-/** Friendly text the placeholder is edited to (or posted as) when the turn errors. */
-export const CHANNEL_ERROR_REPLY =
-  ":warning: Sorry, I hit an error working on that and couldn't finish. Please try again.";
-
 /**
  * Channel assistant (Phase A): a captured "launch a durable task" intent. When
  * the agent decides a mention is a multi-step *task* (not a quick answer) it
