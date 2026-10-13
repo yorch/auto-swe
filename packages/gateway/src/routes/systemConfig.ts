@@ -105,7 +105,7 @@ const CI_POLL_INTERVAL_MAX_SEC = 60;
 /** Longest CI poll deadline below the poll activity's 6-hour timeout, less a tick. */
 const CI_POLL_DEADLINE_MAX_SEC = 6 * 3600 - 15 * 60;
 
-const WorkflowDefaultsPutBody = z.object({
+export const WorkflowDefaultsPutBody = z.object({
   branchPrefix: z
     .string()
     .min(1)

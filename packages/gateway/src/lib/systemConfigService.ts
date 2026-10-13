@@ -1149,6 +1149,11 @@ export type WorkflowDefaultsInput = {
   budgetLargeOutputTokens?: number;
   budgetStandardInputTokens?: number;
   budgetStandardOutputTokens?: number;
+  // Nullable: null clears the column and hands the knob back to the env fallback.
+  ciPollDeadlineSec?: number | null;
+  ciPollGraceSec?: number | null;
+  ciPollIntervalSec?: number | null;
+  ciWaitMode?: 'signal' | 'poll' | null;
   defaultTeamSlug?: string;
   evalHealthMaxFlakeRate?: number;
   evalHealthMaxStaleRate?: number;
@@ -1173,7 +1178,7 @@ type WorkflowDefaultsKey = keyof NonNullable<
 /// editor. Every key maps 1:1 to a `workflow_defaults` column of the same name;
 /// values are written verbatim when provided (`!== undefined`). Schedule/canary
 /// columns are intentionally excluded — they have their own dedicated updaters.
-const WORKFLOW_DEFAULTS_KEYS = [
+export const WORKFLOW_DEFAULTS_KEYS = [
   'branchPrefix',
   'budgetEpicInputTokens',
   'budgetEpicOutputTokens',
@@ -1181,6 +1186,10 @@ const WORKFLOW_DEFAULTS_KEYS = [
   'budgetLargeOutputTokens',
   'budgetStandardInputTokens',
   'budgetStandardOutputTokens',
+  'ciPollDeadlineSec',
+  'ciPollGraceSec',
+  'ciPollIntervalSec',
+  'ciWaitMode',
   'defaultTeamSlug',
   'evalHealthMaxFlakeRate',
   'evalHealthMaxStaleRate',

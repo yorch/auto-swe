@@ -530,6 +530,23 @@ describe('PUT /config/workflow-defaults', () => {
   });
 });
 
+describe('PUT /config/workflow-defaults persistence coverage', () => {
+  // The route test mocks the service, so a body field the writer does not copy
+  // would validate, return 200, and never reach the row. Every accepted field
+  // must be one the writer persists.
+  it('accepts only fields the service writes to the row', async () => {
+    const { WORKFLOW_DEFAULTS_KEYS } = await vi.importActual<
+      typeof import('../lib/systemConfigService.js')
+    >('../lib/systemConfigService.js');
+    const { WorkflowDefaultsPutBody } = await import('./systemConfig.js');
+    const persisted = new Set<string>(WORKFLOW_DEFAULTS_KEYS);
+    const unpersisted = Object.keys(WorkflowDefaultsPutBody.shape).filter(
+      (key) => !persisted.has(key)
+    );
+    expect(unpersisted).toEqual([]);
+  });
+});
+
 describe('PUT /config/workflow-defaults CI poll bounds', () => {
   it('saves when the form re-sends a stored over-max poll interval and deadline, clamped', async () => {
     // The settings form sends every field on every save. A row stored before

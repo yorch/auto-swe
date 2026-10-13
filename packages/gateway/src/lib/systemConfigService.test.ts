@@ -704,6 +704,32 @@ describe('systemConfigService', () => {
       expect(data.budgetTiers.STANDARD.inputTokens).toBe(3_000_000);
     });
 
+    it('writes the CI-wait strategy, and an explicit null clears a column', async () => {
+      mockPrisma.workflowDefaults.findUnique.mockResolvedValueOnce({ id: 'default' });
+      resolveWorkflowDefaultsMock.mockResolvedValueOnce({} as never);
+
+      const result = await updateWorkflowDefaults(prisma, {
+        ciPollDeadlineSec: null,
+        ciPollGraceSec: 90,
+        ciPollIntervalSec: 30,
+        ciWaitMode: 'poll',
+      });
+
+      const sentData = mockPrisma.workflowDefaults.upsert.mock.calls[0][0].update as Record<
+        string,
+        unknown
+      >;
+      expect(sentData).toEqual({
+        ciPollDeadlineSec: null,
+        ciPollGraceSec: 90,
+        ciPollIntervalSec: 30,
+        ciWaitMode: 'poll',
+      });
+      expect(result.changedFields).toEqual(
+        expect.arrayContaining(['ciPollDeadlineSec', 'ciWaitMode'])
+      );
+    });
+
     it('omits untouched fields from the write and changedFields', async () => {
       mockPrisma.workflowDefaults.findUnique.mockResolvedValueOnce({ id: 'default' });
       resolveWorkflowDefaultsMock.mockResolvedValueOnce({} as never);
