@@ -322,10 +322,19 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const updated = await fastify.prisma.team.update({
-        data: request.body,
-        where: { id: request.params.id },
-      });
+      // A rename onto another team's name trips the unique index on name.
+      let updated: Awaited<ReturnType<typeof fastify.prisma.team.update>>;
+      try {
+        updated = await fastify.prisma.team.update({
+          data: request.body,
+          where: { id: request.params.id },
+        });
+      } catch (err) {
+        if (isUniqueConstraintError(err)) {
+          return sendConflict(reply, 'TEAM_EXISTS', 'Team name already exists');
+        }
+        throw err;
+      }
 
       await writeAuditLog(fastify, {
         action: 'UPDATE',
