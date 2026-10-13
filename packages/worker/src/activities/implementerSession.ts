@@ -8,12 +8,13 @@ import {
 } from '../agents/implementerRuntimeSelect.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
-import { getExecErrorStdout } from '../lib/errors.js';
+import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
@@ -317,7 +318,12 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       testResults: testResult,
     };
   } finally {
-    await turns?.close();
+    // A runtime that fails to close must not leak the container or drop the trace.
+    try {
+      await turns?.close();
+    } catch (err) {
+      logWarn('implementer runtime failed to close', { error: getErrorMessage(err) });
+    }
     const done = persistActivityTrace(tracer, input.agentKey);
     await workspace.destroy();
     await done;

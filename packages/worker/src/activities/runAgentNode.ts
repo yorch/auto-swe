@@ -9,6 +9,7 @@ import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { boundToolKeys } from '../lib/boundToolKeys.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
@@ -21,6 +22,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
+import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -182,8 +184,17 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
     });
     return { object: result.object, text: result.text };
   } finally {
+    // Each release is independent: one that rejects (a harness session, an MCP
+    // client) must not leak the checkout opened before it or drop the trace.
     for (const close of opened.reverse()) {
-      await close();
+      try {
+        await close();
+      } catch (err) {
+        logWarn('runAgentNode: releasing a resource failed', {
+          agentKey: key,
+          error: getErrorMessage(err),
+        });
+      }
     }
     await persistActivityTrace(tracer, key);
   }

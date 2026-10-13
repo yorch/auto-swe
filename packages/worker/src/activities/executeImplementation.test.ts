@@ -78,6 +78,8 @@ vi.mock('../lib/activityContext.js', () => ({
   persistActivityTrace: vi.fn(async () => {}),
 }));
 
+vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
+
 vi.mock('../lib/codeSecurityScanner.js', () => ({ scanDiffForCodeIssues: vi.fn(async () => []) }));
 
 // The loop choice has its own tests (agentRuntime, implementerRuntimeSelect);
@@ -127,7 +129,9 @@ vi.mock('./workspace.js', () => ({
   shellQuote: (s: string) => `'${s}'`,
 }));
 
-import { currentAttempt } from '../lib/activityContext.js';
+import { buildImplementerForActivity } from '../agents/implementer.js';
+import { currentAttempt, persistActivityTrace } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { executeImplementation } from './executeImplementation.js';
 import { createWorkspace } from './workspace.js';
@@ -455,5 +459,23 @@ describe('executeImplementation retry safety', () => {
     await executeImplementation(REQUEST);
     const testCall = workspaceMock.exec.mock.calls.find((c) => c[1]?.timeoutMs === 600_000);
     expect(testCall).toBeDefined();
+  });
+
+  it('destroys the workspace and persists the trace when the runtime fails to close', async () => {
+    vi.mocked(buildImplementerForActivity).mockResolvedValueOnce({
+      agent: { generate: generateMock },
+      closeMcp: vi.fn(async () => {
+        throw new Error('mcp close failed');
+      }),
+      maxSteps: 50,
+      promptSuffix: '',
+      skills: [],
+    } as never);
+    await expect(executeImplementation(REQUEST)).resolves.toMatchObject({ repoId: 'repo-1' });
+    expect(vi.mocked(logWarn)).toHaveBeenCalledWith('implementer runtime failed to close', {
+      error: 'mcp close failed',
+    });
+    expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
+    expect(workspaceMock.destroy).toHaveBeenCalledTimes(1);
   });
 });
