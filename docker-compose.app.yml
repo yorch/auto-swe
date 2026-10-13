@@ -20,7 +20,10 @@
 # switch the images onto the in-source dev secrets.
 #
 # Grafana and the OTLP receivers bind to loopback by default, like the infra
-# ports; see `.env.example` for the override variables.
+# ports; see `.env.example` for the override variables. So do the gateway and
+# web dashboard here, through APP_BIND_ADDRESS rather than a `host-ip:` prefix
+# on GATEWAY_PORT/WEB_PORT, because those two also build the localhost URLs
+# below. docker-compose.prod.yml publishes them on every interface.
 services:
   gateway:
     build:
@@ -29,7 +32,7 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "${GATEWAY_PORT:-8080}:8080"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${GATEWAY_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -143,7 +146,7 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-3000}:3000"
     depends_on:
       gateway:
         condition: service_healthy
