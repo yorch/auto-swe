@@ -3,6 +3,7 @@ import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectio
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -57,7 +58,12 @@ const CreateRepoSchema = z.object({
   config: z.record(z.string(), z.unknown()).optional(),
   defaultBranch: GitRefSchema.default('main'),
   description: z.string().optional(),
-  executorImage: z.string().optional(),
+  // Blank means inherit the deployment default, the same as omitting it.
+  executorImage: z
+    .string()
+    .trim()
+    .transform((v) => v || undefined)
+    .optional(),
   githubApiUrl: z.string().url().optional(),
   githubUrl: z.string().url().optional(),
   /**
@@ -102,7 +108,13 @@ const UpdateRepoSchema = z.object({
   consolidationEnabled: z.boolean().optional(),
   defaultBranch: GitRefSchema.optional(),
   description: z.string().nullable().optional(),
-  executorImage: z.string().nullable().optional(),
+  // Blank clears the override, the same as null.
+  executorImage: z
+    .string()
+    .trim()
+    .transform((v) => v || null)
+    .nullable()
+    .optional(),
   githubApiUrl: z.string().url().nullable().optional(),
   githubUrl: z.string().url().nullable().optional(),
   /** Null repoints the repository at the singleton's installation. */
@@ -152,6 +164,44 @@ function rejectsInstallationChange(
   installationId: string | null | undefined
 ): boolean {
   return installationId !== undefined && user.role !== Role.ADMIN;
+}
+
+/**
+ * Why `user` may not give a repository the executor image `image`, or null
+ * when they may.
+ *
+ * The workspace clones and pushes with the run's GitHub credential (the
+ * platform's, or the launcher's own) inside this image, so whoever picks the
+ * image picks code that sees that credential. Only a platform admin may name
+ * one. The team shell-image allowlist is no substitute: its entries are
+ * approved for sandboxed shell steps, which never hold a credential. Clearing
+ * the override, and re-saving the value the row already holds, are always
+ * allowed, so a lead can still edit the rest of a repository whose image an
+ * admin chose.
+ */
+function executorImageProblem(
+  user: { role: string },
+  image: string | null | undefined,
+  current: string | null
+): { code: string; message: string; status: 400 | 403 } | null {
+  if (image == null || image === current) {
+    return null;
+  }
+  if (!DOCKER_IMAGE_REF_RE.test(image)) {
+    return {
+      code: 'VALIDATION_ERROR',
+      message: 'executorImage must be a Docker image reference',
+      status: 400,
+    };
+  }
+  if (user.role === Role.ADMIN) {
+    return null;
+  }
+  return {
+    code: 'EXECUTOR_IMAGE_NOT_ALLOWED',
+    message: 'Only a platform admin may set an executor image',
+    status: 403,
+  };
 }
 
 /**
@@ -492,6 +542,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const imageProblem = executorImageProblem(user, request.body.executorImage, null);
+      if (imageProblem) {
+        return reply
+          .status(imageProblem.status)
+          .send({ error: { code: imageProblem.code, message: imageProblem.message } });
+      }
+
       const urls = await normaliseRepositoryUrls({
         githubApiUrl: request.body.githubApiUrl,
         githubUrl: request.body.githubUrl,
@@ -593,6 +650,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const repo = await fastify.prisma.connection.findUnique({
         select: {
+          executorImage: true,
           githubApiUrl: true,
           githubUrl: true,
           id: true,
@@ -635,6 +693,17 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             error: { code: 'FORBIDDEN', message: 'Requires LEAD role in the target team' },
           });
         }
+      }
+
+      const imageProblem = executorImageProblem(
+        user,
+        request.body.executorImage,
+        repo.executorImage
+      );
+      if (imageProblem) {
+        return reply
+          .status(imageProblem.status)
+          .send({ error: { code: imageProblem.code, message: imageProblem.message } });
       }
 
       // Only the overrides this request sets; a row already pointing somewhere

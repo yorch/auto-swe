@@ -51,7 +51,8 @@ jobs:
           REPO_ID: ${{ steps.repo.outputs.id }}
         # The gateway has no single-repository GET, so page through the list
         # endpoint (which returns only what the token's user may reach) and pick
-        # the row by id. includeInactive lets a LEAD token rebuild a paused repo.
+        # the row by id. includeInactive lets the token rebuild a paused repo. The token must be
+        # a platform admin's: only an admin may set a connection's executor image.
         run: |
           set -euo pipefail
           LIMIT=500
