@@ -17,7 +17,15 @@ const workflow = {
   costUsdAccrued: 1.5,
   currentStatus: 'FAILED',
   id: ID,
-  pullRequests: [{ ciStatus: null, id: 'pr', prNumber: 9, status: 'OPEN' }],
+  pullRequests: [
+    {
+      ciStatus: null,
+      id: 'pr',
+      prNumber: 9,
+      status: 'OPEN',
+      url: 'https://ghe.corp/acme/api/pull/9',
+    },
+  ],
   repository: { githubUrl: null, id: 'r', organizationName: 'acme', repoName: 'api' },
   temporalWorkflowId: 'eng-acme-api-JIRA-1',
   tokensInputUsed: 0,
@@ -65,7 +73,7 @@ describe('workflow detail address', () => {
     expect(screen.queryByText('Request not found')).toBeNull();
     expect(screen.getByText('auto/JIRA-1')).toBeTruthy();
     expect(screen.getByRole('link', { name: /View pull request/ }).getAttribute('href')).toBe(
-      'https://github.com/acme/api/pull/9'
+      'https://ghe.corp/acme/api/pull/9'
     );
     expect(replace).not.toHaveBeenCalled();
   });

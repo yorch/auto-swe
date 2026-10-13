@@ -4,6 +4,7 @@ import {
   type PullRequestState,
   pullRequestUrl,
 } from '@auto-swe/shared/lib/pullRequest';
+import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
 import type { PullRequestListItem, WorkflowRunStatus } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -70,7 +71,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const where: Prisma.PullRequestWhereInput = { AND: filters };
-      const [rows, total] = await Promise.all([
+      const [rows, total, instanceBaseUrl] = await Promise.all([
         fastify.prisma.pullRequest.findMany({
           include: {
             repository: {
@@ -91,6 +92,8 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           where,
         }),
         fastify.prisma.pullRequest.count({ where }),
+        // Where a repository that names no host of its own links its PRs.
+        resolveGitHubBaseUrl(),
       ]);
 
       const ledgerOf = (row: (typeof rows)[number]) =>
@@ -133,7 +136,9 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           status: row.status as PullRequestState,
           ticketId: ledger?.workRequest?.externalTicketId ?? null,
           title: row.title,
-          url: row.repository ? pullRequestUrl(row.repository, row.prNumber) : null,
+          url: row.repository
+            ? pullRequestUrl(row.repository, row.prNumber, instanceBaseUrl)
+            : null,
           workRequestId: ledger?.workRequest?.id ?? null,
         };
       });

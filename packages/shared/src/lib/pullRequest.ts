@@ -24,22 +24,27 @@ export function clampPullRequestTitle(title: string | null | undefined): string 
 export interface PullRequestRepo {
   organizationName: string | null;
   repoName: string | null;
-  /** The repository's own web base; null means github.com. */
+  /** The repository's own web base; null means the instance's configured host. */
   githubUrl?: string | null;
 }
 
 /**
- * The PR's address on its host. The one derivation: a repository may live on
- * a GHE host, so the instance's base is not assumed. Null when a part is
- * missing or the base is not an http(s) URL, so a malformed legacy value is
- * never linked.
+ * The PR's address on its host. The one derivation: a repository may name its
+ * own host (a GHE base) in `githubUrl`; one that names none lives on the
+ * instance's host, `instanceBaseUrl` (`resolveGitHubBaseUrl()`), which is not
+ * github.com on a GHE-primary deployment. Null when a part is missing or the
+ * base is not an http(s) URL, so a malformed legacy value is never linked.
  */
-export function pullRequestUrl(repo: PullRequestRepo, prNumber: number | null): string | null {
+export function pullRequestUrl(
+  repo: PullRequestRepo,
+  prNumber: number | null,
+  instanceBaseUrl: string
+): string | null {
   if (prNumber == null || !repo.organizationName || !repo.repoName) {
     return null;
   }
   try {
-    const base = new URL(repo.githubUrl ?? 'https://github.com');
+    const base = new URL(repo.githubUrl ?? instanceBaseUrl);
     if (base.protocol !== 'https:' && base.protocol !== 'http:') {
       return null;
     }

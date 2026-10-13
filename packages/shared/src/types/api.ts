@@ -38,7 +38,7 @@ export interface WorkflowRepository {
   id: string;
   organizationName: string;
   repoName: string;
-  /** GitHub host base (e.g. https://github.com or a GHE URL); null = github.com */
+  /** GitHub host base (e.g. https://github.com or a GHE URL); null = the instance's host */
   githubUrl?: string | null;
 }
 
@@ -47,6 +47,8 @@ export interface PullRequestSummary {
   prNumber: number | null;
   status: string;
   ciStatus: string | null;
+  /** The PR on its host, resolved by the gateway; null when it cannot be linked. */
+  url: string | null;
 }
 
 export interface WorkRequestSummary {

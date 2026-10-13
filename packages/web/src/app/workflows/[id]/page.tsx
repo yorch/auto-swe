@@ -1,6 +1,5 @@
 'use client';
 
-import { pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
 import { useRouter } from 'next/navigation';
 import { use, useEffect } from 'react';
 import { ButtonLink } from '@/components/ui/Button';
@@ -69,8 +68,9 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   // The workflow exists but its work request was removed: say what is left rather
   // than reporting a record that exists as missing.
   const repo = workflow.repository;
-  const pr = workflow.pullRequests.find((candidate) => candidate.prNumber !== null);
-  const prUrl = repo && pr ? pullRequestUrl(repo, pr.prNumber) : null;
+  // The gateway resolves the link: a repository with no host of its own lives on the
+  // instance's host, which the browser does not know.
+  const prUrl = workflow.pullRequests.find((candidate) => candidate.url)?.url ?? null;
   return (
     <div className="space-y-6">
       <ButtonLink className="-ml-3" href="/workflows" size="sm" variant="ghost">

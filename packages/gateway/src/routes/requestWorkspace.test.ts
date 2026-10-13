@@ -1,6 +1,13 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { describe, expect, it, vi } from 'vitest';
+
+// The instance's own host: a GHE-primary deployment, so github.com is wrong.
+vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/systemConfig')>()),
+  resolveGitHubBaseUrl: vi.fn(async () => 'https://ghe.corp'),
+}));
+
 import { requestWorkspaceRoutes } from './requestWorkspace.js';
 
 const USER = '11111111-1111-4111-8111-111111111111';
@@ -92,6 +99,43 @@ describe('request workspace', () => {
     expect(projection.include.workRequest.select.activeWorkflows.where).toHaveProperty(
       'repository'
     );
+    await app.close();
+  });
+
+  it("links the review on the instance's host when the repository names none", async () => {
+    const { app, prisma } = await build();
+    prisma.workflowRun.findMany.mockResolvedValueOnce([latest[0]]).mockResolvedValueOnce([
+      {
+        ...latest[0],
+        endedAt: null,
+        humanSteps: [],
+        startedAt: new Date(),
+        template: { name: 'Update deps', workspaceProvider: 'git_repo' },
+        workflowId: 'wf-success',
+        workRequest: {
+          _count: { workflowRuns: 1 },
+          activeWorkflows: [
+            {
+              currentStatus: 'PR_OPEN',
+              pullRequests: [{ prNumber: 4 }],
+              repository: {
+                githubUrl: null,
+                name: null,
+                organizationName: 'acme',
+                repoName: 'api',
+              },
+              temporalWorkflowId: 'wf-success',
+            },
+          ],
+          connection: null,
+          description: 'Update dependencies',
+          externalTicketId: 'DEP-1',
+          id: 'request',
+        },
+      },
+    ]);
+    const response = await app.inject({ headers: auth, url: '/runs/requests' });
+    expect(response.json().data[0].reviewUrl).toBe('https://ghe.corp/acme/api/pull/4');
     await app.close();
   });
 

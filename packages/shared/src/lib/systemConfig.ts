@@ -87,6 +87,18 @@ export interface ResolvedGitHubConfig {
   credentialHost?: string;
 }
 
+/// The instance's GitHub web base — the host a repository whose `githubUrl` is
+/// null lives on. Reads that one column and no secret, so a listing that only
+/// builds links does not decrypt the credentials. Same fallback as
+/// `resolveGitHubConfig().baseUrl`.
+export async function resolveGitHubBaseUrl(_opts?: ResolveOpts): Promise<string> {
+  const row = await (await db()).gitHubConfig.findUnique({
+    select: { baseUrl: true },
+    where: { id: 'default' },
+  });
+  return row?.baseUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+}
+
 export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<ResolvedGitHubConfig> {
   const row = await (await db()).gitHubConfig.findUnique({ where: { id: 'default' } });
 
