@@ -119,8 +119,11 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
 - **Resolution → execution:** `resolveAgentSpec` composes the result into an `AgentSpec`, which the
   generic `runAgent` activity executes.
 - **Governance:** editing a system prompt runs the injection/exfiltration scan and resets
-  `isVerified`. Versions are immutable — editing a base cuts a new version. RBAC is ADMIN for
-  GLOBAL, team OWNER for TEAM.
+  `isVerified`. Versions are immutable — editing a base cuts a new version. An edit names the
+  version it read (`:id`) and must name the newest one of its lineage; an edit of an older
+  version, or one that loses a race to a concurrent edit or restore, is refused with
+  `409 AGENT_CHANGED` and writes nothing, so two editors cannot silently undo each other. RBAC is
+  ADMIN for GLOBAL, team OWNER for TEAM.
 - **API + UI:** `/api/v1/platform/agent-library` (plus `/api/v1/teams/:id/agent-library`) and
   `/studio/agents/library`. Each agent's History view lists its versions, shows what changed
   between a version and the one before it (prompt as a line diff; model, skills, tools,

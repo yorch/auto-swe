@@ -9,6 +9,7 @@ import {
   AgentLineageExistsError,
   type AgentScope,
   type AgentScopeKey,
+  AgentVersionConflictError,
   createAgent,
   deactivateAgentLineage,
   defaultOverrideRuntime,
@@ -70,6 +71,11 @@ function runtimeChangeForbidden(
   current: string | null
 ): boolean {
   return actorRole !== 'ADMIN' && requested !== undefined && requested !== current;
+}
+
+/** A stale edit, or one that lost a race to another: the editor must reload first. */
+function agentChanged(err: AgentVersionConflictError) {
+  return { error: { code: 'AGENT_CHANGED', message: err.message } };
 }
 
 const RUNTIME_ADMIN_ONLY = {
@@ -328,12 +334,16 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
       }
-      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await updateAgent(
-        fastify.prisma,
-        current,
-        request.body,
-        actor.sub
-      );
+      let saved: Awaited<ReturnType<typeof updateAgent>>;
+      try {
+        saved = await updateAgent(fastify.prisma, current, request.body, actor.sub);
+      } catch (err) {
+        if (err instanceof AgentVersionConflictError) {
+          return reply.status(409).send(agentChanged(err));
+        }
+        throw err;
+      }
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = saved;
       // A new model can strand harness agents that inherit it: say so, refuse nothing.
       const runtimeWarnings =
         request.body.modelSpec !== undefined
@@ -600,12 +610,16 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           .status(400)
           .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
       }
-      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await updateAgent(
-        fastify.prisma,
-        current,
-        request.body,
-        actor.sub
-      );
+      let saved: Awaited<ReturnType<typeof updateAgent>>;
+      try {
+        saved = await updateAgent(fastify.prisma, current, request.body, actor.sub);
+      } catch (err) {
+        if (err instanceof AgentVersionConflictError) {
+          return reply.status(409).send(agentChanged(err));
+        }
+        throw err;
+      }
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = saved;
       // A new model can strand harness agents that inherit it: say so, refuse nothing.
       const runtimeWarnings =
         request.body.modelSpec !== undefined

@@ -1349,3 +1349,71 @@ describe('agent runtime', () => {
     await app.close();
   });
 });
+
+describe('concurrent agent edits', () => {
+  const uniqueViolation = () => Object.assign(new Error('unique'), { code: 'P2002' });
+
+  it('refuses an edit of a version that is no longer the newest of its lineage', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ scope: 'GLOBAL', teamId: null }));
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 2 }); // someone cut v2 since
+    const res = await app.inject({
+      body: { description: 'edited' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('AGENT_CHANGED');
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    expect(mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses a team admin edit of a stale version the same way', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow());
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 3 });
+    const res = await app.inject({
+      body: { description: 'edited' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('AGENT_CHANGED');
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('answers 409, not 500, when a concurrent edit cut the same version first', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ scope: 'GLOBAL', teamId: null }));
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockRejectedValue(uniqueViolation());
+    const res = await app.inject({
+      body: { description: 'edited' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('AGENT_CHANGED');
+    await app.close();
+  });
+
+  it('answers 409, not 500, when a concurrent create of the same lineage won', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null); // no lineage when checked
+    mockPrisma.agent.create.mockRejectedValue(uniqueViolation());
+    const res = await app.inject({
+      body: { key: 'myAgent', name: 'My Agent', scope: 'GLOBAL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('CONFLICT');
+    await app.close();
+  });
+});
