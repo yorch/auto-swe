@@ -18,8 +18,12 @@ import {
   buildDockerArgs,
   buildSidecarDockerArgs,
   isAllowedHostMountPath,
+  runEphemeralContainer,
   runSidecarContainer,
+  SANDBOX_COMMAND_MAX_MS,
+  sandboxCommandTimeoutMs,
 } from './ephemeralContainer.js';
+import { spawnCaptureAsync } from './execUtils.js';
 
 const BASE = {
   command: 'echo hello',
@@ -316,5 +320,28 @@ describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
         workspaceMount: 'cstep-abc',
       })
     ).rejects.toThrow(/sidecar not ready within 300ms/);
+  });
+});
+
+describe('sandbox command timeout', () => {
+  it('defaults to ten minutes and keeps a timeout under the cap', () => {
+    expect(sandboxCommandTimeoutMs(undefined)).toBe(600_000);
+    expect(sandboxCommandTimeoutMs(120_000)).toBe(120_000);
+  });
+
+  it("caps a timeout the spec allows but the step's activity budget cannot hold", () => {
+    // The node schema admits an hour; the activity's own budget is also an hour.
+    expect(SANDBOX_COMMAND_MAX_MS).toBeLessThan(3_600_000);
+    expect(sandboxCommandTimeoutMs(3_600_000)).toBe(SANDBOX_COMMAND_MAX_MS);
+  });
+
+  it('runs the container under the capped timeout', async () => {
+    vi.mocked(spawnCaptureAsync).mockClear();
+    await runEphemeralContainer({ ...BASE, timeoutMs: 3_600_000 });
+    expect(vi.mocked(spawnCaptureAsync)).toHaveBeenCalledWith(
+      'docker',
+      expect.any(Array),
+      expect.objectContaining({ timeoutMs: SANDBOX_COMMAND_MAX_MS })
+    );
   });
 });

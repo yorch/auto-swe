@@ -45,7 +45,7 @@ export interface EphemeralRunInput {
   memory?: string;
   /** Docker `--cpus` value, default 1.0. */
   cpus?: number;
-  /** Wall-clock cap, default 600_000 ms. */
+  /** Wall-clock cap, default 600_000 ms; never more than {@link SANDBOX_COMMAND_MAX_MS}. */
   timeoutMs?: number;
   /** Optional override of the container working directory. Defaults to /workspace. */
   workdir?: string;
@@ -267,6 +267,26 @@ async function injectEgressAddHosts(
   }
 }
 
+/** A step's command wall clock when its node sets no `timeoutMs`. */
+const DEFAULT_COMMAND_TIMEOUT_MS = 600_000;
+
+/**
+ * Ceiling on a `shell` / `containerStep` command's wall clock, whatever its node's
+ * `timeoutMs` says. The spec admits up to an hour, but the step's activity has the
+ * same hour as its `startToCloseTimeout` (`shellActivities` / `containerStepActivities`
+ * in `workflows/runnableActivities.ts`), and a shell step also clones before the
+ * command and commits and pushes after it. A command allowed the whole hour lets
+ * the activity time out first, and the sandbox retry policy then starts a second
+ * attempt while the first may still push. The cap leaves ten minutes for the rest.
+ * Clamped at run time rather than in the schema, so stored specs stay valid.
+ */
+export const SANDBOX_COMMAND_MAX_MS = 50 * 60_000;
+
+/** The command wall clock a step actually gets: its `timeoutMs`, capped. */
+export function sandboxCommandTimeoutMs(requested: number | undefined): number {
+  return Math.min(requested ?? DEFAULT_COMMAND_TIMEOUT_MS, SANDBOX_COMMAND_MAX_MS);
+}
+
 /**
  * Run a single user-authored shell command inside a fresh container.
  *
@@ -277,7 +297,7 @@ async function injectEgressAddHosts(
 export async function runEphemeralContainer(input: EphemeralRunInput): Promise<EphemeralRunResult> {
   const containerName = `shellstep-${crypto.randomBytes(8).toString('hex')}`;
   const args = buildDockerArgs(input, containerName);
-  const timeoutMs = input.timeoutMs ?? 600_000;
+  const timeoutMs = sandboxCommandTimeoutMs(input.timeoutMs);
 
   await injectEgressAddHosts(input, args);
 
@@ -368,7 +388,7 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
       body: JSON.stringify(input.body ?? {}),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
-      signal: AbortSignal.timeout(input.timeoutMs ?? 600_000),
+      signal: AbortSignal.timeout(sandboxCommandTimeoutMs(input.timeoutMs)),
     });
     const text = await res.text();
     if (!res.ok) {

@@ -1084,6 +1084,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   behind a variable, a helper call, or a conditional spread is undecidable to it. Those few sites
   are listed by name in the test, verified by hand, and each entry declares how many call sites it
   covers, so the allowlist cannot widen without someone editing it.
+- **A sandboxed command gets at most 50 minutes, whatever its `timeoutMs` says.** The `shell` and
+  `containerStep` schemas accept a `timeoutMs` up to one hour, but the step's activity also has one
+  hour, and a shell step clones before its command and commits and pushes after it. The worker caps
+  the command's wall clock at 50 minutes so the activity cannot time out (and be retried) while the
+  first attempt may still push; a stored spec asking for more is not rejected, it runs under the cap.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub
