@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TemporalUnavailableError } from '../lib/temporalErrors.js';
-import { workflowRunRoutes } from './workflowRuns.js';
+import { MAX_TRACES_PER_READ, workflowRunRoutes } from './workflowRuns.js';
 
 const { recordRunFinalized } = vi.hoisted(() => ({ recordRunFinalized: vi.fn() }));
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
@@ -347,7 +347,8 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.traces).toHaveLength(1);
-    expect(prisma.agentTrace.findMany).toHaveBeenCalled();
+    expect(res.json().data.tracesTruncated).toBe(false);
+    expect(prisma.agentTrace.findMany.mock.calls[0][0].take).toBe(MAX_TRACES_PER_READ + 1);
   });
 
   it('projects which spec node, branch and attempt each trace belongs to', async () => {
@@ -524,8 +525,10 @@ describe('workflowRunRoutes GET /:id/traces (live tail)', () => {
 
     expect(prisma.agentTrace.findMany).toHaveBeenCalledWith({
       orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+      take: MAX_TRACES_PER_READ + 1,
       where: { createdAt: { gte: new Date('2026-09-01T10:00:00.123Z') }, runId },
     });
+    expect(res.json().truncated).toBe(false);
     const [trace] = res.json().data;
     expect(trace.id).toBe('t-new');
     expect(trace.trimmed).toBe(true);
@@ -561,6 +564,23 @@ describe('workflowRunRoutes GET /:id/traces (live tail)', () => {
       url: `/api/v1/workflow-runs/${runId}/traces`,
     });
     expect(prisma.agentTrace.findMany.mock.calls[0][0].where).toEqual({ runId });
+  });
+
+  it('caps one read and says when it cut the page', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    const rows = Array.from({ length: MAX_TRACES_PER_READ + 1 }, (_, i) => traceRow(`t-${i}`, 'x'));
+    prisma.agentTrace.findMany.mockResolvedValue(rows);
+    prisma.agentTrace.count.mockResolvedValue(MAX_TRACES_PER_READ + 10);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/traces`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toHaveLength(MAX_TRACES_PER_READ);
+    expect(res.json().truncated).toBe(true);
+    expect(res.json().total).toBe(MAX_TRACES_PER_READ + 10);
   });
 
   it('404s without reading traces when the run is not visible to the caller', async () => {
