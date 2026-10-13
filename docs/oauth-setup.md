@@ -113,6 +113,21 @@ then asks GitHub whether that user is a member of a listed organization
 - **GitHub Enterprise.** The membership is asked of the same host the user signed in against. A
   credential that belongs to another host is refused, as everywhere else.
 
+### Invited users
+
+An invitation creates the account and emails a magic link. Who invited decides whether the account
+skips the approval queue:
+
+| Invited by | Account |
+|---|---|
+| A platform ADMIN (`POST /users/invite`, or an organization's invite) | active, approved (`approvalSource` `admin`), email marked verified |
+| An organization's `ORG_ADMIN` (`POST /platform/organizations/:orgId/members/invite`) | inactive and unapproved, email unverified — it waits in the queue at `/govern/users` like a sign-up |
+
+Administering an organization is not authority to approve sign-ins, so an org admin's invitee gets
+the organization membership at once but cannot use the platform until a platform admin approves
+them. Following the magic link verifies the address and signs them in to the pending-approval
+screen.
+
 ### Production-only extras
 
 - **Public homepage**: GitHub requires a real homepage URL for apps used in production. Set `Homepage URL` to your real domain.

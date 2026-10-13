@@ -201,11 +201,20 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           .send({ error: { code: 'USER_EXISTS', message: 'User with this email already exists' } });
       }
 
+      // Approving a sign-in is a platform admin's decision (`PATCH /users/:id`),
+      // and an org admin is not one: otherwise anyone who administers an org
+      // could mint active accounts for any address, skipping the approval
+      // queue. Their invitee waits in that queue like any other sign-up, and
+      // the address is verified when the invitee follows the magic link, not
+      // vouched for by the inviter. A platform admin's invite is the approval,
+      // as it is on `POST /users/invite`.
+      const approved = requireUser(request).role === 'ADMIN';
       const user = await fastify.prisma.user.create({
         data: {
+          ...(approved ? { approvalSource: 'admin', approvedAt: new Date() } : {}),
           email,
-          emailVerified: true,
-          isActive: true,
+          emailVerified: approved,
+          isActive: approved,
           role: 'ENGINEER',
         },
         select: { email: true, id: true, isActive: true, role: true },

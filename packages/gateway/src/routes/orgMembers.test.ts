@@ -1,4 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// The invite handler lazy-imports betterAuth.ts to send the magic link; the
+// real module needs DATABASE_URL and BETTER_AUTH_SECRET at import.
+const signInMagicLink = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('../lib/betterAuth.js', () => ({
+  getAuth: () => ({ api: { signInMagicLink } }),
+}));
+
 import { makeAuthedApp } from '../test/authedApp.js';
 import { orgMembersRoutes } from './orgMembers.js';
 
@@ -19,6 +27,12 @@ const MEMBER_ROW = {
 };
 
 const auditCreate = vi.fn().mockResolvedValue({});
+const userCreate = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+  email: data.email,
+  id: TARGET_USER,
+  isActive: data.isActive,
+  role: data.role,
+}));
 
 function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
   let prisma: Record<string, unknown>;
@@ -44,6 +58,7 @@ function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
         }),
       update: vi.fn().mockResolvedValue({ ...MEMBER_ROW, role: 'ORG_MEMBER' }),
     },
+    user: { create: userCreate, findFirst: vi.fn().mockResolvedValue(null) },
   };
   const app = makeAuthedApp({ prisma, role, sub: USER_ID });
   // Register under the real prefix so a plugin that drops it is caught here.
@@ -126,6 +141,56 @@ describe('POST /:orgId/members', () => {
       url: `${PREFIX}/${ORG_ID}/members`,
     });
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('POST /:orgId/members/invite', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+  });
+
+  const invite = async (role: string) => {
+    const app = buildApp(role, 'ORG_ADMIN');
+    await app.ready();
+    return app.inject({
+      body: JSON.stringify({ email: 'New@Example.com' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+  };
+
+  it("leaves an org admin's invitee waiting for a platform admin's approval", async () => {
+    const res = await invite('ENGINEER');
+
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.body).data).toMatchObject({ isActive: false, orgRole: 'ORG_MEMBER' });
+    const { data } = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    // Inactive and unapproved is the approval queue; the address is verified
+    // by the invitee following the link, not vouched for by the inviter.
+    expect(data).toEqual({
+      email: 'new@example.com',
+      emailVerified: false,
+      isActive: false,
+      role: 'ENGINEER',
+    });
+    // The org membership and the magic link still go out.
+    expect(orgLockCalls).toEqual([ORG_ID]);
+    expect(signInMagicLink).toHaveBeenCalledTimes(1);
+  });
+
+  it("approves a platform admin's invitee at once", async () => {
+    const res = await invite('ADMIN');
+
+    expect(res.statusCode).toBe(201);
+    const { data } = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    expect(data).toMatchObject({
+      approvalSource: 'admin',
+      approvedAt: expect.any(Date),
+      emailVerified: true,
+      isActive: true,
+    });
   });
 });
 
