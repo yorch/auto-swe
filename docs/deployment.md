@@ -378,7 +378,7 @@ If you'd rather run prebuilt images than build your own, the repo ships three co
 | File | What it adds |
 | ---- | ------------ |
 | `docker-compose.prod.yml` | `gateway` / `worker` / `web` from registry images (`pull_policy: always`, `restart: unless-stopped`, `env_file: .env`). Overlays the infra file — it reuses `postgres`, `temporal`, and (when the `objectstore` profile is active) `garage` from `docker-compose.infra.yml`. |
-| `docker-compose.traefik.yml` | Fronts gateway + web with Traefik TLS. Strips the published host ports (`ports: !reset []`), attaches both to an external `traefik` network, and adds `websecure` routers with `certResolver=webcert` for `DOMAIN_API` (gateway) and `DOMAIN_APP` (web). Requires a Traefik instance you run separately, with the `traefik` Docker network already created. |
+| `docker-compose.traefik.yml` | Fronts gateway + web with Traefik TLS. Strips the published host ports (`ports: !reset []`), attaches both to an external `traefik` network in addition to the stack's `default` one (which they still need to reach Postgres, Temporal and each other), and adds `websecure` routers with `certResolver=webcert` for `DOMAIN_API` (gateway) and `DOMAIN_APP` (web). Requires a Traefik instance you run separately, with the `traefik` Docker network already created. |
 | `docker-compose.watchtower.yml` | Adds a scoped Watchtower container (`WATCHTOWER_SCOPE`, label-gated, cleanup on) that re-pulls the three app images every `WATCHTOWER_POLL_INTERVAL` seconds (compose default 300; `.env.example` suggests 86400). |
 
 ```bash

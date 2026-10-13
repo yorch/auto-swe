@@ -1,7 +1,10 @@
 services:
   gateway:
     ports: !reset []
+    # `default` is listed explicitly: naming any network replaces the implicit
+    # one, which is how the gateway reaches postgres/temporal and web the gateway.
     networks:
+      - default
       - traefik
     labels:
       - "traefik.enable=true"
@@ -15,7 +18,10 @@ services:
 
   web:
     ports: !reset []
+    # `default` is listed explicitly: naming any network replaces the implicit
+    # one, which is how the gateway reaches postgres/temporal and web the gateway.
     networks:
+      - default
       - traefik
     labels:
       - "traefik.enable=true"
