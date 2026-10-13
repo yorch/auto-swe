@@ -227,6 +227,11 @@ verdicts into trends per template, model, and prompt version.
   kappa thresholds are set at `/govern/workflow-defaults`, but nothing stores a flake rate per run or
   a judge/human agreement figure, so there is nothing to chart for them; the stale rate is the
   quarantined share of cases today, with no history, so it is a bar per dataset and not a trend.
+- **No case is flake-screened.** `EvalCase.flakeScreened` is meant to mark a case whose reference
+  passed k times in a row, and `screenGateConsistency` (`activities/standaloneGateRunner.ts`) can run
+  that check, but nothing calls it and nothing sets the flag. Every case stays `flakeScreened: false`,
+  the suite-health screened count is always zero, and the harness runs a case whether or not it was
+  screened, so a flaky reference can enter the gate.
 - **Trend breakdowns cover judge model, agent and runtime, and templates only for online signals.**
   `GET /api/v1/platform/evals/trends` accepts `by=judgeModel|agentKey|runtime` and `templateId`. A
   runtime breakdown sees only harness rows, the one place a runtime is recorded. A template
