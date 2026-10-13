@@ -32,7 +32,10 @@ function mockPrisma(opts?: { activeWorkflowCreateError?: Error }) {
     runInputDeletes: [] as unknown[],
   };
   const prisma = {
-    $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    $queryRaw: vi.fn(async () => [{ id: 'repo-a' }]),
+    $transaction: vi.fn(async (action: ((tx: unknown) => Promise<unknown>) | Promise<unknown>[]) =>
+      typeof action === 'function' ? action(prisma) : Promise.all(action)
+    ),
     activeWorkflow: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         if (opts?.activeWorkflowCreateError) {
@@ -45,6 +48,11 @@ function mockPrisma(opts?: { activeWorkflowCreateError?: Error }) {
         return {};
       }),
     },
+    connection: {
+      findMany: vi.fn(async () => []),
+      findUnique: vi.fn(async () => null),
+    },
+    organizationMembership: { findUnique: vi.fn(async () => null) },
     runInput: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         state.runInputCreates += 1;
@@ -54,6 +62,11 @@ function mockPrisma(opts?: { activeWorkflowCreateError?: Error }) {
         state.runInputDeletes.push(args);
         return {};
       }),
+    },
+    team: { findUnique: vi.fn(async () => null) },
+    teamMembership: { findUnique: vi.fn(async () => null) },
+    user: {
+      findUnique: vi.fn(async () => ({ id: 'user-1', isActive: true, role: 'ENGINEER' })),
     },
   };
   return { prisma, state };
@@ -68,10 +81,12 @@ describe('launchTrackedWorkflow', () => {
   it('writes the ledger BEFORE starting the workflow', async () => {
     const { prisma } = mockPrisma();
     const order: string[] = [];
-    prisma.$transaction.mockImplementation(async (ops: Promise<unknown>[]) => {
-      order.push('ledger');
-      return Promise.all(ops);
-    });
+    prisma.$transaction.mockImplementation(
+      async (action: Promise<unknown>[] | ((tx: unknown) => Promise<unknown>)) => {
+        order.push('ledger');
+        return typeof action === 'function' ? action(prisma) : Promise.all(action);
+      }
+    );
 
     const res = await launchTrackedWorkflow(prisma as never, ROWS, async () => {
       order.push('start');
@@ -80,6 +95,287 @@ describe('launchTrackedWorkflow', () => {
     expect(res).toEqual({ activeWorkflowId: 'aw-1', ok: true });
     // The whole point of the change: rows exist before the workflow can run.
     expect(order).toEqual(['ledger', 'start']);
+  });
+
+  it('persists the exact authorized repository identity in the launch transaction', async () => {
+    const { prisma } = mockPrisma();
+    prisma.connection.findUnique.mockResolvedValue({
+      id: 'repo-a',
+      isActive: true,
+      shares: [],
+      team: {
+        id: 'team-a',
+        isActive: true,
+        memberships: [],
+        organization: { isActive: true },
+        orgId: 'org-a',
+      },
+      teamId: 'team-a',
+      type: 'git_repo',
+    } as never);
+    await launchTrackedWorkflow(
+      prisma as never,
+      {
+        activeWorkflow: {
+          currentStatus: 'IMPLEMENTING',
+          repoId: 'repo-a',
+          temporalWorkflowId: 'wf-repo',
+        },
+        knowledgeSourceRepo: { orgId: 'org-a', repoId: 'repo-a', teamId: 'team-a' },
+        runInput: { connectionId: 'repo-a', id: 'ri-repo' },
+      },
+      async () => {}
+    );
+    expect(prisma.runInput.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          knowledgeSourceKind: 'REPOSITORY',
+          knowledgeSourceOrgId: 'org-a',
+          knowledgeSourceRepoId: 'repo-a',
+          knowledgeSourceTeamId: 'team-a',
+        }),
+      })
+    );
+  });
+
+  it('keeps a moved repository UNKNOWN instead of snapshotting its new owner', async () => {
+    const { prisma } = mockPrisma();
+    prisma.connection.findUnique.mockResolvedValue({
+      id: 'repo-a',
+      isActive: true,
+      shares: [],
+      team: {
+        id: 'team-b',
+        isActive: true,
+        memberships: [],
+        organization: { isActive: true },
+        orgId: 'org-b',
+      },
+      teamId: 'team-b',
+      type: 'git_repo',
+    } as never);
+    await launchTrackedWorkflow(
+      prisma as never,
+      {
+        activeWorkflow: {
+          currentStatus: 'IMPLEMENTING',
+          repoId: 'repo-a',
+          temporalWorkflowId: 'wf-moved',
+        },
+        knowledgeSourceRepo: { orgId: 'org-a', repoId: 'repo-a', teamId: 'team-a' },
+        runInput: { connectionId: 'repo-a', id: 'ri-moved' },
+      },
+      async () => {}
+    );
+    expect(prisma.runInput.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          knowledgeSourceKind: 'UNKNOWN',
+          knowledgeSourceOrgId: null,
+          knowledgeSourceRepoId: null,
+          knowledgeSourceTeamId: null,
+        }),
+      })
+    );
+  });
+
+  it('does not snapshot repository authority after the launcher loses membership', async () => {
+    const { prisma } = mockPrisma();
+    prisma.connection.findUnique.mockResolvedValue({
+      id: 'repo-a',
+      isActive: true,
+      shares: [],
+      team: {
+        id: 'team-a',
+        isActive: true,
+        memberships: [],
+        organization: { isActive: true },
+        orgId: 'org-a',
+      },
+      teamId: 'team-a',
+      type: 'git_repo',
+    } as never);
+    await launchTrackedWorkflow(
+      prisma as never,
+      {
+        activeWorkflow: {
+          currentStatus: 'IMPLEMENTING',
+          repoId: 'repo-a',
+          temporalWorkflowId: 'wf-membership',
+        },
+        knowledgeSourceRepo: { orgId: 'org-a', repoId: 'repo-a', teamId: 'team-a' },
+        runInput: { connectionId: 'repo-a', id: 'ri-membership' },
+      },
+      async () => {},
+      { sourceAuthorization: { actor: { role: 'ENGINEER', sub: 'user-1' } } }
+    );
+    expect(prisma.connection.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'repo-a' } })
+    );
+    expect(prisma.runInput.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          knowledgeSourceKind: 'UNKNOWN',
+          knowledgeSourceRepoId: null,
+        }),
+      })
+    );
+  });
+
+  it('does not honor a stale platform ADMIN role after the user is demoted', async () => {
+    const { prisma } = mockPrisma();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      isActive: true,
+      role: 'ENGINEER',
+    } as never);
+    prisma.connection.findUnique.mockResolvedValue({
+      id: 'repo-a',
+      isActive: true,
+      shares: [],
+      team: {
+        id: 'team-a',
+        isActive: true,
+        memberships: [],
+        organization: { isActive: true },
+        orgId: 'org-a',
+      },
+      teamId: 'team-a',
+      type: 'git_repo',
+    } as never);
+    await launchTrackedWorkflow(
+      prisma as never,
+      {
+        activeWorkflow: {
+          currentStatus: 'IMPLEMENTING',
+          repoId: 'repo-a',
+          temporalWorkflowId: 'wf-admin-demoted',
+        },
+        knowledgeSourceRepo: { orgId: 'org-a', repoId: 'repo-a', teamId: 'team-a' },
+        runInput: { connectionId: 'repo-a', id: 'ri-admin-demoted' },
+      },
+      async () => {},
+      { sourceAuthorization: { actor: { role: 'ADMIN', sub: 'user-1' } } }
+    );
+    expect(prisma.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'user-1' } })
+    );
+    expect(prisma.runInput.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ knowledgeSourceKind: 'UNKNOWN' }),
+      })
+    );
+  });
+
+  it('does not persist a source for a launcher deactivated after request authentication', async () => {
+    const { prisma } = mockPrisma();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      isActive: false,
+      role: 'ADMIN',
+    } as never);
+    await launchTrackedWorkflow(
+      prisma as never,
+      {
+        activeWorkflow: {
+          currentStatus: 'IMPLEMENTING',
+          repoId: 'repo-a',
+          temporalWorkflowId: 'wf-admin-inactive',
+        },
+        knowledgeSourceRepo: { orgId: 'org-a', repoId: 'repo-a', teamId: 'team-a' },
+        runInput: { connectionId: 'repo-a', id: 'ri-admin-inactive' },
+      },
+      async () => {},
+      { sourceAuthorization: { actor: { role: 'ADMIN', sub: 'user-1' } } }
+    );
+    expect(prisma.runInput.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ knowledgeSourceKind: 'UNKNOWN' }),
+      })
+    );
+  });
+
+  it('persists per-repository epic launch sources from exact authorized tuples', async () => {
+    const { prisma } = mockPrisma();
+    prisma.connection.findUnique.mockResolvedValue({
+      id: 'repo-epic',
+      isActive: true,
+      shares: [],
+      team: {
+        id: 'team-epic',
+        isActive: true,
+        memberships: [],
+        organization: { isActive: true },
+        orgId: 'org-epic',
+      },
+      teamId: 'team-epic',
+      type: 'git_repo',
+    } as never);
+    await launchTrackedWorkflow(
+      prisma as never,
+      {
+        knowledgeSourceRepos: [{ orgId: 'org-epic', repoId: 'repo-epic', teamId: 'team-epic' }],
+        runInput: { id: 'ri-epic', isCrossRepo: true },
+        temporalWorkflowId: 'epic-1',
+      },
+      async () => {},
+      { sourceAuthorization: {} }
+    );
+    expect(prisma.runInput.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          knowledgeRepoSources: [{ orgId: 'org-epic', repoId: 'repo-epic', teamId: 'team-epic' }],
+        }),
+      })
+    );
+  });
+
+  it('requires exact team authority and leaves missing source UNKNOWN', async () => {
+    const { prisma } = mockPrisma();
+    await launchTrackedWorkflow(
+      prisma as never,
+      {
+        runInput: { id: 'ri-team' },
+        temporalWorkflowId: 'wf-team',
+      },
+      async () => {}
+    );
+    expect(prisma.runInput.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          knowledgeSourceKind: 'UNKNOWN',
+          knowledgeSourceTeamId: null,
+        }),
+      })
+    );
+
+    const explicit = mockPrisma();
+    explicit.prisma.$queryRaw.mockResolvedValue([{ id: 'team-explicit' }] as never);
+    explicit.prisma.team.findUnique.mockResolvedValue({
+      id: 'team-explicit',
+      isActive: true,
+      memberships: [],
+      organization: { isActive: true },
+      orgId: 'org-explicit',
+    } as never);
+    await launchTrackedWorkflow(
+      explicit.prisma as never,
+      {
+        knowledgeSourceTeam: { orgId: 'org-explicit', teamId: 'team-explicit' },
+        runInput: { id: 'ri-team' },
+        temporalWorkflowId: 'wf-team',
+      },
+      async () => {}
+    );
+    expect(explicit.prisma.runInput.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          knowledgeSourceKind: 'TEAM',
+          knowledgeSourceOrgId: 'org-explicit',
+          knowledgeSourceTeamId: 'team-explicit',
+        }),
+      })
+    );
   });
 
   it('writes both rows in a single transaction', async () => {
@@ -164,10 +460,12 @@ describe('launchTrackedWorkflow', () => {
     it('still writes the ledger before starting', async () => {
       const { prisma } = mockPrisma();
       const order: string[] = [];
-      prisma.$transaction.mockImplementation(async (ops: Promise<unknown>[]) => {
-        order.push('ledger');
-        return Promise.all(ops);
-      });
+      prisma.$transaction.mockImplementation(
+        async (action: Promise<unknown>[] | ((tx: unknown) => Promise<unknown>)) => {
+          order.push('ledger');
+          return typeof action === 'function' ? action(prisma) : Promise.all(action);
+        }
+      );
 
       await launchTrackedWorkflow(prisma as never, PRD_ROWS, async () => {
         order.push('start');

@@ -1,4 +1,5 @@
-import type { Prisma } from '@auto-swe/shared';
+import type { Prisma, Role } from '@auto-swe/shared';
+import type { AccessActor } from '@auto-swe/shared/lib/accessActor';
 import { sameRepositoryIds } from '@auto-swe/shared/lib/sameRepositoryIds';
 import {
   chooseWorkflowId,
@@ -61,6 +62,12 @@ import { isUniqueConstraintError } from './prismaErrors.js';
 export type WorkflowLedgerRows = {
   /** `RunInput` row, when this launch creates one (skipped when re-running). */
   runInput?: Record<string, unknown>;
+  /** Exact, database-resolved repo-less tenant identity; absent means UNKNOWN. */
+  knowledgeSourceTeam?: { teamId: string; orgId: string };
+  /** Exact database-resolved repository identity authorized by the route. */
+  knowledgeSourceRepo?: LaunchRepositorySource;
+  /** Exact, authorized target identities for a multi-repository launch. */
+  knowledgeSourceRepos?: LaunchRepositorySource[];
 } & (
   | {
       /** `ActiveWorkflow` row. Must carry `temporalWorkflowId`. */
@@ -77,6 +84,18 @@ export type WorkflowLedgerRows = {
       temporalWorkflowId: string;
     }
 );
+
+export interface LaunchRepositorySource {
+  repoId: string;
+  teamId: string;
+  orgId: string;
+}
+
+export interface LaunchSourceAuthorization {
+  actor?: AccessActor;
+  /** Schedule team chosen at the route boundary; recheck its lead claim in the transaction. */
+  requiredTeamId?: string;
+}
 
 export type LaunchWorkflowResult =
   | {
@@ -114,11 +133,253 @@ export type LaunchWorkflowResult =
  */
 export type LaunchGuard = (tx: Prisma.TransactionClient) => Promise<string | null>;
 
+/**
+ * Resolve a repository source only if the exact identity authorized by the route is still current.
+ * The connection row lock serializes this check with repository moves. Provider-backed permission
+ * checks happen before this transaction; this boundary rechecks only database-owned authority.
+ */
+export async function snapshotAuthorizedRepositorySource(
+  tx: Prisma.TransactionClient,
+  expected: LaunchRepositorySource,
+  authorization: LaunchSourceAuthorization = {}
+): Promise<LaunchRepositorySource | null> {
+  const requestActor = authorization.actor;
+  let actor: AccessActor | undefined;
+  if (requestActor) {
+    // Lock order: current actor User → Connection → sorted Teams → sorted Organizations.
+    // CLAUDE.md §7 exception: serialize this role/active check with user updates.
+    const lockedUser = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM users WHERE id = ${requestActor.sub}::uuid FOR UPDATE
+    `;
+    const currentUser = lockedUser.length
+      ? await tx.user.findUnique({
+          select: { id: true, isActive: true, role: true },
+          where: { id: requestActor.sub },
+        })
+      : null;
+    if (!currentUser?.isActive) {
+      return null;
+    }
+    actor = { role: currentUser.role as Role, sub: currentUser.id };
+  }
+  // CLAUDE.md §7 exception: repository moves lock this row; Prisma cannot express SELECT FOR UPDATE.
+  const locked = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM connections WHERE id = ${expected.repoId}::uuid FOR UPDATE
+  `;
+  if (locked.length === 0) {
+    return null;
+  }
+  // The connection lock makes the current owner and share list stable; lock every team whose
+  // membership can authorize access, in deterministic order, before checking memberships. Team
+  // membership writers take these same team-row locks; share writers take the connection lock.
+  const current = await tx.connection.findUnique({
+    select: { shares: { select: { teamId: true } }, teamId: true },
+    where: { id: expected.repoId },
+  });
+  if (!current) {
+    return null;
+  }
+  const teamIds = [
+    ...new Set(
+      [
+        current.teamId,
+        ...current.shares.map((share) => share.teamId),
+        expected.teamId,
+        authorization.requiredTeamId,
+      ].filter((id): id is string => !!id)
+    ),
+  ].sort();
+  for (const teamId of teamIds) {
+    // CLAUDE.md §7 exception: source authorization must serialize with team membership changes.
+    const lockedTeam = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM teams WHERE id = ${teamId}::uuid FOR UPDATE
+    `;
+    if (lockedTeam.length === 0) {
+      return null;
+    }
+  }
+  // CLAUDE.md §7 exception: organization activation and membership changes use this row lock.
+  const lockedOrg = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM organizations WHERE id = ${expected.orgId}::uuid FOR UPDATE
+  `;
+  if (lockedOrg.length === 0) {
+    return null;
+  }
+
+  const membershipWhere = actor ? { userId: actor.sub } : undefined;
+  const repo = await tx.connection.findUnique({
+    select: {
+      id: true,
+      isActive: true,
+      shares: {
+        select: {
+          team: {
+            select: {
+              isActive: true,
+              memberships: {
+                select: { userId: true },
+                ...(membershipWhere ? { where: membershipWhere } : {}),
+              },
+            },
+          },
+          teamId: true,
+        },
+      },
+      team: {
+        select: {
+          id: true,
+          isActive: true,
+          memberships: {
+            select: { userId: true },
+            ...(membershipWhere ? { where: membershipWhere } : {}),
+          },
+          organization: { select: { isActive: true } },
+          orgId: true,
+        },
+      },
+      teamId: true,
+      type: true,
+    },
+    where: { id: expected.repoId },
+  });
+  if (
+    !repo?.isActive ||
+    repo.type !== 'git_repo' ||
+    !repo.team?.isActive ||
+    !repo.team.organization.isActive ||
+    repo.id !== expected.repoId ||
+    repo.teamId !== expected.teamId ||
+    repo.team.orgId !== expected.orgId
+  ) {
+    return null;
+  }
+
+  if (actor && actor.role !== 'ADMIN') {
+    const repoMember =
+      repo.team.memberships.some((membership) => membership.userId === actor.sub) ||
+      repo.shares.some(
+        (share) =>
+          share.team.isActive &&
+          share.team.memberships.some((membership) => membership.userId === actor.sub)
+      );
+    if (!repoMember) {
+      return null;
+    }
+    const orgMembership = await tx.organizationMembership.findUnique({
+      select: { userId: true },
+      where: { userId_orgId: { orgId: repo.team.orgId, userId: actor.sub } },
+    });
+    if (!orgMembership) {
+      return null;
+    }
+  }
+
+  if (authorization.requiredTeamId) {
+    const selectedTeamIsVisible =
+      repo.teamId === authorization.requiredTeamId ||
+      repo.shares.some(
+        (share) => share.teamId === authorization.requiredTeamId && share.team.isActive
+      );
+    if (!selectedTeamIsVisible) {
+      return null;
+    }
+    if (actor?.role !== 'ADMIN') {
+      const membership = actor
+        ? await tx.teamMembership.findUnique({
+            select: { role: true },
+            where: {
+              userId_teamId: { teamId: authorization.requiredTeamId, userId: actor.sub },
+            },
+          })
+        : null;
+      if (membership?.role !== 'LEAD' && membership?.role !== 'ADMIN') {
+        return null;
+      }
+    }
+  }
+
+  return { orgId: repo.team.orgId, repoId: repo.id, teamId: repo.teamId };
+}
+
+async function snapshotAuthorizedTeamSource(
+  tx: Prisma.TransactionClient,
+  expected: { teamId: string; orgId: string },
+  requestActor?: AccessActor
+): Promise<{ teamId: string; orgId: string } | null> {
+  let actor: AccessActor | undefined;
+  if (requestActor) {
+    // Lock order: current actor User → Team → Organization.
+    // CLAUDE.md §7 exception: serialize this role/active check with user updates.
+    const lockedUser = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM users WHERE id = ${requestActor.sub}::uuid FOR UPDATE
+    `;
+    const currentUser = lockedUser.length
+      ? await tx.user.findUnique({
+          select: { id: true, isActive: true, role: true },
+          where: { id: requestActor.sub },
+        })
+      : null;
+    if (!currentUser?.isActive) {
+      return null;
+    }
+    actor = { role: currentUser.role as Role, sub: currentUser.id };
+  }
+  // CLAUDE.md §7 exception: lock the tenant row while checking its launch snapshot.
+  const locked = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM teams WHERE id = ${expected.teamId}::uuid FOR UPDATE
+  `;
+  if (locked.length === 0) {
+    return null;
+  }
+  // CLAUDE.md §7 exception: tenant activation must remain stable through the source write.
+  const lockedOrg = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM organizations WHERE id = ${expected.orgId}::uuid FOR UPDATE
+  `;
+  if (lockedOrg.length === 0) {
+    return null;
+  }
+  const team = await tx.team.findUnique({
+    select: {
+      id: true,
+      isActive: true,
+      organization: { select: { isActive: true } },
+      orgId: true,
+      ...(actor ? { memberships: { select: { userId: true }, where: { userId: actor.sub } } } : {}),
+    },
+    where: { id: expected.teamId },
+  });
+  if (
+    !team?.isActive ||
+    !team.organization.isActive ||
+    team.id !== expected.teamId ||
+    team.orgId !== expected.orgId ||
+    (actor &&
+      actor.role !== 'ADMIN' &&
+      !team.memberships.some((membership) => membership.userId === actor.sub))
+  ) {
+    return null;
+  }
+  if (actor && actor.role !== 'ADMIN') {
+    const membership = await tx.organizationMembership.findUnique({
+      select: { userId: true },
+      where: { userId_orgId: { orgId: team.orgId, userId: actor.sub } },
+    });
+    if (!membership) {
+      return null;
+    }
+  }
+  return { orgId: team.orgId, teamId: team.id };
+}
+
 export async function launchTrackedWorkflow(
   prisma: FastifyInstance['prisma'],
   rows: WorkflowLedgerRows,
   start: () => Promise<unknown>,
-  opts?: { log?: { error: (obj: unknown, msg?: string) => void }; guard?: LaunchGuard }
+  opts?: {
+    log?: { error: (obj: unknown, msg?: string) => void };
+    guard?: LaunchGuard;
+    sourceAuthorization?: LaunchSourceAuthorization;
+  }
 ): Promise<LaunchWorkflowResult> {
   const { runInput } = rows;
   // Read `rows.activeWorkflow` rather than a destructured local: destructuring
@@ -131,41 +392,115 @@ export async function launchTrackedWorkflow(
   // 1. Ledger first, atomically. A P2002 here is the dedup gate firing.
   let activeWorkflowId: string | null;
   try {
-    if (opts?.guard) {
-      // The guard and the writes share one interactive transaction, so what the guard counted
-      // is what the writes are added to. Without a guard the batch form below is used, unchanged.
-      const { guard } = opts;
-      const outcome = await prisma.$transaction(
-        async (tx): Promise<{ refusal: string } | { activeWorkflowId: string | null }> => {
-          const refusal = await guard(tx);
+    const outcome = await prisma.$transaction(
+      async (tx): Promise<{ refusal: string } | { activeWorkflowId: string | null }> => {
+        if (opts?.guard) {
+          const refusal = await opts.guard(tx);
           if (refusal !== null) {
             return { refusal };
           }
-          if (runInput) {
-            await tx.runInput.create({ data: runInput as never });
-          }
-          const created = activeWorkflow
-            ? await tx.activeWorkflow.create({ data: activeWorkflow as never })
-            : null;
-          return { activeWorkflowId: created ? (created as { id: string }).id : null };
         }
-      );
-      if ('refusal' in outcome) {
-        return { ok: false, reason: 'GUARD_REFUSED', refusal: outcome.refusal };
+
+        const unknownSource = {
+          knowledgeSourceKind: 'UNKNOWN' as const,
+          knowledgeSourceOrgId: null,
+          knowledgeSourceRepoId: null,
+          knowledgeSourceTeamId: null,
+        };
+        let source:
+          | typeof unknownSource
+          | {
+              knowledgeSourceKind: 'REPOSITORY' | 'TEAM';
+              knowledgeSourceOrgId: string;
+              knowledgeSourceRepoId: string | null;
+              knowledgeSourceTeamId: string;
+            } = unknownSource;
+        const crossRepo = runInput?.isCrossRepo === true;
+        const activeRepoId = runInput
+          ? ((activeWorkflow?.repoId as string | null | undefined) ?? null)
+          : null;
+        const requestRepoId = runInput
+          ? ((runInput.connectionId as string | null | undefined) ?? null)
+          : null;
+        const repoId = crossRepo ? null : (activeRepoId ?? requestRepoId);
+        const expectedRepo = rows.knowledgeSourceRepo;
+        if (
+          expectedRepo &&
+          repoId === expectedRepo.repoId &&
+          (!activeRepoId || activeRepoId === expectedRepo.repoId) &&
+          (!requestRepoId || requestRepoId === expectedRepo.repoId)
+        ) {
+          const snapshot = await snapshotAuthorizedRepositorySource(
+            tx,
+            expectedRepo,
+            opts?.sourceAuthorization
+          );
+          if (snapshot) {
+            source = {
+              knowledgeSourceKind: 'REPOSITORY',
+              knowledgeSourceOrgId: snapshot.orgId,
+              knowledgeSourceRepoId: snapshot.repoId,
+              knowledgeSourceTeamId: snapshot.teamId,
+            };
+          }
+        } else if (!repoId && rows.knowledgeSourceTeam) {
+          const snapshot = await snapshotAuthorizedTeamSource(
+            tx,
+            rows.knowledgeSourceTeam,
+            opts?.sourceAuthorization?.actor
+          );
+          if (snapshot) {
+            source = {
+              knowledgeSourceKind: 'TEAM',
+              knowledgeSourceOrgId: snapshot.orgId,
+              knowledgeSourceRepoId: null,
+              knowledgeSourceTeamId: snapshot.teamId,
+            };
+          }
+        }
+
+        let knowledgeRepoSources: LaunchRepositorySource[] = [];
+        if (rows.knowledgeSourceRepos) {
+          const expectedSources = [...rows.knowledgeSourceRepos].sort((a, b) =>
+            a.repoId.localeCompare(b.repoId)
+          );
+          const resolved: LaunchRepositorySource[] = [];
+          for (const expected of expectedSources) {
+            const snapshot = await snapshotAuthorizedRepositorySource(
+              tx,
+              expected,
+              opts?.sourceAuthorization
+            );
+            if (!snapshot) {
+              resolved.length = 0;
+              break;
+            }
+            resolved.push(snapshot);
+          }
+          if (resolved.length === expectedSources.length) {
+            knowledgeRepoSources = resolved;
+          }
+        }
+
+        if (runInput) {
+          await tx.runInput.create({
+            data: {
+              ...runInput,
+              ...source,
+              ...(rows.knowledgeSourceRepos ? { knowledgeRepoSources } : {}),
+            } as never,
+          });
+        }
+        const created = activeWorkflow
+          ? await tx.activeWorkflow.create({ data: activeWorkflow as never })
+          : null;
+        return { activeWorkflowId: created ? (created as { id: string }).id : null };
       }
-      activeWorkflowId = outcome.activeWorkflowId;
-    } else {
-      const writes = [
-        ...(runInput
-          ? [prisma.runInput.create({ data: runInput as never })]
-          : ([] as ReturnType<typeof prisma.runInput.create>[])),
-        ...(activeWorkflow
-          ? [prisma.activeWorkflow.create({ data: activeWorkflow as never })]
-          : ([] as ReturnType<typeof prisma.activeWorkflow.create>[])),
-      ];
-      const results = (await prisma.$transaction(writes)) as Array<{ id: string }>;
-      activeWorkflowId = activeWorkflow ? results[results.length - 1].id : null;
+    );
+    if ('refusal' in outcome) {
+      return { ok: false, reason: 'GUARD_REFUSED', refusal: outcome.refusal };
     }
+    activeWorkflowId = outcome.activeWorkflowId;
   } catch (err) {
     if (isUniqueConstraintError(err)) {
       return { ok: false, reason: 'DUPLICATE', source: 'ledger' };

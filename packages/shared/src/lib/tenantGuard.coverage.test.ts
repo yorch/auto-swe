@@ -43,6 +43,14 @@ const EXEMPT_WRAPPERS = new Set(['runUnscoped', 'asPlatformAdmin']);
  *  - `agentLibraryService:agent.findMany` → `listAgents`'s all-optional filter.
  *    Its two callers are checked: the admin library route marks the call with
  *    `runUnscoped(['Agent'])`, the per-team route passes `{ scope: 'TEAM', teamId }`.
+ *  - `knowledgeService:connection.findMany` → `repoMemberWhere()` requires an owning- or
+ *    shared-team membership; the query additionally requires active repository, team and org.
+ *  - `knowledgeService:knowledgeItem.findMany` → one call uses `knowledgeReadableWhere(actor)`;
+ *    the other uses conditions built from current manager memberships, repository capabilities,
+ *    and the explicit platform-ADMIN `runUnscoped()` path.
+ *  - `knowledgeRuntime:knowledgeItem.findMany` → both semantic candidate and final-projection
+ *    calls reuse `getKnowledgeWorkflowEligibilityWhere()`, which intersects the running workflow's
+ *    current launcher memberships with the saved source and issued repository capability.
  *
  * Keep this list short. A new entry means someone put a `where` behind an
  * indirection that can no longer be read off the page — inline it, or mark the
@@ -60,6 +68,9 @@ const HAND_VERIFIED = new Map([
   ['packages/gateway/src/lib/agentLibraryService.ts:agent.findMany', 1],
   ['packages/gateway/src/lib/agentLibraryService.ts:agent.updateMany', 1],
   ['packages/gateway/src/routes/skills.ts:skill.findMany', 1],
+  ['packages/shared/src/lib/knowledgeService.ts:connection.findMany', 1],
+  ['packages/shared/src/lib/knowledgeService.ts:knowledgeItem.findMany', 2],
+  ['packages/worker/src/lib/knowledgeRuntime.ts:knowledgeItem.findMany', 2],
 ]);
 
 /**

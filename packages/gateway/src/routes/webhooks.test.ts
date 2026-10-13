@@ -110,7 +110,13 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     // The launch path writes its ledger rows in one transaction; the array
     // form just resolves the queued promises in order.
-    $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    $queryRaw: vi.fn(async () => [{ id: 'conn-1' }]),
+    $transaction: vi.fn(async function (
+      this: Record<string, unknown>,
+      action: Promise<unknown>[] | ((tx: unknown) => Promise<unknown>)
+    ) {
+      return typeof action === 'function' ? action(this) : Promise.all(action);
+    }),
     activeWorkflow: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         // Enforce the real unique index on `temporal_workflow_id` — the
@@ -150,7 +156,28 @@ vi.mock('@auto-swe/shared/db', () => ({
             bound.in ? bound.in.includes(r.id as string) : !bound.notIn?.includes(r.id as string)
           );
         }
-        return repos.map((r) => ({ team: { organization: null, orgId: 'org-1' }, ...r }));
+        return repos.map((r) => ({
+          team: { organization: null, orgId: 'org-1' },
+          teamId: 'team-1',
+          ...r,
+        }));
+      }),
+      findUnique: vi.fn(async () => {
+        const repo = jiraPrismaState.activeRepo;
+        return repo
+          ? {
+              ...repo,
+              shares: [],
+              team: {
+                id: 'team-1',
+                isActive: true,
+                memberships: [],
+                organization: { isActive: true },
+                orgId: 'org-1',
+              },
+              teamId: 'team-1',
+            }
+          : null;
       }),
     },
     gitHubHostCredential: {

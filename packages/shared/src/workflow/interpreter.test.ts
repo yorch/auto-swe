@@ -29,10 +29,22 @@ function makeDispatcher(opts: {
 }): {
   dispatcher: Dispatcher;
   calls: Call[];
-  records: Array<{ nodeId: string; status: string }>;
+  records: Array<{
+    nodeId: string;
+    nodeType?: string;
+    specNodeId?: string;
+    status: string;
+    stepName?: string;
+  }>;
 } {
   const calls: Call[] = [];
-  const records: Array<{ nodeId: string; status: string }> = [];
+  const records: Array<{
+    nodeId: string;
+    nodeType?: string;
+    specNodeId?: string;
+    status: string;
+    stepName?: string;
+  }> = [];
   const dispatcher: Dispatcher = {
     async dispatchStep({ step, inputs, config, cancellation }) {
       const merged = { ...config, ...inputs };
@@ -64,8 +76,8 @@ function makeDispatcher(opts: {
         Promise.resolve(raw).then(resolve, reject);
       });
     },
-    async recordStep({ nodeId, status }) {
-      records.push({ nodeId, status });
+    async recordStep({ nodeId, nodeType, specNodeId, status, stepName }) {
+      records.push({ nodeId, nodeType, specNodeId, status, stepName });
     },
     async waitSignal(name) {
       const q = opts.signalQueue[name];
@@ -169,7 +181,9 @@ describe('runSpec', () => {
     });
     const result = await runSpec(spec, baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
-    expect(records).toContainEqual({ nodeId: 'maybeFail', status: 'SKIPPED' });
+    expect(records).toContainEqual(
+      expect.objectContaining({ nodeId: 'maybeFail', nodeType: 'step', status: 'SKIPPED' })
+    );
   });
 
   it('propagates step errors when onError defaults to fail', async () => {
@@ -211,13 +225,20 @@ describe('runSpec', () => {
       },
       schemaVersion: SPEC_SCHEMA_VERSION,
     });
-    const { dispatcher } = makeDispatcher({
+    const { dispatcher, records } = makeDispatcher({
       signalQueue: { ping: [{ passed: true }] },
       stepOutputs: {},
     });
     const result = await runSpec(spec, baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
     expect(result.result.got).toEqual({ passed: true });
+    expect(records).toContainEqual({
+      nodeId: 'wait',
+      nodeType: 'signal',
+      specNodeId: 'wait',
+      status: 'PASSED',
+      stepName: 'signal',
+    });
   });
 
   it('signal node takes onTimeout branch when nothing arrives', async () => {
@@ -1201,7 +1222,9 @@ describe('runSpec', () => {
     await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow('branch 0 boom');
     expect(calls.filter((c) => c.step === 'second')).toHaveLength(0);
     // Branch 1's first step did complete — it was between activities, not cancelled mid-flight.
-    expect(records).toContainEqual({ nodeId: 'fan[1]/first', status: 'PASSED' });
+    expect(records).toContainEqual(
+      expect.objectContaining({ nodeId: 'fan[1]/first', nodeType: 'step', status: 'PASSED' })
+    );
   });
 
   it('fanOut block-mode without dispatcher cancellation support still drains in-flight work', async () => {
@@ -1597,7 +1620,9 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
     });
     const result = await runSpec(DEFAULT_ENGINEERING_SPEC, baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
-    expect(records).toContainEqual({ nodeId: 'validate', status: 'SKIPPED' });
+    expect(records).toContainEqual(
+      expect.objectContaining({ nodeId: 'validate', nodeType: 'step', status: 'SKIPPED' })
+    );
   });
 
   it('commitToMemory failure is non-blocking — still completes successfully', async () => {

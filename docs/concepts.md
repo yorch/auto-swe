@@ -83,7 +83,13 @@ through the **scope cascade**, so one platform can behave differently per team.
   and every command and file write is scanned before it runs.
 
 - **Lesson** — What a finished run learned, embedded with pgvector and retrieved as context for
-  later runs on the same repository.
+  later runs on the same repository. This legacy repository memory is separate from governed
+  knowledge items.
+
+- **Governed knowledge** — A versioned, evidence-backed summary with an owner, origin, visibility,
+  review state, and publication history. Agent capture starts local and unreviewed; humans control
+  approval and any wider summary publication. Retrieval returns untrusted evidence, not policy. See
+  [knowledge.md](./knowledge.md).
 
 ## Configuration
 

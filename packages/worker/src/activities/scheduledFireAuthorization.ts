@@ -20,7 +20,7 @@
  * next tick decides again, so restoring access resumes the schedule with no
  * other action.
  */
-import type { PrismaClient, Role } from '@auto-swe/shared';
+import { Prisma, type PrismaClient, type Role } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
 import {
@@ -53,6 +53,7 @@ export type ScheduledFireRefusalReason =
   | 'schedule-missing'
   | 'acting-user-missing'
   | 'repository-inactive'
+  | 'repository-source-changed'
   | 'schedule-team-unclaimed'
   | 'schedule-inactive'
   | 'launcher-out-of-sync'
@@ -98,9 +99,8 @@ export async function scheduledFireRefusal(
   }
   const schedule = await db.scheduledWorkRequest.findFirst({
     select: {
-      // Who every fire runs as — and so whose access it is checked against.
+      // Only an explicit acting user is authority; do not fall back to the schedule creator.
       actsAsUser: { select: { id: true, isActive: true, role: true } },
-      createdBy: { select: { id: true, isActive: true, role: true } },
       id: true,
       // Deactivation (an unshared team, a moved repository) pauses the Temporal
       // schedule best-effort; the row is what the worker can still trust.
@@ -109,6 +109,14 @@ export async function scheduledFireRefusal(
       // The team the schedule belongs to; checked against the repository's
       // current owner and sharers below.
       teamId: true,
+      workRequest: {
+        select: {
+          knowledgeSourceKind: true,
+          knowledgeSourceOrgId: true,
+          knowledgeSourceRepoId: true,
+          knowledgeSourceTeamId: true,
+        },
+      },
     },
     where: { workRequestId: input.workRequestId },
   });
@@ -147,15 +155,9 @@ export async function scheduledFireRefusal(
     );
   }
 
-  // Every fire acts for someone. A schedule runs as the user who last defined
-  // what it does (`actsAsUserId`); one from before that was recorded has no such
-  // user and runs on the platform credential, so its creator is the person whose
-  // access stands behind it. A schedule with neither — both deleted or
-  // deactivated — has nobody whose access could be checked, and "no user to
-  // check" is exactly the exemption this closes. An ADMIN or team lead
-  // re-activating or editing it takes it over (the gateway rebinds it to them).
-  const actsAs = schedule.actsAsUser;
-  const owner = actsAs ?? schedule.createdBy;
+  // Only the explicit launcher/acting user is a source authority. Legacy schedules without
+  // `actsAsUserId` require an administrator or team lead to take them over before firing.
+  const owner = schedule.actsAsUser;
   if (!owner?.isActive) {
     return refuse(
       'acting-user-missing',
@@ -169,18 +171,15 @@ export async function scheduledFireRefusal(
   // and then a run would use one person's token on the strength of another's
   // access. Refuse until the schedule is saved again, which re-syncs both.
   const launcher = input.launchedById ?? null;
-  if (launcher !== (actsAs?.id ?? null)) {
+  if (launcher !== owner.id) {
     return refuse(
       'launcher-out-of-sync',
       "the schedule's stored identity is out of sync with its Temporal schedule; re-save the schedule (edit it or resume it) to repair it"
     );
   }
   const actor = { role: owner.role as Role, sub: owner.id };
-  // The fire launches as `actsAs` (its `launchedById`), so that user's own saved
-  // token is the identity whose access matters. A legacy schedule launches as
-  // nobody and uses the platform credential, so its creator is judged by the
-  // login, as every platform-credential launch is.
-  const runIdentity = actsAs ? 'caller' : 'platform';
+  // The fire must use the schedule's explicit acting user; there is no creator fallback.
+  const runIdentity = 'caller';
 
   const repo = await db.connection.findUnique({
     select: {
@@ -200,8 +199,9 @@ export async function scheduledFireRefusal(
       },
       team: {
         select: {
+          isActive: true,
           memberships: { select: { userId: true }, where: { userId: owner.id } },
-          organization: { select: { monthlyBudgetUsdCents: true } },
+          organization: { select: { isActive: true, monthlyBudgetUsdCents: true } },
           orgId: true,
         },
       },
@@ -210,8 +210,24 @@ export async function scheduledFireRefusal(
     },
     where: { id: schedule.repoId },
   });
-  if (!repo?.isActive) {
-    return refuse('repository-inactive', 'the repository is no longer active');
+  if (!repo?.isActive || !repo.team.isActive || !repo.team.organization.isActive) {
+    return refuse(
+      'repository-inactive',
+      'the repository, team, or organization is no longer active'
+    );
+  }
+
+  const source = schedule.workRequest;
+  if (
+    source?.knowledgeSourceKind === 'REPOSITORY' &&
+    (source.knowledgeSourceRepoId !== repo.id ||
+      source.knowledgeSourceTeamId !== repo.teamId ||
+      source.knowledgeSourceOrgId !== repo.team.orgId)
+  ) {
+    return refuse(
+      'repository-source-changed',
+      'the repository no longer matches the source identity saved when the schedule was created'
+    );
   }
 
   // The schedule's team must still have a claim on the repository: its owning
@@ -379,6 +395,238 @@ const REFUSAL_OUTCOME: Partial<Record<ScheduledFireRefusalReason, string>> = {
  * Throw when this run is a scheduled fire its owner may no longer launch.
  * A no-op for every other run.
  */
+export async function assertScheduledFireSourceSnapshot(
+  tx: Prisma.TransactionClient,
+  input: { workflowId: string; workRequestId?: string; launchedById?: string | null }
+): Promise<void> {
+  if (!input.workRequestId || !input.workflowId.startsWith('sched-')) {
+    return;
+  }
+  const workflowScheduleId = SCHEDULE_FIRE_ID_RE.exec(input.workflowId)?.[1];
+  if (!workflowScheduleId) {
+    throw ApplicationFailure.nonRetryable(
+      'scheduled fire id is malformed',
+      SCHEDULED_FIRE_REFUSED,
+      [
+        {
+          message: 'scheduled fire id is malformed',
+          reason: 'schedule-missing',
+          scheduleId: 'unknown',
+        } satisfies ScheduledFireRefusal,
+      ]
+    );
+  }
+  // Lock the schedule before reading it so a concurrent reassignment, deactivation, or
+  // identity takeover cannot change the authority between validation and WorkflowRun upsert.
+  await tx.$queryRaw(
+    Prisma.sql`SELECT id FROM scheduled_work_requests WHERE id = ${workflowScheduleId}::uuid FOR UPDATE`
+  );
+  const schedule = await tx.scheduledWorkRequest.findFirst({
+    select: {
+      actsAsUser: { select: { id: true } },
+      id: true,
+      isActive: true,
+      repoId: true,
+      teamId: true,
+      workRequest: {
+        select: {
+          knowledgeSourceKind: true,
+          knowledgeSourceOrgId: true,
+          knowledgeSourceRepoId: true,
+          knowledgeSourceTeamId: true,
+        },
+      },
+    },
+    where: { id: workflowScheduleId, workRequestId: input.workRequestId },
+  });
+  const scheduleId = schedule?.id ?? workflowScheduleId;
+  const fail = (reason: ScheduledFireRefusalReason, message: string): never => {
+    throw ApplicationFailure.nonRetryable(
+      `scheduled fire ${schedule?.id ?? scheduleId ?? 'unknown'} refused: ${message}`,
+      SCHEDULED_FIRE_REFUSED,
+      [
+        {
+          message,
+          reason,
+          scheduleId: schedule?.id ?? scheduleId ?? 'unknown',
+        } satisfies ScheduledFireRefusal,
+      ]
+    );
+  };
+  if (
+    !schedule ||
+    !scheduleId ||
+    schedule.id !== scheduleId ||
+    !input.workflowId.startsWith(`sched-${schedule.id}`) ||
+    !schedule.isActive
+  ) {
+    return fail('schedule-inactive', 'the schedule is missing, mismatched, or inactive');
+  }
+  const actorId = input.launchedById ?? null;
+  if (!actorId || schedule.actsAsUser?.id !== actorId) {
+    return fail(
+      'launcher-out-of-sync',
+      'the explicit schedule launcher is missing or does not match the Temporal arguments'
+    );
+  }
+  // Lock order: Schedule → exact launcher User → Connection → sorted Teams → sorted Organizations.
+  // CLAUDE.md §7 exception: serialize source authority with user role/deactivation updates.
+  const lockedUser = await tx.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT id FROM users WHERE id = ${actorId}::uuid FOR UPDATE`
+  );
+  const actor = lockedUser.length
+    ? await tx.user.findUnique({
+        select: { id: true, isActive: true, role: true },
+        where: { id: actorId },
+      })
+    : null;
+  if (!actor?.isActive) {
+    return fail('acting-user-missing', 'the explicit schedule launcher is no longer active');
+  }
+  const owner = actor;
+
+  // CLAUDE.md §7 exception: repository moves lock this row; Prisma cannot express SELECT FOR UPDATE.
+  const locked = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM connections WHERE id = ${schedule.repoId}::uuid FOR UPDATE
+  `;
+  if (locked.length === 0) {
+    return fail('repository-inactive', 'the scheduled repository no longer exists');
+  }
+  const identity = await tx.connection.findUnique({
+    select: {
+      shares: { select: { teamId: true } },
+      team: { select: { orgId: true } },
+      teamId: true,
+    },
+    where: { id: schedule.repoId },
+  });
+  if (!identity) {
+    return fail('repository-inactive', 'the scheduled repository no longer exists');
+  }
+  const sourceOrgId = schedule.workRequest?.knowledgeSourceOrgId;
+  const teamIds = [
+    ...new Set(
+      [identity.teamId, ...identity.shares.map((share) => share.teamId), schedule.teamId].filter(
+        (id): id is string => !!id
+      )
+    ),
+  ].sort();
+  for (const teamId of teamIds) {
+    // CLAUDE.md §7 exception: serialize membership checks with team membership changes.
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`);
+  }
+  const orgIds = [
+    ...new Set([identity.team.orgId, sourceOrgId].filter((id): id is string => !!id)),
+  ].sort();
+  for (const orgId of orgIds) {
+    // CLAUDE.md §7 exception: serialize org membership and activation checks with writers.
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`
+    );
+  }
+  const repo = await tx.connection.findUnique({
+    select: {
+      id: true,
+      isActive: true,
+      shares: {
+        select: {
+          team: {
+            select: {
+              isActive: true,
+              memberships: { select: { userId: true }, where: { userId: owner.id } },
+            },
+          },
+          teamId: true,
+        },
+      },
+      team: {
+        select: {
+          id: true,
+          isActive: true,
+          memberships: { select: { userId: true }, where: { userId: owner.id } },
+          organization: { select: { isActive: true } },
+          orgId: true,
+        },
+      },
+      teamId: true,
+      type: true,
+    },
+    where: { id: schedule.repoId },
+  });
+  if (!repo?.isActive || repo.type !== 'git_repo') {
+    return fail('repository-inactive', 'the scheduled repository is no longer active');
+  }
+  // CLAUDE.md §7 exception: lock tenant rows and re-read their state after the provider check.
+  const lockedTeam = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM teams WHERE id = ${repo.teamId}::uuid FOR UPDATE
+  `;
+  const lockedOrg = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM organizations WHERE id = ${repo.team.orgId}::uuid FOR UPDATE
+  `;
+  const currentTeam = await tx.team.findUnique({
+    select: { id: true, isActive: true, orgId: true },
+    where: { id: repo.teamId },
+  });
+  const currentOrg = await tx.organization.findUnique({
+    select: { id: true, isActive: true },
+    where: { id: repo.team.orgId },
+  });
+  if (
+    lockedTeam.length === 0 ||
+    lockedOrg.length === 0 ||
+    !repo.team.isActive ||
+    !repo.team.organization.isActive ||
+    !currentTeam?.isActive ||
+    currentTeam.orgId !== repo.team.orgId ||
+    !currentOrg?.isActive
+  ) {
+    return fail('repository-inactive', 'the repository, team, or organization is no longer active');
+  }
+  if (
+    schedule.workRequest?.knowledgeSourceKind === 'REPOSITORY' &&
+    (schedule.workRequest.knowledgeSourceRepoId !== repo.id ||
+      schedule.workRequest.knowledgeSourceTeamId !== repo.teamId ||
+      schedule.workRequest.knowledgeSourceOrgId !== repo.team.orgId)
+  ) {
+    return fail(
+      'repository-source-changed',
+      'the current target no longer matches its saved source tuple'
+    );
+  }
+  const claimExists =
+    schedule.teamId === repo.teamId ||
+    repo.shares.some((share) => share.teamId === schedule.teamId && share.team.isActive);
+  if (!claimExists) {
+    return fail(
+      'schedule-team-unclaimed',
+      'the schedule team no longer owns or shares the repository'
+    );
+  }
+
+  if (owner.role !== 'ADMIN') {
+    const hasMembership =
+      repo.team.memberships.some((membership) => membership.userId === owner.id) ||
+      repo.shares.some(
+        (share) =>
+          share.team.isActive &&
+          share.team.memberships.some((membership) => membership.userId === owner.id)
+      );
+    if (!hasMembership) {
+      return fail('not-a-team-member', 'the schedule owner is no longer a repository team member');
+    }
+    const orgMembership = await tx.organizationMembership.findUnique({
+      select: { userId: true },
+      where: { userId_orgId: { orgId: repo.team.orgId, userId: owner.id } },
+    });
+    if (!orgMembership) {
+      return fail(
+        'not-an-org-member',
+        'the schedule owner is no longer a member of the repository organization'
+      );
+    }
+  }
+}
+
 export async function assertScheduledFireAuthorized(input: {
   workflowId: string;
   workRequestId?: string;

@@ -137,7 +137,15 @@ describe('runAgentNode', () => {
     const result = await runAgentNode({ agentRef: 'reviewer', userMessage: 'check the diff' });
 
     expect(mockedResolveSpec).toHaveBeenCalledWith(
-      { agentKey: 'reviewer', basePrompt: '', promptOverride: undefined },
+      expect.objectContaining({
+        agentKey: 'reviewer',
+        availableTools: expect.objectContaining({
+          searchKnowledge: expect.anything(),
+          submitLearning: expect.anything(),
+        }),
+        basePrompt: '',
+        promptOverride: undefined,
+      }),
       { teamId: 'team-1' }
     );
     expect(mockedRunAgent).toHaveBeenCalledWith({ agentKey: 'reviewer' }, 'check the diff', {
@@ -172,7 +180,15 @@ describe('runAgentNode', () => {
 
     // The pinned version is merged into ctx.agentVersions for resolveAgent.
     expect(mockedResolveSpec).toHaveBeenCalledWith(
-      { agentKey: 'reviewer', basePrompt: '', promptOverride: undefined },
+      expect.objectContaining({
+        agentKey: 'reviewer',
+        availableTools: expect.objectContaining({
+          searchKnowledge: expect.anything(),
+          submitLearning: expect.anything(),
+        }),
+        basePrompt: '',
+        promptOverride: undefined,
+      }),
       { agentVersions: { reviewer: 5 }, teamId: 'team-1' }
     );
   });

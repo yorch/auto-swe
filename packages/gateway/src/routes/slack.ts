@@ -2076,6 +2076,13 @@ function formatTemplateShow(
 
 // ── Modal: work-request picker ──────────────────────────────────────────────
 
+interface SlackModalView {
+  blocks: Array<{ text: { text: string; type: 'mrkdwn' }; type: 'section' }>;
+  close: { text: string; type: 'plain_text' };
+  title: { text: string; type: 'plain_text' };
+  type: 'modal';
+}
+
 interface RunModalMetadata {
   channelId: string;
   initialDescription: string;
@@ -2087,7 +2094,7 @@ interface RunModalMetadata {
  * shortcut carries no channel/response_url, so an ephemeral hint can't reach the
  * clicker — this modal is the only surface available via the `trigger_id`.
  */
-function buildLinkAccountModalView(): unknown {
+function buildLinkAccountModalView(): SlackModalView {
   return {
     blocks: [
       {
@@ -2441,6 +2448,11 @@ async function handleRunModalSubmission(
         temporalWorkflowId,
         workRequestId,
       },
+      knowledgeSourceRepo: {
+        orgId: repo.team.orgId,
+        repoId: repo.id,
+        teamId: repo.teamId,
+      },
       runInput: {
         connectionId: repo.id,
         description,
@@ -2460,7 +2472,10 @@ async function handleRunModalSubmission(
         templateId: resolvedTemplate.templateId,
         templateVersion: resolvedTemplate.version,
       }),
-    { log: fastify.log }
+    {
+      log: fastify.log,
+      sourceAuthorization: { actor: { role: user.role, sub: user.id } },
+    }
   );
   if (!launch.ok) {
     return {

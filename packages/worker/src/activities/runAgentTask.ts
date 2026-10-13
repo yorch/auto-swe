@@ -18,6 +18,7 @@ import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRun
 import type { BoundHarness } from '../agents/harness/registry.js';
 import { HARNESSES } from '../agents/harnessRegistry.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
+import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
@@ -432,10 +433,21 @@ async function runOnMastra(
 ): Promise<AgentLoopResult> {
   const { agentCtx, key, resolved, tracer } = input;
   const built = buildWorkspaceTools(input.workspace, tracer, input.maxToolOutputChars);
+  const knowledgeTools = buildKnowledgeTools(tracer);
   const spec = await resolveAgentSpec(
     {
       agentKey: key as ModelBackedAgentKey,
-      availableTools: selectAgentRunTools(built, resolved.toolKeys) as unknown as AgentTools,
+      // Knowledge tools are offered only when the Agent names them; resolveAgentSpec
+      // intersects offered tools with `toolKeys`, so nothing else binds them.
+      availableTools: {
+        ...selectAgentRunTools(built, resolved.toolKeys),
+        ...(resolved.toolKeys?.includes('searchKnowledge')
+          ? { searchKnowledge: knowledgeTools.searchKnowledge }
+          : {}),
+        ...(resolved.toolKeys?.includes('submitLearning')
+          ? { submitLearning: knowledgeTools.submitLearning }
+          : {}),
+      } as unknown as AgentTools,
       basePrompt: '',
     },
     agentCtx

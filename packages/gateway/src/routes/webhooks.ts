@@ -1297,6 +1297,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       const launch = await launchTrackedWorkflow(
         fastify.prisma,
         {
+          ...(connectionResult.source ? { knowledgeSourceRepo: connectionResult.source } : {}),
           activeWorkflow: {
             budgetTier: 'STANDARD',
             currentStatus: 'IMPLEMENTING',
@@ -1523,6 +1524,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             repoId: defaultRepo.id,
             temporalWorkflowId,
             workRequestId,
+          },
+          knowledgeSourceRepo: {
+            orgId: defaultRepo.team.orgId,
+            repoId: defaultRepo.id,
+            teamId: defaultRepo.teamId,
           },
           runInput: {
             connectionId: defaultRepo.id,

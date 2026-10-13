@@ -226,6 +226,9 @@ export interface Dispatcher {
   /** Record a step's outcome (best-effort; failures here must not throw). */
   recordStep(args: {
     nodeId: string;
+    specNodeId?: string;
+    nodeType?: string;
+    stepName?: string;
     status: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'SKIPPED';
     inputs?: unknown;
     outputs?: unknown;
@@ -461,6 +464,7 @@ async function walk(
     }
     const nodeId = currentNodeId;
     const recordingId = nodeIdPrefix ? `${nodeIdPrefix}${nodeId}` : nodeId;
+    const nodeDispatcher = identityRecordingDispatcher(dispatcher, nodeId, node);
 
     try {
       switch (node.type) {
@@ -475,7 +479,7 @@ async function walk(
             nodeId,
             node,
             ctx,
-            dispatcher,
+            nodeDispatcher,
             cancellationSink
           );
           break;
@@ -494,7 +498,7 @@ async function walk(
             nodeId,
             node,
             ctx,
-            dispatcher,
+            nodeDispatcher,
             cancellationSink
           );
           break;
@@ -512,6 +516,7 @@ async function walk(
             spec,
             ctx,
             dispatcher,
+            nodeDispatcher,
             cursor,
             nodeIdPrefix,
             cancellationSink
@@ -527,7 +532,7 @@ async function walk(
             nodeId,
             node,
             ctx,
-            dispatcher,
+            nodeDispatcher,
             cancellationSink
           );
           break;
@@ -538,7 +543,7 @@ async function walk(
       // containerStep) already record their own per-attempt FAILED rows via the
       // runRetryable try/catch. Don't double-record.
       if (!SELF_RECORDING_NODE_TYPES.has(node.type)) {
-        await safeRecord(dispatcher, {
+        await safeRecord(nodeDispatcher, {
           error: describeStepError(err),
           nodeId: recordingId,
           status: 'FAILED',
@@ -1179,6 +1184,7 @@ async function runFanOut(
   spec: WorkflowSpec,
   ctx: Context,
   dispatcher: Dispatcher,
+  recordDispatcher: Dispatcher,
   cursor: Cursor,
   parentPrefix: string,
   parentSink?: BranchSink
@@ -1188,14 +1194,14 @@ async function runFanOut(
     const message = `fanOut '${recordingId}': 'over' must resolve to an array (got ${describeOperand(resolved)})`;
     // fanOut is self-recording (see SELF_RECORDING_NODE_TYPES), so this early
     // exit has to write its own FAILED row.
-    await safeRecord(dispatcher, { error: message, nodeId: recordingId, status: 'FAILED' });
+    await safeRecord(recordDispatcher, { error: message, nodeId: recordingId, status: 'FAILED' });
     throw new Error(message);
   }
   const raw: unknown[] = resolved;
 
   const concurrency = Math.max(1, node.concurrency ?? cursor.limits.fanoutConcurrency);
 
-  await safeRecord(dispatcher, {
+  await safeRecord(recordDispatcher, {
     inputs: {
       concurrency,
       count: raw.length,
@@ -1373,7 +1379,7 @@ async function runFanOut(
     // The enclosing branch was cancelled: report that, not this fan-out's own
     // (possibly clean) outcome, so the outer fan-out's policy applies.
     const cancelled = new BranchCancelledError();
-    await safeRecord(dispatcher, {
+    await safeRecord(recordDispatcher, {
       error: cancelled.message,
       nodeId: recordingId,
       outputs: aggregate,
@@ -1383,7 +1389,7 @@ async function runFanOut(
   }
 
   if (firstError !== null && node.onBranchFail === 'block') {
-    await safeRecord(dispatcher, {
+    await safeRecord(recordDispatcher, {
       error: firstError instanceof Error ? firstError.message : String(firstError),
       nodeId: recordingId,
       outputs: aggregate,
@@ -1392,7 +1398,7 @@ async function runFanOut(
     throw firstError instanceof Error ? firstError : new Error(String(firstError));
   }
 
-  await safeRecord(dispatcher, {
+  await safeRecord(recordDispatcher, {
     nodeId: recordingId,
     outputs: aggregate,
     status: 'PASSED',
@@ -1468,11 +1474,31 @@ function collectExports(
 }
 
 /** Don't dump giant arrays into workflow_steps.inputs; record a length-only summary. */
-function summarizeForRecord(arr: unknown[]): unknown {
+type RecordedArraySummary = unknown[] | { length: number; sample: unknown[] };
+
+function summarizeForRecord(arr: unknown[]): RecordedArraySummary {
   if (arr.length <= 4) {
     return arr;
   }
   return { length: arr.length, sample: arr.slice(0, 2) };
+}
+
+function identityRecordingDispatcher(
+  dispatcher: Dispatcher,
+  specNodeId: string,
+  node: Node
+): Dispatcher {
+  return {
+    ...dispatcher,
+    recordStep(args) {
+      return dispatcher.recordStep({
+        ...args,
+        nodeType: node.type,
+        specNodeId,
+        stepName: node.type === 'step' ? node.step : node.type,
+      });
+    },
+  };
 }
 
 async function safeRecord(
@@ -1513,6 +1539,7 @@ function setPath(ctx: Context, path: string, value: unknown): void {
       throw new Error(`setPath: refusing to write through reserved segment '${seg}' in '${path}'`);
     }
   }
+  // SAFETY: Context is the interpreter's mutable record-shaped runtime state; paths are traversed as keys.
   let cur: Record<string, unknown> = ctx as unknown as Record<string, unknown>;
   for (let i = 0; i < parts.length - 1; i++) {
     const k = parts[i] as string;

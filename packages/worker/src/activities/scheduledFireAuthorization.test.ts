@@ -44,19 +44,30 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    $queryRaw: vi.fn(async () => [{ id: 'repo-1' }]),
     activeWorkflow: { findMany: vi.fn(), updateMany: vi.fn() },
     automationFire: { create: vi.fn(async () => ({})) },
     configAuditLog: { create: vi.fn(), findFirst: vi.fn() },
     connection: { findUnique: vi.fn() },
+    organization: { findUnique: vi.fn(async () => ({ id: 'org-1', isActive: true })) },
     organizationMembership: { findUnique: vi.fn() },
     orgMonthlyUsage: { findUnique: vi.fn() },
     scheduledWorkRequest: { findFirst: vi.fn() },
+    team: { findUnique: vi.fn(async () => ({ id: 'team-1', isActive: true, orgId: 'org-1' })) },
+    user: {
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
+        id: where.id,
+        isActive: true,
+        role: 'LEAD',
+      })),
+    },
   },
 }));
 
 import { prisma } from '@auto-swe/shared/db';
 import {
   assertScheduledFireAuthorized,
+  assertScheduledFireSourceSnapshot,
   SCHEDULED_FIRE_REFUSED,
   scheduledFireRefusal,
 } from './scheduledFireAuthorization.js';
@@ -64,16 +75,23 @@ import {
 // biome-ignore lint/suspicious/noExplicitAny: terse access to the mocked prisma client in tests.
 const db = prisma as any;
 
-const SCHEDULE_ID = 'sched-row-1';
+const SCHEDULE_ID = '00000000-0000-4000-8000-00000000000c';
 const OWNER = 'user-owner';
-const FIRE = { workflowId: `sched-${SCHEDULE_ID}-2026-09-24T14:00:00Z`, workRequestId: 'wr-1' };
+const FIRE = {
+  launchedById: OWNER,
+  workflowId: `sched-${SCHEDULE_ID}-2026-09-24T14:00:00Z`,
+  workRequestId: 'wr-1',
+};
 
 // A fire of a schedule that runs as `user-acting`: Temporal's stored arguments carry that launcher.
 const ACTING_FIRE = { ...FIRE, launchedById: 'user-acting' };
 
 type Person = { id: string; isActive: boolean; role: string };
 
-function schedule(owner: Person | null = null, actsAsUser: Person | null = null) {
+function schedule(
+  owner: Person | null = null,
+  actsAsUser: Person | null = { id: OWNER, isActive: true, role: 'LEAD' }
+) {
   return {
     actsAsUser,
     createdBy: owner ?? { id: OWNER, isActive: true, role: 'LEAD' },
@@ -81,6 +99,12 @@ function schedule(owner: Person | null = null, actsAsUser: Person | null = null)
     isActive: true,
     repoId: 'repo-1',
     teamId: 'team-1',
+    workRequest: {
+      knowledgeSourceKind: 'REPOSITORY',
+      knowledgeSourceOrgId: 'org-1',
+      knowledgeSourceRepoId: 'repo-1',
+      knowledgeSourceTeamId: 'team-1',
+    },
   };
 }
 
@@ -104,8 +128,9 @@ function repo(
     repoName: 'payments',
     shares: [],
     team: {
+      isActive: true,
       memberships: (overrides.members ?? [OWNER]).map((userId) => ({ userId })),
-      organization: { monthlyBudgetUsdCents: overrides.cap ?? null },
+      organization: { isActive: true, monthlyBudgetUsdCents: overrides.cap ?? null },
       orgId: 'org-1',
     },
     teamId: 'team-1',
@@ -128,6 +153,54 @@ beforeEach(() => {
 });
 
 describe('scheduledFireRefusal', () => {
+  it('locks and rejects a moved target again in the WorkflowRun creation transaction', async () => {
+    db.connection.findUnique
+      .mockResolvedValueOnce({
+        shares: [],
+        team: { orgId: 'org-1' },
+        teamId: 'team-1',
+      })
+      .mockResolvedValueOnce({ ...repo(), teamId: 'team-moved' });
+    await expect(assertScheduledFireSourceSnapshot(db, FIRE)).rejects.toMatchObject({
+      type: SCHEDULED_FIRE_REFUSED,
+    });
+    expect(db.$queryRaw.mock.calls.length).toBeGreaterThanOrEqual(5);
+    expect(db.scheduledWorkRequest.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: SCHEDULE_ID, workRequestId: 'wr-1' } })
+    );
+  });
+
+  it('re-reads a schedule after locking its row and refuses a deactivated row', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({ ...schedule(), isActive: false });
+    await expect(assertScheduledFireSourceSnapshot(db, FIRE)).rejects.toMatchObject({
+      type: SCHEDULED_FIRE_REFUSED,
+    });
+    expect(db.scheduledWorkRequest.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: SCHEDULE_ID, workRequestId: 'wr-1' } })
+    );
+  });
+
+  it('locks and re-reads the acting user rather than trusting the schedule role', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce(
+      schedule(null, { id: OWNER, isActive: true, role: 'ADMIN' })
+    );
+    db.connection.findUnique.mockResolvedValueOnce(repo({ members: [] }));
+    db.organizationMembership.findUnique.mockResolvedValueOnce(null);
+    await expect(assertScheduledFireSourceSnapshot(db, FIRE)).rejects.toMatchObject({
+      type: SCHEDULED_FIRE_REFUSED,
+    });
+    expect(db.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: OWNER } })
+    );
+  });
+
+  it('refuses when the locked acting user was deactivated after the schedule row was read', async () => {
+    db.user.findUnique.mockResolvedValueOnce({ id: OWNER, isActive: false, role: 'ADMIN' });
+    await expect(assertScheduledFireSourceSnapshot(db, FIRE)).rejects.toMatchObject({
+      type: SCHEDULED_FIRE_REFUSED,
+    });
+  });
+
   it('lets an owner who still has access fire', async () => {
     expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
   });
@@ -147,7 +220,10 @@ describe('scheduledFireRefusal', () => {
       await scheduledFireRefusal(db, { workflowId: 'sched-other-row-1', workRequestId: 'wr-1' })
     ).toBeNull();
     db.scheduledWorkRequest.findFirst.mockResolvedValueOnce(null);
-    expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+      reason: 'schedule-missing',
+      scheduleId: SCHEDULE_ID,
+    });
   });
 
   it('refuses a fire whose schedule row is gone but whose Temporal schedule lived on', async () => {
@@ -159,6 +235,26 @@ describe('scheduledFireRefusal', () => {
         workRequestId: 'wr-1',
       })
     ).toMatchObject({ reason: 'schedule-missing', scheduleId: orphanId });
+  });
+
+  it('refuses a fire when the active repository no longer matches the saved source tuple', async () => {
+    db.connection.findUnique.mockResolvedValueOnce({ ...repo(), teamId: 'team-moved' });
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+      reason: 'repository-source-changed',
+    });
+  });
+
+  it('keeps legacy UNKNOWN source snapshots independent of relation inference', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({
+      ...schedule(),
+      workRequest: {
+        knowledgeSourceKind: 'UNKNOWN',
+        knowledgeSourceOrgId: null,
+        knowledgeSourceRepoId: null,
+        knowledgeSourceTeamId: null,
+      },
+    });
+    expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
   });
 
   it('refuses when the schedule team no longer owns or shares the repository', async () => {
@@ -191,10 +287,10 @@ describe('scheduledFireRefusal', () => {
   });
 
   it('refuses when the owner was deleted or deactivated', async () => {
-    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({ ...schedule(), createdBy: null });
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({ ...schedule(), actsAsUser: null });
     expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'acting-user-missing' });
     db.scheduledWorkRequest.findFirst.mockResolvedValueOnce(
-      schedule({ id: OWNER, isActive: false, role: 'LEAD' })
+      schedule(null, { id: OWNER, isActive: false, role: 'LEAD' })
     );
     expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'acting-user-missing' });
   });
@@ -217,7 +313,9 @@ describe('scheduledFireRefusal', () => {
     db.scheduledWorkRequest.findFirst.mockResolvedValueOnce(
       schedule(null, { id: 'user-acting', isActive: false, role: 'LEAD' })
     );
-    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'acting-user-missing' });
+    expect(await scheduledFireRefusal(db, ACTING_FIRE)).toMatchObject({
+      reason: 'acting-user-missing',
+    });
   });
 
   it('refuses when the Temporal arguments name a different launcher than the row', async () => {
@@ -272,8 +370,12 @@ describe('scheduledFireRefusal', () => {
     expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'not-an-org-member' });
 
     db.scheduledWorkRequest.findFirst.mockResolvedValueOnce(
-      schedule({ id: OWNER, isActive: true, role: 'ADMIN' })
+      schedule(
+        { id: OWNER, isActive: true, role: 'ADMIN' },
+        { id: OWNER, isActive: true, role: 'ADMIN' }
+      )
     );
+    db.user.findUnique.mockResolvedValueOnce({ id: OWNER, isActive: true, role: 'ADMIN' });
     db.organizationMembership.findUnique.mockResolvedValueOnce(null);
     expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
   });

@@ -64,6 +64,7 @@ vi.mock('../lib/config/agentResolver.js', () => ({ resolveAgentRuntimeChoice }))
 vi.mock('./scheduledFireAuthorization.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./scheduledFireAuthorization.js')>()),
   assertScheduledFireAuthorized: vi.fn(async () => undefined),
+  assertScheduledFireSourceSnapshot: vi.fn(async () => undefined),
 }));
 
 vi.mock('@auto-swe/shared/db', () => {
@@ -108,6 +109,7 @@ vi.mock('@auto-swe/shared/db', () => {
     evalResult: {
       findMany: vi.fn(async () => []),
     },
+    organizationMembership: { findUnique: vi.fn(async () => null) },
     orgMonthlyUsage: {
       upsert: vi.fn(),
     },
@@ -124,6 +126,10 @@ vi.mock('@auto-swe/shared/db', () => {
     },
     slackChannel: { findFirst: vi.fn(async () => null) },
     team: { findUnique: vi.fn() },
+    teamMembership: { findUnique: vi.fn(async () => null) },
+    user: {
+      findUnique: vi.fn(async () => ({ id: 'user-admin', isActive: true, role: 'ADMIN' })),
+    },
     workflowHumanStep: {
       count: vi.fn(async () => 0),
     },
@@ -131,7 +137,11 @@ vi.mock('@auto-swe/shared/db', () => {
       findFirst: vi.fn(async () => null),
     },
     workflowRun: {
-      findUnique: vi.fn(),
+      findUnique: vi.fn(async ({ where }: { where: { workflowId: string } }) =>
+        where.workflowId === 'wf-1'
+          ? { launchedById: 'user-admin', temporalRunId: 'temporal-run-1' }
+          : null
+      ),
       update: vi.fn(),
       updateMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn(),
@@ -142,6 +152,7 @@ vi.mock('@auto-swe/shared/db', () => {
     },
     workflowTemplate: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(async () => null),
     },
     workflowTemplateVersion: {
       findUnique: vi.fn(),
@@ -188,6 +199,12 @@ beforeEach(() => {
     _sum: { costUsd: null, inputTokens: null, outputTokens: null },
   } as never);
   vi.mocked(prisma.$transaction).mockReset();
+  vi.mocked(prisma.$transaction).mockImplementation(async (callback) => callback(prisma as never));
+  vi.mocked(prisma.$queryRaw).mockReset().mockResolvedValue([]);
+  vi.mocked(prisma.user.findUnique)
+    .mockReset()
+    .mockResolvedValue({ id: 'user-admin', isActive: true, role: 'ADMIN' } as never);
+  vi.mocked(prisma.organizationMembership.findUnique).mockReset().mockResolvedValue(null);
 });
 
 const validSpec = {
@@ -299,6 +316,163 @@ describe('createWorkflowRun', () => {
       expect(findVersion).not.toHaveBeenCalled();
     });
 
+    it('derives an epic child source from the epic stored tuple and the launcher current membership', async () => {
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+      // The row locks must find their rows, or the derivation correctly answers UNKNOWN.
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: 'locked-row' }] as never);
+      vi.mocked(prisma.runInput.findUnique).mockResolvedValue({
+        knowledgeRepoSources: [{ orgId: 'org-a', repoId: 'repo-b', teamId: 'team-a' }],
+      } as never);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'user-launcher',
+        isActive: true,
+        role: 'ENGINEER',
+      } as never);
+      vi.mocked(prisma.teamMembership.findUnique).mockResolvedValue({
+        userId: 'user-launcher',
+      } as never);
+      vi.mocked(prisma.organizationMembership.findUnique).mockResolvedValue({
+        userId: 'user-launcher',
+      } as never);
+      vi.mocked(prisma.connection.findUnique).mockResolvedValue({
+        id: 'repo-b',
+        isActive: true,
+        shares: [],
+        team: {
+          isActive: true,
+          memberships: [{ userId: 'user-launcher' }],
+          organization: { isActive: true },
+          orgId: 'org-a',
+        },
+        teamId: 'team-a',
+        type: 'git_repo',
+      } as never);
+      upsertRun.mockClear();
+      await createWorkflowRun({
+        launchedById: 'user-launcher',
+        parentWorkflowId: 'epic-T-1',
+        repoId: 'repo-b',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'epic-T-1-repo-b',
+        workRequestId: 'wr-epic',
+      });
+      expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+        knowledgeSourceKind: 'REPOSITORY',
+        knowledgeSourceOrgId: 'org-a',
+        knowledgeSourceRepoId: 'repo-b',
+        knowledgeSourceTeamId: 'team-a',
+      });
+    });
+
+    it('keeps an epic child UNKNOWN once the launcher has no current membership', async () => {
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+      // The row locks must find their rows, or the derivation correctly answers UNKNOWN.
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: 'locked-row' }] as never);
+      vi.mocked(prisma.runInput.findUnique).mockResolvedValue({
+        knowledgeRepoSources: [{ orgId: 'org-a', repoId: 'repo-b', teamId: 'team-a' }],
+      } as never);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'user-launcher',
+        isActive: true,
+        role: 'ENGINEER',
+      } as never);
+      vi.mocked(prisma.teamMembership.findUnique).mockResolvedValue(null as never);
+      vi.mocked(prisma.connection.findUnique).mockResolvedValue({
+        id: 'repo-b',
+        isActive: true,
+        shares: [],
+        team: {
+          isActive: true,
+          memberships: [],
+          organization: { isActive: true },
+          orgId: 'org-a',
+        },
+        teamId: 'team-a',
+        type: 'git_repo',
+      } as never);
+      upsertRun.mockClear();
+      await createWorkflowRun({
+        launchedById: 'user-launcher',
+        parentWorkflowId: 'epic-T-1',
+        repoId: 'repo-b',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'epic-T-1-repo-b',
+        workRequestId: 'wr-epic',
+      });
+      expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+        knowledgeSourceKind: 'UNKNOWN',
+        knowledgeSourceRepoId: null,
+      });
+    });
+
+    it('keeps an epic child UNKNOWN when the repository has moved off the stored tuple', async () => {
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+      // The row locks must find their rows, or the derivation correctly answers UNKNOWN.
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: 'locked-row' }] as never);
+      vi.mocked(prisma.runInput.findUnique).mockResolvedValue({
+        knowledgeRepoSources: [{ orgId: 'org-a', repoId: 'repo-b', teamId: 'team-a' }],
+      } as never);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'user-launcher',
+        isActive: true,
+        role: 'ENGINEER',
+      } as never);
+      vi.mocked(prisma.teamMembership.findUnique).mockResolvedValue({
+        userId: 'user-launcher',
+      } as never);
+      vi.mocked(prisma.organizationMembership.findUnique).mockResolvedValue({
+        userId: 'user-launcher',
+      } as never);
+      vi.mocked(prisma.connection.findUnique).mockResolvedValue({
+        id: 'repo-b',
+        isActive: true,
+        shares: [],
+        team: {
+          isActive: true,
+          memberships: [{ userId: 'user-launcher' }],
+          organization: { isActive: true },
+          orgId: 'org-a',
+        },
+        teamId: 'team-moved',
+        type: 'git_repo',
+      } as never);
+      upsertRun.mockClear();
+      await createWorkflowRun({
+        launchedById: 'user-launcher',
+        parentWorkflowId: 'epic-T-1',
+        repoId: 'repo-b',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'epic-T-1-repo-b',
+        workRequestId: 'wr-epic',
+      });
+      expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+        knowledgeSourceKind: 'UNKNOWN',
+      });
+    });
+
+    it('keeps an epic child UNKNOWN when the epic carries no launcher', async () => {
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+      // The row locks must find their rows, or the derivation correctly answers UNKNOWN.
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: 'locked-row' }] as never);
+      vi.mocked(prisma.runInput.findUnique).mockResolvedValue({
+        knowledgeRepoSources: [{ orgId: 'org-a', repoId: 'repo-b', teamId: 'team-a' }],
+      } as never);
+      upsertRun.mockClear();
+      await createWorkflowRun({
+        parentWorkflowId: 'epic-T-1',
+        repoId: 'repo-b',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'epic-T-1-repo-b',
+        workRequestId: 'wr-epic',
+      });
+      expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+        knowledgeSourceKind: 'UNKNOWN',
+      });
+    });
     it('refuses an epic child whose own repository points at a retired installation', async () => {
       // An epic child's work request is the epic's and names no connection, so
       // the check must read the child's own repository.
@@ -618,9 +792,39 @@ describe('createWorkflowRun', () => {
       templateId: 'tpl-1',
       templateVersion: 1,
       workflowId: 'wf-1',
+      workRequestId: 'wr-1',
     });
     expect('error' in out && out.error).toMatch(/template tpl-1@v1 not found/);
     expect(upsertRun).not.toHaveBeenCalled();
+    // A launch that claimed its ledger row before starting must not sit in STARTING
+    // forever once setup has failed before the run could exist.
+    expect(vi.mocked(prisma.activeWorkflow.updateMany)).toHaveBeenCalledWith({
+      data: { currentStatus: 'FAILED' },
+      where: { currentStatus: 'STARTING', temporalWorkflowId: 'wf-1', workRequestId: 'wr-1' },
+    });
+  });
+
+  it('retires the launch record of a malformed spec the same way', async () => {
+    findVersion.mockResolvedValue({ spec: { nonsense: true } } as never);
+    const out = await createWorkflowRun({
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-1',
+      workRequestId: 'wr-1',
+    });
+    expect('error' in out).toBe(true);
+    expect(vi.mocked(prisma.activeWorkflow.updateMany)).toHaveBeenCalledWith({
+      data: { currentStatus: 'FAILED' },
+      where: { currentStatus: 'STARTING', temporalWorkflowId: 'wf-1', workRequestId: 'wr-1' },
+    });
+  });
+
+  it('does not touch a launch record when the run has no work request to link it to', async () => {
+    findVersion.mockResolvedValue(null as never);
+    vi.mocked(prisma.activeWorkflow.updateMany).mockClear();
+    await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
+
+    expect(vi.mocked(prisma.activeWorkflow.updateMany)).not.toHaveBeenCalled();
   });
 
   it('returns an error when the stored spec is malformed', async () => {
@@ -832,6 +1036,29 @@ describe('recordWorkflowStep', () => {
     await recordWorkflowStep({ nodeId: 'a', runId: 'r1', status: 'PASSED' });
     const argsPassed = upsertStep.mock.calls[1]?.[0]?.create as Record<string, unknown>;
     expect(argsPassed.endedAt).toBeInstanceOf(Date);
+  });
+
+  it('persists interpreter-owned spec node, type, and step identity on the workflow step', async () => {
+    upsertStep.mockResolvedValue({} as never);
+    await recordWorkflowStep({
+      nodeId: 'fan[0]/tests',
+      nodeType: 'step',
+      runId: 'r1',
+      specNodeId: 'tests',
+      status: 'PASSED',
+      stepName: 'runTests',
+    });
+    expect(upsertStep.mock.calls[0]?.[0]?.create).toMatchObject({
+      nodeId: 'fan[0]/tests',
+      nodeType: 'step',
+      specNodeId: 'tests',
+      stepName: 'runTests',
+    });
+    expect(upsertStep.mock.calls[0]?.[0]?.update).toMatchObject({
+      nodeType: 'step',
+      specNodeId: 'tests',
+      stepName: 'runTests',
+    });
   });
 
   it('records the attempt number on retried steps', async () => {

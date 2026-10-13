@@ -56,6 +56,7 @@ import { githubInstallationRoutes } from './routes/githubInstallations.js';
 import { githubWebhookSecretRoutes } from './routes/githubWebhookSecrets.js';
 import { humanErrorBaselineRoutes } from './routes/humanErrorBaselines.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
+import { knowledgeRoutes } from './routes/knowledge.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { mcpRoutes } from './routes/mcp.js';
 import { mcpConnectionRoutes } from './routes/mcpConnections.js';
@@ -304,6 +305,7 @@ async function start() {
   await app.register(automationRoutes, { prefix: '/api/v1/automations' });
   await app.register(connectionCredentialRoutes, { prefix: '/api/v1/repositories' });
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
+  await app.register(knowledgeRoutes, { prefix: '/api/v1/knowledge' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
   await app.register(slackChannelRoutes, { prefix: '/api/v1/platform/slack-channels' });
   // Deprecated alias — kept for one release.

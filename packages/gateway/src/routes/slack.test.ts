@@ -252,11 +252,12 @@ function buildApp(state: FakeState): FastifyInstance {
   } as unknown as never);
 
   app.decorate('prisma', {
+    $queryRaw: async () => [{ id: 'conn-1' }],
     $transaction: async (arg: unknown) => {
+      state.launchOrder.push('ledger');
       if (typeof arg === 'function') {
         return (arg as (tx: unknown) => unknown)(app.prisma);
       }
-      state.launchOrder.push('ledger');
       return Promise.all(arg as Promise<unknown>[]);
     },
     activeWorkflow: {
@@ -372,6 +373,7 @@ function buildApp(state: FakeState): FastifyInstance {
     team: {
       findUnique: async () => ({ id: 'team-default', orgId: 'org-1', slug: 'default' }),
     },
+    teamMembership: { findUnique: async () => ({ role: 'LEAD' }) },
     user: {
       // `isActive` is applied, not ignored: the access decision filters on it,
       // and a fake that drops the filter cannot tell a deactivated user from a
@@ -2404,8 +2406,10 @@ describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
     repoName: 'payments',
     shares: [],
     team: {
+      id: 'team-a',
+      isActive: true,
       memberships: [{ userId: 'u1' }],
-      organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+      organization: { id: 'org-1', isActive: true, monthlyBudgetUsdCents: null },
       orgId: 'org-1',
     },
     teamId: 'team-a',

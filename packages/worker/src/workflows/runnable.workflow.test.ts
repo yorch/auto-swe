@@ -56,6 +56,7 @@ const calls: {
   /** The input each `executeGateFixImplementation` call received. */
   gateFixArgs: unknown[];
   recordedSteps: Array<{ error?: string; nodeId: string; status: string }>;
+  retiredLaunches: Array<{ workflowId: string; workRequestId: string | null }>;
 } = {
   cancelledHumanSteps: [],
   ciFixArgs: [],
@@ -72,6 +73,7 @@ const calls: {
   readSource: [],
   recordedSteps: [],
   resolveWorkspace: [],
+  retiredLaunches: [],
   reviewFixArgs: [],
   runTool: [],
   writeOutcome: [],
@@ -91,6 +93,8 @@ let currentSpec: Record<string, unknown> = {};
 let currentPinnedSettings: Record<string, unknown> | undefined;
 /** When set, the fake createWorkflowRun reports this setup error instead of a run. */
 let createRunError: string | undefined;
+/** When set, the fake createWorkflowRun throws instead of returning — exhausted retries. */
+let createRunThrows = false;
 let updateDomainStateImpl: (workflowId: string, status: string) => Promise<void> = async (
   _wf,
   status
@@ -134,6 +138,9 @@ const fakeActivities = {
   },
   createWorkflowRun: async (input: unknown) => {
     calls.createWorkflowRun.push(input);
+    if (createRunThrows) {
+      throw new Error('setup activity exhausted its attempts');
+    }
     if (createRunError) {
       return { error: createRunError };
     }
@@ -200,6 +207,12 @@ const fakeActivities = {
       connectionId: input.connectionId ?? 'conn-default',
       provider: input.workspaceProvider ?? 'document',
     };
+  },
+  retireFailedLaunch: async (input: { workflowId: string; workRequestId?: string | null }) => {
+    calls.retiredLaunches.push({
+      workflowId: input.workflowId,
+      workRequestId: input.workRequestId ?? null,
+    });
   },
   runAgentTask: async () => {
     throw ApplicationFailure.nonRetryable(
@@ -290,6 +303,8 @@ beforeEach((ctx: TestContext) => {
   // has to opt in, and one that doesn't cannot accidentally depend on it.
   currentPinnedSettings = undefined;
   createRunError = undefined;
+  createRunThrows = false;
+  calls.retiredLaunches.length = 0;
 });
 
 afterAll(async () => {
@@ -419,6 +434,22 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     );
     expect(failure?.cause?.type).toBe('WORKFLOW_RUN_SETUP_FAILED');
     expect(failure?.cause?.message).toContain('template not found');
+  }, 120_000);
+
+  it('retires its launch record when setup threw on every attempt', async () => {
+    // The activity cannot know it is the last attempt, so the workflow retires the claim
+    // the launched run left behind — otherwise the ticket it names stays reserved for a run
+    // that never existed. Patched, so a history recorded before this step replays cleanly.
+    createRunThrows = true;
+    const handle = await env.client.workflow.start('RunnableWorkflow', startArgs('wf-setup-throw'));
+    await handle.result().then(
+      () => null,
+      () => null
+    );
+    expect(calls.retiredLaunches).toContainEqual({
+      workflowId: 'wf-setup-throw',
+      workRequestId: REQUEST.workRequestId,
+    });
   }, 120_000);
 
   it('runs a spec with no pinned-settings snapshot at all', async () => {

@@ -106,7 +106,7 @@ describe('POST /api/v1/agent-runs', () => {
 
     const prisma = {
       $executeRaw: async () => 1,
-      $queryRaw: async () => [],
+      $queryRaw: async () => [{ id: REPO }],
       $transaction: async (arg: unknown) =>
         typeof arg === 'function' ? arg(prisma) : Promise.all(arg as Promise<unknown>[]),
       activeWorkflow: {
@@ -172,6 +172,7 @@ describe('POST /api/v1/agent-runs', () => {
         },
         findUnique: async () => s.prevRun,
       },
+      user: { findUnique: async () => ({ id: USER, isActive: true, role: s.role }) },
       workflowTemplate: {
         findFirst: async ({ where }: { where: Record<string, unknown> }) => {
           if (where.id !== undefined) {
@@ -498,6 +499,7 @@ describe('POST /api/v1/agent-runs/:id/rerun', () => {
       verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'user-2' }),
     } as unknown as never);
     const prisma = {
+      $queryRaw: async () => [{ id: REPO }],
       $transaction: async (arg: unknown) =>
         typeof arg === 'function' ? arg(prisma) : Promise.all(arg as Promise<unknown>[]),
       activeWorkflow: {
@@ -517,8 +519,10 @@ describe('POST /api/v1/agent-runs/:id/rerun', () => {
           repoName: 'api',
           shares: [],
           team: {
+            id: 'team-1',
+            isActive: true,
             memberships: [{ userId: 'user-2' }],
-            organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+            organization: { id: 'org-1', isActive: true, monthlyBudgetUsdCents: null },
             orgId: 'org-1',
           },
           teamId: 'team-1',
@@ -531,6 +535,8 @@ describe('POST /api/v1/agent-runs/:id/rerun', () => {
         create: async ({ data }: { data: Record<string, unknown> }) => ({ id: data.id, ...data }),
         findUnique: async () => prev,
       },
+      teamMembership: { findUnique: async () => ({ role: 'LEAD' }) },
+      user: { findUnique: async () => ({ id: 'user-2', isActive: true, role: 'ENGINEER' }) },
       workflowTemplate: {
         findFirst: async ({ where }: { where: Record<string, unknown> }) =>
           where.id !== undefined

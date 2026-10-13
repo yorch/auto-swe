@@ -53,21 +53,38 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   const workflowId = workflowInfo().workflowId;
 
   // 1. Materialize the run row + parsed spec snapshot.
-  const runInfo = await stateActivities.createWorkflowRun({
-    canaryAgentKey: input.request.canaryAgentKey,
-    canaryVersion: input.request.canaryVersion,
-    launchedById: input.request.launchedById,
-    templateId: input.templateId,
-    templateVersion: input.templateVersion,
-    workflowId,
-    workRequestId: input.request.workRequestId,
-    // Epic children get their own ledger row from this activity (the gateway
-    // wrote only the epic's). Absent for every other run, so their input is
-    // unchanged.
-    ...(input.request.parentWorkflowId
-      ? { parentWorkflowId: input.request.parentWorkflowId, repoId: input.request.repoId ?? null }
-      : {}),
-  });
+  let runInfo: Awaited<ReturnType<typeof stateActivities.createWorkflowRun>>;
+  try {
+    runInfo = await stateActivities.createWorkflowRun({
+      canaryAgentKey: input.request.canaryAgentKey,
+      canaryVersion: input.request.canaryVersion,
+      launchedById: input.request.launchedById,
+      templateId: input.templateId,
+      templateVersion: input.templateVersion,
+      workflowId,
+      workRequestId: input.request.workRequestId,
+      // Epic children get their own ledger row from this activity (the gateway
+      // wrote only the epic's). Absent for every other run, so their input is
+      // unchanged.
+      ...(input.request.parentWorkflowId
+        ? { parentWorkflowId: input.request.parentWorkflowId, repoId: input.request.repoId ?? null }
+        : {}),
+    });
+  } catch (err) {
+    // Setup threw on every attempt. A launch that claimed its ledger row before
+    // starting (a PRD child, and every gateway launch that writes its row first)
+    // would leave that row in STARTING forever, reserving the ticket for a run that
+    // never existed. The activity cannot retire it itself: it cannot know it is the
+    // last attempt. Patched, because a history recorded before this step carries no
+    // such command and its replay must not issue one.
+    if (patched('retire-failed-launch')) {
+      await stateActivities.retireFailedLaunch({
+        workflowId,
+        workRequestId: input.request.workRequestId ?? null,
+      });
+    }
+    throw err;
+  }
   if ('error' in runInfo) {
     // A plain Error here fails the workflow *task*, which Temporal retries
     // forever; a non-retryable ApplicationFailure fails the run once.
@@ -246,6 +263,7 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       },
     },
     nodes: {},
+    // SAFETY: RepoWorkRequest is the validated launch DTO; the interpreter Context stores request data generically.
     request: input.request as unknown as Record<string, unknown>,
     workflow: { id: workflowId },
   };

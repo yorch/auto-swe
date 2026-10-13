@@ -81,6 +81,12 @@ describe('startChannelRun', () => {
     // Linked relationally so run visibility can reach the channel's team.
     expect(data.channelId).toBe('chan-1');
     expect(data.specSnapshot.description).toBe(CHANNEL_ASSISTANT_SPEC.description);
+    expect(data).toMatchObject({
+      knowledgeSourceKind: 'UNKNOWN',
+      knowledgeSourceOrgId: null,
+      knowledgeSourceRepoId: null,
+      knowledgeSourceTeamId: null,
+    });
     // Channel metadata also rides along in the spec snapshot for the audit feed.
     expect(data.specSnapshot.channel).toMatchObject({
       channelId: 'chan-1',
@@ -203,6 +209,12 @@ describe('startChannelRun', () => {
     });
     const data = p.workflowRun.create.mock.calls[0][0].data;
     expect(data.channelId).toBeNull();
+    expect(data).toMatchObject({
+      knowledgeSourceKind: 'UNKNOWN',
+      knowledgeSourceOrgId: null,
+      knowledgeSourceRepoId: null,
+      knowledgeSourceTeamId: null,
+    });
     expect(data.specSnapshot.channel.channelId).toBe('chan-gone');
   });
 

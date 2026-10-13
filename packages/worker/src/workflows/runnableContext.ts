@@ -182,7 +182,14 @@ export async function snapshotContext(ctx: Context, runId: string): Promise<unkn
 
   // Second pass: substitute by path, so two identical strings at different
   // paths cannot collide.
-  const rebuild = (value: unknown, path: string): unknown => {
+  type RebuiltContextValue =
+    | string
+    | number
+    | boolean
+    | null
+    | RebuiltContextValue[]
+    | { [key: string]: RebuiltContextValue };
+  const rebuild = (value: unknown, path: string): RebuiltContextValue => {
     if (typeof value === 'string') {
       if (value.length <= CONTEXT_INLINE_LIMIT) {
         return value;
@@ -200,7 +207,10 @@ export async function snapshotContext(ctx: Context, runId: string): Promise<unkn
         Object.entries(value).map(([k, v]) => [k, rebuild(v, path ? `${path}.${k}` : k)])
       );
     }
-    return value;
+    if (value === null || typeof value === 'number' || typeof value === 'boolean') {
+      return value;
+    }
+    return null;
   };
 
   return rebuild(ctx, '');

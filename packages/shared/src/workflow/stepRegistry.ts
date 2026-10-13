@@ -34,6 +34,7 @@ const SYSTEM_PROMPT_FIELD = {
   type: 'string' as const,
 } as const;
 
+export const KNOWLEDGE_TOOL_IDS = ['searchKnowledge', 'submitLearning'] as const;
 export const IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash'] as const;
 
 /**
@@ -48,7 +49,11 @@ export const MCP_TOOL_KEY = 'mcp' as const;
  * tools plus the `'mcp'` pseudo-key. Used to validate Agent tool config and to
  * populate the tool picker in the Agent library UI.
  */
-export const AGENT_TOOL_KEYS = [...IMPLEMENTER_TOOL_IDS, MCP_TOOL_KEY] as const;
+export const AGENT_TOOL_KEYS = [
+  ...IMPLEMENTER_TOOL_IDS,
+  MCP_TOOL_KEY,
+  ...KNOWLEDGE_TOOL_IDS,
+] as const;
 export type AgentToolKey = (typeof AGENT_TOOL_KEYS)[number];
 
 /**
@@ -310,6 +315,31 @@ register({
   description: 'Summarize the run and store a lesson in pgvector memory.',
   label: 'Commit to memory',
   name: 'commitToMemory',
+});
+
+register({
+  category: 'control',
+  configFields: [
+    { key: 'query', label: 'Query', required: true, type: 'string' },
+    { default: 5, key: 'limit', label: 'Maximum results', type: 'number' },
+  ],
+  description: 'Retrieve authorized governed knowledge as untrusted evidence.',
+  label: 'Retrieve knowledge',
+  name: 'retrieveKnowledge',
+});
+
+register({
+  category: 'control',
+  configFields: [
+    { key: 'title', label: 'Title', required: true, type: 'string' },
+    { key: 'content', label: 'Learning', multiline: true, required: true, type: 'string' },
+    { key: 'nodeId', label: 'Evidence node ID', required: true, type: 'string' },
+    { key: 'idempotencyKey', label: 'Idempotency key', required: true, type: 'string' },
+    { key: 'evidence', label: 'Evidence references', required: true, type: 'json' },
+  ],
+  description: 'Capture a locally scoped unreviewed learning from persisted run evidence.',
+  label: 'Capture learning',
+  name: 'captureLearning',
 });
 
 // ── Generic workspace / source / outcome / tool steps (non-SWE workflows) ──

@@ -313,6 +313,19 @@ export const SETTING_DEFINITIONS = {
     schema: z.boolean(),
   }),
 
+  'memory.knowledgeMaxResults': defineSetting({
+    defaultValue: 5,
+    description: 'Maximum governed knowledge results returned to an agent in one retrieval.',
+    group: 'memory',
+    label: 'Knowledge retrieval result limit',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.min(1).max(10),
+    unit: 'results',
+  }),
+
   // ── Semantic memory ────────────────────────────────────────────────────────
   'memory.lessonMaxAgeDays': defineSetting({
     defaultValue: 0,

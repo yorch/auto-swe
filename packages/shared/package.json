@@ -105,6 +105,8 @@
     "./lib/repoMembership": "./dist/lib/repoMembership.js",
     "./lib/pullRequest": "./dist/lib/pullRequest.js",
     "./lib/keyRotation": "./dist/lib/keyRotation.js",
+    "./lib/knowledge": "./dist/lib/knowledge.js",
+    "./lib/knowledgeService": "./dist/lib/knowledgeService.js",
     "./config": "./dist/config/index.js",
     "./config/cache": "./dist/config/cache.js",
     "./config/registry": "./dist/config/registry.js",

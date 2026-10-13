@@ -52,6 +52,27 @@ enum WorkflowTemplateStatus {
   ARCHIVED
 }
 
+enum KnowledgeType {
+  LEARNING
+  REFERENCE
+  DECISION
+  POLICY
+}
+
+enum KnowledgeStatus {
+  UNREVIEWED
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum KnowledgeVisibility {
+  REPOSITORY
+  TEAM
+  SELECTED_TEAMS
+  ORGANIZATION
+}
+
 enum ConfigScope {
   GLOBAL
   ORGANIZATION
@@ -114,6 +135,11 @@ model ActiveWorkflow {
   workRequest        RunInput?   @relation(fields: [workRequestId], references: [id])
   repoId             String?     @map("repo_id") @db.Uuid
   repository         Connection? @relation(fields: [repoId], references: [id])
+  /// Child-run launch identity; scalar values survive nullable relation deletion.
+  knowledgeSourceKind WorkflowRunKnowledgeSourceKind? @map("knowledge_source_kind")
+  knowledgeSourceRepoId String? @map("knowledge_source_repo_id") @db.Uuid
+  knowledgeSourceTeamId String? @map("knowledge_source_team_id") @db.Uuid
+  knowledgeSourceOrgId String? @map("knowledge_source_org_id") @db.Uuid
   currentStatus      String      @map("current_status")
   assignedBranch     String?     @map("assigned_branch")
   budgetTier         String      @default("STANDARD") @map("budget_tier")
@@ -383,10 +409,84 @@ model Connection {
   shares                ConnectionTeamShare[]
   automations           Automation[]
   automationFires       AutomationFire[]
+  knowledgeItems        KnowledgeItem[]
 
   @@index([teamId])
   @@index([installationId])
   @@map("connections")
+}
+
+/// Governed knowledge is separate from legacy MemoryItem retrieval. The vector
+/// is populated by the runtime embedding stage; policy and projections do not
+/// expose source evidence or the vector itself.
+model KnowledgeItem {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerTeamId       String              @map("owner_team_id") @db.Uuid
+  ownerTeam         Team                @relation("KnowledgeOwnerTeam", fields: [ownerTeamId], references: [id], onDelete: Cascade)
+  orgId             String              @map("org_id") @db.Uuid
+  organization      Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  originTeamId      String              @map("origin_team_id") @db.Uuid
+  originTeam        Team                @relation("KnowledgeOriginTeam", fields: [originTeamId], references: [id], onDelete: Cascade)
+  repoId            String?             @map("repo_id") @db.Uuid
+  repository        Connection?         @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  type              KnowledgeType       @default(LEARNING)
+  status            KnowledgeStatus     @default(UNREVIEWED)
+  visibility        KnowledgeVisibility @default(REPOSITORY)
+  title             String
+  content           String
+  tags              String[]            @default([])
+  entityType        String?             @map("entity_type")
+  entityId          String?             @map("entity_id")
+  version           Int                 @default(1)
+  approvedVersion   Int?                @map("approved_version")
+  producerRunId     String?             @map("producer_run_id") @db.Uuid
+  producerNodeId    String?             @map("producer_node_id")
+  producerAgentKey  String?             @map("producer_agent_key")
+  modelSpec         String?             @map("model_spec")
+  idempotencyKey    String?             @map("idempotency_key")
+  contentDigest     String              @map("content_digest")
+  evidence          Json?
+  embedding         Unsupported("vector(1536)")?
+  embeddingModel    String?             @map("embedding_model")
+  embeddingDigest   String?             @map("embedding_digest")
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  approvedById      String?             @map("approved_by_id") @db.Uuid
+  approvedBy        User?               @relation("KnowledgeItemApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt        DateTime?           @map("approved_at") @db.Timestamptz
+  grants            KnowledgeItemTeamGrant[]
+  events            KnowledgeItemEvent[]
+
+  @@unique([producerRunId, producerNodeId, idempotencyKey])
+  @@index([ownerTeamId, status, visibility])
+  @@index([orgId, status, visibility])
+  @@index([repoId, status])
+  @@map("knowledge_items")
+}
+
+model KnowledgeItemTeamGrant {
+  knowledgeItemId String        @map("knowledge_item_id") @db.Uuid
+  teamId          String        @map("team_id") @db.Uuid
+  knowledgeItem   KnowledgeItem @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+  team            Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([knowledgeItemId, teamId])
+  @@index([teamId])
+  @@map("knowledge_item_team_grants")
+}
+
+model KnowledgeItemEvent {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  knowledgeItemId String        @map("knowledge_item_id") @db.Uuid
+  knowledgeItem   KnowledgeItem @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+  actorId         String?       @map("actor_id") @db.Uuid
+  actor           User?         @relation("KnowledgeEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action          String
+  version         Int
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([knowledgeItemId, createdAt])
+  @@map("knowledge_item_events")
 }
 
 /// What the source-control host last said about one user's access to one
@@ -663,6 +763,7 @@ model Organization {
   slackChannels       SlackChannel[]
   memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
   agentTraces         AgentTrace[]             @relation("OrgAgentTraces")
+  knowledgeItems      KnowledgeItem[]
   humanErrorBaselines HumanErrorBaseline[]
 
   configSettings    ConfigSetting[]
@@ -722,6 +823,9 @@ model Team {
   autonomyPolicies      AutonomyPolicy[]
   skills                Skill[]
   skillSources          SkillSource[]
+  ownedKnowledgeItems   KnowledgeItem[]         @relation("KnowledgeOwnerTeam")
+  originKnowledgeItems  KnowledgeItem[]         @relation("KnowledgeOriginTeam")
+  knowledgeGrants       KnowledgeItemTeamGrant[]
 
   @@index([orgId])
   @@map("teams")
@@ -1130,6 +1234,8 @@ model User {
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
   connectionCredentials ConnectionCredential[]
+  knowledgeApprovals    KnowledgeItem[]         @relation("KnowledgeItemApprover")
+  knowledgeEvents       KnowledgeItemEvent[]    @relation("KnowledgeEventActor")
   launchedRuns          WorkflowRun[]            @relation("WorkflowRunLauncher")
   createdShares         ConnectionTeamShare[]    @relation("ConnectionShareCreator")
 
@@ -1219,9 +1325,17 @@ model RunInput {
   payload                 Json?
   /// Generic target Connection (P3). Null = not connection-scoped (or legacy
   /// rows where the linkage lives on requestPayload/ActiveWorkflow.repoId).
-  connectionId            String?     @map("connection_id") @db.Uuid
-  connection              Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
-  slackMessageTs          String?     @map("slack_message_ts")
+  connectionId     String?     @map("connection_id") @db.Uuid
+  connection       Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  /// Immutable source identity recorded by the authorized launch transaction.
+  /// Null on legacy rows; UNKNOWN is explicit and never promoted from absent links.
+  knowledgeSourceKind WorkflowRunKnowledgeSourceKind? @map("knowledge_source_kind")
+  knowledgeSourceRepoId String? @map("knowledge_source_repo_id") @db.Uuid
+  knowledgeSourceTeamId String? @map("knowledge_source_team_id") @db.Uuid
+  knowledgeSourceOrgId String? @map("knowledge_source_org_id") @db.Uuid
+  /// Authorized epic target identities, separate from caller-controlled requestPayload.
+  knowledgeRepoSources Json?     @map("knowledge_repo_sources")
+  slackMessageTs   String?     @map("slack_message_ts")
   /// Channel that originated the request (paired with slackMessageTs to thread
   /// per-step failure notifications back to the source conversation). Populated
   /// when the work request was created via the Slack slash command.
@@ -1409,6 +1523,7 @@ model WorkflowArtifact {
   id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   runId       String?      @map("run_id") @db.Uuid
   run         WorkflowRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+  evidence    TrustedKnowledgeEvidence[]
   kind        String
   contentType String       @default("application/octet-stream") @map("content_type")
   sizeBytes   Int          @map("size_bytes")
@@ -1420,6 +1535,44 @@ model WorkflowArtifact {
 
   @@index([runId])
   @@map("workflow_artifacts")
+}
+
+enum KnowledgeEvidenceProducer {
+  QUALITY_GATE
+}
+
+enum KnowledgeEvidenceOutcome {
+  PASSED
+}
+
+enum WorkflowRunKnowledgeSourceKind {
+  UNKNOWN
+  REPOSITORY
+  TEAM
+}
+
+/// Worker-owned, exact-attempt provenance for evidence accepted by knowledge capture.
+model TrustedKnowledgeEvidence {
+  id             String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId          String                    @map("run_id") @db.Uuid
+  run            WorkflowRun               @relation(fields: [runId], references: [id], onDelete: Cascade)
+  temporalRunId  String                   @map("temporal_run_id")
+  recordingId    String                   @map("recording_id")
+  specNodeId     String                   @map("spec_node_id")
+  stepAttempt    Int                      @map("step_attempt")
+  activityAttempt Int                     @default(1) @map("activity_attempt")
+  evidenceCorrelation String               @map("evidence_correlation")
+  producer       KnowledgeEvidenceProducer
+  gateName       String                   @map("gate_name")
+  outcome        KnowledgeEvidenceOutcome
+  artifactId     String?                  @map("artifact_id") @db.Uuid
+  artifact       WorkflowArtifact?        @relation(fields: [artifactId], references: [id], onDelete: SetNull)
+  summary        String
+  createdAt      DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([runId, recordingId, stepAttempt, activityAttempt, producer, gateName])
+  @@index([runId, artifactId])
+  @@map("trusted_knowledge_evidence")
 }
 
 /// One execution of a template. `specSnapshot` is the parsed WorkflowSpec at
@@ -1444,6 +1597,12 @@ model WorkflowRun {
   /// epic's teams reaches that team's child, not every child of the epic.
   connectionId      String?           @map("connection_id") @db.Uuid
   connection        Connection?       @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  /// Immutable knowledge source identity captured when this row is first created.
+  /// Nullable for legacy rows; those executions cannot capture knowledge.
+  knowledgeSourceKind WorkflowRunKnowledgeSourceKind? @map("knowledge_source_kind")
+  knowledgeSourceRepoId String?         @map("knowledge_source_repo_id") @db.Uuid
+  knowledgeSourceTeamId String?         @map("knowledge_source_team_id") @db.Uuid
+  knowledgeSourceOrgId String?          @map("knowledge_source_org_id") @db.Uuid
   specSnapshot      Json              @map("spec_snapshot")
   contextSnapshot   Json?             @map("context_snapshot")
   /// P1/WS3 Agent-version snapshot taken at run start: a `{ agentKey: version }`
@@ -1523,6 +1682,7 @@ model WorkflowRun {
 
   steps             WorkflowStep[]
   artifacts         WorkflowArtifact[]
+  trustedKnowledgeEvidence TrustedKnowledgeEvidence[]
   traces            AgentTrace[]
   memoryItems       MemoryItem[]
   humanSteps        WorkflowHumanStep[]
@@ -1832,6 +1992,9 @@ model WorkflowStep {
   runId     String             @map("run_id") @db.Uuid
   run       WorkflowRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
   nodeId    String             @map("node_id")
+  specNodeId String?           @map("spec_node_id")
+  nodeType  String?            @map("node_type")
+  stepName  String?            @map("step_name")
   attempt   Int                @default(1)
   status    WorkflowStepStatus @default(PENDING)
   startedAt DateTime?          @map("started_at") @db.Timestamptz

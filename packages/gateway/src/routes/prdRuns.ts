@@ -69,6 +69,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
               shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
               team: {
                 select: {
+                  id: true,
                   memberships: {
                     select: { userId: true },
                     where: { userId: user.sub },
@@ -77,6 +78,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
                   orgId: true,
                 },
               },
+              teamId: true,
               type: true,
             },
             where: { id: { in: repoIds }, isActive: true, type: 'git_repo' },
@@ -180,6 +182,11 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
       const launch = await launchTrackedWorkflow(
         fastify.prisma,
         {
+          knowledgeSourceRepos: repos.map((repo) => ({
+            orgId: repo.team.orgId,
+            repoId: repo.id,
+            teamId: repo.teamId,
+          })),
           runInput: {
             // The primary repository is the run's relational target: run
             // visibility reaches a run through its work request's connection,
@@ -201,7 +208,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
           temporalWorkflowId: prdWorkflowId,
         },
         () => fastify.temporal.startRunnableWorkflow(prdWorkflowId, workflowInput),
-        { log: fastify.log }
+        { log: fastify.log, sourceAuthorization: { actor: user } }
       );
       if (!launch.ok) {
         return reply.status(409).send({

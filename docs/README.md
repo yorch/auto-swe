@@ -33,6 +33,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [memory.md](./memory.md) | Agent memory — lessons and channel memory in pgvector, how they are written, recalled, consolidated and gated |
 | [nl-workflow-authoring.md](./nl-workflow-authoring.md) | Describing an automation in natural language and getting a validated `WorkflowSpec` back |
 | [figma-integration.md](./figma-integration.md) | Design context — the `design-fidelity` skill and submit-time Figma enrichment |
+| [knowledge.md](./knowledge.md) | Governed reusable knowledge — local capture, evidence, review/publication scopes, retrieval and trust boundaries |
 | [repo-dependency-graph.md](./repo-dependency-graph.md) | Directed dependency edges between git repos — the `RepoDependency` model, the cross-team edge API and management UI, and the neighbour resolver |
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
 | [repo-access-gating.md](./repo-access-gating.md) | Making repository access agree with GitHub — the permission projection, the sweep and webhook refresh, and the advisory-then-enforce rollout |

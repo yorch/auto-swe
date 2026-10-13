@@ -248,6 +248,49 @@ describe('buildImplementerForActivity', () => {
     vi.mocked(loadAgentToolConfig).mockResolvedValue(null);
   });
 
+  it.each([
+    [['searchKnowledge'], ['searchKnowledge']],
+    [['submitLearning'], ['submitLearning']],
+    [
+      ['searchKnowledge', 'submitLearning'],
+      ['searchKnowledge', 'submitLearning'],
+    ],
+    [
+      ['bash', 'searchKnowledge'],
+      ['bash', 'searchKnowledge'],
+    ],
+    [null, []],
+    [[], []],
+  ] as const)(
+    'constructs only explicitly granted knowledge tools: %j',
+    async (grants, expected) => {
+      vi.mocked(loadAgentSkills).mockResolvedValue([]);
+      vi.mocked(loadAgentToolConfig).mockResolvedValue(grants as string[] | null);
+      const built = await buildImplementerForActivity(workspace, new AgentTracer(), ctx);
+      const tools = (built.agent as unknown as { tools: Record<string, unknown> }).tools;
+      expect(
+        Object.keys(tools).filter((key) => key === 'searchKnowledge' || key === 'submitLearning')
+      ).toEqual(
+        expect.arrayContaining(
+          [...expected].filter((key) => key === 'searchKnowledge' || key === 'submitLearning')
+        )
+      );
+      expect(expected).toEqual(
+        expect.arrayContaining(
+          Object.keys(tools).filter((key) => key === 'searchKnowledge' || key === 'submitLearning')
+        )
+      );
+      if (grants?.length === 1 && grants[0] === 'searchKnowledge') {
+        expect(Object.keys(tools)).not.toContain('submitLearning');
+        expect(Object.keys(tools)).not.toContain('bash');
+      }
+      if (grants?.length === 1 && grants[0] === 'submitLearning') {
+        expect(Object.keys(tools)).not.toContain('searchKnowledge');
+        expect(Object.keys(tools)).not.toContain('bash');
+      }
+    }
+  );
+
   it('defaults to the implementer and returns the resolved step budget', async () => {
     vi.mocked(loadAgentSkills).mockResolvedValue([]);
     const built = await buildImplementerForActivity(workspace, new AgentTracer(), ctx);
@@ -294,6 +337,15 @@ describe('effectivePersonaToolKeys', () => {
     expect(effectivePersonaToolKeys(['readFile'], null)).toEqual(['readFile']);
     expect(effectivePersonaToolKeys(['bash', 'readFile'], ['readFile', 'writeFile'])).toEqual([
       'readFile',
+    ]);
+  });
+
+  it('intersects knowledge grants and preserves a knowledge-only persona without workspace fallback', () => {
+    expect(
+      effectivePersonaToolKeys(['searchKnowledge'], ['searchKnowledge', 'submitLearning'])
+    ).toEqual(['__noWorkspaceTools', 'searchKnowledge']);
+    expect(effectivePersonaToolKeys(['submitLearning'], ['searchKnowledge'])).toEqual([
+      '__noWorkspaceTools',
     ]);
   });
 

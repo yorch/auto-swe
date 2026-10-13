@@ -55,6 +55,7 @@ async function buildHarness(): Promise<Harness> {
   } as unknown as never);
 
   const prismaMock: Record<string, unknown> = {
+    $queryRaw: async () => [{ id: REPO_ID }],
     activeWorkflow: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         h.activeWorkflowCreates.push(data);
@@ -66,16 +67,34 @@ async function buildHarness(): Promise<Harness> {
       findMany: async () => [
         {
           id: REPO_ID,
+          isActive: true,
           organizationName: 'acme',
           repoName: 'payments',
           shares: [],
           team: {
+            isActive: true,
             memberships: [{ userId: 'user-1' }],
-            organization: { id: 'org-1', monthlyBudgetUsdCents: 1000 },
+            organization: { id: 'org-1', isActive: true, monthlyBudgetUsdCents: 1000 },
             orgId: 'org-1',
           },
+          teamId: 'team-1',
+          type: 'git_repo',
         },
       ],
+      findUnique: async () => ({
+        id: REPO_ID,
+        isActive: true,
+        shares: [],
+        team: {
+          id: 'team-1',
+          isActive: true,
+          memberships: [{ userId: 'user-1' }],
+          organization: { isActive: true },
+          orgId: 'org-1',
+        },
+        teamId: 'team-1',
+        type: 'git_repo',
+      }),
     },
     organizationMembership: {
       findUnique: async () => (h.orgMember ? { role: 'ORG_MEMBER' } : null),
@@ -93,13 +112,17 @@ async function buildHarness(): Promise<Harness> {
         return {};
       },
     },
+    teamMembership: { findUnique: async () => ({ role: 'LEAD' }) },
+    user: { findUnique: async () => ({ id: 'user-1', isActive: true, role: h.role }) },
     workflowTemplate: {
       findFirst: async () => ({ activeVersion: 1, id: 'tpl-prd' }),
     },
   };
-  prismaMock.$transaction = async (ops: Promise<unknown>[]) => {
+  prismaMock.$transaction = async (
+    action: Promise<unknown>[] | ((tx: unknown) => Promise<unknown>)
+  ) => {
     h.order.push('ledger');
-    return Promise.all(ops);
+    return typeof action === 'function' ? action(prismaMock) : Promise.all(action);
   };
   h.app.decorate('prisma', prismaMock as unknown as never);
 
@@ -154,11 +177,17 @@ describe('POST /prd-runs', () => {
     expect(h.runInputs).toHaveLength(1);
   });
 
-  it('records the primary repository as the RunInput connection, so run visibility reaches its team', async () => {
+  it('records a DB-authored exact repo set and keeps the ambiguous parent source UNKNOWN', async () => {
     const res = await submit(h);
 
     expect(res.statusCode).toBe(201);
-    expect(h.runInputs[0]).toMatchObject({ connectionId: REPO_ID, isCrossRepo: true });
+    expect(h.runInputs[0]).toMatchObject({
+      connectionId: REPO_ID,
+      isCrossRepo: true,
+      knowledgeRepoSources: [{ orgId: 'org-1', repoId: REPO_ID, teamId: 'team-1' }],
+      knowledgeSourceKind: 'UNKNOWN',
+      knowledgeSourceRepoId: null,
+    });
   });
 
   it('flags the generated PRD-<id> ticket as synthetic', async () => {

@@ -143,6 +143,7 @@ export type {
   InferRepoDependenciesResult,
 } from './inferRepoDependencies.js';
 export { inferRepoDependencies } from './inferRepoDependencies.js';
+export { captureLearning, retrieveKnowledge } from './knowledge.js';
 export type { ListProviderModelsInput, ListProviderModelsResult } from './listProviderModels.js';
 export { listProviderModels } from './listProviderModels.js';
 export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';
@@ -232,6 +233,7 @@ export {
   finalizeWorkflowRun,
   recordWorkflowStep,
   resolveTemplateForRepo,
+  retireFailedLaunch,
 } from './templates.js';
 export { validateContext } from './validateContext.js';
 export type { CiWaitConfig, WaitForCiByPollingInput } from './waitForCiByPolling.js';

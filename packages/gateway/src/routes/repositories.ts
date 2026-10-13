@@ -762,9 +762,19 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             // the move, so the move can never commit without the cleanup.
             await runUnscoped(
               "a repository's shares are keyed by the repository, and span the teams it names",
-              ['ConnectionTeamShare'],
+              ['ConnectionTeamShare', 'KnowledgeItem'],
               () =>
                 fastify.prisma.$transaction(async (tx) => {
+                  // CLAUDE.md §7 exception: serialize moves with repo-origin KnowledgeItem inserts.
+                  await tx.$queryRaw(
+                    Prisma.sql`SELECT id FROM connections WHERE id = ${repo.id}::uuid FOR UPDATE`
+                  );
+                  const existingKnowledge = await tx.knowledgeItem.count({
+                    where: { repoId: repo.id },
+                  });
+                  if (existingKnowledge > 0) {
+                    throw new Error('KNOWLEDGE_REASSIGNMENT_CONFLICT');
+                  }
                   const row = await updateRow(tx);
                   const owner = await tx.team.findUnique({
                     select: { orgId: true },
@@ -784,6 +794,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             )
           : await updateRow(fastify.prisma);
       } catch (err) {
+        if (err instanceof Error && err.message === 'KNOWLEDGE_REASSIGNMENT_CONFLICT') {
+          return sendConflict(
+            reply,
+            'KNOWLEDGE_SOURCE_IN_USE',
+            'Repository with governed knowledge cannot be reassigned'
+          );
+        }
         // Repointing the web base onto a host where the same owner/name is
         // already onboarded collides with the (host, owner, name) identity.
         if (isUniqueConstraintError(err)) {
@@ -902,19 +919,23 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         "a repository's shares are keyed by the repository, and span the teams it names",
         ['ConnectionTeamShare'],
         () =>
-          fastify.prisma.$transaction([
-            fastify.prisma.connectionTeamShare.deleteMany({
+          fastify.prisma.$transaction(async (tx) => {
+            // CLAUDE.md §7 exception: serialize share replacement with source checks.
+            await tx.$queryRaw(
+              Prisma.sql`SELECT id FROM connections WHERE id = ${repo.id}::uuid FOR UPDATE`
+            );
+            await tx.connectionTeamShare.deleteMany({
               where: { connectionId: repo.id, teamId: { notIn: teamIds } },
-            }),
-            fastify.prisma.connectionTeamShare.createMany({
+            });
+            return tx.connectionTeamShare.createMany({
               data: teamIds.map((teamId) => ({
                 connectionId: repo.id,
                 createdById: user.sub,
                 teamId,
               })),
               skipDuplicates: true,
-            }),
-          ])
+            });
+          })
       );
       await writeAuditLog(fastify, {
         action: 'UPDATE',

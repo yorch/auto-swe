@@ -114,11 +114,8 @@ function removesTeamAdmin(targetRole: Role, action: 'delete' | 'update', newRole
  * Apply a membership change, refusing it when it would leave the team with no
  * ADMIN.
  *
- * Count-then-write on its own is a race: two admins demoting each other both
- * count two admins, both proceed, and the team ends with none. The team row is
- * locked for the transaction, so concurrent admin removals on one team queue
- * behind each other and each counts what the previous one committed. Only
- * changes that remove an admin take the lock; everything else writes directly.
+ * The team row lock serializes every membership write with launch-source checks.
+ * Admin-removal counts also run under that lock to preserve the last-admin invariant.
  */
 async function applyMembershipChange<T>(
   prisma: FastifyInstance['prisma'],
@@ -126,16 +123,15 @@ async function applyMembershipChange<T>(
   removesAdmin: boolean,
   write: (db: Prisma.TransactionClient) => Promise<T>
 ): Promise<{ ok: true; value: T } | { ok: false; guard: TeamGuardResult }> {
-  if (!removesAdmin) {
-    return { ok: true, value: await write(prisma) };
-  }
   return prisma.$transaction(async (tx) => {
-    // CLAUDE.md §7 exception: a row lock on the team serialises concurrent
-    // admin removals; Prisma has no `SELECT … FOR UPDATE`.
+    // CLAUDE.md §7 exception: this lock is shared with source checks and serializes all
+    // membership changes for this team.
     await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
-    const adminCount = await tx.teamMembership.count({ where: { role: 'ADMIN', teamId } });
-    if (adminCount <= 1) {
-      return { guard: LAST_TEAM_ADMIN, ok: false as const };
+    if (removesAdmin) {
+      const adminCount = await tx.teamMembership.count({ where: { role: 'ADMIN', teamId } });
+      if (adminCount <= 1) {
+        return { guard: LAST_TEAM_ADMIN, ok: false as const };
+      }
     }
     return { ok: true as const, value: await write(tx) };
   });
@@ -520,17 +516,24 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      await fastify.prisma.team.update({
-        data: { isActive: false },
-        where: { id: request.params.id },
-      });
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor: requireUser(request),
-        after: { isActive: false },
-        before: teamAuditFields(team),
-        entityId: team.id,
-        entityType: 'Team',
+      await fastify.prisma.$transaction(async (tx) => {
+        // CLAUDE.md §7 exception: serialize team deactivation with source checks.
+        await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${request.params.id}::uuid FOR UPDATE`;
+        await tx.team.update({
+          data: { isActive: false },
+          where: { id: request.params.id },
+        });
+        // The entry commits with the change it records: an audit failure must not leave a
+        // deactivated team with no record of who deactivated it.
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor: requireUser(request),
+          after: { isActive: false },
+          before: teamAuditFields(team),
+          client: tx,
+          entityId: team.id,
+          entityType: 'Team',
+        });
       });
 
       return { data: { deleted: true } };
@@ -589,22 +592,34 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       // (userId, teamId) decides a concurrent double-add, which must be a 409,
       // not a 500.
       try {
-        const membership = await fastify.prisma.teamMembership.create({
-          data: {
-            role,
-            teamId: request.params.id,
-            userId,
-          },
-          include: { user: { select: { email: true, id: true, role: true } } },
-        });
-        await writeAuditLog(fastify, {
-          action: 'CREATE',
-          actor: requireUser(request),
-          after: membershipAuditFields(membership),
-          entityId: membership.id,
-          entityType: 'TeamMembership',
-        });
-        return reply.status(201).send({ data: membership });
+        const result = await applyMembershipChange(
+          fastify.prisma,
+          request.params.id,
+          false,
+          async (db) => {
+            const membership = await db.teamMembership.create({
+              data: {
+                role,
+                teamId: request.params.id,
+                userId,
+              },
+              include: { user: { select: { email: true, id: true, role: true } } },
+            });
+            await writeAuditLog(fastify, {
+              action: 'CREATE',
+              actor: requireUser(request),
+              after: membershipAuditFields(membership),
+              client: db,
+              entityId: membership.id,
+              entityType: 'TeamMembership',
+            });
+            return membership;
+          }
+        );
+        if (!result.ok) {
+          return sendError(reply, 409, result.guard.code, result.guard.message);
+        }
+        return reply.status(201).send({ data: result.value });
       } catch (err) {
         if (isUniqueConstraintError(err)) {
           return sendConflict(reply, 'MEMBER_EXISTS', 'User is already a member of this team');
@@ -648,24 +663,26 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma,
         request.params.id,
         removesTeamAdmin(membership.role, 'update', request.body.role),
-        (db) =>
-          db.teamMembership.update({
+        async (db) => {
+          const updated = await db.teamMembership.update({
             data: { role: request.body.role },
             where: { id: membership.id },
-          })
+          });
+          await writeAuditLog(fastify, {
+            action: 'UPDATE',
+            actor: requireUser(request),
+            after: membershipAuditFields(updated),
+            before: membershipAuditFields(membership),
+            client: db,
+            entityId: membership.id,
+            entityType: 'TeamMembership',
+          });
+          return updated;
+        }
       );
       if (!result.ok) {
         return sendError(reply, 409, result.guard.code, result.guard.message);
       }
-
-      await writeAuditLog(fastify, {
-        action: 'UPDATE',
-        actor: requireUser(request),
-        after: membershipAuditFields(result.value),
-        before: membershipAuditFields(membership),
-        entityId: membership.id,
-        entityType: 'TeamMembership',
-      });
 
       return { data: result.value };
     }
@@ -704,19 +721,22 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma,
         request.params.id,
         removesTeamAdmin(membership.role, 'delete'),
-        (db) => db.teamMembership.delete({ where: { id: membership.id } })
+        async (db) => {
+          const removed = await db.teamMembership.delete({ where: { id: membership.id } });
+          await writeAuditLog(fastify, {
+            action: 'DELETE',
+            actor: requireUser(request),
+            before: membershipAuditFields(membership),
+            client: db,
+            entityId: membership.id,
+            entityType: 'TeamMembership',
+          });
+          return removed;
+        }
       );
       if (!result.ok) {
         return sendError(reply, 409, result.guard.code, result.guard.message);
       }
-
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor: requireUser(request),
-        before: membershipAuditFields(membership),
-        entityId: membership.id,
-        entityType: 'TeamMembership',
-      });
 
       return { data: { removed: true } };
     }

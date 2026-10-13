@@ -154,6 +154,7 @@ async function enrichWithTicketData(
     }
 
     const snapshotData: Record<string, unknown> = {
+      // SAFETY: ticket is JSON-compatible provider output; Prisma's JSON type is narrower than unknown.
       rawTicketData: ticket as unknown as Prisma.InputJsonValue,
     };
     if (rawDocumentation !== null) {
@@ -162,6 +163,7 @@ async function enrichWithTicketData(
 
     await fastify.prisma.contextSnapshot.upsert({
       create: {
+        // SAFETY: snapshotData contains only Prisma JSON values assembled above.
         ...(snapshotData as {
           rawTicketData: Prisma.InputJsonValue;
           rawDocumentation?: Prisma.InputJsonValue;
@@ -236,10 +238,13 @@ async function enrichWithDesignData(
 
     await fastify.prisma.contextSnapshot.upsert({
       create: {
+        // SAFETY: summaries are JSON-compatible provider output; Prisma's JSON type is narrower than unknown.
         rawDesign: summaries as unknown as Prisma.InputJsonValue,
         workRequestId: args.workRequestId,
       },
-      update: { rawDesign: summaries as unknown as Prisma.InputJsonValue },
+      update: {
+        rawDesign: summaries as unknown as Prisma.InputJsonValue, // SAFETY: provider output is JSON-compatible.
+      },
       where: { workRequestId: args.workRequestId },
     });
   } catch (err) {
@@ -703,6 +708,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             temporalWorkflowId,
             workRequestId,
           },
+          knowledgeSourceRepo: {
+            orgId: repo.team.orgId,
+            repoId: repo.id,
+            teamId: repo.teamId,
+          },
           runInput: {
             connectionId: repo.id,
             description,
@@ -722,7 +732,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: resolvedTemplate.templateId,
             templateVersion: resolvedTemplate.version,
           }),
-        { guard: mcpWrite.launchGuard, log: fastify.log }
+        {
+          guard: mcpWrite.launchGuard,
+          log: fastify.log,
+          sourceAuthorization: { actor: user },
+        }
       );
       if (!launch.ok && launch.reason === 'GUARD_REFUSED') {
         // A retry of this key whose first submit committed while this one waited for the lock is

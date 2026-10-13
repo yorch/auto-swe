@@ -231,6 +231,13 @@ export const NAV_GROUPS: NavGroup[] = [
         minRole: 'ADMIN',
         section: 'Knowledge',
       },
+      {
+        href: '/govern/knowledge',
+        icon: 'layers',
+        label: 'Knowledge',
+        minRole: 'ENGINEER',
+        section: 'Knowledge',
+      },
       // The baselines API and layout both require LEAD.
       {
         href: '/govern/baselines',

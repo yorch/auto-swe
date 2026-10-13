@@ -20,6 +20,7 @@ import {
   temporalConnected,
 } from '../lib/temporalErrors.js';
 import { memberTeams, reachableConnections } from '../lib/tenantScope.js';
+import { snapshotAuthorizedRepositorySource } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import type { WorkRequestScheduleInput } from '../plugins/temporal.js';
 import { resolveDefaultTemplate } from './workRequests.js';
@@ -803,64 +804,70 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       // scheduled runs are attributable in /runs and the work-request list.
       // All three rows land in one transaction: a failure on the second or
       // third create must not leave an orphan RunInput/ActiveWorkflow behind.
-      const runInputCreate = fastify.prisma.runInput.create({
-        data: {
-          description: body.description,
-          externalTicketId: ticketId,
-          id: workRequestId,
-          requestedById: user.sub,
-          requestPayload: JSON.stringify({
-            name: body.name,
-            scheduledWorkRequestId: scheduleId,
-            source: 'schedule',
-          }),
-          templateId: template.templateId,
-          templateVersion: template.templateVersion,
-          // `<prefix>-SCHED-<id>` is generated from the schedule, not a tracker ticket.
-          ticketIsSynthetic: true,
-        },
-      });
+      const runInputData = {
+        description: body.description,
+        externalTicketId: ticketId,
+        id: workRequestId,
+        requestedById: user.sub,
+        requestPayload: JSON.stringify({
+          name: body.name,
+          scheduledWorkRequestId: scheduleId,
+          source: 'schedule',
+        }),
+        templateId: template.templateId,
+        templateVersion: template.templateVersion,
+        // `<prefix>-SCHED-<id>` is generated from the schedule, not a tracker ticket.
+        ticketIsSynthetic: true,
+      };
 
       // Anchor ActiveWorkflow row. Its temporalWorkflowId is the schedule's
       // BASE workflow ID, which no real fire uses (fires get a timestamp
       // suffix), so it never collides. It exists so worker activities that
       // join workRequestId → ActiveWorkflow (PR reuse, budget display) find a
       // row carrying the repo / branch / budget tier.
-      const activeWorkflowCreate = fastify.prisma.activeWorkflow.create({
-        data: {
-          assignedBranch: branch,
-          budgetTier: body.budgetTier,
-          currentStatus: 'SCHEDULED',
-          repoId: repo.id,
-          temporalWorkflowId: `sched-${scheduleId}`,
-          workRequestId,
-        },
-      });
+      const activeWorkflowData = {
+        assignedBranch: branch,
+        budgetTier: body.budgetTier,
+        currentStatus: 'SCHEDULED',
+        repoId: repo.id,
+        temporalWorkflowId: `sched-${scheduleId}`,
+        workRequestId,
+      };
 
-      const scheduleCreate = fastify.prisma.scheduledWorkRequest.create({
-        data: {
-          actsAsUserId: user.sub,
-          budgetTier: body.budgetTier,
-          createdById: user.sub,
-          cronExpression: body.cronExpression,
-          description: body.description,
-          externalTicketPrefix: body.externalTicketPrefix,
-          id: scheduleId,
-          isActive: body.isActive,
-          name: body.name,
-          repoId: repo.id,
-          teamId: owner.teamId,
-          templateId: body.templateId ?? null,
-          templateVersion: body.templateId ? template.templateVersion : null,
-          workRequestId,
-        },
-        include: scheduleInclude,
+      const scheduleData = {
+        actsAsUserId: user.sub,
+        budgetTier: body.budgetTier,
+        createdById: user.sub,
+        cronExpression: body.cronExpression,
+        description: body.description,
+        externalTicketPrefix: body.externalTicketPrefix,
+        id: scheduleId,
+        isActive: body.isActive,
+        name: body.name,
+        repoId: repo.id,
+        teamId: owner.teamId,
+        templateId: body.templateId ?? null,
+        templateVersion: body.templateId ? template.templateVersion : null,
+        workRequestId,
+      };
+      const row = await fastify.prisma.$transaction(async (tx) => {
+        const source = await snapshotAuthorizedRepositorySource(
+          tx,
+          { orgId: repo.team.orgId, repoId: repo.id, teamId: repo.teamId },
+          { actor: { role: user.role, sub: user.sub }, requiredTeamId: owner.teamId }
+        );
+        await tx.runInput.create({
+          data: {
+            ...runInputData,
+            knowledgeSourceKind: source ? 'REPOSITORY' : 'UNKNOWN',
+            knowledgeSourceOrgId: source?.orgId ?? null,
+            knowledgeSourceRepoId: source?.repoId ?? null,
+            knowledgeSourceTeamId: source?.teamId ?? null,
+          },
+        });
+        await tx.activeWorkflow.create({ data: activeWorkflowData });
+        return tx.scheduledWorkRequest.create({ data: scheduleData, include: scheduleInclude });
       });
-      const [, , row] = await fastify.prisma.$transaction([
-        runInputCreate,
-        activeWorkflowCreate,
-        scheduleCreate,
-      ]);
 
       try {
         await fastify.temporal.syncWorkRequestSchedule(

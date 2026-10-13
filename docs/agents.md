@@ -198,6 +198,8 @@ These tools translate agent calls to `docker exec` commands inside the workspace
 
 `Agent.toolKeys` is a nullable Json string array of tool IDs to allow. `null` means all 4 tools are enabled.
 
+Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. They are not workspace tools and are excluded when `toolKeys` is null or legacy. Grant each explicitly on the resolved Agent to enable it. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
+
 ### 3.2 `loadSkill` Tool (5th tool, always present when skills exist)
 
 When `skills` is non-empty, a fifth tool — `loadSkill` — is automatically added alongside the four workspace tools. It is **not** listed in `IMPLEMENTER_TOOL_IDS` and is **not** part of `Agent.toolKeys` (it is auto-added).

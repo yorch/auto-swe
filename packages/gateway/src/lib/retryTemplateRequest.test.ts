@@ -26,8 +26,19 @@ const input = {
 async function harness(visible = true) {
   const app = Fastify();
   const prisma = {
-    $transaction: vi.fn(async (writes: Promise<unknown>[]) => Promise.all(writes)),
+    // The launch records an authorized source snapshot: row locks, then the membership reads. All
+    // null here, so the snapshot stays UNKNOWN and the launch proceeds — the fail-closed path.
+    $queryRaw: vi.fn(async () => [{ id: 'locked-row' }]),
+    $transaction: vi.fn(async (arg: unknown) =>
+      typeof arg === 'function'
+        ? (arg as (tx: unknown) => Promise<unknown>)(prisma)
+        : Promise.all(arg as Promise<unknown>[])
+    ),
     activeWorkflow: { create: vi.fn(async () => ({ id: 'ledger-1' })) },
+    connection: { findUnique: vi.fn(async () => null) },
+    organizationMembership: { findUnique: vi.fn(async () => null) },
+    teamMembership: { findUnique: vi.fn(async () => null) },
+    user: { findUnique: vi.fn(async () => null) },
     workflowRun: {
       findFirst: vi.fn(async (_query: unknown) => (visible ? { id: 'old-run' } : null)),
     },
@@ -50,7 +61,7 @@ const auth = { authorization: 'Bearer fake' };
 beforeEach(() => {
   vi.mocked(validateRunConnection)
     .mockReset()
-    .mockResolvedValue({ budgetCap: null, budgetOrgId: null, ok: true });
+    .mockResolvedValue({ budgetCap: null, budgetOrgId: null, ok: true, source: null });
   vi.mocked(authorizeLaunch)
     .mockReset()
     .mockResolvedValue({ ok: true } as never);

@@ -121,6 +121,7 @@ export const SIDEBAR = [
       'docs/memory',
       'docs/nl-workflow-authoring',
       'docs/figma-integration',
+      'docs/knowledge',
       'docs/repo-dependency-graph',
       'docs/repo-access-gating',
       'docs/repositories',
