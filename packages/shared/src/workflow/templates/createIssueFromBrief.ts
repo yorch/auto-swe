@@ -59,7 +59,10 @@ export const CREATE_ISSUE_FROM_BRIEF_SPEC: WorkflowSpec = {
         result: {
           brief: { from: 'request.payload.brief' },
           description: { from: 'nodes.draftIssue.output.text' },
-          issueUrl: { from: 'nodes.writeOutcome.output.reference' },
+          // `writes: 'split'` names the write nodes autoWrite/manualWrite; one ran.
+          issueUrl: {
+            expr: 'nodes.autoWrite.output.reference ?? nodes.manualWrite.output.reference',
+          },
           projectKey: { from: 'request.payload.projectKey' },
           title: { from: 'request.payload.title' },
         },

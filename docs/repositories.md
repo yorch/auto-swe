@@ -269,6 +269,14 @@ longer fit.
 
 ## Limitations
 
+- **An executor image is checked when it is saved, not when a run starts.** Only a platform admin
+  may set one (see [`deployment.md`](./deployment.md)), but the worker runs whatever image the row
+  holds, so an image already stored stays in use until an admin changes or clears it.
+- **A rebuilt executor image is chosen by its repository.** `build-executor.yml` builds from the
+  target repository's own `.auto-swe/Dockerfile` when it has one and writes the result to the
+  connection with an admin token, so anyone who can merge to that repository's default branch decides
+  what the next rebuilt image runs, and that image receives the run's GitHub credential.
+
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an
   origin.

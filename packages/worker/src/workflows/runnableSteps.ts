@@ -47,6 +47,13 @@ import {
 
 interface StepExecutorArgs {
   step: string;
+  /**
+   * Identifies this dispatch within the run: the interpreter's recording id
+   * (branch-prefixed inside a fan-out), suffixed `#<n>` on a loop's later
+   * visits. Side-effect ledgers key on it so two writes are never mistaken for
+   * one.
+   */
+  dispatchKey: string;
   ctx: Context;
   request: RepoWorkRequest;
   config: Record<string, unknown>;
@@ -54,6 +61,9 @@ interface StepExecutorArgs {
 }
 
 type StepExecutor = (args: StepExecutorArgs) => Promise<unknown>;
+
+/** writeOutcome inputs that name a payload shape; their presence disables the inputs fallback. */
+const EXPLICIT_PAYLOAD_INPUTS = ['data', 'pageId', 'blocks', 'body', 'ticketId'] as const;
 
 /** Resolve a step's target connection, defaulting to the run-level workspace. */
 function resolveConnectionId(step: string, ctx: Context, inputs: Record<string, unknown>): string {
@@ -725,7 +735,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'writeOutcome',
-    ({ inputs, ctx, step }) => {
+    ({ inputs, ctx, step, dispatchKey }) => {
       let data = inputs.data;
       // Convenience for Notion: a template can pass `text` + `pageId` and the
       // step wraps it into a single paragraph block.
@@ -755,6 +765,21 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
           ticketId: inputs.ticketId,
         };
       }
+      // Otherwise the node's own inputs are the payload: a write node that binds
+      // `title`/`description` (issue tracker) or `channelId`/`text` (Slack) as
+      // separate inputs writes exactly those fields. Not for a node that names an
+      // explicit payload or one of the shapes above: when one of those binds to
+      // nothing, the write must fail rather than land somewhere else (a Notion
+      // `text` with no `pageId` would otherwise go to the connection's source
+      // page). `connectionId` picks the target and is not part of what is written.
+      if (data === undefined && !EXPLICIT_PAYLOAD_INPUTS.some((key) => key in inputs)) {
+        const fields = Object.fromEntries(
+          Object.entries(inputs).filter(([key, v]) => key !== 'connectionId' && v !== undefined)
+        );
+        if (Object.keys(fields).length > 0) {
+          data = fields;
+        }
+      }
       // Convenience for Zendesk: pass through the public/private flag.
       if (typeof inputs.public === 'boolean' && typeof data === 'object' && data != null) {
         data = { ...(data as object), public: inputs.public };
@@ -762,7 +787,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       return genericActivities.writeOutcome({
         connectionId: resolveConnectionId(step, ctx, inputs),
         data,
-        nodeId: step,
+        nodeId: dispatchKey,
       });
     },
   ],
@@ -794,13 +819,14 @@ export async function dispatchStepImpl(
   ctx: Context,
   request: RepoWorkRequest,
   config: Record<string, unknown>,
-  inputs: Record<string, unknown>
+  inputs: Record<string, unknown>,
+  dispatchKey: string
 ): Promise<unknown> {
   const executor = STEP_EXECUTORS.get(step);
   if (!executor) {
     throw new Error(`unknown step: ${step}`);
   }
-  return executor({ config, ctx, inputs, request, step });
+  return executor({ config, ctx, dispatchKey, inputs, request, step });
 }
 
 // ── Helpers ──

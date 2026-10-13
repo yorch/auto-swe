@@ -21,6 +21,14 @@ Six long-running processes plus one Docker daemon, and two more that are optiona
 
 The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `WORKSPACE_IMAGE` environment variable (default `node:24-alpine`); an explicit `image` on a node still wins. Leave a connection's executor image **blank** to inherit that default — the column has no database default, so blank means "inherit" rather than a pinned value, and a connection that names an image keeps it. Clearing the field in the connection's settings is how you opt one back in (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
 
+The workspace clones and pushes with the run's GitHub credential (the platform's, or the launcher's
+own) inside the executor image, so choosing the image is choosing code that sees that credential.
+Only a platform admin may set a connection's executor image; a team lead may clear it, or save the
+connection with the image it already has. The team shell-image allowlist does not apply: its entries
+are approved for sandboxed shell steps, which never hold a credential. `build-executor.yml` writes
+each freshly tagged image to its repository, so its `GATEWAY_TOKEN` must belong to a platform
+admin.
+
 The workspace image tracks its own major, not the services'. It stays on `node:24-alpine` while the gateway, worker and web images run Node 26, because that image puts `yarn`, `pnpm` and `corepack` on `PATH` and the Node 26 image puts none of them there — Corepack is no longer bundled with the Node distribution.
 
 This is a harder constraint than "some target repos use Yarn". Every built-in quality gate is unconditionally a `yarn` command — `DEFAULT_COMMANDS` in `activities/qualityGates.ts` defines `runBuild`, `runLint`, `runTests`, `runTypecheck` and `runVulnScan` that way — and they run with `docker exec` inside this container. On an image without `yarn` all five exit `127`, for every repo regardless of its stack, and the failure reads as the agent producing broken code rather than as a missing tool. A per-connection `gateCommands` override sidesteps it, but that is opt-in and unset is the normal case.

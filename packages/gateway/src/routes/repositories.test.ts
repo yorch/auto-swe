@@ -576,6 +576,98 @@ describe('repositoryRoutes', () => {
     });
   });
 
+  describe('executor image', () => {
+    const patch = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload,
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+    const asTeamLead = () => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-1';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role: 'LEAD',
+        team: { isActive: true },
+      });
+    };
+
+    it('refuses a team lead any new image: it would hold the credential', async () => {
+      asTeamLead();
+      ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce({
+        executorImage: null,
+        id: REPO_ID,
+        teamId: TEAM_ID,
+      });
+
+      const res = await patch({ executorImage: 'attacker/evil:1' });
+
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error.code).toBe('EXECUTOR_IMAGE_NOT_ALLOWED');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a team lead onboarding a repository with an image', async () => {
+      asTeamLead();
+      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: {
+          executorImage: 'attacker/evil:1',
+          organizationName: 'acme',
+          repoName: 'api',
+          teamId: TEAM_ID,
+        },
+        url: '/api/v1/repositories',
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+    });
+
+    it('lets a team lead re-save the image an admin chose, and clear it', async () => {
+      asTeamLead();
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: 'registry.acme.dev/custom:2026-10-01',
+        id: REPO_ID,
+        teamId: TEAM_ID,
+      });
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+
+      const same = await patch({
+        description: 'edited',
+        executorImage: 'registry.acme.dev/custom:2026-10-01',
+      });
+      const blank = await patch({ executorImage: '  ' });
+
+      expect(same.statusCode).toBe(200);
+      expect(blank.statusCode).toBe(200);
+      const cleared = ctx.mockPrisma.connection.update.mock.calls[1]?.[0] as {
+        data: { executorImage: unknown };
+      };
+      expect(cleared.data.executorImage).toBeNull();
+    });
+
+    it('lets a platform admin set any image reference, but not a malformed one', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: null,
+        id: REPO_ID,
+        teamId: TEAM_ID,
+      });
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+
+      const ok = await patch({ executorImage: 'registry.acme.dev/custom:2026-10-01' });
+      const bad = await patch({ executorImage: 'node:26 --privileged' });
+
+      expect(ok.statusCode).toBe(200);
+      expect(bad.statusCode).toBe(400);
+      expect(ctx.mockPrisma.connection.update).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('PATCH /api/v1/repositories/:id', () => {
     it('updates the repository and returns the new row', async () => {
       ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });

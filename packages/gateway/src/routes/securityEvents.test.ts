@@ -126,6 +126,7 @@ describe('memory gate events', () => {
                 'memory.lesson_refused',
                 'memory.consolidation_refused',
                 'memory.channel_write_refused',
+                'memory.knowledge_learning_refused',
               ],
             },
           },

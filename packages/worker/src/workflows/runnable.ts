@@ -162,6 +162,12 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     steerBuffer.push(msg);
   });
 
+  // How many times each recording id has dispatched a step. A graph loop revisits
+  // the same node under the same recording id, so the visit number is what makes
+  // each pass a distinct write in the outcome ledger. Workflow state, so a replay
+  // recomputes the same numbers.
+  const dispatchVisits = new Map<string, number>();
+
   // 3. Build the Temporal-backed dispatcher.
   //
   // Phase-8: when the interpreter passes a `cancellation` sink (every dispatch
@@ -199,9 +205,17 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     }) {
       // Tag the activity this dispatch schedules with the node it runs for; the
       // outbound interceptor (nodeTagInterceptor.ts) turns it into a header.
+      // `onFail.retry` re-dispatches (stepAttempt > 1) keep the visit they retry,
+      // so a write that already landed is not repeated.
+      const visit =
+        (stepAttempt ?? 1) > 1
+          ? (dispatchVisits.get(nodeId) ?? 1)
+          : (dispatchVisits.get(nodeId) ?? 0) + 1;
+      dispatchVisits.set(nodeId, visit);
+      const dispatchKey = visit === 1 ? nodeId : `${nodeId}#${visit}`;
       return runWithNodeTag(nodeTagOf(nodeId, specNodeId, stepAttempt), () =>
         runWithCancellation(cancellation, () =>
-          dispatchStepImpl(step, ctx, input.request, config, inputs)
+          dispatchStepImpl(step, ctx, input.request, config, inputs, dispatchKey)
         )
       );
     },
