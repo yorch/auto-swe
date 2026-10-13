@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback } from 'react';
 import { EpicList } from '@/components/epics/EpicList';
 import { RequestList } from '@/components/requests/RequestList';
 import { RequestPanel } from '@/components/requests/RequestPanel';
@@ -17,6 +17,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useEpics } from '@/hooks/useEpics';
 import { type RequestState, useRequests } from '@/hooks/useRequests';
 import { parseOffset } from '@/hooks/useUrlFilters';
@@ -42,8 +43,6 @@ function RequestsWorkspace() {
   const rawState = params.get('state');
   const state = STATES.find((option) => option.value === rawState)?.value ?? 'all';
   const search = (params.get('search') ?? '').slice(0, 200);
-  const [searchDraft, setSearchDraft] = useState(search);
-  useEffect(() => setSearchDraft(search), [search]);
   const offset = parseOffset(params.get('offset'));
   const type = params.get('type') === 'epics' ? 'epics' : 'all';
   const showEpics = type === 'epics';
@@ -78,13 +77,9 @@ function RequestsWorkspace() {
     },
     [router, urlFor]
   );
-  useEffect(() => {
-    if (searchDraft === search) {
-      return;
-    }
-    const timer = setTimeout(() => update({ offset: null, search: searchDraft }), 300);
-    return () => clearTimeout(timer);
-  }, [searchDraft, search, update]);
+  const [searchDraft, setSearchDraft] = useDebouncedUrlSearch(search, (value) =>
+    update({ offset: null, search: value })
+  );
   return (
     <div className="space-y-6">
       <PageHeader
