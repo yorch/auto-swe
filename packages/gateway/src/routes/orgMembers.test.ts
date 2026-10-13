@@ -166,7 +166,8 @@ describe('POST /:orgId/members/invite', () => {
 
     expect(res.statusCode).toBe(201);
     expect(JSON.parse(res.body).data).toMatchObject({ isActive: false, orgRole: 'ORG_MEMBER' });
-    const { data } = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    const call = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    const { data } = call;
     // Inactive and unapproved is the approval queue; the address is verified
     // by the invitee following the link, not vouched for by the inviter.
     expect(data).toEqual({
@@ -184,7 +185,8 @@ describe('POST /:orgId/members/invite', () => {
     const res = await invite('ADMIN');
 
     expect(res.statusCode).toBe(201);
-    const { data } = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    const call = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    const { data } = call;
     expect(data).toMatchObject({
       approvalSource: 'admin',
       approvedAt: expect.any(Date),
