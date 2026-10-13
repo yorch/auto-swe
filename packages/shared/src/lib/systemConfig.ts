@@ -87,16 +87,21 @@ export interface ResolvedGitHubConfig {
   credentialHost?: string;
 }
 
-/// The instance's GitHub web base — the host a repository whose `githubUrl` is
-/// null lives on. Reads that one column and no secret, so a listing that only
-/// builds links does not decrypt the credentials. Same fallback as
-/// `resolveGitHubConfig().baseUrl`.
+/** The instance's GitHub web URL: the stored row's, else `GITHUB_URL`, else github.com. */
+function githubBaseUrlOf(row: { baseUrl: string | null } | null): string {
+  return row?.baseUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+}
+
+/**
+ * The instance's GitHub web URL alone, as `resolveGitHubConfig().baseUrl` resolves it. Reads one
+ * column and decrypts no secret, for a caller that needs only the host.
+ */
 export async function resolveGitHubBaseUrl(_opts?: ResolveOpts): Promise<string> {
   const row = await (await db()).gitHubConfig.findUnique({
     select: { baseUrl: true },
     where: { id: 'default' },
   });
-  return row?.baseUrl ?? process.env.GITHUB_URL ?? 'https://github.com';
+  return githubBaseUrlOf(row);
 }
 
 export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<ResolvedGitHubConfig> {
@@ -151,7 +156,7 @@ export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<Resolved
     appInstallationId: row?.appInstallationId ?? process.env.GITHUB_APP_INSTALLATION_ID ?? null,
     appPrivateKey,
     authMode: row?.authMode ?? process.env.GITHUB_AUTH_MODE ?? null,
-    baseUrl: row?.baseUrl ?? process.env.GITHUB_URL ?? 'https://github.com',
+    baseUrl: githubBaseUrlOf(row),
     credentialHost: hostFamily(apiUrl),
     // Sign-in credentials are environment-only: better-auth reads them once at boot.
     oauthClientId: process.env.GITHUB_CLIENT_ID ?? null,

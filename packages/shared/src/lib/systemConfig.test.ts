@@ -16,6 +16,7 @@ import { encryptSecret } from './crypto.js';
 import {
   assertScheduledSweepsEnv,
   assertWorkspaceInfraEnv,
+  resolveGitHubBaseUrl,
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
   resolveKnowledgeBaseConfig,
@@ -111,6 +112,25 @@ describe('systemConfig resolvers', () => {
       }
     }
     vi.unstubAllEnvs();
+  });
+
+  describe('resolveGitHubBaseUrl', () => {
+    it('reads only the base URL column, never a secret', async () => {
+      findGitHub.mockResolvedValue({ baseUrl: 'https://ghe.example.com' } as never);
+      await expect(resolveGitHubBaseUrl()).resolves.toBe('https://ghe.example.com');
+      expect(findGitHub).toHaveBeenCalledWith({
+        select: { baseUrl: true },
+        where: { id: 'default' },
+      });
+    });
+
+    it('falls back to GITHUB_URL, then github.com, as resolveGitHubConfig does', async () => {
+      findGitHub.mockResolvedValue(null);
+      await expect(resolveGitHubBaseUrl()).resolves.toBe('https://github.com');
+      vi.stubEnv('GITHUB_URL', 'https://github.example.org');
+      await expect(resolveGitHubBaseUrl()).resolves.toBe('https://github.example.org');
+      expect((await resolveGitHubConfig()).baseUrl).toBe('https://github.example.org');
+    });
   });
 
   describe('resolveGitHubConfig', () => {
