@@ -20,6 +20,8 @@ vi.mock('@mastra/core/agent', () => ({
 }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn(async () => 'run-1'),
+  // The governed mirror reads the running run row for its findings; undefined means none yet.
+  currentRunningWorkflowRunId: vi.fn(async () => undefined),
   persistActivityTrace: persistTraceMock,
 }));
 vi.mock('../lib/lessonAttemptHistory.js', async (importOriginal) => ({

@@ -91,10 +91,13 @@ function selectTools(available: AgentTools | undefined, enabled: string[] | null
   if (!available) {
     return empty;
   }
-  if (enabled === null) {
-    return available;
-  }
   const pool = available as Record<string, unknown>;
+  if (enabled === null) {
+    const picked = Object.fromEntries(
+      Object.entries(pool).filter(([key]) => key !== 'searchKnowledge' && key !== 'submitLearning')
+    );
+    return picked as AgentTools;
+  }
   const picked: Record<string, unknown> = {};
   for (const key of enabled) {
     if (key in pool) {

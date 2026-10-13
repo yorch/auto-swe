@@ -19,7 +19,25 @@ import type { SkillOption } from '@/hooks/useSkills';
 
 /** Mirrors `AGENT_TOOL_KEYS`: the four implementer workspace tools plus the
  *  `mcp` pseudo-key that gates MCP tool loading. */
-export const ALL_TOOL_KEYS = ['readFile', 'writeFile', 'listDirectory', 'bash', 'mcp'] as const;
+export const ALL_TOOL_KEYS = [
+  'readFile',
+  'writeFile',
+  'listDirectory',
+  'bash',
+  'mcp',
+  'searchKnowledge',
+  'submitLearning',
+] as const;
+
+const TOOL_LABELS: Record<(typeof ALL_TOOL_KEYS)[number], string> = {
+  bash: 'Run workspace commands',
+  listDirectory: 'List workspace directories',
+  mcp: 'Use connected MCP tools',
+  readFile: 'Read workspace files',
+  searchKnowledge: 'Search governed knowledge (explicit opt-in)',
+  submitLearning: 'Submit local learning for human review (explicit opt-in)',
+  writeFile: 'Write workspace files',
+};
 
 /** Drops empty-string and undefined entries so an untouched optional field is
  *  omitted from the request body rather than sent as `''`. */
@@ -170,7 +188,7 @@ export function ToolKeysEditor({
               <Checkbox
                 checked={value?.includes(key) ?? false}
                 key={key}
-                label={<span className="font-mono text-xs">{key}</span>}
+                label={<span className="text-xs">{TOOL_LABELS[key]}</span>}
                 onChange={(e) => toggleKey(key, e.target.checked)}
               />
             ))}

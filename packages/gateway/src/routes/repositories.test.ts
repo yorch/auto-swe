@@ -18,7 +18,13 @@ vi.mock('@auto-swe/shared', () => ({
     apiKeyNonce: Buffer.from('nonce'),
     apiKeyVersion: 1,
   }),
-  Prisma: { DbNull: DB_NULL },
+  Prisma: {
+    DbNull: DB_NULL,
+    sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({
+      strings: [...strings],
+      values,
+    }),
+  },
   Role: { ADMIN: 'ADMIN', ENGINEER: 'ENGINEER', LEAD: 'LEAD' },
 }));
 
@@ -47,6 +53,15 @@ async function buildApp() {
   const authState: AuthState = { role: 'ADMIN', sub: 'admin-1' };
 
   const mockPrisma = {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        $queryRaw: vi.fn(),
+        connection: { update: (...args: unknown[]) => mockPrisma.connection.update(...args) },
+        connectionTeamShare: { deleteMany: vi.fn() },
+        knowledgeItem: { count: (...args: unknown[]) => mockPrisma.knowledgeItem.count(...args) },
+        team: { findUnique: (...args: unknown[]) => mockPrisma.team.findUnique(...args) },
+      })
+    ),
     connection: {
       count: vi.fn(),
       create: vi.fn(),
@@ -55,6 +70,8 @@ async function buildApp() {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    connectionTeamShare: { deleteMany: vi.fn() },
+    knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
     team: {
       findUnique: vi.fn(),
     },
@@ -102,6 +119,9 @@ describe('repositoryRoutes', () => {
   beforeEach(() => {
     ctx.authState.role = 'ADMIN';
     ctx.authState.sub = 'admin-1';
+    ctx.mockPrisma.$transaction.mockClear();
+    ctx.mockPrisma.knowledgeItem.count.mockReset().mockResolvedValue(0);
+    ctx.mockPrisma.connectionTeamShare.deleteMany.mockReset();
     ctx.mockPrisma.connection.count.mockReset();
     ctx.mockPrisma.connection.create.mockReset();
     ctx.mockPrisma.connection.findFirst.mockReset();
@@ -575,6 +595,30 @@ describe('repositoryRoutes', () => {
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).data.description).toBe('updated');
       expect(ctx.mockPrisma.connection.update).toHaveBeenCalled();
+    });
+
+    it('rejects reassignment when governed knowledge exists on the locked repository', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce({
+        apiKeyAuthTag: null,
+        apiKeyCiphertext: null,
+        apiKeyNonce: null,
+        apiKeyVersion: 1,
+        id: REPO_ID,
+        team: { orgId: 'org-1' },
+        teamId: TEAM_ID,
+        type: 'git_repo',
+      });
+      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ isActive: true });
+      ctx.mockPrisma.knowledgeItem.count.mockResolvedValueOnce(1);
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload: { teamId: '44444444-4444-4444-8444-444444444444' },
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+      expect(res.statusCode, res.payload).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('KNOWLEDGE_SOURCE_IN_USE');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
     });
 
     it('returns 404 when the repository does not exist', async () => {

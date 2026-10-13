@@ -146,6 +146,8 @@ describe('resolveAgentSpec — tool selection', () => {
   const tools = {
     bash: 't-bash',
     readFile: 't-read',
+    searchKnowledge: 't-search',
+    submitLearning: 't-submit',
     writeFile: 't-write',
   } as unknown as AgentTools;
 
@@ -154,14 +156,24 @@ describe('resolveAgentSpec — tool selection', () => {
     expect(spec.tools).toEqual({});
   });
 
-  it('returns every candidate when the agent has no tool override (null)', async () => {
+  it('does not grant knowledge tools when the agent has no tool override (null)', async () => {
     mockedResolveAgent.mockResolvedValue(resolvedAgent({ toolKeys: null }));
     const spec = await resolveAgentSpec({
       agentKey: 'implementer',
       availableTools: tools,
       basePrompt: 'B',
     });
-    expect(spec.tools).toBe(tools);
+    expect(spec.tools).toEqual({ bash: 't-bash', readFile: 't-read', writeFile: 't-write' });
+  });
+
+  it('grants knowledge tools only when explicitly named', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ toolKeys: ['searchKnowledge'] }));
+    const spec = await resolveAgentSpec({
+      agentKey: 'reviewer',
+      availableTools: tools,
+      basePrompt: 'B',
+    });
+    expect(spec.tools).toEqual({ searchKnowledge: 't-search' });
   });
 
   it('intersects candidates with the enabled-tool keys', async () => {

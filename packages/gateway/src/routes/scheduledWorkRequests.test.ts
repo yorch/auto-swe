@@ -50,6 +50,7 @@ describe('/api/v1/scheduled-work-requests', () => {
 
   // Per-test knobs
   let membershipRole = 'LEAD';
+  let sourceIdentityMoved = false;
   let scheduleRow: Record<string, unknown> | null = null;
   let syncShouldFail = false;
   let temporalUp = true;
@@ -136,6 +137,7 @@ describe('/api/v1/scheduled-work-requests', () => {
     } as unknown as never);
 
     const prismaMock: Record<string, unknown> = {
+      $queryRaw: async () => [{ id: REPO_ID }],
       // Batch form (already-issued fake promises) or the interactive form.
       $transaction: async (ops: unknown) =>
         typeof ops === 'function'
@@ -176,6 +178,26 @@ describe('/api/v1/scheduled-work-requests', () => {
             orgId: 'org-1',
           },
           teamId: 'team-1',
+          type: 'git_repo',
+        }),
+        findUnique: async () => ({
+          id: REPO_ID,
+          isActive: true,
+          shares: sharedTeams.map((t) => ({
+            team: {
+              isActive: true,
+              memberships: t.role ? [{ userId: 'user-1' }] : [],
+            },
+            teamId: t.teamId,
+          })),
+          team: {
+            id: sourceIdentityMoved ? 'team-moved' : 'team-1',
+            isActive: true,
+            memberships: [{ userId: 'user-1' }],
+            organization: { isActive: true },
+            orgId: sourceIdentityMoved ? 'org-moved' : 'org-1',
+          },
+          teamId: sourceIdentityMoved ? 'team-moved' : 'team-1',
           type: 'git_repo',
         }),
       },
@@ -249,6 +271,12 @@ describe('/api/v1/scheduled-work-requests', () => {
           return { count: 1 };
         },
       },
+      teamMembership: {
+        findUnique: async () => (membershipRole ? { role: membershipRole } : null),
+      },
+      user: {
+        findUnique: async () => ({ id: 'user-1', isActive: true, role: 'ENGINEER' }),
+      },
       workflowTemplate: {
         // Explicit override (by id, with the caller-visibility filter) or the
         // resolveDefaultTemplate path (team default).
@@ -317,6 +345,7 @@ describe('/api/v1/scheduled-work-requests', () => {
 
   beforeEach(() => {
     membershipRole = 'LEAD';
+    sourceIdentityMoved = false;
     scheduleRow = null;
     syncShouldFail = false;
     temporalUp = true;
@@ -418,6 +447,12 @@ describe('/api/v1/scheduled-work-requests', () => {
     // The id is generated from the schedule, so the ticket view leaves it out.
     expect(createdWorkRequests[0].ticketIsSynthetic).toBe(true);
     expect(createdWorkRequests[0].templateVersion).toBe(3);
+    expect(createdWorkRequests[0]).toMatchObject({
+      knowledgeSourceKind: 'REPOSITORY',
+      knowledgeSourceOrgId: 'org-1',
+      knowledgeSourceRepoId: REPO_ID,
+      knowledgeSourceTeamId: 'team-1',
+    });
     expect(createdActiveWorkflows).toHaveLength(1);
     expect(String(createdActiveWorkflows[0].temporalWorkflowId)).toMatch(/^sched-/);
     expect(createdActiveWorkflows[0].currentStatus).toBe('SCHEDULED');
@@ -433,6 +468,41 @@ describe('/api/v1/scheduled-work-requests', () => {
     expect(sync.request.repoId).toBe(REPO_ID);
     expect(sync.request.workRequestId).toBe(createdWorkRequests[0].id);
     expect(sync.request.externalTicketId).toBe(body.data.externalTicketId);
+  });
+
+  it('stores UNKNOWN when the repository moves after schedule authorization but before the lock', async () => {
+    sourceIdentityMoved = true;
+    const res = await inject({
+      method: 'POST',
+      payload: validBody,
+      token: 'lead-token',
+      url: '/api/v1/scheduled-work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(createdWorkRequests).toHaveLength(1);
+    expect(createdWorkRequests[0]).toMatchObject({
+      knowledgeSourceKind: 'UNKNOWN',
+      knowledgeSourceOrgId: null,
+      knowledgeSourceRepoId: null,
+      knowledgeSourceTeamId: null,
+    });
+  });
+
+  it('creates a trusted source tuple for a team ADMIN schedule owner', async () => {
+    membershipRole = 'ADMIN';
+    const res = await inject({
+      method: 'POST',
+      payload: validBody,
+      token: 'lead-token',
+      url: '/api/v1/scheduled-work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(createdWorkRequests[0]).toMatchObject({
+      knowledgeSourceKind: 'REPOSITORY',
+      knowledgeSourceOrgId: 'org-1',
+      knowledgeSourceRepoId: REPO_ID,
+      knowledgeSourceTeamId: 'team-1',
+    });
   });
 
   it('creates a schedule as a platform ADMIN with no team membership', async () => {

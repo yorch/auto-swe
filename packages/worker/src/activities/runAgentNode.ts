@@ -5,6 +5,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRunTools.js';
 import { HARNESSES } from '../agents/harnessRegistry.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
+import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -150,9 +151,17 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
 
     // `key` is free-form (a template-declared agent key); the resolver input is
     // typed to the SWE role union. basePrompt is empty — the Agent supplies its
-    // own system prompt (custom agents set one; sub-roles inherit).
+    // own system prompt (custom agents set one; sub-roles inherit). Governed
+    // knowledge tools need no workspace: they call activities, and
+    // `resolveAgentSpec` intersects them with the Agent's `toolKeys`, so an agent
+    // that does not name `searchKnowledge`/`submitLearning` binds neither.
     const spec = await resolveAgentSpec(
-      { agentKey: key as ModelBackedAgentKey, basePrompt: '', promptOverride: input.systemPrompt },
+      {
+        agentKey: key as ModelBackedAgentKey,
+        availableTools: buildKnowledgeTools(tracer) as AgentTools,
+        basePrompt: '',
+        promptOverride: input.systemPrompt,
+      },
       resolveCtx
     );
     // loadMcpTools is failure-isolated, so a bad server degrades to no tools.
@@ -317,10 +326,21 @@ async function runInCheckout(args: {
 
   const maxToolOutputChars = await resolveSetting('workspace.maxToolOutputChars', resolveCtx);
   const built = buildWorkspaceTools(workspace, tracer, maxToolOutputChars);
+  const knowledgeTools = buildKnowledgeTools(tracer);
   const spec = await resolveAgentSpec(
     {
       agentKey: key as ModelBackedAgentKey,
-      availableTools: selectAgentRunTools(built, resolved.toolKeys) as unknown as AgentTools,
+      // Knowledge tools are offered only when the Agent names them; resolveAgentSpec
+      // intersects offered tools with `toolKeys`, so nothing else binds them.
+      availableTools: {
+        ...selectAgentRunTools(built, resolved.toolKeys),
+        ...(resolved.toolKeys?.includes('searchKnowledge')
+          ? { searchKnowledge: knowledgeTools.searchKnowledge }
+          : {}),
+        ...(resolved.toolKeys?.includes('submitLearning')
+          ? { submitLearning: knowledgeTools.submitLearning }
+          : {}),
+      } as unknown as AgentTools,
       basePrompt: '',
       promptOverride: input.systemPrompt,
     },

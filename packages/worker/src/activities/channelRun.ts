@@ -242,8 +242,14 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
         agentRuntimes: agentRuntimes as Prisma.InputJsonObject,
         agentVersions,
         channelId: channel?.id ?? null,
+        // Channel launches have no durable actor-bound source snapshot; fail closed.
+        knowledgeSourceKind: 'UNKNOWN',
+        knowledgeSourceOrgId: null,
+        knowledgeSourceRepoId: null,
+        knowledgeSourceTeamId: null,
         pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
         skillRevisions,
+        // SAFETY: CHANNEL_ASSISTANT_SPEC and its audit metadata are JSON-serializable.
         specSnapshot: specSnapshot as unknown as Prisma.InputJsonValue,
         status: 'RUNNING',
         templateId,

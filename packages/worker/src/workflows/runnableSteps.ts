@@ -37,6 +37,7 @@ import {
   gateActivities,
   genericActivities,
   githubActivities,
+  knowledgeActivities,
   mcpNodeActivities,
   memoryActivities,
   mergeActivities,
@@ -166,6 +167,28 @@ const gateExecutor: StepExecutor = ({ step, ctx, request, config, inputs }) => {
 };
 
 const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepExecutor>([
+  [
+    'retrieveKnowledge',
+    ({ config, inputs }) =>
+      knowledgeActivities.retrieveKnowledge({
+        limit: Number(inputs.limit ?? config.limit ?? 5),
+        query: String(inputs.query ?? config.query ?? ''),
+      }),
+  ],
+  [
+    'captureLearning',
+    ({ config, inputs }) =>
+      knowledgeActivities.captureLearning({
+        content: String(inputs.content ?? config.content ?? ''),
+        evidence: (inputs.evidence ?? config.evidence) as Parameters<
+          typeof knowledgeActivities.captureLearning
+        >[0]['evidence'],
+        idempotencyKey: String(inputs.idempotencyKey ?? config.idempotencyKey ?? ''),
+        nodeId: String(inputs.nodeId ?? config.nodeId ?? ''),
+        title: String(inputs.title ?? config.title ?? ''),
+      }),
+  ],
+
   [
     'updateDomainState',
     async ({ config, inputs }) => {

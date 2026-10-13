@@ -121,6 +121,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
               shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
               team: {
                 select: {
+                  id: true,
                   memberships: {
                     select: { userId: true },
                     where: { userId: user.sub },
@@ -131,6 +132,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
                   orgId: true,
                 },
               },
+              teamId: true,
               type: true,
             },
             // Only git_repo connections are valid epic targets; a non-git id (e.g.
@@ -183,6 +185,11 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
             temporalWorkflowId: epicWorkflowId,
             workRequestId,
           },
+          knowledgeSourceRepos: repos.map((repo) => ({
+            orgId: repo.team.orgId,
+            repoId: repo.id,
+            teamId: repo.teamId,
+          })),
           runInput: {
             description,
             externalTicketId,
@@ -203,7 +210,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
             requestPayload: JSON.stringify(request.body),
             workRequestId,
           }),
-        { log: fastify.log }
+        { log: fastify.log, sourceAuthorization: { actor: user } }
       );
 
       if (!launch.ok) {

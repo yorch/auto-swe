@@ -65,6 +65,30 @@ async function findWorkflowRunId(): Promise<string | undefined> {
 }
 
 /**
+ * Look up the exact running WorkflowRun row for the current Temporal execution.
+ * Returns undefined if workflow/run identity cannot be verified or lookup fails.
+ */
+export async function currentRunningWorkflowRunId(): Promise<string | undefined> {
+  try {
+    const execution = activityInfo().workflowExecution;
+    if (!execution?.workflowId || !execution.runId) {
+      return undefined;
+    }
+    const row = await prisma.workflowRun.findFirst({
+      select: { id: true },
+      where: {
+        status: 'RUNNING',
+        temporalRunId: execution.runId,
+        workflowId: execution.workflowId,
+      },
+    });
+    return row?.id;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Look up the `WorkflowRun.id` row for the currently executing Temporal
  * workflow so artifacts produced by an activity link back to the run. Returns
  * undefined when no row exists yet (race against `createWorkflowRun`) or when

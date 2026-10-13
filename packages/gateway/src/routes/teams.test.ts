@@ -358,7 +358,7 @@ describe('team admin floor', () => {
     expect(state.memberships.map((m) => m.userId)).toEqual([ADMIN_USER_ID]);
   });
 
-  it('takes no lock for a change that removes no ADMIN', async () => {
+  it('takes the shared team lock for a change that removes no ADMIN', async () => {
     const state = freshState();
     const app = buildApp(state);
     await app.inject({
@@ -366,7 +366,7 @@ describe('team admin floor', () => {
       method: 'DELETE',
       url: `/api/v1/teams/${TEAM_ID}/members/${TARGET_USER_ID}`,
     });
-    expect(state.locks ?? []).toEqual([]);
+    expect(state.locks ?? []).toEqual([TEAM_ID]);
   });
 });
 
@@ -386,6 +386,7 @@ describe('POST /api/v1/teams/:id/members', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('MEMBER_EXISTS');
+    expect(state.locks).toEqual([TEAM_ID]);
   });
 });
 

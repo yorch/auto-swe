@@ -19,12 +19,18 @@
  * The first match always wins; we never silently merge.
  */
 
+import { randomUUID } from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { heartbeat } from '@temporalio/activity';
+import { activityInfo, heartbeat } from '@temporalio/activity';
 import { GATE_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
-import { currentWorkflowRunId } from '../lib/activityContext.js';
+import {
+  currentRunningWorkflowRunId,
+  currentTemporalRunId,
+  currentWorkflowRunId,
+} from '../lib/activityContext.js';
+import { currentNodeTag } from '../lib/activityNodeTag.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { recordGateEval } from '../lib/evalCapture.js';
@@ -76,6 +82,12 @@ export interface GateResult {
    * step-level `config.command` is honoured on the re-run too.
    */
   command?: string;
+  /** Worker-generated correlation to the persisted trusted gate provenance row. */
+  evidenceCorrelation?: string;
+  /** Temporal activity attempt that produced this gate result. */
+  activityAttempt?: number;
+  /** Worker-owned gate identity paired with evidenceCorrelation. */
+  gateName?: GateName;
 }
 
 export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
@@ -86,6 +98,51 @@ export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
   runTests: 'yarn test',
   runTypecheck: 'yarn typecheck',
   runVulnScan: 'yarn npm audit --severity high',
+};
+
+type TrustedKnowledgeEvidenceWriter = {
+  createMany(args: {
+    data: Array<{
+      activityAttempt: number;
+      artifactId: string;
+      evidenceCorrelation: string;
+      gateName: GateName;
+      outcome: 'PASSED';
+      producer: 'QUALITY_GATE';
+      recordingId: string;
+      runId: string;
+      specNodeId: string;
+      stepAttempt: number;
+      summary: string;
+      temporalRunId: string;
+    }>;
+    skipDuplicates: true;
+  }): Promise<{ count: number }>;
+  findUnique(args: {
+    where: {
+      runId_recordingId_stepAttempt_activityAttempt_producer_gateName: {
+        activityAttempt: number;
+        gateName: GateName;
+        producer: 'QUALITY_GATE';
+        recordingId: string;
+        runId: string;
+        stepAttempt: number;
+      };
+    };
+  }): Promise<{
+    activityAttempt: number;
+    artifactId: string | null;
+    evidenceCorrelation: string;
+    gateName: string;
+    outcome: 'PASSED';
+    producer: 'QUALITY_GATE';
+    recordingId: string;
+    runId: string;
+    specNodeId: string;
+    stepAttempt: number;
+    summary: string;
+    temporalRunId: string;
+  } | null>;
 };
 
 const ARTIFACT_KIND: Record<GateName, string> = {
@@ -244,6 +301,95 @@ async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
 
     // P0 evals: capture the gate verdict as a normalized signal (best-effort).
     await recordGateEval(gate, gateResult, runId);
+
+    // Only an executed, passed gate with its stored artifact and exact interpreter
+    // dispatch can attest evidence. No-op gates and missing artifacts never do.
+    if (passed && artifact?.id) {
+      const tag = currentNodeTag();
+      const activityAttempt = activityInfo().attempt;
+      const evidenceCorrelation = randomUUID();
+      const [exactRunId, temporalRunId] = await Promise.all([
+        currentRunningWorkflowRunId(),
+        Promise.resolve(currentTemporalRunId()),
+      ]);
+      if (
+        tag &&
+        tag.recordingId.length > 0 &&
+        tag.specNodeId.length > 0 &&
+        Number.isInteger(tag.stepAttempt) &&
+        tag.stepAttempt > 0 &&
+        Number.isInteger(activityAttempt) &&
+        activityAttempt > 0 &&
+        exactRunId &&
+        temporalRunId
+      ) {
+        const attachedArtifact = await prisma.workflowArtifact.findFirst({
+          select: { id: true },
+          where: { id: artifact.id, runId: exactRunId },
+        });
+        if (attachedArtifact) {
+          // SAFETY: the schema and generated Prisma client define this worker-only evidence model.
+          const evidenceWriter = (
+            prisma as unknown as {
+              trustedKnowledgeEvidence: TrustedKnowledgeEvidenceWriter;
+            }
+          ).trustedKnowledgeEvidence;
+          const provenance = {
+            activityAttempt,
+            artifactId: artifact.id,
+            evidenceCorrelation,
+            gateName: gate,
+            outcome: 'PASSED',
+            producer: 'QUALITY_GATE',
+            recordingId: tag.recordingId,
+            runId: exactRunId,
+            specNodeId: tag.specNodeId,
+            stepAttempt: tag.stepAttempt,
+            summary: `${gate} passed (exit 0)`,
+            temporalRunId,
+          } as const;
+          const inserted = await evidenceWriter.createMany({
+            data: [provenance],
+            skipDuplicates: true,
+          });
+          const stored =
+            inserted.count > 0
+              ? provenance
+              : await evidenceWriter.findUnique({
+                  where: {
+                    runId_recordingId_stepAttempt_activityAttempt_producer_gateName: {
+                      activityAttempt,
+                      gateName: gate,
+                      producer: 'QUALITY_GATE',
+                      recordingId: tag.recordingId,
+                      runId: exactRunId,
+                      stepAttempt: tag.stepAttempt,
+                    },
+                  },
+                });
+          if (
+            stored &&
+            stored.artifactId === provenance.artifactId &&
+            typeof stored.evidenceCorrelation === 'string' &&
+            stored.evidenceCorrelation.length > 0 &&
+            stored.activityAttempt === provenance.activityAttempt &&
+            stored.gateName === provenance.gateName &&
+            stored.outcome === provenance.outcome &&
+            stored.producer === provenance.producer &&
+            stored.recordingId === provenance.recordingId &&
+            stored.runId === provenance.runId &&
+            stored.specNodeId === provenance.specNodeId &&
+            stored.stepAttempt === provenance.stepAttempt &&
+            stored.summary === provenance.summary &&
+            stored.temporalRunId === provenance.temporalRunId
+          ) {
+            gateResult.activityAttempt = activityAttempt;
+            gateResult.evidenceCorrelation = stored.evidenceCorrelation;
+            gateResult.gateName = gate;
+          }
+        }
+      }
+    }
 
     return gateResult;
   } finally {

@@ -7,6 +7,7 @@
  * ADMINs bypass the org check. This mirrors the team-scoped `requiredTeamRole`
  * pattern, so the gate is visible in each route's options rather than inline.
  */
+import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -34,7 +35,7 @@ type OrgAdminGuardResult = { code: string; message: string } | null;
 
 /** Prevent self-demotion/self-removal and removing/demoting the last org admin. */
 async function guardOrgAdminChange(
-  fastify: Parameters<typeof orgMembersPlugin>[0],
+  db: Prisma.TransactionClient,
   orgId: string,
   targetUserId: string,
   actorUserId: string,
@@ -54,7 +55,7 @@ async function guardOrgAdminChange(
     currentRole === 'ORG_ADMIN' &&
     ((action === 'update' && newRole && newRole !== 'ORG_ADMIN') || action === 'delete')
   ) {
-    const adminCount = await fastify.prisma.organizationMembership.count({
+    const adminCount = await db.organizationMembership.count({
       where: { orgId, role: 'ORG_ADMIN' },
     });
     if (adminCount <= 1) {
@@ -65,6 +66,18 @@ async function guardOrgAdminChange(
     }
   }
   return null;
+}
+
+async function withOrganizationMembershipLock<T>(
+  fastify: Parameters<typeof orgMembersPlugin>[0],
+  orgId: string,
+  write: (tx: Prisma.TransactionClient) => Promise<T>
+): Promise<T> {
+  return fastify.prisma.$transaction(async (tx) => {
+    // CLAUDE.md §7 exception: serialize org membership writes with source checks and revocations.
+    await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
+    return write(tx);
+  });
 }
 
 const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
@@ -108,47 +121,57 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       const { orgId } = request.params;
       const { userId, role } = request.body;
 
-      const existing = await fastify.prisma.organizationMembership.findUnique({
-        where: { userId_orgId: { orgId, userId } },
-      });
-      if (existing) {
-        const guard = await guardOrgAdminChange(
-          fastify,
-          orgId,
-          userId,
-          requireUser(request).sub,
-          'update',
-          existing.role,
-          role
-        );
-        if (guard) {
-          return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
+      const result = await withOrganizationMembershipLock(fastify, orgId, async (tx) => {
+        const existing = await tx.organizationMembership.findUnique({
+          where: { userId_orgId: { orgId, userId } },
+        });
+        if (existing) {
+          const guard = await guardOrgAdminChange(
+            tx,
+            orgId,
+            userId,
+            requireUser(request).sub,
+            'update',
+            existing.role,
+            role
+          );
+          if (guard) {
+            return { guard };
+          }
+          const updated = await tx.organizationMembership.update({
+            data: { role },
+            where: { id: existing.id },
+          });
+          await writeAuditLog(fastify, {
+            action: 'UPDATE',
+            actor: requireUser(request),
+            after: memberAuditFields(updated),
+            before: memberAuditFields(existing),
+            client: tx,
+            entityId: existing.id,
+            entityType: 'OrganizationMembership',
+          });
+          return { status: 200 as const, value: updated };
         }
-        const updated = await fastify.prisma.organizationMembership.update({
-          data: { role },
-          where: { id: existing.id },
+        const created = await tx.organizationMembership.create({
+          data: { orgId, role, userId },
         });
         await writeAuditLog(fastify, {
-          action: 'UPDATE',
+          action: 'CREATE',
           actor: requireUser(request),
-          after: memberAuditFields(updated),
-          before: memberAuditFields(existing),
-          entityId: existing.id,
+          after: memberAuditFields(created),
+          client: tx,
+          entityId: created.id,
           entityType: 'OrganizationMembership',
         });
-        return reply.status(200).send({ data: updated });
+        return { status: 201 as const, value: created };
+      });
+      if ('guard' in result && result.guard) {
+        return reply
+          .status(409)
+          .send({ error: { code: result.guard.code, message: result.guard.message } });
       }
-      const created = await fastify.prisma.organizationMembership.create({
-        data: { orgId, role, userId },
-      });
-      await writeAuditLog(fastify, {
-        action: 'CREATE',
-        actor: requireUser(request),
-        after: memberAuditFields(created),
-        entityId: created.id,
-        entityType: 'OrganizationMembership',
-      });
-      return reply.status(201).send({ data: created });
+      return reply.status(result.status).send({ data: result.value });
     }
   );
 
@@ -187,15 +210,18 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         },
         select: { email: true, id: true, isActive: true, role: true },
       });
-      const membership = await fastify.prisma.organizationMembership.create({
-        data: { orgId, role: orgRole, userId: user.id },
-      });
-      await writeAuditLog(fastify, {
-        action: 'CREATE',
-        actor: requireUser(request),
-        after: memberAuditFields(membership),
-        entityId: membership.id,
-        entityType: 'OrganizationMembership',
+      await withOrganizationMembershipLock(fastify, orgId, async (tx) => {
+        const created = await tx.organizationMembership.create({
+          data: { orgId, role: orgRole, userId: user.id },
+        });
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: requireUser(request),
+          after: memberAuditFields(created),
+          client: tx,
+          entityId: created.id,
+          entityType: 'OrganizationMembership',
+        });
       });
 
       try {
@@ -226,39 +252,51 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       const { orgId, userId } = request.params;
       const { role } = request.body;
 
-      const row = await fastify.prisma.organizationMembership.findUnique({
-        where: { userId_orgId: { orgId, userId } },
+      const result = await withOrganizationMembershipLock(fastify, orgId, async (tx) => {
+        const row = await tx.organizationMembership.findUnique({
+          where: { userId_orgId: { orgId, userId } },
+        });
+        if (!row) {
+          return { missing: true as const };
+        }
+        const guard = await guardOrgAdminChange(
+          tx,
+          orgId,
+          userId,
+          requireUser(request).sub,
+          'update',
+          row.role,
+          role
+        );
+        if (guard) {
+          return { guard };
+        }
+        const updated = await tx.organizationMembership.update({
+          data: { role },
+          where: { id: row.id },
+        });
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: requireUser(request),
+          after: memberAuditFields(updated),
+          before: memberAuditFields(row),
+          client: tx,
+          entityId: row.id,
+          entityType: 'OrganizationMembership',
+        });
+        return { value: updated };
       });
-      if (!row) {
+      if ('missing' in result) {
         return reply
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Membership not found' } });
       }
-      const guard = await guardOrgAdminChange(
-        fastify,
-        orgId,
-        userId,
-        requireUser(request).sub,
-        'update',
-        row.role,
-        role
-      );
-      if (guard) {
-        return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
+      if ('guard' in result && result.guard) {
+        return reply
+          .status(409)
+          .send({ error: { code: result.guard.code, message: result.guard.message } });
       }
-      const updated = await fastify.prisma.organizationMembership.update({
-        data: { role },
-        where: { id: row.id },
-      });
-      await writeAuditLog(fastify, {
-        action: 'UPDATE',
-        actor: requireUser(request),
-        after: memberAuditFields(updated),
-        before: memberAuditFields(row),
-        entityId: row.id,
-        entityType: 'OrganizationMembership',
-      });
-      return { data: updated };
+      return { data: result.value };
     }
   );
 
@@ -272,33 +310,45 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { orgId, userId } = request.params;
 
-      const row = await fastify.prisma.organizationMembership.findUnique({
-        where: { userId_orgId: { orgId, userId } },
+      const result = await withOrganizationMembershipLock(fastify, orgId, async (tx) => {
+        const row = await tx.organizationMembership.findUnique({
+          where: { userId_orgId: { orgId, userId } },
+        });
+        if (!row) {
+          return { missing: true as const };
+        }
+        const guard = await guardOrgAdminChange(
+          tx,
+          orgId,
+          userId,
+          requireUser(request).sub,
+          'delete',
+          row.role
+        );
+        if (guard) {
+          return { guard };
+        }
+        await tx.organizationMembership.delete({ where: { id: row.id } });
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor: requireUser(request),
+          before: memberAuditFields(row),
+          client: tx,
+          entityId: row.id,
+          entityType: 'OrganizationMembership',
+        });
+        return { deleted: true as const };
       });
-      if (!row) {
+      if ('missing' in result) {
         return reply
           .status(404)
           .send({ error: { code: 'NOT_FOUND', message: 'Membership not found' } });
       }
-      const guard = await guardOrgAdminChange(
-        fastify,
-        orgId,
-        userId,
-        requireUser(request).sub,
-        'delete',
-        row.role
-      );
-      if (guard) {
-        return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
+      if ('guard' in result && result.guard) {
+        return reply
+          .status(409)
+          .send({ error: { code: result.guard.code, message: result.guard.message } });
       }
-      await fastify.prisma.organizationMembership.delete({ where: { id: row.id } });
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor: requireUser(request),
-        before: memberAuditFields(row),
-        entityId: row.id,
-        entityType: 'OrganizationMembership',
-      });
       return reply.status(204).send();
     }
   );

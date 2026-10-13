@@ -81,10 +81,11 @@ function buildHarness(opts?: { inputSchema?: unknown; name?: string }): Harness 
       }),
     },
   };
-  // The route writes both ledger rows through $transaction's array form.
-  prismaMock.$transaction = async (ops: Promise<unknown>[]) => {
+  prismaMock.$transaction = async (
+    action: Promise<unknown>[] | ((tx: unknown) => Promise<unknown>)
+  ) => {
     h.order.push('ledger');
-    return Promise.all(ops);
+    return typeof action === 'function' ? action(prismaMock) : Promise.all(action);
   };
   h.app.decorate('prisma', prismaMock as unknown as never);
 

@@ -32,6 +32,12 @@ describe('theme colour classes', () => {
     expect(declared.has('brick-900')).toBe(false);
   });
 
+  it('keeps governed knowledge borders on a declared structural token', () => {
+    const knowledgePage = readFileSync(path.join(SRC, 'app/govern/knowledge/page.tsx'), 'utf8');
+    expect(declared.has('ink-400')).toBe(true);
+    expect(knowledgePage).not.toMatch(/\bborder-paper-800\b/);
+  });
+
   it('uses only shades the theme declares', () => {
     const offenders: string[] = [];
     const files = globSync('{app,components,hooks,lib,stores}/**/*.{ts,tsx}', { cwd: SRC });

@@ -66,7 +66,8 @@ describe('POST /work-requests/:id/retry', () => {
     const prismaMock = {
       $executeRaw: async () => 1,
       $queryRaw: async () => [],
-      $transaction: async (arg: unknown) => (Array.isArray(arg) ? Promise.all(arg) : undefined),
+      $transaction: async (arg: Promise<unknown>[] | ((tx: unknown) => Promise<unknown>)) =>
+        typeof arg === 'function' ? arg(prismaMock) : Promise.all(arg),
       activeWorkflow: {
         create: async ({ data }: { data: Record<string, unknown> }) => ({
           id: 'aw-new',

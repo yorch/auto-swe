@@ -72,6 +72,8 @@ export const BUILTIN_STEPS = [
   'resolveCiWaitConfig',
   'waitForCiByPolling',
   'commitToMemory',
+  'retrieveKnowledge',
+  'captureLearning',
   // Quality gates + the gate-fix loop
   'runLint',
   'runTypecheck',

@@ -34,6 +34,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   'EvalRubric',
   'HumanErrorBaseline',
   'MemoryItem',
+  'KnowledgeItem',
+  'KnowledgeItemTeamGrant',
   'OrgMonthlyUsage',
   'OrganizationMembership',
   'ProviderCredential',
@@ -68,6 +70,8 @@ export const GUARDED_OPERATIONS = new Set([
  */
 const TENANT_KEYS = new Set([
   'channelId',
+  'ownerTeamId',
+  'originTeamId',
   'orgId',
   'organization',
   'organizationId',

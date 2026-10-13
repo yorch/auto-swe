@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   current: { ctx: {} as object },
   restore: vi.fn(),
   rows: [] as Row[],
+  runFindFirst: vi.fn(),
   runId: { value: 'run-1' as string | null },
   runLookupFails: { value: false },
   takePersistingUsage: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('@auto-swe/shared/db', () => ({
       },
     },
     workflowRun: {
+      findFirst: h.runFindFirst,
       findUnique: async () => {
         if (h.runLookupFails.value) {
           throw new Error('connection reset');
@@ -46,7 +48,7 @@ vi.mock('./spendOwner.js', () => ({
 }));
 vi.mock('./runlessBudget.js', () => ({ takePersistingUsage: h.takePersistingUsage }));
 
-import { persistActivityTrace } from './activityContext.js';
+import { currentRunningWorkflowRunId, persistActivityTrace } from './activityContext.js';
 import { AgentTracer } from './agentTracer.js';
 
 function tracerWith(...names: string[]): AgentTracer {
@@ -140,5 +142,27 @@ describe('persistActivityTrace — spend owner', () => {
   it('stamps the owner beside the run id on a run-backed workflow', async () => {
     await persistActivityTrace(tracerWith('a'), 'implementer');
     expect(h.rows[0]).toMatchObject({ orgId: 'org-1', runId: 'run-1', teamId: 'team-1' });
+  });
+});
+
+describe('currentRunningWorkflowRunId', () => {
+  beforeEach(() => {
+    h.runFindFirst.mockImplementation(async () => (h.runId.value ? { id: h.runId.value } : null));
+  });
+
+  it('resolves the run row only through the exact running execution identity', async () => {
+    h.runId.value = 'db-run-uuid';
+    await expect(currentRunningWorkflowRunId()).resolves.toBe('db-run-uuid');
+    // The execution ids are part of the query rather than checked afterwards, so a row left
+    // by an earlier execution of a reused workflow id can never be selected.
+    expect(h.runFindFirst).toHaveBeenCalledWith({
+      select: { id: true },
+      where: { status: 'RUNNING', temporalRunId: 'temporal-run-1', workflowId: 'wf-author-1' },
+    });
+  });
+
+  it('returns undefined when no matching running row exists', async () => {
+    h.runId.value = null;
+    await expect(currentRunningWorkflowRunId()).resolves.toBeUndefined();
   });
 });

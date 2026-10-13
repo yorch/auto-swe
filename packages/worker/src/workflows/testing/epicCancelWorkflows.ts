@@ -17,14 +17,26 @@ import {
 
 export { EpicOrchestratorWorkflow, epicCancelSignal } from '../epicOrchestrator.js';
 
-const { recordChildCancelled, recordChildFinished } = proxyActivities<{
+const { recordChildCancelled, recordChildFinished, recordChildLaunch } = proxyActivities<{
   recordChildCancelled(workflowId: string): Promise<void>;
   recordChildFinished(workflowId: string): Promise<void>;
+  /** Reports the request this child was started with, so a test can see what the epic forwarded. */
+  recordChildLaunch(input: {
+    launchedById?: string | null;
+    repoId?: string;
+    workflowId: string;
+  }): Promise<void>;
 }>({ startToCloseTimeout: '10s' });
 
 export async function RunnableWorkflow(input: {
+  request?: { launchedById?: string; repoId?: string };
   templateId: string;
 }): Promise<{ lessonsGenerated: []; status: string; totalCIRetries: 0; totalReviewRetries: 0 }> {
+  await recordChildLaunch({
+    ...(input.request?.launchedById ? { launchedById: input.request.launchedById } : {}),
+    ...(input.request?.repoId ? { repoId: input.request.repoId } : {}),
+    workflowId: workflowInfo().workflowId,
+  });
   const scripted = /^sleep:(\d+):(\w+)$/.exec(input.templateId);
   if (scripted) {
     await sleep(Number(scripted[1]));

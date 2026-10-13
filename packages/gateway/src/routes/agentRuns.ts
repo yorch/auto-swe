@@ -379,6 +379,11 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
           temporalWorkflowId,
           workRequestId,
         },
+        knowledgeSourceRepo: {
+          orgId: repo.team.orgId,
+          repoId: repo.id,
+          teamId: repo.teamId,
+        },
         ...(input.workRequestId
           ? {}
           : {
@@ -403,7 +408,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateId: template.id,
           templateVersion: template.activeVersion as number,
         }),
-      { log: fastify.log }
+      { log: fastify.log, sourceAuthorization: { actor: user } }
     );
     if (!result.ok) {
       return error(reply, 409, 'RUN_CONFLICT', 'A run with this idempotency key already exists');

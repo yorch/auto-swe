@@ -8,6 +8,7 @@ import type { WorkspaceProviderMetadata } from '@auto-swe/shared/lib/workspacePr
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 import { authorizeLaunch, sendLaunchRefusal } from './launchAuthorization.js';
+import type { LaunchRepositorySource } from './workflowLaunch.js';
 
 export interface ValidateRunConnectionInput {
   connectionId: string | null;
@@ -27,7 +28,12 @@ export interface ValidateRunConnectionInput {
 }
 
 export type ValidateRunConnectionResult =
-  | { budgetCap: number | null; budgetOrgId: string | null; ok: true }
+  | {
+      budgetCap: number | null;
+      budgetOrgId: string | null;
+      ok: true;
+      source: LaunchRepositorySource | null;
+    }
   | { ok: false };
 
 /** A user id no row can carry, for a membership filter that must match nobody. */
@@ -58,6 +64,7 @@ export async function validateRunConnection(
 
   let budgetOrgId: string | null = null;
   let budgetCap: number | null = null;
+  let source: LaunchRepositorySource | null = null;
 
   if (connectionId) {
     const connection = await prisma.connection.findUnique({
@@ -135,6 +142,9 @@ export async function validateRunConnection(
 
     budgetOrgId = connection.team.organization?.id ?? null;
     budgetCap = connection.team.organization?.monthlyBudgetUsdCents ?? null;
+    if (connection.team.orgId) {
+      source = { orgId: connection.team.orgId, repoId: connection.id, teamId: connection.teamId };
+    }
   } else if (providerMeta?.connectionTypes?.length) {
     reply.status(400).send({
       error: {
@@ -145,5 +155,5 @@ export async function validateRunConnection(
     return { ok: false };
   }
 
-  return { budgetCap, budgetOrgId, ok: true };
+  return { budgetCap, budgetOrgId, ok: true, source };
 }

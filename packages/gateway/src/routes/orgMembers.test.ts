@@ -7,6 +7,8 @@ const PREFIX = '/api/v1/admin/organizations';
 const USER_ID = '00000000-0000-4000-8000-0000000000aa';
 const TARGET_USER = '00000000-0000-4000-8000-0000000000bb';
 
+const orgLockCalls: string[] = [];
+
 const MEMBER_ROW = {
   createdAt: new Date(),
   id: 'row-1',
@@ -19,35 +21,41 @@ const MEMBER_ROW = {
 const auditCreate = vi.fn().mockResolvedValue({});
 
 function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
-  const app = makeAuthedApp({
-    prisma: {
-      configAuditLog: { create: auditCreate },
-      organizationMembership: {
-        count: vi.fn().mockResolvedValue(2),
-        create: vi.fn().mockResolvedValue(MEMBER_ROW),
-        delete: vi.fn().mockResolvedValue({}),
-        findMany: vi.fn().mockResolvedValue([MEMBER_ROW]),
-        findUnique: vi
-          .fn()
-          .mockImplementation(({ where }: { where: { userId_orgId?: unknown; id?: string } }) => {
-            if (where.id) {
-              return Promise.resolve(MEMBER_ROW);
-            }
-            return Promise.resolve(membershipRole ? { id: 'row-1', role: membershipRole } : null);
-          }),
-        update: vi.fn().mockResolvedValue({ ...MEMBER_ROW, role: 'ORG_MEMBER' }),
-      },
+  let prisma: Record<string, unknown>;
+  prisma = {
+    $queryRaw: vi.fn(async () => {
+      orgLockCalls.push(ORG_ID);
+      return [{ id: ORG_ID }];
+    }),
+    $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(prisma)),
+    configAuditLog: { create: auditCreate },
+    organizationMembership: {
+      count: vi.fn().mockResolvedValue(2),
+      create: vi.fn().mockResolvedValue(MEMBER_ROW),
+      delete: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([MEMBER_ROW]),
+      findUnique: vi
+        .fn()
+        .mockImplementation(({ where }: { where: { userId_orgId?: unknown; id?: string } }) => {
+          if (where.id) {
+            return Promise.resolve(MEMBER_ROW);
+          }
+          return Promise.resolve(membershipRole ? { id: 'row-1', role: membershipRole } : null);
+        }),
+      update: vi.fn().mockResolvedValue({ ...MEMBER_ROW, role: 'ORG_MEMBER' }),
     },
-    role,
-    sub: USER_ID,
-  });
+  };
+  const app = makeAuthedApp({ prisma, role, sub: USER_ID });
   // Register under the real prefix so a plugin that drops it is caught here.
   app.register(orgMembersRoutes, { prefix: PREFIX });
   return app;
 }
 
 describe('GET /:orgId/members', () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+  });
 
   it('returns members list for org admin', async () => {
     const app = buildApp('ADMIN');
@@ -68,7 +76,10 @@ describe('GET /:orgId/members', () => {
 });
 
 describe('POST /:orgId/members', () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+  });
 
   it('creates a membership', async () => {
     const app = buildApp('ADMIN');
@@ -82,6 +93,8 @@ describe('POST /:orgId/members', () => {
     expect(res.statusCode).toBeOneOf([200, 201]);
     // The standard `{ data }` envelope, not a bare row.
     expect(JSON.parse(res.body).data.id).toBe('row-1');
+    expect(orgLockCalls).toEqual([ORG_ID]);
+    // Upstream's audit assertion: the entry is written with the locked change.
     expect(auditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: 'UPDATE',
@@ -117,7 +130,10 @@ describe('POST /:orgId/members', () => {
 });
 
 describe('PATCH /:orgId/members/:userId', () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+  });
 
   it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {
     const app = buildApp('ENGINEER', 'ORG_MEMBER');
@@ -133,7 +149,10 @@ describe('PATCH /:orgId/members/:userId', () => {
 });
 
 describe('DELETE /:orgId/members/:userId', () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+  });
 
   it('removes a membership', async () => {
     const app = buildApp('ADMIN');
@@ -143,6 +162,7 @@ describe('DELETE /:orgId/members/:userId', () => {
       url: `${PREFIX}/${ORG_ID}/members/${TARGET_USER}`,
     });
     expect(res.statusCode).toBe(204);
+    expect(orgLockCalls).toEqual([ORG_ID]);
   });
 
   it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {

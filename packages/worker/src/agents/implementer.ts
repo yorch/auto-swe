@@ -16,6 +16,7 @@ import { type McpConnectionTarget, resolveAgentMcpUrl } from '../lib/config/mcpC
 import { skillMenuLine, skillPromptBlock } from '../lib/config/skillPrompt.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getModel, type LanguageModel } from '../lib/models.js';
+import { buildKnowledgeTools } from './knowledgeTools.js';
 import { createLessonTools } from './lessonTools.js';
 import { isMcpToolEnabled, loadMcpTools, type McpToolRecord } from './mcpTools.js';
 import { buildWorkspaceTools } from './workspaceTools.js';
@@ -78,6 +79,8 @@ export interface ImplementerAgentOptions {
    * tools may read. Omitted, the agent gets no memory tools.
    */
   lessonRepoId?: string;
+  /** Knowledge tools require explicit Agent.toolKeys grants; null never enables them. */
+  knowledgeToolKeys?: string[];
 }
 
 export { skillMenuLine };
@@ -155,6 +158,7 @@ export async function createImplementerAgent(
 
   // All available workspace tools keyed by toolKey.
   const workspaceTools = { bash, listDirectory, readFile, writeFile };
+  const noWorkspaceTools = tools?.includes('__noWorkspaceTools') ?? false;
 
   // Filter workspace tools by the enabled tool keys when provided; null → use all 4 tools.
   const activeWorkspaceTools =
@@ -168,8 +172,13 @@ export async function createImplementerAgent(
 
   // If every provided key was unrecognised, fall back to allTools to avoid
   // instantiating an agent with no tools.
+  const hasExplicitNonWorkspaceGrant = Boolean(
+    tools?.some((key) => ['searchKnowledge', 'submitLearning', '__noWorkspaceTools'].includes(key))
+  );
   const resolvedWorkspaceTools =
-    Object.keys(activeWorkspaceTools).length > 0 ? activeWorkspaceTools : workspaceTools;
+    Object.keys(activeWorkspaceTools).length > 0 || hasExplicitNonWorkspaceGrant || noWorkspaceTools
+      ? activeWorkspaceTools
+      : workspaceTools;
 
   const hasSkills = resolvedSkills.length > 0;
 
@@ -181,6 +190,12 @@ export async function createImplementerAgent(
     ...resolvedWorkspaceTools,
     ...(hasSkills ? { loadSkill } : {}),
     ...(options?.lessonRepoId ? createLessonTools(options.lessonRepoId, tracer) : {}),
+    ...(options?.knowledgeToolKeys?.includes('searchKnowledge')
+      ? { searchKnowledge: buildKnowledgeTools(tracer).searchKnowledge }
+      : {}),
+    ...(options?.knowledgeToolKeys?.includes('submitLearning')
+      ? { submitLearning: buildKnowledgeTools(tracer).submitLearning }
+      : {}),
   };
 
   // MCP tools (Repository.mcpServerRef): opt-in via options, gated by the 'mcp'
@@ -264,15 +279,25 @@ export function effectivePersonaToolKeys(
     }
     const workspace = IMPLEMENTER_TOOL_IDS.filter((id) => keys.includes(id)) as string[];
     return {
+      knowledge: keys.filter((key) => key === 'searchKnowledge' || key === 'submitLearning'),
       mcp: keys.includes(MCP_TOOL_KEY),
-      workspace: workspace.length > 0 ? workspace : [...IMPLEMENTER_TOOL_IDS],
+      workspace:
+        workspace.length > 0 ||
+        keys.some((key) => key === 'searchKnowledge' || key === 'submitLearning')
+          ? workspace
+          : [...IMPLEMENTER_TOOL_IDS],
     };
   };
   const p = expand(persona);
   const i = expand(implementer);
   const common = p.workspace.filter((id) => i.workspace.includes(id));
   const workspace = common.length > 0 ? common : i.workspace;
-  return p.mcp && i.mcp ? [...workspace, MCP_TOOL_KEY] : workspace;
+  const knowledge = (p.knowledge ?? []).filter((key) => (i.knowledge ?? []).includes(key));
+  return [
+    ...(workspace.length === 0 ? ['__noWorkspaceTools'] : workspace),
+    ...(p.mcp && i.mcp ? [MCP_TOOL_KEY] : []),
+    ...knowledge,
+  ];
 }
 
 /**
@@ -373,6 +398,11 @@ export async function buildImplementerForActivity(
     {
       agentKey,
       ...(lessonRepoId ? { lessonRepoId } : {}),
+      // The effective keys already fold a persona into the implementer's set, so the
+      // knowledge grant is read from there and never widened by a persona.
+      knowledgeToolKeys: toolKeys?.filter(
+        (key) => key === 'searchKnowledge' || key === 'submitLearning'
+      ),
       maxToolOutputChars,
       mcpAllowPrivateNetwork: mcpTarget?.allowPrivateNetwork,
       mcpBearerToken: mcpTarget?.bearerToken,

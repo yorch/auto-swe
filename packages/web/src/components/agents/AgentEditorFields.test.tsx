@@ -174,11 +174,14 @@ describe('ToolKeysEditor', () => {
     const onChange = vi.fn();
     render(<ToolKeysEditor onChange={onChange} value={['bash']} />);
 
-    for (const key of ALL_TOOL_KEYS) {
-      expect(screen.getByText(key)).toBeTruthy();
-    }
+    expect(ALL_TOOL_KEYS).toContain('searchKnowledge');
+    expect(ALL_TOOL_KEYS).toContain('submitLearning');
+    expect(screen.getByText('Search governed knowledge (explicit opt-in)')).toBeTruthy();
+    expect(
+      screen.getByText('Submit local learning for human review (explicit opt-in)')
+    ).toBeTruthy();
 
-    fireEvent.click(screen.getByLabelText('readFile'));
+    fireEvent.click(screen.getByLabelText('Read workspace files'));
     expect(onChange).toHaveBeenCalledWith(['bash', 'readFile']);
   });
 

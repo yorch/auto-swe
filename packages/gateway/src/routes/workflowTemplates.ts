@@ -1741,6 +1741,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             select: {
               id: true,
               organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+              orgId: true,
             },
           },
           teamId: true,
@@ -1900,6 +1901,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const launch = await launchTrackedWorkflow(
         fastify.prisma,
         {
+          ...(connectionResult.source
+            ? { knowledgeSourceRepo: connectionResult.source }
+            : !connectionId && tpl.teamId && tpl.team?.orgId
+              ? { knowledgeSourceTeam: { orgId: tpl.team.orgId, teamId: tpl.teamId } }
+              : {}),
           activeWorkflow: {
             budgetTier,
             currentStatus: 'IMPLEMENTING',
@@ -1926,7 +1932,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: tpl.id,
             templateVersion: resolvedVersion,
           }),
-        { log: fastify.log }
+        {
+          log: fastify.log,
+          sourceAuthorization: user ? { actor: user } : {},
+        }
       );
       if (!launch.ok) {
         return reply.status(409).send({
@@ -2099,6 +2108,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // `spec` is stored as parsed JSON; cast at the boundary. Both rows were
       // validated against WorkflowSpecSchema when they landed, so the cast is safe.
       const specA = verA.spec as unknown as WorkflowSpec;
+      // SAFETY: this persisted version passed WorkflowSpecSchema validation when created.
       const specB = verB.spec as unknown as WorkflowSpec;
       const diff = diffSpecs(specA, specB);
       return {

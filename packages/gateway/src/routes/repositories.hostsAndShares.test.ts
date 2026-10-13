@@ -8,7 +8,10 @@ const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
 vi.mock('@auto-swe/shared', () => ({
   ConnectionTypeSchema,
   encryptConnectionApiToken: () => ({}),
-  Prisma: { DbNull: DB_NULL },
+  Prisma: {
+    DbNull: DB_NULL,
+    sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({ strings, values }),
+  },
   Role: { ADMIN: 'ADMIN', ENGINEER: 'ENGINEER', LEAD: 'LEAD' },
 }));
 
@@ -46,9 +49,8 @@ async function buildApp() {
   app.setSerializerCompiler(serializerCompiler);
   const auth = { role: 'ADMIN' as 'ADMIN' | 'LEAD', sub: 'user-1' };
   const prisma = {
-    $transaction: vi.fn<(arg: unknown) => Promise<unknown>>((ops) =>
-      Promise.all(ops as Promise<unknown>[])
-    ),
+    $queryRaw: vi.fn().mockResolvedValue([{ id: REPO }]),
+    $transaction: vi.fn<(arg: unknown) => Promise<unknown>>(),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: {
       create: vi.fn(),
@@ -62,6 +64,7 @@ async function buildApp() {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     gitHubInstallation: { findUnique: vi.fn() },
+    knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
     runInput: { findUnique: vi.fn() },
     scheduledWorkRequest: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -71,6 +74,11 @@ async function buildApp() {
     team: { findMany: vi.fn(), findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
   };
+  prisma.$transaction.mockImplementation((ops) =>
+    typeof ops === 'function'
+      ? (ops as (tx: unknown) => Promise<unknown>)(prisma)
+      : Promise.all(ops as Promise<unknown>[])
+  );
   const temporal = { syncWorkRequestSchedule: vi.fn().mockResolvedValue(undefined) };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('temporal', temporal as unknown as never);
@@ -460,6 +468,7 @@ describe('repository sharing', () => {
       data: [{ connectionId: REPO, createdById: 'user-1', teamId: OTHER_TEAM }],
       skipDuplicates: true,
     });
+    expect(ctx.prisma.$queryRaw).toHaveBeenCalled();
     expect(ctx.prisma.configAuditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: 'UPDATE', entityId: REPO }),
     });

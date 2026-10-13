@@ -33,6 +33,7 @@ import { sumRunTraceUsage } from '../lib/traceTotals.js';
 import { accrueChannelUsage } from './channelAssistant.js';
 import {
   assertScheduledFireAuthorized,
+  assertScheduledFireSourceSnapshot,
   SCHEDULE_FIRE_ID_RE,
 } from './scheduledFireAuthorization.js';
 
@@ -40,6 +41,232 @@ import {
  * Workflow run lifecycle activities. These live OUTSIDE the workflow file so
  * the interpreter (which runs in the V8 isolate) can call them through proxies.
  */
+
+interface KnowledgeSourceSnapshot {
+  knowledgeSourceKind: 'UNKNOWN' | 'REPOSITORY' | 'TEAM';
+  knowledgeSourceRepoId: string | null;
+  knowledgeSourceTeamId: string | null;
+  knowledgeSourceOrgId: string | null;
+}
+
+/**
+ * An epic child's authorized source, derived when the child itself starts.
+ *
+ * The epic orchestrator no longer runs a pre-launch verification step, so there is no row
+ * holding the child's tuple by the time the run materializes. The child resolves it from the
+ * launch instead: the gateway stored every authorized `{repoId, teamId, orgId}` the caller
+ * was allowed to launch on in `RunInput.knowledgeRepoSources`, so the child takes the entry
+ * for its own repository and re-checks it against the current state — the launcher is still
+ * an active member of that team and organization (current platform ADMIN being the explicit
+ * bypass), and the repository, its team and its organization are still active and still the
+ * ones the entry names.
+ *
+ * Anything else is `UNKNOWN`: never a widened scope from the epic's other repositories, and
+ * never an inference from a missing or moved tuple.
+ */
+async function epicChildSourceSnapshot(
+  input: CreateWorkflowRunInput
+): Promise<KnowledgeSourceSnapshot> {
+  const unknown: KnowledgeSourceSnapshot = {
+    knowledgeSourceKind: 'UNKNOWN',
+    knowledgeSourceOrgId: null,
+    knowledgeSourceRepoId: null,
+    knowledgeSourceTeamId: null,
+  };
+  const actorId = input.launchedById;
+  // Bound as consts: narrowing of a property access is not preserved inside the transaction
+  // callback below, and an un-narrowed `where` makes Prisma fall back to the overload without
+  // `select` — silently dropping the relations the checks below read.
+  const repoId = input.repoId;
+  const workRequestId = input.workRequestId;
+  const parentWorkflowId = input.parentWorkflowId;
+  if (!parentWorkflowId || !repoId || !workRequestId || !actorId) {
+    return unknown;
+  }
+  // Same protocol the pre-launch activity used, and the same one the PRD child transaction uses:
+  // launcher user → connection → sorted teams → sorted organizations. Without it the checks below
+  // would not be serialized against a concurrent membership, share or ownership change.
+  return prisma.$transaction(async (tx) => {
+    // CLAUDE.md §7 exception: serialize the launcher recheck with user updates.
+    const lockedUser = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM users WHERE id = ${actorId}::uuid FOR UPDATE
+    `;
+    const actor = lockedUser.length
+      ? await tx.user.findUnique({
+          select: { isActive: true, role: true },
+          where: { id: actorId },
+        })
+      : null;
+    if (!actor?.isActive) {
+      return unknown;
+    }
+    const launch = await tx.runInput.findUnique({
+      select: { knowledgeRepoSources: true },
+      where: { id: workRequestId },
+    });
+    const sources = Array.isArray(launch?.knowledgeRepoSources)
+      ? launch.knowledgeRepoSources.filter(
+          (source): source is { repoId: string; teamId: string; orgId: string } =>
+            typeof source === 'object' &&
+            source !== null &&
+            typeof (source as { repoId?: unknown }).repoId === 'string' &&
+            typeof (source as { teamId?: unknown }).teamId === 'string' &&
+            typeof (source as { orgId?: unknown }).orgId === 'string'
+        )
+      : [];
+    const expected = sources.find((source) => source.repoId === repoId);
+    if (!expected) {
+      return unknown;
+    }
+    // CLAUDE.md §7 exception: lock the connection before discovering its owner and shares.
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM connections WHERE id = ${expected.repoId}::uuid FOR UPDATE
+    `;
+    const identity = locked.length
+      ? await tx.connection.findUnique({
+          select: {
+            shares: { select: { teamId: true } },
+            team: { select: { orgId: true } },
+            teamId: true,
+          },
+          where: { id: expected.repoId },
+        })
+      : null;
+    if (!identity) {
+      return unknown;
+    }
+    const teamIds = [
+      ...new Set([
+        identity.teamId,
+        ...identity.shares.map((share) => share.teamId),
+        expected.teamId,
+      ]),
+    ].sort();
+    for (const teamId of teamIds) {
+      // CLAUDE.md §7 exception: serialize source checks with membership changes.
+      const teamLock = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM teams WHERE id = ${teamId}::uuid FOR UPDATE
+      `;
+      if (teamLock.length === 0) {
+        return unknown;
+      }
+    }
+    const orgIds = [...new Set([identity.team.orgId, expected.orgId])].sort();
+    for (const orgId of orgIds) {
+      // CLAUDE.md §7 exception: serialize org membership checks with revocation.
+      const orgLock = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE
+      `;
+      if (orgLock.length === 0) {
+        return unknown;
+      }
+    }
+    const repository = await tx.connection.findUnique({
+      select: {
+        id: true,
+        isActive: true,
+        shares: {
+          select: {
+            team: {
+              select: {
+                isActive: true,
+                memberships: { select: { userId: true }, where: { userId: actorId } },
+              },
+            },
+          },
+        },
+        team: {
+          select: {
+            isActive: true,
+            memberships: { select: { userId: true }, where: { userId: actorId } },
+            organization: { select: { isActive: true } },
+            orgId: true,
+          },
+        },
+        teamId: true,
+        type: true,
+      },
+      where: { id: repoId },
+    });
+    const teamMembership = await tx.teamMembership.findUnique({
+      select: { userId: true },
+      where: { userId_teamId: { teamId: expected.teamId, userId: actorId } },
+    });
+    const orgMembership = await tx.organizationMembership.findUnique({
+      select: { userId: true },
+      where: { userId_orgId: { orgId: expected.orgId, userId: actorId } },
+    });
+    const exact = Boolean(
+      repository?.isActive &&
+        repository.type === 'git_repo' &&
+        repository.team.isActive &&
+        repository.team.organization.isActive &&
+        repository.id === expected.repoId &&
+        repository.teamId === expected.teamId &&
+        repository.team.orgId === expected.orgId
+    );
+    if (!exact || !repository) {
+      return unknown;
+    }
+    // The platform ADMIN bypass is the same explicit one every other repository check makes.
+    const member =
+      actor.role === 'ADMIN' ||
+      Boolean(teamMembership) ||
+      repository.shares.some((share) => share.team.isActive && share.team.memberships.length > 0);
+    const orgMember = actor.role === 'ADMIN' || Boolean(orgMembership);
+    if (!member || !orgMember) {
+      return unknown;
+    }
+    return {
+      knowledgeSourceKind: 'REPOSITORY',
+      knowledgeSourceOrgId: expected.orgId,
+      knowledgeSourceRepoId: expected.repoId,
+      knowledgeSourceTeamId: expected.teamId,
+    };
+  });
+}
+
+async function knowledgeSourceSnapshot(
+  input: CreateWorkflowRunInput
+): Promise<KnowledgeSourceSnapshot> {
+  const unknown: KnowledgeSourceSnapshot = {
+    knowledgeSourceKind: 'UNKNOWN',
+    knowledgeSourceOrgId: null,
+    knowledgeSourceRepoId: null,
+    knowledgeSourceTeamId: null,
+  };
+  // An epic child derives its own tuple at start: nothing pre-creates its ledger row with a
+  // source any more (see `epicChildSourceSnapshot`).
+  if (input.parentWorkflowId) {
+    return epicChildSourceSnapshot(input);
+  }
+  const requestSource = input.workRequestId
+    ? await prisma.runInput.findUnique({
+        select: {
+          knowledgeSourceKind: true,
+          knowledgeSourceOrgId: true,
+          knowledgeSourceRepoId: true,
+          knowledgeSourceTeamId: true,
+        },
+        where: { id: input.workRequestId },
+      })
+    : null;
+  if (
+    !requestSource?.knowledgeSourceKind ||
+    !requestSource.knowledgeSourceTeamId ||
+    !requestSource.knowledgeSourceOrgId ||
+    (requestSource.knowledgeSourceKind === 'REPOSITORY' && !requestSource.knowledgeSourceRepoId) ||
+    (requestSource.knowledgeSourceKind === 'TEAM' && requestSource.knowledgeSourceRepoId)
+  ) {
+    return unknown;
+  }
+  return {
+    knowledgeSourceKind: requestSource.knowledgeSourceKind,
+    knowledgeSourceOrgId: requestSource.knowledgeSourceOrgId,
+    knowledgeSourceRepoId: requestSource.knowledgeSourceRepoId,
+    knowledgeSourceTeamId: requestSource.knowledgeSourceTeamId,
+  };
+}
 
 export interface CreateWorkflowRunInput {
   workflowId: string;
@@ -245,6 +472,7 @@ export async function createWorkflowRun(
 
   const retired = await installationRetiredForRun(input);
   if (retired) {
+    await retireFailedLaunch(input);
     return { error: retired };
   }
 
@@ -257,6 +485,7 @@ export async function createWorkflowRun(
     where: { templateId_version: { templateId: input.templateId, version: input.templateVersion } },
   });
   if (!version) {
+    await retireFailedLaunch(input);
     return { error: `template ${input.templateId}@v${input.templateVersion} not found` };
   }
 
@@ -265,6 +494,7 @@ export async function createWorkflowRun(
     const migrated = migrateSpec(version.spec, SPEC_SCHEMA_VERSION);
     spec = parseWorkflowSpec(migrated);
   } catch (err) {
+    await retireFailedLaunch(input);
     return { error: err instanceof Error ? err.message : String(err) };
   }
 
@@ -327,10 +557,12 @@ export async function createWorkflowRun(
   // names the earlier one's run id, so `currentRunLauncherId` will not match it
   // and the later execution gets no user credential — never the earlier
   // launcher's.
-  const run = await prisma.workflowRun.upsert({
+  const sourceSnapshot = await knowledgeSourceSnapshot(input);
+  const runUpsert: Prisma.WorkflowRunUpsertArgs = {
     create: {
       agentVersions,
       ...(agentRuntimes ? { agentRuntimes: agentRuntimes as Prisma.InputJsonObject } : {}),
+      ...sourceSnapshot,
       // An epic child's own repository. Its work request is the epic's and
       // spans every repository, so run visibility reads this instead — a member
       // of one of the epic's teams reaches that team's child, not all of them.
@@ -343,6 +575,7 @@ export async function createWorkflowRun(
       outcomeDomain: version.template?.workspaceProvider ?? null,
       pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
       skillRevisions,
+      // SAFETY: spec was parsed by WorkflowSpecSchema immediately above.
       specSnapshot: spec as unknown as object,
       status: 'RUNNING',
       templateId: input.templateId,
@@ -353,7 +586,20 @@ export async function createWorkflowRun(
     },
     update: {},
     where: { workflowId: input.workflowId },
-  });
+  };
+  const run =
+    input.workRequestId && input.workflowId.startsWith('sched-')
+      ? await prisma.$transaction(async (tx) => {
+          const existing = await tx.workflowRun.findUnique({
+            select: { id: true },
+            where: { workflowId: input.workflowId },
+          });
+          if (!existing) {
+            await assertScheduledFireSourceSnapshot(tx, input);
+          }
+          return tx.workflowRun.upsert(runUpsert);
+        })
+      : await prisma.workflowRun.upsert(runUpsert);
 
   // The ledger row only has to exist before the run's first LLM call, which is
   // after this activity returns.
@@ -400,6 +646,7 @@ export async function createWorkflowRun(
   return {
     pinnedSettings: persisted,
     runId: run.id,
+    // SAFETY: persisted specSnapshot was validated on initial create from the parsed spec.
     spec: (run.specSnapshot as unknown as WorkflowSpec) ?? spec,
   };
 }
@@ -478,6 +725,9 @@ async function runSettingsContext(
 export interface RecordStepInput {
   runId: string;
   nodeId: string;
+  specNodeId?: string;
+  nodeType?: string;
+  stepName?: string;
   status: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'SKIPPED';
   inputs?: unknown;
   outputs?: unknown;
@@ -499,17 +749,23 @@ export async function recordWorkflowStep(input: RecordStepInput): Promise<void> 
       error: input.error,
       inputs: input.inputs as object | undefined,
       nodeId: input.nodeId,
+      nodeType: input.nodeType,
       outputs: input.outputs as object | undefined,
       runId: input.runId,
+      specNodeId: input.specNodeId,
       startedAt: now,
       status: input.status,
+      stepName: input.stepName,
     },
     update: {
       endedAt: input.status === 'RUNNING' || input.status === 'PENDING' ? null : now,
       error: input.error,
       inputs: input.inputs as object | undefined,
+      nodeType: input.nodeType,
       outputs: input.outputs as object | undefined,
+      specNodeId: input.specNodeId,
       status: input.status,
+      stepName: input.stepName,
     },
     where: { runId_nodeId_attempt: { attempt, nodeId: input.nodeId, runId: input.runId } },
   });
@@ -1030,11 +1286,53 @@ export function buildChannelTaskResultText(
 }
 
 /**
- * Resolve which workflow template a repo's work should run against. Prefers
- * the repo's team default; falls back to the global (teamId IS NULL) default.
- * Used by the epic orchestrator to start child workflows per repo. Throws if
- * no template is configured — workflows can't run without one.
+ * Retire the launch record of a run whose setup failed before it began.
+ *
+ * A launch that claims its ledger row before starting (a PRD child, and every gateway launch
+ * that writes its row first) would otherwise leave that row in `STARTING` forever: the run
+ * never came into existence, so nothing else will move the row on, and the allocator counts a
+ * nonterminal row as live work for that ticket — a reservation nothing will release.
+ *
+ * Scoped to the row that is still `STARTING` and names this execution's workflow id and work
+ * request, so it can neither touch another submission's row nor overwrite a status a real run
+ * already set. The request and repository stay linked for later recovery. It does not check
+ * Temporal's run id (`ActiveWorkflow` has none) and takes its ids from the caller, so it is only
+ * as precise as the callers: this activity's own `{ error }` returns, and `RunnableWorkflow`,
+ * which passes its own `workflowInfo().workflowId` and recorded request.
+ *
+ * Called from this activity's own `{ error }` returns, and from the workflow when setup threw
+ * on every retry (see `RunnableWorkflow`), which is the case an activity cannot detect itself
+ * — it cannot know it is the last attempt.
  */
+export async function retireFailedLaunch(input: {
+  workflowId: string;
+  workRequestId?: string | null;
+}): Promise<void> {
+  if (!input.workRequestId) {
+    return;
+  }
+  await prisma.activeWorkflow.updateMany({
+    data: { currentStatus: 'FAILED' },
+    where: {
+      currentStatus: 'STARTING',
+      temporalWorkflowId: input.workflowId,
+      workRequestId: input.workRequestId,
+    },
+  });
+}
+
+/**
+ * The repository has no active default workflow template anywhere it could
+ * inherit one from.
+ *
+ * A distinct type because callers treat this as a deliberate skip — there is
+ * nothing to run for this repository — while every other failure from
+ * {@link resolveTemplateForRepo} is a database or configuration fault that must
+ * fail the activity. A bare `catch` cannot tell those apart, which is how a
+ * connection failure became "this story was submitted" with nothing started.
+ */
+export class NoTemplateForRepoError extends Error {}
+
 export async function resolveTemplateForRepo(
   repoId: string
 ): Promise<{ templateId: string; templateVersion: number }> {
@@ -1055,7 +1353,7 @@ export async function resolveTemplateForRepo(
     }));
 
   if (!tpl?.activeVersion) {
-    throw new Error(
+    throw new NoTemplateForRepoError(
       `no active default workflow template for repo ${repoId} (team ${repo.teamId}). Run \`yarn db:seed\`.`
     );
   }

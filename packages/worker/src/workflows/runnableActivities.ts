@@ -37,6 +37,7 @@ export const stateActivities = proxyActivities<
     | 'resolveHumanStep'
     | 'cancelPendingHumanSteps'
     | 'storeContextOverflowBatch'
+    | 'retireFailedLaunch'
   >
 >({
   retry: RETRY_STATE,
@@ -174,6 +175,15 @@ export const contextActivities = proxyActivities<Pick<typeof activitiesType, 'va
   heartbeatTimeout: T_2M,
   retry: RETRY_STANDARD,
   startToCloseTimeout: T_5M,
+});
+
+// Governed knowledge capture/retrieval. Activity-backed and workspace-free.
+export const knowledgeActivities = proxyActivities<
+  Pick<typeof activitiesType, 'retrieveKnowledge' | 'captureLearning'>
+>({
+  heartbeatTimeout: T_2M,
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_10M,
 });
 
 export const memoryActivities = proxyActivities<Pick<typeof activitiesType, 'commitToMemory'>>({
