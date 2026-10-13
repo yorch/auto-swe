@@ -14,10 +14,10 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     configSetting: {
       create: vi.fn(async () => ({})),
-      delete: vi.fn(async () => ({})),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
       findFirst: vi.fn(async () => null),
       findMany: vi.fn(async () => []),
-      update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
     organizationMembership: { findUnique: vi.fn(async () => null) },
     slackChannel: { findUnique: vi.fn(async () => ({ orgId: 'org-1', teamId: 'team-1' })) },
@@ -346,7 +346,7 @@ describe('PUT /config/settings/:key', () => {
       url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
     });
     expect(res.statusCode).toBe(200);
-    expect(configSetting.update).toHaveBeenCalledTimes(1);
+    expect(configSetting.updateMany).toHaveBeenCalledTimes(1);
     expect(configSetting.create).not.toHaveBeenCalled();
     expect(writeAudit).toHaveBeenCalledWith(
       expect.anything(),
@@ -373,8 +373,44 @@ describe('PUT /config/settings/:key', () => {
       url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
     });
     expect(res.statusCode).toBe(200);
-    expect(configSetting.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'row-won' } })
+    expect(configSetting.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: 'row-won' }) })
+    );
+    await app.close();
+  });
+
+  it('creates the row when a concurrent clear deleted the one it read', async () => {
+    configSetting.findFirst.mockResolvedValue({ id: 'row-1', value: 9 } as never);
+    configSetting.updateMany.mockResolvedValueOnce({ count: 0 } as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { value: 12 },
+      headers: auth('ADMIN'),
+      method: 'PUT',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(configSetting.create).toHaveBeenCalledTimes(1);
+    expect(writeAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ action: 'CREATE', beforeJson: null })
+    );
+    await app.close();
+  });
+
+  it('scopes the in-place update to the row’s tenant columns', async () => {
+    configSetting.findFirst.mockResolvedValue({ id: 'row-1', value: 9 } as never);
+    const app = await buildApp();
+    await app.inject({
+      body: { value: 12 },
+      headers: auth('ADMIN'),
+      method: 'PUT',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
+    });
+    // The tenant guard refuses a mass write with no tenant predicate.
+    expect(configSetting.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: 'row-1', teamId: null }) })
     );
     await app.close();
   });
@@ -502,7 +538,22 @@ describe('DELETE /config/settings/:key', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.cleared).toBe(true);
-    expect(configSetting.delete).toHaveBeenCalledTimes(1);
+    expect(configSetting.deleteMany).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('is a no-op, not a 500, when a concurrent clear removed the row first', async () => {
+    configSetting.findFirst.mockResolvedValue({ id: 'row-1', value: 9 } as never);
+    configSetting.deleteMany.mockResolvedValueOnce({ count: 0 } as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'DELETE',
+      url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.cleared).toBe(false);
+    expect(writeAudit).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -515,7 +566,7 @@ describe('DELETE /config/settings/:key', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.cleared).toBe(false);
-    expect(configSetting.delete).not.toHaveBeenCalled();
+    expect(configSetting.deleteMany).not.toHaveBeenCalled();
     expect(writeAudit).not.toHaveBeenCalled();
     await app.close();
   });
@@ -528,7 +579,7 @@ describe('DELETE /config/settings/:key', () => {
       url: '/api/v1/platform/config/settings/channel.historyMessageLimit',
     });
     expect(res.statusCode).toBe(403);
-    expect(configSetting.delete).not.toHaveBeenCalled();
+    expect(configSetting.deleteMany).not.toHaveBeenCalled();
     await app.close();
   });
 });

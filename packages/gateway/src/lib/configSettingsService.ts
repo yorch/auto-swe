@@ -342,45 +342,53 @@ export async function setSetting(
   const { columns, existing } = target;
 
   if (existing) {
-    await prisma.configSetting.update({
+    // updateMany, not update: a concurrent clear may have deleted the row since
+    // it was read, which `update` reports as P2025. Nothing is stored any more,
+    // so the write falls through and creates the row afresh. The scope columns
+    // are in the filter for the tenant guard, which refuses a mass write that
+    // names no tenant.
+    const { count } = await prisma.configSetting.updateMany({
       data: { updatedById: actor.id, value: parsed.data as never },
-      where: { id: existing.id },
+      where: { id: existing.id, ...columns },
     });
-  } else {
-    try {
-      await prisma.configSetting.create({
-        data: {
-          key,
-          scope: selector.scope,
-          updatedById: actor.id,
-          value: parsed.data as never,
-          ...columns,
-        },
-      });
-    } catch (err) {
-      // A concurrent writer created the row between the read and this create;
-      // the partial unique index refused ours. Last write wins, as it would
-      // have had the two arrived in sequence — update the row that won.
-      if (!isUniqueConstraintError(err)) {
-        throw err;
-      }
-      const winner = await prisma.configSetting.findFirst({
-        where: { key, scope: selector.scope, ...columns },
-      });
-      if (!winner) {
-        throw err;
-      }
-      await prisma.configSetting.update({
-        data: { updatedById: actor.id, value: parsed.data as never },
-        where: { id: winner.id },
-      });
+    if (count > 0) {
       invalidateSettingsCache();
-      return { after: parsed.data, before: winner.value };
+      return { after: parsed.data, before: existing.value };
     }
+  }
+  try {
+    await prisma.configSetting.create({
+      data: {
+        key,
+        scope: selector.scope,
+        updatedById: actor.id,
+        value: parsed.data as never,
+        ...columns,
+      },
+    });
+  } catch (err) {
+    // A concurrent writer created the row between the read and this create;
+    // the partial unique index refused ours. Last write wins, as it would
+    // have had the two arrived in sequence — update the row that won.
+    if (!isUniqueConstraintError(err)) {
+      throw err;
+    }
+    const winner = await prisma.configSetting.findFirst({
+      where: { key, scope: selector.scope, ...columns },
+    });
+    if (!winner) {
+      throw err;
+    }
+    await prisma.configSetting.updateMany({
+      data: { updatedById: actor.id, value: parsed.data as never },
+      where: { id: winner.id, ...columns },
+    });
+    invalidateSettingsCache();
+    return { after: parsed.data, before: winner.value };
   }
 
   invalidateSettingsCache();
-  return { after: parsed.data, before: existing?.value };
+  return { after: parsed.data, before: undefined };
 }
 
 /// Removes an override so the key falls back to the next scope down. Returns
@@ -400,11 +408,21 @@ export async function clearSetting(
   if ('denial' in target) {
     return target;
   }
-  if (target.existing) {
-    await prisma.configSetting.delete({ where: { id: target.existing.id } });
-    invalidateSettingsCache();
+  if (!target.existing) {
+    return { before: undefined };
   }
-  return { before: target.existing?.value };
+  // deleteMany, not delete: a concurrent clear that removed the row first
+  // leaves nothing to delete, which `delete` reports as P2025. It is the same
+  // no-op as finding nothing stored. The scope columns are in the filter for
+  // the tenant guard, which refuses a mass write that names no tenant.
+  const { count } = await prisma.configSetting.deleteMany({
+    where: { id: target.existing.id, ...target.columns },
+  });
+  if (count === 0) {
+    return { before: undefined };
+  }
+  invalidateSettingsCache();
+  return { before: target.existing.value };
 }
 
 async function authorize(
