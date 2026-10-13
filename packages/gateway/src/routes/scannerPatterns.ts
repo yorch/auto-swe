@@ -18,6 +18,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 // The Prisma enum's values, from the one shared list the bundle schema and the
@@ -25,6 +26,11 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 const PATTERN_TYPES = SCANNER_PATTERN_TYPES;
 
 const PatternIdParams = z.object({ id: z.string().uuid() });
+
+// `label` is unique, so a second rule with a taken label is a conflict, not a 500.
+const LABEL_EXISTS = {
+  error: { code: 'PATTERN_LABEL_EXISTS', message: 'A scanner pattern with this label exists' },
+};
 
 // Policy lives in `regexSafety` and is imported, not restated: this schema and
 // `checkRegexSafety` must never be able to disagree about which flags are legal.
@@ -197,9 +203,17 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: regexError });
       }
 
-      const created = await fastify.prisma.scannerPattern.create({
-        data: { flags, isBuiltIn: false, label, pattern, type },
-      });
+      let created: Awaited<ReturnType<typeof fastify.prisma.scannerPattern.create>>;
+      try {
+        created = await fastify.prisma.scannerPattern.create({
+          data: { flags, isBuiltIn: false, label, pattern, type },
+        });
+      } catch (err) {
+        if (isUniqueConstraintError(err)) {
+          return reply.status(409).send(LABEL_EXISTS);
+        }
+        throw err;
+      }
       invalidateScannerPatternCache();
       await writeAuditLog(fastify, {
         action: 'CREATE',
@@ -265,10 +279,18 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const updated = await fastify.prisma.scannerPattern.update({
-        data: updateData,
-        where: { id: request.params.id },
-      });
+      let updated: Awaited<ReturnType<typeof fastify.prisma.scannerPattern.update>>;
+      try {
+        updated = await fastify.prisma.scannerPattern.update({
+          data: updateData,
+          where: { id: request.params.id },
+        });
+      } catch (err) {
+        if (isUniqueConstraintError(err)) {
+          return reply.status(409).send(LABEL_EXISTS);
+        }
+        throw err;
+      }
       invalidateScannerPatternCache();
       await writeAuditLog(fastify, {
         action: 'UPDATE',
