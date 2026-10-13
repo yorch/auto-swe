@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { api } from '@/lib/api';
 import { type DateRange, rangeKey, rangeQuery } from '@/lib/dateRange';
+import { randomId } from '@/lib/randomId';
 
 export function useWorkflowTemplates(teamId?: string | null) {
   return useQuery({
@@ -302,7 +303,7 @@ export function useRunTemplate(templateId: string) {
     mutationFn: (body: { payload?: Record<string, unknown>; label?: string }) => {
       const serialized = JSON.stringify(body);
       if (!submission.current || submission.current.body !== serialized) {
-        submission.current = { body: serialized, key: crypto.randomUUID() };
+        submission.current = { body: serialized, key: randomId() };
       }
       return api
         .fetch<{ data: { temporalWorkflowId: string; workflowId: string; workRequestId: string } }>(

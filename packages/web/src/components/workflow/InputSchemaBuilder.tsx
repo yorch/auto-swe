@@ -14,6 +14,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { selectableConnectionTypes } from '@/lib/connectionForm';
+import { randomId } from '@/lib/randomId';
 
 const FIELD_TYPES: { label: string; value: InputFieldType }[] = [
   { label: 'String', value: 'string' },
@@ -64,7 +65,7 @@ function propertyToDraft(key: string, prop: InputSchemaProperty, required: boole
     description: prop.description ?? '',
     enumValues: prop.enum ? prop.enum.join(', ') : '',
     format: prop.format === 'uuid' ? 'uuid' : '',
-    id: crypto.randomUUID(),
+    id: randomId(),
     itemType: prop.items?.type ?? 'string',
     key,
     required,
@@ -134,7 +135,7 @@ export function InputSchemaBuilder({
         description: '',
         enumValues: '',
         format: '',
-        id: crypto.randomUUID(),
+        id: randomId(),
         itemType: 'string',
         key: '',
         required: false,

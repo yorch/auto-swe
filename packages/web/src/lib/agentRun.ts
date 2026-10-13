@@ -1,6 +1,7 @@
 import { AGENT_RUN_MAX_PROMPT_CHARS } from '@auto-swe/shared/lib/agentRun';
 import type { AgentRunLimits } from '@auto-swe/shared/types/api';
 import { ApiError } from '@/lib/api';
+import { randomId } from '@/lib/randomId';
 import { isRecord } from '@/lib/utils';
 
 export { AGENT_RUN_MAX_PROMPT_CHARS } from '@auto-swe/shared/lib/agentRun';
@@ -135,34 +136,21 @@ export function buildLaunchBody(v: AgentRunFormValues) {
   };
 }
 
+export interface IdempotencyState {
+  fingerprint: string;
+  key: string;
+}
+
 /**
  * Idempotency for the launch: one key per distinct submission. Resubmitting
  * the same values (a retry after a dropped connection, a double click) reuses
  * the key, so the gateway answers `RUN_CONFLICT` instead of starting a second
  * run; changing anything, or starting over, mints a fresh one.
  */
-/**
- * A fresh random key. `crypto.randomUUID` exists only in secure contexts, and
- * the dashboard may be served over plain http, so fall back to `getRandomValues`
- * (available everywhere).
- */
-export function newIdempotencyKey(): string {
-  if (typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-export interface IdempotencyState {
-  fingerprint: string;
-  key: string;
-}
-
 export function idempotencyFor(
   prev: IdempotencyState | null,
   body: object,
-  newKey: () => string = newIdempotencyKey
+  newKey: () => string = randomId
 ): IdempotencyState {
   const fingerprint = JSON.stringify(body);
   return prev && prev.fingerprint === fingerprint ? prev : { fingerprint, key: newKey() };

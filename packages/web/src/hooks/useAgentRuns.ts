@@ -6,8 +6,8 @@ import type {
   AgentRunLimits,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { newIdempotencyKey } from '@/lib/agentRun';
 import { api } from '@/lib/api';
+import { randomId } from '@/lib/randomId';
 
 /** The query string for the form-support reads: scoped to a repository when one is chosen. */
 function repoQuery(repoId: string | null): string {
@@ -82,7 +82,7 @@ export function useRerunAgentRun() {
           body: JSON.stringify(
             typeof input === 'string' ? {} : { instructions: input.instructions }
           ),
-          headers: { 'Idempotency-Key': newIdempotencyKey() },
+          headers: { 'Idempotency-Key': randomId() },
           method: 'POST',
         })
         .then((r) => r.data);
