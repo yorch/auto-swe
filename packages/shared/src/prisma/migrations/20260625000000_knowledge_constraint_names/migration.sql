@@ -4,8 +4,10 @@
 -- unexpected. Renaming is the record of that: cheaper and safer than dropping and recreating the
 -- constraints, and it leaves every row where it is.
 --
--- `evidence_correlation` is declared with a database default in the schema but was created without
--- one, so the same check asks for the default to be applied.
+-- `evidence_correlation` was added with a default only so the NOT NULL column could be filled on
+-- existing rows. Every insert supplies the correlation itself (qualityGates builds it), and a
+-- `dbgenerated` declaration of that cast is never equal to what PostgreSQL stores, which no DDL can
+-- reconcile -- so the default is dropped and the schema declares none.
 
 ALTER TABLE "knowledge_items"
   RENAME CONSTRAINT "knowledge_items_owner_team_fkey" TO "knowledge_items_owner_team_id_fkey";
@@ -43,4 +45,4 @@ ALTER INDEX "trusted_knowledge_evidence_run_artifact_idx"
   RENAME TO "trusted_knowledge_evidence_run_id_artifact_id_idx";
 
 ALTER TABLE "trusted_knowledge_evidence"
-  ALTER COLUMN "evidence_correlation" SET DEFAULT gen_random_uuid()::text;
+  ALTER COLUMN "evidence_correlation" DROP DEFAULT;

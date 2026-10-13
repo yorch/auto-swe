@@ -1561,7 +1561,7 @@ model TrustedKnowledgeEvidence {
   specNodeId     String                   @map("spec_node_id")
   stepAttempt    Int                      @map("step_attempt")
   activityAttempt Int                     @default(1) @map("activity_attempt")
-  evidenceCorrelation String               @default(dbgenerated("gen_random_uuid()::text")) @map("evidence_correlation")
+  evidenceCorrelation String               @map("evidence_correlation")
   producer       KnowledgeEvidenceProducer
   gateName       String                   @map("gate_name")
   outcome        KnowledgeEvidenceOutcome
