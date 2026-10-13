@@ -349,7 +349,7 @@ export async function setSetting(
     // names no tenant.
     const { count } = await prisma.configSetting.updateMany({
       data: { updatedById: actor.id, value: parsed.data as never },
-      where: { id: existing.id, ...columns },
+      where: { id: existing.id, ...columns, teamId: columns.teamId ?? null },
     });
     if (count > 0) {
       invalidateSettingsCache();
@@ -381,7 +381,7 @@ export async function setSetting(
     }
     await prisma.configSetting.updateMany({
       data: { updatedById: actor.id, value: parsed.data as never },
-      where: { id: winner.id, ...columns },
+      where: { id: winner.id, ...columns, teamId: columns.teamId ?? null },
     });
     invalidateSettingsCache();
     return { after: parsed.data, before: winner.value };
@@ -414,9 +414,14 @@ export async function clearSetting(
   // deleteMany, not delete: a concurrent clear that removed the row first
   // leaves nothing to delete, which `delete` reports as P2025. It is the same
   // no-op as finding nothing stored. The scope columns are in the filter for
-  // the tenant guard, which refuses a mass write that names no tenant.
+  // the tenant guard, which refuses a mass write that names no tenant; `teamId`
+  // is also named literally, which is what the guard's static coverage audit reads.
   const { count } = await prisma.configSetting.deleteMany({
-    where: { id: target.existing.id, ...target.columns },
+    where: {
+      id: target.existing.id,
+      ...target.columns,
+      teamId: target.columns.teamId ?? null,
+    },
   });
   if (count === 0) {
     return { before: undefined };
