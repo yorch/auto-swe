@@ -113,6 +113,45 @@ async function exchangeSlackOAuthCode(
   return (await res.json()) as SlackOAuthResponse;
 }
 
+/**
+ * The cookie that binds an account-link flow to the browser that started it.
+ *
+ * The signed `state` says who started the flow, but not who finishes it: a
+ * started flow's Slack authorize URL handed to someone else would link *their*
+ * Slack account to the starter's platform user. So `/connect` also puts a
+ * random nonce in the state and in this cookie, and the callback requires both
+ * to agree. The callback is a top-level GET navigation back from Slack to the
+ * gateway's own host, which a `SameSite=Lax` cookie is sent on.
+ */
+const SLACK_LINK_COOKIE = 'auto_swe_slack_link';
+/** Matches the state token's lifetime: a flow cannot outlive either. */
+const SLACK_LINK_COOKIE_MAX_AGE_S = 10 * 60;
+
+/** The account-link callback URL, and the cookie options scoped to its path. */
+function slackLinkCallback(): {
+  redirectUri: string;
+  cookie: { httpOnly: true; path: string; sameSite: 'lax'; secure: boolean };
+} {
+  const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/callback`;
+  const url = new URL(redirectUri);
+  return {
+    cookie: {
+      httpOnly: true,
+      path: url.pathname,
+      sameSite: 'lax',
+      secure: url.protocol === 'https:',
+    },
+    redirectUri,
+  };
+}
+
+/** Constant-time string equality; false for any length mismatch. */
+function sameNonce(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
 interface SlackIdentityResponse {
   ok: boolean;
   user: { id: string };
@@ -217,15 +256,20 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       // Single-purpose, short-lived state token (not an API access token) so a
       // leak via Slack logs / Referer / browser history can't be replayed as a
-      // bearer credential.
-      const state = fastify.auth.signOAuthState(user.sub, 'slack-link');
+      // bearer credential. The nonce binds it to this browser (SLACK_LINK_COOKIE).
+      const nonce = crypto.randomBytes(32).toString('base64url');
+      const state = fastify.auth.signOAuthState(user.sub, 'slack-link', nonce);
 
-      const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/callback`;
+      const { cookie, redirectUri } = slackLinkCallback();
       // We link by Slack user id only; identity.basic is sufficient.
       const scopes = 'identity.basic';
 
       const url = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&scope=${scopes}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
 
+      reply.setCookie(SLACK_LINK_COOKIE, nonce, {
+        ...cookie,
+        maxAge: SLACK_LINK_COOKIE_MAX_AGE_S,
+      });
       return reply.redirect(url);
     }
   );
@@ -241,12 +285,38 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     // Verify the single-purpose OAuth state token.
-    let statePayload: { sub: string };
+    let statePayload: { sub: string; nonce?: string };
     try {
       statePayload = fastify.auth.verifyOAuthState(state, 'slack-link');
     } catch {
       return reply.status(400).send({
         error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },
+      });
+    }
+
+    // The flow must finish in the browser that started it (SLACK_LINK_COOKIE).
+    // One use only: the cookie is cleared whatever the outcome.
+    const { cookie, redirectUri } = slackLinkCallback();
+    const browserNonce = request.cookies[SLACK_LINK_COOKIE];
+    reply.clearCookie(SLACK_LINK_COOKIE, cookie);
+    if (!(statePayload.nonce && browserNonce && sameNonce(statePayload.nonce, browserNonce))) {
+      return reply.status(403).send({
+        error: {
+          code: 'STATE_MISMATCH',
+          message:
+            'This Slack link was not started in this browser. Start it again from your settings page.',
+        },
+      });
+    }
+    // The state is up to ten minutes old; the account it names must still be
+    // one that may sign in.
+    const linkingUser = await fastify.prisma.user.findUnique({
+      select: { isActive: true },
+      where: { id: statePayload.sub },
+    });
+    if (!linkingUser?.isActive) {
+      return reply.status(403).send({
+        error: { code: 'USER_INACTIVE', message: 'User account is not active' },
       });
     }
 
@@ -256,7 +326,6 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
       });
     }
-    const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/callback`;
     const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
     if (!tokenData.ok) {
       return reply.status(400).send({
