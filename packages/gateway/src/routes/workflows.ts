@@ -62,7 +62,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
       const [workflows, total] = await Promise.all([
         fastify.prisma.activeWorkflow.findMany({
           include: { pullRequests: true, repository: true },
-          orderBy: { updatedAt: 'desc' },
+          orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,

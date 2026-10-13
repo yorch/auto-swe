@@ -104,6 +104,16 @@ describe('workflowRunRoutes GET / (list)', () => {
     expect(where.template).toEqual({ name: { notIn: ['Channel Assistant', 'Channel Task'] } });
   });
 
+  it('breaks startedAt ties by id, so offset pages neither repeat nor skip a run', async () => {
+    const { app, prisma } = await buildApp();
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/workflow-runs' });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.workflowRun.findMany.mock.calls[0][0].orderBy).toEqual([
+      { startedAt: 'desc' },
+      { id: 'desc' },
+    ]);
+  });
+
   it('narrows to runs where one node failed', async () => {
     const { app, prisma } = await buildApp();
     const res = await app.inject({

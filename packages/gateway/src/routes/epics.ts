@@ -288,7 +288,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       const [workRequests, total] = await Promise.all([
         fastify.prisma.runInput.findMany({
           include: { requestedBy: { select: { email: true, id: true, name: true } } },
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,

@@ -85,7 +85,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         () =>
           Promise.all([
             fastify.prisma.memoryItem.findMany({
-              orderBy: { createdAt: 'desc' },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
               select: {
                 consolidatedAt: true,
                 createdAt: true,

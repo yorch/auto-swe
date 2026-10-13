@@ -281,7 +281,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
               select: { description: true, externalTicketId: true, id: true, requestPayload: true },
             },
           },
-          orderBy: { startedAt: 'desc' },
+          orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,
@@ -636,7 +636,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const rows = await fastify.prisma.autonomyDecision.findMany({
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         skip: request.query.offset,
         take: request.query.limit,
         where: { runId: run.id },

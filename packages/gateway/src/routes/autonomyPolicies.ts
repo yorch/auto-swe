@@ -191,7 +191,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
       };
       const [rows, total] = await Promise.all([
         fastify.prisma.autonomyDecision.findMany({
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,
