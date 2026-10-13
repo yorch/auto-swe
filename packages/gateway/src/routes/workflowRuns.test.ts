@@ -373,6 +373,7 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
       toolName: null,
       type: 'activity_event',
     };
+    // The read is newest first; the route hands the page back oldest first.
     prisma.agentTrace.findMany.mockResolvedValue([
       { ...base, id: 't-new', recordingId: 'fan[1]/impl', specNodeId: 'impl', stepAttempt: 2 },
       // A row written before the columns existed.
@@ -386,8 +387,8 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(res.statusCode).toBe(200);
     const traces = res.json().data.traces as Array<Record<string, unknown>>;
     expect(traces.map((t) => [t.id, t.specNodeId, t.recordingId, t.stepAttempt])).toEqual([
-      ['t-new', 'impl', 'fan[1]/impl', 2],
       ['t-old', null, null, null],
+      ['t-new', 'impl', 'fan[1]/impl', 2],
     ]);
   });
 

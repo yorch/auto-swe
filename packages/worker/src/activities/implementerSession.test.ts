@@ -125,7 +125,14 @@ const recordLlmUsageMock = vi.fn(async (..._args: unknown[]) => ({
 const { assertRolePricedMock } = vi.hoisted(() => ({
   assertRolePricedMock: vi.fn(async (_role: string) => {}),
 }));
-vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: assertRolePricedMock }));
+vi.mock('../lib/usdCapGuard.js', () => ({
+  assertRolePricedForUsdCap: assertRolePricedMock,
+  // The security gate passes spend refusals through; the real check reads the type.
+  isSpendRefusal: (err: unknown) =>
+    ['BUDGET_EXCEEDED', 'MODEL_PRICE_UNAVAILABLE', 'MODEL_UNPRICED'].includes(
+      (err as { type?: string } | null)?.type ?? ''
+    ),
+}));
 const unpriced = () =>
   Object.assign(new Error('Model has no price in the model catalog'), { type: 'MODEL_UNPRICED' });
 
