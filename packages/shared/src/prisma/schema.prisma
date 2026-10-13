@@ -461,6 +461,8 @@ model KnowledgeItem {
   @@index([ownerTeamId, status, visibility])
   @@index([orgId, status, visibility])
   @@index([repoId, status])
+  @@index([originTeamId])
+  @@index([approvedById])
   @@map("knowledge_items")
 }
 
@@ -1471,6 +1473,8 @@ model Automation {
   fires AutomationFire[]
 
   @@index([connectionId, source])
+  @@index([templateId])
+  @@index([createdById])
   @@map("automations")
 }
 
@@ -1510,6 +1514,7 @@ model AutomationFire {
   @@index([repoKey, subjectKey])
   @@index([producedKey])
   @@index([workRequestId])
+  @@index([connectionId])
   @@map("automation_fires")
 }
 
@@ -1572,6 +1577,7 @@ model TrustedKnowledgeEvidence {
 
   @@unique([runId, recordingId, stepAttempt, activityAttempt, producer, gateName])
   @@index([runId, artifactId])
+  @@index([artifactId])
   @@map("trusted_knowledge_evidence")
 }
 
@@ -1695,6 +1701,9 @@ model WorkflowRun {
   @@index([launchedById])
   @@index([channelId])
   @@index([connectionId])
+  // The run list (`GET /workflow-runs`) pages newest first, optionally by status.
+  @@index([startedAt])
+  @@index([status, startedAt])
   @@map("workflow_runs")
 }
 
@@ -2051,6 +2060,7 @@ model WorkflowHumanStep {
   @@index([runId])
   @@index([runId, nodeId])
   @@index([status])
+  @@index([resolvedBy])
   @@map("workflow_human_steps")
 }
 
@@ -2068,6 +2078,7 @@ model HumanApproval {
 
   @@unique([stepId, resolvedBy])
   @@index([stepId])
+  @@index([resolvedBy])
   @@map("human_approvals")
 }
 
@@ -2954,6 +2965,7 @@ model AgentSkillRef {
   skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
 
   @@unique([agentId, skillId])
+  @@index([skillId])
   @@map("agent_skill_refs")
 }
 
