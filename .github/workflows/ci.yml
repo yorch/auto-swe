@@ -197,14 +197,15 @@ jobs:
         working-directory: packages/shared
         run: |
           set -euo pipefail
-          EXPECTED='DROP INDEX "idx_memory_items_embedding";'
+          EXPECTED_MEMORY='DROP INDEX "idx_memory_items_embedding";'
+          EXPECTED_KNOWLEDGE='DROP INDEX "knowledge_items_embedding_hnsw_idx";'
           diff_sql=$(yarn prisma migrate diff \
             --from-config-datasource \
             --to-schema src/prisma/schema.prisma \
             --script)
           unexpected=$(printf '%s\n' "$diff_sql" \
             | grep -Ev '^[[:space:]]*(--.*)?$' \
-            | grep -vxF -e "$EXPECTED" || true)
+            | grep -vxF -e "$EXPECTED_MEMORY" -e "$EXPECTED_KNOWLEDGE" || true)
           if [ -n "$unexpected" ]; then
             echo "::error::schema.prisma and the committed migrations disagree. Add a migration (see .claude/skills/prisma-pgvector-hnsw). Unexpected diff:"
             printf '%s\n' "$unexpected"
