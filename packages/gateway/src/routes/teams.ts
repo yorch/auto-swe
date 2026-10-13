@@ -523,14 +523,17 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
           data: { isActive: false },
           where: { id: request.params.id },
         });
-      });
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor: requireUser(request),
-        after: { isActive: false },
-        before: teamAuditFields(team),
-        entityId: team.id,
-        entityType: 'Team',
+        // The entry commits with the change it records: an audit failure must not leave a
+        // deactivated team with no record of who deactivated it.
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor: requireUser(request),
+          after: { isActive: false },
+          before: teamAuditFields(team),
+          client: tx,
+          entityId: team.id,
+          entityType: 'Team',
+        });
       });
 
       return { data: { deleted: true } };
@@ -660,24 +663,26 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma,
         request.params.id,
         removesTeamAdmin(membership.role, 'update', request.body.role),
-        (db) =>
-          db.teamMembership.update({
+        async (db) => {
+          const updated = await db.teamMembership.update({
             data: { role: request.body.role },
             where: { id: membership.id },
-          })
+          });
+          await writeAuditLog(fastify, {
+            action: 'UPDATE',
+            actor: requireUser(request),
+            after: membershipAuditFields(updated),
+            before: membershipAuditFields(membership),
+            client: db,
+            entityId: membership.id,
+            entityType: 'TeamMembership',
+          });
+          return updated;
+        }
       );
       if (!result.ok) {
         return sendError(reply, 409, result.guard.code, result.guard.message);
       }
-
-      await writeAuditLog(fastify, {
-        action: 'UPDATE',
-        actor: requireUser(request),
-        after: membershipAuditFields(result.value),
-        before: membershipAuditFields(membership),
-        entityId: membership.id,
-        entityType: 'TeamMembership',
-      });
 
       return { data: result.value };
     }
@@ -716,19 +721,22 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma,
         request.params.id,
         removesTeamAdmin(membership.role, 'delete'),
-        (db) => db.teamMembership.delete({ where: { id: membership.id } })
+        async (db) => {
+          const removed = await db.teamMembership.delete({ where: { id: membership.id } });
+          await writeAuditLog(fastify, {
+            action: 'DELETE',
+            actor: requireUser(request),
+            before: membershipAuditFields(membership),
+            client: db,
+            entityId: membership.id,
+            entityType: 'TeamMembership',
+          });
+          return removed;
+        }
       );
       if (!result.ok) {
         return sendError(reply, 409, result.guard.code, result.guard.message);
       }
-
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor: requireUser(request),
-        before: membershipAuditFields(membership),
-        entityId: membership.id,
-        entityType: 'TeamMembership',
-      });
 
       return { data: { removed: true } };
     }
