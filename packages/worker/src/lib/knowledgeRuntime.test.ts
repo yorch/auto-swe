@@ -98,8 +98,6 @@ vi.mock('./memorySecurityEvent.js', () => ({ recordMemorySecurityEvent: vi.fn(as
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn(async () => 5) }));
 
 import { generateEmbeddingWithSpec } from './embeddings.js';
-import { withoutFlaggedMemory } from './memoryGuard.js';
-import { recordMemorySecurityEvent } from './memorySecurityEvent.js';
 import {
   indexKnowledgeCandidates,
   resolveKnowledgeExecutionScope,
@@ -108,6 +106,8 @@ import {
   searchWorkflowKnowledge,
   submitWorkflowLearning,
 } from './knowledgeRuntime.js';
+import { withoutFlaggedMemory } from './memoryGuard.js';
+import { recordMemorySecurityEvent } from './memorySecurityEvent.js';
 
 function gateOutput(record: {
   activityAttempt: number;

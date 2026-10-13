@@ -2,12 +2,12 @@ import { KnowledgeEvidenceSchema } from '@auto-swe/shared';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { AgentTracer } from '../lib/agentTracer.js';
-import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import {
   resolveWorkflowKnowledgeEvidence,
   searchWorkflowKnowledge,
   submitWorkflowLearning,
 } from '../lib/knowledgeRuntime.js';
+import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 
 export const SEARCH_KNOWLEDGE_TOOL = 'searchKnowledge';
 export const SUBMIT_LEARNING_TOOL = 'submitLearning';

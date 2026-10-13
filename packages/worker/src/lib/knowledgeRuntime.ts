@@ -370,9 +370,13 @@ export async function submitWorkflowLearning(
     ]);
   } catch (err) {
     if (err instanceof MemoryContentRefusedError) {
-      const event = memoryWriteRefusalEvent(err, MEMORY_SECURITY_EVENTS.KNOWLEDGE_LEARNING_REFUSED, {
-        nodeId: tag.specNodeId,
-      });
+      const event = memoryWriteRefusalEvent(
+        err,
+        MEMORY_SECURITY_EVENTS.KNOWLEDGE_LEARNING_REFUSED,
+        {
+          nodeId: tag.specNodeId,
+        }
+      );
       await recordMemorySecurityEvent(event.name, event.outputJson);
     }
     throw err;

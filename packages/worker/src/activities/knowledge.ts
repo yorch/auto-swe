@@ -1,12 +1,12 @@
 import type { KnowledgeEvidence } from '@auto-swe/shared';
 import { ApplicationFailure } from '@temporalio/activity';
 import { LEARNING_REFUSED_MESSAGE } from '../agents/knowledgeTools.js';
-import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import {
   resolveWorkflowKnowledgeEvidence,
   searchWorkflowKnowledge,
   submitWorkflowLearning,
 } from '../lib/knowledgeRuntime.js';
+import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 
 export async function retrieveKnowledge(input: { query: string; limit?: number }) {
   const result = await searchWorkflowKnowledge(input.query, { limit: input.limit });
