@@ -11,7 +11,6 @@
  * ADMIN-only. Secrets are write-only: encrypted on the way in, and the API only
  * ever reports whether one is set and its last four characters.
  */
-import { createPrivateKey } from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
 import { hostEntry } from '@auto-swe/shared/config';
 import { approvedRepositoryHosts } from '@auto-swe/shared/lib/connectionCredential';
@@ -23,50 +22,27 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import {
+  GitHubAppIdSchema,
+  GitHubAppPrivateKeySchema,
+  GitHubTokenSchema,
+} from '../lib/githubCredentialSchemas.js';
 import { sendError } from '../lib/httpErrors.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
-// A pasted trailing newline is the common way to store a token that can never
-// authenticate, so edge whitespace is refused rather than trimmed silently.
-const TokenSchema = z
-  .string()
-  .min(1)
-  .max(512)
-  .refine((v) => v === v.trim(), 'must not start or end with whitespace');
-
-// A PEM legitimately ends in a newline, so it is only required to parse.
-const PrivateKeySchema = z
-  .string()
-  .min(1)
-  .max(10_000)
-  .refine((v) => {
-    try {
-      createPrivateKey(v);
-      return true;
-    } catch {
-      return false;
-    }
-  }, 'must be a PEM private key');
-
-const AppIdSchema = z
-  .string()
-  .min(1)
-  .max(100)
-  .regex(/^[0-9]+$/, 'must be the numeric GitHub App id');
-
 const CreateSchema = z.object({
-  appId: AppIdSchema.optional(),
-  appPrivateKey: PrivateKeySchema.optional(),
+  appId: GitHubAppIdSchema.optional(),
+  appPrivateKey: GitHubAppPrivateKeySchema.optional(),
   host: hostEntry,
-  token: TokenSchema.optional(),
+  token: GitHubTokenSchema.optional(),
 });
 
 /** `null` clears the field. */
 const UpdateSchema = z.object({
-  appId: AppIdSchema.nullable().optional(),
-  appPrivateKey: PrivateKeySchema.nullable().optional(),
-  token: TokenSchema.nullable().optional(),
+  appId: GitHubAppIdSchema.nullable().optional(),
+  appPrivateKey: GitHubAppPrivateKeySchema.nullable().optional(),
+  token: GitHubTokenSchema.nullable().optional(),
 });
 
 const IdParams = z.object({ id: z.string().uuid() });
