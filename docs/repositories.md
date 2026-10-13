@@ -281,7 +281,6 @@ longer fit.
   `build-executor` `repository_dispatch`); a run without one fails. Nothing lists the repositories
   and dispatches a periodic rebuild, so an image picks up base-image fixes only when someone
   triggers it.
-
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an
   origin.
