@@ -2,6 +2,7 @@ import type { CodeSecurityFinding } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { SecurityScanResult } from '../agents/securityReviewProcessor.js';
 import type { AgentTracer } from './agentTracer.js';
+import { isSpendRefusal } from './usdCapGuard.js';
 
 /** The two scanners the post-diff gate runs; injected so each caller keeps its own seam. */
 export interface SecurityGateScanners {
@@ -51,7 +52,10 @@ export async function runPostDiffSecurityGate(
   try {
     securityResult = await scanners.scanDiffForSecurityIssues(diff);
   } catch (err) {
-    if (err instanceof ApplicationFailure && err.type === 'BUDGET_EXCEEDED') {
+    // A refusal to spend keeps its own type: a budget stop, an unpriced model, or a
+    // price lookup that failed and is retryable on purpose (a database blip must
+    // not fail a run for good).
+    if (isSpendRefusal(err)) {
       throw err;
     }
     throw ApplicationFailure.nonRetryable(

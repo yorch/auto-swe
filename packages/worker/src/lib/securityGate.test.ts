@@ -67,6 +67,16 @@ describe('runPostDiffSecurityGate', () => {
     expect(await failureOf(runPostDiffSecurityGate('diff', tracer().tracer, s))).toBe(budget);
   });
 
+  it('passes a retryable price-lookup failure through unchanged', async () => {
+    const s = scanners();
+    const unavailable = ApplicationFailure.retryable(
+      'catalog unreachable',
+      'MODEL_PRICE_UNAVAILABLE'
+    );
+    s.scanDiffForSecurityIssues.mockRejectedValue(unavailable);
+    expect(await failureOf(runPostDiffSecurityGate('diff', tracer().tracer, s))).toBe(unavailable);
+  });
+
   it('turns a critical finding into SECURITY_GATE_FAILURE with the findings', async () => {
     const s = scanners();
     const findings = [

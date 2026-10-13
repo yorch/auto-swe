@@ -541,10 +541,10 @@ describe('runAgentNode', () => {
       expect(result).toEqual({ text: 'harness verdict' });
       expect(workspace.destroy).toHaveBeenCalledTimes(1);
       expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(logWarn)).toHaveBeenCalledWith(
-        'runAgentNode: releasing a resource failed',
-        { agentKey: 'reviewer', error: 'relay hung up' }
-      );
+      expect(vi.mocked(logWarn)).toHaveBeenCalledWith('runAgentNode: releasing a resource failed', {
+        agentKey: 'reviewer',
+        error: 'relay hung up',
+      });
     });
   });
 });
