@@ -1,39 +1,19 @@
 /**
  * Chart colours, drawn from the one checked copy of the design tokens.
  *
- * `STATUS_CHART_COLORS` mirrors the text colour of each status in
- * `STATUS_META` (lib/utils.ts), so a slice matches the StatusBadge beside it.
- *
  * Recharts hands several of these to SVG presentation attributes, which do not
  * resolve `var()` — see `lib/palette.ts`.
  */
 import { TOKEN, TOKEN_LIGHT, type Tokens } from '@/lib/palette';
 
-export function statusChartColors(t: Tokens): Record<string, string> {
-  return {
-    AWAITING_CI: t.amber400,
-    AWAITING_HUMAN_MERGE: t.amber400,
-    COMPLETED: t.moss400,
-    FAILED: t.brick400,
-    IMPLEMENTING: t.ember400,
-    IN_REVIEW: t.violet400,
-    RUNNING: t.dust400,
-    TIMED_OUT: t.paper500,
-    VALIDATING_CONTEXT: t.ember400,
-  };
-}
-
-/** The dark theme's status colours; `statusChartColors(useTokens())` follows the theme. */
-export const STATUS_CHART_COLORS = statusChartColors(TOKEN);
-
 /**
  * Categorical series colours, in the order they are assigned. An Okabe-Ito
  * derived set lightened for the dark chart background: the first two (sky blue,
  * orange) are far apart in lightness and hue for every common form of colour
- * blindness, and no status red/green pair sits in here — status colours are
- * `STATUS_CHART_COLORS`, a separate vocabulary. `colors.test.ts` checks that no
- * two entries are near-duplicates (also under a deuteranopia simulation) and
- * that each reads against the background.
+ * blindness, and no status red/green pair sits in here: status is a separate
+ * vocabulary. `colors.test.ts` checks that no two entries are near-duplicates
+ * (also under a deuteranopia simulation) and that each reads against the
+ * background.
  */
 export const CHART_PALETTE = [
   '#56b4e9', // sky blue
@@ -121,5 +101,3 @@ export function topNWithOther<T>(
 export function trendColors(t: Tokens) {
   return { active: t.ember400, completed: t.moss400, failed: t.brick400 } as const;
 }
-
-export const TREND_COLORS = trendColors(TOKEN);

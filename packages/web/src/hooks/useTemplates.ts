@@ -5,7 +5,6 @@ import type {
   GlobalAnalyticsResponse,
   SpecDiffResponse,
   StepRegistryEntry,
-  WorkflowRunSummary,
   WorkflowTemplateAnalytics,
   WorkflowTemplateDetail,
   WorkflowTemplateSummary,
@@ -50,24 +49,6 @@ export function useWorkflowTemplateVersion(id: string, version: number | null) {
         }>(`/api/v1/workflow-templates/${id}/versions/${version}`)
         .then((r) => r.data),
     queryKey: ['workflow-template-version', id, version],
-  });
-}
-
-export function useTemplateRuns(
-  id: string,
-  { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {}
-) {
-  return useQuery({
-    enabled: !!id,
-    queryFn: () =>
-      api
-        .get<{
-          data: WorkflowRunSummary[];
-          meta: { total: number };
-        }>(`/api/v1/workflow-templates/${id}/runs?limit=${limit}&offset=${offset}`)
-        .then((r) => ({ data: r.data, total: r.meta.total })),
-    queryKey: ['workflow-template-runs', id, limit, offset],
-    refetchInterval: 10_000,
   });
 }
 

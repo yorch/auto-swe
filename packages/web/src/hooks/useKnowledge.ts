@@ -82,19 +82,6 @@ export function useKnowledgeDetail(id: string | null) {
     queryKey: ['knowledge', 'detail', id],
   });
 }
-export function useKnowledgeMutation<T>(
-  path: (input: T) => string,
-  method: 'post' | 'put' = 'post'
-) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...body }: T & { id?: string }) =>
-      method === 'put'
-        ? api.put(path({ id, ...body } as T), body)
-        : api.post(path({ id, ...body } as T), body),
-    onSuccess: () => invalidate(qc),
-  });
-}
 export function useKnowledgeCreate() {
   const qc = useQueryClient();
   return useMutation({
