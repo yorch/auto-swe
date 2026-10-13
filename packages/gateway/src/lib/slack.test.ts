@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchSlackChannelIsPrivate,
+  postSlackMessage,
   SLACK_TIMESTAMP_MAX_AGE,
   verifySlackSignature,
 } from './slack.js';
@@ -42,6 +43,43 @@ describe('verifySlackSignature', () => {
 
   it('rejects when signatures have different lengths', () => {
     expect(verifySlackSignature(body, ts, 'v0=short', SECRET, now)).toBe(false);
+  });
+});
+
+describe('postSlackMessage', () => {
+  const realFetch = globalThis.fetch;
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    warn.mockClear();
+  });
+  afterAll(() => {
+    warn.mockRestore();
+  });
+
+  function respond(body: unknown) {
+    globalThis.fetch = vi.fn(async () => ({ json: async () => body, status: 200 }) as never);
+  }
+
+  it('returns the message timestamp without a warning', async () => {
+    respond({ ok: true, ts: '1.2' });
+    expect(await postSlackMessage({ channel: 'C1', text: 'hi' }, 'xoxb-secret')).toBe('1.2');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('returns null but logs Slack’s error code, never the token', async () => {
+    respond({ error: 'not_in_channel', ok: false });
+    expect(await postSlackMessage({ channel: 'C1', text: 'hi' }, 'xoxb-secret')).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not_in_channel'));
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain('xoxb-secret');
+  });
+
+  it('returns null but logs when the request fails', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('network down');
+    }) as never;
+    expect(await postSlackMessage({ channel: 'C1', text: 'hi' }, 'xoxb-secret')).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('network down'));
   });
 });
 

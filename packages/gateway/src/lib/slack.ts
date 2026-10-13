@@ -98,8 +98,15 @@ export async function postSlackMessage(
       signal: controller.signal,
     });
     const data = (await res.json()) as SlackChatPostMessageResponse;
+    if (!data.ok) {
+      // Slack's error code (`not_in_channel`, `invalid_auth`, ...) names the
+      // misconfiguration; the token is never logged.
+      console.warn(`[slack] chat.postMessage failed: ${data.error ?? `HTTP ${res.status}`}`);
+    }
     return data.ok && data.ts ? data.ts : null;
-  } catch {
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`[slack] chat.postMessage failed: ${reason}`);
     return null;
   } finally {
     clearTimeout(timer);
