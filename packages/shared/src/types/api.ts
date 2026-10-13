@@ -613,6 +613,11 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   result: unknown;
   steps: WorkflowStepRecord[];
   traces: AgentTraceRecord[];
+  /**
+   * True when the run has more traces than one read returns: `traces` is then the
+   * newest `MAX_TRACES_PER_READ` of them, not all of them.
+   */
+  tracesTruncated?: boolean;
   templateName: string;
   /** A run of the hidden Agent Run system template (keyed on its origin, not its name). */
   isAgentRun?: boolean;

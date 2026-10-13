@@ -136,6 +136,17 @@ const TRACE_FIELD_CAP = 4_000;
  */
 export const MAX_TRACES_PER_READ = 5_000;
 
+const NEWEST_TRACES_FIRST = [
+  { createdAt: 'desc' as const },
+  { seq: 'desc' as const },
+  { id: 'desc' as const },
+];
+
+/** A newest-first read cut to the cap, back in the order the viewer shows: oldest first. */
+function newestInOrder<T>(rows: T[]): T[] {
+  return rows.slice(0, MAX_TRACES_PER_READ).reverse();
+}
+
 /**
  * Trim large string fields out of trace payloads. LLM-response rows carry the
  * full system prompt + user message (often tens of KB including diffs) which
@@ -520,7 +531,9 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma.$transaction(
             [
               fastify.prisma.agentTrace.findMany({
-                orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+                // Newest first, so a cut page keeps the live end of the run; the id
+                // breaks ties between parallel activities' rows at the cut.
+                orderBy: NEWEST_TRACES_FIRST,
                 // One row past the cap, so a full page can be told from a cut one.
                 take: MAX_TRACES_PER_READ + 1,
                 where: {
@@ -534,7 +547,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           )
       );
       return {
-        data: traces.slice(0, MAX_TRACES_PER_READ).map((t) => projectTrace(t, false)),
+        data: newestInOrder(traces).map((t) => projectTrace(t, false)),
         serverTime,
         total,
         truncated: traces.length > MAX_TRACES_PER_READ,
@@ -583,7 +596,9 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             ['AgentTrace'],
             () =>
               fastify.prisma.agentTrace.findMany({
-                orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+                // Newest first, so a cut page keeps the live end of the run; the id
+                // breaks ties between parallel activities' rows at the cut.
+                orderBy: NEWEST_TRACES_FIRST,
                 // One row past the cap, so a full page can be told from a cut one.
                 take: MAX_TRACES_PER_READ + 1,
                 where: { runId: run.id },
@@ -623,8 +638,8 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateVersion: run.templateVersion,
           tokensInputTotal: Number(run.tokensInputTotal),
           tokensOutputTotal: Number(run.tokensOutputTotal),
-          traces: traces.slice(0, MAX_TRACES_PER_READ).map((t) => projectTrace(t, fullTraces)),
-          // The oldest `MAX_TRACES_PER_READ` traces only; the tail reads on from them.
+          traces: newestInOrder(traces).map((t) => projectTrace(t, fullTraces)),
+          // The newest `MAX_TRACES_PER_READ` traces only, oldest first.
           tracesTruncated: traces.length > MAX_TRACES_PER_READ,
           workflowId: run.workflowId,
           workRequest: projectWorkRequest(run.workRequest),

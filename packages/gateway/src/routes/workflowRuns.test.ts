@@ -524,7 +524,7 @@ describe('workflowRunRoutes GET /:id/traces (live tail)', () => {
     expect(JSON.stringify(runWhere.OR)).toContain('"requestedById":"u-1"');
 
     expect(prisma.agentTrace.findMany).toHaveBeenCalledWith({
-      orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+      orderBy: [{ createdAt: 'desc' }, { seq: 'desc' }, { id: 'desc' }],
       take: MAX_TRACES_PER_READ + 1,
       where: { createdAt: { gte: new Date('2026-09-01T10:00:00.123Z') }, runId },
     });
@@ -579,6 +579,10 @@ describe('workflowRunRoutes GET /:id/traces (live tail)', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data).toHaveLength(MAX_TRACES_PER_READ);
+    // Read newest first, the cut drops the oldest row and the page comes back
+    // oldest first: t-0 is the newest of the mocked rows, so it comes last.
+    expect(res.json().data.at(-1).id).toBe('t-0');
+    expect(res.json().data[0].id).toBe(`t-${MAX_TRACES_PER_READ - 1}`);
     expect(res.json().truncated).toBe(true);
     expect(res.json().total).toBe(MAX_TRACES_PER_READ + 10);
   });

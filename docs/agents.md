@@ -1051,8 +1051,8 @@ String values are stored up to 32 000 characters per field. The run page polls, 
 `GET /api/v1/workflow-runs/:id` and its live tail `GET /api/v1/workflow-runs/:id/traces` trim each
 field to 4 000 characters (head and tail) and mark the trace `trimmed`; the page then offers
 **Load full payloads**, which refetches once with `?fullTraces=true` and stops polling. Each of the
-two reads loads at most 5 000 traces (`MAX_TRACES_PER_READ`), oldest first: the run detail then sets
-`tracesTruncated` and the tail sets `truncated`. The `writeFile` tool records only the file `path` in `inputJson` (not the full
+two reads loads at most the newest 5 000 traces (`MAX_TRACES_PER_READ`), returned oldest first: the
+run detail then sets `tracesTruncated` and the tail sets `truncated`. The `writeFile` tool records only the file `path` in `inputJson` (not the full
 content) to keep trace sizes manageable.
 
 ### 8.3 AgentTrace Table
@@ -1231,9 +1231,11 @@ template override is never badged, because it may use a different model or crede
   checked only by the shell-command scanner, whose write-target extraction is a heuristic over the
   command text and does not know the harness's current directory.
 
-- **The run page shows at most 5 000 traces of a run.** A read loads the oldest
-  `MAX_TRACES_PER_READ` rows; past that the page's held set never matches the tail's `total`, so
-  every poll of a running run re-reads that first page rather than appending the newest traces.
+- **The run page shows at most 5 000 traces of a run.** A read loads the newest
+  `MAX_TRACES_PER_READ` rows, and on a run with more the page keeps a window of that size, sliding
+  it forward as the tail appends; the oldest traces are not shown. A tail that itself returns more
+  than 5 000 rows between two polls leaves a gap inside the window until the run finishes, when
+  the page re-reads it.
 
 - **The memory gate and the credential masker are pattern-based.** The memory gate (§6.4) refuses
   only the phrasings the `INJECTION` patterns name; a reworded instruction is stored and recalled,
