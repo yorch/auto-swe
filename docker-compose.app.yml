@@ -10,7 +10,7 @@
 # `yarn docker:app:up` works out of the box. The production path is
 # docker-compose.prod.yml, which makes those variables mandatory via `:?`.
 #
-# `.env` reaches the app containers through `env_file`, so every integration
+# `.env` reaches the gateway and worker through `env_file`, so every integration
 # fallback it sets (GITHUB_*, GOOGLE_*/OKTA_*, SLACK_*, TRACKER_*/KB_*,
 # FIGMA_API_TOKEN, SMTP_*/RESEND_*, BUNDLE_*, CI_WAIT_*/CI_POLL_*, …) is visible
 # to them without a line here per variable. `environment:` wins over
@@ -147,9 +147,9 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
-    env_file:
-      - path: .env
-        required: false
+    # No `env_file`, unlike the gateway and worker: the dashboard reads only the
+    # variables below, and `.env` holds every secret (CONFIG_ENCRYPTION_KEY,
+    # auth secrets, integration tokens). `${...}` still interpolates from it.
     environment:
       - NODE_ENV=production
       # NEXT_PUBLIC_* are read at request time by the root Server Component and

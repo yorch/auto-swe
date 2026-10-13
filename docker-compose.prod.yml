@@ -106,11 +106,24 @@ services:
     restart: unless-stopped
     ports:
       - ${WEB_PORT:-3000}:3000
-    env_file:
-      - .env
+    # No `env_file`: the dashboard reads only the variables below, and handing
+    # it `.env` would put every secret (CONFIG_ENCRYPTION_KEY, auth secrets,
+    # integration tokens) in a process that needs none of them. Compose still
+    # interpolates `${...}` from `.env`, so these are set there as usual.
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://gateway:8080}
+      # The gateway as the BROWSER reaches it — a public URL, never the compose
+      # hostname, which no browser can resolve.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required in production — set it to the public gateway URL in .env}
+      # The gateway as the web container reaches it for server-side fetches.
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://gateway:8080}
+      NEXT_PUBLIC_TEMPORAL_UI_URL: ${NEXT_PUBLIC_TEMPORAL_UI_URL:-}
+      NEXT_PUBLIC_GRAFANA_URL: ${NEXT_PUBLIC_GRAFANA_URL:-}
+      PORT: "3000"
+      # Docker sets HOSTNAME to the container id, and the standalone Next server
+      # binds to HOSTNAME — so without this it listens on one network's address
+      # only, and the image's 127.0.0.1 healthcheck cannot reach it.
+      HOSTNAME: 0.0.0.0
     depends_on:
       gateway:
         condition: service_healthy
