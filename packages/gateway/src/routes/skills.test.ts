@@ -58,21 +58,26 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
           1
         );
       }),
-      findMany: vi.fn(async () => [
-        {
-          _count: { agentSkillRefs: 3 },
-          agentSkillRefs: [
-            { agent: { isActive: true, key: 'reviewer' } },
-            { agent: { isActive: true, key: 'reviewer' } },
-            { agent: { isActive: false, key: 'old' } },
-          ],
-          id: CUSTOM_ID,
-          name: 'n',
-          revisions: [{ scanWarnings: ['looks like an instruction override'] }],
-          source: null,
-          sourceId: null,
-        },
-      ]),
+      // The name-conflict check selects names alone; the library listing includes the rest.
+      findMany: vi.fn(async (args?: { select?: { name?: boolean } }) =>
+        args?.select?.name
+          ? skills.map((s) => ({ id: s.id, name: s.name, scope: s.scope ?? 'GLOBAL' }))
+          : [
+              {
+                _count: { agentSkillRefs: 3 },
+                agentSkillRefs: [
+                  { agent: { isActive: true, key: 'reviewer' } },
+                  { agent: { isActive: true, key: 'reviewer' } },
+                  { agent: { isActive: false, key: 'old' } },
+                ],
+                id: CUSTOM_ID,
+                name: 'n',
+                revisions: [{ scanWarnings: ['looks like an instruction override'] }],
+                source: null,
+                sourceId: null,
+              },
+            ]
+      ),
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
         const row = skills.find((s) => s.id === where.id);
         return row ? { ...row } : null;
@@ -119,6 +124,12 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       ),
     },
   };
+  // Create and rename take the name-allocation lock inside a transaction.
+  const executeRaw = vi.fn(async () => 1);
+  Object.assign(prisma, {
+    $executeRaw: executeRaw,
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+  });
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -136,7 +147,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       url: `/api/v1/platform${url}`,
     });
   const revisionsOf = (id: string) => revisions.filter((r) => r.skillId === id);
-  return { audit, call, prisma, revisionsOf, skills };
+  return { audit, call, executeRaw, prisma, revisionsOf, skills };
 }
 
 describe('GET /skills — external source badge', () => {
@@ -408,6 +419,44 @@ describe('PUT /skills/:id — conflicts and verification', () => {
     await call('POST', `/skills/${CUSTOM_ID}/verify`, { revision: 1 });
     await call('PUT', `/skills/${CUSTOM_ID}`, { name: 'renamed' });
     expect(skills.find((s) => s.id === CUSTOM_ID)?.isVerified).toBe(true);
+  });
+});
+
+describe('skill names', () => {
+  it('refuses a create whose name folds onto an existing skill’s, writing nothing', async () => {
+    const { call, executeRaw, prisma } = await buildApp();
+    const res = await call('POST', '/skills', { name: 'N.', promptText: 'hi' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_NAME_EXISTS');
+    expect(res.json().error.conflicts.map((c: { id: string }) => c.id)).toContain(CUSTOM_ID);
+    expect(prisma.skill.create).not.toHaveBeenCalled();
+    // Under the same lock an import takes, so two creates cannot both find the name free.
+    expect(executeRaw).toHaveBeenCalled();
+  });
+
+  it('refuses a rename onto another skill’s name', async () => {
+    const { call, prisma } = await buildApp();
+    const res = await call('PUT', `/skills/${CUSTOM_ID}`, { name: 'N' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.conflicts).toEqual([
+      expect.objectContaining({ id: BUILTIN_ID, name: 'n' }),
+    ]);
+    expect(prisma.skill.update).not.toHaveBeenCalled();
+  });
+
+  it('lets a skill be renamed onto its own name in another case', async () => {
+    const { call, skills } = await buildApp();
+    (skills.find((s) => s.id === BUILTIN_ID) as Row).name = 'other';
+    const res = await call('PUT', `/skills/${CUSTOM_ID}`, { name: 'N' });
+    expect(res.statusCode).toBe(200);
+    expect(skills.find((s) => s.id === CUSTOM_ID)?.name).toBe('N');
+  });
+
+  it('does not check the name on an edit that leaves it alone', async () => {
+    const { call, executeRaw } = await buildApp();
+    const res = await call('PUT', `/skills/${CUSTOM_ID}`, { description: 'new', name: 'n' });
+    expect(res.statusCode).toBe(200);
+    expect(executeRaw).not.toHaveBeenCalled();
   });
 });
 

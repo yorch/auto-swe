@@ -307,9 +307,10 @@ async function createSkillRows(
 }
 
 // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
-// `skills` has no unique name, so two concurrent imports could both find a name
-// free; this serialises the check-then-create of every import.
-const lockSkillNames = (tx: Prisma.TransactionClient) =>
+// `skills` has no unique name, so two concurrent writers could both find a name
+// free; this serialises the check-then-write of every import, and of the skill
+// library's create and rename (`skillLibraryService`).
+export const lockSkillNames = (tx: Prisma.TransactionClient) =>
   tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('skill-name-allocation', 0))`;
 
 /**

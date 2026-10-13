@@ -1148,6 +1148,8 @@ on the `Agent` payload below.
 | `POST` | `/api/v1/platform/skills/:id/verify` | `ADMIN` | Mark the current revision human-verified (audited) |
 | `DELETE` | `/api/v1/platform/skills/:id` | `ADMIN` | Delete (built-in skills are rejected with 400) |
 
+A create, or a rename, onto a name an agent could confuse with an existing skill's is refused with `409 SKILL_NAME_EXISTS`, listing the skills it collides with. Names compare as an import compares them (§6.6: case, spacing and trailing punctuation folded), and a GLOBAL skill collides with a same-named skill at any scope. The check and the write run in one transaction under the same advisory lock an import takes, so two writers cannot both take a name; a rename onto the skill's own name in another case is allowed.
+
 Any edit that cuts a revision (a `promptText` or `description` change) automatically resets `isVerified` to `false`, whether or not the skill is flagged built-in (bundle-installed skills are); a rename or an `isActive` toggle leaves it. The edit triggers a security scan (the scan result is returned in the response but does not block the save). A change to `promptText` or `description` cuts a new revision (§6.5).
 
 Importing skills from an external repository is a separate surface, documented with its trust model in §6.6.
@@ -1269,6 +1271,12 @@ template override is never badged, because it may use a different model or crede
   which skills a retry sees.
 - **A pinned revision whose row is missing falls back to the live text** rather than failing the run.
   Deleting a skill deletes its revisions with it, along with the agents' references to it.
+- **Skill names are unique by check, not by constraint.** The library and the importer refuse a
+  name already in use (§9.1, §6.6), but the database has no unique index on it: a deployment that
+  already holds two skills with one name keeps both, and an index cannot be added without first
+  deciding which to keep. Bundle install and the built-in sync match a GLOBAL skill by its exact
+  name, so they neither fold names nor take the name lock; where two skills share a name, the one a
+  bundle's agent reference resolves to is whichever the query returns first.
 - **Verification attests to text, not to a source.** `isVerified` says an admin approved the current
   revision; it carries no signature and nothing re-checks it against provenance.
 - **External skill sources run no scripts.** Nothing from a source is executed, and only `.md`/`.txt`

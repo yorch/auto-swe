@@ -8,6 +8,7 @@ import {
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { WORKFLOW_RUN_FAILURE_STATUSES } from '@auto-swe/shared/types/api';
 import { scanSkillAdvisory } from './skillScan.js';
+import { findConflicts, lockSkillNames, type SkillConflict } from './skillSourceService.js';
 
 /**
  * Skill-library service: create/update flows (with the injection/exfiltration
@@ -33,6 +34,52 @@ export function skillVisibilityWhere(tenant: { teamId: string; orgId?: string | 
   };
 }
 
+/**
+ * Thrown when a skill would take a name an agent could confuse with an existing
+ * skill's: the same name, compared as an import compares it (case, spacing and
+ * trailing punctuation folded), at any scope that can see the new one.
+ */
+export class SkillNameConflictError extends Error {
+  constructor(readonly conflicts: SkillConflict[]) {
+    super(`A skill with this name already exists: ${conflictList(conflicts)}`);
+    this.name = 'SkillNameConflictError';
+  }
+}
+
+function conflictList(conflicts: SkillConflict[]): string {
+  return conflicts.map((c) => `${c.name} (${c.scope})`).join(', ');
+}
+
+/** The tenant a skill row belongs to, as the name-conflict check reads it. */
+function skillTarget(row: {
+  orgId?: string | null;
+  scope?: string | null;
+  teamId?: string | null;
+}): { orgId: string | null; scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM'; teamId: string | null } {
+  const scope = row.scope === 'ORGANIZATION' || row.scope === 'TEAM' ? row.scope : 'GLOBAL';
+  return { orgId: row.orgId ?? null, scope, teamId: row.teamId ?? null };
+}
+
+/**
+ * Refuses `name` when another skill visible beside it already has it. Runs
+ * inside the caller's transaction after `lockSkillNames`, the lock an import
+ * takes too, so two writers cannot both find the name free. `selfId` is the
+ * skill being renamed, which never conflicts with itself.
+ */
+async function assertSkillNameFree(
+  tx: Prisma.TransactionClient,
+  name: string,
+  target: ReturnType<typeof skillTarget>,
+  selfId: string | null
+): Promise<void> {
+  const conflicts = [...(await findConflicts(tx, [name], target)).values()]
+    .flat()
+    .filter((c) => c.id !== selfId);
+  if (conflicts.length > 0) {
+    throw new SkillNameConflictError(conflicts);
+  }
+}
+
 /// Creates a non-built-in skill. Custom promptText is scanned for
 /// injection/exfiltration patterns — non-blocking; warnings are returned for
 /// the route to surface alongside the created row.
@@ -51,21 +98,28 @@ export async function createSkill(
   const scanWarnings = await scanSkillAdvisory(input.description, input.promptText);
   // Default GLOBAL preserves the admin-curated library; a caller that supplies
   // a tenant gets a scoped row. The DB CHECK rejects a mismatched combination.
-  const skill = await prisma.skill.create({
-    data: {
-      description: input.description,
-      ...initialRevision(
-        { description: input.description ?? null, promptText: input.promptText },
-        { createdById: input.createdById, scanWarnings }
-      ),
-      isBuiltIn: false,
-      isVerified: false,
-      name: input.name,
-      orgId: input.scope === 'ORGANIZATION' ? input.orgId : null,
-      promptText: input.promptText,
-      scope: input.scope ?? 'GLOBAL',
-      teamId: input.scope === 'TEAM' ? input.teamId : null,
-    },
+  const orgId = input.scope === 'ORGANIZATION' ? (input.orgId ?? null) : null;
+  const scope = input.scope ?? 'GLOBAL';
+  const teamId = input.scope === 'TEAM' ? (input.teamId ?? null) : null;
+  const skill = await prisma.$transaction(async (tx) => {
+    await lockSkillNames(tx);
+    await assertSkillNameFree(tx, input.name, { orgId, scope, teamId }, null);
+    return tx.skill.create({
+      data: {
+        description: input.description,
+        ...initialRevision(
+          { description: input.description ?? null, promptText: input.promptText },
+          { createdById: input.createdById, scanWarnings }
+        ),
+        isBuiltIn: false,
+        isVerified: false,
+        name: input.name,
+        orgId,
+        promptText: input.promptText,
+        scope,
+        teamId,
+      },
+    });
   });
   return { scanWarnings, skill };
 }
@@ -133,7 +187,7 @@ export async function updateSkill(
     ...(clearVerified ? { isVerified: false } : {}),
   };
 
-  let updated: SkillRow;
+  let write: (db: Pick<Prisma.TransactionClient, 'skill'>) => Promise<SkillRow>;
   if (contentChanged) {
     // A description-only edit leaves the imported text as it was, so the new
     // revision still says where that text came from (and keeps its label). A
@@ -148,10 +202,20 @@ export async function updateSkill(
       scanWarnings,
       ...carried,
     });
-    updated = await prisma.skill.update({ data: { ...base, ...next.data }, where: next.where });
+    write = (db) => db.skill.update({ data: { ...base, ...next.data }, where: next.where });
   } else {
-    updated = await prisma.skill.update({ data: base, where: { id: existing.id } });
+    write = (db) => db.skill.update({ data: base, where: { id: existing.id } });
   }
+  // A rename takes the name-allocation lock and is refused onto a name in use,
+  // as a create is; any other edit keeps whatever name the skill already has.
+  const updated =
+    name !== undefined && name !== existing.name
+      ? await prisma.$transaction(async (tx) => {
+          await lockSkillNames(tx);
+          await assertSkillNameFree(tx, name, skillTarget(existing), existing.id);
+          return write(tx);
+        })
+      : await write(prisma);
   return { scanWarnings, updated };
 }
 
