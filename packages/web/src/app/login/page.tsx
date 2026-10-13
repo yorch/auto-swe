@@ -413,7 +413,10 @@ function LoginPageInner() {
         </div>
         <Button
           className="w-full"
-          onClick={() => {
+          onClick={async () => {
+            // A pending user can still hold a session; sign it out, or the
+            // sign-in check that runs on '/login' puts this screen straight back.
+            await useAuthStore.getState().logout();
             setPendingEmail(null);
             router.replace('/login');
           }}

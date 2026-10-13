@@ -44,6 +44,20 @@ describe('useDebouncedUrlSearch', () => {
     expect(write).toHaveBeenLastCalledWith('abc');
   });
 
+  it('keeps the draft when an older write lands after a newer one was sent', () => {
+    const { hook, write } = setup();
+    act(() => hook.result.current[1]('a'));
+    act(() => vi.advanceTimersByTime(300));
+    act(() => hook.result.current[1]('ab'));
+    act(() => vi.advanceTimersByTime(300));
+    expect(write).toHaveBeenLastCalledWith('ab');
+    act(() => hook.result.current[1]('abc'));
+    hook.rerender({ url: 'a' });
+    expect(hook.result.current[0]).toBe('abc');
+    hook.rerender({ url: 'ab' });
+    expect(hook.result.current[0]).toBe('abc');
+  });
+
   it('keeps a trailing space when the URL holds the trimmed value', () => {
     const { hook, write } = setup('', trim);
     act(() => hook.result.current[1]('permission '));

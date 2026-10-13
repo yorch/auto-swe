@@ -21,6 +21,10 @@ export function useDebouncedUrlSearch(
 ): [string, (value: string) => void] {
   const [draft, setDraft] = useState(urlValue);
   const lastWritten = useRef(urlValue);
+  // Values written and not yet seen back in the URL, oldest first. A write can
+  // land after a newer one was sent, so the newest alone cannot tell it apart
+  // from outside navigation.
+  const inFlight = useRef<string[]>([]);
   // The latest callbacks, so a pending write uses the current URL's other filters
   // and a re-render does not restart the timer.
   const writeRef = useRef(write);
@@ -29,7 +33,13 @@ export function useDebouncedUrlSearch(
   normalizeRef.current = normalize;
 
   useEffect(() => {
+    const ours = inFlight.current.indexOf(urlValue);
+    if (ours !== -1) {
+      inFlight.current = inFlight.current.slice(ours + 1);
+      return;
+    }
     if (urlValue !== lastWritten.current) {
+      inFlight.current = [];
       lastWritten.current = urlValue;
       setDraft(urlValue);
     }
@@ -46,6 +56,7 @@ export function useDebouncedUrlSearch(
         return;
       }
       lastWritten.current = next;
+      inFlight.current.push(next);
       writeRef.current(next);
     }, delayMs);
     return () => clearTimeout(timer);
