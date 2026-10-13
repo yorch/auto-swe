@@ -277,6 +277,12 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /api/v1/auth/slack/callback — Handle Slack OAuth callback
   fastify.get('/callback', async (request, reply) => {
     const { code, state } = request.query as { code?: string; state?: string };
+    // The flow must finish in the browser that started it (SLACK_LINK_COOKIE).
+    // One use only: the cookie is cleared whatever the outcome, a cancelled or
+    // malformed callback included.
+    const { cookie, redirectUri } = slackLinkCallback();
+    const browserNonce = request.cookies[SLACK_LINK_COOKIE];
+    reply.clearCookie(SLACK_LINK_COOKIE, cookie);
 
     if (!code || !state) {
       return reply.status(400).send({
@@ -294,11 +300,6 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    // The flow must finish in the browser that started it (SLACK_LINK_COOKIE).
-    // One use only: the cookie is cleared whatever the outcome.
-    const { cookie, redirectUri } = slackLinkCallback();
-    const browserNonce = request.cookies[SLACK_LINK_COOKIE];
-    reply.clearCookie(SLACK_LINK_COOKIE, cookie);
     if (!(statePayload.nonce && browserNonce && sameNonce(statePayload.nonce, browserNonce))) {
       return reply.status(403).send({
         error: {

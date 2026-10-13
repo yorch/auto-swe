@@ -287,7 +287,7 @@ describe('repository URL overrides', () => {
       lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'none' });
       const denied = await patch(ghe);
       expect(denied.statusCode).toBe(403);
-      expect(JSON.parse(denied.payload).error.code).toBe('GITHUB_ACCESS_DENIED');
+      expect(JSON.parse(denied.payload).error.code).toBe('GITHUB_ACCESS_UNVERIFIED');
       expect(lookupRepoPermission).toHaveBeenCalledWith(
         expect.objectContaining({ ...ghe, organizationName: 'Acme', repoName: 'My_API' }),
         'octocat'

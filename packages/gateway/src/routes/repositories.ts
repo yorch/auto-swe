@@ -261,26 +261,27 @@ async function onboardingAccessProblem(
   } catch {
     return unavailable;
   }
+  // No access and no such repository give the same answer, so a lead cannot
+  // probe which private repositories the platform credential can see.
+  const unconfirmed = {
+    code: 'GITHUB_ACCESS_UNVERIFIED',
+    message: `GitHub did not confirm that you can read ${slug}: you have no access, it does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`,
+    status: 403 as const,
+  };
   if (lookup.ok) {
-    return permissionMeets(lookup.permission, 'read')
-      ? null
-      : {
-          code: 'GITHUB_ACCESS_DENIED',
-          message: `GitHub reports that ${login} has no access to ${slug}. Only someone who can read a repository on GitHub may onboard it; a platform admin can onboard it instead.`,
-          status: 403,
-        };
+    return permissionMeets(lookup.permission, 'read') ? null : unconfirmed;
   }
   if (lookup.failure === 'rate-limited' || lookup.failure === 'unavailable') {
     return unavailable;
   }
-  return {
-    code: 'GITHUB_ACCESS_UNVERIFIED',
-    message:
-      lookup.failure === 'host-mismatch'
-        ? `No platform GitHub credential applies to the host of ${slug}, so your access to it cannot be checked. Ask a platform admin to onboard it.`
-        : `GitHub did not confirm your access to ${slug}: the repository does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`,
-    status: 403,
-  };
+  if (lookup.failure === 'host-mismatch') {
+    return {
+      code: 'GITHUB_ACCESS_UNVERIFIED',
+      message: `No platform GitHub credential applies to the host of ${slug}, so your access to it cannot be checked. Ask a platform admin to onboard it.`,
+      status: 403,
+    };
+  }
+  return unconfirmed;
 }
 
 /**

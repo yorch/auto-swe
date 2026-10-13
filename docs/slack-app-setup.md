@@ -43,7 +43,9 @@ the cookie is present and matches the state's nonce, clears it either way, and r
 `403 USER_INACTIVE` when the user who started the flow has since been deactivated. So an authorize
 link started by one person cannot be finished by another to attach the second person's Slack
 account to the first one's user. The callback must be served from the same host as `/connect` —
-the gateway's public URL — or the cookie is not sent and every link is refused.
+the gateway's public URL — or the cookie is not sent and every link is refused. The cookie is
+host-only but not `__Host-`-prefixed, so a site on a sibling subdomain that can set cookies for the
+parent domain could plant its own nonce; serve the gateway from a host whose siblings you trust.
 
 ## Multi-workspace install ("Add to Slack")
 

@@ -647,7 +647,7 @@ describe('repositoryRoutes', () => {
         const res = await onboardAsTeamLead();
 
         expect(res.statusCode).toBe(403);
-        expect(JSON.parse(res.payload).error.code).toBe('GITHUB_ACCESS_DENIED');
+        expect(JSON.parse(res.payload).error.code).toBe('GITHUB_ACCESS_UNVERIFIED');
         expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
         // Refused before the duplicate check, so the answer says nothing about
         // whether the repository is already onboarded.

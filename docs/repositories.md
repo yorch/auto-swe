@@ -196,8 +196,7 @@ under the same host rules as every other lookup. The refusals:
 
 | Code | Status | When |
 |---|---|---|
-| `GITHUB_ACCESS_UNVERIFIED` | 403 | the caller has no linked GitHub login; the platform credential cannot see the repository (or it does not exist); or no platform credential applies to the repository's host |
-| `GITHUB_ACCESS_DENIED` | 403 | GitHub reports the caller has no access |
+| `GITHUB_ACCESS_UNVERIFIED` | 403 | the caller has no linked GitHub login; GitHub reports no access for them, the repository does not exist, or the platform credential cannot see it (one answer for all three, so the refusal reveals nothing about which private repositories exist); or no platform credential applies to the repository's host |
 | `GITHUB_UNAVAILABLE` | 503 | GitHub could not be asked (outage, rate limit, a database error); it is not taken as a yes |
 
 The access check runs before the duplicate check, so a refused caller does not learn whether the
