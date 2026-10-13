@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 /** A row in the installed-bundle registry (P4/WS3). */
@@ -16,6 +16,27 @@ export interface InstalledBundleRow {
 
 const BASE = '/api/v1/platform/bundles';
 const KEY = ['admin-bundles'];
+
+/**
+ * Everything an install can change: the registry itself and the agents, skills, workflow
+ * templates and scanner patterns the bundle wrote, each under every key it is cached as.
+ */
+const INSTALLED_CONTENT_KEYS = [
+  KEY,
+  ['admin-agent-library'],
+  ['team-agent-library'],
+  ['team-agent-options'],
+  ['agent-run-agents'],
+  ['skills'],
+  ['workflow-templates'],
+  ['scanner-patterns'],
+];
+
+function invalidateInstalledContent(qc: QueryClient) {
+  for (const queryKey of INSTALLED_CONTENT_KEYS) {
+    qc.invalidateQueries({ queryKey });
+  }
+}
 
 export function useInstalledBundles() {
   return useQuery({
@@ -81,7 +102,7 @@ export function useInstallBundleFromUrl() {
   return useMutation({
     mutationFn: (body: { url: string; expectedContentHash: string; overwriteProtected: boolean }) =>
       api.post<{ data: BundleInstallResult }>(`${BASE}/install-from-url`, body).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateInstalledContent(qc),
   });
 }
 
@@ -94,7 +115,7 @@ export function useInstallBundleFromFile() {
       expectedContentHash: string;
       overwriteProtected: boolean;
     }) => api.post<{ data: BundleInstallResult }>(`${BASE}/install`, body).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => invalidateInstalledContent(qc),
   });
 }
 
