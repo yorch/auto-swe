@@ -461,15 +461,6 @@ nodes.ciFix = {
   config: { ...(ciFix.config ?? {}), ...REFUSE_WORKFLOW_CHANGES, untrustedCiLogs: true },
 };
 
-// After a fix is pushed, the wait starts over the way it first did: through the poll-or-signal
-// router, not straight into the webhook wait (`ciLoop` re-enters `waitForCI`), so a deployment
-// that only polls does not sit out four hours for a webhook that never comes.
-const repush = nodes.repushAfterFix;
-if (repush?.type !== 'step') {
-  throw new Error('ci-triage-and-fix: the CI loop has no repushAfterFix step');
-}
-nodes.repushAfterFix = { ...repush, next: ciWaitEntry('pollOrSignal') };
-
 /**
  * A failed GitHub Actions run, diagnosed, and — when the trigger allows it and
  * the diagnosis says code can fix it — fixed in a DRAFT pull request into the
