@@ -93,6 +93,7 @@ type BranchSink = { token?: CancellationToken; shouldAbort?: () => boolean };
  */
 export const WORKFLOW_CANCEL_PATCH = 'workflow-cancel-propagates';
 export const NON_RETRYABLE_PATCH = 'interpreter-skips-retry-of-non-retryable';
+export const DISPATCH_PREP_FAILURE_PATCH = 'interpreter-records-dispatch-prep-failure';
 
 function isPatched(dispatcher: Dispatcher, id: string): boolean {
   return dispatcher.patched ? dispatcher.patched(id) : true;
@@ -750,9 +751,26 @@ async function runDispatchNode(
   cancellationSink?: BranchSink
 ): Promise<string | undefined> {
   const packer = DISPATCH_PACKERS[node.type] as DispatchPacker<DispatchNode>;
-  packer.assertSupported?.(nodeId, dispatcher);
-  const inputs = resolveInputs(node.inputs, ctx);
-  const invoke = packer.pack(node, ctx, dispatcher, nodeId);
+  let inputs: Record<string, unknown>;
+  let invoke: (args: AttemptArgs) => Promise<unknown>;
+  try {
+    packer.assertSupported?.(nodeId, dispatcher);
+    inputs = resolveInputs(node.inputs, ctx);
+    invoke = packer.pack(node, ctx, dispatcher, nodeId);
+  } catch (err) {
+    // A dispatch node is self-recording, so the walk catch writes no row for
+    // it; a failure before the first attempt (an input expression that throws,
+    // an unsupported node) must record its own, or the run fails with no
+    // FAILED step. Gated: the record is an activity a pre-patch history lacks.
+    if (isPatched(dispatcher, DISPATCH_PREP_FAILURE_PATCH)) {
+      await safeRecord(dispatcher, {
+        error: describeStepError(err),
+        nodeId,
+        status: 'FAILED',
+      });
+    }
+    throw err;
+  }
   return runRetryable({
     ctx,
     dispatcher,
@@ -1366,7 +1384,7 @@ async function runFanOut(
   setPath(ctx, `nodes.${nodeId}.output`, aggregate);
 
   if (runCancellation !== null) {
-    await safeRecord(dispatcher, {
+    await safeRecord(recordDispatcher, {
       error: describeStepError(runCancellation),
       nodeId: recordingId,
       outputs: aggregate,
