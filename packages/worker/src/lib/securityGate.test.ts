@@ -21,7 +21,9 @@ async function failureOf(p: Promise<unknown>): Promise<ApplicationFailure> {
   try {
     await p;
   } catch (err) {
-    if (err instanceof ApplicationFailure) return err;
+    if (err instanceof ApplicationFailure) {
+      return err;
+    }
     throw err;
   }
   throw new Error('expected the gate to fail');

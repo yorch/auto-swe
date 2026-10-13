@@ -104,11 +104,13 @@ describe('exportBundle', () => {
       scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
       skill: { findMany: vi.fn().mockResolvedValue([]) },
       workflowTemplate: {
-        findMany: vi.fn().mockResolvedValue([
-          template('t-empty', 'a', null),
-          template('t-head', 'b', null),
-          template('t-pinned', 'c', 2),
-        ]),
+        findMany: vi
+          .fn()
+          .mockResolvedValue([
+            template('t-empty', 'a', null),
+            template('t-head', 'b', null),
+            template('t-pinned', 'c', 2),
+          ]),
       },
       workflowTemplateVersion: { findMany: versionFindMany, groupBy },
     } as unknown as Parameters<typeof exportBundle>[0];
