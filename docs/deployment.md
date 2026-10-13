@@ -415,7 +415,7 @@ The artifact store is S3-compatible, and the worker only ever issues `PutObject`
 Two constraints worth knowing before you set credentials:
 
 - **Garage rejects secret keys shorter than 16 characters.** `ARTIFACT_S3_SECRET_KEY` must clear that bar or the container exits on first boot with `Invalid default access key`.
-- **`GARAGE_RPC_SECRET` must be set.** Single-node deployments never put it on the wire, but Garage requires it and the committed config deliberately does not carry one. Generate with `openssl rand -hex 32`.
+- **`GARAGE_RPC_SECRET` must be set.** Single-node deployments never put it on the wire, but Garage requires it. `infra/garage/garage.toml` does not carry one; `docker-compose.infra.yml` falls back to a fixed, public value so the local quickstart needs no configuration, and the production overlay cannot require it with `:?` the way it does the other secrets — Compose interpolates every service, including one whose profile is off, so a requirement there would also stop deployments that use hosted S3. `yarn env:setup check --profile prod` is the check instead: it fails while `COMPOSE_PROFILES` includes `objectstore` and the secret is empty or not 64 hex characters. Generate with `openssl rand -hex 32`.
 
 **Hosted S3 instead.** Set `COMPOSE_PROFILES=` (empty) in `.env` and point the artifact variables at the provider. No compose file changes:
 
@@ -532,6 +532,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] Infra ports are not world-reachable. `docker-compose.infra.yml` publishes Postgres (5432), Temporal (7233, plus 8233 for the Web UI only when the `temporal-ui` profile is enabled, which production must not do) and the object store (9000) — and `docker-compose.app.yml` Grafana (3001) and OTLP (4317/4318) — on loopback by default so the runbook can reach them from the host. An override such as `POSTGRES_PORT=55432` without the `127.0.0.1:` prefix publishes on every interface; keep the prefix, or firewall the port.
 - [ ] `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SECONDS` are left at the defaults (200 per minute per client) unless a suite drives one signed-in user hard: an end-to-end (Playwright) run loads many pages as a single user and exhausts 200 per minute. Raise them only for that environment. Both are read once at startup and a value that is not a positive integer stops the gateway from booting.
 - [ ] Reverse proxy enforces HTTPS and forwards `X-Forwarded-For` / `X-Forwarded-Proto`, and `TRUST_PROXY` names that proxy's IPs or CIDRs. The gateway rate-limits a verified user by user id and everything else by client IP; without `TRUST_PROXY` every anonymous request behind the proxy shares the proxy's IP and one limit. Do not set it when clients can reach the gateway directly — they could then choose their own IP.
+- [ ] With the bundled object store (`COMPOSE_PROFILES=objectstore`), `GARAGE_RPC_SECRET` is set in `.env`. Compose does not enforce it in production (§5c); left unset, Garage runs on the infra file's public placeholder.
 - [ ] Postgres connection uses TLS (`?sslmode=require`).
 - [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).
 - [ ] Temporal namespace retention is set deliberately (default in self-hosted = 30d; tune for your humanMergeSignal wait).
