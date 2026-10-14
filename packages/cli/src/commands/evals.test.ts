@@ -170,6 +170,38 @@ describe('runEvalsCommand', () => {
     expect(out).toContain('(2 of 42)');
   });
 
+  it('rescreen resets a whole dataset and says the screen started', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ method: init?.method ?? 'GET', url });
+      return jsonResponse({ data: { reset: 4, screenStarted: true } });
+    }) as typeof fetch;
+    const code = await runEvalsCommand(['rescreen', 'ds-1'], ENV);
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { method: 'POST', url: 'http://gw/api/v1/platform/evals/ds-1/rescreen' },
+    ]);
+    expect(stdoutWrites.join('')).toContain('Reset 4 case(s); the flake screen has started.');
+  });
+
+  it('rescreen resets one case with --case', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string) => {
+      urls.push(url);
+      return jsonResponse({ data: { reset: 1, screenStarted: false } });
+    }) as typeof fetch;
+    const code = await runEvalsCommand(['rescreen', 'ds-1', '--case=c-9'], ENV);
+    expect(code).toBe(0);
+    expect(urls).toEqual(['http://gw/api/v1/platform/evals/ds-1/cases/c-9/rescreen']);
+    expect(stdoutWrites.join('')).toContain('could not start now');
+  });
+
+  it('rescreen requires a dataset id', async () => {
+    const code = await runEvalsCommand(['rescreen'], ENV);
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('Usage: evals rescreen');
+  });
+
   it('run requires a slug and both refs', async () => {
     const code = await runEvalsCommand(['run', 'golden', '--candidate=abc'], ENV);
     expect(code).toBe(1);

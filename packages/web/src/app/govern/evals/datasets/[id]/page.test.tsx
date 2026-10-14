@@ -88,6 +88,57 @@ describe('EvalDatasetPage', () => {
     );
   });
 
+  it('re-checks a flaky case after confirmation and says the check started', async () => {
+    const flaky = {
+      baselineSha: 'abcdef1234567890',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      datasetId: DS_ID,
+      flakeRuns: 3,
+      flakeScreened: false,
+      goldenTest: 'yarn test web',
+      id: 'case-2',
+      input: {},
+      reference: null,
+      repoUrl: 'https://github.com/acme/web',
+      tags: [],
+    };
+    const spy = setupFetchMock({
+      [`GET /api/v1/platform/evals/${DS_ID}`]: () => ({
+        data: {
+          caseCount: 1,
+          cases: [flaky],
+          createdAt: '2026-09-01T00:00:00.000Z',
+          description: null,
+          id: DS_ID,
+          name: 'Web bench',
+          scope: 'GLOBAL',
+          slug: 'web-bench',
+        },
+      }),
+      [`POST /api/v1/platform/evals/${DS_ID}/cases/case-2/rescreen`]: () => ({
+        data: { reset: 1, screenStarted: true },
+      }),
+      'GET /api/v1/platform/evals/runs': () => ({
+        data: [],
+        meta: { limit: 20, offset: 0, total: 0 },
+      }),
+    });
+    render(withQuery(<EvalDatasetPage params={resolvedParams({ id: DS_ID })} />));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Re-check case case-2' }));
+    expect(await screen.findByText('Re-check this case?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Re-check' }));
+
+    expect(await screen.findByText('1 case reset; the stability check has started.')).toBeTruthy();
+    expect(
+      spy.mock.calls.some(
+        ([u, init]) =>
+          String(u).endsWith(`/evals/${DS_ID}/cases/case-2/rescreen`) &&
+          (init as RequestInit | undefined)?.method === 'POST'
+      )
+    ).toBe(true);
+  });
+
   it('pages through a long case list and names the CLI command when there are no runs', async () => {
     const cases = Array.from({ length: 30 }, (_, i) => ({
       baselineSha: 'abcdef1234567890',

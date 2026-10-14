@@ -22,7 +22,11 @@ import { evalRoutes } from './evals.js';
 function newMockPrisma() {
   return {
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
-    evalCase: { findMany: vi.fn().mockResolvedValue([]), groupBy: vi.fn().mockResolvedValue([]) },
+    evalCase: {
+      findMany: vi.fn().mockResolvedValue([]),
+      groupBy: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     evalDataset: {
       create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
@@ -834,6 +838,108 @@ describe('evalRoutes', () => {
         url: '/api/v1/platform/evals/suite-health',
       });
       expect(res.statusCode).toBe(403);
+    });
+  });
+
+  describe('POST /evals/:id/rescreen', () => {
+    const DS = '11111111-1111-4111-8111-111111111111';
+    const CASE = '22222222-2222-4222-8222-222222222222';
+
+    it('resets every case of the dataset, audits it, and starts the screen', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      prisma.evalDataset.findUnique.mockResolvedValue({ id: DS });
+      prisma.evalCase.updateMany.mockResolvedValue({ count: 3 });
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/platform/evals/${DS}/rescreen`,
+      });
+      expect(res.statusCode).toBe(202);
+      expect(res.json().data).toEqual({ reset: 3, screenStarted: true });
+      expect(prisma.evalCase.updateMany).toHaveBeenCalledWith({
+        data: { flakeRuns: 0, flakeScreened: false },
+        where: { datasetId: DS },
+      });
+      expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'UPDATE',
+          actorId: 'admin-1',
+          entityId: DS,
+          entityType: 'EvalDataset',
+        }),
+      });
+      expect(startEvalScreenWorkflow).toHaveBeenCalledWith(`eval-screen-${DS}`, {
+        datasetId: DS,
+      });
+    });
+
+    it('resets one case of the dataset', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalDataset.findUnique.mockResolvedValue({ id: DS });
+      prisma.evalCase.updateMany.mockResolvedValue({ count: 1 });
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/platform/evals/${DS}/cases/${CASE}/rescreen`,
+      });
+      expect(res.statusCode).toBe(202);
+      expect(prisma.evalCase.updateMany).toHaveBeenCalledWith({
+        data: { flakeRuns: 0, flakeScreened: false },
+        where: { datasetId: DS, id: CASE },
+      });
+    });
+
+    it('404s a case that is not in the dataset, without auditing or screening', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      prisma.evalDataset.findUnique.mockResolvedValue({ id: DS });
+      prisma.evalCase.updateMany.mockResolvedValue({ count: 0 });
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/platform/evals/${DS}/cases/${CASE}/rescreen`,
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('CASE_NOT_FOUND');
+      expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+      expect(startEvalScreenWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('404s a missing dataset', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalDataset.findUnique.mockResolvedValue(null);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/platform/evals/${DS}/rescreen`,
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('DATASET_NOT_FOUND');
+      expect(prisma.evalCase.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('still resets the cases when the screen cannot start', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      startEvalScreenWorkflow.mockRejectedValue(new Error('temporal unreachable'));
+      prisma.evalDataset.findUnique.mockResolvedValue({ id: DS });
+      prisma.evalCase.updateMany.mockResolvedValue({ count: 2 });
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/platform/evals/${DS}/rescreen`,
+      });
+      expect(res.statusCode).toBe(202);
+      expect(res.json().data).toEqual({ reset: 2, screenStarted: false });
+    });
+
+    it('is ADMIN-only', async () => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/platform/evals/${DS}/rescreen`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(prisma.evalCase.updateMany).not.toHaveBeenCalled();
     });
   });
 });

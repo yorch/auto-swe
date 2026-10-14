@@ -1049,6 +1049,17 @@ export interface EvalTrendsDto {
   scorers: EvalScorerTrend[];
 }
 
+/**
+ * POST /platform/evals/:id/rescreen (or /cases/:caseId/rescreen): the cases reset
+ * to never-screened, and whether their dataset's flake screen was started. When it
+ * was not (Temporal unreachable), the next eval run of the dataset or the
+ * re-validation sweep screens them.
+ */
+export interface EvalRescreenResultDto {
+  reset: number;
+  screenStarted: boolean;
+}
+
 /** GET /platform/evals/suite-health: what the stored data says about each benchmark's health. */
 export interface EvalSuiteHealthDto {
   datasets: Array<{

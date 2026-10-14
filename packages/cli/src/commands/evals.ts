@@ -1,6 +1,7 @@
 import {
   type EvalDatasetDetail,
   type EvalDatasetSummary,
+  type EvalRescreenResultDto,
   type EvalResultDto,
   type EvalRunDto,
   IMPLEMENTER_RUNTIMES,
@@ -15,6 +16,10 @@ const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regressio
 
   evals list                          List eval datasets
   evals show <id>                     Print a dataset's cases
+  evals rescreen <id> [--case=<case-id>]
+                                      Reset a dataset's cases (or one) to unscreened and
+                                      start its flake screen; the harness skips them until
+                                      the new screen passes
   evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=N]
                                       Query captured eval signals
   evals run <dataset-slug> --candidate=<ref> --against=<ref>
@@ -66,6 +71,9 @@ export async function runEvalsCommand(args: string[], env: CliEnv): Promise<numb
     if (sub === 'run') {
       return await cmdRun(rest, env);
     }
+    if (sub === 'rescreen') {
+      return await cmdRescreen(rest, env);
+    }
     return UNKNOWN_SUBCOMMAND;
   });
   if (handled !== UNKNOWN_SUBCOMMAND) {
@@ -103,6 +111,26 @@ async function cmdShow(rest: string[], env: CliEnv): Promise<number> {
     const screened = c.flakeScreened ? '✓screened' : c.flakeRuns > 0 ? '✗flaky' : 'unscreened';
     process.stdout.write(`  ${c.id}  ${c.repoUrl}@${c.baselineSha.slice(0, 10)}  ${screened}\n`);
   }
+  return 0;
+}
+
+/** Reset a dataset's cases (or one, with --case) to never-screened and start the screen. */
+async function cmdRescreen(rest: string[], env: CliEnv): Promise<number> {
+  const { flags, positional } = parseFlags(rest);
+  const id = positional[0];
+  if (!id) {
+    process.stderr.write('Usage: evals rescreen <dataset-id> [--case=<case-id>]\n');
+    return 1;
+  }
+  const path = flags.case
+    ? `/api/v1/platform/evals/${id}/cases/${flags.case}/rescreen`
+    : `/api/v1/platform/evals/${id}/rescreen`;
+  const data = await apiRequest<EvalRescreenResultDto>(env, 'POST', path, {});
+  process.stdout.write(
+    data.screenStarted
+      ? `Reset ${data.reset} case(s); the flake screen has started.\n`
+      : `Reset ${data.reset} case(s); the flake screen could not start now — the next eval run of the dataset starts it.\n`
+  );
   return 0;
 }
 

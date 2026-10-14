@@ -87,6 +87,9 @@ bundles install-from-url <url> [--overwrite-protected]
 
 evals list                           List eval datasets (admin token)
 evals show <id>                      Print a dataset's cases
+evals rescreen <id> [--case=<case-id>]
+                                     Reset a dataset's cases (or one) to unscreened and
+                                     start its flake screen
 evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=N]
                                      Query captured eval signals
 evals run <dataset-slug> --candidate=<ref> --against=<ref>

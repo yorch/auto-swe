@@ -16,6 +16,7 @@ import {
   type EvalCaseDto,
   type EvalDatasetDetail,
   type EvalDatasetSummary,
+  type EvalRescreenResultDto,
   type EvalResultDto,
   type EvalRubricDto,
   type EvalRunDto,
@@ -25,7 +26,7 @@ import {
   IMPLEMENTER_RUNTIMES,
   toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -46,10 +47,17 @@ import {
   sendTemporalUnavailable,
   temporalConnected,
 } from '../lib/temporalErrors.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectEvalResult } from './workflowProjections.js';
 
 const IdParam = z.object({ id: z.string().uuid() });
+const CaseParams = z.object({ caseId: z.string().uuid(), id: z.string().uuid() });
+
+/** What a re-screen answers 404 with, by code. */
+const RESCREEN_NOT_FOUND = {
+  CASE_NOT_FOUND: 'Eval case not found in this dataset',
+  DATASET_NOT_FOUND: 'Eval dataset not found',
+} as const;
 
 const CreateRubricBody = z.object({
   promptText: z.string().min(1).max(50_000),
@@ -327,6 +335,79 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         slug: ds.slug,
       };
       return { data };
+    }
+  );
+
+  // ── Re-screen a dataset's cases, or one case ──
+  // Resets the flake-screen state (flakeRuns 0 marks a case never screened) and
+  // starts the dataset's screen, which joins one already running. For a case
+  // that failed its screen for a reason since fixed, or after the reference's
+  // environment changed. Until the new screen passes, the harness skips the case.
+  const rescreen = async (
+    actor: JwtPayload,
+    log: FastifyBaseLogger,
+    datasetId: string,
+    caseId: string | null
+  ): Promise<EvalRescreenResultDto | keyof typeof RESCREEN_NOT_FOUND> => {
+    const ds = await fastify.prisma.evalDataset.findUnique({
+      select: { id: true },
+      where: { id: datasetId },
+    });
+    if (!ds) {
+      return 'DATASET_NOT_FOUND';
+    }
+    const { count } = await fastify.prisma.evalCase.updateMany({
+      data: { flakeRuns: 0, flakeScreened: false },
+      where: { datasetId: ds.id, ...(caseId ? { id: caseId } : {}) },
+    });
+    if (caseId && count === 0) {
+      return 'CASE_NOT_FOUND';
+    }
+    await writeAuditLog(fastify, {
+      action: 'UPDATE',
+      actor,
+      after: { flakeRuns: 0, flakeScreened: false, rescreen: caseId ? { caseId } : 'dataset' },
+      entityId: ds.id,
+      entityType: 'EvalDataset',
+    });
+    // Best-effort, like the start on create: the cases are reset either way, and
+    // the next eval run of the dataset or the re-validation sweep screens them.
+    let screenStarted = false;
+    if (count > 0) {
+      try {
+        await fastify.temporal.startEvalScreenWorkflow(evalScreenWorkflowId(ds.id), {
+          datasetId: ds.id,
+        });
+        screenStarted = true;
+      } catch (err) {
+        log.error({ datasetId: ds.id, err }, 'failed to start EvalScreenWorkflow');
+      }
+    }
+    return { reset: count, screenStarted };
+  };
+
+  app.post(
+    '/evals/:id/rescreen',
+    { onRequest: adminOnly, schema: { params: IdParam } },
+    async (request, reply) => {
+      const out = await rescreen(requireUser(request), request.log, request.params.id, null);
+      if (typeof out === 'string') {
+        return sendError(reply, 404, out, RESCREEN_NOT_FOUND[out]);
+      }
+      return reply.status(202).send({ data: out });
+    }
+  );
+
+  app.post(
+    '/evals/:id/cases/:caseId/rescreen',
+    { onRequest: adminOnly, schema: { params: CaseParams } },
+    async (request, reply) => {
+      const { caseId, id } = request.params;
+      const out = await rescreen(requireUser(request), request.log, id, caseId);
+      if (typeof out === 'string') {
+        return sendError(reply, 404, out, RESCREEN_NOT_FOUND[out]);
+      }
+      return reply.status(202).send({ data: out });
     }
   );
 

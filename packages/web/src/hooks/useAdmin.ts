@@ -4,6 +4,7 @@ import type {
   AdminTokenSummary,
   EvalDatasetDetail,
   EvalDatasetSummary,
+  EvalRescreenResultDto,
   EvalResultDto,
   EvalRunDto,
   EvalSignalSourceValue,
@@ -587,6 +588,29 @@ export function useEvalDataset(id: string | null) {
     queryFn: () =>
       api.get<{ data: EvalDatasetDetail }>(`/api/v1/platform/evals/${id}`).then((r) => r.data),
     queryKey: ['eval-dataset', id],
+  });
+}
+
+/**
+ * Reset a dataset's cases — or one case, with `caseId` — to never-screened and
+ * start the dataset's flake screen (ADMIN).
+ */
+export function useRescreenEvalCases(datasetId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (caseId?: string) =>
+      api
+        .post<{ data: EvalRescreenResultDto }>(
+          caseId
+            ? `/api/v1/platform/evals/${datasetId}/cases/${caseId}/rescreen`
+            : `/api/v1/platform/evals/${datasetId}/rescreen`,
+          {}
+        )
+        .then((r) => r.data),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['eval-dataset', datasetId] });
+      void qc.invalidateQueries({ queryKey: ['eval-suite-health'] });
+    },
   });
 }
 
