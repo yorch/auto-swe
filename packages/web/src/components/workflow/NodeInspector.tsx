@@ -35,7 +35,12 @@ import {
   AgentSection,
   CondSection,
   ContainerStepSection,
+  EvalSection,
   FanOutSection,
+  HumanApprovalSection,
+  HumanDecisionSection,
+  HumanInputSection,
+  HumanReviewSection,
   McpSection,
   SetSection,
   ShellSection,
@@ -82,16 +87,22 @@ const HANDLE_LABEL_FULL: Record<HandleKind, string> = {
  * here makes that a compile error, and the `false` entries render a pointer
  * to JSON mode instead of blank space.
  */
+/**
+ * Whether a type has a section in `NodeConfig`. All of them do; the map stays a
+ * total `Record` over the union so a new node type is a compile error here
+ * rather than a silently blank rail, and the fallback note below stays for the
+ * case where one is added before its section is.
+ */
 const HAS_CONFIG_SECTION: Record<SpecNode['type'], boolean> = {
   agent: true,
   cond: true,
   containerStep: true,
-  eval: false,
+  eval: true,
   fanOut: true,
-  humanApproval: false,
-  humanDecision: false,
-  humanInput: false,
-  humanReview: false,
+  humanApproval: true,
+  humanDecision: true,
+  humanInput: true,
+  humanReview: true,
   mcp: true,
   set: true,
   shell: true,
@@ -217,6 +228,7 @@ export function NodeInspector({
             node.type === 'shell' ||
             node.type === 'agent' ||
             node.type === 'mcp' ||
+            node.type === 'eval' ||
             node.type === 'containerStep') && (
             <InputsBindingsSection
               inputs={(node as { inputs?: Record<string, Binding> }).inputs}
@@ -226,8 +238,8 @@ export function NodeInspector({
         {!unknownType && !HAS_CONFIG_SECTION[node.type] && (
           <InspectorSection title="Configuration">
             <InspectorNote>
-              There are no form fields for this node type yet. Edit its settings in JSON mode; its
-              outgoing edges are below.
+              This build has no form for this node type, so its settings are edited in JSON mode
+              below. Its outgoing edges are in the next section.
             </InspectorNote>
           </InspectorSection>
         )}
@@ -308,7 +320,9 @@ function NodeConfig({
         <SignalSection
           name={node.name}
           onNameChange={(name) => onChangeNode({ ...node, name })}
+          onStoreAsChange={(storeAs) => onChangeNode({ ...node, storeAs: storeAs || undefined })}
           onTimeoutChange={(timeout) => onChangeNode({ ...node, timeout })}
+          storeAs={node.storeAs ?? ''}
           timeout={node.timeout}
         />
       )}
@@ -322,9 +336,25 @@ function NodeConfig({
       {node.type === 'terminate' && (
         <TerminateSection
           onChange={(status) => onChangeNode({ ...node, status })}
+          onResultChange={(result) =>
+            onChangeNode({
+              ...node,
+              ...(result ? { result: result as (typeof node)['result'] } : { result: undefined }),
+            })
+          }
+          result={node.result ?? {}}
           status={node.status}
         />
       )}
+      {node.type === 'eval' && <EvalSection node={node} onChange={onChangeNode} />}
+      {node.type === 'humanApproval' && (
+        <HumanApprovalSection node={node} onChange={onChangeNode} />
+      )}
+      {node.type === 'humanDecision' && (
+        <HumanDecisionSection node={node} onChange={onChangeNode} />
+      )}
+      {node.type === 'humanInput' && <HumanInputSection node={node} onChange={onChangeNode} />}
+      {node.type === 'humanReview' && <HumanReviewSection node={node} onChange={onChangeNode} />}
       {node.type === 'set' && (
         <SetSection
           onChange={(values) =>

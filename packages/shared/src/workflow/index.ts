@@ -96,6 +96,7 @@ export type {
 export {
   BindingSchema,
   findInvalidPresentation,
+  isValidWaitDuration,
   MAX_FANOUT_CONCURRENCY,
   MAX_NODE_GROUP_LENGTH,
   MAX_NODE_TITLE_LENGTH,

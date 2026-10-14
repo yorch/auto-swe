@@ -1037,11 +1037,6 @@ Current constraints of the system as built. Deliberate product boundaries are in
   from the per-step table. Analytics also skips `PENDING`, `RUNNING` and `SKIPPED`, and a fan-out
   branch records under a prefixed id (`fan[0]/impl`), so one node's failure rate is split across its
   branches rather than aggregated.
-- **Five node types have no editor form.** `eval` and the four human node types are offered on the
-  palette and are fully authorable in a spec, but their inspector section says there are no form
-  fields yet and points at JSON mode (as it does for `terminate.result`, a shell's `timeoutMs`, and a
-  container step's resource and transport fields). A `humanDecision` option or a `humanInput` field
-  can be retargeted from the canvas but not added.
 - **A run's branch name is recomputed by every activity, not pinned.** `branchPrefix` lives on the
   `WorkflowDefaults` singleton, and `executeImplementation`, the quality gates, the CI steps and a
   shell step each resolve it when they run. An edit between two steps of one run makes the later step

@@ -8,10 +8,13 @@
  */
 
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
+import { isValidWaitDuration } from '@auto-swe/shared/workflow';
 import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
+import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
@@ -20,7 +23,15 @@ import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
 import { isRecord } from '@/lib/utils';
 import { CONTAINER_AUTHORING_RULE } from './containerNodes';
-import { InspectorNote, OnFailSection, SchemaAwareForm } from './inspectorFields';
+import {
+  BindingField,
+  InputsBindingsSection,
+  InspectorNote,
+  InspectorSubsection,
+  OnFailSection,
+  SchemaAwareForm,
+  useListKeys,
+} from './inspectorFields';
 
 export function StepConfigSection({
   node,
@@ -100,13 +111,17 @@ export function CondSection({ expr, onChange }: { expr: string; onChange: (v: st
 export function SignalSection({
   name,
   timeout,
+  storeAs,
   onNameChange,
   onTimeoutChange,
+  onStoreAsChange,
 }: {
   name: string;
   timeout: string;
+  storeAs: string;
   onNameChange: (v: string) => void;
   onTimeoutChange: (v: string) => void;
+  onStoreAsChange: (v: string) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -117,13 +132,19 @@ export function SignalSection({
         placeholder="e.g. human.approval"
         value={name}
       />
-      <Input
-        compact
-        hint="A duration such as 24h; the timeout edge fires when it passes"
-        label="Timeout"
-        onChange={(e) => onTimeoutChange(e.target.value)}
-        placeholder="24h"
+      <TimeoutField
+        hint="The timeout edge fires when this passes without a signal"
+        onChange={onTimeoutChange}
         value={timeout}
+      />
+      <Input
+        className="font-mono text-xs"
+        compact
+        hint="Optional. Context path the received payload is written to."
+        label="Store payload at"
+        onChange={(e) => onStoreAsChange(e.target.value)}
+        placeholder="context.ciResult"
+        value={storeAs}
       />
     </div>
   );
@@ -276,6 +297,22 @@ export function ShellSection({
         ]}
         value={node.network ?? 'none'}
       />
+      <Input
+        compact
+        hint="Wall clock for the command. The worker caps it at 50 minutes."
+        id="shell-timeout"
+        label="Timeout (ms)"
+        min={1000}
+        onChange={(e) =>
+          onChange({
+            ...node,
+            timeoutMs: e.target.value === '' ? undefined : Number(e.target.value),
+          })
+        }
+        placeholder="600000"
+        type="number"
+        value={node.timeoutMs ?? ''}
+      />
       <div className="grid grid-cols-2 gap-3">
         <Input
           compact
@@ -355,6 +392,85 @@ export function ContainerStepSection({
         ]}
         value={node.network ?? 'none'}
       />
+      <Select
+        compact
+        hint="How the container returns its result. `stdout` prints one JSON object; `ndjson` streams events and takes the last result; `sidecar` runs the image as a local HTTP server."
+        id="container-transport"
+        label="Transport"
+        onChange={(v) => {
+          if (v === 'stdout' || v === 'ndjson' || v === 'sidecar') {
+            onChange({ ...node, transport: v === 'stdout' ? undefined : v });
+          }
+        }}
+        options={[
+          { label: 'Single JSON object on stdout (default)', value: 'stdout' },
+          { label: 'NDJSON event stream', value: 'ndjson' },
+          { label: 'Sidecar HTTP server', value: 'sidecar' },
+        ]}
+        value={node.transport ?? 'stdout'}
+      />
+      {node.transport === 'sidecar' && (
+        <Input
+          compact
+          hint="The port the image listens on. The worker posts the inputs and binds the JSON response."
+          id="container-sidecar-port"
+          label="Sidecar port"
+          max={65535}
+          min={1}
+          onChange={(e) =>
+            onChange({
+              ...node,
+              sidecar:
+                e.target.value === ''
+                  ? undefined
+                  : { ...node.sidecar, port: Number(e.target.value) },
+            })
+          }
+          placeholder="8080"
+          type="number"
+          value={node.sidecar?.port ?? ''}
+        />
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <Input
+          compact
+          id="container-memory"
+          label="Memory limit"
+          onChange={(e) => onChange({ ...node, memory: e.target.value || undefined })}
+          placeholder="512m"
+          value={node.memory ?? ''}
+        />
+        <Input
+          compact
+          id="container-cpus"
+          label="CPUs"
+          max={8}
+          min={0.1}
+          onChange={(e) =>
+            onChange({ ...node, cpus: e.target.value === '' ? undefined : Number(e.target.value) })
+          }
+          placeholder="1"
+          step={0.1}
+          type="number"
+          value={node.cpus ?? ''}
+        />
+      </div>
+      <Input
+        compact
+        hint="Wall clock for the container. The worker caps it at 50 minutes."
+        id="container-timeout"
+        label="Timeout (ms)"
+        min={1000}
+        onChange={(e) =>
+          onChange({
+            ...node,
+            timeoutMs: e.target.value === '' ? undefined : Number(e.target.value),
+          })
+        }
+        placeholder="600000"
+        type="number"
+        value={node.timeoutMs ?? ''}
+      />
       <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
     </div>
   );
@@ -373,25 +489,38 @@ const TERMINATE_LABEL: Record<TerminateStatus, string> = {
 
 export function TerminateSection({
   status,
+  result,
   onChange,
+  onResultChange,
 }: {
   status: TerminateStatus;
+  /** The run's final result map. Schema-valid but previously uneditable. */
+  result: Record<string, unknown>;
   onChange: (v: TerminateStatus) => void;
+  onResultChange: (v: Record<string, unknown> | undefined) => void;
 }) {
   return (
-    <Select
-      compact
-      hint="The status the run ends with when it reaches this node"
-      id="terminate-status"
-      label="End status"
-      onChange={(v) => {
-        if ((TERMINATE_STATUSES as readonly string[]).includes(v)) {
-          onChange(v as TerminateStatus);
-        }
-      }}
-      options={TERMINATE_STATUSES.map((s) => ({ label: TERMINATE_LABEL[s], value: s }))}
-      value={status}
-    />
+    <div className="space-y-3">
+      <Select
+        compact
+        hint="The status the run ends with when it reaches this node"
+        id="terminate-status"
+        label="End status"
+        onChange={(v) => {
+          if ((TERMINATE_STATUSES as readonly string[]).includes(v)) {
+            onChange(v as TerminateStatus);
+          }
+        }}
+        options={TERMINATE_STATUSES.map((s) => ({ label: TERMINATE_LABEL[s], value: s }))}
+        value={status}
+      />
+      <InputsBindingsSection
+        inputs={result as Record<string, never>}
+        note="No result. Add one to expose a value on the run's final output."
+        onChange={(v) => onResultChange(v)}
+        title="Result"
+      />
+    </div>
   );
 }
 
@@ -553,6 +682,613 @@ export function McpSection({
         value={node.tool}
       />
       <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
+    </div>
+  );
+}
+
+/**
+ * The four human nodes and `eval` share the same shape of problem: their
+ * settings live in nested structures (option and field lists, scorer lists) or
+ * in fields the canvas never surfaced, so the only way to change them was JSON
+ * mode. These sections are the form for that.
+ *
+ * `title` is not here: it is the approver's inbox heading and the node's name on
+ * the canvas, so `NodeMetaFields` owns it for every node type.
+ */
+
+/** A `wait` field on a human node or a `signal`. */
+function TimeoutField({
+  value,
+  onChange,
+  hint,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  hint: string;
+}) {
+  const valid = isValidWaitDuration(value);
+  return (
+    <Input
+      compact
+      hint={valid ? hint : "Not a duration Temporal can parse — try '30m', '24h' or '7d'."}
+      id="hitl-timeout"
+      label="Timeout"
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="24h"
+      value={value}
+    />
+  );
+}
+
+function DescriptionField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <Textarea
+      className="h-20 text-xs"
+      compact
+      hint="Shown to whoever answers, under the title"
+      id="hitl-description"
+      label="Instructions"
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="What should they check before answering?"
+      value={value}
+    />
+  );
+}
+
+function StoreAsField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <Input
+      className="font-mono text-xs"
+      compact
+      hint="Context path the answer is written to, e.g. context.decision"
+      id="hitl-store-as"
+      label="Store answer at"
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="context.decision"
+      value={value}
+    />
+  );
+}
+
+export function HumanApprovalSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'humanApproval' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <DescriptionField
+        onChange={(description) => onChange({ ...node, description: description || undefined })}
+        value={node.description ?? ''}
+      />
+      <Input
+        compact
+        hint="Context path whose value is shown to the approver, e.g. nodes.dryRun.output.summary"
+        id="approval-context-from"
+        label="Context to show"
+        onChange={(e) => onChange({ ...node, contextFrom: e.target.value || undefined })}
+        placeholder="context.summary"
+        value={node.contextFrom ?? ''}
+      />
+      <BindingField
+        allowExpr={false}
+        binding={node.approverCount}
+        hint="How many distinct people must approve. Leave empty for one. A binding that resolves to anything but a positive integer means one approver."
+        label="Distinct approvers"
+        onChange={(approverCount) => onChange({ ...node, approverCount })}
+      />
+      <TimeoutField
+        hint="How long the run waits before taking the timeout edge"
+        onChange={(timeout) => onChange({ ...node, timeout })}
+        value={node.timeout}
+      />
+    </div>
+  );
+}
+
+export function HumanDecisionSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'humanDecision' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  const options = node.options;
+  const rowKeys = useListKeys(options.length);
+  const setOption = (i: number, patch: Partial<(typeof options)[number]>) => {
+    onChange({ ...node, options: options.map((o, j) => (j === i ? { ...o, ...patch } : o)) });
+  };
+  const addOption = () => {
+    if (options.length >= 10) {
+      return;
+    }
+    // A new option needs somewhere to go; the parallel edge dropdowns retarget it.
+    const target = options[0]?.next ?? node.onTimeout;
+    let value = 'option';
+    let n = 2;
+    while (options.some((o) => o.value === value)) {
+      value = `option_${n++}`;
+    }
+    onChange({
+      ...node,
+      options: [...options, { label: `Option ${options.length + 1}`, next: target, value }],
+    });
+  };
+  const removeOption = (i: number) => {
+    if (options.length <= 2) {
+      return;
+    }
+    onChange({ ...node, options: options.filter((_, j) => j !== i) });
+  };
+
+  return (
+    <div className="space-y-3">
+      <DescriptionField
+        onChange={(description) => onChange({ ...node, description: description || undefined })}
+        value={node.description ?? ''}
+      />
+      <InspectorSubsection title={`Options (${options.length} of 2–10)`}>
+        {options.map((option, i) => (
+          <div
+            className="space-y-1.5 rounded-md border border-ink-600 bg-ink-900/40 p-2"
+            key={rowKeys[i]}
+          >
+            <div className="flex items-center gap-1.5">
+              <div className="min-w-0 flex-1">
+                <Input
+                  aria-label={`Option ${i + 1} value`}
+                  className="font-mono text-xs"
+                  compact
+                  onChange={(e) => setOption(i, { value: e.target.value })}
+                  placeholder="value"
+                  value={option.value}
+                />
+              </div>
+              <Button
+                aria-label={`Remove option ${i + 1}`}
+                className="px-2 hover:text-brick-400"
+                disabled={options.length <= 2}
+                onClick={() => removeOption(i)}
+                size="sm"
+                title={options.length <= 2 ? 'A decision needs at least two options' : 'Remove'}
+                variant="ghost"
+              >
+                <Icon name="close" size={14} />
+              </Button>
+            </div>
+            <Input
+              aria-label={`Option ${i + 1} label`}
+              compact
+              onChange={(e) => setOption(i, { label: e.target.value })}
+              placeholder="What the person sees"
+              value={option.label}
+            />
+          </div>
+        ))}
+        <Button disabled={options.length >= 10} onClick={addOption} size="sm" variant="ghost">
+          <Icon name="plus" size={13} />
+          Add option
+        </Button>
+      </InspectorSubsection>
+      <StoreAsField
+        onChange={(storeAs) => onChange({ ...node, storeAs: storeAs || undefined })}
+        value={node.storeAs ?? ''}
+      />
+      <TimeoutField
+        hint="How long the run waits before taking the timeout edge"
+        onChange={(timeout) => onChange({ ...node, timeout })}
+        value={node.timeout}
+      />
+    </div>
+  );
+}
+
+type HumanFieldType = 'text' | 'number' | 'boolean' | 'select';
+
+export function HumanInputSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'humanInput' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  const fields = node.fields;
+  const rowKeys = useListKeys(fields.length);
+  const setField = (i: number, patch: Partial<(typeof fields)[number]>) => {
+    onChange({ ...node, fields: fields.map((f, j) => (j === i ? { ...f, ...patch } : f)) });
+  };
+  const addField = () => {
+    if (fields.length >= 20) {
+      return;
+    }
+    let key = 'field';
+    let n = 2;
+    while (fields.some((f) => f.key === key)) {
+      key = `field_${n++}`;
+    }
+    onChange({
+      ...node,
+      fields: [...fields, { key, label: `Field ${fields.length + 1}`, type: 'text' }],
+    });
+  };
+  const removeField = (i: number) => {
+    if (fields.length <= 1) {
+      return;
+    }
+    onChange({ ...node, fields: fields.filter((_, j) => j !== i) });
+  };
+
+  return (
+    <div className="space-y-3">
+      <DescriptionField
+        onChange={(description) => onChange({ ...node, description: description || undefined })}
+        value={node.description ?? ''}
+      />
+      <InspectorSubsection title={`Fields (${fields.length} of 1–20)`}>
+        {fields.map((field, i) => (
+          <div
+            className="space-y-1.5 rounded-md border border-ink-600 bg-ink-900/40 p-2"
+            key={rowKeys[i]}
+          >
+            <div className="flex items-center gap-1.5">
+              <div className="min-w-0 flex-1">
+                <Input
+                  aria-label={`Field ${i + 1} key`}
+                  className="font-mono text-xs"
+                  compact
+                  onChange={(e) => setField(i, { key: e.target.value })}
+                  placeholder="key"
+                  value={field.key}
+                />
+              </div>
+              <Select
+                aria-label={`Field ${i + 1} type`}
+                className="w-auto"
+                compact
+                onChange={(v) => setField(i, { type: v as HumanFieldType })}
+                options={[
+                  { label: 'Text', value: 'text' },
+                  { label: 'Number', value: 'number' },
+                  { label: 'Boolean', value: 'boolean' },
+                  { label: 'Select', value: 'select' },
+                ]}
+                value={field.type}
+              />
+              <Button
+                aria-label={`Remove field ${i + 1}`}
+                className="px-2 hover:text-brick-400"
+                disabled={fields.length <= 1}
+                onClick={() => removeField(i)}
+                size="sm"
+                title={fields.length <= 1 ? 'A form needs at least one field' : 'Remove'}
+                variant="ghost"
+              >
+                <Icon name="close" size={14} />
+              </Button>
+            </div>
+            <Input
+              aria-label={`Field ${i + 1} label`}
+              compact
+              onChange={(e) => setField(i, { label: e.target.value })}
+              placeholder="What the person sees"
+              value={field.label}
+            />
+            {field.type === 'select' && (
+              <Input
+                aria-label={`Field ${i + 1} options`}
+                compact
+                hint="Comma-separated choices"
+                onChange={(e) =>
+                  setField(i, {
+                    options: e.target.value
+                      .split(',')
+                      .map((o) => o.trim())
+                      .filter(Boolean),
+                  })
+                }
+                placeholder="yes, no, maybe"
+                value={(field.options ?? []).join(', ')}
+              />
+            )}
+            <Checkbox
+              checked={field.required === true}
+              label="Required"
+              onChange={(e) => setField(i, { required: e.target.checked || undefined })}
+            />
+          </div>
+        ))}
+        <Button disabled={fields.length >= 20} onClick={addField} size="sm" variant="ghost">
+          <Icon name="plus" size={13} />
+          Add field
+        </Button>
+      </InspectorSubsection>
+      <StoreAsField
+        onChange={(storeAs) => onChange({ ...node, storeAs: storeAs || undefined })}
+        value={node.storeAs ?? ''}
+      />
+      <TimeoutField
+        hint="How long the run waits before taking the timeout edge"
+        onChange={(timeout) => onChange({ ...node, timeout })}
+        value={node.timeout}
+      />
+    </div>
+  );
+}
+
+export function HumanReviewSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'humanReview' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <DescriptionField
+        onChange={(description) => onChange({ ...node, description: description || undefined })}
+        value={node.description ?? ''}
+      />
+      <Input
+        compact
+        hint="Context path of the content to review, e.g. nodes.implement.output.diff"
+        id="review-content-from"
+        label="Content to review"
+        onChange={(e) => onChange({ ...node, contentFrom: e.target.value })}
+        placeholder="context.currentCodeResult.diff"
+        value={node.contentFrom}
+      />
+      <StoreAsField
+        onChange={(storeAs) => onChange({ ...node, storeAs: storeAs || undefined })}
+        value={node.storeAs ?? ''}
+      />
+      <TimeoutField
+        hint="How long the run waits before taking the timeout edge"
+        onChange={(timeout) => onChange({ ...node, timeout })}
+        value={node.timeout}
+      />
+    </div>
+  );
+}
+
+/** The quality gates a `gate` scorer may run (`GateName` in the worker). */
+const GATE_NAMES = [
+  'runLint',
+  'runTypecheck',
+  'runTests',
+  'runBuild',
+  'runVulnScan',
+  'runPerfBench',
+] as const;
+
+/** The scorer kinds `EvalScorerSchema` accepts, and what each needs. */
+const SCORER_KINDS = ['gate', 'assert', 'trajectory', 'judge', 'policy', 'pii'] as const;
+type ScorerKind = (typeof SCORER_KINDS)[number];
+type Scorer = Extract<SpecNode, { type: 'eval' }>['scorers'][number];
+
+const SCORER_LABEL: Record<ScorerKind, string> = {
+  assert: 'Assert — an expression over the target',
+  gate: 'Gate — a quality gate against the candidate branch',
+  judge: 'Judge — an LLM call against a rubric',
+  pii: 'PII — scan the target for personal data',
+  policy: 'Policy — evaluate an autonomy risk class',
+  trajectory: 'Trajectory — score the run’s trace',
+};
+
+/** The fields a scorer of each kind actually reads, so switching kind cannot leave a stale one. */
+function scorerFor(kind: ScorerKind, previous: Scorer): Scorer {
+  switch (kind) {
+    case 'assert':
+      return { expr: 'expr' in previous ? previous.expr : '', kind };
+    case 'gate':
+      return {
+        ...('command' in previous && previous.command ? { command: previous.command } : {}),
+        gate: 'gate' in previous ? previous.gate : 'runTests',
+        kind,
+      };
+    case 'judge':
+      return {
+        ...('baselineFrom' in previous && previous.baselineFrom
+          ? { baselineFrom: previous.baselineFrom }
+          : {}),
+        kind,
+        rubricRef: 'rubricRef' in previous ? previous.rubricRef : '',
+      };
+    case 'pii':
+      return { kind };
+    case 'policy':
+      return { kind, riskClass: 'riskClass' in previous ? previous.riskClass : 'external_write' };
+    case 'trajectory':
+      return {
+        ...('from' in previous && typeof previous.from === 'string' ? { from: previous.from } : {}),
+        kind,
+      };
+  }
+}
+
+export function EvalSection({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'eval' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  const scorers = node.scorers;
+  const rowKeys = useListKeys(scorers.length);
+  const setScorer = (i: number, next: Scorer) =>
+    onChange({ ...node, scorers: scorers.map((s, j) => (j === i ? next : s)) });
+  const addScorer = () => {
+    if (scorers.length >= 20) {
+      return;
+    }
+    const first = scorers[0];
+    onChange({
+      ...node,
+      scorers: [...scorers, scorerFor('assert', first ?? { expr: '', kind: 'assert' })],
+    });
+  };
+  const removeScorer = (i: number) => {
+    if (scorers.length <= 1) {
+      return;
+    }
+    onChange({ ...node, scorers: scorers.filter((_, j) => j !== i) });
+  };
+  const canSkip = scorers.some((s) => s.kind === 'gate' || s.kind === 'assert');
+
+  return (
+    <div className="space-y-3">
+      <BindingField
+        binding={node.target}
+        hint="The value being scored. Usually a previous node's output or diff."
+        label="Target"
+        onChange={(target) => onChange({ ...node, target })}
+      />
+      <BindingField
+        allowExpr={false}
+        binding={node.candidateRef}
+        hint="Branch holding the candidate's code, for a `gate` scorer. Defaults to the run's own work branch — name it whenever the code is somewhere else, such as a fan-out subtask's branch."
+        label="Candidate branch"
+        onChange={(candidateRef) => onChange({ ...node, candidateRef })}
+      />
+      <InspectorSubsection title={`Scorers (${scorers.length})`}>
+        {scorers.map((scorer, i) => (
+          <div
+            className="space-y-1.5 rounded-md border border-ink-600 bg-ink-900/40 p-2"
+            key={rowKeys[i]}
+          >
+            <div className="flex items-center gap-1.5">
+              <div className="min-w-0 flex-1">
+                <Select
+                  aria-label={`Scorer ${i + 1} kind`}
+                  compact
+                  onChange={(v) => setScorer(i, scorerFor(v as ScorerKind, scorer))}
+                  options={SCORER_KINDS.map((k) => ({
+                    label: k,
+                    value: k,
+                  }))}
+                  value={scorer.kind}
+                />
+              </div>
+              <Button
+                aria-label={`Remove scorer ${i + 1}`}
+                className="px-2 hover:text-brick-400"
+                disabled={scorers.length <= 1}
+                onClick={() => removeScorer(i)}
+                size="sm"
+                title={scorers.length <= 1 ? 'An eval node needs at least one scorer' : 'Remove'}
+                variant="ghost"
+              >
+                <Icon name="close" size={14} />
+              </Button>
+            </div>
+            <p className="text-xs text-paper-500">{SCORER_LABEL[scorer.kind]}</p>
+            {scorer.kind === 'gate' && (
+              <>
+                <Select
+                  aria-label={`Scorer ${i + 1} gate`}
+                  compact
+                  hint="Runs against the candidate branch on the repository's executor image."
+                  onChange={(v) => setScorer(i, { ...scorer, gate: v })}
+                  options={GATE_NAMES.map((g) => ({ label: g, value: g }))}
+                  value={scorer.gate}
+                />
+                <Input
+                  aria-label={`Scorer ${i + 1} command`}
+                  compact
+                  hint="Optional. Overrides the repository's gate command."
+                  onChange={(e) =>
+                    setScorer(i, {
+                      ...scorer,
+                      ...(e.target.value ? { command: e.target.value } : {}),
+                    })
+                  }
+                  placeholder="yarn test"
+                  value={scorer.command ?? ''}
+                />
+              </>
+            )}
+            {scorer.kind === 'assert' && (
+              <Input
+                aria-label={`Scorer ${i + 1} expression`}
+                className="font-mono text-xs"
+                compact
+                hint="Expression over the target, e.g. $.linesChanged < 500"
+                onChange={(e) => setScorer(i, { ...scorer, expr: e.target.value })}
+                placeholder="$.linesChanged < 500"
+                value={scorer.expr}
+              />
+            )}
+            {scorer.kind === 'judge' && (
+              <>
+                <Input
+                  aria-label={`Scorer ${i + 1} rubric`}
+                  compact
+                  hint="Name of a versioned EvalRubric, e.g. code-review-quality@3"
+                  onChange={(e) => setScorer(i, { ...scorer, rubricRef: e.target.value })}
+                  placeholder="code-review-quality@3"
+                  value={scorer.rubricRef}
+                />
+                <Input
+                  aria-label={`Scorer ${i + 1} baseline`}
+                  className="font-mono text-xs"
+                  compact
+                  hint="Optional context path holding the baseline to compare against"
+                  onChange={(e) =>
+                    setScorer(i, {
+                      ...scorer,
+                      ...(e.target.value ? { baselineFrom: e.target.value } : {}),
+                    })
+                  }
+                  placeholder="nodes.baseline.output.diff"
+                  value={scorer.baselineFrom ?? ''}
+                />
+              </>
+            )}
+            {scorer.kind === 'policy' && (
+              <Input
+                aria-label={`Scorer ${i + 1} risk class`}
+                compact
+                hint="Autonomy risk class to evaluate, e.g. external_write"
+                onChange={(e) => setScorer(i, { ...scorer, riskClass: e.target.value })}
+                placeholder="external_write"
+                value={scorer.riskClass}
+              />
+            )}
+            {scorer.kind === 'trajectory' && (
+              <Input
+                aria-label={`Scorer ${i + 1} trace source`}
+                className="font-mono text-xs"
+                compact
+                hint="Optional context path holding the trace to score"
+                onChange={(e) =>
+                  setScorer(i, { ...scorer, ...(e.target.value ? { from: e.target.value } : {}) })
+                }
+                placeholder="nodes.implement.output.traceRef"
+                value={scorer.from ?? ''}
+              />
+            )}
+          </div>
+        ))}
+        <Button disabled={scorers.length >= 20} onClick={addScorer} size="sm" variant="ghost">
+          <Icon name="plus" size={13} />
+          Add scorer
+        </Button>
+      </InspectorSubsection>
+      <Checkbox
+        checked={node.judgeAdvisory !== false}
+        hint={
+          canSkip
+            ? 'A judge axis may block the gate when this is off. Floor scorers still short-circuit it.'
+            : 'A judge axis may block the gate when this is off. There is no floor scorer here to short-circuit it.'
+        }
+        label="Judge is advisory"
+        onChange={(e) => onChange({ ...node, judgeAdvisory: e.target.checked ? undefined : false })}
+      />
+      <InspectorNote>
+        Floor scorers (gate, assert, policy, pii) run first and short-circuit the judge when one
+        fails, so a broken diff never costs a judge call.
+      </InspectorNote>
     </div>
   );
 }
