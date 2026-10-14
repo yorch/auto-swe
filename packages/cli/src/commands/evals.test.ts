@@ -87,7 +87,7 @@ describe('runEvalsCommand', () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({
         data: {
-          caseCount: 3,
+          caseCount: 4,
           cases: [
             {
               baselineSha: 'abcdef0123456789',
@@ -131,7 +131,7 @@ describe('runEvalsCommand', () => {
     const code = await runEvalsCommand(['show', 'ds-1'], ENV);
     expect(code).toBe(0);
     const out = stdoutWrites.join('');
-    expect(out).toContain('Golden set (golden) — 3 cases');
+    expect(out).toContain('Golden set (golden) — 4 cases');
     expect(out).toContain('case-1  https://github.com/acme/api@abcdef0123  ✓screened');
     expect(out).toContain('case-2  https://github.com/acme/api@abcdef0123  ✗flaky');
     expect(out).toContain('case-3  https://github.com/acme/api@abcdef0123  unscreened');
