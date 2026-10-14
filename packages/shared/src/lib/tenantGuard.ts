@@ -40,6 +40,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'OrganizationMembership',
   'ProviderCredential',
   'ScheduledWorkRequest',
+  'ServicePrincipal',
   'Skill',
   'SkillSource',
   'SlackChannel',

@@ -29,6 +29,8 @@ export type AuditEntityType =
   | 'ProviderCredential'
   | 'ScannerPattern'
   | 'ScheduledWorkRequest'
+  | 'ServicePrincipal'
+  | 'ServiceToken'
   | 'Session'
   | 'Skill'
   | 'SkillSource'

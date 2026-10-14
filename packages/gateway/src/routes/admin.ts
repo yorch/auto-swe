@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
-import { safePatAuditFields } from '../lib/patAuditFields.js';
+import { safePatAuditFields, tokenAuditEntity } from '../lib/patAuditFields.js';
 import {
   extractSessionCookieValue,
   invalidateSessionCache,
@@ -127,6 +127,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         name: true,
         prefix: true,
         revokedAt: true,
+        scopes: true,
+        // A service principal's token has no user; it is listed with its principal and team.
+        servicePrincipal: {
+          select: { id: true, name: true, team: { select: { id: true, name: true } } },
+        },
         user: { select: { email: true, id: true } },
       },
     });
@@ -163,6 +168,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           name: updated.name,
           prefix: updated.prefix,
           revokedAt: updated.revokedAt,
+          scopes: updated.scopes,
+          servicePrincipalId: updated.servicePrincipalId,
           userId: updated.userId,
         }),
         before: safePatAuditFields({
@@ -171,10 +178,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           name: existing.name,
           prefix: existing.prefix,
           revokedAt: existing.revokedAt,
+          scopes: existing.scopes,
+          servicePrincipalId: existing.servicePrincipalId,
           userId: existing.userId,
         }),
         entityId: updated.id,
-        entityType: 'PersonalAccessToken',
+        entityType: tokenAuditEntity(updated),
       });
       return { data: { id: updated.id, revokedAt: updated.revokedAt } };
     }
