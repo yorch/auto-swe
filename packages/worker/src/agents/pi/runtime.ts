@@ -14,6 +14,12 @@ import {
 import { type McpRelay, openMcpRelay } from '../harness/mcpRelay.js';
 import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { summedCallsUsage, type UsageTotals } from '../harness/usage.js';
+import {
+  type CompactionResult,
+  compactMessages,
+  createCompactor,
+  toolDefinitionChars,
+} from './compaction.js';
 import { piMcpTools } from './mcp.js';
 import { aiSdkStreamFn, piModelDescriptor } from './model.js';
 import {
@@ -213,6 +219,11 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
     let toolCalls = 0;
     let atTurnCap = false;
     let modelError: { error: unknown } | undefined;
+    // What the turn's compactions came to: how many model calls were compacted,
+    // and the figures of the last one. Traced once, when the turn ends.
+    let compaction:
+      | { budgetTokens: number; calls: number; last: Omit<CompactionResult, 'messages'> }
+      | undefined;
     try {
       const open = await openSession(turn);
       model ??=
@@ -235,16 +246,32 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         () => open.agentTools
       );
       const prompt: AgentMessage = { content: user, role: 'user', timestamp: Date.now() };
+      const systemPrompt = piSystemPrompt({
+        extraTools: open.mcpTools,
+        projectContext: open.projectContext,
+        system,
+        tools,
+      });
+      const budgetTokens =
+        options.harnessContextTokens ??
+        getSettingDefinition('workspace.harnessContextTokens').defaultValue;
+      const overheadChars = toolDefinitionChars(open.agentTools);
+      const noteCompaction = (
+        figures: Omit<CompactionResult, 'messages'>,
+        sentToModel: boolean
+      ) => {
+        compaction = {
+          budgetTokens,
+          calls: (compaction?.calls ?? 0) + (sentToModel ? 1 : 0),
+          last: figures,
+        };
+      };
+      const compactor = createCompactor({ budgetTokens, overheadChars, systemPrompt });
       const added = await runAgentLoop(
         [prompt],
         {
           messages: open.messages,
-          systemPrompt: piSystemPrompt({
-            extraTools: open.mcpTools,
-            projectContext: open.projectContext,
-            system,
-            tools,
-          }),
+          systemPrompt,
           tools: open.agentTools,
         },
         {
@@ -292,6 +319,16 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
           },
           // One call at a time, as the Mastra loop and the trace order them.
           toolExecution: 'sequential',
+          // Runs before every model call and receives the loop's live message
+          // array, not a copy. Returning a different array shapes what is sent;
+          // it is safe only because `compactMessages` never mutates its input.
+          transformContext: async (messages) => {
+            const { figures, messages: fitted } = compactor.next(messages);
+            if (figures) {
+              noteCompaction(figures, true);
+            }
+            return fitted;
+          },
         },
         () => turn.heartbeat(),
         turn.abort.signal,
@@ -310,6 +347,18 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
             )
         )
       );
+      // The session keeps what the next turn would send, so a long session does
+      // not carry history it would only elide or drop again.
+      const { messages: kept, ...figures } = compactMessages({
+        budgetTokens,
+        messages: open.messages,
+        overheadChars,
+        systemPrompt,
+      });
+      if (kept !== open.messages) {
+        noteCompaction(figures, false);
+        open.messages.splice(0, open.messages.length, ...kept);
+      }
 
       if (ended?.stopReason === 'aborted' || turn.abort.signal.aborted) {
         turn.throwIfCancelled();
@@ -337,6 +386,16 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
       };
     } finally {
       holder.current = undefined;
+      if (compaction) {
+        options.tracer.addActivityEvent({
+          name: 'pi.context_compacted',
+          outputJson: {
+            ...compaction.last,
+            budgetTokens: compaction.budgetTokens,
+            compactingCalls: compaction.calls,
+          },
+        });
+      }
     }
   }
 
