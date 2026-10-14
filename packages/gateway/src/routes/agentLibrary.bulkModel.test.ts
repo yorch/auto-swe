@@ -367,6 +367,31 @@ describe('bulk agent model changes', () => {
     // question — and a request naming hundreds of agents must not fan out into lookups for them.
     expect(res.json().data.changes[0].shadowedBy).toEqual(['TEAM']);
     expect(p.team.findMany).not.toHaveBeenCalled();
+    expect(p.team.findUnique).not.toHaveBeenCalled();
+    await app.close();
+  });
+  it('asks once about ownership, for the organizations actually selected', async () => {
+    const { app, p, post } = await setup([
+      { ...agent(), orgId: 'org-1', scope: 'ORGANIZATION' as const },
+      { ...agent(B), orgId: 'org-1', scope: 'ORGANIZATION' as const },
+    ]);
+    p.agent.findMany.mockImplementation(async ({ where }) =>
+      where.key
+        ? [
+            { key: A, scope: 'TEAM', teamId: 'team-1' },
+            { key: B, scope: 'TEAM', teamId: 'team-2' },
+          ]
+        : []
+    );
+    p.team.findMany.mockResolvedValue([{ id: 'team-1', orgId: 'org-1' }]);
+    const res = await post({}, true);
+    // One query for both selected rows, and the answer decides each of them: team-1 is inside
+    // org-1 so it shadows, while team-2 is not and does not.
+    expect(
+      res.json().data.changes.map((change: { shadowedBy: string[] }) => change.shadowedBy)
+    ).toEqual([['TEAM'], []]);
+    expect(p.team.findMany).toHaveBeenCalledTimes(1);
+    expect(p.team.findMany.mock.calls[0][0].where).toEqual({ orgId: { in: ['org-1'] } });
     await app.close();
   });
   it('reports a failed read as that agent’s outcome rather than the batch’s', async () => {
