@@ -1,4 +1,4 @@
-import { AGENT_RUN_MAX_PROMPT_CHARS } from '@auto-swe/shared/lib/agentRun';
+import { AGENT_RUN_MAX_PROMPT_CHARS, type AgentRunDelivery } from '@auto-swe/shared/lib/agentRun';
 import type { AgentRunLimits } from '@auto-swe/shared/types/api';
 import { ApiError } from '@/lib/api';
 import { randomId } from '@/lib/randomId';
@@ -6,7 +6,7 @@ import { isRecord } from '@/lib/utils';
 
 export { AGENT_RUN_MAX_PROMPT_CHARS } from '@auto-swe/shared/lib/agentRun';
 
-export type AgentRunDeliver = 'none' | 'branch' | 'draft_pr';
+export type AgentRunDeliver = AgentRunDelivery;
 
 export const DELIVER_OPTIONS: { value: AgentRunDeliver; label: string; description: string }[] = [
   {

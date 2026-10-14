@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import type { AgentRunDelivery } from '@auto-swe/shared/lib/agentRun';
 import {
   isTerminalWorkflowRunStatus,
   type WorkflowRunDetail,
@@ -36,7 +37,7 @@ const SUB_HELP = `auto-swe agent — run a library agent on a repository
 `;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const DELIVERIES = ['none', 'branch', 'draft_pr'];
+const DELIVERIES: readonly AgentRunDelivery[] = ['none', 'branch', 'draft_pr'];
 const BUDGETS = ['STANDARD', 'LARGE', 'EPIC'];
 
 interface LaunchResponse {
@@ -181,7 +182,7 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
   }
 
   const deliver = flags.deliver ?? 'none';
-  if (!DELIVERIES.includes(deliver)) {
+  if (!DELIVERIES.some((d) => d === deliver)) {
     process.stderr.write(`--deliver must be one of: ${DELIVERIES.join(', ')}\n`);
     return 1;
   }
