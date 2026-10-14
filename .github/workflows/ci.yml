@@ -157,6 +157,9 @@ jobs:
             'grep -rhs "timeout" /run /usr/local/etc/haproxy /etc/haproxy 2>/dev/null' \
             | tee /dev/stderr | grep -q '65m'; then
             echo "::error::the socket proxy did not apply TIMEOUT=65m to its haproxy config"
+            docker exec docker-socket-proxy sh -c \
+              'grep -rnIi "timeout" /etc /run /defaults /usr/local/etc /app /init* 2>/dev/null \
+                | grep -v "^/etc/ssl" | head -80' || true
             exit 1
           fi
           # The test's host address: the proxy refuses the networks API, as the worker's does.
