@@ -320,7 +320,7 @@ The spec supports 15 node types.
 |-----------|---------|-----------|
 | `step` | Dispatch a registered activity | `step`, `inputs`, `next`, `onFail`, `config` |
 | `agent` | Run a library Agent by reference | `agentRef` (`<key>` or `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs`, `workspace` (run in a throwaway checkout of the run's repository) |
-| `mcp` | Call one tool on an `mcp` Connection | `connectionRef`, `tool`, `inputs` |
+| `mcp` | Call one tool on an `mcp` Connection | `connectionRef` (a literal id, checked against the run's team at run time), `tool`, `inputs` |
 | `eval` | Score a value with floor/judge/trajectory scorers, then gate or branch | `target`, `scorers[]`, `judgeAdvisory` |
 | `set` | Write values into the run context | `values` (path → binding) |
 | `cond` | Branch on a boolean expression | `expr`, `onTrue`, `onFalse` |
@@ -1314,6 +1314,17 @@ Current constraints of the system as built. Deliberate product boundaries are in
   non-git retry path does). Closing it properly means authorizing the connection a node actually
   resolved, at the worker boundary, against the run's launcher and team reach — the same check the
   public-caller branch already makes — rather than inferring it from the template's own metadata.
+- **A literal connection reference is checked where it is used.** An `mcp` node names its server
+  with `connectionRef`, an id written into the spec rather than a payload binding, so no launch path
+  authorizes it: `assertRunMayUseConnection` (`worker/src/lib/connectionAccess.ts`) refuses one the
+  run's template may not use, before the server is contacted. The rule is
+  `templateReachesConnection`: a team's template may use a connection that team owns or has had
+  shared with it, and a global template — which only an ADMIN may author — may use any, the rule an
+  agent's `mcpConnectionId` already followed. The save-time reference check reports the same
+  violation as a warning (`MCP_REF_NOT_REACHABLE`), so an author learns at edit time instead of at
+  run time. It is a **run-time** check because a save-time one cannot be a boundary: the value a
+  binding reads can be written by a `set` node, by a `signal` node's `storeAs`, or by a binding's own
+  `default`, so "this path is declared" never established "this id is authorized".
 - **A connection's stored token is bound to the destination it was entered for.** `config` is
   editable by a team LEAD, who cannot read the secret in the row, so repointing a connection is how
   they would collect it. The update route therefore refuses an edit that would keep a stored token

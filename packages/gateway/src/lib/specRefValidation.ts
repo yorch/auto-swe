@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@auto-swe/shared';
+import { templateReachesConnection } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 
@@ -21,14 +22,16 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 export async function validateSpecRefs(
   prisma: PrismaClient,
-  spec: WorkflowSpec
+  spec: WorkflowSpec,
+  /** The template's team, so a literal `mcp` reference can be checked for reach. */
+  templateTeamId: string | null
 ): Promise<string[]> {
-  return (await findSpecRefProblems(prisma, spec)).map((p) => p.message);
+  return (await findSpecRefProblems(prisma, spec, templateTeamId)).map((p) => p.message);
 }
 
 /** One unresolved reference, located on its node. */
 export interface SpecRefProblem {
-  code: 'AGENT_REF_UNRESOLVED' | 'MCP_REF_UNRESOLVED';
+  code: 'AGENT_REF_UNRESOLVED' | 'MCP_REF_NOT_REACHABLE' | 'MCP_REF_UNRESOLVED';
   nodeId: string;
   field: 'agentRef' | 'connectionRef';
   message: string;
@@ -40,7 +43,9 @@ export interface SpecRefProblem {
  */
 export async function findSpecRefProblems(
   prisma: PrismaClient,
-  spec: WorkflowSpec
+  spec: WorkflowSpec,
+  /** The template's team, so a literal `mcp` reference can be checked for reach. */
+  templateTeamId: string | null
 ): Promise<SpecRefProblem[]> {
   const warnings: SpecRefProblem[] = [];
   const agentRefs: { id: string; key: string }[] = [];
@@ -84,18 +89,32 @@ export async function findSpecRefProblems(
       ids.length > 0
         ? await runUnscoped('existence check on author-supplied UUIDs', ['Connection'], () =>
             prisma.connection.findMany({
-              select: { id: true },
+              select: { id: true, shares: { select: { teamId: true } }, teamId: true },
               where: { id: { in: ids }, isActive: true, type: 'mcp' },
             })
           )
         : [];
-    const present = new Set(found.map((c) => c.id));
+    const byId = new Map(found.map((c) => [c.id, c]));
     for (const r of mcpRefs) {
-      if (!present.has(r.connectionRef)) {
+      const connection = byId.get(r.connectionRef);
+      if (!connection) {
         warnings.push({
           code: 'MCP_REF_UNRESOLVED',
           field: 'connectionRef',
           message: `Node '${r.id}': mcp connection '${r.connectionRef}' is not an active mcp connection — create one at /studio/mcp or this node will fail at run time.`,
+          nodeId: r.id,
+        });
+        continue;
+      }
+      // The connection exists, but a team's template may use only a connection that
+      // team owns or has been shared with it: a literal reference is not a licence to
+      // spend another team's token. Global templates are admin-authored and may use
+      // any (see `templateReachesConnection`).
+      if (!templateReachesConnection(connection, templateTeamId)) {
+        warnings.push({
+          code: 'MCP_REF_NOT_REACHABLE',
+          field: 'connectionRef',
+          message: `Node '${r.id}': mcp connection '${r.connectionRef}' does not belong to this template's team and is not shared with it — this node will be refused at run time.`,
           nodeId: r.id,
         });
       }

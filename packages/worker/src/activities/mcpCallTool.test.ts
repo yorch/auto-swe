@@ -4,12 +4,22 @@ const cancel = vi.hoisted(() => ({ ctl: new AbortController() }));
 /** Mutable so a test can pretend the call runs inside a workflow with a row. */
 const ctx = vi.hoisted(() => ({ info: { attempt: 1 } as Record<string, unknown> }));
 vi.mock('@temporalio/activity', () => ({
+  ApplicationFailure: {
+    nonRetryable: (message: string, type?: string) => {
+      const err = new Error(message) as Error & { type?: string };
+      err.type = type;
+      return err;
+    },
+  },
   Context: { current: () => ({ cancellationSignal: cancel.ctl.signal, info: ctx.info }) },
   heartbeat: vi.fn(),
 }));
+// The run and its connection: the activity refuses a connection the run's template
+// team cannot reach before it loads any tool.
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     autonomyDecision: { findFirst: vi.fn() },
+    connection: { findUnique: vi.fn() },
     workflowOutcomeReference: { create: vi.fn(), findFirst: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
   },
@@ -40,8 +50,21 @@ const mockedLoad = vi.mocked(loadMcpTools);
 beforeEach(() => {
   vi.clearAllMocks();
   cancel.ctl = new AbortController();
-  // Default: outside a workflow, so the governance guards find no run.
-  ctx.info = { attempt: 1 };
+  // Inside a workflow, as every real call is: the reachability check fails closed without a
+  // run, so a case wanting the no-run path sets `ctx.info = { attempt: 1 }` itself.
+  ctx.info = { attempt: 1, workflowExecution: { workflowId: 'wf-1' } };
+  // And the run is authorized: the connection belongs to its template team, so the access
+  // check passes and each case below exercises what it names. The fixture carries the other
+  // fields a consumer reads (`id`, for the outcome ledger) so one run serves them all.
+  (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+    id: 'run-1',
+    template: { teamId: 'team-a' },
+  });
+  (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+    isActive: true,
+    shares: [],
+    teamId: 'team-a',
+  });
 });
 
 describe('mcpCallTool', () => {
@@ -86,6 +109,23 @@ describe('mcpCallTool', () => {
       /not an active mcp connection/
     );
     expect(mockedLoad).not.toHaveBeenCalled();
+  });
+
+  it('refuses a connection the run may not use, before loading any tool', async () => {
+    // The `connectionRef` is a literal in the spec, so nothing upstream authorized it:
+    // this is the check that stops a template spending another team's MCP token.
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      isActive: true,
+      shares: [],
+      teamId: 'team-b',
+    });
+    mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
+
+    await expect(mcpCallTool({ connectionRef: 'c1', tool: 't' })).rejects.toThrow(
+      /may not use connection/
+    );
+    expect(mockedLoad).not.toHaveBeenCalled();
+    expect(mockedUrl).not.toHaveBeenCalled();
   });
 
   it('throws when the tool is missing from the server but still closes the client', async () => {
@@ -139,7 +179,13 @@ describe('mcpCallTool governance', () => {
   // Before this, an `mcp` node reached an external system with neither guard.
   beforeEach(() => {
     ctx.info = { attempt: 1, workflowExecution: { workflowId: 'wf-1' } };
-    vi.mocked(prisma.workflowRun.findUnique).mockResolvedValue({ id: 'run-1' } as never);
+    // `template` too: the reachability check reads the run's template team and refuses one
+    // it cannot attribute, so a fixture without it would be refused before the governance
+    // behaviour under test.
+    vi.mocked(prisma.workflowRun.findUnique).mockResolvedValue({
+      id: 'run-1',
+      template: { teamId: 'team-a' },
+    } as never);
   });
 
   function loadedTool(tool: unknown) {

@@ -2,6 +2,7 @@ import { loadMcpTools, sanitizeToolName } from '../agents/mcpTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { mcpUrlForConnection } from '../lib/config/mcpConnection.js';
+import { assertRunMayUseConnection } from '../lib/connectionAccess.js';
 import {
   raceActivityCancellation,
   throwIfActivityCancelled,
@@ -69,6 +70,9 @@ function mcpToolIsReadOnly(tool: unknown): boolean {
 
 async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResult> {
   throwIfActivityCancelled();
+  // The `connectionRef` is a literal in the spec, so nothing upstream authorized it:
+  // without this a template can name another team's MCP server and spend its token.
+  await assertRunMayUseConnection(input.connectionRef, 'mcp');
   const target = await mcpUrlForConnection(input.connectionRef);
   if (!target) {
     throw new Error(
