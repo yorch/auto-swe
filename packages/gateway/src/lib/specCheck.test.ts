@@ -372,7 +372,7 @@ describe('specErrorsOf and specValidationWarnings', () => {
   });
 
   it('includes lint errors among the non-blocking save warnings', () => {
-    const warnings = specValidationWarnings(NO_TERMINAL);
+    const warnings = specValidationWarnings(NO_TERMINAL as unknown as WorkflowSpec);
     expect(warnings.some((w) => w.includes('no terminate node is reachable'))).toBe(true);
   });
 });
