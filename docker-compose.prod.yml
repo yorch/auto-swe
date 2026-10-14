@@ -77,14 +77,15 @@ services:
       HARNESS_MODEL_PROXY_PORT: ${HARNESS_MODEL_PROXY_PORT-8790}
       HARNESS_MODEL_PROXY_URL: ${HARNESS_MODEL_PROXY_URL:-http://{hostname}:${HARNESS_MODEL_PROXY_PORT:-8790}}
       WORKSPACE_NETWORK: ${WORKSPACE_NETWORK:-auto-swe-workspaces}
-    group_add:
-      - "${DOCKER_GID:-999}"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      # The Docker CLI the worker shells out to talks to the socket proxy, not a socket.
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
     networks:
       - default
       - workspaces
+      - docker-proxy
     depends_on:
+      docker-socket-proxy:
+        condition: service_started
       postgres:
         condition: service_healthy
       temporal:
@@ -98,6 +99,33 @@ services:
       garage:
         condition: service_healthy
         required: false
+
+  # Docker API filter in front of the host socket. The worker reaches the daemon
+  # only through this container (DOCKER_HOST), so it never holds the socket and
+  # cannot call the API groups below that it has no use for (swarm, secrets,
+  # services, plugins, build, system, ...). It limits the API surface, NOT the
+  # options of a container the worker is allowed to create: see docs/deployment.md.
+  #   CONTAINERS  run / rm / inspect / cp / attach / wait (`docker run`, `port`, `cp`)
+  #   EXEC        `docker exec` into workspace containers
+  #   IMAGES      inspect + pull the executor image on first `docker run`
+  #   VOLUMES     `docker volume create|rm` for container steps
+  #   POST        every non-GET method: create, start, exec, delete
+  # Everything else stays denied, including NETWORKS: joining an existing network
+  # by name is resolved by the daemon, not through the API.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:${DOCKER_SOCKET_PROXY_VERSION:-0.3.0}
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      EXEC: 1
+      IMAGES: 1
+      POST: 1
+      VERSION: 1
+      VOLUMES: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-proxy
 
   web:
     image: ${APP_IMAGE_WEB:-ghcr.io/yorch/auto-swe/web:main}
@@ -133,3 +161,8 @@ networks:
   # worker's model proxy here, never the database or Temporal.
   workspaces:
     name: ${WORKSPACE_NETWORK:-auto-swe-workspaces}
+  # The worker and the socket proxy, and nothing else. `internal` gives it no
+  # route out, so the unauthenticated Docker API on :2375 is reachable by
+  # exactly these two containers.
+  docker-proxy:
+    internal: true

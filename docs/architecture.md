@@ -754,7 +754,8 @@ flowchart LR
         GW2 -->|gRPC| TMP
         WK2 -->|gRPC| TMP
         WK2 -->|artifacts| GARAGE
-        WK2 -->|/var/run/docker.sock| HOST[Docker daemon]
+        WK2 -->|DOCKER_HOST tcp| DSP[docker-socket-proxy]
+        DSP -->|/var/run/docker.sock| HOST[Docker daemon]
         GW2 --> OTEL
         WK2 --> OTEL
         WEB2 --> GW2
@@ -762,7 +763,7 @@ flowchart LR
 ```
 
 `docker-compose.app.yml` is an overlay — it references infra services and is not runnable
-standalone. The worker needs `/var/run/docker.sock` mounted to create workspaces. The object store
+standalone. The worker creates workspaces through `docker-socket-proxy`, which alone mounts `/var/run/docker.sock`. The object store
 is optional: without an S3 config, artifacts fall back to Postgres inline blobs. Garage sits behind
 the `objectstore` compose profile, so a deployment using a hosted S3 provider omits it entirely and
 points `ARTIFACT_S3_ENDPOINT` at the provider instead.
