@@ -70,5 +70,77 @@ export async function repoAutomationAccess(
 
 export type RepoAutomationAccess = NonNullable<Awaited<ReturnType<typeof repoAutomationAccess>>>;
 
+/**
+ * The team a team automation belongs to, with whether the caller may read its automations (a
+ * member of the team, or ADMIN) and manage them (ADMIN, or a LEAD of the team). Null when there
+ * is no such team or the caller is not a member — answered 404 either way.
+ */
+export async function teamAutomationAccess(prisma: PrismaClient, teamId: string, user: JwtPayload) {
+  const admin = user.role === 'ADMIN';
+  // One team by id, then the membership check below: the fetch-then-check shape.
+  const team = await prisma.team.findUnique({
+    select: {
+      id: true,
+      isActive: true,
+      memberships: { select: { role: true }, where: { userId: user.sub } },
+      name: true,
+      organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+      orgId: true,
+    },
+    where: { id: teamId },
+  });
+  if (!team) {
+    return null;
+  }
+  const role = team.memberships[0]?.role;
+  if (!admin && !role) {
+    return null;
+  }
+  return { canManage: admin || role === 'LEAD' || role === 'ADMIN', team };
+}
+
+export type TeamAutomationAccess = NonNullable<Awaited<ReturnType<typeof teamAutomationAccess>>>;
+
+/** What an automation belongs to, as its routes act on it. */
+export type AutomationOwnerAccess =
+  | ({ kind: 'repository' } & RepoAutomationAccess)
+  | ({ kind: 'team' } & TeamAutomationAccess);
+
+/**
+ * The caller's access to what an automation belongs to: its repository when it has one (a row
+ * with a repository is a repository automation whatever else it names), else its team. Null
+ * when the caller may not read it.
+ */
+export async function automationOwnerAccess(
+  prisma: PrismaClient,
+  owner: { connectionId: string | null; teamId: string | null },
+  user: JwtPayload,
+  gate: RepoAccessGate | undefined
+): Promise<AutomationOwnerAccess | null> {
+  if (owner.connectionId !== null) {
+    const access = await repoAutomationAccess(prisma, owner.connectionId, user, gate);
+    return access ? { kind: 'repository', ...access } : null;
+  }
+  if (owner.teamId !== null) {
+    const access = await teamAutomationAccess(prisma, owner.teamId, user);
+    return access ? { kind: 'team', ...access } : null;
+  }
+  return null;
+}
+
+/** The team an owner's decisions are made for: the repository's owning team, or the team. */
+export function ownerTeam(access: AutomationOwnerAccess): { id: string; orgId: string } {
+  return access.kind === 'repository'
+    ? { id: access.repo.teamId, orgId: access.repo.team.orgId }
+    : { id: access.team.id, orgId: access.team.orgId };
+}
+
 export const MANAGE_FORBIDDEN =
   'Requires ADMIN role, or LEAD membership on the repository owning team';
+
+export const TEAM_MANAGE_FORBIDDEN = 'Requires ADMIN role, or LEAD membership on the team';
+
+/** The refusal for a caller who may read an owner's automations but not manage them. */
+export function manageForbidden(access: AutomationOwnerAccess): string {
+  return access.kind === 'repository' ? MANAGE_FORBIDDEN : TEAM_MANAGE_FORBIDDEN;
+}

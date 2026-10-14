@@ -23,6 +23,8 @@ interface Repo {
   members: string[];
   /** Members of each team the repository is shared with (`ConnectionTeamShare`). */
   sharedWith?: string[][];
+  /** Users with a current GitHub read permission, for an enforcing access gate. Git repos only. */
+  access?: string[];
 }
 
 interface RunShape {
@@ -35,6 +37,8 @@ interface RunShape {
   connection: Repo | null;
   workRequest: {
     requestedById: string | null;
+    /** Members of the team whose service principal requested it, when a machine did. */
+    requestedByService?: { members: string[] } | null;
     repos: Repo[];
     connection: Repo | null;
     /** Epics and PRD runs; defaults to false. */
@@ -76,6 +80,16 @@ function matchesRepo(where: Record<string, unknown>, repo: Repo | null): boolean
       return (value as Record<string, unknown>[]).some((w) => matchesRepo(w, repo));
     case 'team':
       return matchesTeam(value as Record<string, unknown>, repo.members);
+    case 'type':
+      // Every repository here is a git repository.
+      if (JSON.stringify(value) !== JSON.stringify({ not: 'git_repo' })) {
+        throw new Error(`unrecognised repository predicate: ${JSON.stringify(where)}`);
+      }
+      return false;
+    case 'repoAccess': {
+      const { userId } = (value as { some: { userId: string } }).some;
+      return (repo.access ?? []).includes(userId);
+    }
     case 'shares': {
       const { team } = (value as { some: { team: Record<string, unknown> } }).some;
       return (repo.sharedWith ?? []).some((members) => matchesTeam(team, members));
@@ -107,6 +121,11 @@ function matchesRun(where: Record<string, unknown>, run: RunShape): boolean {
       }
       case 'connection':
         return matchesRepo(v, run.connection);
+      case 'connectionId':
+        if (value !== null) {
+          throw new Error(`unrecognised connectionId predicate: ${JSON.stringify(value)}`);
+        }
+        return run.connection === null;
       case 'launchedById':
         return run.launchedById === value;
       case 'workRequest': {
@@ -117,6 +136,19 @@ function matchesRun(where: Record<string, unknown>, run: RunShape): boolean {
         return Object.entries(v).every(([wk, wv]) => {
           if (wk === 'requestedById') {
             return wr.requestedById === wv;
+          }
+          if (wk === 'connectionId') {
+            if (wv !== null) {
+              throw new Error(`unrecognised connectionId predicate: ${JSON.stringify(wv)}`);
+            }
+            return wr.connection === null;
+          }
+          if (wk === 'requestedByService') {
+            const { team, ...rest } = wv as { team?: Record<string, unknown> };
+            if (Object.keys(rest).length > 0 || !team) {
+              throw new Error(`unrecognised requestedByService predicate: ${JSON.stringify(wv)}`);
+            }
+            return !!wr.requestedByService && matchesTeam(team, wr.requestedByService.members);
           }
           if (wk === 'isCrossRepo') {
             return (wr.isCrossRepo ?? false) === wv;
@@ -155,6 +187,51 @@ function run(overrides: Partial<RunShape> = {}): RunShape {
 const engineer = { role: 'ENGINEER', sub: ME };
 const visible = (r: RunShape) =>
   matchesRun(buildWorkflowRunVisibilityFilter(engineer, undefined), r);
+
+describe('runs a service principal requested', () => {
+  const controls = (r: RunShape, gate?: Parameters<typeof buildWorkflowRunControlFilter>[1]) =>
+    matchesRun(buildWorkflowRunControlFilter(engineer, gate), r);
+  const byPrincipal = (members: string[], repo: Repo | null) =>
+    run({
+      workRequest: {
+        connection: repo,
+        repos: repo ? [repo] : [],
+        requestedById: null,
+        requestedByService: { members },
+      },
+    });
+
+  it("reach the principal's team when they name no repository", () => {
+    expect(visible(byPrincipal([ME], null))).toBe(true);
+    expect(controls(byPrincipal([ME], null))).toBe(true);
+    expect(visible(byPrincipal([OTHER], null))).toBe(false);
+    expect(controls(byPrincipal([OTHER], null))).toBe(false);
+  });
+
+  it("do not reach the principal's team on a repository the member cannot reach", () => {
+    // The principal's team is mine, but the repository is another team's.
+    expect(visible(byPrincipal([ME], otherRepo))).toBe(false);
+    expect(controls(byPrincipal([ME], otherRepo))).toBe(false);
+  });
+
+  it('follow the repository terms on a repository: shared teams see, owners control', () => {
+    const sharedWithMe: Repo = { members: [OTHER], sharedWith: [[ME]], teamId: OTHER_TEAM };
+    expect(visible(byPrincipal([ME], sharedWithMe))).toBe(true);
+    expect(controls(byPrincipal([ME], sharedWithMe))).toBe(false);
+    expect(controls(byPrincipal([ME], myRepo))).toBe(true);
+  });
+
+  it('are hidden under an enforcing gate from a member without a GitHub permission', () => {
+    const gate = { mode: 'enforce' as const, staleAfterHours: 24 };
+    const visibleUnderGate = (r: RunShape) =>
+      matchesRun(buildWorkflowRunVisibilityFilter(engineer, gate), r);
+    expect(visibleUnderGate(byPrincipal([ME], myRepo))).toBe(false);
+    expect(controls(byPrincipal([ME], myRepo), gate)).toBe(false);
+    const withAccess: Repo = { ...myRepo, access: [ME] };
+    expect(visibleUnderGate(byPrincipal([ME], withAccess))).toBe(true);
+    expect(controls(byPrincipal([ME], withAccess), gate)).toBe(true);
+  });
+});
 
 describe('buildWorkflowRunVisibilityFilter', () => {
   it('ADMIN sees everything', () => {

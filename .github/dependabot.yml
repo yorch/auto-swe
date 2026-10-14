@@ -9,7 +9,8 @@ updates:
   # docker CLI stage), the agent executor image (defaults/Dockerfile.node) and the pinned
   # infra images in the compose files (pgvector, postgres, temporal, garage,
   # otel-lgtm, watchtower). Compose tags are `${VAR:-default}` expressions;
-  # Dependabot updates the default.
+  # Dependabot updates the default. References written `tag@sha256:<digest>`
+  # get the tag and the digest bumped together.
   - package-ecosystem: docker
     directories:
       - /packages/gateway

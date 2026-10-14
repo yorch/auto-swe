@@ -870,3 +870,132 @@ describe('workflowRunRoutes GET / (status and templateVersion filters)', () => {
     expect(JSON.stringify(where.OR)).toContain('"shares"');
   });
 });
+
+describe('workflowRunRoutes with a service principal token', () => {
+  const SP = '33333333-3333-4333-8333-333333333333';
+  const RUN = '6f9619ff-8b86-4a08-8b86-3e6f9619ffd1';
+  const SERVICE = { authorization: 'Bearer ats_service' };
+
+  async function buildServiceApp(scopes: string[]) {
+    const built = await buildApp('ENGINEER');
+    const prisma = built.prisma as unknown as Record<string, unknown>;
+    prisma.apiToken = {
+      findUnique: vi.fn().mockResolvedValue({
+        expiresAt: new Date(Date.now() + 86_400_000),
+        id: 'tok-1',
+        revokedAt: null,
+        scopes,
+        servicePrincipal: {
+          connectionIds: [],
+          disabledAt: null,
+          id: SP,
+          name: 'deployer',
+          team: { isActive: true, organization: { isActive: true } },
+          teamId: 'team-1',
+          templateIds: [],
+        },
+        servicePrincipalId: SP,
+        user: null,
+        userId: null,
+      }),
+      update: vi.fn().mockResolvedValue({}),
+    };
+    (built.app as unknown as { auth: Record<string, unknown> }).auth.hashToken = (t: string) =>
+      `hash:${t}`;
+    return built;
+  }
+
+  it('lists only the runs the principal requested, whatever scope it asks for', async () => {
+    const { app, prisma } = await buildServiceApp(['runs:read']);
+    const res = await app.inject({
+      headers: SERVICE,
+      method: 'GET',
+      url: '/api/v1/workflow-runs?scope=ALL',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(lastListWhere(prisma)).toMatchObject({
+      workRequest: { requestedByServiceId: SP },
+    });
+    expect(lastListWhere(prisma)).not.toHaveProperty('OR');
+  });
+
+  it('reads one run only through the same filter', async () => {
+    const { app, prisma } = await buildServiceApp(['runs:read']);
+    const res = await app.inject({
+      headers: SERVICE,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${RUN}`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(prisma.workflowRun.findFirst.mock.calls[0][0].where).toEqual({
+      id: RUN,
+      workRequest: { requestedByServiceId: SP },
+    });
+  });
+
+  it('refuses traces to a principal, on the run detail and the traces route', async () => {
+    const { app, prisma } = await buildServiceApp(['runs:read']);
+    for (const q of ['includeTraces=true', 'fullTraces=true']) {
+      const res = await app.inject({
+        headers: SERVICE,
+        method: 'GET',
+        url: `/api/v1/workflow-runs/${RUN}?${q}`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('TRACES_NOT_AVAILABLE');
+    }
+    expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
+  });
+
+  it('needs runs:read to read and runs:cancel to cancel', async () => {
+    const { app } = await buildServiceApp(['runs:launch']);
+    const list = await app.inject({
+      headers: SERVICE,
+      method: 'GET',
+      url: '/api/v1/workflow-runs',
+    });
+    expect(list.statusCode).toBe(403);
+    const cancel = await app.inject({
+      headers: SERVICE,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${RUN}/cancel`,
+    });
+    expect(cancel.statusCode).toBe(403);
+    expect(cancel.json().error.code).toBe('INSUFFICIENT_SCOPE');
+  });
+
+  it('cancels a run it launched and audits the principal, not a user', async () => {
+    const { app, prisma, temporal } = await buildServiceApp(['runs:cancel']);
+    prisma.workflowRun.findFirst.mockResolvedValueOnce({
+      id: RUN,
+      status: 'RUNNING',
+      template: { name: 'Agent Run', teamId: null },
+      workflowId: 'agent-x',
+    });
+    const res = await app.inject({
+      headers: SERVICE,
+      method: 'POST',
+      url: `/api/v1/workflow-runs/${RUN}/cancel`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.workflowRun.findFirst.mock.calls[0][0].where).toMatchObject({
+      workRequest: { requestedByServiceId: SP },
+    });
+    expect(temporal.cancelWorkflow).toHaveBeenCalledWith('agent-x');
+    expect(prisma.configAuditLog.create.mock.calls[0][0].data).toMatchObject({
+      actorId: null,
+      afterJson: { servicePrincipalId: SP, status: 'CANCELLED' },
+    });
+  });
+
+  it('cannot reach a run route that does not opt in', async () => {
+    const { app } = await buildServiceApp(['runs:read', 'runs:cancel', 'runs:launch']);
+    const res = await app.inject({
+      headers: SERVICE,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${RUN}/traces`,
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe('SERVICE_TOKEN_NOT_ALLOWED');
+  });
+});

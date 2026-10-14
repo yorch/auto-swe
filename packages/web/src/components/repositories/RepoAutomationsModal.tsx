@@ -32,7 +32,7 @@ export function RepoAutomationsModal({
       subtitle="When something happens on this repository and an automation matches, the platform starts its template — for a failed CI run, a diagnosis and, in fix mode, a draft fix."
       title={connectionLabel(repo)}
     >
-      <EventAutomationsPanel connectionId={repo.id} />
+      <EventAutomationsPanel owner={{ connectionId: repo.id }} />
       <ModalFooter cancelLabel="Close" onCancel={onClose} />
     </Modal>
   );

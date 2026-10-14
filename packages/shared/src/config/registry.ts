@@ -155,6 +155,23 @@ export const SETTING_DEFINITIONS = {
     unit: 'messages',
   }),
 
+  // ── Eval benchmark ─────────────────────────────────────────────────────────
+  // Read by flake screening, which runs on cases of every tenant from one
+  // deployment-wide sweep: GLOBAL only.
+  'evals.flakeScreenRuns': defineSetting({
+    defaultValue: 3,
+    description:
+      "How many times a benchmark case's reference (its golden test at the pinned commit) is run when the case is screened for flakiness. A case is scored by the regression harness only once its reference passed every one of these runs; one that failed any run is excluded as flaky. Each run provisions a workspace and runs the golden test, so this multiplies screening cost. A change applies to cases screened afterwards; cases already screened keep their result.",
+    group: 'evals',
+    label: 'Flake-screen runs per case',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(20),
+    unit: 'runs',
+  }),
+
   // ── GitHub hosts and per-user credentials ──────────────────────────────────
   // Where a GitHub credential may be sent, and whether a user may attach their
   // own token to a repository, used only for runs they launch. Deployment-wide
@@ -652,6 +669,19 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
+  }),
+  'workspace.harnessContextTokens': defineSetting({
+    defaultValue: 120_000,
+    description:
+      "Token budget for the conversation a harness carries from one turn to the next, estimated at three characters per token and counted with the system prompt and tool definitions. Applies to the Pi runtime. Before each model call over the budget, old tool output and old file content in write/edit calls are replaced with short stubs, then the oldest whole exchanges (a prompt and the work that answered it) are dropped, then the current exchange is stubbed oldest first; the current prompt is always sent. Set it below the model's context window, leaving room for its reply. The Mastra loop starts each turn afresh and does not read it.",
+    group: 'workspace',
+    label: 'Harness context budget',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.min(1_000).max(2_000_000),
+    unit: 'tokens',
   }),
   // Pinned because the runtime decides who executes the tool loop and which
   // credential enters the workspace: a run that began on one runtime must not

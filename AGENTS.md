@@ -169,7 +169,7 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "83 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
+  | Countable claims — "15 node types", "84 Prisma models", "35 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
@@ -856,7 +856,10 @@ Dockerfile; it has the specific rules and what has already been tried and does n
 - Do **NOT** use K8s APIs — workspaces use Docker-in-Docker for isolation
 - Do **NOT** auto-merge PRs on target repositories — humans merge
 - Do **NOT** store secrets in code or commit `.env` files
-- Do **NOT** modify the Temporal server or its configuration
+- Do **NOT** modify the Temporal server or its configuration. The one sanctioned difference is
+  `infra/dynamicconfig/production-sql.yaml`, which `docker-compose.prod.yml` mounts instead of
+  `development-sql.yaml`: the same file minus the development-only search-attribute cache setting.
+  Keep the two identical otherwise
 - Do **NOT** use raw SQL except for pgvector operations — use the Prisma client for everything else.
   The one other exception is a lock Prisma cannot express — `SELECT … FOR UPDATE` on a row or
   `pg_advisory_xact_lock` inside a transaction — and each such call is marked with a

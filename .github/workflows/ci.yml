@@ -121,6 +121,11 @@ jobs:
       - name: Generate Prisma client
         run: yarn db:generate
 
+      # The Pi smoke suite spawns a child process that resolves @auto-swe/shared/*
+      # through the package exports, which point at dist.
+      - name: Build shared
+        run: yarn workspace @auto-swe/shared build
+
       # The real runtime against a real container and a mock model API: the SDK,
       # `docker exec`, the musl binary from node_modules and the policy hook together.
       - name: Claude Code harness (Docker-backed tests)
@@ -133,7 +138,7 @@ jobs:
       - name: Pi harness (Docker-backed tests)
         env:
           PI_DOCKER_TEST: '1'
-        run: yarn test packages/worker/src/agents/pi/runtime.docker.test.ts
+        run: yarn test packages/worker/src/agents/pi/runtime.docker.test.ts packages/worker/src/agents/pi/smoke.docker.test.ts
 
       # The trusted finalize path's real shell against a deliberately hostile
       # agent container (a lying `git`, `* -diff`, a planted symlink, a secret).
@@ -210,6 +215,7 @@ jobs:
           yarn test packages/worker/src/agents/claudeCode/runtime.docker.test.ts
           packages/worker/src/activities/agentRunFinalize.docker.test.ts
           packages/worker/src/agents/pi/runtime.docker.test.ts
+          packages/worker/src/agents/pi/smoke.docker.test.ts
 
   # Real-database job: applies every migration to a fresh Postgres+pgvector
   # and runs the seed. The unit-test job deliberately uses an unreachable
@@ -337,6 +343,14 @@ jobs:
         env:
           WORK_REQUEST_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/workRequests.idempotency.pg.test.ts
+
+      # Service principals: the api_tokens exactly-one-owner CHECK, the principal → tokens
+      # cascade, and the launch guard's row lock admitting one of two concurrent launches at
+      # maxInFlight = 1 are database behaviour a mocked Prisma cannot show.
+      - name: Service principals (database-backed tests)
+        env:
+          SERVICE_PRINCIPAL_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/servicePrincipals.pg.test.ts
 
       # CI-failure triggers: the per-trigger advisory lock, the unique dedupe key and the
       # CHECK constraints decide concurrent deliveries, which a mocked Prisma cannot show.

@@ -9,6 +9,7 @@ const { checkSensitiveFilePath, scanShellCommand } = vi.hoisted(() => ({
 vi.mock('../../lib/sensitiveFileScanner.js', () => ({ checkSensitiveFilePath }));
 vi.mock('../../lib/shellCommandScanner.js', () => ({ scanShellCommand }));
 
+import { ARG_STUB } from './compaction.js';
 import {
   canonicalisePiArgs,
   decidePiToolCall,
@@ -86,6 +87,31 @@ describe('resolving a path before it is decided', () => {
     expect(bash.command).toBe('cat @x');
 
     expect(canonicalisePiArgs('read', { path: '~/.bashrc' })).toMatch(/^Path rejected/);
+  });
+});
+
+describe('the history placeholder for elided file content', () => {
+  const marker = `see ${ARG_STUB}`;
+  it('is refused as the content of a write or the new text of an edit', async () => {
+    const calls: [string, Record<string, unknown>][] = [
+      ['write', { content: marker, path: `${REPO}/a.ts` }],
+      ['edit', { newText: marker, oldText: 'a', path: `${REPO}/a.ts` }],
+      ['edit', { edits: [{ newText: marker, oldText: 'a' }], path: `${REPO}/a.ts` }],
+    ];
+    for (const [tool, input] of calls) {
+      const verdict = await decidePiToolCall(tool, input, ctx);
+      expect(verdict).toMatchObject({ allow: false });
+      expect((verdict as { reason: string }).reason).toContain('placeholder');
+    }
+  });
+
+  it('does not stop ordinary writes, or a placeholder as text to find', async () => {
+    await expect(
+      decidePiToolCall('write', { content: 'real', path: `${REPO}/a.ts` }, ctx)
+    ).resolves.toMatchObject({ allow: true });
+    await expect(
+      decidePiToolCall('edit', { newText: 'b', oldText: ARG_STUB, path: `${REPO}/a.ts` }, ctx)
+    ).resolves.toMatchObject({ allow: true });
   });
 });
 

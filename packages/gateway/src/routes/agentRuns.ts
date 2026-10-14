@@ -39,9 +39,14 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { isOrgMember } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { validateRunConnection } from '../lib/runConnection.js';
+import {
+  idempotencyCallerScope,
+  sendServiceLaunchRefusal,
+  servicePrincipalLaunchGuard,
+} from '../lib/servicePrincipals.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
-import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { type RouteCaller, requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
 
 /**
  * `POST /api/v1/agent-runs`: run one library Agent against one repository.
@@ -102,8 +107,11 @@ interface LaunchInput {
   maxWallClockSeconds?: number;
   prompt: string;
   repoId: string;
-  /** The user the run acts as and is charged through. */
-  user: JwtPayload;
+  /**
+   * Who launches: a person, whom the run acts as (`launchedById`), or a service principal, whose
+   * run uses the platform credential and is attributed to it (`requestedByServiceId`).
+   */
+  caller: RouteCaller;
   /** Re-runs keep their request identity while allocating a fresh delivery branch. */
   workRequestId?: string;
 }
@@ -121,7 +129,9 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     reply: FastifyReply,
     input: LaunchInput
   ) {
-    const { user } = input;
+    const { caller } = input;
+    const user = caller.kind === 'user' ? caller.user : null;
+    const service = caller.kind === 'service' ? caller.principal : undefined;
     const { key, version } = splitRef(input.agent);
 
     if (!isLaunchableAgentKey(key)) {
@@ -134,7 +144,9 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     // Authorisation: repository access (owning OR shared team), GitHub
-    // permission, the caller as the run's identity, the org's monthly cap.
+    // permission, the caller as the run's identity, the org's monthly cap. A
+    // service principal instead needs the repository on its allowlist and
+    // reachable by its team, and the org under its cap.
     const connection = await validateRunConnection(
       {
         connectionId: input.repoId,
@@ -142,6 +154,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         log: request.log,
         prisma: fastify.prisma,
         providerMeta: null,
+        ...(service ? { service } : {}),
         templateTeamId: null,
         user,
       },
@@ -330,11 +343,11 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     const workRequestId = input.workRequestId ?? attemptId;
     const externalTicketId = agentRunTicketId(attemptId);
     const repo8 = repo.id.replace(/-/g, '').slice(0, 8);
-    // The key is scoped to the caller as well as the repo: two users who pick the
+    // The key is scoped to the caller as well as the repo: two callers who pick the
     // same key on one repo must not collide, and a 409 must not reveal the other's run.
-    const user8 = user.sub.replace(/-/g, '').slice(0, 8);
+    const caller8 = idempotencyCallerScope(caller);
     const temporalWorkflowId = input.idempotencyKey
-      ? workflowIdFromIdempotencyKey('agent', `${repo8}-${user8}`, input.idempotencyKey)
+      ? workflowIdFromIdempotencyKey('agent', `${repo8}-${caller8}`, input.idempotencyKey)
       : `agent-${repo8}-${crypto.randomUUID().replace(/-/g, '')}`;
     const { branchPrefix } = await resolveWorkflowDefaults();
     if (input.baseBranch && isPlatformWorkBranch(input.baseBranch, branchPrefix)) {
@@ -360,8 +373,9 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       connectionId: repo.id,
       description: input.prompt,
       externalTicketId,
-      // The run acts as, and uses the saved GitHub credential of, its launcher.
-      launchedById: user.sub,
+      // A person's run acts as, and uses the saved GitHub credential of, its
+      // launcher. A service principal's uses the platform credential.
+      ...(user ? { launchedById: user.sub } : {}),
       payload,
       repoId: repo.id,
       requestPayload,
@@ -398,7 +412,8 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
                 externalTicketId,
                 id: workRequestId,
                 payload: payload as object,
-                requestedById: user.sub,
+                requestedById: user?.sub ?? null,
+                requestedByServiceId: service?.servicePrincipalId ?? null,
                 requestPayload,
                 templateId: template.id,
                 templateVersion: template.activeVersion,
@@ -413,9 +428,22 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateId: template.id,
           templateVersion: template.activeVersion as number,
         }),
-      { log: fastify.log, sourceAuthorization: { actor: user } }
+      {
+        ...(service
+          ? {
+              guard: servicePrincipalLaunchGuard(service.servicePrincipalId, {
+                connectionId: repo.id,
+              }),
+            }
+          : {}),
+        log: fastify.log,
+        sourceAuthorization: user ? { actor: user } : {},
+      }
     );
     if (!result.ok) {
+      if (result.reason === 'GUARD_REFUSED') {
+        return sendServiceLaunchRefusal(reply, result.refusal);
+      }
       return error(reply, 409, 'RUN_CONFLICT', 'A run with this idempotency key already exists');
     }
     return reply.status(201).send({
@@ -583,23 +611,26 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
+      // Open to service principals: docs/service-principals.md.
+      // `runs:agent`, not `runs:launch`: a free-form prompt to an agent of the caller's choosing.
+      config: { serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: CreateAgentRunBody, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
+      const caller = requireCaller(request);
       const b: CreateAgentRunBody = request.body;
       return launch(request, reply, {
         agent: b.agent,
         ...(b.baseBranch ? { baseBranch: b.baseBranch } : {}),
         budgetTier: b.budgetTier,
+        caller,
         deliver: b.deliver,
         idempotencyKey: request.headers['idempotency-key'],
         maxSteps: b.maxSteps,
         maxWallClockSeconds: b.maxWallClockSeconds,
         prompt: b.prompt,
         repoId: b.repoId,
-        user,
       });
     }
   );
@@ -657,13 +688,13 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         // A re-run takes the default tier: the original's is on its ledger row and
         // a re-run is a fresh spend decision by whoever re-runs it.
         budgetTier: 'STANDARD',
+        caller: { kind: 'user', user },
         deliver: p.deliver,
         idempotencyKey: request.headers['idempotency-key'],
         maxSteps: p.maxSteps,
         maxWallClockSeconds: p.maxWallClockSeconds,
         prompt,
         repoId: prev.connectionId,
-        user,
         workRequestId: request.params.workRequestId,
       });
     }

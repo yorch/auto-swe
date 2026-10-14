@@ -7,7 +7,11 @@ import { api } from '@/lib/api';
 /** An event automation (docs/automations.md), as the API returns it. */
 export interface EventAutomation {
   id: string;
-  connectionId: string;
+  /** Its repository; null for a team's automation. */
+  connectionId: string | null;
+  /** Its team, for an automation with no repository. */
+  teamId?: string | null;
+  team?: { id: string; name: string } | null;
   name: string;
   enabled: boolean;
   /** An event source key, e.g. `github.workflow_run.failed`. */
@@ -54,31 +58,49 @@ export type EventAutomationInput = Pick<
   'name' | 'enabled' | 'filters' | 'inputs' | 'cooldownMinutes' | 'maxRunsPerDay' | 'templateId'
 >;
 
-const BASE = '/api/v1/automations/events';
-const key = (connectionId: string) => ['automations', 'events', connectionId];
+/** What event automations belong to: a repository, or a team (for a team-target source). */
+export type AutomationOwner = { connectionId: string } | { teamId: string };
 
-export function useEventAutomations(connectionId: string) {
+/** The owner as the API's query and body name it. */
+function ownerParam(owner: AutomationOwner): { connectionId: string } | { teamId: string } {
+  return 'connectionId' in owner ? { connectionId: owner.connectionId } : { teamId: owner.teamId };
+}
+
+function ownerQuery(owner: AutomationOwner): string {
+  return 'connectionId' in owner
+    ? `connectionId=${encodeURIComponent(owner.connectionId)}`
+    : `teamId=${encodeURIComponent(owner.teamId)}`;
+}
+
+const BASE = '/api/v1/automations/events';
+const key = (owner: AutomationOwner) => [
+  'automations',
+  'events',
+  'connectionId' in owner ? owner.connectionId : `team:${owner.teamId}`,
+];
+
+export function useEventAutomations(owner: AutomationOwner) {
   return useQuery({
     queryFn: () =>
       api
         .get<{ data: { canManage: boolean; automations: EventAutomation[] } }>(
-          `${BASE}?connectionId=${encodeURIComponent(connectionId)}`
+          `${BASE}?${ownerQuery(owner)}`
         )
         .then((r) => r.data),
-    queryKey: key(connectionId),
+    queryKey: key(owner),
   });
 }
 
-export function useAutomationTemplates(connectionId: string, source: string, enabled = true) {
+export function useAutomationTemplates(owner: AutomationOwner, source: string, enabled = true) {
   return useQuery({
     enabled,
     queryFn: () =>
       api
         .get<{ data: AutomationTemplate[] }>(
-          `${BASE}/templates?connectionId=${encodeURIComponent(connectionId)}&source=${encodeURIComponent(source)}`
+          `${BASE}/templates?${ownerQuery(owner)}&source=${encodeURIComponent(source)}`
         )
         .then((r) => r.data),
-    queryKey: [...key(connectionId), 'templates', source],
+    queryKey: [...key(owner), 'templates', source],
   });
 }
 
@@ -112,27 +134,27 @@ export function useRetryAutomationFire(automationId: string) {
   });
 }
 
-/** Everything that lists automations: the repository's, and the cross-kind list. */
-function useInvalidate(connectionId: string) {
+/** Everything that lists automations: the owner's, and the cross-kind list. */
+function useInvalidate(owner: AutomationOwner) {
   const qc = useQueryClient();
   return () =>
     Promise.all([
-      qc.invalidateQueries({ queryKey: key(connectionId) }),
+      qc.invalidateQueries({ queryKey: key(owner) }),
       qc.invalidateQueries({ queryKey: ['automations', 'all'] }),
     ]);
 }
 
-export function useCreateEventAutomation(connectionId: string) {
-  const invalidate = useInvalidate(connectionId);
+export function useCreateEventAutomation(owner: AutomationOwner) {
+  const invalidate = useInvalidate(owner);
   return useMutation({
     mutationFn: (body: EventAutomationInput & { source: string }) =>
-      api.post(BASE, { ...body, connectionId }),
+      api.post(BASE, { ...body, ...ownerParam(owner) }),
     onSuccess: invalidate,
   });
 }
 
-export function useUpdateEventAutomation(connectionId: string) {
-  const invalidate = useInvalidate(connectionId);
+export function useUpdateEventAutomation(owner: AutomationOwner) {
+  const invalidate = useInvalidate(owner);
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<EventAutomationInput> & { id: string }) =>
       api.patch(`${BASE}/${id}`, body),
@@ -140,8 +162,8 @@ export function useUpdateEventAutomation(connectionId: string) {
   });
 }
 
-export function useDeleteEventAutomation(connectionId: string) {
-  const invalidate = useInvalidate(connectionId);
+export function useDeleteEventAutomation(owner: AutomationOwner) {
+  const invalidate = useInvalidate(owner);
   return useMutation({
     mutationFn: (id: string) => api.delete(`${BASE}/${id}`),
     onSuccess: invalidate,

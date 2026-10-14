@@ -1,7 +1,8 @@
 /**
- * The event-automation engine (docs/automations.md): one occurrence of an event source on a
- * repository → the first matching automation → one decision, recorded in the ledger
- * (`AutomationFire`) → at most one run.
+ * The event-automation engine (docs/automations.md): one occurrence of an event source on an
+ * owner (a repository, or a team for a source whose automations target one) → the first
+ * matching automation → one decision, recorded in the ledger (`AutomationFire`, by its owner
+ * key) → at most one run.
  *
  * Everything decided here is decided from the signed webhook alone — no call to the host — and
  * a source's worker step decides again from the host's own record before anything is changed.
@@ -16,6 +17,9 @@ import {
   type AutomationOutcome,
   buildAutomationPayload,
   type EventSource,
+  isRepositoryOwnerKey,
+  ownerKeyHost,
+  repositoryOwnerKey,
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
@@ -25,6 +29,10 @@ import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAcces
 import { isRepoMember } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import {
+  isWorkspaceProviderType,
+  type WorkspaceProviderType,
+} from '@auto-swe/shared/lib/workspaceProviders';
 import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance } from 'fastify';
@@ -114,9 +122,16 @@ function hostOf(url: string | undefined): string | null {
   }
 }
 
-/** `<host>/<owner>/<repo>`, lowercased: the repository, whichever connection row matched. */
-export function repositoryKey(host: string, repoFullName: string): string {
-  return `${host}/${repoFullName}`.toLowerCase();
+/**
+ * The advisory lock one owner's decisions are taken under. A repository's is
+ * `automation-repo:<key>`, byte for byte as it always was: during a rolling deploy old and new
+ * gateways decide side by side and must serialise on the same lock. Every other owner's is
+ * `automation-owner:<key>`.
+ */
+export function ownerLockKey(ownerKey: string): string {
+  return isRepositoryOwnerKey(ownerKey)
+    ? `automation-repo:${ownerKey}`
+    : `automation-owner:${ownerKey}`;
 }
 
 /** What the engine loads of a repository row. */
@@ -190,15 +205,29 @@ export async function handleOccurrence<F, X>(
     ...match,
     facts,
     now,
-    repoKey: repositoryKey(host, occurrence.repoFullName),
+    ownerKey: repositoryOwnerKey(host, occurrence.repoFullName),
     // A redelivery takes a failed start again; any other earlier decision stands.
     retry: { kind: 'redelivery' },
     startRetryDelayMs,
+    team: match.connection.team,
   });
 }
 
 /** A repository row as the engine reads it: its automations, installation and team. */
 export type EngineConnection = Prisma.ConnectionGetPayload<{ include: typeof connectionInclude }>;
+
+/**
+ * The team a decision is made for: the repository's owning team, or a team automation's own.
+ * Its organization is what the run spends against, and its settings switch the source off.
+ */
+export type EngineTeam = EngineConnection['team'];
+
+/** What a team automation's decision reads of its team (the shape of `EngineTeam`). */
+export const engineTeamSelect = {
+  id: true,
+  organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+  orgId: true,
+} satisfies Prisma.TeamSelect;
 
 /** Which earlier decision of the same occurrence a new one may replace. */
 export type RetryScope =
@@ -210,22 +239,28 @@ export type RetryScope =
 /**
  * Decide one occurrence for one matched automation and start its run. Shared by the webhook
  * path and a manager's retry, so a retry passes every limit a delivery does.
+ *
+ * A repository automation passes its repository row (`connection`) and that row's team; a team
+ * automation passes `connection: null` and its own team, and its run acts on no repository.
  */
 export async function decideAndStart<F, X>(
   fastify: FastifyInstance,
   source: EventSource<F, X>,
   args: {
-    connection: EngineConnection;
+    connection: EngineConnection | null;
+    /** The repository's owning team, or the team automation's own. */
+    team: EngineTeam;
     automation: AutomationRow;
     facts: X;
-    repoKey: string;
+    /** Who the decision belongs to in the ledger (`@auto-swe/shared/automation` owner keys). */
+    ownerKey: string;
     now: Date;
     retry: RetryScope;
     startRetryDelayMs: number;
   }
 ): Promise<AutomationResult> {
   const prisma = fastify.prisma;
-  const { connection, automation, facts, repoKey, now, startRetryDelayMs } = args;
+  const { connection, team, automation, facts, ownerKey, now, startRetryDelayMs } = args;
   const { branchPrefix } = await resolveWorkflowDefaults();
   // Asked again here, not only by the webhook path: a retry of a decision recorded before the
   // rule changed (a new branch prefix) must still never act on the platform's own work.
@@ -233,10 +268,10 @@ export async function decideAndStart<F, X>(
   if (ignored) {
     return { ignored: true, reason: ignored };
   }
-  const orgId = connection.team?.orgId ?? undefined;
+  const orgId = team?.orgId ?? undefined;
   const enabled = await resolveSetting(source.killSwitch, {
     ...(orgId ? { orgId } : {}),
-    teamId: connection.teamId,
+    teamId: team.id,
   });
   if (enabled !== true) {
     return { ignored: true, reason: `${source.label} automations are switched off` };
@@ -245,10 +280,10 @@ export async function decideAndStart<F, X>(
   const keys = source.keys(facts);
   const fireBase = {
     automationId: automation.id,
-    connectionId: connection.id,
-    dedupeKey: source.dedupeKey(repoKey, facts),
+    connectionId: connection?.id ?? null,
+    dedupeKey: source.dedupeKey(ownerKey, facts),
     facts: facts as Prisma.InputJsonObject,
-    repoKey,
+    ownerKey,
     scopeKey: keys.scope,
     source: source.key,
     subjectKey: keys.subject,
@@ -288,13 +323,11 @@ export async function decideAndStart<F, X>(
     let requestedById: string | null = null;
     if (source.actor) {
       const actor = source.actor(facts);
-      const decided = await actorLaunchDecision(
-        prisma,
-        repoKey,
-        actor.id,
-        connection.id,
-        fastify.log
-      );
+      // Only a repository's members act through a source with an actor; a team automation
+      // has no repository to be a member of.
+      const decided = connection
+        ? await actorLaunchDecision(prisma, ownerKey, actor.id, connection.id, fastify.log)
+        : ACTOR_NEEDS_REPOSITORY;
       if ('refused' in decided) {
         return recordDecision(
           prisma,
@@ -305,7 +338,7 @@ export async function decideAndStart<F, X>(
       }
       requestedById = decided.userId;
     }
-    const org = connection.team?.organization;
+    const org = team?.organization;
     if (org && (await isOrgOverBudget(prisma, org.id, org.monthlyBudgetUsdCents))) {
       return recordDecision(
         prisma,
@@ -318,7 +351,7 @@ export async function decideAndStart<F, X>(
       prisma,
       source,
       automation.templateId,
-      connection.teamId
+      team.id
     );
     if (!template) {
       fastify.log.warn(
@@ -339,7 +372,7 @@ export async function decideAndStart<F, X>(
       source,
       template.inputSchema,
       automation.inputs,
-      connection.id,
+      connection?.id ?? null,
       facts
     );
     if (!built.ok) {
@@ -359,14 +392,16 @@ export async function decideAndStart<F, X>(
     const temporalWorkflowId = `${source.workflowId.prefix}-${automation.id.replace(/-/g, '').slice(0, 8)}-${source.workflowId.part(facts)}`;
     const request: RepoWorkRequest = {
       budgetTier: 'STANDARD',
-      connectionId: connection.id,
+      connectionId: connection?.id ?? null,
       description: run.description,
       externalTicketId: run.ticketId,
       payload,
-      repoId: connection.id,
+      repoId: connection?.id ?? null,
       requestPayload: JSON.stringify(payload),
       workRequestId,
-      workspaceProvider: 'git_repo',
+      // A run with no repository takes the workspace its template declares, as any template
+      // run without a connection does.
+      workspaceProvider: connection ? 'git_repo' : workspaceProviderOf(template.workspaceProvider),
     };
 
     let decided: { outcome: AutomationOutcome; reason: string } | null = null;
@@ -376,16 +411,18 @@ export async function decideAndStart<F, X>(
       launch = await launchTrackedWorkflow(
         prisma,
         {
+          // A run with no repository is the team's: its knowledge source is the team.
+          ...(connection ? {} : { knowledgeSourceTeam: { orgId: team.orgId, teamId: team.id } }),
           activeWorkflow: {
             assignedBranch: `${branchPrefix}/${run.ticketId}`,
             budgetTier: 'STANDARD',
             currentStatus: 'IMPLEMENTING',
-            repoId: connection.id,
+            repoId: connection?.id ?? null,
             temporalWorkflowId,
             workRequestId,
           },
           runInput: {
-            connectionId: connection.id,
+            connectionId: connection?.id ?? null,
             description: run.description,
             externalTicketId: run.ticketId,
             id: workRequestId,
@@ -428,7 +465,7 @@ export async function decideAndStart<F, X>(
         },
         {
           guard: async (tx) => {
-            decided = await decideUnderLock(tx, { automation, repoKey }, source, keys, now, (id) =>
+            decided = await decideUnderLock(tx, { automation, ownerKey }, source, keys, now, (id) =>
               fastify.temporal.isWorkflowGone(id)
             );
             await tx.automationFire.create({
@@ -488,22 +525,23 @@ export async function decideAndStart<F, X>(
 }
 
 /**
- * The checks that must see every earlier decision on the same repository, under a transaction
- * lock on the repository, so two deliveries cannot both pass them — however many automations or
+ * The checks that must see every earlier decision on the same owner, under a transaction lock
+ * on the owner, so two deliveries cannot both pass them — however many automations or
  * repository rows they matched. Null: start the run.
  *
  * Every check reads only the occurrence's own source. Same subject, cooldown and in-flight are
- * judged across the repository's whole ledger (`repoKey`), which outlives any automation and
+ * judged across the owner's whole ledger (`ownerKey`), which outlives any automation and
  * connection row: two automations matching two workflows that fail on one push must not open two
- * fixes, and deleting and recreating an automation must not forget what was done. Own output
- * matches the subject alone (`producedKey`), so it survives a repository rename. The daily cap
- * is the automation's own.
+ * fixes, and deleting and recreating an automation must not forget what was done. For a
+ * repository, own output matches the subject alone (`producedKey`), so it survives a repository
+ * rename; for any other owner it matches within the owner, so one team's output never
+ * suppresses another's occurrence. The daily cap is the automation's own.
  */
 export async function decideUnderLock<F, X>(
   tx: Prisma.TransactionClient,
   scope: {
     automation: Pick<AutomationRow, 'id' | 'cooldownMinutes' | 'maxRunsPerDay'>;
-    repoKey: string;
+    ownerKey: string;
   },
   source: Pick<EventSource<F, X>, 'inFlightLookbackMs' | 'key'>,
   keys: { scope: string; subject: string },
@@ -511,25 +549,32 @@ export async function decideUnderLock<F, X>(
   /** Whether Temporal says an execution is over. Throws when Temporal cannot say. */
   isWorkflowGone: (temporalWorkflowId: string) => Promise<boolean>
 ): Promise<{ outcome: AutomationOutcome; reason: string } | null> {
-  const { automation, repoKey } = scope;
-  // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises one repository's
+  const { automation, ownerKey } = scope;
+  // CLAUDE.md §7 exception: a transaction-scoped advisory lock serialises one owner's
   // decisions; Prisma has no way to express it.
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`automation-repo:${repoKey}`}, 0))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ownerLockKey(ownerKey)}, 0))`;
 
   // Something a run of the platform produced (a pushed fix commit): acting on it would only
-  // answer the platform's own output with more of it. Matched by the subject alone (a commit
-  // sha names one commit wherever it is), so a repository renamed since still recognises it.
+  // answer the platform's own output with more of it. On a repository, matched by the subject
+  // alone (a commit sha names one commit wherever it is), so a repository renamed since still
+  // recognises it; on any other owner, within that owner.
   if (
-    await tx.automationFire.findFirst({ where: { producedKey: keys.subject, source: source.key } })
+    await tx.automationFire.findFirst({
+      where: {
+        producedKey: keys.subject,
+        source: source.key,
+        ...(isRepositoryOwnerKey(ownerKey) ? {} : { ownerKey }),
+      },
+    })
   ) {
     return {
       outcome: 'SUPPRESSED_OWN_OUTPUT',
       reason: 'it is the platform’s own output (a fix it pushed); it is not acted on again',
     };
   }
-  // Every other guard counts only this source's decisions on this repository: another
-  // source's subjects and scopes are other things, whatever their keys look like.
-  const startedOnRepo = { outcome: 'STARTED', repoKey, source: source.key } as const;
+  // Every other guard counts only this source's decisions on this owner: another source's
+  // subjects and scopes are other things, whatever their keys look like.
+  const startedOnRepo = { outcome: 'STARTED', ownerKey, source: source.key } as const;
   if (
     await tx.automationFire.findFirst({ where: { ...startedOnRepo, subjectKey: keys.subject } })
   ) {
@@ -605,7 +650,7 @@ export async function decideUnderLock<F, X>(
  */
 export async function actorLaunchDecision(
   prisma: PrismaClient,
-  repoKey: string,
+  ownerKey: string,
   accountId: string,
   connectionId: string,
   log?: AccessLog
@@ -616,7 +661,11 @@ export async function actorLaunchDecision(
   if (!/^\d{1,20}$/.test(accountId)) {
     return notLinked;
   }
-  const host = repoKey.slice(0, repoKey.indexOf('/'));
+  // The account is matched on the repository's host, which only a repository key names.
+  const host = ownerKeyHost(ownerKey);
+  if (host === null) {
+    return ACTOR_NEEDS_REPOSITORY;
+  }
   // How a linked account is recorded: a bare id on github.com, `<host>:<id>` elsewhere.
   const linked =
     host === 'github.com' ? [accountId, `github.com:${accountId}`] : [`${host}:${accountId}`];
@@ -650,6 +699,16 @@ export async function actorLaunchDecision(
   }
   return { userId: user.id };
 }
+
+/** The workspace a template declares, when it is one this build knows. */
+function workspaceProviderOf(declared: string | null): WorkspaceProviderType | null {
+  return declared && isWorkspaceProviderType(declared) ? declared : null;
+}
+
+/** Why a person's action cannot start a run where there is no repository to be a member of. */
+const ACTOR_NEEDS_REPOSITORY = {
+  refused: 'cannot start work here: only a repository’s members act through this source',
+} as const;
 
 /**
  * Free the occurrence's dedupe key for a new decision, when the earlier one may be taken again.
@@ -719,7 +778,7 @@ async function recordDecision(
 
 /**
  * The template an automation starts: its own, when it names one that is active, global or its
- * repository team's, not a system template, and that its source can start; otherwise the
+ * team's (the repository's owning team, or a team automation's own), not a system template, and that its source can start; otherwise the
  * source's default. Null when there is none to start.
  */
 export async function resolveAutomationTemplate<F, X>(
@@ -727,8 +786,18 @@ export async function resolveAutomationTemplate<F, X>(
   source: Pick<EventSource<F, X>, 'defaultTemplate' | 'templateCompatible'>,
   templateId: string | null,
   teamId: string
-): Promise<{ id: string; activeVersion: number; inputSchema: unknown } | null> {
-  const select = { activeVersion: true, id: true, inputSchema: true } as const;
+): Promise<{
+  id: string;
+  activeVersion: number;
+  inputSchema: unknown;
+  workspaceProvider: string | null;
+} | null> {
+  const select = {
+    activeVersion: true,
+    id: true,
+    inputSchema: true,
+    workspaceProvider: true,
+  } as const;
   const row = templateId
     ? await prisma.workflowTemplate.findFirst({
         select,
@@ -752,5 +821,10 @@ export async function resolveAutomationTemplate<F, X>(
   ) {
     return null;
   }
-  return { activeVersion: row.activeVersion, id: row.id, inputSchema: row.inputSchema };
+  return {
+    activeVersion: row.activeVersion,
+    id: row.id,
+    inputSchema: row.inputSchema,
+    workspaceProvider: row.workspaceProvider,
+  };
 }

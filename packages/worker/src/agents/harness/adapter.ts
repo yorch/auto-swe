@@ -225,6 +225,12 @@ export interface HarnessRuntimeOptions<Access> {
    */
   maxToolOutputChars?: number;
   /**
+   * `workspace.harnessContextTokens`, the token budget for the conversation a
+   * harness carries across turns, for a harness whose conversation the worker
+   * holds (Pi); the setting's default when omitted.
+   */
+  harnessContextTokens?: number;
+  /**
    * The resolved Agent's `toolKeys` (`IMPLEMENTER_TOOL_IDS`), read as the Mastra
    * implementer reads them: null, absent or empty grants every tool.
    */

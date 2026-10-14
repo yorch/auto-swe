@@ -412,7 +412,32 @@ export interface ScheduledRevalidationInput {
   datasetSlug?: string;
 }
 
+/**
+ * Infrastructure errors (a reference run killed or timed out) after which a case's
+ * flake screen is recorded as failed, so it stops being retried.
+ */
+export const FLAKE_SCREEN_MAX_INFRA_ERRORS = 3;
+
+/** What one flake screen of a dataset's never-screened cases did (`evalFlakeScreen.ts`). */
+export interface FlakeScreenResult {
+  /** Cases whose outcome this screen recorded. */
+  screened: number;
+  /** Of those, cases whose reference passed every run. */
+  passed: number;
+  /** Cases whose reference failed at least one run (flaky, or never passing). */
+  failedCaseIds: string[];
+  /** Cases left unscreened because a reference run hit an infrastructure error. */
+  erroredCaseIds: string[];
+}
+
+/** Input for screening one dataset's never-screened cases, e.g. right after they were added. */
+export interface EvalScreenInput {
+  datasetId: string;
+}
+
 export interface ScheduledRevalidationResult {
   datasetsProcessed: number;
   caseResults: { datasetId: string; result: RevalidateResult | { error: string } }[];
+  /** The flake screen of each dataset's never-screened cases, run after its re-validation. */
+  screenResults: { datasetId: string; result: FlakeScreenResult | { error: string } }[];
 }

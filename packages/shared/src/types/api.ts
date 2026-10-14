@@ -731,7 +731,72 @@ export interface AdminTokenSummary {
   expiresAt: string | null;
   lastUsedAt: string | null;
   revokedAt: string | null;
-  user: { id: string; email: string };
+  /** The owner when this is a person's token; null for a service principal's. */
+  user: { id: string; email: string } | null;
+  /** The owner when this is a service principal's token; null for a person's. */
+  servicePrincipal: { id: string; name: string; team: { id: string; name: string } } | null;
+  /** Empty on a person's token, which acts with its user's role. */
+  scopes: string[];
+}
+
+// ── Service principals ──
+
+/**
+ * What a service principal's token may do. A route opts in by declaring the scopes it needs
+ * (`config.serviceScopes`); every other route refuses a service token.
+ *
+ * `runs:agent` is separate from `runs:launch` because an agent run takes a free-form prompt and
+ * an agent of the caller's choosing (the implementer, with a shell): a repository grant alone
+ * would otherwise let a principal run anything there. `runs:launch` starts only the templates on
+ * the principal's template allowlist.
+ */
+export const SERVICE_TOKEN_SCOPES = [
+  'runs:launch',
+  'runs:agent',
+  'runs:read',
+  'runs:cancel',
+] as const;
+export type ServiceTokenScope = (typeof SERVICE_TOKEN_SCOPES)[number];
+
+/** A service token's longest lifetime, in days. Every service token expires. */
+export const SERVICE_TOKEN_MAX_DAYS = 365;
+
+/** Tokens a principal may hold at once (unrevoked, unexpired): one live plus one rotating in. */
+export const SERVICE_TOKEN_MAX_LIVE = 2;
+
+/** One row of GET /api/v1/teams/:teamId/service-principals. */
+export interface ServicePrincipalSummary {
+  id: string;
+  teamId: string;
+  name: string;
+  description: string | null;
+  disabledAt: string | null;
+  maxRunsPerDay: number;
+  maxInFlight: number;
+  connectionIds: string[];
+  templateIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy: { id: string; email: string } | null;
+  /** Unrevoked, unexpired tokens. */
+  liveTokenCount: number;
+}
+
+/** One row of GET …/service-principals/:id/tokens — never the plaintext. */
+export interface ServiceTokenSummary {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: ServiceTokenScope[];
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+/** POST …/service-principals/:id/tokens: the plaintext appears here exactly once. */
+export interface ServiceTokenCreated extends ServiceTokenSummary {
+  token: string;
 }
 
 // ── Personal access tokens ──
@@ -993,6 +1058,11 @@ export interface EvalCaseDto {
   tags: string[];
   flakeScreened: boolean;
   flakeRuns: number;
+  /**
+   * The failed screen was recorded because the reference's runs kept being killed
+   * or timing out, not because a run failed: the case could not be checked.
+   */
+  screenEnvironmentFailed?: boolean;
   createdAt: string;
 }
 
@@ -1026,6 +1096,11 @@ export interface EvalRunDto {
    */
   candidateRuntime: ImplementerRuntimeKind | null;
   baselineRuntime: ImplementerRuntimeKind | null;
+  /**
+   * RUNNING | SUCCESS | REGRESSION | FAILED | INCONCLUSIVE. INCONCLUSIVE: the
+   * dataset had cases but none flake-screened, so nothing was scored;
+   * `summary.inconclusive` says how many await screening.
+   */
   status: string;
   /**
    * The runless budget stopped the run before every case ran, so a SUCCESS or
@@ -1061,6 +1136,17 @@ export interface EvalTrendsDto {
   scorers: EvalScorerTrend[];
 }
 
+/**
+ * POST /platform/evals/:id/rescreen (or /cases/:caseId/rescreen): the cases reset
+ * to never-screened, and whether their dataset's flake screen was started. When it
+ * was not (Temporal unreachable), the next eval run of the dataset or the
+ * re-validation sweep screens them.
+ */
+export interface EvalRescreenResultDto {
+  reset: number;
+  screenStarted: boolean;
+}
+
 /** GET /platform/evals/suite-health: what the stored data says about each benchmark's health. */
 export interface EvalSuiteHealthDto {
   datasets: Array<{
@@ -1070,7 +1156,19 @@ export interface EvalSuiteHealthDto {
     cases: number;
     /** Cases quarantined by re-validation: their reference stopped passing. */
     quarantined: number;
+    /** Cases whose reference passed every run of its flake screen. */
     flakeScreened: number;
+    /**
+     * Cases not quarantined and never flake-screened. The harness does not score
+     * them until a screen passes.
+     */
+    neverScreened: number;
+    /** The oldest 50 of them; `neverScreened` is the total. */
+    neverScreenedCaseIds: string[];
+    /** Cases not quarantined whose flake screen failed. The harness does not score them. */
+    screenFailed: number;
+    /** The oldest 50 of them; `screenFailed` is the total. */
+    screenFailedCaseIds: string[];
     /** `quarantined / cases`, 0 for an empty dataset. */
     staleRate: number;
   }>;

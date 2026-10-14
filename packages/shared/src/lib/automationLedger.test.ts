@@ -25,7 +25,7 @@ describe('automation ledger rows for schedules and webhooks', () => {
     expect(create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         dedupeKey: 'k',
-        repoKey: '',
+        ownerKey: '@owner/tpl-1',
         scopeKey: 'tpl-1',
         source: TEMPLATE_WEBHOOK_SOURCE,
         subjectKey: 'tpl-1',

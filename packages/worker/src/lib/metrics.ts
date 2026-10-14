@@ -27,7 +27,7 @@ import { metrics } from '@opentelemetry/api';
  */
 const RUN_SOURCES = {
   channel: ['SUCCESS', 'FAILED'],
-  eval: ['SUCCESS', 'REGRESSION', 'FAILED'],
+  eval: ['SUCCESS', 'REGRESSION', 'INCONCLUSIVE', 'FAILED'],
   reaper: ['SUCCESS', 'FAILED', 'TIMED_OUT', 'CANCELLED'],
   worker: ['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED', 'CANCELLED'],
 } as const;

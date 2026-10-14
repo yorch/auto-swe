@@ -67,30 +67,3 @@ export async function runGateStandalone(input: StandaloneGateInput): Promise<Gat
     await workspace.destroy();
   }
 }
-
-export interface ConsistencyResult {
-  /** True when every run passed (the case is flake-free at the floor). */
-  consistent: boolean;
-  passes: number;
-  runs: number;
-}
-
-/**
- * Flake screening (RFC §9): run a gate `k` times and report whether it passed
- * every time. A benchmark case is only promotable when its reference solution
- * passes consistently — this prevents a flaky floor from poisoning the headline
- * metric. The runner is injected so this is unit-testable without Docker.
- */
-export async function screenGateConsistency(
-  k: number,
-  run: () => Promise<GateResult>
-): Promise<ConsistencyResult> {
-  let passes = 0;
-  for (let i = 0; i < k; i += 1) {
-    const r = await run();
-    if (r.passed) {
-      passes += 1;
-    }
-  }
-  return { consistent: passes === k && k > 0, passes, runs: k };
-}

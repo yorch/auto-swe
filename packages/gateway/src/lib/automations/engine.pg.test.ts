@@ -19,7 +19,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn(async () => true) }));
 
-import { type AutomationResult, handleOccurrence } from './engine.js';
+import { type AutomationResult, decideUnderLock, handleOccurrence } from './engine.js';
 
 /**
  * Event-automation decisions against real Postgres, through the `github.workflow_run.failed`
@@ -40,7 +40,7 @@ const enabled = process.env.CI_TRIGGER_PG_TEST === '1';
 describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
   const suffix = crypto.randomBytes(4).toString('hex');
   const org = `ci-${suffix}`;
-  const repoKey = `github.com/${org}/repo`;
+  const ownerKey = `github.com/${org}/repo`;
   let automationId: string;
   let templateId: string;
   let repoId: string;
@@ -153,13 +153,15 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     started.length = 0;
     gone.clear();
     temporalDown = false;
-    await prisma.automationFire.deleteMany({ where: { repoKey } });
+    await prisma.automationFire.deleteMany({ where: { ownerKey } });
     await prisma.activeWorkflow.deleteMany({ where: { repoId } });
   });
 
   afterAll(async () => {
-    await prisma.automationFire.deleteMany({ where: { repoKey } });
-    await prisma.automation.deleteMany({ where: { connectionId: repoId } });
+    await prisma.automationFire.deleteMany({ where: { ownerKey } });
+    await runUnscoped('test fixture', ['Automation'], () =>
+      prisma.automation.deleteMany({ where: { connectionId: repoId } })
+    );
   });
 
   const outcomes = (results: AutomationResult[]) =>
@@ -257,7 +259,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     gone.add((first as { temporalWorkflowId: string }).temporalWorkflowId);
     await prisma.automationFire.updateMany({
       data: { producedKey: 'e'.repeat(40) },
-      where: { dedupeKey: { endsWith: '#400/1' }, repoKey },
+      where: { dedupeKey: { endsWith: '#400/1' }, ownerKey },
     });
     await expect(deliver({ headSha: 'e'.repeat(40), runId: '401' })).resolves.toMatchObject({
       outcome: 'SUPPRESSED_OWN_OUTPUT',
@@ -279,7 +281,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       outcome: 'STARTED',
     });
     await prisma.automation.delete({ where: { id: temp.id } });
-    const fire = await prisma.automationFire.findFirst({ where: { repoKey, scopeKey: 'tmp' } });
+    const fire = await prisma.automationFire.findFirst({ where: { ownerKey, scopeKey: 'tmp' } });
     expect(fire).toMatchObject({ automationId: null, outcome: 'STARTED' });
     const again = await prisma.automation.create({
       data: {
@@ -306,7 +308,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     await expect(deliver({ runId: '600' })).rejects.toMatchObject({
       name: 'AutomationStartError',
     });
-    const failed = await prisma.automationFire.findMany({ where: { repoKey } });
+    const failed = await prisma.automationFire.findMany({ where: { ownerKey } });
     expect(failed).toEqual([
       expect.objectContaining({ outcome: 'FAILED_TO_START', temporalWorkflowId: null }),
     ]);
@@ -316,7 +318,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     expect(started).toHaveLength(1);
     const rows = await prisma.automationFire.findMany({
       orderBy: { createdAt: 'asc' },
-      where: { repoKey },
+      where: { ownerKey },
     });
     expect(rows.map((r) => [r.outcome, r.retriedAt !== null])).toEqual([
       ['FAILED_TO_START', true],
@@ -432,7 +434,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
         outcome: 'SUPPRESSED_PRECONDITION',
       });
     } finally {
-      await prisma.automationFire.deleteMany({ where: { repoKey } });
+      await prisma.automationFire.deleteMany({ where: { ownerKey } });
       await prisma.automation.delete({ where: { id: automation.id } });
       await prisma.user.deleteMany({ where: { id: { in: [member.id, outsider.id] } } });
     }
@@ -456,6 +458,32 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       { ...base, filters: filters(), inputs: ['fix'] },
     ]) {
       await expect(prisma.automation.create({ data: bad })).rejects.toThrow();
+    }
+  });
+
+  it('keeps every automation owned: a repository or a team, never neither', async () => {
+    const base = { filters: filters(), name: 'owned', source: WORKFLOW_RUN_FAILED };
+    await expect(prisma.automation.create({ data: base })).rejects.toThrow();
+    const onTeam = await prisma.automation.create({ data: { ...base, teamId } });
+    try {
+      expect(onTeam.connectionId).toBeNull();
+      // A team's decisions are taken under their own lock, on their own ledger.
+      const decided = await prisma.$transaction((tx) =>
+        decideUnderLock(
+          tx,
+          {
+            automation: { cooldownMinutes: 0, id: onTeam.id, maxRunsPerDay: 1 },
+            ownerKey: `@team/${teamId}`,
+          },
+          workflowRunFailedSource,
+          { scope: 'main', subject: 'a'.repeat(40) },
+          new Date(),
+          async () => true
+        )
+      );
+      expect(decided).toBeNull();
+    } finally {
+      await prisma.automation.delete({ where: { id: onTeam.id } });
     }
   });
 });

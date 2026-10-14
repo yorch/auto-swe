@@ -55,3 +55,17 @@ export function repoMemberWhere(
     ],
   };
 }
+
+/** The teams a repository belongs to: its owning team and every team it is shared with. */
+export interface RepoTeams {
+  teamId: string;
+  shares: Array<{ teamId: string }>;
+}
+
+/**
+ * Whether `teamId` owns the repository or has it shared with it — the team-level form of
+ * {@link isRepoMember}, for a caller that is a team rather than a person (a service principal).
+ */
+export function isRepoTeam(repo: RepoTeams, teamId: string): boolean {
+  return repo.teamId === teamId || repo.shares.some((s) => s.teamId === teamId);
+}

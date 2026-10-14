@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
-import { safePatAuditFields } from '../lib/patAuditFields.js';
+import { safePatAuditFields, tokenAuditEntity } from '../lib/patAuditFields.js';
 import {
   extractSessionCookieValue,
   invalidateSessionCache,
@@ -113,25 +113,74 @@ function safeSessionAuditFields(row: {
   };
 }
 
+/**
+ * `GET /access-tokens`: every API token, a person's or a service principal's. Exactly one of
+ * `user` and `servicePrincipal` is set; `scopes` is empty on a person's token. Never a hash.
+ */
+const AccessTokenListResponseSchema = z.object({
+  data: z.array(
+    z.object({
+      createdAt: z.iso.datetime(),
+      expiresAt: z.iso.datetime().nullable(),
+      id: z.string(),
+      lastUsedAt: z.iso.datetime().nullable(),
+      name: z.string(),
+      prefix: z.string(),
+      revokedAt: z.iso.datetime().nullable(),
+      scopes: z.array(z.string()),
+      servicePrincipal: z
+        .object({
+          id: z.string(),
+          name: z.string(),
+          team: z.object({ id: z.string(), name: z.string() }),
+        })
+        .nullable(),
+      user: z.object({ email: z.string(), id: z.string() }).nullable(),
+    })
+  ),
+});
+
+const iso = (d: Date | null) => (d ? d.toISOString() : null);
+
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
-  app.get('/access-tokens', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const rows = await fastify.prisma.apiToken.findMany({
-      orderBy: { createdAt: 'desc' },
-      select: {
-        createdAt: true,
-        expiresAt: true,
-        id: true,
-        lastUsedAt: true,
-        name: true,
-        prefix: true,
-        revokedAt: true,
-        user: { select: { email: true, id: true } },
-      },
-    });
-    return { data: rows };
-  });
+  app.get(
+    '/access-tokens',
+    {
+      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: { response: { 200: AccessTokenListResponseSchema } },
+    },
+    async () => {
+      const rows = await fastify.prisma.apiToken.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: {
+          createdAt: true,
+          expiresAt: true,
+          id: true,
+          lastUsedAt: true,
+          name: true,
+          prefix: true,
+          revokedAt: true,
+          scopes: true,
+          // A service principal's token has no user; it is listed with its principal and team.
+          servicePrincipal: {
+            select: { id: true, name: true, team: { select: { id: true, name: true } } },
+          },
+          user: { select: { email: true, id: true } },
+        },
+      });
+      return {
+        data: rows.map((r) => ({
+          ...r,
+          createdAt: r.createdAt.toISOString(),
+          expiresAt: iso(r.expiresAt),
+          lastUsedAt: iso(r.lastUsedAt),
+          revokedAt: iso(r.revokedAt),
+        })),
+      };
+    }
+  );
 
   app.delete(
     '/access-tokens/:id',
@@ -163,6 +212,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           name: updated.name,
           prefix: updated.prefix,
           revokedAt: updated.revokedAt,
+          scopes: updated.scopes,
+          servicePrincipalId: updated.servicePrincipalId,
           userId: updated.userId,
         }),
         before: safePatAuditFields({
@@ -171,10 +222,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           name: existing.name,
           prefix: existing.prefix,
           revokedAt: existing.revokedAt,
+          scopes: existing.scopes,
+          servicePrincipalId: existing.servicePrincipalId,
           userId: existing.userId,
         }),
         entityId: updated.id,
-        entityType: 'PersonalAccessToken',
+        entityType: tokenAuditEntity(updated),
       });
       return { data: { id: updated.id, revokedAt: updated.revokedAt } };
     }

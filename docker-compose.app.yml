@@ -133,7 +133,7 @@ services:
   # surface, NOT the options of a container the worker is allowed to create:
   # see docs/deployment.md. Root only to open the socket; nothing else runs here.
   docker-socket-proxy:
-    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine}
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine@sha256:7af8255207ee9964ccb4eec8ce4b7a40b777769665e3ae83897fb01b24d8a43a}
     restart: unless-stopped
     user: root
     read_only: true
@@ -149,7 +149,7 @@ services:
 
   # Observability: Grafana LGTM (Grafana + Tempo + Loki + Prometheus + OTel Collector)
   otel-lgtm:
-    image: grafana/otel-lgtm:0.34.0
+    image: grafana/otel-lgtm:0.34.0@sha256:b966ea107831d526d9eb8fe4d2d86c9e5731392fad9dce8296bcf2072031f07c
     restart: unless-stopped
     ports:
       - "${GRAFANA_PORT:-127.0.0.1:3001}:3000"   # Grafana UI (3000 taken by Next.js)

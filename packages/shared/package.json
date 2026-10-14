@@ -43,6 +43,7 @@
     "./lib/deploymentAgents": "./dist/lib/deploymentAgents.js",
     "./lib/credentialCoverage": "./dist/lib/credentialCoverage.js",
     "./lib/builtinModels": "./dist/lib/builtinModels.js",
+    "./scannerPatterns": "./dist/scannerPatterns/index.js",
     "./lib/regexExec": "./dist/lib/regexExec.js",
     "./lib/connectionGuards": "./dist/lib/connectionGuards.js",
     "./lib/connectionTypes": "./dist/lib/connectionTypes.js",

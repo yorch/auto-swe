@@ -194,4 +194,33 @@ describe('EvalRunPage', () => {
     renderPage({ error: 'temporal unavailable' }, 'FAILED');
     expect(await screen.findByText('temporal unavailable')).toBeTruthy();
   });
+
+  it('explains an inconclusive run and how many cases await screening', async () => {
+    renderPage(
+      {
+        inconclusive: { awaitingScreen: 4, reason: 'unscreened', screenFailed: 1 },
+        summary: 'inconclusive',
+        unscreened: { neverScreened: 4, screenFailed: 1 },
+      },
+      'INCONCLUSIVE'
+    );
+    expect(await screen.findByText('Inconclusive: no case was scored')).toBeTruthy();
+    expect(screen.getByText(/4 cases awaiting the check/)).toBeTruthy();
+    expect(screen.getByText(/1 case that failed it/)).toBeTruthy();
+  });
+
+  it('names the cases a verdict left unscored', async () => {
+    renderPage({
+      byTag: {},
+      overall: delta(0, -0.1, 0.1),
+      regression: false,
+      summary: 'scored verdict',
+      unscreened: { neverScreened: 2, screenFailed: 0 },
+    });
+    expect(
+      await screen.findByText(
+        'Not scored: 2 cases awaiting a stability check, 0 cases that failed one.'
+      )
+    ).toBeTruthy();
+  });
 });

@@ -4,7 +4,7 @@ import type { InputSchema } from '../lib/inputSchema.js';
 
 /**
  * What starts runs without a person pressing run. `event` automations are generic rules on a
- * repository (`Automation` rows, one per event source); the other kinds keep their own storage
+ * repository or a team (`Automation` rows, one per event source); the other kinds keep their own storage
  * and editors and join through the decision ledger (`AutomationFire`) and the shared listing.
  */
 export const AUTOMATION_KINDS = [
@@ -97,13 +97,23 @@ export interface OccurrenceRun {
 }
 
 /**
- * An event source: one kind of thing that happens on a repository and can start a run. The
- * descriptor is pure and shared, so the gateway decides with it, the form renders from it and
- * the tester answers with the same `mismatch` the webhook path uses.
+ * What an automation of a source belongs to:
+ * - `repository`: a rule on one git repository (`Automation.connectionId`), managed by the
+ *   repository's owning team, its runs on that repository;
+ * - `team`: a rule owned by a team (`Automation.teamId`), with no repository of its own.
+ */
+export type EventSourceTarget = 'repository' | 'team';
+
+/**
+ * An event source: one kind of thing that happens and can start a run. The descriptor is pure
+ * and shared, so the gateway decides with it, the form renders from it and the tester answers
+ * with the same `mismatch` the webhook path uses.
  */
 export interface EventSource<Filters = unknown, Facts = unknown> {
   /** Stored on the automation: `<host>.<event>.<action>`. */
   key: string;
+  /** What its automations belong to. */
+  target: EventSourceTarget;
   /** "When CI fails". */
   label: string;
   /** One sentence for the picker. */
@@ -133,11 +143,11 @@ export interface EventSource<Filters = unknown, Facts = unknown> {
   run(facts: Facts): OccurrenceRun;
   keys(facts: Facts): DecisionKeys;
   /**
-   * The occurrence's identity on its repository (`repoKey` is `<host>/<owner>/<repo>`,
-   * lowercased): a redelivery, or a second automation or repository row matching the same
-   * occurrence, has the same key and is decided once.
+   * The occurrence's identity on its owner (`ownerKey`, `./ownerKey.ts`: for a repository
+   * `<host>/<owner>/<repo>`, lowercased): a redelivery, or a second automation or repository row
+   * matching the same occurrence, has the same key and is decided once.
    */
-  dedupeKey(repoKey: string, facts: Facts): string;
+  dedupeKey(ownerKey: string, facts: Facts): string;
   /** The run's workflow id is `<prefix>-<automation8>-<part>`. */
   workflowId: { prefix: string; part(facts: Facts): string };
   /** Why the occurrence is never acted on at all — answered before any query, not recorded. */

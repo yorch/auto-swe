@@ -204,11 +204,24 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       // queue. Their invitee waits in that queue like any other sign-up, and
       // the address is verified when the invitee follows the magic link, not
       // vouched for by the inviter. A platform admin's invite is the approval,
-      // as it is on `POST /users/invite`.
-      const approved = requireUser(request).role === 'ADMIN';
+      // as it is on `POST /users/invite`. The exception is an organization a
+      // platform admin has marked `trustedInvites`: there an org admin's invite
+      // is the approval too, recorded as `org_admin`, while the organization
+      // is active. Trust is read here, per invite, so clearing it or
+      // deactivating the organization takes effect on the next one.
+      let approvalSource: 'admin' | 'org_admin' | null =
+        requireUser(request).role === 'ADMIN' ? 'admin' : null;
+      if (!approvalSource) {
+        const org = await fastify.prisma.organization.findUnique({
+          select: { isActive: true, trustedInvites: true },
+          where: { id: orgId },
+        });
+        approvalSource = org?.isActive && org.trustedInvites ? 'org_admin' : null;
+      }
+      const approved = approvalSource !== null;
       const user = await fastify.prisma.user.create({
         data: {
-          ...(approved ? { approvalSource: 'admin', approvedAt: new Date() } : {}),
+          ...(approvalSource ? { approvalSource, approvedAt: new Date() } : {}),
           email,
           emailVerified: approved,
           isActive: approved,
@@ -228,6 +241,18 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           entityId: created.id,
           entityType: 'OrganizationMembership',
         });
+        // The approval itself, so a platform admin can see who admitted an
+        // account that skipped the queue.
+        if (approvalSource) {
+          await writeAuditLog(fastify, {
+            action: 'CREATE',
+            actor: requireUser(request),
+            after: { approvalSource, email: user.email, isActive: user.isActive, orgId },
+            client: tx,
+            entityId: user.id,
+            entityType: 'User',
+          });
+        }
       });
 
       try {
