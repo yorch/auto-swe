@@ -159,7 +159,11 @@ export function parseSmokeArgs(
   };
 }
 
-/** `text` with the userinfo of any URL in it (`https://user:token@host`) replaced, for logs, traces and errors. */
+/**
+ * `text` with the userinfo of any URL in it (`https://user:token@host`) replaced,
+ * for logs, traces and errors. The userinfo runs to the LAST `@` of the authority,
+ * so a password holding an unencoded `@` (`user:p@ss@host`) is removed whole.
+ */
 export function redactUrlCredentials(text: string): string {
-  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1***@');
+  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/gi, '$1***@');
 }

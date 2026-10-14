@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { cp, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -353,6 +353,9 @@ const NO_PROGRAMS = [
   'protocol.ext.allow=never',
 ];
 
+/** Every host git call is bounded. */
+const GIT_TIMEOUT_MS = 120_000;
+
 async function git(
   root: string,
   args: string[],
@@ -362,13 +365,18 @@ async function git(
     cwd: options.cwd ?? root,
     env: gitEnv(root, options.env),
     maxBuffer: 64 * 1024 * 1024,
-    timeout: options.timeout,
+    timeout: options.timeout ?? GIT_TIMEOUT_MS,
   });
   return stdout;
 }
 
-const ENV_FILE = /^\.env(\..*)?$/;
+const ENV_FILE = /^\.env|\.env$/;
 const ENV_TEMPLATE = /\.(example|sample|template|dist)$/;
+
+/** Whether a `--dir` file is left out as secrets: `.env*` (`.env`, `.envrc`, `.env.local`) and `*.env`, not templates. */
+export function isExcludedEnvFile(basename: string): boolean {
+  return ENV_FILE.test(basename) && !ENV_TEMPLATE.test(basename);
+}
 
 /**
  * Put the repository's files in `<root>/repo` with a fresh baseline commit made
@@ -397,7 +405,7 @@ async function prepareCheckout(
         if (base === 'node_modules' || base === '.git') {
           return false;
         }
-        return options.includeEnv || !ENV_FILE.test(base) || ENV_TEMPLATE.test(base);
+        return options.includeEnv || !isExcludedEnvFile(base);
       },
       recursive: true,
       verbatimSymlinks: true,
@@ -429,7 +437,13 @@ async function diffAgainstBaseline(
   baselineGitDir: string,
   after: string
 ): Promise<{ diff: string; diffStat: string }> {
-  await run('find', [after, '-name', '.git', '-prune', '-exec', 'rm', '-rf', '{}', '+']);
+  // `after` is the host's own directory; the container's tree was copied INTO it.
+  if (!(await lstat(after)).isDirectory()) {
+    throw new Error('The copied-back tree is not a directory; refusing to diff it.');
+  }
+  await run('find', [after, '-name', '.git', '-prune', '-exec', 'rm', '-rf', '{}', '+'], {
+    timeout: GIT_TIMEOUT_MS,
+  });
   const env = {
     GIT_DIR: baselineGitDir,
     GIT_INDEX_FILE: path.join(root, 'index-after'),
@@ -486,7 +500,7 @@ async function startWorkspace(
   );
   if (infra.blockMetadata) {
     try {
-      await run('sh', ['-c', buildMetadataBlockArgs(name, image)], {
+      await run('sh', ['-c', buildMetadataBlockArgs(name, infra.metadataBlockImage)], {
         env: dockerEnv(),
         timeout: 60_000,
       });
@@ -569,8 +583,12 @@ export async function runSmoke(options: SmokeOptions): Promise<{
   // Named before `docker run`, so a container that was created but failed to start is removed too.
   const containerName = `workspace-smoke-${randomBytes(4).toString('hex')}`;
   let cleaned: Promise<void> | undefined;
+  // The in-flight `docker run`, pull included: removing before it settles races it, and the
+  // container it then creates is left running.
+  let starting: Promise<unknown> | undefined;
   const cleanup = () => {
     cleaned ??= (async () => {
+      await starting?.catch(() => undefined);
       await run('docker', ['rm', '-f', containerName], { env: dockerEnv() }).catch(() => undefined);
       await rm(root, { force: true, recursive: true });
     })();
@@ -578,15 +596,27 @@ export async function runSmoke(options: SmokeOptions): Promise<{
   };
   const interrupt = new AbortController();
   const signals = options.signals ?? process;
+  // `on`, not `once`, and removed only after the cleanup has finished: with the listener gone
+  // a `signal-exit` hook (execa and friends) sees itself as the last one and re-raises the
+  // signal, killing the process mid-cleanup.
+  let interrupted = false;
   const onSignal = (signal: string) => {
+    if (interrupted) {
+      return;
+    }
+    interrupted = true;
     interrupt.abort();
     log(`${signal}: removing the container and temporary files…`);
-    void cleanup().finally(() => (options.exit ?? process.exit)(signal === 'SIGINT' ? 130 : 143));
+    void cleanup().finally(() => {
+      signals.off('SIGINT', onInt);
+      signals.off('SIGTERM', onTerm);
+      (options.exit ?? process.exit)(signal === 'SIGINT' ? 130 : 143);
+    });
   };
   const onInt = () => onSignal('SIGINT');
   const onTerm = () => onSignal('SIGTERM');
-  signals.once('SIGINT', onInt);
-  signals.once('SIGTERM', onTerm);
+  signals.on('SIGINT', onInt);
+  signals.on('SIGTERM', onTerm);
 
   try {
     log(
@@ -595,17 +625,19 @@ export async function runSmoke(options: SmokeOptions): Promise<{
     const { baselineGitDir, checkout } = await prepareCheckout(options, root);
 
     log(`Starting a workspace container from ${options.image}…`);
-    const workspace = await startWorkspace(
+    starting = startWorkspace(
       containerName,
       options.image,
       options.containerCommand ?? ['sleep', 'infinity'],
       log
     );
+    const workspace = await starting;
     await run('docker', ['exec', containerName, 'mkdir', '-p', '/workspace'], {
       env: dockerEnv(),
     });
     await run('docker', ['cp', `${checkout}/.`, `${containerName}:${WORKSPACE_DIR}`], {
       env: dockerEnv(),
+      timeout: 120_000,
     });
 
     const tracer = new MemoryTracer();
@@ -665,8 +697,13 @@ export async function runSmoke(options: SmokeOptions): Promise<{
     let diff = '';
     try {
       const after = path.join(root, 'after');
-      await run('docker', ['cp', `${containerName}:${WORKSPACE_DIR}`, after], {
+      // Into a directory made here, as `<dir>/.`: Docker resolves the path inside the container's
+      // root and copies its contents, so a symlink the agent put at the checkout path cannot
+      // point the copy (or the diff) at a host directory.
+      await mkdir(after);
+      await run('docker', ['cp', `${containerName}:${WORKSPACE_DIR}/.`, after], {
         env: dockerEnv(),
+        timeout: 120_000,
       });
       ({ diff, diffStat } = await diffAgainstBaseline(root, baselineGitDir, after));
     } catch (err) {

@@ -789,19 +789,25 @@ CI under the same `PI_DOCKER_TEST` flag).
 What the container is and is not. It is created with `createWorkspace`'s settings: the memory, CPU
 and pids limits, DNS and network from `resolveWorkspaceInfra()` (`WORKSPACE_*`), `--init`,
 `--cap-drop=ALL`, `no-new-privileges`, the two GCP metadata hostnames blackholed, and the
-metadata-IP blackhole sidecar (best effort, as there; a failure is logged and the run continues).
+metadata-IP blackhole sidecar, run from `WORKSPACE_METADATA_BLOCK_IMAGE` (best effort, as there; a
+failure is logged and the run continues).
 It does not get the harness model proxy's host alias, because the model is called from the script.
 The repository is cloned (shallow) or copied on the host and `docker cp`'d in, so the image needs no
 git. The repository's own `.git` is never carried over, for `--repo` or `--dir`: the script makes a
 fresh baseline commit, so the diff shows only what the agent changed. `--dir` also leaves out
-`node_modules` and `.env*` files (templates such as `.env.example` are kept); `--include-env` copies
-them, which puts those secrets within reach of a model-driven container.
+`node_modules` and every file whose name starts with `.env` (`.env`, `.env.local`, `.envrc`) or ends
+with `.env` (`prod.env`); names ending `.example`, `.sample`, `.template` or `.dist` are kept.
+Everything else under `--dir` is copied, and `--include-env` copies the excluded files too, which
+puts those secrets within reach of a model-driven container.
 
 Nothing that comes out of the container is trusted by host git. The diff compares the container's
 tree, with every `.git` entry deleted, against a git directory the host made before the container
-existed, using a scratch index and a minimal environment, with `core.fsmonitor` and hooks disabled.
-The container and the temporary directories are removed however the run ends, including on SIGINT
-and SIGTERM.
+existed, using a scratch index and a minimal environment, with `core.fsmonitor` and hooks disabled
+and a timeout on every call. The tree is copied out with `docker cp <container>:/workspace/target-repo/.`
+into a directory made on the host, so Docker resolves the path inside the container and a symlink
+the agent left at the checkout path cannot point the copy at a host directory. The container and
+the temporary directories are removed however the run ends, including on SIGINT and SIGTERM, which
+wait for an in-flight `docker run` (an image pull included) to settle before removing the container.
 
 Once a turn has run cleanly, compare the runtime with the Mastra loop on the same prompt, model and
 skills, as [evals.md "Comparing runtimes"](./evals.md#comparing-runtimes) describes:

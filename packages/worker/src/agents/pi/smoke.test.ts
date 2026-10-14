@@ -6,6 +6,7 @@ import {
   DEFAULT_REPO,
   estimateCostUsd,
   formatReport,
+  isExcludedEnvFile,
   parseSmokeArgs,
   redactUrlCredentials,
   runSmoke,
@@ -72,6 +73,31 @@ describe('redactUrlCredentials', () => {
     expect(redactUrlCredentials('https://host.test/a.git scp@host:a/b')).toBe(
       'https://host.test/a.git scp@host:a/b'
     );
+  });
+
+  it('removes a password holding an unencoded @ whole', () => {
+    expect(redactUrlCredentials('fatal: https://user:p@ss@host.test/a.git: 401')).toBe(
+      'fatal: https://***@host.test/a.git: 401'
+    );
+  });
+});
+
+describe('isExcludedEnvFile', () => {
+  it('excludes .env*, *.env and secrets-bearing variants, and keeps templates', () => {
+    for (const name of ['.env', '.env.local', '.env.production', '.envrc', 'prod.env', 'app.env']) {
+      expect(isExcludedEnvFile(name), name).toBe(true);
+    }
+    for (const name of [
+      '.env.example',
+      '.env.sample',
+      '.env.template',
+      '.env.dist',
+      'README.md',
+      'environment.ts',
+      'env.ts',
+    ]) {
+      expect(isExcludedEnvFile(name), name).toBe(false);
+    }
   });
 });
 
