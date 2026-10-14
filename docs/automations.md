@@ -427,7 +427,9 @@ path with the token replaced by `[redacted]`.
 
 A webhook call may ask to be told how its run went: a top-level `callback` object in the body,
 `{ "url": "…" }` or `{ "endpointId": "…" }` with an optional `context`, names a callback endpoint of
-the **template's team** (or a URL under one). The platform then POSTs a signed body there when the
+the **template's team** that accepts template webhook launches (`acceptTemplateWebhookLaunches`,
+off by default), or a URL under one. Deliveries say `launchedBy: { kind: "template_webhook" }`, since
+the caller holds a token, not an identity. The platform then POSTs a signed body there when the
 run waits for a human and when it ends ([run-callbacks.md](./run-callbacks.md)). The `callback` key is
 taken out of the body before the payload is validated against the template's inputs and stored, so
 a template cannot use `callback` as an input of its own (a non-object value is left as input). A

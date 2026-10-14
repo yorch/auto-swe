@@ -107,6 +107,14 @@ refusal there writes nothing and starts nothing: `403 SERVICE_PRINCIPAL_DISABLED
 `429 SERVICE_DAILY_LIMIT_REACHED` or `429 SERVICE_IN_FLIGHT_LIMIT_REACHED`. A template not on the
 allowlist answers `404`, as a template that does not exist does.
 
+### Reporting the outcome
+
+A principal's launch (`runs:launch` or `runs:agent`) may carry a `callback`, as a person's may
+([run-callbacks.md](./run-callbacks.md)), and it is resolved against the **principal's own team's**
+callback endpoints only — never another team's, whatever teams the principal's repositories are
+shared with. Every delivery names the principal in `launchedBy`
+(`{ "kind": "service_principal", "id": "<principal id>" }`, plus `templateId` for a template run).
+
 ## 4. Granting: a launch decision by a lead
 
 Putting a repository on a principal's allowlist is a launch decision, taken by the lead making the
