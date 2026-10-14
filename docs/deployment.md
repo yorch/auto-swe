@@ -545,6 +545,14 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 
 ---
 
+## Limitations
+
+- **Production runs the development Temporal dynamic config.** `docker-compose.infra.yml` mounts `infra/dynamicconfig/development-sql.yaml` for every deployment. That file sets `system.forceSearchAttributesCacheRefreshOnRead`, which upstream marks as a development setting not to enable in production (it refreshes the search-attribute cache on every read, trading server load for immediacy). It is left as is because the Temporal server and its configuration are outside what this project changes; a deployment that wants a production file supplies its own through `DYNAMIC_CONFIG_FILE_PATH` and the mounted directory.
+- **The Docker socket proxy narrows the API, not container options.** See §0: a worker that can create containers can still request privileged mode or host bind mounts.
+- **The base images are tag-pinned, not digest-pinned.** Dependabot bumps the tags weekly; pinning digests needs a networked environment to resolve them.
+
+---
+
 ## 11. Where this guide ends
 
 This doc covers infrastructure setup and the first happy-path workflow. For everything else:
