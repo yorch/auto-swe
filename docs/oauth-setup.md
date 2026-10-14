@@ -133,8 +133,10 @@ A platform admin can delegate that decision per organization with the **Trust or
 invites** switch on the organization's page (`/govern/organizations/:orgId`), stored as
 `Organization.trustedInvites` and set through `PATCH /platform/organizations/:orgId`. Only a
 platform admin can change it; an `ORG_ADMIN` sending the field gets `403`, and each change is
-audited. Trust is read on every invite, so clearing it applies to the next one; accounts already
-approved stay approved.
+audited. Trust applies only while the organization is active, and it is read on every invite, so
+clearing it or deactivating the organization applies to the next one; accounts already approved
+stay approved. An approval made this way is audited as a `User` creation with its
+`approvalSource`, alongside the membership.
 
 **Limitations.** Trust is all-or-nothing per organization: it covers every `ORG_ADMIN` of the
 organization, present and future, and there is no per-inviter or per-domain restriction. Turning

@@ -758,7 +758,7 @@ model Organization {
   createdAt                   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  teams              Team[]
+  teams               Team[]
   agents              Agent[]
   providerCredentials ProviderCredential[]
   memberships         OrganizationMembership[]
@@ -1210,7 +1210,8 @@ model User {
   /// (set) from one still waiting in the approval queue (null): auto-approval
   /// only ever acts on the second, and deactivation therefore sticks.
   approvedAt           DateTime? @map("approved_at") @db.Timestamptz
-  /// Who approved: `admin`, or `github-org:<org>` for the auto-approval rule.
+  /// Who approved: `admin`, `org_admin` for a trusted organization's org-admin
+  /// invite, or `github-org:<org>` for the auto-approval rule.
   approvalSource       String?   @map("approval_source")
   createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz

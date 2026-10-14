@@ -615,21 +615,6 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                   readOnly={!canAdmin}
                   value={orgSlug}
                 />
-                {isPlatformAdmin && (
-                  <div className="space-y-1 border-t border-ink-600 pt-4">
-                    <ToggleSwitch
-                      checked={org?.trustedInvites ?? false}
-                      disabled={patchOrg.isPending}
-                      label="Trust organization admin invites"
-                      onChange={() => handleToggleTrust(!(org?.trustedInvites ?? false))}
-                      title={org?.trustedInvites ? 'Stop trusting invites' : 'Trust invites'}
-                    />
-                    <p className="text-xs leading-relaxed text-paper-500">
-                      When on, an invite from any of this organization&apos;s admins creates an
-                      active, approved account instead of waiting in the approval queue.
-                    </p>
-                  </div>
-                )}
                 {canAdmin && (
                   <div className="flex justify-end">
                     <Button
@@ -644,6 +629,29 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               </div>
             </QueryBoundary>
           </Card>
+
+          {/* ── Invite trust (platform admins only) ── It saves on toggle, so it
+              sits outside the profile form, whose unsaved edits a refetch resets. */}
+          {isPlatformAdmin && org && (
+            <Card>
+              <CardHeader className="mb-3">
+                <CardTitle eyebrow="Access">Invite trust</CardTitle>
+              </CardHeader>
+              <div className="space-y-1">
+                <ToggleSwitch
+                  checked={org.trustedInvites ?? false}
+                  disabled={patchOrg.isPending}
+                  label="Trust organization admin invites"
+                  onChange={() => handleToggleTrust(!(org.trustedInvites ?? false))}
+                  title={org.trustedInvites ? 'Stop trusting invites' : 'Trust invites'}
+                />
+                <p className="text-xs leading-relaxed text-paper-500">
+                  When on, an invite from any of this organization&apos;s admins creates an active,
+                  approved account instead of waiting in the approval queue.
+                </p>
+              </div>
+            </Card>
+          )}
         </div>
       </div>
 
