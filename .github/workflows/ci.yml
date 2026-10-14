@@ -136,20 +136,32 @@ jobs:
         run: yarn test packages/worker/src/activities/agentRunFinalize.docker.test.ts
 
       # The same suites through the socket proxy the worker uses in compose, with
-      # the same API flags and idle timeout: proves `run`, `exec -i`, `cp` and the
-      # volume calls all pass the filter, and that the image tag resolves.
+      # the same API flags and idle timeout: proves `run`, `exec -i`, `cp`, `pause`
+      # and the volume calls all pass the filter, and that the image tag resolves.
       - name: Start the Docker socket proxy
         run: |
           docker run -d --name docker-socket-proxy --read-only --tmpfs /run \
-            -e CONTAINERS=1 -e EXEC=1 -e IMAGES=1 -e POST=1 -e TIMEOUT=65m -e VOLUMES=1 \
+            -e ALLOW_ARCHIVE=1 -e ALLOW_PAUSE=1 -e CONTAINERS=1 -e EXEC=1 -e IMAGES=1 \
+            -e POST=1 -e TIMEOUT=65m -e VOLUMES=1 \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -p 127.0.0.1:2375:2375 lscr.io/linuxserver/socket-proxy:latest
+          ready=''
           for _ in $(seq 1 30); do
-            curl -sf http://127.0.0.1:2375/_ping && exit 0
+            if curl -sf http://127.0.0.1:2375/_ping; then ready=1; break; fi
             sleep 1
           done
-          docker logs docker-socket-proxy
-          exit 1
+          if [ -z "$ready" ]; then docker logs docker-socket-proxy; exit 1; fi
+          # The idle timeout is what keeps an hour-long step alive; fail here if
+          # the image stops honouring TIMEOUT rather than mid-run in production.
+          if ! docker exec docker-socket-proxy sh -c \
+            'grep -rhs "timeout" /run /usr/local/etc/haproxy /etc/haproxy 2>/dev/null' \
+            | tee /dev/stderr | grep -q '65m'; then
+            echo "::error::the socket proxy did not apply TIMEOUT=65m to its haproxy config"
+            exit 1
+          fi
+          # The test's host address: the proxy refuses the networks API, as the worker's does.
+          echo "CLAUDE_CODE_TEST_HOST_ADDRESS=$(docker network inspect bridge \
+            --format '{{(index .IPAM.Config 0).Gateway}}')" >> "$GITHUB_ENV"
 
       - name: Docker-backed tests through the socket proxy
         env:

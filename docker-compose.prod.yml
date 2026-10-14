@@ -105,7 +105,9 @@ services:
   # cannot call the API groups below that it has no use for (swarm, secrets,
   # services, plugins, build, system, ...). It limits the API surface, NOT the
   # options of a container the worker is allowed to create: see docs/deployment.md.
-  #   CONTAINERS  run / rm / inspect / cp / attach / wait (`docker run`, `port`, `cp`)
+  #   CONTAINERS  run / rm / inspect / attach / wait (`docker run`, `port`)
+  #   ALLOW_ARCHIVE  /containers/{id}/archive: `docker cp` in either direction
+  #   ALLOW_PAUSE    `docker pause`, which freezes the agent container at finalize
   #   EXEC        `docker exec` into workspace containers
   #   IMAGES      inspect + pull the executor image on first `docker run`
   #   VOLUMES     `docker volume create|rm` for container steps
@@ -122,6 +124,8 @@ services:
     tmpfs:
       - /run
     environment:
+      ALLOW_ARCHIVE: 1
+      ALLOW_PAUSE: 1
       CONTAINERS: 1
       EXEC: 1
       IMAGES: 1
