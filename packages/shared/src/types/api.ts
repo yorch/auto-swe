@@ -1076,9 +1076,11 @@ export interface EvalSuiteHealthDto {
      * them until a screen passes.
      */
     neverScreened: number;
+    /** The oldest 50 of them; `neverScreened` is the total. */
     neverScreenedCaseIds: string[];
     /** Cases not quarantined whose flake screen failed. The harness does not score them. */
     screenFailed: number;
+    /** The oldest 50 of them; `screenFailed` is the total. */
     screenFailedCaseIds: string[];
     /** `quarantined / cases`, 0 for an empty dataset. */
     staleRate: number;

@@ -159,6 +159,13 @@ const TrendsQuery = refineCustomRange(
   })
 );
 
+/**
+ * Case ids suite health lists per dataset and kind, oldest first. A dataset holds
+ * up to 10,000 cases, every one unscreened right after it is created; the counts
+ * beside the lists are the totals.
+ */
+const SUITE_HEALTH_CASE_IDS = 50;
+
 /** Did the harness record `summary.partial` — a verdict over only some of the cases? */
 function hasPartialVerdict(summary: unknown): boolean {
   return (
@@ -576,10 +583,10 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
             flakeScreened: acc.screened,
             name: d.name,
             neverScreened: skip.never.length,
-            neverScreenedCaseIds: skip.never,
+            neverScreenedCaseIds: skip.never.slice(0, SUITE_HEALTH_CASE_IDS),
             quarantined: acc.quarantined,
             screenFailed: skip.failed.length,
-            screenFailedCaseIds: skip.failed,
+            screenFailedCaseIds: skip.failed.slice(0, SUITE_HEALTH_CASE_IDS),
             slug: d.slug,
             staleRate: acc.cases > 0 ? acc.quarantined / acc.cases : 0,
           };

@@ -830,6 +830,29 @@ describe('evalRoutes', () => {
       });
     });
 
+    it('lists at most the oldest 50 unscreened case ids, beside the full counts', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalDataset.findMany.mockResolvedValue([{ id: 'd1', name: 'Big', slug: 'big' }]);
+      prisma.evalCase.groupBy.mockResolvedValue([
+        { _count: { _all: 120 }, datasetId: 'd1', flakeScreened: false, quarantined: false },
+      ]);
+      prisma.evalCase.findMany.mockResolvedValue([
+        ...Array.from({ length: 60 }, (_, i) => ({ datasetId: 'd1', flakeRuns: 0, id: `n${i}` })),
+        ...Array.from({ length: 60 }, (_, i) => ({ datasetId: 'd1', flakeRuns: 3, id: `f${i}` })),
+      ]);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/suite-health',
+      });
+      const [d] = JSON.parse(res.payload).data.datasets;
+      expect(d.neverScreened).toBe(60);
+      expect(d.neverScreenedCaseIds).toHaveLength(50);
+      expect(d.neverScreenedCaseIds[0]).toBe('n0');
+      expect(d.screenFailed).toBe(60);
+      expect(d.screenFailedCaseIds).toHaveLength(50);
+    });
+
     it('is ADMIN-only', async () => {
       const { app } = await buildApp('ENGINEER');
       const res = await app.inject({
