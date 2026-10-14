@@ -66,7 +66,22 @@ describe('adminRoutes', () => {
           name: 'ci',
           prefix: 'ats_xxxxxxxx',
           revokedAt: null,
+          scopes: [],
+          servicePrincipal: null,
           user: { email: 'alice@example.com', id: 'u-1' },
+        },
+        {
+          createdAt: new Date('2026-02-01'),
+          expiresAt: new Date('2026-05-01'),
+          id: 'svc-1',
+          lastUsedAt: null,
+          name: 'deploy',
+          prefix: 'ats_yyyyyyyy',
+          revokedAt: null,
+          scopes: ['runs:launch'],
+          servicePrincipal: { id: 'sp-1', name: 'deployer', team: { id: 't-1', name: 'Platform' } },
+          tokenHash: 'must-not-leak',
+          user: null,
         },
       ]);
       const res = await ctx.app.inject({
@@ -76,9 +91,17 @@ describe('adminRoutes', () => {
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body.data).toHaveLength(1);
+      expect(body.data).toHaveLength(2);
       expect(body.data[0].user.email).toBe('alice@example.com');
       expect(body.data[0]).not.toHaveProperty('tokenHash');
+      // A service token is listed with its principal and team, and no user.
+      expect(body.data[1]).toMatchObject({
+        expiresAt: '2026-05-01T00:00:00.000Z',
+        scopes: ['runs:launch'],
+        servicePrincipal: { name: 'deployer', team: { name: 'Platform' } },
+        user: null,
+      });
+      expect(body.data[1]).not.toHaveProperty('tokenHash');
     });
 
     it('returns 403 for non-admin', async () => {

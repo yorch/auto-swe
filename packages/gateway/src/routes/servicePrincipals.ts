@@ -21,6 +21,7 @@ import type { Prisma } from '@auto-swe/shared';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import { isRepoTeam, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import {
+  ACTIVE_WORKFLOW_TERMINAL_STATUSES,
   SERVICE_TOKEN_MAX_DAYS,
   SERVICE_TOKEN_MAX_LIVE,
   SERVICE_TOKEN_SCOPES,
@@ -411,7 +412,7 @@ export const servicePrincipalRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // ── Delete (its tokens go with it; its runs keep running, unattributed) ──
+  // ── Delete (refused while it has runs in flight; its tokens go with it) ──
   app.delete(
     '/:teamId/service-principals/:id',
     { onRequest: lead, schema: { params: PrincipalParams } },
@@ -422,14 +423,40 @@ export const servicePrincipalRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return;
       }
-      await fastify.prisma.servicePrincipal.delete({ where: { id: existing.id } });
-      await writeAuditLog(fastify, {
-        action: 'DELETE',
-        actor: user,
-        before: principalAuditFields(existing),
-        entityId: existing.id,
-        entityType: 'ServicePrincipal',
+      const deleted = await fastify.prisma.$transaction(async (tx) => {
+        // CLAUDE.md §7 exception: the launch guard holds this row lock while it writes a run's
+        // ledger rows, so the in-flight count below cannot miss a launch committing beside it.
+        await tx.$queryRaw`SELECT id FROM service_principals WHERE id = ${existing.id}::uuid FOR UPDATE`;
+        const inFlight = await tx.activeWorkflow.count({
+          where: {
+            currentStatus: { notIn: [...ACTIVE_WORKFLOW_TERMINAL_STATUSES] },
+            workRequest: { requestedByServiceId: existing.id },
+          },
+        });
+        if (inFlight > 0) {
+          return false;
+        }
+        await tx.servicePrincipal.delete({ where: { id: existing.id } });
+        await writeAuditLog(fastify, {
+          action: 'DELETE',
+          actor: user,
+          before: principalAuditFields(existing),
+          client: tx,
+          entityId: existing.id,
+          entityType: 'ServicePrincipal',
+        });
+        return true;
       });
+      if (!deleted) {
+        // Deleting would leave its running work unattributed and out of its team's reach: stop
+        // it by disabling the principal, and delete once its runs have finished.
+        return sendError(
+          reply,
+          409,
+          'SERVICE_PRINCIPAL_HAS_RUNS',
+          'This service principal has runs in flight; disable it, and delete it once they finish'
+        );
+      }
       return reply.status(204).send();
     }
   );

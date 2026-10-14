@@ -33,6 +33,7 @@ interface State {
   liveTokens: number;
   principal: Record<string, unknown> | null;
   tokenRow: Record<string, unknown> | null;
+  inFlight: number;
 }
 
 describe('service principal management routes', () => {
@@ -43,6 +44,7 @@ describe('service principal management routes', () => {
   let updated: Array<Record<string, unknown>>;
   let connectionLookups: number;
   let tokensCreated: Array<Record<string, unknown>>;
+  let deleted: number;
 
   const principalRow = (over: Record<string, unknown> = {}) => ({
     connectionIds: [] as string[],
@@ -62,6 +64,7 @@ describe('service principal management routes', () => {
 
   beforeEach(async () => {
     s = {
+      inFlight: 0,
       liveTokens: 0,
       orgMember: true,
       orgOverBudget: false,
@@ -77,6 +80,7 @@ describe('service principal management routes', () => {
     updated = [];
     tokensCreated = [];
     connectionLookups = 0;
+    deleted = 0;
 
     app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
@@ -88,6 +92,7 @@ describe('service principal management routes', () => {
 
     const prisma: Record<string, unknown> = {
       $queryRaw: async () => [{ id: SP }],
+      activeWorkflow: { count: async () => s.inFlight },
       apiToken: {
         count: async () => s.liveTokens,
         create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -165,7 +170,10 @@ describe('service principal management routes', () => {
           created.push(data);
           return principalRow(data);
         },
-        delete: async () => ({}),
+        delete: async () => {
+          deleted++;
+          return {};
+        },
         findFirst: async () => s.principal,
         findMany: async () => [{ ...principalRow(), _count: { tokens: 1 } }],
         update: async ({ data }: { data: Record<string, unknown> }) => {
@@ -326,6 +334,22 @@ describe('service principal management routes', () => {
       expect(updated[0]?.disabledAt).toBeInstanceOf(Date);
       await send('PATCH', `${base}/${SP}`, { disabled: false });
       expect(updated[1]).toEqual({ disabledAt: null });
+    });
+
+    it('deletes a principal with nothing in flight, and audits it', async () => {
+      const res = await send('DELETE', `${base}/${SP}`);
+      expect(res.statusCode).toBe(204);
+      expect(deleted).toBe(1);
+      expect(audits[0]).toMatchObject({ action: 'DELETE', entityType: 'ServicePrincipal' });
+    });
+
+    it('refuses to delete a principal with runs in flight: 409, disable it instead', async () => {
+      s.inFlight = 1;
+      const res = await send('DELETE', `${base}/${SP}`);
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('SERVICE_PRINCIPAL_HAS_RUNS');
+      expect(deleted).toBe(0);
+      expect(audits).toHaveLength(0);
     });
 
     it("404s another team's principal", async () => {
