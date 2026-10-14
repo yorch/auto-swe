@@ -342,7 +342,7 @@ export interface RBACOptions {
  */
 /** Phase-8 personal access tokens are prefixed with `ats_`. The remainder is
  * 32 bytes of base64url entropy (~43 chars). Anything starting with this
- * prefix bypasses JWT verification and hashes through PersonalAccessToken
+ * prefix bypasses JWT verification and hashes through ApiToken
  * instead. JWTs continue to round-trip the existing RS256/HS256 path.
  *
  * Canonical home for this constant — `routes/tokens.ts` (which mints the
@@ -364,7 +364,7 @@ class PatAuthError extends Error {
  */
 async function verifyPatPayload(request: FastifyRequest, token: string): Promise<JwtPayload> {
   const hash = request.server.auth.hashToken(token);
-  const pat = await request.server.prisma.personalAccessToken.findUnique({
+  const pat = await request.server.prisma.apiToken.findUnique({
     include: { user: true },
     where: { tokenHash: hash },
   });
@@ -375,7 +375,7 @@ async function verifyPatPayload(request: FastifyRequest, token: string): Promise
     throw new PatAuthError('TOKEN_EXPIRED', 'Access token expired');
   }
   // Fire-and-forget `lastUsedAt` update so a slow write can't add latency.
-  request.server.prisma.personalAccessToken
+  request.server.prisma.apiToken
     .update({ data: { lastUsedAt: new Date() }, where: { id: pat.id } })
     .catch(() => {});
   const now = Math.floor(Date.now() / 1000);

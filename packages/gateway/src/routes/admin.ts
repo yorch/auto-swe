@@ -117,7 +117,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   app.get('/access-tokens', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const rows = await fastify.prisma.personalAccessToken.findMany({
+    const rows = await fastify.prisma.apiToken.findMany({
       orderBy: { createdAt: 'desc' },
       select: {
         createdAt: true,
@@ -140,7 +140,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { params: TokenIdParam },
     },
     async (request, reply) => {
-      const existing = await fastify.prisma.personalAccessToken.findUnique({
+      const existing = await fastify.prisma.apiToken.findUnique({
         where: { id: request.params.id },
       });
       if (!existing) {
@@ -149,7 +149,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       if (existing.revokedAt) {
         return { data: { id: existing.id, revokedAt: existing.revokedAt } };
       }
-      const updated = await fastify.prisma.personalAccessToken.update({
+      const updated = await fastify.prisma.apiToken.update({
         data: { revokedAt: new Date() },
         where: { id: existing.id },
       });

@@ -40,7 +40,7 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
   // ── List own tokens ──
   app.get('/', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
     const user = requireUser(request);
-    const rows = await fastify.prisma.personalAccessToken.findMany({
+    const rows = await fastify.prisma.apiToken.findMany({
       orderBy: { createdAt: 'desc' },
       select: {
         createdAt: true,
@@ -72,7 +72,7 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
       const expiresAt = expiresInDays
         ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000)
         : null;
-      const created = await fastify.prisma.personalAccessToken.create({
+      const created = await fastify.prisma.apiToken.create({
         data: {
           expiresAt,
           name,
@@ -119,7 +119,7 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const existing = await fastify.prisma.personalAccessToken.findUnique({
+      const existing = await fastify.prisma.apiToken.findUnique({
         where: { id: request.params.id },
       });
       if (!existing || existing.userId !== user.sub) {
@@ -131,7 +131,7 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
       if (existing.revokedAt) {
         return { data: { id: existing.id, revokedAt: existing.revokedAt } };
       }
-      const updated = await fastify.prisma.personalAccessToken.update({
+      const updated = await fastify.prisma.apiToken.update({
         data: { revokedAt: new Date() },
         where: { id: existing.id },
       });

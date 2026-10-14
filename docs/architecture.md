@@ -576,7 +576,7 @@ flowchart LR
 | Path | Token format | Storage | Issued by |
 |------|-------------|---------|-----------|
 | better-auth cookie | HTTP-only session cookie | `sessions` (60 s in-memory cache) | `POST /api/auth/sign-in/*` — email+password, GitHub, Google, magic-link |
-| PAT bearer | `ats_<base64url-32B>` | `personal_access_tokens` (hash only) | Settings → API tokens |
+| PAT bearer | `ats_<base64url-32B>` | `api_tokens` (hash only) | Settings → API tokens |
 | JWT bearer | `eyJ…` (HS256/RS256) | — | `POST /api/v1/auth/session-token`, which exchanges an active session cookie for a short-lived JWT |
 
 A JWT's role claim is not trusted on its own: after verifying the signature, the gateway re-reads
@@ -625,7 +625,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 ```mermaid
 erDiagram
     User ||--o{ TeamMembership : "belongs to"
-    User ||--o{ PersonalAccessToken : has
+    User ||--o{ ApiToken : has
     User ||--o{ Account : "better-auth"
     User ||--o{ Session : "better-auth"
 
@@ -666,7 +666,7 @@ erDiagram
 | Group | Models | Purpose |
 |-------|--------|---------|
 | Identity | `User`, `Account`, `Session`, `Verification` | better-auth sessions, PATs, the JWT bridge; `User.preferences` JSONB holds per-user UI settings |
-| Auth tokens | `PersonalAccessToken` | `ats_*` bearer tokens; only the hash is stored |
+| Auth tokens | `ApiToken` | `ats_*` bearer tokens; only the hash is stored |
 | Tenancy & RBAC | `Organization`, `Team`, `TeamMembership`, `OrganizationMembership` | `Organization` is the top-level tenant; every `Team` nests under one. `OrgRole` is `ORG_ADMIN` / `ORG_MEMBER` |
 | Connections | `Connection` | Typed binding to an external system. `type` is validated against the runtime registry in `@auto-swe/shared/lib/connectionTypes` (`git_repo`, `issue_tracker`, `notion`, `zendesk`, `hubspot`, `slack_workspace`, `http_api`, `mcp`). `type='git_repo'` carries repo coordinates, default branch, and gate commands; other types store type-specific settings in `config`. Token-based connection types may store an AES-256-GCM encrypted API token (`apiKeyCiphertext`/`Nonce`/`AuthTag`/`Version`). Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
 | Repository sharing | `ConnectionTeamShare` | A further team, in the owning team's organization, whose members may see and launch on a repository; the owning team keeps management. See [repositories.md](./repositories.md) |

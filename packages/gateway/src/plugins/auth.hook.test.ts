@@ -179,7 +179,7 @@ describe('requireAuth — PAT (ats_ prefix) path', () => {
     const update = vi.fn().mockResolvedValue({});
     const request = makeRequest({
       authorization: 'Bearer ats_abcdef123456',
-      prisma: { personalAccessToken: { findUnique, update } },
+      prisma: { apiToken: { findUnique, update } },
       verifyAccessToken,
     });
     const reply = makeReply();
@@ -198,7 +198,7 @@ describe('requireAuth — PAT (ats_ prefix) path', () => {
     const findUnique = vi.fn().mockResolvedValue(null);
     const request = makeRequest({
       authorization: 'Bearer ats_unknown',
-      prisma: { personalAccessToken: { findUnique } },
+      prisma: { apiToken: { findUnique } },
     });
     const reply = makeReply();
     await requireAuth()(request, reply as unknown as FastifyReply);
@@ -215,7 +215,7 @@ describe('requireAuth — PAT (ats_ prefix) path', () => {
     });
     const request = makeRequest({
       authorization: 'Bearer ats_revoked',
-      prisma: { personalAccessToken: { findUnique } },
+      prisma: { apiToken: { findUnique } },
     });
     const reply = makeReply();
     await requireAuth()(request, reply as unknown as FastifyReply);
@@ -232,7 +232,7 @@ describe('requireAuth — PAT (ats_ prefix) path', () => {
     });
     const request = makeRequest({
       authorization: 'Bearer ats_inactive_user',
-      prisma: { personalAccessToken: { findUnique } },
+      prisma: { apiToken: { findUnique } },
     });
     const reply = makeReply();
     await requireAuth()(request, reply as unknown as FastifyReply);
@@ -249,7 +249,7 @@ describe('requireAuth — PAT (ats_ prefix) path', () => {
     });
     const request = makeRequest({
       authorization: 'Bearer ats_expired',
-      prisma: { personalAccessToken: { findUnique } },
+      prisma: { apiToken: { findUnique } },
     });
     const reply = makeReply();
     await requireAuth()(request, reply as unknown as FastifyReply);

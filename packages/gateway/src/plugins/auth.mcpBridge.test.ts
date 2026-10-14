@@ -35,7 +35,7 @@ describe('requireAuth and the MCP bridge', () => {
     defaultGrant = state.grant;
     const app = Fastify();
     app.decorate('prisma', {
-      personalAccessToken: { findUnique: async () => null, update: async () => ({}) },
+      apiToken: { findUnique: async () => null, update: async () => ({}) },
       user: {
         findUnique: async () => ({ isActive: true, role: 'ENGINEER', slackId: null }),
       },
