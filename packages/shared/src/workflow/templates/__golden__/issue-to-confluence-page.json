@@ -1,0 +1,173 @@
+{
+  "description": "Read a Jira or Linear issue, draft a Confluence page with the content writer, and create that page — or rewrite the one the request names — after policy/approval gating.",
+  "entry": "resolveWorkspace",
+  "name": "issue-to-confluence-page",
+  "nodes": {
+    "autoWrite": {
+      "inputs": {
+        "bodyText": {
+          "from": "nodes.draftPage.output.text"
+        },
+        "connectionId": {
+          "from": "request.payload.docConnectionId"
+        },
+        "fallbackTitle": {
+          "from": "nodes.readSource.output.data.title"
+        },
+        "spaceKey": {
+          "from": "request.payload.spaceKey"
+        },
+        "targetPageId": {
+          "from": "request.payload.targetPageId"
+        },
+        "title": {
+          "from": "request.payload.title"
+        },
+        "version": {
+          "from": "request.payload.version"
+        }
+      },
+      "next": "done",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "checkAuto": {
+      "expr": "nodes.publishOutcome.output.decision == 'require_approval'",
+      "onFalse": "autoWrite",
+      "onTrue": "humanApproval",
+      "type": "cond"
+    },
+    "done": {
+      "result": {
+        "approved": {
+          "literal": true
+        },
+        "issueId": {
+          "from": "request.payload.issueId"
+        },
+        "pageUrl": {
+          "expr": "nodes.autoWrite.output.reference ?? nodes.manualWrite.output.reference"
+        },
+        "targetPageId": {
+          "from": "request.payload.targetPageId"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "doneRejected": {
+      "result": {
+        "approved": {
+          "literal": false
+        },
+        "issueId": {
+          "from": "request.payload.issueId"
+        },
+        "written": {
+          "literal": false
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "draftPage": {
+      "agentRef": "contentWriter",
+      "inputs": {
+        "instructions": {
+          "from": "request.payload.instructions"
+        },
+        "issue": {
+          "from": "nodes.readSource.output.data"
+        },
+        "targetPageId": {
+          "from": "request.payload.targetPageId"
+        }
+      },
+      "next": "publishOutcome",
+      "spanName": "llm.confluence_page_draft",
+      "type": "agent"
+    },
+    "humanApproval": {
+      "approverCount": {
+        "from": "nodes.publishOutcome.output.approverCount"
+      },
+      "contextFrom": "nodes.draftPage.output.text",
+      "description": "A Confluence page draft is ready. Approve to publish it, reject to discard it.",
+      "onApprove": "manualWrite",
+      "onReject": "doneRejected",
+      "onTimeout": "doneRejected",
+      "timeout": "24h",
+      "title": "Approve Confluence page write",
+      "type": "humanApproval"
+    },
+    "manualWrite": {
+      "inputs": {
+        "bodyText": {
+          "from": "nodes.draftPage.output.text"
+        },
+        "connectionId": {
+          "from": "request.payload.docConnectionId"
+        },
+        "fallbackTitle": {
+          "from": "nodes.readSource.output.data.title"
+        },
+        "spaceKey": {
+          "from": "request.payload.spaceKey"
+        },
+        "targetPageId": {
+          "from": "request.payload.targetPageId"
+        },
+        "title": {
+          "from": "request.payload.title"
+        },
+        "version": {
+          "from": "request.payload.version"
+        }
+      },
+      "next": "done",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "publishOutcome": {
+      "config": {
+        "action": "external_write"
+      },
+      "inputs": {
+        "description": {
+          "from": "request.payload.issueId"
+        }
+      },
+      "next": "checkAuto",
+      "step": "publishOutcome",
+      "type": "step"
+    },
+    "readSource": {
+      "config": {},
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        },
+        "issueId": {
+          "from": "request.payload.issueId"
+        }
+      },
+      "next": "draftPage",
+      "step": "readSource",
+      "type": "step"
+    },
+    "resolveWorkspace": {
+      "config": {
+        "workspaceProvider": "issue_tracker"
+      },
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        }
+      },
+      "next": "readSource",
+      "step": "resolveWorkspace",
+      "type": "step"
+    }
+  },
+  "schemaVersion": 1
+}

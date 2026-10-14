@@ -358,6 +358,16 @@ export const USE_CASES = {
       'under the default autonomy policy.',
     title: 'Post a Slack update',
   },
+  'issue-to-confluence-page': {
+    group: 'content',
+    maturity: 'seeded',
+    source: 'packages/shared/src/workflow/templates/issueToConfluencePage.ts',
+    summary:
+      'Reads a Jira or Linear issue, drafts a Confluence page from it, and creates the page ' +
+      '— or rewrites the one named in the request — once the autonomy policy, and a person ' +
+      'where the policy asks for one, allows the external write.',
+    title: 'Tracker issue to Confluence page',
+  },
 };
 
 /**
