@@ -9,7 +9,7 @@ import {
 } from '@auto-swe/shared/types/api';
 import { apiRequest, apiRequestFull, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
-import { parseFlags } from '../lib/flags.js';
+import { FLAG_PRESENT, parseFlags } from '../lib/flags.js';
 import { sleep } from '../lib/time.js';
 
 const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regression gate
@@ -122,9 +122,15 @@ async function cmdRescreen(rest: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Usage: evals rescreen <dataset-id> [--case=<case-id>]\n');
     return 1;
   }
+  // `--case` with no value parses to FLAG_PRESENT, which is not a case id.
+  if (flags.case === FLAG_PRESENT || flags.case === '') {
+    process.stderr.write('Usage: evals rescreen <dataset-id> [--case=<case-id>]\n');
+    return 1;
+  }
+  const dataset = encodeURIComponent(id);
   const path = flags.case
-    ? `/api/v1/platform/evals/${id}/cases/${flags.case}/rescreen`
-    : `/api/v1/platform/evals/${id}/rescreen`;
+    ? `/api/v1/platform/evals/${dataset}/cases/${encodeURIComponent(flags.case)}/rescreen`
+    : `/api/v1/platform/evals/${dataset}/rescreen`;
   const data = await apiRequest<EvalRescreenResultDto>(env, 'POST', path, {});
   process.stdout.write(
     data.screenStarted

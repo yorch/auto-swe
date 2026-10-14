@@ -17,7 +17,9 @@ export async function startDatasetScreen(datasetId: string): Promise<void> {
       workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
     });
   } catch (err) {
-    // A server that refuses the conflict policy reports the running screen this way.
+    // A server that ignores the conflict policy reports the running screen this
+    // way, which is the same join. One that refuses the field throws
+    // InvalidArgument, which is rethrown.
     if (!(err instanceof Error && err.name === 'WorkflowExecutionAlreadyStartedError')) {
       throw err;
     }

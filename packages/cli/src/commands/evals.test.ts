@@ -196,6 +196,25 @@ describe('runEvalsCommand', () => {
     expect(stdoutWrites.join('')).toContain('could not start now');
   });
 
+  it('rescreen prints the usage error for --case without a value, and sends nothing', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as typeof fetch;
+    const code = await runEvalsCommand(['rescreen', 'ds-1', '--case'], ENV);
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('Usage: evals rescreen');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rescreen URL-encodes the case id', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string) => {
+      urls.push(url);
+      return jsonResponse({ data: { reset: 1, screenStarted: true } });
+    }) as typeof fetch;
+    await runEvalsCommand(['rescreen', 'ds-1', '--case=a/b?c'], ENV);
+    expect(urls).toEqual(['http://gw/api/v1/platform/evals/ds-1/cases/a%2Fb%3Fc/rescreen']);
+  });
+
   it('rescreen requires a dataset id', async () => {
     const code = await runEvalsCommand(['rescreen'], ENV);
     expect(code).toBe(1);

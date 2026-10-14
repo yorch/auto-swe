@@ -363,9 +363,19 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     if (!ds) {
       return 'DATASET_NOT_FOUND';
     }
+    // What the reset discards, for the audit: how many of the cases were screened,
+    // failed their screen, or were never screened.
+    const scope = { datasetId: ds.id, ...(caseId ? { id: caseId } : {}) };
+    const [screenedBefore, failedBefore, neverBefore] = await Promise.all([
+      fastify.prisma.evalCase.count({ where: { ...scope, flakeScreened: true } }),
+      fastify.prisma.evalCase.count({
+        where: { ...scope, flakeRuns: { gt: 0 }, flakeScreened: false },
+      }),
+      fastify.prisma.evalCase.count({ where: { ...scope, flakeRuns: 0 } }),
+    ]);
     const { count } = await fastify.prisma.evalCase.updateMany({
       data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0 },
-      where: { datasetId: ds.id, ...(caseId ? { id: caseId } : {}) },
+      where: scope,
     });
     if (caseId && count === 0) {
       return 'CASE_NOT_FOUND';
@@ -374,6 +384,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       action: 'UPDATE',
       actor,
       after: { flakeRuns: 0, flakeScreened: false, rescreen: caseId ? { caseId } : 'dataset' },
+      before: { failed: failedBefore, neverScreened: neverBefore, screened: screenedBefore },
       entityId: ds.id,
       entityType: 'EvalDataset',
     });
@@ -538,60 +549,81 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
   // ── Suite health ──
   // What the stored data can say about a benchmark's health: the share of each
   // dataset's golden cases quarantined as stale (exact), how many are flake-screened, and
-  // which the harness skips for want of a passing screen. One grouped read over the cases plus
-  // the unscreened ids; the thresholds are the Tier-2 defaults the gate uses.
+  // which the harness skips for want of a passing screen. Grouped counts over the cases plus,
+  // per dataset, a bounded read of the oldest unscreened ids; the thresholds are the Tier-2
+  // defaults the gate uses.
   app.get('/evals/suite-health', { onRequest: adminOnly }, async () => {
-    const [groups, unscreened, datasets, defaults] = await Promise.all([
+    const [groups, neverGroups, datasets, defaults] = await Promise.all([
       fastify.prisma.evalCase.groupBy({
         _count: { _all: true },
         by: ['datasetId', 'quarantined', 'flakeScreened'],
       }),
-      // The cases the harness skips: not quarantined (skipped for that already) and not screened.
-      fastify.prisma.evalCase.findMany({
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        select: { datasetId: true, flakeRuns: true, id: true },
-        where: { flakeScreened: false, quarantined: false },
+      // flakeRuns = 0 marks a case never screened; above it, a screen that failed.
+      fastify.prisma.evalCase.groupBy({
+        _count: { _all: true },
+        by: ['datasetId'],
+        where: { flakeRuns: 0, flakeScreened: false, quarantined: false },
       }),
       runUnscoped('admin suite health spans every team', ['EvalDataset'], () =>
         fastify.prisma.evalDataset.findMany({ select: { id: true, name: true, slug: true } })
       ),
       resolveWorkflowDefaults(),
     ]);
-    const perDataset = new Map<string, { cases: number; quarantined: number; screened: number }>();
+    const perDataset = new Map<
+      string,
+      { cases: number; quarantined: number; screened: number; unscreened: number }
+    >();
     for (const g of groups) {
-      const acc = perDataset.get(g.datasetId) ?? { cases: 0, quarantined: 0, screened: 0 };
+      const acc = perDataset.get(g.datasetId) ?? {
+        cases: 0,
+        quarantined: 0,
+        screened: 0,
+        unscreened: 0,
+      };
       acc.cases += g._count._all;
       acc.quarantined += g.quarantined ? g._count._all : 0;
       acc.screened += g.flakeScreened ? g._count._all : 0;
+      acc.unscreened += !g.flakeScreened && !g.quarantined ? g._count._all : 0;
       perDataset.set(g.datasetId, acc);
     }
-    // flakeRuns = 0 marks a case never screened; above it, a screen that failed.
-    const skipped = new Map<string, { never: string[]; failed: string[] }>();
-    for (const c of unscreened) {
-      const acc = skipped.get(c.datasetId) ?? { failed: [], never: [] };
-      (c.flakeRuns === 0 ? acc.never : acc.failed).push(c.id);
-      skipped.set(c.datasetId, acc);
-    }
+    const neverCounts = new Map(neverGroups.map((g) => [g.datasetId, g._count._all]));
+    // The cases the harness skips: not quarantined (skipped for that already) and not screened.
+    const skippedIds = async (datasetId: string, failed: boolean): Promise<string[]> => {
+      const rows = await fastify.prisma.evalCase.findMany({
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true },
+        take: SUITE_HEALTH_CASE_IDS,
+        where: {
+          datasetId,
+          flakeRuns: failed ? { gt: 0 } : 0,
+          flakeScreened: false,
+          quarantined: false,
+        },
+      });
+      return rows.map((r) => r.id);
+    };
+    const rows = await Promise.all(
+      datasets.map(async (d) => {
+        const acc = perDataset.get(d.id) ?? { cases: 0, quarantined: 0, screened: 0 };
+        const never = neverCounts.get(d.id) ?? 0;
+        const failed = Math.max(0, acc.unscreened - never);
+        return {
+          cases: acc.cases,
+          datasetId: d.id,
+          flakeScreened: acc.screened,
+          name: d.name,
+          neverScreened: never,
+          neverScreenedCaseIds: never > 0 ? await skippedIds(d.id, false) : [],
+          quarantined: acc.quarantined,
+          screenFailed: failed,
+          screenFailedCaseIds: failed > 0 ? await skippedIds(d.id, true) : [],
+          slug: d.slug,
+          staleRate: acc.cases > 0 ? acc.quarantined / acc.cases : 0,
+        };
+      })
+    );
     const data: EvalSuiteHealthDto = {
-      datasets: datasets
-        .map((d) => {
-          const acc = perDataset.get(d.id) ?? { cases: 0, quarantined: 0, screened: 0 };
-          const skip = skipped.get(d.id) ?? { failed: [], never: [] };
-          return {
-            cases: acc.cases,
-            datasetId: d.id,
-            flakeScreened: acc.screened,
-            name: d.name,
-            neverScreened: skip.never.length,
-            neverScreenedCaseIds: skip.never.slice(0, SUITE_HEALTH_CASE_IDS),
-            quarantined: acc.quarantined,
-            screenFailed: skip.failed.length,
-            screenFailedCaseIds: skip.failed.slice(0, SUITE_HEALTH_CASE_IDS),
-            slug: d.slug,
-            staleRate: acc.cases > 0 ? acc.quarantined / acc.cases : 0,
-          };
-        })
-        .sort((a, b) => a.slug.localeCompare(b.slug)),
+      datasets: rows.sort((a, b) => a.slug.localeCompare(b.slug)),
       thresholds: {
         maxFlakeRate: defaults.evalHealthMaxFlakeRate,
         maxStaleRate: defaults.evalHealthMaxStaleRate,

@@ -23,6 +23,7 @@ function newMockPrisma() {
   return {
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     evalCase: {
+      count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -777,17 +778,21 @@ describe('evalRoutes', () => {
         { id: 'd2', name: 'Empty', slug: 'empty' },
         { id: 'd1', name: 'Bench', slug: 'bench' },
       ]);
-      prisma.evalCase.groupBy.mockResolvedValue([
-        { _count: { _all: 6 }, datasetId: 'd1', flakeScreened: true, quarantined: false },
-        { _count: { _all: 1 }, datasetId: 'd1', flakeScreened: true, quarantined: true },
-        { _count: { _all: 1 }, datasetId: 'd1', flakeScreened: false, quarantined: true },
-        { _count: { _all: 2 }, datasetId: 'd1', flakeScreened: false, quarantined: false },
-      ]);
-      // flakeRuns 0: never screened; above 0: a screen that failed.
-      prisma.evalCase.findMany.mockResolvedValue([
-        { datasetId: 'd1', flakeRuns: 0, id: 'c9' },
-        { datasetId: 'd1', flakeRuns: 3, id: 'c10' },
-      ]);
+      // The by-state groups, and the never-screened (flakeRuns 0) count per dataset.
+      prisma.evalCase.groupBy.mockImplementation(async (args: { by: string[] }) =>
+        args.by.length === 1
+          ? [{ _count: { _all: 1 }, datasetId: 'd1' }]
+          : [
+              { _count: { _all: 6 }, datasetId: 'd1', flakeScreened: true, quarantined: false },
+              { _count: { _all: 1 }, datasetId: 'd1', flakeScreened: true, quarantined: true },
+              { _count: { _all: 1 }, datasetId: 'd1', flakeScreened: false, quarantined: true },
+              { _count: { _all: 2 }, datasetId: 'd1', flakeScreened: false, quarantined: false },
+            ]
+      );
+      prisma.evalCase.findMany.mockImplementation(
+        async (args: { where: { flakeRuns: unknown } }) =>
+          args.where.flakeRuns === 0 ? [{ id: 'c9' }] : [{ id: 'c10' }]
+      );
       const res = await app.inject({
         headers: AUTH,
         method: 'GET',
@@ -795,7 +800,15 @@ describe('evalRoutes', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(prisma.evalCase.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { flakeScreened: false, quarantined: false } })
+        expect.objectContaining({
+          take: 50,
+          where: {
+            datasetId: 'd1',
+            flakeRuns: { gt: 0 },
+            flakeScreened: false,
+            quarantined: false,
+          },
+        })
       );
       expect(JSON.parse(res.payload).data).toEqual({
         datasets: [
@@ -833,13 +846,18 @@ describe('evalRoutes', () => {
     it('lists at most the oldest 50 unscreened case ids, beside the full counts', async () => {
       const { app, prisma } = await buildApp();
       prisma.evalDataset.findMany.mockResolvedValue([{ id: 'd1', name: 'Big', slug: 'big' }]);
-      prisma.evalCase.groupBy.mockResolvedValue([
-        { _count: { _all: 120 }, datasetId: 'd1', flakeScreened: false, quarantined: false },
-      ]);
-      prisma.evalCase.findMany.mockResolvedValue([
-        ...Array.from({ length: 60 }, (_, i) => ({ datasetId: 'd1', flakeRuns: 0, id: `n${i}` })),
-        ...Array.from({ length: 60 }, (_, i) => ({ datasetId: 'd1', flakeRuns: 3, id: `f${i}` })),
-      ]);
+      prisma.evalCase.groupBy.mockImplementation(async (args: { by: string[] }) =>
+        args.by.length === 1
+          ? [{ _count: { _all: 60 }, datasetId: 'd1' }]
+          : [{ _count: { _all: 120 }, datasetId: 'd1', flakeScreened: false, quarantined: false }]
+      );
+      // The database applies `take`: the read never holds more than 50 ids.
+      prisma.evalCase.findMany.mockImplementation(
+        async (args: { take: number; where: { flakeRuns: unknown } }) =>
+          Array.from({ length: args.take }, (_, i) => ({
+            id: `${args.where.flakeRuns === 0 ? 'n' : 'f'}${i}`,
+          }))
+      );
       const res = await app.inject({
         headers: AUTH,
         method: 'GET',
@@ -851,6 +869,7 @@ describe('evalRoutes', () => {
       expect(d.neverScreenedCaseIds[0]).toBe('n0');
       expect(d.screenFailed).toBe(60);
       expect(d.screenFailedCaseIds).toHaveLength(50);
+      expect(prisma.evalCase.findMany).toHaveBeenCalledTimes(2);
     });
 
     it('is ADMIN-only', async () => {
@@ -872,6 +891,10 @@ describe('evalRoutes', () => {
       const { app, prisma, startEvalScreenWorkflow } = await buildApp();
       prisma.evalDataset.findUnique.mockResolvedValue({ id: DS });
       prisma.evalCase.updateMany.mockResolvedValue({ count: 3 });
+      prisma.evalCase.count
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(1);
       const res = await app.inject({
         headers: AUTH,
         method: 'POST',
@@ -887,6 +910,8 @@ describe('evalRoutes', () => {
         data: expect.objectContaining({
           action: 'UPDATE',
           actorId: 'admin-1',
+          // What the reset discards: screened, failed-screen and never-screened counts.
+          beforeJson: { failed: 1, neverScreened: 1, screened: 1 },
           entityId: DS,
           entityType: 'EvalDataset',
         }),

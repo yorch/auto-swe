@@ -1008,9 +1008,12 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     },
 
     async startEvalScreenWorkflow(workflowId: string, input: EvalScreenInput): Promise<void> {
-      // One screen per dataset id: a start while one runs joins it (it loads
-      // every unscreened case when it starts its activity), and a closed one is
-      // started afresh. The catch covers a server that refuses the policy.
+      // One screen per dataset id: a start while one runs joins it, and a closed
+      // one is started afresh. The workflow screens again while cases remain, so a
+      // join after the activity's last load is still picked up. A server that
+      // ignores the conflict policy answers an already-running id with
+      // WorkflowExecutionAlreadyStartedError, which is the same join; one that
+      // refuses the field answers InvalidArgument, which is rethrown.
       try {
         await client.workflow.start('EvalScreenWorkflow', {
           args: [input],
