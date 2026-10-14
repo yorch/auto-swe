@@ -1,6 +1,6 @@
 ---
 name: prisma-pgvector-hnsw
-description: Handle the pgvector HNSW index and other non-Prisma-expressible DDL when changing schema.prisma or adding a migration. Use when a migration diff unexpectedly drops idx_memory_items_embedding, a CHECK constraint, or a partial unique index, or before running any prisma migrate command in this repo.
+description: Handle the pgvector HNSW index and other non-Prisma-expressible DDL when changing schema.prisma or adding a migration. Use when a migration diff unexpectedly drops idx_memory_items_embedding or knowledge_items_embedding_hnsw_idx, or before running any prisma migrate command in this repo.
 ---
 
 # pgvector, HNSW, and DDL Prisma cannot express
@@ -11,24 +11,33 @@ on. They live in a hand-written migration:
 
 ```
 packages/shared/src/prisma/migrations/
-├── 00000000000000_init/                        generated baseline
-└── 00000000000001_custom_constraints_and_indexes/   hand-written DDL
+├── 20260618000000_init/                             generated baseline
+└── 20260618000001_custom_constraints_and_indexes/   hand-written DDL
 ```
 
 ## The gotcha
 
-`prisma migrate dev` diffs the database against `schema.prisma`. Everything in the hand-written
-migration is invisible to the schema, so the diff reads it as drift and **emits a DROP** — every
-time, for any unrelated schema change.
+`prisma migrate dev` diffs the database against `schema.prisma`, and the HNSW indexes are invisible
+to the schema, so the diff reads them as drift and **emits a DROP** — every time, for any unrelated
+schema change.
 
 ```sql
 -- what `migrate dev` silently proposes, on a migration that has nothing to do with memory:
 DROP INDEX "idx_memory_items_embedding";
+DROP INDEX "knowledge_items_embedding_hnsw_idx";
 ```
 
 Applied to production, that drops the index semantic memory retrieval depends on. Queries keep
 working — they fall back to a sequential scan — so nothing fails loudly. Recall degrades and
 latency climbs.
+
+The rest of the hand-written DDL is invisible to the schema too, but the diff does **not** propose
+dropping it: with every one of these migrations applied, the only statements the diff emits are the
+two above, which is exactly what the CI drift check
+([`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml) — "Verify migrations match
+schema.prisma") allows through. Do not extrapolate from that to a general promise — the diff's
+treatment of a construct it cannot model is an implementation detail of the version installed, so
+read whatever it generates rather than assuming which constructs are safe.
 
 ## Rules
 
@@ -37,20 +46,51 @@ latency climbs.
 2. **Read every generated migration before committing it.** If it contains a `DROP INDEX`,
    `DROP CONSTRAINT`, or `ALTER … DROP NOT NULL` you did not intend, delete those statements. The
    generator does not know the DDL it is dropping was deliberate.
-3. **Non-expressible DDL belongs in `00000000000001`, not in the baseline.** The split is by *kind*
-   of DDL, not by when it was written. While the schema is undeployed, add to that file and
+3. **Non-expressible DDL belongs in the hand-written file, not in the baseline.** The split is by
+   *kind* of DDL, not by when it was written. While the schema is undeployed, add to that file and
    regenerate the baseline (`prisma migrate diff --from-empty --to-schema src/prisma/schema.prisma
    --script`) rather than appending a third migration — two migrations, one generated and one
-   hand-written, is the shape to keep. **Once the schema is deployed anywhere this inverts:**
-   `00000000000001` is then applied in the wild and must not be edited, so new DDL of either kind
-   appends as its own migration.
+   hand-written, is the shape to keep. **Once the schema is deployed anywhere this inverts:** the
+   hand-written file is then applied in the wild and must not be edited, so new DDL of either kind
+   appends as its own migration. Generate the baseline with `prisma migrate diff --from-empty
+   --to-schema src/prisma/schema.prisma --script` and keep the committed file **byte-identical to
+   that command's output** — it is the command the CI drift check and `docs/deployment.md` name.
+   `prisma migrate dev` produces the same DDL except for two differences, so do not "reconcile" the
+   file with it: it omits the `CREATE SCHEMA IF NOT EXISTS "public";` preamble and the trailing
+   blank line, both of which the committed baseline carries.
 4. **After regenerating the baseline, prove the result is unchanged.** Apply the old chain and the
-   new one to two fresh databases and compare `information_schema.columns`, `pg_constraint` and
-   `pg_indexes` — a raw `pg_dump` diff also reports physical column ordering, which is not a schema
-   difference and will bury a real one.
+   new one to two fresh databases and compare `information_schema.columns`, `pg_constraint`,
+   `pg_indexes`, `pg_get_functiondef` and `pg_get_triggerdef` — the declared contract, not the
+   physical layout. Two differences are *not* schema differences and will bury a real one: a raw
+   `pg_dump` diff also reports physical column ordering, and PostgreSQL's autogenerated `*_not_null`
+   constraint names keep the name of a table that a rename migration moved — and so differ from the
+   names the regenerated baseline derives from the current table name. Compare the column *set*, and
+   the constraint definitions rather than their names, when a table has been renamed.
 5. **Embeddings are fixed at 1536 dimensions.** `packages/worker/src/lib/embeddings.ts` throws if a
    model returns a different shape; changing the dimension means a new migration plus a re-embed of
    every existing row.
+
+## Directory names
+
+Prisma names a migration `<14-digit timestamp>_<snake_case name>` — `20260619000000_governed_knowledge`.
+**The order is the contract:** `migrate deploy` applies migrations lexicographically by directory
+name, so the baseline must sort before every migration whose DDL it precedes. The consolidated pair
+keeps that shape — `20260618000000_init` for the generated baseline and
+`20260618000001_custom_constraints_and_indexes` for the hand-written file beside it. Their stamp is a
+sentinel: `20260618` is the day before the repository's earliest content migration, so both sort
+first and no content migration can ever precede them.
+
+The stamp is deliberately not the date the work happened. Any timestamp at or after
+`20260619000000` puts the baseline **after** migrations whose DDL it contains, and a same-day
+collision is enough to do it, because `20260619000000_governed_knowledge` already sorts before
+`20260619000000_init`. Nothing enforces the timestamp at all — a folder named `bogus_name` applies
+cleanly — so the shape is a convention and the ordering is the rule.
+
+Renaming either directory is safe only while the schema is undeployed. A database that already
+recorded the old names cannot be migrated forward: `migrate deploy` matches recorded migrations to
+directories by name, so it treats the renamed baseline as brand new and re-applies it, failing with
+`P3018` (`type "Role" already exists`). Reset such a database instead — `prisma migrate reset`, or
+drop and recreate it — which replays the pair from empty. See [Resetting locally](#resetting-locally).
 
 ## Resetting locally
 

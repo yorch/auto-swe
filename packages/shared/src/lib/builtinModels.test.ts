@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
@@ -14,23 +15,27 @@ const bySpec = new Map(BUILTIN_MODELS.map((m) => [builtinModelSpec(m), m]));
 
 /**
  * The embedding default is seeded by SQL, not TypeScript, so read it from the
- * migration that inserts it rather than restating it here.
+ * migration that inserts it rather than restating it here. The directory is
+ * searched rather than named: the migrations are a generated baseline plus a
+ * hand-written file, and which of them owns the seed is a detail of that split —
+ * naming the file here would break on every consolidation of them.
  */
 function seededEmbeddingSpec(): string {
-  const sql = readFileSync(
-    fileURLToPath(
-      new URL(
-        '../prisma/migrations/00000000000001_custom_constraints_and_indexes/migration.sql',
-        import.meta.url
-      )
-    ),
-    'utf8'
-  );
-  const match = /INSERT INTO "embedding_configs"[^;]*VALUES \('default', '([^']+)'\)/.exec(sql);
-  if (!match?.[1]) {
-    throw new Error('embedding_configs default seed not found in the migration');
+  const directory = fileURLToPath(new URL('../prisma/migrations', import.meta.url));
+  const specs = readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .flatMap((entry) => {
+      const sql = readFileSync(join(directory, entry.name, 'migration.sql'), 'utf8');
+      const match = /INSERT INTO "embedding_configs"[^;]*VALUES \('default', '([^']+)'\)/.exec(sql);
+      return match?.[1] ? [match[1]] : [];
+    });
+  if (specs.length !== 1) {
+    throw new Error(
+      'expected exactly one embedding_configs default seed across the migrations, ' +
+        `found ${specs.length}`
+    );
   }
-  return match[1];
+  return specs[0] as string;
 }
 
 /**

@@ -915,9 +915,11 @@ curl -X POST http://localhost:8080/api/v1/work-requests \
 Monitor at `http://localhost:3000` (dashboard), `/runs` (history), and `http://localhost:8233`
 (Temporal UI). To start over locally,
 `yarn workspace @auto-swe/shared exec prisma migrate reset` is the cleanest path — a generated
-`init` baseline plus one hand-written migration (`custom_constraints_and_indexes`) for DDL the
+`20260618000000_init` baseline plus one hand-written migration (`20260618000001_custom_constraints_and_indexes`) for DDL the
 Prisma DSL cannot express (CHECK constraints, partial unique indexes, the pgvector HNSW index,
-array `NOT NULL`).
+array `NOT NULL`). The `0_`/`1_` prefixes are what keeps the pair ahead of every content migration
+in `migrate deploy`'s lexicographic order — see the `prisma-pgvector-hnsw` skill before renaming
+them.
 
 Full production runbook: [`docs/deployment.md`](./docs/deployment.md).
 
