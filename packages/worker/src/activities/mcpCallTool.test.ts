@@ -133,16 +133,23 @@ describe('mcpCallTool (cancellation)', () => {
 });
 
 describe('mcpCallTool governance', () => {
-  // An MCP tool's semantics belong to the remote server, so we cannot tell a
-  // read from a write: every call is governed as a mutation. Before this, an
-  // `mcp` node reached an external system with neither the approval guard nor
-  // the retry ledger that `writeOutcome` has had all along.
+  // A call this node cannot prove is a read is governed as a mutation: refused
+  // when the run recorded a policy decision requiring an approval that never
+  // came, and written to the outcome ledger so a retry returns the first result.
+  // Before this, an `mcp` node reached an external system with neither guard.
   beforeEach(() => {
     ctx.info = { attempt: 1, workflowExecution: { workflowId: 'wf-1' } };
     vi.mocked(prisma.workflowRun.findUnique).mockResolvedValue({ id: 'run-1' } as never);
   });
 
-  it('refuses when the recorded policy requires an approval that never came', async () => {
+  function loadedTool(tool: unknown) {
+    return {
+      close: vi.fn().mockResolvedValue(undefined),
+      tools: { mcp_search_docs: tool },
+    } as never;
+  }
+
+  it('refuses a call that is not declared read-only when an approval is missing', async () => {
     vi.mocked(prisma.autonomyDecision.findFirst)
       .mockResolvedValueOnce({
         createdAt: new Date('2026-01-01T00:00:00Z'),
@@ -153,39 +160,76 @@ describe('mcpCallTool governance', () => {
       .mockResolvedValueOnce(null);
     mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
     const execute = vi.fn().mockResolvedValue({ ok: 1 });
-    mockedLoad.mockResolvedValue({
-      close: vi.fn().mockResolvedValue(undefined),
-      tools: { mcp_search_docs: { execute } },
-    } as never);
+    mockedLoad.mockResolvedValue(loadedTool({ execute }));
 
     await expect(
       mcpCallTool({ connectionRef: 'c1', nodeId: 'do', tool: 'search_docs' })
     ).rejects.toThrow(/requires human approval/);
     expect(execute).not.toHaveBeenCalled();
-    expect(mockedLoad).not.toHaveBeenCalled();
   });
 
-  it('records the result so a retry does not invoke the remote tool twice', async () => {
+  it('lets a server-declared read-only tool through under the same policy', async () => {
+    // The MCP `readOnlyHint` annotation is the protocol's own signal that a call
+    // has no effect. Refusing a read because an unrelated write is waiting for a
+    // person would be a false refusal, so an annotated tool is exempt — exactly
+    // as a connector read is.
+    vi.mocked(prisma.autonomyDecision.findFirst).mockResolvedValueOnce({
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      payload: { decision: 'require_approval' },
+    } as never);
+    mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
+    const execute = vi.fn().mockResolvedValue({ hits: 3 });
+    mockedLoad.mockResolvedValue(
+      loadedTool({ execute, mcp: { annotations: { readOnlyHint: true } } })
+    );
+
+    const result = await mcpCallTool({
+      connectionRef: 'c1',
+      nodeId: 'do',
+      tool: 'search_docs',
+    });
+
+    expect(result).toEqual({ result: { hits: 3 } });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('records its own result shape, so a retry returns exactly what the first call returned', async () => {
+    // Reset rather than re-mock: the read-only test above deliberately queues a
+    // `require_approval` decision it never consumes, and the shared beforeEach
+    // only clears call history.
+    vi.mocked(prisma.autonomyDecision.findFirst).mockReset();
     vi.mocked(prisma.autonomyDecision.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.workflowOutcomeReference.findFirst)
-      .mockResolvedValueOnce(null as never)
-      .mockResolvedValueOnce({ result: { result: 'first' } } as never);
+    vi.mocked(prisma.workflowOutcomeReference.findFirst).mockReset();
+    vi.mocked(prisma.workflowOutcomeReference.create).mockReset();
     mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
     const execute = vi.fn().mockResolvedValue({ ok: 1 });
-    mockedLoad.mockResolvedValue({
-      close: vi.fn().mockResolvedValue(undefined),
-      tools: { mcp_search_docs: { execute } },
-    } as never);
+    mockedLoad.mockResolvedValue(loadedTool({ execute }));
+
+    // Round-trip through the ledger: the first call's own recorded value is what
+    // the retry reads back. Returning the remote payload unwrapped instead would
+    // change the activity's result shape on retry and break a downstream binding
+    // to `nodes.<id>.output.result`.
+    const recorded: unknown[] = [];
+    vi.mocked(prisma.workflowOutcomeReference.create).mockImplementation((async (arg: {
+      data: { result: unknown };
+    }) => {
+      recorded.push(arg.data.result);
+      return arg as never;
+    }) as never);
+    vi.mocked(prisma.workflowOutcomeReference.findFirst).mockImplementation((async () => {
+      const next = recorded.shift();
+      return next === undefined ? null : ({ result: next } as never);
+    }) as never);
 
     const args = { connectionRef: 'c1', nodeId: 'do', tool: 'search_docs' };
     const first = await mcpCallTool(args);
     const second = await mcpCallTool(args);
 
     expect(first).toEqual({ result: { ok: 1 } });
-    expect(second).toEqual({ result: 'first' });
+    expect(second).toEqual(first);
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ connectionId: 'c1', nodeId: 'do', runId: 'run-1' }),
-    });
+    expect(recorded).toEqual([]);
   });
 });

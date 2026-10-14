@@ -51,29 +51,24 @@ export async function mcpCallTool(input: McpCallToolInput): Promise<McpCallToolR
   return withHeartbeat('mcpCallTool', mcpCallToolImpl(input));
 }
 
+/**
+ * Whether the remote server declared this tool as read-only (the MCP
+ * `readOnlyHint` annotation). Mastra copies the server's annotations onto the
+ * tool it builds (`@mastra/mcp`), so this is the protocol's own signal rather
+ * than a guess from the name.
+ *
+ * Absent or false means unknown, and an unknown tool is governed as a mutation:
+ * the annotation is the only thing that can tell us a call has no effect, and
+ * `readOnlyHint` defaults to false in the protocol.
+ */
+function mcpToolIsReadOnly(tool: unknown): boolean {
+  const annotations = (tool as { mcp?: { annotations?: { readOnlyHint?: boolean } } } | undefined)
+    ?.mcp?.annotations;
+  return annotations?.readOnlyHint === true;
+}
+
 async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResult> {
   throwIfActivityCancelled();
-
-  // An MCP tool's semantics belong to the remote server: we cannot tell a read
-  // from a write, so every call is governed as a mutation — refused when the run
-  // recorded a policy decision requiring an approval that never came, and
-  // recorded against the outcome ledger so an activity retry returns the first
-  // result rather than calling the remote tool twice.
-  const scope = await mutationScope();
-  const ledgerKey: OutcomeKey | null =
-    input.nodeId && scope.runId
-      ? { connectionId: input.connectionRef, nodeId: input.nodeId, runId: scope.runId }
-      : null;
-  if (scope.runId) {
-    await assertApprovalSatisfied(scope.runId);
-  }
-  if (ledgerKey) {
-    const existing = await findRecordedOutcome<McpCallToolResult>(ledgerKey);
-    if (existing) {
-      return existing;
-    }
-  }
-
   const target = await mcpUrlForConnection(input.connectionRef);
   if (!target) {
     throw new Error(
@@ -102,6 +97,33 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
         })`
       );
     }
+    // Governance is decided now, not before connecting: whether this call can
+    // change anything is a property of the tool, and the tool list is what tells
+    // us. A server that annotates a tool `readOnlyHint: true` gets a call that
+    // is neither gated on an approval nor written to the outcome ledger — the
+    // same treatment a connector read gets. Everything else is a mutation, and
+    // is refused when the run recorded a policy decision requiring an approval
+    // that never came, and recorded so an activity retry returns the first
+    // result instead of invoking the remote tool twice.
+    const readOnly = mcpToolIsReadOnly(tool);
+    const scope = await mutationScope();
+    const ledgerKey: OutcomeKey | null =
+      !readOnly && input.nodeId && scope.runId
+        ? { connectionId: input.connectionRef, nodeId: input.nodeId, runId: scope.runId }
+        : null;
+    // The ledger is consulted before the approval guard, as in `writeOutcome`
+    // and `runTool`: the effect already happened, and returning what it produced
+    // performs no second one.
+    if (ledgerKey) {
+      const existing = await findRecordedOutcome<McpCallToolResult>(ledgerKey);
+      if (existing) {
+        return existing;
+      }
+      if (scope.runId) {
+        await assertApprovalSatisfied(scope.runId);
+      }
+    }
+
     // Mastra tool execute is `(input, context)`; @mastra/mcp reads every context
     // field with optional chaining (`context?.…`), so a direct call with just the
     // argument object is safe. The loaded tool is already wrapped with audit
@@ -112,11 +134,14 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
     ) => Promise<unknown>;
     // The MCP call takes no abort signal, so a cancel abandons it rather than
     // waiting out its timeout; the client is still closed in `finally`.
-    const result = await raceActivityCancellation(execute(input.inputs ?? {}));
+    const remote = await raceActivityCancellation(execute(input.inputs ?? {}));
+    const result = { result: remote };
+    // The ledger holds the activity's result, not the remote payload, so a retry
+    // returns exactly what the first call returned.
     if (ledgerKey) {
       await recordOutcome({ ...ledgerKey, attempt: scope.attempt, result });
     }
-    return { result };
+    return result;
   } finally {
     await loaded.close();
     await persistActivityTrace(tracer, 'mcp');
