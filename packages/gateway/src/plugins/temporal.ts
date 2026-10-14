@@ -10,6 +10,7 @@ import type {
   ChannelAssistantTurnInput,
   ConsolidateLessonsInput,
   EpicRequest,
+  EvalScreenInput,
   RepoWorkRequest,
   ScheduledConsolidationInput,
   ScheduledEvalInput,
@@ -24,6 +25,7 @@ import {
   ScheduleNotFoundError,
   type ScheduleOptionsAction,
   ScheduleOverlapPolicy,
+  WorkflowIdConflictPolicy,
   WorkflowIdReusePolicy,
 } from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
@@ -298,6 +300,11 @@ declare module 'fastify' {
           baselineRuntime?: ImplementerRuntimeKind | null;
         }
       ) => Promise<void>;
+      /**
+       * Flake-screen a dataset's never-screened cases (EvalScreenWorkflow). Joins
+       * a screen already running under the same id instead of failing.
+       */
+      startEvalScreenWorkflow: (workflowId: string, input: EvalScreenInput) => Promise<void>;
       startConsolidationWorkflow: (
         workflowId: string,
         input: ConsolidateLessonsInput
@@ -998,6 +1005,27 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         workflowExecutionTimeout: '5h',
         workflowId,
       });
+    },
+
+    async startEvalScreenWorkflow(workflowId: string, input: EvalScreenInput): Promise<void> {
+      // One screen per dataset id: a start while one runs joins it, and a closed
+      // one is started afresh. The workflow screens again while cases remain, so a
+      // join after the activity's last load is still picked up. A server that
+      // ignores the conflict policy answers an already-running id with
+      // WorkflowExecutionAlreadyStartedError, which is the same join; one that
+      // refuses the field answers InvalidArgument, which is rethrown.
+      try {
+        await client.workflow.start('EvalScreenWorkflow', {
+          args: [input],
+          taskQueue: 'engineering-workflow',
+          workflowId,
+          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        });
+      } catch (err) {
+        if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {
+          throw err;
+        }
+      }
     },
 
     async startReembedMemory(workflowId: string, memoryId: string): Promise<void> {

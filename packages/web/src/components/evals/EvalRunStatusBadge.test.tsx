@@ -16,6 +16,13 @@ describe('EvalRunStatusBadge', () => {
     expect(screen.getByText(`${label} (partial)`)).toBeTruthy();
   });
 
+  it('shows a run that scored nothing as inconclusive, not as a pass or a failure', () => {
+    render(<EvalRunStatusBadge status="INCONCLUSIVE" />);
+    expect(screen.getByText('Inconclusive').closest('span[title]')?.getAttribute('title')).toMatch(
+      /nothing was scored/
+    );
+  });
+
   it('does not decorate a status that has no verdict', () => {
     render(<EvalRunStatusBadge partial status="FAILED" />);
     expect(screen.getByText('Did not finish')).toBeTruthy();

@@ -34,7 +34,15 @@ const userCreate = vi.fn(async ({ data }: { data: Record<string, unknown> }) => 
   role: data.role,
 }));
 
-function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
+const orgFindUnique = vi.fn();
+
+function buildApp(
+  role: string,
+  membershipRole: string | null = 'ORG_ADMIN',
+  trustedInvites = false,
+  orgActive = true
+) {
+  orgFindUnique.mockResolvedValue({ isActive: orgActive, trustedInvites });
   let prisma: Record<string, unknown>;
   prisma = {
     $queryRaw: vi.fn(async () => {
@@ -43,6 +51,7 @@ function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
     }),
     $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(prisma)),
     configAuditLog: { create: auditCreate },
+    organization: { findUnique: orgFindUnique },
     organizationMembership: {
       count: vi.fn().mockResolvedValue(2),
       create: vi.fn().mockResolvedValue(MEMBER_ROW),
@@ -150,8 +159,8 @@ describe('POST /:orgId/members/invite', () => {
     orgLockCalls.length = 0;
   });
 
-  const invite = async (role: string) => {
-    const app = buildApp(role, 'ORG_ADMIN');
+  const invite = async (role: string, trustedInvites = false, orgActive = true) => {
+    const app = buildApp(role, 'ORG_ADMIN', trustedInvites, orgActive);
     await app.ready();
     return app.inject({
       body: JSON.stringify({ email: 'New@Example.com' }),
@@ -193,6 +202,46 @@ describe('POST /:orgId/members/invite', () => {
       emailVerified: true,
       isActive: true,
     });
+    // A platform admin's invite needs no trust lookup.
+    expect(orgFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("approves a trusted organization's org-admin invitee as org_admin", async () => {
+    const res = await invite('ENGINEER', true);
+
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.body).data).toMatchObject({ isActive: true, orgRole: 'ORG_MEMBER' });
+    const call = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({
+      approvalSource: 'org_admin',
+      approvedAt: expect.any(Date),
+      emailVerified: true,
+      isActive: true,
+    });
+    expect(orgFindUnique).toHaveBeenCalledWith({
+      select: { isActive: true, trustedInvites: true },
+      where: { id: ORG_ID },
+    });
+    // The approval is audited, not only the membership.
+    const entityTypes = auditCreate.mock.calls.map(
+      (c) => (c[0] as { data: { entityType: string } }).data.entityType
+    );
+    expect(entityTypes).toEqual(['OrganizationMembership', 'User']);
+  });
+
+  it('queues the invitee of a trusted but deactivated organization', async () => {
+    await invite('ENGINEER', true, false);
+
+    const call = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({ emailVerified: false, isActive: false });
+    expect(call.data).not.toHaveProperty('approvalSource');
+  });
+
+  it('keeps the platform admin source in a trusted organization', async () => {
+    await invite('ADMIN', true);
+
+    const call = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({ approvalSource: 'admin' });
   });
 });
 

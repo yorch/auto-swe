@@ -23,6 +23,7 @@ export type OverridableScope = Exclude<SettingScope, 'GLOBAL'>;
 /// permission grant can name a whole area (`channel.*`) instead of every key.
 export const SETTING_GROUPS = [
   'channel',
+  'evals',
   'github',
   'mcp',
   'memory',

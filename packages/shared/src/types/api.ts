@@ -977,6 +977,11 @@ export interface EvalCaseDto {
   tags: string[];
   flakeScreened: boolean;
   flakeRuns: number;
+  /**
+   * The failed screen was recorded because the reference's runs kept being killed
+   * or timing out, not because a run failed: the case could not be checked.
+   */
+  screenEnvironmentFailed?: boolean;
   createdAt: string;
 }
 
@@ -1010,6 +1015,11 @@ export interface EvalRunDto {
    */
   candidateRuntime: ImplementerRuntimeKind | null;
   baselineRuntime: ImplementerRuntimeKind | null;
+  /**
+   * RUNNING | SUCCESS | REGRESSION | FAILED | INCONCLUSIVE. INCONCLUSIVE: the
+   * dataset had cases but none flake-screened, so nothing was scored;
+   * `summary.inconclusive` says how many await screening.
+   */
   status: string;
   /**
    * The runless budget stopped the run before every case ran, so a SUCCESS or
@@ -1045,6 +1055,17 @@ export interface EvalTrendsDto {
   scorers: EvalScorerTrend[];
 }
 
+/**
+ * POST /platform/evals/:id/rescreen (or /cases/:caseId/rescreen): the cases reset
+ * to never-screened, and whether their dataset's flake screen was started. When it
+ * was not (Temporal unreachable), the next eval run of the dataset or the
+ * re-validation sweep screens them.
+ */
+export interface EvalRescreenResultDto {
+  reset: number;
+  screenStarted: boolean;
+}
+
 /** GET /platform/evals/suite-health: what the stored data says about each benchmark's health. */
 export interface EvalSuiteHealthDto {
   datasets: Array<{
@@ -1054,7 +1075,19 @@ export interface EvalSuiteHealthDto {
     cases: number;
     /** Cases quarantined by re-validation: their reference stopped passing. */
     quarantined: number;
+    /** Cases whose reference passed every run of its flake screen. */
     flakeScreened: number;
+    /**
+     * Cases not quarantined and never flake-screened. The harness does not score
+     * them until a screen passes.
+     */
+    neverScreened: number;
+    /** The oldest 50 of them; `neverScreened` is the total. */
+    neverScreenedCaseIds: string[];
+    /** Cases not quarantined whose flake screen failed. The harness does not score them. */
+    screenFailed: number;
+    /** The oldest 50 of them; `screenFailed` is the total. */
+    screenFailedCaseIds: string[];
     /** `quarantined / cases`, 0 for an empty dataset. */
     staleRate: number;
   }>;

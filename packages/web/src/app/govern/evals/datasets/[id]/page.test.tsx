@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import EvalDatasetPage from './page';
 
 afterEach(() => vi.unstubAllGlobals());
+
+// jsdom implements <dialog> without showModal()/close(); stand in for the browser's.
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+  };
+});
 
 const DS_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -19,7 +30,7 @@ describe('EvalDatasetPage', () => {
     const spy = setupFetchMock({
       [`GET /api/v1/platform/evals/${DS_ID}`]: () => ({
         data: {
-          caseCount: 1,
+          caseCount: 2,
           cases: [
             {
               baselineSha: 'abcdef1234567890',
@@ -33,6 +44,19 @@ describe('EvalDatasetPage', () => {
               reference: null,
               repoUrl: 'https://github.com/acme/api',
               tags: ['auth'],
+            },
+            {
+              baselineSha: 'abcdef1234567890',
+              createdAt: '2026-09-01T00:00:00.000Z',
+              datasetId: DS_ID,
+              flakeRuns: 3,
+              flakeScreened: false,
+              goldenTest: 'yarn test web',
+              id: 'case-2',
+              input: {},
+              reference: null,
+              repoUrl: 'https://github.com/acme/web',
+              tags: [],
             },
           ],
           createdAt: '2026-09-01T00:00:00.000Z',
@@ -64,6 +88,7 @@ describe('EvalDatasetPage', () => {
     expect(await screen.findByText('Auth bench')).toBeTruthy();
     expect(await screen.findByText('https://github.com/acme/api')).toBeTruthy();
     expect(screen.getByText('Checked (5 runs)')).toBeTruthy();
+    expect(screen.getByText('Flaky (failed a 3-run check)')).toBeTruthy();
     expect(await screen.findByText('feat/x')).toBeTruthy();
     const runLink = screen
       .getAllByRole('link')
@@ -72,6 +97,57 @@ describe('EvalDatasetPage', () => {
     expect(spy.mock.calls.some(([u]) => String(u).includes(`evals/runs?datasetId=${DS_ID}`))).toBe(
       true
     );
+  });
+
+  it('re-checks a flaky case after confirmation and says the check started', async () => {
+    const flaky = {
+      baselineSha: 'abcdef1234567890',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      datasetId: DS_ID,
+      flakeRuns: 3,
+      flakeScreened: false,
+      goldenTest: 'yarn test web',
+      id: 'case-2',
+      input: {},
+      reference: null,
+      repoUrl: 'https://github.com/acme/web',
+      tags: [],
+    };
+    const spy = setupFetchMock({
+      [`GET /api/v1/platform/evals/${DS_ID}`]: () => ({
+        data: {
+          caseCount: 1,
+          cases: [flaky],
+          createdAt: '2026-09-01T00:00:00.000Z',
+          description: null,
+          id: DS_ID,
+          name: 'Web bench',
+          scope: 'GLOBAL',
+          slug: 'web-bench',
+        },
+      }),
+      [`POST /api/v1/platform/evals/${DS_ID}/cases/case-2/rescreen`]: () => ({
+        data: { reset: 1, screenStarted: true },
+      }),
+      'GET /api/v1/platform/evals/runs': () => ({
+        data: [],
+        meta: { limit: 20, offset: 0, total: 0 },
+      }),
+    });
+    render(withQuery(<EvalDatasetPage params={resolvedParams({ id: DS_ID })} />));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Re-check case case-2' }));
+    expect(await screen.findByText('Re-check this case?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Re-check' }));
+
+    expect(await screen.findByText('1 case reset; the stability check has started.')).toBeTruthy();
+    expect(
+      spy.mock.calls.some(
+        ([u, init]) =>
+          String(u).endsWith(`/evals/${DS_ID}/cases/case-2/rescreen`) &&
+          (init as RequestInit | undefined)?.method === 'POST'
+      )
+    ).toBe(true);
   });
 
   it('pages through a long case list and names the CLI command when there are no runs', async () => {

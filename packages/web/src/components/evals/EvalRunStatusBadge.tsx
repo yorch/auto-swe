@@ -2,6 +2,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 
 const TONE: Record<string, BadgeTone> = {
   FAILED: 'brick',
+  INCONCLUSIVE: 'amber',
   REGRESSION: 'brick',
   RUNNING: 'amber',
   SUCCESS: 'moss',
@@ -9,6 +10,7 @@ const TONE: Record<string, BadgeTone> = {
 
 const LABEL: Record<string, string> = {
   FAILED: 'Did not finish',
+  INCONCLUSIVE: 'Inconclusive',
   REGRESSION: 'Regression',
   RUNNING: 'Running',
   SUCCESS: 'Passed',
@@ -17,13 +19,15 @@ const LABEL: Record<string, string> = {
 /** What each status means, for the tooltip. */
 const MEANING: Record<string, string> = {
   FAILED: 'The run stopped before it reached a verdict, so nothing was compared.',
+  INCONCLUSIVE:
+    'No case had passed its stability check yet, so nothing was scored. Run again once the check finishes.',
   REGRESSION: 'The candidate scored significantly worse than the baseline.',
   RUNNING: 'The benchmark is still running; there is no verdict yet.',
   SUCCESS: 'The candidate did not score significantly worse than the baseline.',
 };
 
 /**
- * An offline harness run's status: RUNNING | SUCCESS | FAILED | REGRESSION, shown in
+ * An offline harness run's status: RUNNING | SUCCESS | FAILED | REGRESSION | INCONCLUSIVE, shown in
  * plain words with the meaning on hover. A `partial` verdict covers only the cases the
  * runless budget or the organization cap (`reason: 'org_budget'`) let run, so it is
  * labelled as such and drawn amber rather than as a plain pass.

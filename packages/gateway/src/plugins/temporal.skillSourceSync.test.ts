@@ -28,6 +28,7 @@ vi.mock('@temporalio/client', () => ({
   },
   ScheduleNotFoundError,
   ScheduleOverlapPolicy: { SKIP: 'SKIP' },
+  WorkflowIdConflictPolicy: {},
   WorkflowIdReusePolicy: {},
   WorkflowNotFoundError: class extends Error {},
 }));

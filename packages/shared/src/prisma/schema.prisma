@@ -754,6 +754,8 @@ model Organization {
   monthlyBudgetUsdCents       Int?     @map("monthly_budget_usd_cents")
   /// Percent of monthly cap at which to start warning (0-100). Null = no alert.
   budgetAlertThresholdPercent Int?     @map("budget_alert_threshold_percent")
+  /// When true, an ORG_ADMIN's invite creates an active, approved account. Platform-ADMIN-set only.
+  trustedInvites              Boolean  @default(false) @map("trusted_invites")
   createdAt                   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -1209,7 +1211,8 @@ model User {
   /// (set) from one still waiting in the approval queue (null): auto-approval
   /// only ever acts on the second, and deactivation therefore sticks.
   approvedAt           DateTime? @map("approved_at") @db.Timestamptz
-  /// Who approved: `admin`, or `github-org:<org>` for the auto-approval rule.
+  /// Who approved: `admin`, `org_admin` for a trusted organization's org-admin
+  /// invite, or `github-org:<org>` for the auto-approval rule.
   approvalSource       String?   @map("approval_source")
   createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -1851,6 +1854,9 @@ model EvalCase {
   /// Curation gate: true once the reference passes k× consistently.
   flakeScreened Boolean     @default(false) @map("flake_screened")
   flakeRuns     Int         @default(0) @map("flake_runs")
+  /// Screens that hit an infrastructure failure (killed, timed out, no workspace).
+  /// At the cap the case is recorded as a failed screen, so it stops being retried.
+  flakeScreenInfraErrors Int @default(0) @map("flake_screen_infra_errors")
   /// P3 re-validation: the reference stopped passing against current repo state
   /// (the case went stale, not the agent's fault) — excluded from the gate.
   quarantined   Boolean     @default(false)
@@ -1879,7 +1885,7 @@ model EvalRun {
   /// the setting.
   candidateRuntime String?     @map("candidate_runtime")
   baselineRuntime  String?     @map("baseline_runtime")
-  /// RUNNING | SUCCESS | FAILED | REGRESSION.
+  /// RUNNING | SUCCESS | FAILED | REGRESSION | INCONCLUSIVE (no case was flake-screened).
   status           String      @default("RUNNING")
   /// Paired-stats verdict: { delta, se, ci95, n, byTag, regression }.
   summary          Json?

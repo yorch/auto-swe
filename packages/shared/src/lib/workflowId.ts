@@ -96,6 +96,16 @@ export function generateBranchName(externalTicketId: string, branchPrefix: strin
 }
 
 /**
+ * The workflow id of a dataset's flake screen (`EvalScreenWorkflow`). One per
+ * dataset, so every starter — dataset creation, an eval run that finds
+ * unscreened cases, an admin re-screen — joins a screen already running
+ * instead of starting a second one over the same cases.
+ */
+export function evalScreenWorkflowId(datasetId: string): string {
+  return `eval-screen-${datasetId}`;
+}
+
+/**
  * The alternate base used when {@link generateWorkflowId}'s string is already
  * held by a DIFFERENT repository's workflow: the base plus the first eight hex
  * digits of this repository's id. Deterministic, so every later submission for

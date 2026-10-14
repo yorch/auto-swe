@@ -1,4 +1,4 @@
-FROM node:26-alpine AS builder
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS builder
 
 WORKDIR /app
 
@@ -68,7 +68,7 @@ RUN yarn workspace @auto-swe/shared db:generate \
   && mkdir -p packages/web/public
 
 # ── Runtime ──
-FROM node:26-alpine AS runtime
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS runtime
 
 WORKDIR /app
 

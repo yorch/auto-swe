@@ -48,6 +48,7 @@ export interface OrgRow {
   monthlyBudgetUsdCents: number | null;
   name: string;
   slug: string;
+  trustedInvites?: boolean;
 }
 
 export function useOrg(orgId: string) {
@@ -62,7 +63,7 @@ export function useOrg(orgId: string) {
 export function usePatchOrg(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name?: string; slug?: string }) =>
+    mutationFn: (body: { name?: string; slug?: string; trustedInvites?: boolean }) =>
       api
         .patch<{ data: OrgRow }>(`/api/v1/platform/organizations/${orgId}`, body)
         .then((r) => r.data),

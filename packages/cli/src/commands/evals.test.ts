@@ -87,13 +87,36 @@ describe('runEvalsCommand', () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({
         data: {
-          caseCount: 1,
+          caseCount: 4,
           cases: [
             {
               baselineSha: 'abcdef0123456789',
+              flakeRuns: 3,
               flakeScreened: true,
               id: 'case-1',
               repoUrl: 'https://github.com/acme/api',
+            },
+            {
+              baselineSha: 'abcdef0123456789',
+              flakeRuns: 3,
+              flakeScreened: false,
+              id: 'case-2',
+              repoUrl: 'https://github.com/acme/api',
+            },
+            {
+              baselineSha: 'abcdef0123456789',
+              flakeRuns: 0,
+              flakeScreened: false,
+              id: 'case-3',
+              repoUrl: 'https://github.com/acme/api',
+            },
+            {
+              baselineSha: 'abcdef0123456789',
+              flakeRuns: 3,
+              flakeScreened: false,
+              id: 'case-4',
+              repoUrl: 'https://github.com/acme/api',
+              screenEnvironmentFailed: true,
             },
           ],
           createdAt: '2026-01-01T00:00:00.000Z',
@@ -108,8 +131,12 @@ describe('runEvalsCommand', () => {
     const code = await runEvalsCommand(['show', 'ds-1'], ENV);
     expect(code).toBe(0);
     const out = stdoutWrites.join('');
-    expect(out).toContain('Golden set (golden) — 1 cases');
+    expect(out).toContain('Golden set (golden) — 4 cases');
     expect(out).toContain('case-1  https://github.com/acme/api@abcdef0123  ✓screened');
+    expect(out).toContain('case-2  https://github.com/acme/api@abcdef0123  ✗flaky');
+    expect(out).toContain('case-3  https://github.com/acme/api@abcdef0123  unscreened');
+    // Runs that kept being killed are not a flaky test.
+    expect(out).toContain('case-4  https://github.com/acme/api@abcdef0123  ✗uncheckable');
   });
 
   it('results builds the query string and reads meta.total from the full envelope', async () => {
@@ -151,6 +178,68 @@ describe('runEvalsCommand', () => {
     expect(out).toContain('0.75');
     expect(out).toContain('pass  claude-code');
     expect(out).toContain('(2 of 42)');
+  });
+
+  it('rescreen resets a whole dataset and says the screen started', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ method: init?.method ?? 'GET', url });
+      return jsonResponse({ data: { reset: 4, screenStarted: true } });
+    }) as typeof fetch;
+    const code = await runEvalsCommand(['rescreen', 'ds-1'], ENV);
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { method: 'POST', url: 'http://gw/api/v1/platform/evals/ds-1/rescreen' },
+    ]);
+    expect(stdoutWrites.join('')).toContain('Reset 4 case(s); the flake screen has started.');
+  });
+
+  it('rescreen resets one case with --case', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string) => {
+      urls.push(url);
+      return jsonResponse({ data: { reset: 1, screenStarted: false } });
+    }) as typeof fetch;
+    const code = await runEvalsCommand(['rescreen', 'ds-1', '--case=c-9'], ENV);
+    expect(code).toBe(0);
+    expect(urls).toEqual(['http://gw/api/v1/platform/evals/ds-1/cases/c-9/rescreen']);
+    expect(stdoutWrites.join('')).toContain('could not start now');
+  });
+
+  it('rescreen takes --case=true as a case id, not a bare flag', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string) => {
+      urls.push(url);
+      return jsonResponse({ data: { reset: 1, screenStarted: true } });
+    }) as typeof fetch;
+    const code = await runEvalsCommand(['rescreen', 'ds-1', '--case=true'], ENV);
+    expect(code).toBe(0);
+    expect(urls).toEqual(['http://gw/api/v1/platform/evals/ds-1/cases/true/rescreen']);
+  });
+
+  it('rescreen prints the usage error for --case without a value, and sends nothing', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as typeof fetch;
+    const code = await runEvalsCommand(['rescreen', 'ds-1', '--case'], ENV);
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('Usage: evals rescreen');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rescreen URL-encodes the case id', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string) => {
+      urls.push(url);
+      return jsonResponse({ data: { reset: 1, screenStarted: true } });
+    }) as typeof fetch;
+    await runEvalsCommand(['rescreen', 'ds-1', '--case=a/b?c'], ENV);
+    expect(urls).toEqual(['http://gw/api/v1/platform/evals/ds-1/cases/a%2Fb%3Fc/rescreen']);
+  });
+
+  it('rescreen requires a dataset id', async () => {
+    const code = await runEvalsCommand(['rescreen'], ENV);
+    expect(code).toBe(1);
+    expect(stderrWrites.join('')).toContain('Usage: evals rescreen');
   });
 
   it('run requires a slug and both refs', async () => {
@@ -287,6 +376,24 @@ describe('runEvalsCommand', () => {
     expect(stdoutWrites.join('')).toContain('FAILED');
   });
 
+  it('run exits 2 on an INCONCLUSIVE run and names the cases awaiting screening', async () => {
+    globalThis.fetch = runFetch('INCONCLUSIVE', {
+      inconclusive: { awaitingScreen: 4, reason: 'unscreened', screenFailed: 1 },
+      summary:
+        'inconclusive: no case is flake-screened yet — 4 await screening, 1 failed their screen',
+      unscreened: { neverScreened: 4, screenFailed: 1 },
+    });
+    const code = await runEvalsCommand(
+      ['run', 'golden', '--candidate=feat', '--against=main'],
+      ENV
+    );
+    expect(code).toBe(2);
+    expect(stdoutWrites.join('')).toContain('inconclusive: no case is flake-screened yet');
+    expect(stdoutWrites.join('')).toContain(
+      'Not scored: 4 cases await flake screening, 1 failed it'
+    );
+  });
+
   it('run exits 2 and says so when the budget stopped a SUCCESS run part-way', async () => {
     globalThis.fetch = runFetch('SUCCESS', {
       partial: {
@@ -317,6 +424,7 @@ describe('runEvalsCommand', () => {
     expect(evalRunExitCode('SUCCESS')).toBe(0);
     expect(evalRunExitCode('REGRESSION')).toBe(1);
     expect(evalRunExitCode('FAILED')).toBe(2);
+    expect(evalRunExitCode('INCONCLUSIVE')).toBe(2);
     expect(evalRunExitCode('CANCELLED')).toBe(2);
   });
 
