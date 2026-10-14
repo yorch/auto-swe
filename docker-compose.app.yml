@@ -126,39 +126,19 @@ services:
       - workspaces
       - docker-proxy
 
-  # Docker API filter in front of the host socket. The worker reaches the daemon
-  # only through this container (DOCKER_HOST), so it never holds the socket and
-  # cannot call the API groups below that it has no use for (swarm, secrets,
-  # services, plugins, build, system, ...). It limits the API surface, NOT the
-  # options of a container the worker is allowed to create: see docs/deployment.md.
-  #   CONTAINERS  run / rm / inspect / attach / wait (`docker run`, `port`)
-  #   ALLOW_ARCHIVE  /containers/{id}/archive: `docker cp` in either direction
-  #   ALLOW_PAUSE    `docker pause`, which freezes the agent container at finalize
-  #   EXEC        `docker exec` into workspace containers
-  #   IMAGES      inspect + pull the executor image on first `docker run`
-  #   VOLUMES     `docker volume create|rm` for container steps
-  #   POST        every non-GET method: create, start, exec, delete
-  # Everything else stays denied, including NETWORKS: joining an existing network
-  # by name is resolved by the daemon, not through the API.
-  # TIMEOUT: a foreground `docker run` waits on /containers/{id}/wait and a quiet
-  # `docker exec` stream sends nothing for minutes, so the proxy's idle timeout
-  # must outlast the longest step (1 h in the spec) or it cuts them off mid-run.
+  # Docker API filter in front of the host socket: haproxy with the allowlist
+  # and timeouts in infra/docker-socket-proxy/haproxy.cfg, which says what each
+  # allowed path is for. The worker reaches the daemon only through this
+  # container (DOCKER_HOST), so it never holds the socket. It limits the API
+  # surface, NOT the options of a container the worker is allowed to create:
+  # see docs/deployment.md. Root only to open the socket; nothing else runs here.
   docker-socket-proxy:
-    image: ${DOCKER_SOCKET_PROXY_IMAGE:-lscr.io/linuxserver/socket-proxy:latest}
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.2-alpine}
     restart: unless-stopped
+    user: root
     read_only: true
-    tmpfs:
-      - /run
-    environment:
-      ALLOW_ARCHIVE: 1
-      ALLOW_PAUSE: 1
-      CONTAINERS: 1
-      EXEC: 1
-      IMAGES: 1
-      POST: 1
-      TIMEOUT: 65m
-      VOLUMES: 1
     volumes:
+      - ./infra/docker-socket-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - docker-proxy
