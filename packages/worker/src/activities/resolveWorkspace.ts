@@ -1,5 +1,6 @@
 import {
   decryptConnectionApiToken,
+  parseConfluenceConnectionConfig,
   parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
   parseZendeskConnectionConfig,
@@ -8,6 +9,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import type { WorkspaceProviderType } from '@auto-swe/shared/lib/workspaceProviders';
 import { ApplicationFailure } from '@temporalio/activity';
+import { readConfluencePage } from '../connectors/confluence.js';
 import { fetchIssue } from '../connectors/issueTracker.js';
 import { readNotionPage } from '../connectors/notion.js';
 import { fetchZendeskTicket } from '../connectors/zendesk.js';
@@ -89,6 +91,42 @@ async function resolveGitRepoWorkspace(connectionId: string): Promise<WorkspaceC
   };
 }
 
+/**
+ * Read the page a document workspace is anchored on, when one is named, so a
+ * missing page fails here rather than midway through a run that has already
+ * spent on an agent. Best-effort by design: an unnamed or unreadable page is not
+ * an error, the step that reads it is.
+ */
+async function probeDocumentSource(
+  connection: {
+    apiKeyAuthTag: Buffer | Uint8Array | null;
+    apiKeyCiphertext: Buffer | Uint8Array | null;
+    apiKeyNonce: Buffer | Uint8Array | null;
+    apiKeyVersion: number;
+    config: unknown;
+    type: string;
+  },
+  sourceId: string
+): Promise<void> {
+  if (!connection.apiKeyCiphertext || !connection.apiKeyNonce || !connection.apiKeyAuthTag) {
+    return;
+  }
+  const apiToken = decryptConnectionApiToken({
+    apiKeyAuthTag: connection.apiKeyAuthTag,
+    apiKeyCiphertext: connection.apiKeyCiphertext,
+    apiKeyNonce: connection.apiKeyNonce,
+    apiKeyVersion: connection.apiKeyVersion,
+  });
+  if (connection.type === 'confluence') {
+    await readConfluencePage(
+      { apiToken, config: parseConfluenceConnectionConfig(connection.config) },
+      sourceId
+    );
+    return;
+  }
+  await readNotionPage({ apiToken }, sourceId);
+}
+
 async function resolveDocumentWorkspace(
   connectionId: string,
   payload?: unknown
@@ -96,33 +134,26 @@ async function resolveDocumentWorkspace(
   const connection = await prisma.connection.findUnique({
     where: { id: connectionId },
   });
-  if (!connection?.isActive || connection.type !== 'notion') {
+  if (!connection?.isActive || (connection.type !== 'notion' && connection.type !== 'confluence')) {
     throw ApplicationFailure.nonRetryable(
-      `Connection ${connectionId} is not an active notion connection`
+      `Connection ${connectionId} is not an active notion or confluence connection`
     );
   }
-  const config = parseNotionConnectionConfig(connection.config);
   const payloadPageId =
     typeof payload === 'object' && payload != null
       ? (payload as Record<string, unknown>).pageId
       : undefined;
-  const sourceId =
-    (typeof payloadPageId === 'string' ? payloadPageId : config.sourcePageId) ?? null;
+  // Only Notion carries a default page to read on the connection: Confluence's
+  // `parentPageId` is where a *new* page is created, not a page to read, so a
+  // Confluence source page has to be named by the run.
+  const configuredSourceId =
+    connection.type === 'notion'
+      ? parseNotionConnectionConfig(connection.config).sourcePageId
+      : undefined;
+  const sourceId = (typeof payloadPageId === 'string' ? payloadPageId : configuredSourceId) ?? null;
 
-  if (
-    sourceId &&
-    connection.apiKeyCiphertext &&
-    connection.apiKeyNonce &&
-    connection.apiKeyAuthTag
-  ) {
-    const apiToken = decryptConnectionApiToken({
-      apiKeyAuthTag: connection.apiKeyAuthTag,
-      apiKeyCiphertext: connection.apiKeyCiphertext,
-      apiKeyNonce: connection.apiKeyNonce,
-      apiKeyVersion: connection.apiKeyVersion,
-    });
-    // Validate reachability early; the activity will fail fast if the page is missing.
-    await readNotionPage({ apiToken }, sourceId);
+  if (sourceId) {
+    await probeDocumentSource(connection, sourceId);
   }
 
   return {
