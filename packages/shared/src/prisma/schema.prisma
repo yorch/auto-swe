@@ -2133,8 +2133,8 @@ model WorkflowTemplate {
   webhookPreviousSigningSecretKeyVersion Int?                   @map("webhook_previous_signing_secret_key_version")
   webhookPreviousSigningSecretLastFour   String?                @map("webhook_previous_signing_secret_last_four")
   webhookPreviousSigningSecretExpiresAt  DateTime?              @map("webhook_previous_signing_secret_expires_at") @db.Timestamptz
-  /// Refuse unsigned webhook calls. Policy (`workflow.templateWebhookRequireSignature`) can force
-  /// this for a team or organization whatever the flag says.
+  /// Refuse unsigned webhook calls. Policy (`workflow.templateWebhookRequireSignature`, resolved
+  /// for the template's team) can require it too when this is false; it never turns it off.
   webhookRequireSignature                Boolean                @default(false) @map("webhook_require_signature")
   createdAt                              DateTime               @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                              DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz

@@ -32,6 +32,9 @@ interface Harness {
   role: string;
   /** Simulates another rotation landing between this route's read and its write. */
   raceOnce: boolean;
+  updateWheres: Row[];
+  /** Runs after the route's read: another request's write landing in between. */
+  afterRead?: () => void;
 }
 
 async function build(): Promise<Harness> {
@@ -50,6 +53,7 @@ async function build(): Promise<Harness> {
       webhookSigningSecretNonce: null,
       webhookToken: 'tok',
     },
+    updateWheres: [],
   };
   h.app.setValidatorCompiler(validatorCompiler);
   h.app.setSerializerCompiler(serializerCompiler);
@@ -68,21 +72,44 @@ async function build(): Promise<Harness> {
       },
     },
     workflowTemplate: {
-      findFirst: async ({ where }: { where: Row }) => (where.id === ID ? { ...h.row } : null),
-      update: async ({ data }: { data: Row }) => {
-        Object.assign(h.row, data);
-        return { ...h.row };
+      findFirst: async ({ select, where }: { select?: Row; where: Row }) => {
+        const row = where.id === ID ? { ...h.row } : null;
+        // The preHandler's system-template probe selects fields; only the route's read races.
+        if (row && !select) {
+          h.afterRead?.();
+          h.afterRead = undefined;
+        }
+        return row;
+      },
+      update: async () => {
+        throw new Error('signing writes must be conditional');
       },
       updateMany: async ({ data, where }: { data: Row; where: Row }) => {
         if (h.raceOnce) {
           h.raceOnce = false;
           return { count: 0 };
         }
-        const expected = where.webhookSigningSecretNonce as { equals?: unknown } | null;
-        if (
-          where.id !== ID ||
-          !sameNonce(expected?.equals ?? null, h.row.webhookSigningSecretNonce)
-        ) {
+        h.updateWheres.push(where);
+        // Evaluates the conditions the routes write; the write filter's team clause is the
+        // caller's, already applied by findFirst here.
+        const holds = (c: Row): boolean =>
+          Object.entries(c).every(([k, v]) => {
+            if (k === 'id') {
+              return v === ID;
+            }
+            if (k === 'webhookSigningSecretNonce') {
+              const e = v as { equals?: unknown } | null;
+              return sameNonce(e?.equals ?? null, h.row.webhookSigningSecretNonce);
+            }
+            if (k === 'webhookRequireSignature') {
+              return h.row.webhookRequireSignature === v;
+            }
+            if (k === 'webhookSigningSecretCiphertext') {
+              return h.row.webhookSigningSecretCiphertext != null;
+            }
+            return true;
+          });
+        if (!((where.AND as Row[]) ?? [where]).every(holds)) {
           return { count: 0 };
         }
         Object.assign(h.row, data);
@@ -198,6 +225,32 @@ describe('template webhook signing routes', () => {
       afterJson: { webhookSigningSecretConfigured: false },
       beforeJson: { webhookSigningSecretConfigured: true },
     });
+  });
+
+  it('a removal that loses a race to require-signature is refused, not applied', async () => {
+    await call(h, 'POST', '/webhook/signing-secret/rotate');
+    // The DELETE read the switch as off; a PUT turns it on before the DELETE writes.
+    h.afterRead = () => {
+      h.row.webhookRequireSignature = true;
+    };
+    const res = await call(h, 'DELETE', '/webhook/signing-secret');
+    expect(res.statusCode).toBe(409);
+    expect(h.row.webhookSigningSecretCiphertext).not.toBeNull();
+  });
+
+  it('require-signature that loses a race to removal is refused, not applied', async () => {
+    await call(h, 'POST', '/webhook/signing-secret/rotate');
+    h.afterRead = () => {
+      h.row.webhookSigningSecretCiphertext = null;
+    };
+    const res = await call(h, 'PUT', '/webhook/require-signature', { required: true });
+    expect(res.statusCode).toBe(409);
+    expect(h.row.webhookRequireSignature).toBe(false);
+  });
+
+  it('every write carries the caller’s write filter', async () => {
+    await call(h, 'POST', '/webhook/signing-secret/rotate');
+    expect(JSON.stringify(h.updateWheres[0])).toContain('teamId');
   });
 
   it('needs platform LEAD, like the token routes', async () => {

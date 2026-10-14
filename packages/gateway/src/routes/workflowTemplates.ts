@@ -2048,6 +2048,29 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     }
     return existing;
   };
+  /**
+   * Update one template's signing columns only if `condition` still holds, through the caller's
+   * write filter. Returns the number of rows written (0 or 1). The row was already loaded
+   * through the same filter; the guard cannot read `templateWriteFilter`'s spread (an ADMIN's is
+   * empty, and a global template has no team), so the call is marked rather than filtered.
+   */
+  const updateSigningIf = async (
+    user: JwtPayload,
+    id: string,
+    data: Prisma.WorkflowTemplateUpdateManyMutationInput,
+    condition: Prisma.WorkflowTemplateWhereInput
+  ): Promise<number> => {
+    const { count } = await runUnscoped(
+      'one template by id, constrained by the caller’s write filter',
+      ['WorkflowTemplate'],
+      () =>
+        fastify.prisma.workflowTemplate.updateMany({
+          data,
+          where: { AND: [{ id }, templateWriteFilter(user), condition] },
+        })
+    );
+    return count;
+  };
   const signingAudit = (state: WebhookSigningState) => ({
     webhookRequireSignature: state.requireSignature,
     webhookSigningPreviousActive: state.previousExpiresAt !== null,
@@ -2073,20 +2096,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const rotated = rotatedSigningColumns(existing, now);
       // Conditional on the secret read: two rotations racing would otherwise both hand out a
       // secret, and the one written first would be silently replaced.
-      const { count } = await runUnscoped(
-        'one row by id, already loaded through the caller’s write filter',
-        ['WorkflowTemplate'],
-        () =>
-          fastify.prisma.workflowTemplate.updateMany({
-            data: rotated.data,
-            where: {
-              id: existing.id,
-              webhookSigningSecretNonce: existing.webhookSigningSecretNonce
-                ? { equals: existing.webhookSigningSecretNonce }
-                : null,
-            },
-          })
-      );
+      const count = await updateSigningIf(user, existing.id, rotated.data, {
+        webhookSigningSecretNonce: existing.webhookSigningSecretNonce
+          ? { equals: existing.webhookSigningSecretNonce }
+          : null,
+      });
       if (count === 0) {
         return sendError(
           reply,
@@ -2139,10 +2153,19 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       const now = new Date();
-      await fastify.prisma.workflowTemplate.update({
-        data: CLEARED_SIGNING_COLUMNS,
-        where: { id: existing.id },
+      // Conditional on the switch still being off: a concurrent PUT that turned it on must not
+      // end with signatures required and no secret.
+      const cleared = await updateSigningIf(user, existing.id, CLEARED_SIGNING_COLUMNS, {
+        webhookRequireSignature: false,
       });
+      if (cleared === 0) {
+        return sendError(
+          reply,
+          409,
+          'WEBHOOK_SIGNATURE_REQUIRED',
+          'This webhook requires signed calls; turn that off before removing its signing secret'
+        );
+      }
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
@@ -2179,10 +2202,23 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       const now = new Date();
-      const updated = await fastify.prisma.workflowTemplate.update({
-        data: { webhookRequireSignature: required },
-        where: { id: existing.id },
-      });
+      // Turning it on is conditional on a secret still existing: a concurrent DELETE of the
+      // secret must not leave signatures required with nothing to sign with.
+      const changed = await updateSigningIf(
+        user,
+        existing.id,
+        { webhookRequireSignature: required },
+        required ? { webhookSigningSecretCiphertext: { not: null } } : {}
+      );
+      if (changed === 0) {
+        return sendError(
+          reply,
+          409,
+          'WEBHOOK_SIGNING_NOT_CONFIGURED',
+          'Generate a signing secret before requiring signed calls'
+        );
+      }
+      const updated = { ...existing, webhookRequireSignature: required };
       if (existing.webhookRequireSignature !== required) {
         await writeAuditLog(fastify, {
           action: 'UPDATE',

@@ -328,8 +328,12 @@ as every other credential, and `rotateEncryptionKey` re-encrypts them.
 How a call is decided, before anything else about the template is looked at:
 
 1. Signing is **required** when the template's switch is on, or when the registry setting
-   `workflow.templateWebhookRequireSignature` is true for the template's team or organization
-   (ADMIN, default off). A global template is covered only by the platform-wide value.
+   `workflow.templateWebhookRequireSignature` (ADMIN, default off) resolves to true for the
+   template's team. It resolves like every setting, most specific scope first: a TEAM override
+   wins over the ORGANIZATION one, which wins over GLOBAL — so a TEAM `false` exempts that team from
+   an organization-wide `true`, and the effective-config view shows exactly what is enforced. A
+   global template has no team, so only the GLOBAL value applies to it. The setting can only add
+   a requirement; it never turns off a template's own switch.
 2. Required, and the template has no secret: every call is refused with
    `409 WEBHOOK_SIGNING_NOT_CONFIGURED`.
 3. Required: the call must carry a valid signature, or it is refused.
