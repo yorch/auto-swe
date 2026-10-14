@@ -1370,9 +1370,10 @@ Every row records the team and organization whose spend it is, written at persis
 `persistActivityTrace` and the embedding usage row from `currentSpendOwner()`
 (`lib/spendOwner.ts`). A run's owner is derived the way run visibility decides its team: the run's
 own repository (an epic child), its ledger row's repository, its work request's connection, its
-Slack channel, then its template; a run none of those gives a team (a service principal's
-connection-less run of a global template) is attributed, with no team, to the organization its
-launch charged its request to (`RunInput.billingOrgId`). A workflow with no run names its owner itself with
+Slack channel, then its template — except that a run no repository or connection places, whose
+launch charged its request to an organization (`RunInput.billingOrgId`), is attributed to that
+organization, the one billing names, keeping its channel's or template's team only when that team
+belongs to it. A workflow with no run names its owner itself with
 `withSpendOwner`: authoring and explaining charge the requesting team, lesson consolidation and
 dependency inference the repository's team, and the eval harness the dataset's team (or its
 organization, for an ORGANIZATION-scoped dataset). Resolution never fails an activity; a lookup that

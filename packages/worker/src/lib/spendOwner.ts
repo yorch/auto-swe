@@ -73,10 +73,10 @@ export async function ownerOfDataset(datasetId: string): Promise<SpendOwner> {
  *
  * Derived the way run visibility decides a run's team: the run's own
  * repository (an epic child), its ledger row's repository, its work request's
- * connection, its Slack channel, then its template. A run none of those gives
- * a team — a service principal's run of a global template with no connection —
- * is attributed to the organization its launch charged it to
- * (`RunInput.billingOrgId`), with no team. Never throws — attribution is
+ * connection, its Slack channel, then its template. A run no repository or
+ * connection places but whose launch charged its request to an organization
+ * (`RunInput.billingOrgId`) is attributed to that organization — the one billing
+ * names — with its channel's or template's team only when that team is in it. Never throws — attribution is
  * bookkeeping, and a call that has been paid for must still be recorded.
  */
 export async function currentSpendOwner(): Promise<SpendOwner> {
@@ -123,14 +123,17 @@ async function ownerOfWorkflow(workflowId: string): Promise<SpendOwner> {
       where: { temporalWorkflowId: workflowId },
     }),
   ]);
-  const owner =
-    run?.connection?.team ??
-    ledger?.repository?.team ??
-    run?.workRequest?.connection?.team ??
-    run?.channel?.team ??
-    run?.template?.team;
-  if (!owner && run?.workRequest?.billingOrgId) {
-    return { orgId: run.workRequest.billingOrgId };
+  const placed =
+    run?.connection?.team ?? ledger?.repository?.team ?? run?.workRequest?.connection?.team;
+  if (placed) {
+    return fromTeam(placed);
   }
-  return fromTeam(owner);
+  // A connection-less run charged to an org at launch is attributed to that org, the one billing
+  // names; its template's team is kept only when it belongs to that org.
+  const charged = run?.workRequest?.billingOrgId;
+  if (charged) {
+    const team = run?.channel?.team ?? run?.template?.team;
+    return team?.orgId === charged ? fromTeam(team) : { orgId: charged };
+  }
+  return fromTeam(run?.channel?.team ?? run?.template?.team);
 }

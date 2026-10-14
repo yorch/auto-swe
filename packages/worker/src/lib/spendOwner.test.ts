@@ -70,7 +70,7 @@ describe('currentSpendOwner', () => {
     });
     expect(await currentSpendOwner()).toEqual({ orgId: 'org-stamped' });
 
-    // A team, where one is found, still decides.
+    // The charged org decides over a template team in another org: it is the one billing names.
     _resetConfigCacheForTests();
     h.run.mockResolvedValue({
       channel: null,
@@ -78,7 +78,27 @@ describe('currentSpendOwner', () => {
       template: { team: team('tpl') },
       workRequest: { billingOrgId: 'org-stamped', connection: null },
     });
+    expect(await currentSpendOwner()).toEqual({ orgId: 'org-stamped' });
+
+    // A template team inside the charged org keeps its team.
+    _resetConfigCacheForTests();
+    h.run.mockResolvedValue({
+      channel: null,
+      connection: null,
+      template: { team: team('tpl') },
+      workRequest: { billingOrgId: 'org-of-tpl', connection: null },
+    });
     expect(await currentSpendOwner()).toEqual({ orgId: 'org-of-tpl', teamId: 'tpl' });
+
+    // A connection still places the run first.
+    _resetConfigCacheForTests();
+    h.run.mockResolvedValue({
+      channel: null,
+      connection: null,
+      template: { team: team('tpl') },
+      workRequest: { billingOrgId: 'org-stamped', connection: { team: team('request') } },
+    });
+    expect(await currentSpendOwner()).toEqual({ orgId: 'org-of-request', teamId: 'request' });
   });
 
   it('prefers what the activity declared, without touching the workflow rows', async () => {
