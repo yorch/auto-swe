@@ -236,8 +236,10 @@ describe.skipIf(!enabled)('the Pi smoke tool against a real container', () => {
 
     await runSmoke(opts).catch(() => undefined);
 
+    // The forced exit fires once its `docker rm -f` settles, which can be after
+    // runSmoke itself has returned.
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(143), { timeout: 20_000 });
     expect(exit).toHaveBeenCalledWith(130);
-    expect(exit).toHaveBeenCalledWith(143);
     expect(await leftoverContainers()).toBe('');
   }, 120_000);
 

@@ -654,6 +654,16 @@ export async function runSmoke(options: SmokeOptions): Promise<{
       env: dockerEnv(),
       timeout: 120_000,
     });
+    // `docker cp` keeps the host's uid, and the container's root has no
+    // CAP_DAC_OVERRIDE (`--cap-drop=ALL`), so a non-root host would leave a tree the
+    // agent cannot write. Hand it to root, as `createWorkspace`'s clone is: one fixed
+    // command, privileged for this exec alone, before the agent runs anything.
+    // `-h` re-owns a symlink itself, never its target.
+    await run(
+      'docker',
+      ['exec', '--privileged', '-u', '0', containerName, 'chown', '-R', '-h', '0:0', WORKSPACE_DIR],
+      { env: dockerEnv(), timeout: 120_000 }
+    );
 
     const tracer = new MemoryTracer();
     const modelCalls: SmokeModelCall[] = [];

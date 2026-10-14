@@ -793,7 +793,8 @@ metadata-IP blackhole sidecar, run from `WORKSPACE_METADATA_BLOCK_IMAGE` (best e
 failure is logged and the run continues).
 It does not get the harness model proxy's host alias, because the model is called from the script.
 The repository is cloned (shallow) or copied on the host and `docker cp`'d in, so the image needs no
-git. The repository's own `.git` is never carried over, for `--repo` or `--dir`: the script makes a
+git, then handed to the container's root by one privileged `chown -R -h` (`docker cp` keeps the host
+user's uid, which the capability-less root could not write), so the image needs a `chown`. The repository's own `.git` is never carried over, for `--repo` or `--dir`: the script makes a
 fresh baseline commit, so the diff shows only what the agent changed. `--dir` also leaves out
 `node_modules` and every file whose name starts with `.env` (`.env`, `.env.local`, `.envrc`) or ends
 with `.env` (`prod.env`); names ending `.example`, `.sample`, `.template` or `.dist` are kept.
