@@ -260,6 +260,11 @@ export function buildInitialPayload(schema: InputSchema): Record<string, unknown
       payload[key] = Array.isArray(prop.default) ? [...prop.default] : prop.default;
     } else if (prop.type === 'boolean') {
       payload[key] = false;
+    } else if (prop.type === 'number') {
+      // Left unset rather than `''`: a number field the user never touches must not
+      // be submitted as an empty string, which the gateway refuses for `number`. An
+      // untouched optional number is simply absent; a required one still fails
+      // validation for being missing.
     } else if (prop.enum && prop.enum.length > 0) {
       // Keep enum fields unselected initially so the user makes an explicit choice.
       payload[key] = '';
