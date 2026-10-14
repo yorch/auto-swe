@@ -207,6 +207,37 @@ describe('exportBundle', () => {
     expect(m.entities.agents[0]).toMatchObject({ key: 'a', runtime: 'claude-code' });
     expect(m.entities.agents[1]).not.toHaveProperty('runtime');
   });
+
+  it('carries an agent’s reasoning level when it has one, and no field when it has none', async () => {
+    const row = (key: string, reasoning: string | null) => ({
+      description: null,
+      inheritsModelFrom: null,
+      isVerified: false,
+      key,
+      modelSpec: 'anthropic/claude-opus-5-5',
+      name: key,
+      origin: 'x',
+      reasoning,
+      runtime: null,
+      skillRefs: [],
+      systemPrompt: null,
+      toolKeys: null,
+    });
+    const prisma = {
+      agent: {
+        findMany: vi.fn().mockResolvedValue([row('a', 'high'), row('b', null)]),
+      },
+      scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
+      skill: { findMany: vi.fn().mockResolvedValue([]) },
+      workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    } as unknown as Parameters<typeof exportBundle>[0];
+
+    const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+
+    expect(m.entities.agents[0]).toMatchObject({ key: 'a', reasoning: 'high' });
+    expect(m.entities.agents[1]).not.toHaveProperty('reasoning');
+    expect(m.metadata.contentHash).toBe(computeContentHash(m));
+  });
 });
 
 describe('installBundle', () => {
@@ -694,6 +725,19 @@ describe('installBundle', () => {
         )
       ).rejects.toThrow(/invalid agent\(s\):[\s\S]*test\.coder.*Anthropic model/);
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('sets the reasoning level the bundle names, leaves it alone when absent, and clears it on null', async () => {
+      await installBundle(asArg(), agentManifest({ reasoning: 'medium' }), {
+        allowUnverified: true,
+      });
+      expect(prisma.agent.create.mock.calls[0]?.[0].data.reasoning).toBe('medium');
+
+      prisma.agent.findFirst.mockResolvedValue({ id: 'mine', origin: 'bundle:test' });
+      await installBundle(asArg(), agentManifest({}), { allowUnverified: true });
+      expect(prisma.agent.update.mock.calls[0]?.[0].data).not.toHaveProperty('reasoning');
+      await installBundle(asArg(), agentManifest({ reasoning: null }), { allowUnverified: true });
+      expect(prisma.agent.update.mock.calls[1]?.[0].data.reasoning).toBeNull();
     });
 
     it('refuses a runtime it does not know', async () => {

@@ -24,7 +24,12 @@ export const piHarness = defineHarness<PiAccess>({
         'HARNESS_UNSUPPORTED_MODEL'
       );
     }
-    return { apiBase: model.apiBase, apiKey: model.apiKey, spec: model.spec };
+    return {
+      apiBase: model.apiBase,
+      apiKey: model.apiKey,
+      reasoning: model.reasoning ?? null,
+      spec: model.spec,
+    };
   },
   capabilities: PI_CAPABILITIES,
   createRuntime: ({ exactToolKeys, ...options }) =>

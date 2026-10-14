@@ -1,4 +1,4 @@
-import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
+import type { ImplementerRuntimeKind, ReasoningLevel } from '@auto-swe/shared/types/api';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { HarnessCapabilities, HarnessRuntimeOptions } from './adapter.js';
 import type { HarnessRuntime } from './runtime.js';
@@ -11,6 +11,8 @@ export interface HarnessModel {
   apiBase?: string | null;
   apiKey: string;
   spec: string;
+  /** The Agent's reasoning level; null/absent = the provider's default. */
+  reasoning?: ReasoningLevel | null;
 }
 
 /**

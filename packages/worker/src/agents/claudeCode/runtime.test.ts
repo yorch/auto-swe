@@ -349,6 +349,24 @@ describe('what the harness is started with', () => {
     );
   });
 
+  it('passes the Agent’s reasoning level as the harness’s effort, and nothing without one', async () => {
+    const withEffort = setup({
+      access: {
+        apiKey: API_KEY,
+        effort: 'high',
+        modelId: 'claude-opus-5-5',
+      },
+    });
+    h.script.push([[init('s1'), success('ok')]]);
+    await withEffort.runtime.runTurn({ system: 'S', user: 'U' });
+    expect(h.queryCalls[0]?.options.effort).toBe('high');
+
+    const without = setup();
+    h.script.push([[init('s2'), success('ok')]]);
+    await without.runtime.runTurn({ system: 'S', user: 'U' });
+    expect(h.queryCalls[1]?.options).not.toHaveProperty('effort');
+  });
+
   it('can be told to ignore the repository’s own settings', async () => {
     const ctx = setup({ loadProjectSettings: false });
     h.script.push([[init('s1'), success('ok')]]);

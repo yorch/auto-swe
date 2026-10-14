@@ -12,8 +12,8 @@ describe('modelLabel', () => {
       '↳ inherits reviewer'
     );
   });
-  it('falls back to the role default', () => {
-    expect(modelLabel({ inheritsModelFrom: null, modelSpec: null })).toBe('— (role default)');
+  it('labels an agent with no model', () => {
+    expect(modelLabel({ inheritsModelFrom: null, modelSpec: null })).toBe('— (no model)');
   });
 });
 

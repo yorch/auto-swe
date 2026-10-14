@@ -12,7 +12,7 @@ Only secret-free, deployment-portable library content is exported:
 
 | Entity | Included |
 |---|---|
-| `Agent` | Global definitions with `modelSpec` or `inheritsModelFrom`, `systemPrompt`, `skillRefs`, `toolKeys`, and `runtime` when the agent has one |
+| `Agent` | Global definitions with `modelSpec` or `inheritsModelFrom`, `systemPrompt`, `skillRefs`, `toolKeys`, and `runtime` and `reasoning` when the agent has them |
 | `Skill` | Name, description, prompt text, `origin`, `isVerified` |
 | `ScannerPattern` | Label, type, pattern, flags (safe subset only), `origin` |
 | `WorkflowTemplate` | Active version's `WorkflowSpec`, `name`, `description`, `inputSchema`, `origin` |
@@ -204,11 +204,11 @@ separately.
   or the node will fail at run time.
 - **Template versions are exported as a single spec.** The active version is frozen into the bundle;
   experiment versions and version history are not carried.
-- **A bundle without a `runtime` leaves an installed agent's runtime as it is.** Absent is not the
-  same as `null`: a manifest written before the field existed must not clear an admin's choice, so
-  only an explicit `null` clears it on re-install, and a new agent starts with none. An export
-  writes the field only for an agent that has a runtime, so a bundle of agents with none hashes as
-  it did before the field existed.
+- **A bundle without a `runtime` or `reasoning` leaves an installed agent's value as it is.** Absent
+  is not the same as `null`: a manifest written before the field existed must not clear an admin's
+  choice, so only an explicit `null` clears it on re-install, and a new agent starts with none. An
+  export writes each field only for an agent that has a value, so a bundle of agents with none
+  hashes as it did before the fields existed.
 - **Skill/tool bindings are resolved at install time, not at export.** If a bundle references a tool
   or skill key that does not exist in the target, the install succeeds but the agent may fail when
   the workflow reaches that node.

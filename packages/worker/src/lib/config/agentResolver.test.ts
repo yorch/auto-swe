@@ -128,6 +128,7 @@ describe('resolveAgent — reads from the Agent entity', () => {
       apiBase: undefined,
       apiKey: 'sk-cred',
       credentialFellThrough: false,
+      reasoning: null,
       scope: 'GLOBAL',
       spec: 'anthropic/claude-opus-4-8',
       systemPrompt: 'SYS',
@@ -656,6 +657,41 @@ describe('resolveAgent — runtime', () => {
     expect(warn).toHaveBeenCalledWith(
       'agent has an unknown runtime; ignoring it',
       expect.objectContaining({ runtime: 'something-else' })
+    );
+  });
+});
+
+describe('resolveAgent — reasoning', () => {
+  it('reads the row’s own level onto the model, and null as no opinion', async () => {
+    agentFindFirst.mockResolvedValueOnce(agentRow({ reasoning: 'high' }));
+    expect((await resolveAgent('reviewer')).model.reasoning).toBe('high');
+    agentFindFirst.mockResolvedValueOnce(agentRow({ reasoning: null }));
+    expect((await resolveAgent('reviewer')).model.reasoning).toBeNull();
+  });
+
+  it('inherits the level along inheritsModelFrom, unless the persona sets its own', async () => {
+    agentFindFirst.mockImplementation(async ({ where }: { where: { key: string } }) =>
+      where.key === 'ciFixer'
+        ? agentRow({ inheritsModelFrom: 'implementer', key: 'ciFixer', modelSpec: null })
+        : where.key === 'gateFixer'
+          ? agentRow({
+              inheritsModelFrom: 'implementer',
+              key: 'gateFixer',
+              modelSpec: null,
+              reasoning: 'off',
+            })
+          : agentRow({ key: 'implementer', reasoning: 'medium' })
+    );
+    expect((await resolveAgent('ciFixer')).model.reasoning).toBe('medium');
+    expect((await resolveAgent('gateFixer')).model.reasoning).toBe('off');
+  });
+
+  it('reads an unknown level as no opinion, with a warning', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ reasoning: 'maximum' }));
+    expect((await resolveAgent('reviewer')).model.reasoning).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      'agent has an unknown reasoning level; ignoring it',
+      expect.objectContaining({ reasoning: 'maximum' })
     );
   });
 });

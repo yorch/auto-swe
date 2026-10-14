@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { IMPLEMENTER_RUNTIMES } from '@auto-swe/shared/types/api';
+import { IMPLEMENTER_RUNTIMES, REASONING_LEVELS } from '@auto-swe/shared/types/api';
 import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -16,11 +16,13 @@ import {
   inheritingHarnessWarnings,
   listAgents,
   mergedRuntimeAndModel,
+  modelRequiredError,
   runtimeSaveError,
   updateAgent,
   validateAgentScopeRefs,
   validateCredentialRef,
   validateMcpConnectionRef,
+  writesModel,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -51,6 +53,7 @@ const AgentBaseFields = {
     .nullable()
     .optional(),
   name: z.string().min(1).max(200),
+  reasoning: z.enum(REASONING_LEVELS).nullable().optional(),
   runtime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   // A skill listed twice would hit the (agent, skill) unique index, which the
   // write reports as a conflicting edit; refuse it here as the bad input it is.
@@ -253,6 +256,10 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         inheritsModelFrom: body.inheritsModelFrom ?? null,
         modelSpec: body.modelSpec ?? null,
       };
+      const modelError = modelRequiredError(named, true);
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
+      }
       const runtime =
         body.runtime !== undefined
           ? body.runtime
@@ -319,6 +326,10 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 400, 'INVALID_MCP_CONNECTION', mcpError);
       }
       const merged = mergedRuntimeAndModel(current, request.body);
+      const modelError = modelRequiredError(merged, writesModel(request.body));
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
+      }
       const runtimeError = await runtimeSaveError(fastify.prisma, merged);
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
@@ -350,9 +361,15 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: { modelSpec: agent.modelSpec, runtime: agent.runtime, version: agent.version },
+        after: {
+          modelSpec: agent.modelSpec,
+          reasoning: agent.reasoning ?? null,
+          runtime: agent.runtime,
+          version: agent.version,
+        },
         before: {
           modelSpec: current.modelSpec,
+          reasoning: current.reasoning ?? null,
           runtime: current.runtime,
           version: current.version,
         },
@@ -492,6 +509,10 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeChangeForbidden(actor.role, request.body.runtime, inherited)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
+      const modelError = modelRequiredError(named, true);
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
+      }
       const runtime = request.body.runtime !== undefined ? request.body.runtime : inherited;
       const runtimeError = await runtimeSaveError(fastify.prisma, { ...named, runtime });
       if (runtimeError) {
@@ -576,6 +597,10 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
       const merged = mergedRuntimeAndModel(current, request.body);
+      const modelError = modelRequiredError(merged, writesModel(request.body));
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
+      }
       const runtimeError = await runtimeSaveError(fastify.prisma, merged);
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
@@ -624,10 +649,16 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: { modelSpec: agent.modelSpec, runtime: agent.runtime, version: agent.version },
+        after: {
+          modelSpec: agent.modelSpec,
+          reasoning: agent.reasoning ?? null,
+          runtime: agent.runtime,
+          version: agent.version,
+        },
         before: {
           key: current.key,
           modelSpec: current.modelSpec,
+          reasoning: current.reasoning ?? null,
           runtime: current.runtime,
           scope: 'TEAM',
           teamId: current.teamId,

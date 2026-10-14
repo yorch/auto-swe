@@ -8,7 +8,14 @@ import type {
   ToolCall,
   Usage,
 } from '@mariozechner/pi-ai';
-import type { LanguageModel, LanguageModelUsage, ModelMessage, ToolSet } from 'ai';
+import type {
+  ContentPart,
+  LanguageModel,
+  LanguageModelUsage,
+  ModelMessage,
+  ProviderMetadata,
+  ToolSet,
+} from 'ai';
 import type { UsageTotals } from '../harness/usage.js';
 
 /**
@@ -32,7 +39,12 @@ export function piModelDescriptor(spec: string): Model<string> {
   };
 }
 
-/** One model call's counters from the AI SDK's usage, cache traffic apart from fresh input. */
+/**
+ * One model call's counters from the AI SDK's usage, cache traffic apart from
+ * fresh input. `outputTokens` is the whole output, reasoning included (its
+ * `outputTokenDetails` split text from reasoning), so a call that thinks is
+ * metered and priced for its thinking.
+ */
 export function usageTotals(usage: LanguageModelUsage | undefined): UsageTotals {
   const cacheRead = usage?.inputTokenDetails?.cacheReadTokens ?? 0;
   const cacheWrite = usage?.inputTokenDetails?.cacheWriteTokens ?? 0;
@@ -64,9 +76,46 @@ function textOf(content: string | readonly { type: string; text?: string }[]): s
 }
 
 /**
- * Pi's conversation as AI SDK messages. Thinking is dropped (the loop runs
- * without reasoning, and a provider's signed thinking does not survive the
- * conversion), and so are images: no tool here produces one.
+ * Pi keeps an assistant part's provider metadata — Anthropic's thinking
+ * signature or redacted data, OpenAI's reasoning item and encrypted content,
+ * Google's thought signature — in the part's own signature field, as JSON under
+ * this prefix. Every model call goes through {@link aiSdkStreamFn}, so nothing
+ * else writes or reads those fields.
+ */
+const METADATA_PREFIX = 'aisdk:';
+
+function encodeMetadata(metadata: ProviderMetadata | undefined): string | undefined {
+  return metadata && Object.keys(metadata).length > 0
+    ? `${METADATA_PREFIX}${JSON.stringify(metadata)}`
+    : undefined;
+}
+
+function decodeMetadata(signature: string | undefined): ProviderMetadata | undefined {
+  if (!signature?.startsWith(METADATA_PREFIX)) {
+    return undefined;
+  }
+  try {
+    const value: unknown = JSON.parse(signature.slice(METADATA_PREFIX.length));
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as ProviderMetadata)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `providerOptions` for a part, only when it has any. */
+function withOptions(signature: string | undefined): { providerOptions?: ProviderMetadata } {
+  const providerOptions = decodeMetadata(signature);
+  return providerOptions ? { providerOptions } : {};
+}
+
+/**
+ * Pi's conversation as AI SDK messages. An assistant turn keeps its parts in
+ * the order the model produced them, and each part its provider metadata, so a
+ * reasoning part goes back with its signature: with thinking on, a provider
+ * reads the previous turn's thinking when the model continues after a tool
+ * call. Images are dropped: no tool here produces one.
  */
 export function toModelMessages(messages: readonly Message[]): ModelMessage[] {
   const out: ModelMessage[] = [];
@@ -77,13 +126,20 @@ export function toModelMessages(messages: readonly Message[]): ModelMessage[] {
       const content: Extract<ModelMessage, { role: 'assistant' }>['content'] = [];
       for (const part of message.content) {
         if (part.type === 'text' && part.text.length > 0) {
-          content.push({ text: part.text, type: 'text' });
+          content.push({ text: part.text, type: 'text', ...withOptions(part.textSignature) });
+        } else if (part.type === 'thinking') {
+          content.push({
+            text: part.thinking,
+            type: 'reasoning',
+            ...withOptions(part.thinkingSignature),
+          });
         } else if (part.type === 'toolCall') {
           content.push({
             input: part.arguments,
             toolCallId: part.id,
             toolName: part.name,
             type: 'tool-call',
+            ...withOptions(part.thoughtSignature),
           });
         }
       }
@@ -106,6 +162,42 @@ export function toModelMessages(messages: readonly Message[]): ModelMessage[] {
     }
   }
   return out;
+}
+
+/**
+ * A model call's output as Pi's assistant content, in the order the model
+ * produced it, each part's provider metadata kept in its signature field for
+ * {@link toModelMessages} to send back.
+ */
+export function piContentOf(parts: readonly ContentPart<ToolSet>[]): AssistantMessage['content'] {
+  const content: AssistantMessage['content'] = [];
+  for (const part of parts) {
+    if (part.type === 'text' && part.text.length > 0) {
+      const textSignature = encodeMetadata(part.providerMetadata);
+      content.push({ text: part.text, type: 'text', ...(textSignature ? { textSignature } : {}) });
+    } else if (part.type === 'reasoning') {
+      const thinkingSignature = encodeMetadata(part.providerMetadata);
+      const redacted = part.providerMetadata?.anthropic?.redactedData != null;
+      content.push({
+        thinking: part.text,
+        type: 'thinking',
+        ...(thinkingSignature ? { thinkingSignature } : {}),
+        ...(redacted ? { redacted } : {}),
+      });
+    } else if (part.type === 'tool-call') {
+      const thoughtSignature = encodeMetadata(part.providerMetadata);
+      content.push({
+        arguments: (part.input && typeof part.input === 'object'
+          ? part.input
+          : {}) as ToolCall['arguments'],
+        id: part.toolCallId,
+        name: part.toolName,
+        type: 'toolCall',
+        ...(thoughtSignature ? { thoughtSignature } : {}),
+      });
+    }
+  }
+  return content;
 }
 
 function stopReasonOf(finishReason: string): StopReason {
@@ -138,7 +230,8 @@ export interface AiSdkStreamOptions {
 
 /**
  * Pi's model call, made by the worker's AI SDK model rather than pi-ai's own
- * provider clients. pi-ai builds a provider client per call and gives it the
+ * provider clients. The model carries the Agent's reasoning level
+ * (`lib/models.ts`), so a call here thinks as a Mastra call would. pi-ai builds a provider client per call and gives it the
  * process's global `fetch`, so it would bypass the SSRF guard every other model
  * call goes through (`lib/models.ts`) and the private-network allowlist with it.
  *
@@ -192,18 +285,7 @@ export function aiSdkStreamFn(options: AiSdkStreamOptions, tools: () => AgentToo
       const usage = usageTotals(result.usage);
       const id = result.response?.id ?? `call-${Date.now()}`;
       options.onCall({ id, usage });
-      const content: AssistantMessage['content'] = [];
-      if (result.text) {
-        content.push({ text: result.text, type: 'text' });
-      }
-      for (const call of result.toolCalls) {
-        content.push({
-          arguments: (call.input ?? {}) as ToolCall['arguments'],
-          id: call.toolCallId,
-          name: call.toolName,
-          type: 'toolCall',
-        });
-      }
+      const content = piContentOf(result.content);
       const stopReason = stopReasonOf(result.finishReason);
       stream.push({
         message: message({ content, responseId: id, stopReason, usage: piUsage(usage) }),
