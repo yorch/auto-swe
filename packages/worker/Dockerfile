@@ -1,3 +1,7 @@
+# Docker CLI source, as a named stage so Dependabot's docker ecosystem tracks the
+# tag (it reads FROM lines, not COPY --from=<image>). Nothing runs in it.
+FROM docker:28-cli AS dockercli
+
 # ── Stage 1: Build ──
 FROM node:26-alpine AS builder
 WORKDIR /app
@@ -89,7 +93,7 @@ FROM node:26-slim
 # daemon over DOCKER_HOST (a socket proxy in compose), so the image holds no
 # socket and no docker group. Taken from the official CLI image rather than apt, which keeps it pinned and avoids pulling
 # the whole docker.io package (daemon included) into the runtime.
-COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
 
 ARG APP_VERSION=unknown
