@@ -2481,12 +2481,35 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       ]);
 
       const isTruncated = runs.length > ANALYTICS_ROW_CAP || steps.length > ANALYTICS_ROW_CAP;
+      // Which node ids the versions in the window declare. Feeds the per-step
+      // rollup so a fan-out branch's recorded ids (`fan[0]/impl`) fold back onto
+      // the node the spec declares instead of splitting its failure rate. A
+      // window can span several versions (A/B, or history), so the union is
+      // taken; a spec that has gone missing simply leaves its ids to be stripped
+      // structurally instead.
+      const versions = [...new Set(runs.slice(0, ANALYTICS_ROW_CAP).map((r) => r.templateVersion))];
+      const knownNodeIds = new Set<string>();
+      if (versions.length > 0) {
+        const versionRows = await fastify.prisma.workflowTemplateVersion.findMany({
+          select: { spec: true },
+          where: { templateId: tpl.id, version: { in: versions } },
+        });
+        for (const row of versionRows) {
+          const nodes = (row.spec as { nodes?: Record<string, unknown> } | null)?.nodes;
+          if (nodes && typeof nodes === 'object') {
+            for (const id of Object.keys(nodes)) {
+              knownNodeIds.add(id);
+            }
+          }
+        }
+      }
       return {
         data: {
           ...computeAnalytics(
             runs.slice(0, ANALYTICS_ROW_CAP),
             steps.slice(0, ANALYTICS_ROW_CAP),
-            request.query.window
+            request.query.window,
+            knownNodeIds
           ),
           isTruncated,
         },

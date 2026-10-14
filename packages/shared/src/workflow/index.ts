@@ -15,6 +15,7 @@ export {
   computeDailyRunSeries,
   computeGlobalAnalytics,
   MIN_SAMPLES_FOR_SIGNIFICANCE,
+  normalizeRecordingNodeId,
 } from './analytics.js';
 export type {
   AuthoringAgentRef,
