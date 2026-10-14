@@ -82,6 +82,9 @@ CREATE TYPE "ScannerPatternType" AS ENUM ('INJECTION', 'EXFILTRATION', 'SHELL_CO
 -- CreateEnum
 CREATE TYPE "OutboundDeliveryStatus" AS ENUM ('PENDING', 'DELIVERED', 'DEAD');
 
+-- CreateEnum
+CREATE TYPE "AssistantActionStatus" AS ENUM ('PENDING', 'CONFIRMED', 'DECLINED', 'EXECUTED');
+
 -- CreateTable
 CREATE TABLE "active_workflows" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -1814,6 +1817,25 @@ CREATE TABLE "outbound_deliveries" (
     CONSTRAINT "outbound_deliveries_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "assistant_actions" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "user_id" UUID NOT NULL,
+    "conversation_id" UUID NOT NULL,
+    "method" TEXT NOT NULL,
+    "url" TEXT NOT NULL,
+    "body" JSONB,
+    "summary" TEXT NOT NULL,
+    "digest" TEXT NOT NULL,
+    "status" "AssistantActionStatus" NOT NULL DEFAULT 'PENDING',
+    "expires_at" TIMESTAMPTZ NOT NULL,
+    "decided_at" TIMESTAMPTZ,
+    "executed_at" TIMESTAMPTZ,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "assistant_actions_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "active_workflows_temporal_workflow_id_key" ON "active_workflows"("temporal_workflow_id");
 
@@ -2489,6 +2511,9 @@ CREATE INDEX "outbound_deliveries_workflow_run_id_idx" ON "outbound_deliveries"(
 -- CreateIndex
 CREATE INDEX "outbound_deliveries_run_callback_id_idx" ON "outbound_deliveries"("run_callback_id");
 
+-- CreateIndex
+CREATE INDEX "assistant_actions_user_id_conversation_id_created_at_idx" ON "assistant_actions"("user_id", "conversation_id", "created_at");
+
 -- AddForeignKey
 ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
@@ -2926,4 +2951,7 @@ ALTER TABLE "outbound_deliveries" ADD CONSTRAINT "outbound_deliveries_run_callba
 
 -- AddForeignKey
 ALTER TABLE "outbound_deliveries" ADD CONSTRAINT "outbound_deliveries_workflow_run_id_fkey" FOREIGN KEY ("workflow_run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "assistant_actions" ADD CONSTRAINT "assistant_actions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 

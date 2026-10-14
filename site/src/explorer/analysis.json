@@ -3948,8 +3948,8 @@
       "before": 0,
       "id": "gateway",
       "lines": 90,
-      "path": "packages/gateway/src/index.ts",
-      "title": "API entry point"
+      "path": "packages/gateway/src/routes/register.ts",
+      "title": "API route registration"
     },
     {
       "anchor": "const worker = await Worker.create({",

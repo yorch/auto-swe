@@ -285,6 +285,13 @@ app.register(exampleRoutes, { prefix: '/compat/example' });`;
     expect(routes[0].declarations.map((route) => route.method)).toEqual(['GET', 'POST']);
   });
 
+  it('reads mounts from the route registration module, which imports its siblings', () => {
+    const register = `import { exampleRoutes } from './example.js';
+await app.register(exampleRoutes, { prefix: '/api/v1/example' });`;
+    const routes = parseRouteFamilies(register, { example: "fastify.get('/read', handler);" });
+    expect(routes[0].prefixes).toEqual(['/api/v1/example']);
+  });
+
   it('reads the declarations of a route module split into a directory, per file', () => {
     const gateway = `import { exampleRoutes } from './routes/example.js';
 app.register(exampleRoutes, { prefix: '/api/v1/example' });`;

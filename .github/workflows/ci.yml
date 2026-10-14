@@ -344,6 +344,13 @@ jobs:
           WORK_REQUEST_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/workRequests.idempotency.pg.test.ts
 
+      # In-app assistant confirmations: one confirmed action is spent by exactly one request,
+      # which only the conditional UPDATE decides when several arrive at once.
+      - name: Assistant action confirmations (database-backed tests)
+        env:
+          ASSISTANT_PG_TEST: '1'
+        run: yarn test packages/gateway/src/routes/assistantActions.pg.test.ts
+
       # Service principals: the api_tokens exactly-one-owner CHECK, the principal → tokens
       # cascade, and the launch guard's row lock admitting one of two concurrent launches at
       # maxInFlight = 1 are database behaviour a mocked Prisma cannot show.
