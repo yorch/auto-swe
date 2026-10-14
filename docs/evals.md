@@ -93,7 +93,18 @@ scope. It then runs a bounded TDD loop scoring the golden test's exit code.
 its flake screen (§4). A case never screened, or whose screen failed, is skipped — as is a case
 re-validation quarantined — so a flaky floor cannot move the verdict. Every run's summary carries
 `unscreened`: the count and ids of the cases skipped as never screened (`neverScreened`,
-`neverScreenedCaseIds`) and as failed screens (`screenFailed`, `screenFailedCaseIds`).
+`neverScreenedCaseIds`) and as failed screens (`screenFailed`, `screenFailedCaseIds`). The run page
+and `auto-swe evals run` print those counts. A run that finds never-screened cases starts its
+dataset's screen (§4) before scoring what is already screened, so a dataset screens itself on first
+use.
+
+**A run with no screened case is `INCONCLUSIVE`.** When the dataset has cases but none is
+flake-screened, nothing is scored and there is no verdict: the run ends `INCONCLUSIVE` — neither
+`SUCCESS` nor `FAILED` — and its summary's `inconclusive` names how many cases await screening
+(`awaitingScreen`) and how many failed their screen (`screenFailed`). The run page explains it and
+`auto-swe evals run` exits 2, as for a run without a verdict. Running again once the screen
+finishes gives a verdict. A dataset with no cases at all is not inconclusive; its run is a
+`SUCCESS` over nothing.
 
 ### Comparing runtimes
 
@@ -128,6 +139,10 @@ Every harness result records the runtime that actually ran, whether or not the r
 candidate arm's in `EvalResult.runtime`, the baseline arm's in its `metadata.baselineRuntime`. The
 verdict's `summary.runtimes` lists the runtimes each side ran on across the completed cases.
 
+**Cases run in a pinned image.** A case is scored, and its reference screened and re-validated,
+in `EVAL_WORKSPACE_IMAGE`, not the operator's configured workspace image, so a score stays
+comparable with its history; moving the image re-baselines every score and calls for a re-screen.
+
 **Infrastructure errors throw rather than scoring zero.** A Docker, model, agent, or MCP failure
 marks the `EvalRun` `FAILED`; it never records a false `0` that would poison the regression verdict
 with infra noise.
@@ -157,22 +172,47 @@ deployment at `/govern/workflow-defaults`.
 
 **Golden-set re-validation.** `ScheduledRevalidationWorkflow` fans out over datasets due for
 re-validation and quarantines cases that have gone stale, so the benchmark does not silently decay
-into measuring the wrong thing. Managed at `/govern/workflow-defaults`, with
-`GET`/`PUT /api/v1/admin/config/revalidation` and a manual trigger endpoint
-(`POST /api/v1/admin/config/revalidation/trigger`).
+into measuring the wrong thing. A quarantined case whose reference passes again is restored, and
+its flake screen is reset to never-screened: it passed its last screen in an older repository
+state, so it is scored again only after a new one passes. Managed at `/govern/workflow-defaults`,
+with `GET`/`PUT /api/v1/admin/config/revalidation` and a manual trigger endpoint
+(`POST /api/v1/admin/config/revalidation/trigger`). The schedule is off by default. Its
+`revalidationDatasetSlug` (the `datasetSlug` field of that endpoint) limits a sweep — re-validation
+and the screening after it — to the datasets whose slug contains it; unset, a sweep covers every
+dataset.
 
-**Flake screening.** A case's reference — its golden test at the pinned commit — is run
+**Flake screening.** A case's reference — its golden test at the pinned commit, in the eval
+workspace image the harness scores it in (`EVAL_WORKSPACE_IMAGE`) — is run up to
 `evals.flakeScreenRuns` times (setting registry, default 3, GLOBAL only, ADMIN to change) by the
 `screenDatasetCasesActivity` activity. The case is marked `flakeScreened` only when every run
-passed; either way `flakeRuns` records the number of runs, so `flakeRuns = 0` is a case never
-screened and `flakeRuns > 0` without `flakeScreened` is a failed screen (a flaky reference, or one
-that never passes). Creating a dataset with cases starts `EvalScreenWorkflow` for it, and every
-re-validation sweep screens each dataset's remaining never-screened cases after re-validating it,
-which picks up a case whose screen could not start (Temporal unavailable) or hit an infrastructure
-error — such a case is left unscreened rather than recorded as flaky. Quarantined cases are not
-screened. A screen's result is written only if the case's repository, commit and golden test are
-still the ones it ran. A case's reference cannot be edited through the API, so a new reference is
-a new case, which starts unscreened.
+passed; the first failing run ends its screen. Either way `flakeRuns` records the configured number
+of runs, so `flakeRuns = 0` is a case never screened and `flakeRuns > 0` without `flakeScreened` is
+a failed screen (a flaky reference, or one that never passes).
+
+Screening starts itself. `EvalScreenWorkflow` runs under one id per dataset
+(`eval-screen-<datasetId>`), and every starter joins a screen already running instead of starting a
+second: creating a dataset with cases, an eval run that finds never-screened cases in its dataset
+(§3), and an admin re-screen. A running screen reloads the dataset's never-screened cases when it
+has worked through them, so a case added or reset while it ran is screened too. Every re-validation
+sweep also screens each dataset's never-screened cases, one dataset at a time, after all its
+re-validations.
+
+A run that could not say anything about the test leaves the case unscreened for the next screen
+rather than marking it flaky: a workspace that could not be provisioned or cloned, and a run killed
+by a signal or a timeout — the runner's own timeout, or an exit status of 128 and above, such as
+137 for the out-of-memory killer. Every other non-zero exit is a test failure. The activity
+heartbeats after every reference run, under a five-minute heartbeat timeout. Quarantined cases are
+not screened. A screen's result is written only if the case is still unscreened and its repository,
+commit and golden test are still the ones it ran. A case's reference cannot be edited through the
+API, so a new reference is a new case, which starts unscreened.
+
+**Re-screening.** An admin resets a dataset's cases, or one case, to never-screened
+(`flakeRuns = 0`, `flakeScreened = false`) and starts the dataset's screen with
+`POST /api/v1/platform/evals/:id/rescreen` or `POST /api/v1/platform/evals/:id/cases/:caseId/rescreen`,
+the re-check buttons on the dataset page, or `auto-swe evals rescreen <dataset-id> [--case=<id>]`.
+The reset is audited against the dataset. When the screen cannot start (Temporal unreachable) the
+cases stay reset, and the next eval run of the dataset or the next sweep screens them. Until a new
+screen passes, the harness does not score a reset case.
 
 **Canary routing.** `resolveCanaryConfig()` reads the canary agent key and version from
 `WorkflowDefaults`; `shouldRouteToCanary()` hashes the work-request ID (FNV-1a) for a deterministic
@@ -183,8 +223,9 @@ split. A routed run is stamped `isCanary` and gets the candidate version applied
 thresholds in the Tier-2 defaults (`evalHealthMaxFlakeRate`, `evalHealthMaxStaleRate`,
 `evalHealthMinKappa`, `evalJudgeThreshold`). An unhealthy suite is not a trustworthy gate.
 `GET /api/v1/platform/evals/suite-health` returns each dataset's case count, how many cases
-re-validation quarantined as stale, how many are flake-screened, and the count and ids of the
-non-quarantined cases the harness skips as never screened or failed screens, with the three
+re-validation quarantined as stale, how many are flake-screened, and the count of the
+non-quarantined cases the harness skips as never screened or failed screens, each with the ids of
+the oldest 50 of them, with the three
 thresholds, and `/govern/evals` charts the stale rate per dataset against its ceiling. The dataset
 page and `auto-swe evals show` mark each case as screened, flaky, or not checked yet.
 
@@ -210,11 +251,11 @@ verdicts into trends per template, model, and prompt version.
 | Surface | Where |
 |---|---|
 | Dashboard | `/govern/evals` — each scorer's daily mean over a 7, 30, or 90-day UTC window or a custom span of up to 366 days, charted by week above 90 days (`since` / `until` on `GET /api/v1/platform/evals/trends`); every captured result, paginated and filterable by scorer and source, linked to the run or harness run it scored; the datasets |
-| Dataset detail | `/govern/evals/datasets/[id]` — the cases and the dataset's harness runs, each side with its runtime override |
-| Harness run detail | `/govern/evals/runs/[id]` — the paired verdict, overall and per tag, the runtimes each side ran on, and that run's results with the runtime of each |
+| Dataset detail | `/govern/evals/datasets/[id]` — the cases with their stability (flake-screen) state, a re-check of every case or of one already checked, and the dataset's harness runs, each side with its runtime override |
+| Harness run detail | `/govern/evals/runs/[id]` — the paired verdict, overall and per tag, the runtimes each side ran on, the cases left unscored for want of a passing screen, why a run is inconclusive, and that run's results with the runtime of each |
 | Run detail | The eval panel on `/runs/[id]` |
-| REST | `/api/v1/platform/evals` (datasets, cases, runs, rubrics, `results`, and `trends` — one bounded aggregate per UTC day) |
-| CLI | `auto-swe evals` — list, show, and `run` a dataset, optionally on a runtime per side; `results` prints a harness row's runtime |
+| REST | `/api/v1/platform/evals` (datasets, cases, runs, rubrics, `results`, `trends` — one bounded aggregate per UTC day — and `rescreen`) |
+| CLI | `auto-swe evals` — list, show, `rescreen`, and `run` a dataset, optionally on a runtime per side; `results` prints a harness row's runtime |
 | Schedules | `/govern/workflow-defaults` — nightly regression and re-validation cadence |
 
 ---
@@ -227,11 +268,13 @@ verdicts into trends per template, model, and prompt version.
 | `packages/worker/src/activities/runEvalNode.ts` | Node execution, scorer dispatch, short-circuiting |
 | `packages/worker/src/activities/evalHarness.ts` | `runCaseDefault`, dataset orchestration |
 | `packages/worker/src/activities/evalRevalidate.ts` | Golden-set re-validation and quarantine |
-| `packages/worker/src/activities/evalFlakeScreen.ts` | Flake screening of never-screened cases |
+| `packages/worker/src/activities/evalFlakeScreen.ts` | Flake screening of never-screened cases, and what counts as an infrastructure failure |
+| `packages/worker/src/activities/evalWorkspaceImage.ts` | `EVAL_WORKSPACE_IMAGE`, the pinned image cases are scored and screened in |
+| `packages/worker/src/lib/evalScreenStart.ts` | Starting or joining a dataset's screen from an activity |
 | `packages/worker/src/activities/prepareScheduledEvalRun.ts` | Scheduled-run setup |
 | `packages/worker/src/workflows/evalRun.ts` | `EvalRunWorkflow` |
 | `packages/worker/src/workflows/scheduledEval.ts`, `scheduledRevalidation.ts` | Schedule-driven workflows; the re-validation sweep also flake-screens |
-| `packages/worker/src/workflows/evalScreen.ts` | `EvalScreenWorkflow`, started when a dataset is created with cases |
+| `packages/worker/src/workflows/evalScreen.ts` | `EvalScreenWorkflow`, one per dataset, started on dataset creation, by an eval run, and by a re-screen |
 | `packages/gateway/src/routes/evals.ts` | Admin API |
 
 > End-to-end verification of the Temporal, Docker, and LLM paths requires the full infrastructure
@@ -251,20 +294,30 @@ verdicts into trends per template, model, and prompt version.
   share against the flake-rate ceiling or stores a judge/human agreement figure, so there is nothing
   to chart for them; the stale rate is the quarantined share of cases today, with no history, so it
   is a bar per dataset and not a trend.
-- **A new case is not scored until it is screened.** Screening a dataset runs k workspaces per
-  case, one after another, so a run started right after a dataset is created skips the cases not yet
-  screened; a run with no screened case finishes `SUCCESS` with `n=0` and lists them under
-  `unscreened`. A gate that reads the status alone must also check that count. A case whose screen
-  could not start waits for the next re-validation sweep, so with that schedule disabled it is
-  screened only by creating it again.
-- **Screening costs k reference runs per case.** `evals.flakeScreenRuns` multiplies the clone and
-  golden-test time of every new case, and runs every time even after a failure. One screen of a
-  dataset is a single activity with a four-hour limit; a dataset too large for it is finished by its
-  retries and later sweeps, which skip the cases already recorded.
-- **A failed screen is permanent.** Nothing re-screens a case once its screen is recorded, so a
-  case that failed because of a transient fault that still let the golden test run (a flaky network
-  fetch inside the test) stays excluded; replacing it means adding the case again. Changing
-  `evals.flakeScreenRuns` does not re-screen cases already screened.
+- **A new case is not scored until it is screened.** Screening a dataset runs up to k workspaces
+  per case, one after another, so a run started while its dataset is being screened scores only the
+  cases screened so far, and one that finds no screened case is `INCONCLUSIVE`. A dataset whose
+  screen could not start (Temporal unreachable) is screened by its next eval run, the next sweep, or
+  a re-screen.
+- **Trends shift as the screened set grows.** A dataset's runs score whatever is screened when each
+  run starts, so successive runs of one dataset can cover different cases — more as screening
+  catches up, fewer after a re-screen. Pass rates and per-day means compared across that change
+  compare different case sets; compare runs whose `unscreened` counts match.
+- **Screening costs up to k reference runs per case.** `evals.flakeScreenRuns` multiplies the clone
+  and golden-test time of every new case; a case's first failing run ends its screen. One screen of
+  a dataset is a single activity with a four-hour limit; a dataset too large for it is finished by
+  its retries and later starts, which skip the cases already recorded. A sweep screens a dataset in
+  its own activity, not through the dataset's `EvalScreenWorkflow`, so a sweep and a screen started
+  by a run can work on the same dataset at once and run one case's reference twice; only one result
+  is recorded.
+- **The runner sees only the golden test's exit status.** A dependency install or network fetch
+  inside the golden-test command that fails exits like a failing test and marks the case flaky; an
+  admin re-screen clears it. In the other direction, a test suite that itself dies on a signal, or
+  hangs past the runner's timeout, reads as an infrastructure failure, so the case is never screened
+  and is retried by every screen.
+- **A failed screen stands until an admin re-screens it.** Nothing re-screens a case on its own once
+  its screen is recorded, except re-validation restoring a quarantined case. Changing
+  `evals.flakeScreenRuns` does not re-screen cases already screened; a dataset re-screen does.
 - **k passes are evidence, not proof.** A reference that fails rarely can pass k runs and be scored;
   re-validation quarantines it later only if it fails on the run re-validation makes.
 - **Trend breakdowns cover judge model, agent and runtime, and templates only for online signals.**
