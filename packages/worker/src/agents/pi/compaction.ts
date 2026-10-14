@@ -18,7 +18,17 @@ const MIN_ELIDABLE_ARG_CHARS = 200;
 /** The tools whose call arguments carry file content, and the fields that do. */
 const CONTENT_TOOLS = new Set(['write', 'edit']);
 
-type Part = { type: string; text?: string; thinking?: string; name?: string; arguments?: unknown };
+type Part = {
+  type: string;
+  text?: string;
+  thinking?: string;
+  name?: string;
+  arguments?: unknown;
+  /** Provider metadata the model adapter round-trips (`aisdk:` JSON); it is sent to the provider. */
+  textSignature?: string;
+  thinkingSignature?: string;
+  thoughtSignature?: string;
+};
 type Role = 'user' | 'assistant' | 'toolResult';
 
 function roleOf(message: AgentMessage): string {
@@ -28,11 +38,16 @@ function roleOf(message: AgentMessage): string {
 function partChars(part: Part): number {
   switch (part.type) {
     case 'text':
-      return part.text?.length ?? 0;
+      return (part.text?.length ?? 0) + (part.textSignature?.length ?? 0);
     case 'thinking':
-      return part.thinking?.length ?? 0;
+      // A redacted thinking part has no text; its payload rides in the signature.
+      return (part.thinking?.length ?? 0) + (part.thinkingSignature?.length ?? 0);
     case 'toolCall':
-      return (part.name?.length ?? 0) + JSON.stringify(part.arguments ?? {}).length;
+      return (
+        (part.name?.length ?? 0) +
+        JSON.stringify(part.arguments ?? {}).length +
+        (part.thoughtSignature?.length ?? 0)
+      );
     default:
       return IMAGE_CHARS;
   }

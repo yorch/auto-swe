@@ -818,7 +818,9 @@ the adapter fits it to `workspace.harnessContextTokens` (default 120,000 tokens;
 workflow template, team and organization) without a model call, which keeps metering exact. Before each
 model call, through Pi's `transformContext` hook, it estimates the system prompt, the tool definitions
 and the messages at three characters per token (code and JSON tokenise densely, so the estimate leans
-towards compacting early). Over the budget, it works in phases until the estimate is under it:
+towards compacting early). Thinking parts and the provider
+metadata on a turn's parts count toward it and are never stubbed, so a reasoning-heavy history is fitted
+only by dropping whole exchanges. Over the budget, it works in phases until the estimate is under it:
 
 1. In every exchange before the newest, oldest first, it replaces the text of each tool result with a
    one-line stub naming the tool, and each large string in a `write` or `edit` call's arguments

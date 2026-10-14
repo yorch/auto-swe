@@ -97,6 +97,62 @@ describe('estimateTokens', () => {
   });
 });
 
+describe('provider metadata on assistant parts', () => {
+  const sig = (n: number) => `aisdk:${JSON.stringify({ anthropic: { signature: 's'.repeat(n) } })}`;
+  const signed = (thinking: string, thinkingSig: string, callSig: string): AgentMessage =>
+    ({
+      content: [
+        { thinking, thinkingSignature: thinkingSig, type: 'thinking' },
+        { text: 'ok', textSignature: callSig, type: 'text' },
+        {
+          arguments: { content: 'q'.repeat(5_000), path: 'a.ts' },
+          id: 'w',
+          name: 'write',
+          thoughtSignature: callSig,
+          type: 'toolCall',
+        },
+      ],
+      role: 'assistant',
+      stopReason: 'toolUse',
+      timestamp: 0,
+    }) as unknown as AgentMessage;
+
+  it('grows the estimate with the size of the signatures', () => {
+    const small = estimateTokens('', [signed('t', sig(10), sig(10))]);
+    const large = estimateTokens('', [signed('t', sig(3_000), sig(3_000))]);
+    expect(large - small).toBeGreaterThanOrEqual(Math.floor((3 * 2_990) / 3));
+  });
+
+  it('never stubs a thinking part or a call signature, only the call content', () => {
+    const thinkingSig = sig(500);
+    const callSig = sig(300);
+    const messages: AgentMessage[] = [
+      user('first'),
+      signed('deep thought', thinkingSig, callSig),
+      result('w', 'write', 'ok'),
+      assistant(),
+      user('second'),
+    ];
+    const out = compactMessages({ budgetTokens: 1_000, messages, systemPrompt: '' });
+    expect(out.elidedArguments).toBe(1);
+    const parts = (
+      out.messages[1] as unknown as {
+        content: Record<string, unknown>[];
+      }
+    ).content;
+    expect(parts[0]).toEqual({
+      thinking: 'deep thought',
+      thinkingSignature: thinkingSig,
+      type: 'thinking',
+    });
+    expect(parts[1]).toMatchObject({ textSignature: callSig });
+    expect(parts[2]).toMatchObject({
+      arguments: { content: ARG_STUB, path: 'a.ts' },
+      thoughtSignature: callSig,
+    });
+  });
+});
+
 describe('compactMessages', () => {
   it('returns the same messages when under budget', () => {
     const messages = conversation(2, 2);
