@@ -14,12 +14,13 @@ Six long-running processes plus one Docker daemon, and two more that are optiona
 | `postgres-temporal`        | `postgres:18-alpine`                               | Separate DB for Temporal history. Do **not** combine with the app DB.  |
 | `temporal` (server+admin+ui) | `temporalio/server:1.31.2` + admin-tools 1.31 + ui 2.53.3 | Workflow orchestration runtime + setup container + web UI on `:8233`.  |
 | `gateway`                  | built from `packages/gateway/Dockerfile`           | Fastify HTTP API on `:8080`. Stateless, scale horizontally.            |
-| `worker`                   | built from `packages/worker/Dockerfile`            | Temporal worker. Spawns ephemeral Docker workspaces via the host socket. |
+| `worker`                   | built from `packages/worker/Dockerfile`            | Temporal worker. Spawns ephemeral Docker workspaces through `docker-socket-proxy`. |
+| `docker-socket-proxy`      | `haproxy:3.2-alpine` (`DOCKER_SOCKET_PROXY_IMAGE`) with `infra/docker-socket-proxy/haproxy.cfg` | Filters the Docker API for the worker; the only app container that mounts the host socket. Its idle timeouts (65 min) outlast the longest container step. |
 | `web`                      | built from `packages/web/Dockerfile`               | Next.js dashboard on `:3000`. Stateless, scale horizontally.           |
 | `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.34.0`                         | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
 | object store (optional)    | `dxflrs/garage` (bundled) / AWS S3 / Cloudflare R2 / Backblaze B2 | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
 
-The worker mounts `/var/run/docker.sock` and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `WORKSPACE_IMAGE` environment variable (default `node:24-alpine`); an explicit `image` on a node still wins. Leave a connection's executor image **blank** to inherit that default — the column has no database default, so blank means "inherit" rather than a pinned value, and a connection that names an image keeps it. Clearing the field in the connection's settings is how you opt one back in (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). **Anyone with code execution inside the worker container has root on its host.** Keep the worker host isolated.
+The worker reaches the Docker daemon through `docker-socket-proxy` (`DOCKER_HOST=tcp://docker-socket-proxy:2375`, on an `internal` network only the two share) and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `WORKSPACE_IMAGE` environment variable (default `node:24-alpine`); an explicit `image` on a node still wins. Leave a connection's executor image **blank** to inherit that default — the column has no database default, so blank means "inherit" rather than a pinned value, and a connection that names an image keeps it. Clearing the field in the connection's settings is how you opt one back in (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). The proxy is haproxy with a path allowlist in `infra/docker-socket-proxy/haproxy.cfg`: it passes only the API groups the worker uses (`_ping`, `version`, `containers` — which covers `docker cp` and `pause` —, `exec`, `images`, `volumes`) and answers everything else with a 403 (build, networks, swarm, services, secrets, plugins, system, info, events). The file names what each allowed path is for; a new Docker operation in the worker needs its path there. **It limits the API surface, not container options:** the worker may still create a container with `--privileged` or a host bind mount, so anyone with code execution inside the worker container can still reach root on its host. Keep the worker host isolated.
 
 The workspace clones and pushes with the run's GitHub credential (the platform's, or the launcher's
 own) inside the executor image, so choosing the image is choosing code that sees that credential.
@@ -27,7 +28,8 @@ Only a platform admin may set a connection's executor image; a team lead may cle
 connection with the image it already has. The team shell-image allowlist does not apply: its entries
 are approved for sandboxed shell steps, which never hold a credential. `build-executor.yml` writes
 each freshly tagged image to its repository, so its `GATEWAY_TOKEN` must belong to a platform
-admin.
+admin. It builds `defaults/Dockerfile.node` unless a run sets `use_repo_dockerfile`, which builds the
+repository's own `.auto-swe/Dockerfile` instead.
 
 The workspace image tracks its own major, not the services'. It stays on `node:24-alpine` while the gateway, worker and web images run Node 26, because that image puts `yarn`, `pnpm` and `corepack` on `PATH` and the Node 26 image puts none of them there — Corepack is no longer bundled with the Node distribution.
 
@@ -401,7 +403,8 @@ Things to know:
 - **Required secrets.** The gateway and worker images run with `NODE_ENV=production` and refuse the in-source dev fallbacks, so `.env` must contain real values for `JWT_SECRET`, `BETTER_AUTH_SECRET` (≥32 chars), and `CONFIG_ENCRYPTION_KEY`. `docker-compose.prod.yml` enforces all three with `:?` interpolation errors at `up` time, and both processes additionally validate `CONFIG_ENCRYPTION_KEY` at boot — a key that is present but not base64-encoded 32 bytes exits with a descriptive error before anything is served.
 - **The web container does not receive `.env`.** It is handed only what the dashboard reads — `NEXT_PUBLIC_API_URL`, `API_INTERNAL_URL`, `NEXT_PUBLIC_TEMPORAL_UI_URL`, `NEXT_PUBLIC_GRAFANA_URL`, `NODE_ENV`, `PORT` and `HOSTNAME` — so no secret reaches the Next.js server. Compose still interpolates those values from `.env`. `NEXT_PUBLIC_API_URL` is required (`:?`) and must be the gateway's public URL, since the browser uses it; `API_INTERNAL_URL` defaults to `http://gateway:8080` for the server's own fetches. A new variable the dashboard reads has to be added to the `web` service explicitly.
 - **Managed DB.** Set `DATABASE_URL_OVERRIDE` to point gateway + worker at a managed Postgres instead of the compose `postgres` service.
-- **Worker DinD.** Same as everywhere else: the worker mounts `/var/run/docker.sock`; set `DOCKER_GID` to the group that owns that socket (`stat -c %g /var/run/docker.sock` on Linux; `0` under Docker Desktop on macOS, where the socket a container sees is `root:root`).
+- **Worker DinD.** Same as everywhere else: the worker uses `DOCKER_HOST` pointing at `docker-socket-proxy`, which mounts the host socket. No `DOCKER_GID` is needed. `DOCKER_SOCKET_PROXY_IMAGE` overrides the haproxy image (default `haproxy:3.2-alpine`); the allowlist and timeouts are in `infra/docker-socket-proxy/haproxy.cfg`, mounted read-only, so the deployment needs that file next to the compose files. Keep its `timeout client`/`server`/`tunnel` above the longest step: a foreground `docker run` waits on the API without sending a byte until the container exits, and a quieter exec stream is cut at the proxy's idle timeout. Watchtower (`docker-compose.watchtower.yml`) keeps its own direct socket mount: it is a separate service, not on the proxy's network, and its access is not filtered by the proxy.
+- **Worker health.** The worker serves no HTTP. Its image `HEALTHCHECK` passes while `/tmp/worker-alive` has been touched in the last two minutes; the worker touches it every 10 seconds only while its Temporal worker is running, so a stopped or wedged worker reports unhealthy. The check does not see a worker that polls but fails every activity.
 - **Object store selection.** `COMPOSE_PROFILES` in `.env` decides whether the bundled Garage service runs. `objectstore` (the `.env.example` default) starts it; an empty value starts nothing, and the worker's `depends_on` is `required: false` so it comes up regardless. See §5c.
 
 ---
@@ -448,7 +451,7 @@ The simplest production layout maps the local Docker Compose 1:1 onto the produc
 | `db-1`                    | `postgres` (pgvector)                       | Managed Postgres (RDS / Cloud SQL) is fine. Enable the `vector` extension, version 0.8 or later (scoped memory search uses its iterative index scan).   |
 | `temporal-1..N`           | `postgres-temporal`, `temporal`, `temporal-ui` | Or Temporal Cloud — skip the host entirely.                       |
 | `gateway-1..N`            | `gateway`                                   | Behind your HTTPS reverse proxy. Stateless; scale horizontally.    |
-| `worker-1..N`             | `worker` + Docker daemon                    | **Isolated.** Worker mounts `/var/run/docker.sock`.                |
+| `worker-1..N`             | `worker` + Docker daemon                    | **Isolated.** Reaches Docker via the socket proxy.             |
 | `web-1..N`                | `web`                                       | Behind HTTPS reverse proxy. Stateless; scale horizontally.         |
 | `obs-1` (optional)        | `otel-lgtm` or your collector + Grafana    | OTLP/gRPC on `:4317`.                                              |
 
@@ -528,7 +531,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] `SEED_ADMIN_PASSWORD` is rotated or the seed admin is deleted after first sign-in.
 - [ ] OAuth consent screens are published (Google) and homepage URLs filled (GitHub) for prod-grade UX.
 - [ ] Magic-link transport is verified end-to-end against a real inbox (not just SMTP 2xx).
-- [ ] Worker host is isolated — separate VPC subnet, no shared Docker socket, no inbound traffic.
+- [ ] Worker host is isolated — separate VPC subnet, no shared Docker socket (the worker holds none; only `docker-socket-proxy` does), no inbound traffic.
 - [ ] Infra ports are not world-reachable. `docker-compose.infra.yml` publishes Postgres (5432), Temporal (7233, plus 8233 for the Web UI only when the `temporal-ui` profile is enabled, which production must not do) and the object store (9000) — and `docker-compose.app.yml` Grafana (3001) and OTLP (4317/4318) — on loopback by default so the runbook can reach them from the host. An override such as `POSTGRES_PORT=55432` without the `127.0.0.1:` prefix publishes on every interface; keep the prefix, or firewall the port. The local `docker-compose.app.yml` also binds the gateway (8080) and dashboard (3000) to `APP_BIND_ADDRESS`, loopback by default; `docker-compose.prod.yml` publishes those two on every interface (or not at all under the Traefik overlay), so put them behind the reverse proxy.
 - [ ] `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SECONDS` are left at the defaults (200 per minute per client) unless a suite drives one signed-in user hard: an end-to-end (Playwright) run loads many pages as a single user and exhausts 200 per minute. Raise them only for that environment. Both are read once at startup and a value that is not a positive integer stops the gateway from booting.
 - [ ] Reverse proxy enforces HTTPS and forwards `X-Forwarded-For` / `X-Forwarded-Proto`, and `TRUST_PROXY` names that proxy's IPs or CIDRs. The gateway rate-limits a verified user by user id and everything else by client IP; without `TRUST_PROXY` every anonymous request behind the proxy shares the proxy's IP and one limit. Do not set it when clients can reach the gateway directly — they could then choose their own IP.
@@ -539,6 +542,16 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] `OTEL_EXPORTER_OTLP_ENDPOINT` is set and the collector is reachable — otherwise traces, metrics and logs silently drop.
 - [ ] GitHub PAT and webhook secret are set via `/studio/integrations` (or env var fallback). Secrets are random per-environment.
 - [ ] `CONFIG_ENCRYPTION_KEY` (base64 32-byte random) is set and backed up — it encrypts all DB-stored secrets (GitHub token, Slack tokens, S3 key, OAuth secrets). Loss = all stored credentials are unreadable.
+
+---
+
+## Limitations
+
+- **Production runs the development Temporal dynamic config.** `docker-compose.infra.yml` mounts `infra/dynamicconfig/development-sql.yaml` for every deployment. That file sets `system.forceSearchAttributesCacheRefreshOnRead`, which upstream marks as a development setting not to enable in production (it refreshes the search-attribute cache on every read, trading server load for immediacy). It is left as is because the Temporal server and its configuration are outside what this project changes; `DYNAMIC_CONFIG_FILE_PATH` is a literal in that compose file, so a deployment that wants a production file supplies it through a compose override of the `temporal` service.
+- **The Docker socket proxy narrows the API, not container options.** See §0: a worker that can create containers can still request privileged mode or host bind mounts.
+- **The Docker socket proxy runs as root.** It must open the host socket, which is root-owned; the container is read-only, drops every capability and runs nothing but haproxy. CI exercises the worker's Docker calls through the same image and config.
+- **The proxy's allowlist is by path prefix, not by operation.** It refuses the bulk and exfiltrating operations (prune, push, load, image export and import from a URL), but every other operation in an allowed group passes, including ones the worker does not use, such as `kill`, `rename` and image delete.
+- **The base images are tag-pinned, not digest-pinned.** Dependabot bumps the tags weekly; pinning digests needs a networked environment to resolve them.
 
 ---
 

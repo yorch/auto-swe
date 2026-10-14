@@ -718,6 +718,29 @@ export interface AdminTokenSummary {
   user: { id: string; email: string };
 }
 
+// ── Personal access tokens ──
+
+/** One row of GET /api/v1/auth/tokens (the caller's own tokens; never the plaintext). */
+export interface PatSummary {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+/** POST /api/v1/auth/tokens: a new token, whose plaintext appears here exactly once. */
+export interface PatCreated {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  expiresAt: string | null;
+  token: string;
+}
+
 // ── Webhooks ──
 
 export interface GitWebhookBody {

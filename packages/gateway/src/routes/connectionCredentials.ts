@@ -26,6 +26,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
@@ -114,24 +115,20 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
       const user = requireUser(request);
       const policy = await resolveUserCredentialPolicy();
       if (!policy.enabled) {
-        return reply.status(403).send({
-          error: {
-            code: 'USER_CREDENTIALS_DISABLED',
-            message: 'Per-user GitHub credentials are turned off on this platform.',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'USER_CREDENTIALS_DISABLED',
+          'Per-user GitHub credentials are turned off on this platform.'
+        );
       }
 
       const repo = await loadOwnableRepo(request.params.id, user);
       if (!repo) {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
       if (!(repo.isActive && repo.team.isActive)) {
-        return reply.status(409).send({
-          error: { code: 'REPO_INACTIVE', message: 'This repository or its team is inactive.' },
-        });
+        return sendError(reply, 409, 'REPO_INACTIVE', 'This repository or its team is inactive.');
       }
 
       // Both hosts, because a run sends the token to both: the web base for
@@ -141,12 +138,12 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
       const baseUrl = repo.githubUrl ?? ghConfig.baseUrl;
       const refused = [apiUrl, baseUrl].filter((u) => !credentialHostAllowed(u, policy.hosts));
       if (refused.length > 0) {
-        return reply.status(400).send({
-          error: {
-            code: 'HOST_NOT_ALLOWED',
-            message: `Personal tokens may not be sent to ${refused.join(' or ')}. An admin can allow the host under the GitHub platform settings.`,
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'HOST_NOT_ALLOWED',
+          `Personal tokens may not be sent to ${refused.join(' or ')}. An admin can allow the host under the GitHub platform settings.`
+        );
       }
 
       const { token } = request.body;
@@ -158,29 +155,29 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
       });
       if (!lookup.ok) {
         if (lookup.failure === 'credential-rejected' || lookup.failure === 'repo-not-found') {
-          return reply.status(400).send({
-            error: {
-              code: 'CREDENTIAL_REJECTED',
-              message: `GitHub rejected this token, or it cannot see ${repo.organizationName}/${repo.repoName}. Check that it has access to the repository.`,
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'CREDENTIAL_REJECTED',
+            `GitHub rejected this token, or it cannot see ${repo.organizationName}/${repo.repoName}. Check that it has access to the repository.`
+          );
         }
-        return reply.status(503).send({
-          error: {
-            code: 'GITHUB_UNAVAILABLE',
-            message: 'GitHub could not be reached to verify the token. Try again shortly.',
-          },
-        });
+        return sendError(
+          reply,
+          503,
+          'GITHUB_UNAVAILABLE',
+          'GitHub could not be reached to verify the token. Try again shortly.'
+        );
       }
       // A run pushes a branch and opens a pull request, so a token whose owner
       // can only read would be saved only to fail every run later.
       if (!permissionMeets(lookup.permission, 'write')) {
-        return reply.status(400).send({
-          error: {
-            code: 'INSUFFICIENT_PERMISSION',
-            message: `This token's account has ${lookup.permission} access to ${repo.organizationName}/${repo.repoName}; runs need write access.`,
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'INSUFFICIENT_PERMISSION',
+          `This token's account has ${lookup.permission} access to ${repo.organizationName}/${repo.repoName}; runs need write access.`
+        );
       }
 
       const key = { connectionId: repo.id, userId: user.sub };
@@ -243,9 +240,7 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
         where: { connectionId_userId: key },
       });
       if (!existing) {
-        return reply.status(404).send({
-          error: { code: 'CREDENTIAL_NOT_FOUND', message: 'No saved token for this repository' },
-        });
+        return sendError(reply, 404, 'CREDENTIAL_NOT_FOUND', 'No saved token for this repository');
       }
       await fastify.prisma.connectionCredential.delete({ where: { id: existing.id } });
       await writeAuditLog(fastify, {

@@ -5,6 +5,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { paginationQuery } from '../lib/pagination.js';
 import {
@@ -144,12 +145,12 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       const foundIds = new Set(repos.map((r) => r.id));
       const missingIds = repoIds.filter((id) => !foundIds.has(id));
       if (missingIds.length > 0) {
-        return reply.status(404).send({
-          error: {
-            code: 'REPOS_NOT_FOUND',
-            message: `Repositories not found or inactive: ${missingIds.join(', ')}`,
-          },
-        });
+        return sendError(
+          reply,
+          404,
+          'REPOS_NOT_FOUND',
+          `Repositories not found or inactive: ${missingIds.join(', ')}`
+        );
       }
 
       // An epic fans out into a push and a pull request on every repository it
@@ -214,12 +215,12 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       );
 
       if (!launch.ok) {
-        return reply.status(409).send({
-          error: {
-            code: 'EPIC_ALREADY_EXISTS',
-            message: `Epic workflow already running for ${externalTicketId}`,
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'EPIC_ALREADY_EXISTS',
+          `Epic workflow already running for ${externalTicketId}`
+        );
       }
 
       return reply.status(201).send({
@@ -351,9 +352,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       const { workflowId } = request.params;
 
       const notFound = () =>
-        reply.status(404).send({
-          error: { code: 'EPIC_NOT_FOUND', message: `Epic ${workflowId} not found` },
-        });
+        sendError(reply, 404, 'EPIC_NOT_FOUND', `Epic ${workflowId} not found`);
 
       if (!workflowId.startsWith(EPIC_ID_PREFIX)) {
         return notFound();

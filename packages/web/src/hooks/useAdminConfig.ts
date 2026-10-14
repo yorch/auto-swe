@@ -1,5 +1,6 @@
 'use client';
 
+import type { BudgetTier } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { READINESS_KEY } from '@/hooks/useReadiness';
@@ -191,7 +192,7 @@ export interface WorkflowDefaultsConfig {
   defaultTeamSlug: string | null;
   // Tier-2 operator knobs (GLOBAL). Present on the resolved GET payload; the
   // per-tier budgets come back nested under budgetTiers.
-  budgetTiers?: Record<'STANDARD' | 'LARGE' | 'EPIC', WorkflowBudgetTier>;
+  budgetTiers?: Record<BudgetTier, WorkflowBudgetTier>;
   maxTddIterations?: number;
   maxEvalIterations?: number;
   lessonRetrievalLimit?: number;

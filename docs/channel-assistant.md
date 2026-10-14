@@ -406,6 +406,6 @@ unproven on real traffic, and turn them on one channel at a time.
 | Activities | `activities/channelAssistant.ts`, `channelReactive.ts`, `channelTask.ts`, `channelTaskPlan.ts`, `channelOpenItems.ts`, `consolidateChannelMemory.ts`, `passiveIngestChannelMemory.ts` |
 | Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
 | Steering | `workflows/runnable.ts` (`steer` handler), `activities/runAgentNode.ts` (`prependSteering`), `shared/workflow/interpreter.ts` (`drainSteering`) |
-| Gateway | `routes/slack.ts` (events, thread-reply steering), `routes/slackChannels.ts`, `plugins/temporal.ts` (`startChannelAssistant`) |
+| Gateway | `routes/slack.ts` + `routes/slack/events.ts` (events), `lib/slack/` (thread-reply steering, channel provisioning), `routes/slackChannels.ts`, `plugins/temporal.ts` (`startChannelAssistant`) |
 | Web | `app/govern/slack-channels/`, `app/teams/[id]/page.tsx` (persona card), `hooks/useSlackChannels.ts` |
 | Shared | `lib/channelTask.ts` (`channelTaskWorkflowId`, `CHANNEL_TASK_STEER_SIGNAL`), `lib/syncBuiltins.ts` (`channelAssistant`, `syncChannelTaskTemplate`) |

@@ -832,7 +832,7 @@ silently drops every trace record when the activity fails — exactly when you n
 
 ### Docker-in-Docker Workspace
 
-- The worker process needs the Docker socket mounted (`/var/run/docker.sock`)
+- The worker reaches the Docker daemon through `docker-socket-proxy` (`DOCKER_HOST=tcp://docker-socket-proxy:2375`), not a mounted socket; the proxy alone mounts `/var/run/docker.sock`. The proxy is haproxy with a path allowlist in `infra/docker-socket-proxy/haproxy.cfg`, shared by both compose files and the CI proxy step; a new Docker CLI/API operation in worker code needs its API path allowed there, or it fails with a 403 only when it runs through the proxy
 - Containers are created with `docker run`, commands executed with `docker exec`
 - **Always** clean up containers in a `finally` block — leaked containers accumulate
 - Shell escaping: `shellQuote()` in `activities/workspace.ts` wraps every `docker exec … sh -c` and every clone/checkout argument. It is the injection boundary for agent-generated commands — treat any change to it, or any caller that bypasses it, as security-critical.

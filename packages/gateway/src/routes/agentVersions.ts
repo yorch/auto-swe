@@ -11,6 +11,7 @@ import {
   validateMcpConnectionRef,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -60,7 +61,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const agent = await fastify.prisma.agent.findUnique({ where: { id: request.params.id } });
       if (!agent) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
       }
       const versions = await runUnscoped(
         'admin reads the version history of one agent lineage at any scope',
@@ -99,7 +100,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const anchor = await fastify.prisma.agent.findUnique({ where: { id: request.params.id } });
       if (!anchor) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
       }
       const where = lineageWhere(anchor);
       const source = await fastify.prisma.agent.findFirst({
@@ -107,26 +108,24 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
         where: { ...where, id: request.body.versionId },
       });
       if (!source) {
-        return reply.status(404).send({
-          error: { code: 'NOT_FOUND', message: 'That version does not belong to this agent' },
-        });
+        return sendError(reply, 404, 'NOT_FOUND', 'That version does not belong to this agent');
       }
       const latest = await fastify.prisma.agent.findFirst({
         orderBy: { version: 'desc' },
         where,
       });
       if (!latest) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
       }
       // Restoring into a deactivated lineage would silently switch the agent back on, which is
       // a decision of its own; reactivate it deliberately first.
       if (!latest.isActive) {
-        return reply.status(409).send({
-          error: {
-            code: 'AGENT_INACTIVE',
-            message: 'This agent is deactivated. Reactivate it before restoring a version.',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'AGENT_INACTIVE',
+          'This agent is deactivated. Reactivate it before restoring a version.'
+        );
       }
       // The same reference check an edit gets: the connection may have been deactivated or
       // belong to another team since that version was current.
@@ -135,9 +134,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
         teamId: anchor.teamId,
       });
       if (mcpError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
+        return sendError(reply, 400, 'INVALID_MCP_CONNECTION', mcpError);
       }
       // The pinned credential may have been deleted, or the version may predate the check.
       const credentialError = await validateCredentialRef(
@@ -147,9 +144,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
         { orgId: anchor.orgId, scope: anchor.scope as AgentScope, teamId: anchor.teamId }
       );
       if (credentialError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+        return sendError(reply, 400, 'INVALID_CREDENTIAL', credentialError);
       }
       // A skill deactivated since then is not injected into the agent; say so rather than refuse.
       const inactiveSkills =
@@ -193,7 +188,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         // Another edit or restore cut the next version first.
         if (err instanceof AgentVersionConflictError) {
-          return reply.status(409).send({ error: { code: 'AGENT_CHANGED', message: err.message } });
+          return sendError(reply, 409, 'AGENT_CHANGED', err.message);
         }
         throw err;
       }

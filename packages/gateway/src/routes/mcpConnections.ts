@@ -15,6 +15,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { redactConnection } from '../lib/connectionRedaction.js';
+import { sendError } from '../lib/httpErrors.js';
 import { probeMcpServer } from '../lib/mcpProbe.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -244,9 +245,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, isActive: true, type: 'mcp' },
       });
       if (!conn) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'MCP connection not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'MCP connection not found');
       }
       const config = (conn.config ?? {}) as {
         url?: unknown;
@@ -322,21 +321,15 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       const allowPrivateNetwork = request.body.allowPrivateNetwork === true;
       const safety = checkProbeUrl(url, { allowPrivate: allowPrivateNetwork });
       if (!safety.ok) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'UNSAFE_URL', message: `url rejected: ${safety.reason}` } });
+        return sendError(reply, 400, 'UNSAFE_URL', `url rejected: ${safety.reason}`);
       }
       const headerProblem = headers ? validateMcpHeaders(headers) : null;
       if (headerProblem) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_HEADERS', message: headerProblem } });
+        return sendError(reply, 400, 'INVALID_HEADERS', headerProblem);
       }
       const team = await fastify.prisma.team.findUnique({ where: { id: teamId } });
       if (!team?.isActive) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found or inactive' } });
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found or inactive');
       }
       const config = {
         url,
@@ -386,15 +379,11 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, type: 'mcp' },
       });
       if (!conn) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'MCP connection not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'MCP connection not found');
       }
       const safety = checkProbeUrl(url, { allowPrivate: allowPrivateNetwork });
       if (!safety.ok) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'UNSAFE_URL', message: `url rejected: ${safety.reason}` } });
+        return sendError(reply, 400, 'UNSAFE_URL', `url rejected: ${safety.reason}`);
       }
       const before = conn.config as Record<string, unknown> | null;
       const hadToken = conn.apiKeyCiphertext != null;
@@ -403,13 +392,12 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       if (hadToken && bearerToken === undefined && !clearBearerToken) {
         const previous = typeof before?.url === 'string' ? safeOrigin(before.url) : null;
         if (previous !== safeOrigin(url)) {
-          return reply.status(409).send({
-            error: {
-              code: 'TOKEN_ORIGIN_CHANGE',
-              message:
-                'This connection has a stored bearer token. Changing the server address would send it to a different host. Enter a new token or clear the stored one first.',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'TOKEN_ORIGIN_CHANGE',
+            'This connection has a stored bearer token. Changing the server address would send it to a different host. Enter a new token or clear the stored one first.'
+          );
         }
       }
       // The same rule for custom headers: a stored value belongs to the origin it was saved for.
@@ -419,12 +407,12 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       } catch {
         // Unreadable stored headers can only be replaced, never kept.
         if (request.body.headers === undefined) {
-          return reply.status(409).send({
-            error: {
-              code: 'HEADERS_UNREADABLE',
-              message: 'The stored headers could not be read. Re-enter them or remove them.',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'HEADERS_UNREADABLE',
+            'The stored headers could not be read. Re-enter them or remove them.'
+          );
         }
       }
       let nextHeaders: McpHeader[] | undefined;
@@ -434,18 +422,18 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         for (const h of request.body.headers) {
           const value = h.value ?? byName.get(h.name.toLowerCase());
           if (value === undefined) {
-            return reply.status(400).send({
-              error: {
-                code: 'INVALID_HEADERS',
-                message: `Enter a value for the ${h.name} header; none is stored.`,
-              },
-            });
+            return sendError(
+              reply,
+              400,
+              'INVALID_HEADERS',
+              `Enter a value for the ${h.name} header; none is stored.`
+            );
           }
           nextHeaders.push({ name: h.name, value });
         }
         const problem = validateMcpHeaders(nextHeaders);
         if (problem) {
-          return reply.status(400).send({ error: { code: 'INVALID_HEADERS', message: problem } });
+          return sendError(reply, 400, 'INVALID_HEADERS', problem);
         }
       }
       const keptStoredValues =
@@ -455,13 +443,12 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       if (keptStoredValues) {
         const previous = typeof before?.url === 'string' ? safeOrigin(before.url) : null;
         if (previous !== safeOrigin(url)) {
-          return reply.status(409).send({
-            error: {
-              code: 'HEADERS_ORIGIN_CHANGE',
-              message:
-                'This connection has stored headers. Changing the server address would send them to a different host. Enter their values again or remove them first.',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'HEADERS_ORIGIN_CHANGE',
+            'This connection has stored headers. Changing the server address would send them to a different host. Enter their values again or remove them first.'
+          );
         }
       }
       const finalHeaderNames = (nextHeaders ?? storedHeaders).map((h) => h.name);
@@ -523,9 +510,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, type: 'mcp' },
       });
       if (!conn) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'MCP connection not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'MCP connection not found');
       }
       // Soft-delete: Agents may still reference it via mcpConnectionId; an
       // inactive connection resolves to no MCP tools (mcpUrlForConnection).

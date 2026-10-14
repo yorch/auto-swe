@@ -1,3 +1,7 @@
+# Docker CLI source, as a named stage so Dependabot's docker ecosystem tracks the
+# tag (it reads FROM lines, not COPY --from=<image>). Nothing runs in it.
+FROM docker:28-cli AS dockercli
+
 # ── Stage 1: Build ──
 FROM node:26-alpine AS builder
 WORKDIR /app
@@ -85,11 +89,11 @@ RUN yarn workspaces focus @auto-swe/worker --production \
 # future OS-level surprise in this stage will not look Node-related.
 FROM node:26-slim
 
-# Worker needs Docker CLI to manage workspace containers (DinD). Compose adds
-# the host Docker socket group at runtime with DOCKER_GID. Taken from the
-# official CLI image rather than apt, which keeps it pinned and avoids pulling
+# Worker needs Docker CLI to manage workspace containers (DinD). It talks to the
+# daemon over DOCKER_HOST (a socket proxy in compose), so the image holds no
+# socket and no docker group. Taken from the official CLI image rather than apt, which keeps it pinned and avoids pulling
 # the whole docker.io package (daemon included) into the runtime.
-COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
 
 ARG APP_VERSION=unknown
@@ -137,6 +141,12 @@ COPY --from=prod-deps --chown=node:node /app/packages/worker/node_modules ./pack
 COPY --chown=node:node package.json ./
 
 ENV NODE_ENV=production
+
+# The worker serves no HTTP. It touches /tmp/worker-alive every 10 s while its
+# Temporal worker is RUNNING (src/lib/livenessFile.ts); unhealthy once the file
+# is two minutes stale. `find` exits 0 with no match, hence the emptiness test.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD test -n "$(find /tmp/worker-alive -mmin -2 2>/dev/null)" || exit 1
 
 # Ownership is set on each COPY above. The recursive form rewrites every
 # file's metadata into a new layer, storing the whole tree — node_modules

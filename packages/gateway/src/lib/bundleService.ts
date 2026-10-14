@@ -3,6 +3,7 @@ import {
   type BundleAgent,
   type BundleDependency,
   type BundleEntities,
+  type BundleInstallResult,
   type BundleManifest,
   type BundleScannerPattern,
   BundleSchemaVersionError,
@@ -10,6 +11,7 @@ import {
   type BundleTemplate,
   buildBundleManifest,
   bundleAgentRuntimeWarnings,
+  type InstalledBundleRow,
   parseBundle,
   type TrustedKey,
   unsupportedBundleDependencies,
@@ -256,8 +258,7 @@ export class SkillChangedError extends Error {
   }
 }
 
-export interface InstallResult {
-  counts: { agents: number; skills: number; scannerPatterns: number; templates: number };
+export interface InstallResult extends BundleInstallResult {
   /**
    * Deployment-owned rows this install replaced. Empty unless the install
    * passed `overwriteProtected`; recorded in the audit row so a forced install
@@ -266,10 +267,6 @@ export interface InstallResult {
   replacedProtected: ProtectedConflicts;
   /** The `InstalledBundle` registry row this install wrote — the audit entity. */
   installedBundleId: string;
-  /** VERIFIED when the bundle's signature matched a trusted key, else UNVERIFIED. */
-  trustState: 'VERIFIED' | 'UNVERIFIED';
-  signedBy: string | null;
-  warnings: string[];
 }
 
 export interface InstallOptions {
@@ -287,18 +284,10 @@ export interface InstallOptions {
   overwriteProtected?: boolean;
 }
 
-export interface InstalledBundleRow {
-  name: string;
-  version: string;
-  source: string | null;
-  trustState: string;
-  signedBy: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 /** Installed-bundle registry (P4/WS3), most-recent first. */
-export async function listInstalledBundles(prisma: PrismaClient): Promise<InstalledBundleRow[]> {
+export async function listInstalledBundles(
+  prisma: PrismaClient
+): Promise<Array<InstalledBundleRow<Date>>> {
   return prisma.installedBundle.findMany({
     orderBy: { updatedAt: 'desc' },
     select: {

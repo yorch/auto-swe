@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { currentYearMonth } from '../lib/orgAccess.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -121,9 +122,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: orgId },
       });
       if (!org) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Organization not found');
       }
       return { data: org };
     }
@@ -140,9 +139,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       const { orgId } = request.params;
       const body = request.body;
       if (Object.keys(body).length === 0) {
-        return reply.status(400).send({
-          error: { code: 'INVALID_BODY', message: 'No fields to update' },
-        });
+        return sendError(reply, 400, 'INVALID_BODY', 'No fields to update');
       }
 
       const existing = await fastify.prisma.organization.findUnique({
@@ -150,9 +147,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: orgId },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Organization not found');
       }
 
       try {
@@ -172,12 +167,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: updated };
       } catch (e) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-          return reply.status(409).send({
-            error: {
-              code: 'ORG_EXISTS',
-              message: 'Organization name or slug already in use',
-            },
-          });
+          return sendError(reply, 409, 'ORG_EXISTS', 'Organization name or slug already in use');
         }
         throw e;
       }

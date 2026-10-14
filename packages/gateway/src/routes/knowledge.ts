@@ -20,6 +20,7 @@ import {
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -40,12 +41,10 @@ const PermissionQuery = z.object({
 
 function errorResponse(error: unknown, reply: FastifyReply): FastifyReply {
   if (error instanceof KnowledgeVersionConflictError) {
-    return reply.code(409).send({ error: { code: 'VERSION_CONFLICT', message: error.message } });
+    return sendError(reply, 409, 'VERSION_CONFLICT', error.message);
   }
   if (error instanceof KnowledgeAccessError) {
-    return reply
-      .code(403)
-      .send({ error: { code: 'FORBIDDEN', message: 'Knowledge access denied' } });
+    return sendError(reply, 403, 'FORBIDDEN', 'Knowledge access denied');
   }
   throw error;
 }
@@ -199,9 +198,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
           capability
         );
         if (!readable) {
-          return reply
-            .code(404)
-            .send({ error: { code: 'NOT_FOUND', message: 'Knowledge item not found' } });
+          return sendError(reply, 404, 'NOT_FOUND', 'Knowledge item not found');
         }
         return { data: { ...readable, provenance: null } };
       } catch (error) {

@@ -16,6 +16,7 @@ import {
   SkillChangedError,
 } from '../lib/bundleService.js';
 import { resolveBundleAllowUnverified, resolveBundleTrustedKeys } from '../lib/bundleTrust.js';
+import { sendError } from '../lib/httpErrors.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -149,21 +150,19 @@ async function runInstall(
       });
     }
     if (err instanceof BundleIntegrityError || err instanceof BundleDependencyError) {
-      return reply.status(400).send({ error: { code: 'INVALID_BUNDLE', message: err.message } });
+      return sendError(reply, 400, 'INVALID_BUNDLE', err.message);
     }
     if (err instanceof SkillChangedError) {
       // A skill was edited while the install ran; the transaction rolled back whole.
-      return reply.status(409).send({
-        error: {
-          code: 'SKILL_CHANGED',
-          message: 'A skill changed while the bundle installed; nothing was installed. Retry.',
-        },
-      });
+      return sendError(
+        reply,
+        409,
+        'SKILL_CHANGED',
+        'A skill changed while the bundle installed; nothing was installed. Retry.'
+      );
     }
     if (err instanceof z.ZodError) {
-      return reply
-        .status(400)
-        .send({ error: { code: 'INVALID_BUNDLE', message: 'bundle failed schema validation' } });
+      return sendError(reply, 400, 'INVALID_BUNDLE', 'bundle failed schema validation');
     }
     throw err;
   }
@@ -202,12 +201,12 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
         try {
           raw = await fetchBundleJson(request.body.url);
         } catch (err) {
-          return reply.status(400).send({
-            error: {
-              code: 'BUNDLE_FETCH_FAILED',
-              message: `failed to fetch bundle from ${request.body.url}: ${err instanceof Error ? err.message : String(err)}`,
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'BUNDLE_FETCH_FAILED',
+            `failed to fetch bundle from ${request.body.url}: ${err instanceof Error ? err.message : String(err)}`
+          );
         }
       }
       try {
@@ -218,14 +217,10 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.send({ data });
       } catch (err) {
         if (err instanceof BundleIntegrityError || err instanceof BundleDependencyError) {
-          return reply
-            .status(400)
-            .send({ error: { code: 'INVALID_BUNDLE', message: err.message } });
+          return sendError(reply, 400, 'INVALID_BUNDLE', err.message);
         }
         if (err instanceof z.ZodError) {
-          return reply.status(400).send({
-            error: { code: 'INVALID_BUNDLE', message: 'bundle failed schema validation' },
-          });
+          return sendError(reply, 400, 'INVALID_BUNDLE', 'bundle failed schema validation');
         }
         throw err;
       }
@@ -238,12 +233,12 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { bundle, expectedContentHash } = request.body;
       if (expectedContentHash !== undefined && servedContentHash(bundle) !== expectedContentHash) {
-        return reply.status(409).send({
-          error: {
-            code: 'BUNDLE_CHANGED',
-            message: 'This bundle differs from the one you previewed. Preview it again.',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'BUNDLE_CHANGED',
+          'This bundle differs from the one you previewed. Preview it again.'
+        );
       }
       return runInstall(
         fastify,
@@ -265,21 +260,21 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         raw = await fetchBundleJson(url);
       } catch (err) {
-        return reply.status(400).send({
-          error: {
-            code: 'BUNDLE_FETCH_FAILED',
-            message: `failed to fetch bundle from ${url}: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'BUNDLE_FETCH_FAILED',
+          `failed to fetch bundle from ${url}: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
       const expected = request.body.expectedContentHash;
       if (expected !== undefined && servedContentHash(raw) !== expected) {
-        return reply.status(409).send({
-          error: {
-            code: 'BUNDLE_CHANGED',
-            message: 'The bundle at this URL changed since you previewed it. Preview it again.',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'BUNDLE_CHANGED',
+          'The bundle at this URL changed since you previewed it. Preview it again.'
+        );
       }
       return runInstall(
         fastify,

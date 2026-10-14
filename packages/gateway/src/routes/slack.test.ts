@@ -2283,6 +2283,18 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
     globalThis.fetch = originalFetch;
   });
 
+  /** The install callback as the starting browser sends it (nonce in state and cookie). */
+  function finishInstall(
+    link = 'state:u1:n1',
+    cookies: Record<string, string> = { auto_swe_slack_install: 'n1' }
+  ) {
+    return app.inject({
+      cookies,
+      method: 'GET',
+      url: `/api/v1/auth/slack/install/callback?code=c1&state=${encodeURIComponent(link)}`,
+    });
+  }
+
   it('stores the encrypted bot token on a new workspace and redirects', async () => {
     stubOauthExchange({
       access_token: 'xoxb-installed-9999',
@@ -2292,10 +2304,7 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
       team: { id: 'T-NEW', name: 'Acme HQ' },
     });
 
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/v1/auth/slack/install/callback?code=c1&state=s1',
-    });
+    const res = await finishInstall();
 
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toContain('/studio/integrations?tab=slack&slack_installed=T-NEW');
@@ -2317,10 +2326,7 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
     state.existingWorkspace = { id: 'ws-1', orgId: 'org-1', slackTeamId: 'T-EXIST' };
     stubOauthExchange({ access_token: 'xoxb-abcd', ok: true, team: { id: 'T-EXIST' } });
 
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/v1/auth/slack/install/callback?code=c1&state=s1',
-    });
+    const res = await finishInstall();
 
     expect(res.statusCode).toBe(302);
     expect(state.workspaceCreateCalls).toHaveLength(0);
@@ -2332,10 +2338,7 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
     stubOauthExchange({ access_token: 'xoxb-abcd', ok: true, team: { id: 'T-NEW' } });
     state.installer = { id: 'u1', isActive: true, role: 'LEAD' };
 
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/v1/auth/slack/install/callback?code=c1&state=s1',
-    });
+    const res = await finishInstall();
 
     expect(res.statusCode).toBe(403);
     expect(state.workspaceCreateCalls).toHaveLength(0);
@@ -2345,14 +2348,81 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
   it('rejects a grant with no bot token (e.g. a user-scope grant)', async () => {
     stubOauthExchange({ authed_user: { access_token: 'xoxp-user' }, ok: true });
 
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/v1/auth/slack/install/callback?code=c1&state=s1',
-    });
+    const res = await finishInstall();
 
     expect(res.statusCode).toBe(400);
     expect(state.workspaceCreateCalls).toHaveLength(0);
     expect(state.workspaceUpdateCalls).toHaveLength(0);
+  });
+
+  it('binds the install to the starting browser with its own cookie', async () => {
+    const start = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'GET',
+      url: '/api/v1/auth/slack/install',
+    });
+    expect(start.statusCode).toBe(302);
+    const cookie = start.cookies.find((c) => c.name === 'auto_swe_slack_install');
+    expect(cookie).toMatchObject({
+      httpOnly: true,
+      maxAge: 600,
+      path: '/api/v1/auth/slack/install/callback',
+      sameSite: 'Lax',
+    });
+    expect(cookie?.secure).toBeFalsy();
+    const link = new URL(start.headers.location as string).searchParams.get('state') ?? '';
+    expect(link).toBe(`state:u1:${cookie?.value}`);
+  });
+
+  it('clears the binding cookie on a successful install', async () => {
+    stubOauthExchange({ access_token: 'xoxb-abcd', ok: true, team: { id: 'T-NEW' } });
+
+    const res = await finishInstall();
+
+    expect(res.statusCode).toBe(302);
+    expect(res.cookies.find((c) => c.name === 'auto_swe_slack_install')?.value).toBe('');
+  });
+
+  it('refuses a callback carrying no binding cookie', async () => {
+    stubOauthExchange({ access_token: 'xoxb-abcd', ok: true, team: { id: 'T-NEW' } });
+
+    const res = await finishInstall('state:u1:n1', {});
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error.code).toBe('STATE_MISMATCH');
+    expect(res.cookies.find((c) => c.name === 'auto_swe_slack_install')?.value).toBe('');
+    expect(state.workspaceCreateCalls).toHaveLength(0);
+    expect(state.workspaceUpdateCalls).toHaveLength(0);
+  });
+
+  it("refuses a callback whose cookie is another flow's nonce", async () => {
+    stubOauthExchange({ access_token: 'xoxb-abcd', ok: true, team: { id: 'T-NEW' } });
+
+    const res = await finishInstall('state:u1:n1', { auto_swe_slack_install: 'n2' });
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error.code).toBe('STATE_MISMATCH');
+    expect(state.workspaceCreateCalls).toHaveLength(0);
+  });
+
+  it('refuses a state with no nonce, whatever cookie is sent', async () => {
+    stubOauthExchange({ access_token: 'xoxb-abcd', ok: true, team: { id: 'T-NEW' } });
+
+    const res = await finishInstall('state:u1:', { auto_swe_slack_install: 'anything' });
+
+    expect(res.statusCode).toBe(403);
+    expect(state.workspaceCreateCalls).toHaveLength(0);
+  });
+
+  it('clears the cookie when code or state is missing', async () => {
+    const res = await app.inject({
+      cookies: { auto_swe_slack_install: 'n1' },
+      method: 'GET',
+      url: '/api/v1/auth/slack/install/callback',
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.cookies.find((c) => c.name === 'auto_swe_slack_install')?.value).toBe('');
   });
 });
 

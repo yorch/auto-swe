@@ -257,6 +257,20 @@ describe('GET /config/settings — scoped reads', () => {
     await app.close();
   });
 
+  it('refuses a scoped view that names no id, even for an admin', async () => {
+    // Without the id there is nothing to resolve against: answering would show
+    // GLOBAL values labelled as a team view.
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'GET',
+      url: '/api/v1/platform/config/settings?scope=TEAM',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('SCOPE_NOT_ALLOWED');
+    await app.close();
+  });
+
   it('refuses a scope whose id belongs to nothing rather than silently reading GLOBAL', async () => {
     slackChannel.findUnique.mockResolvedValue(null as never);
     const app = await buildApp();

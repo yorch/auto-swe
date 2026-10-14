@@ -72,8 +72,16 @@ const NO_CACHE = { cacheCreationInputTokens: 0, cachedInputTokens: 0 };
 let api: MockMessagesApi;
 let containers: string[] = [];
 
-/** The bridge gateway: where a container reaches a server listening on the host. */
+/**
+ * The bridge gateway: where a container reaches a server listening on the host.
+ * CLAUDE_CODE_TEST_HOST_ADDRESS supplies it when the daemon is reached through
+ * the socket proxy, which (like the worker's) refuses the networks API.
+ */
 async function hostAddress(): Promise<string> {
+  const preset = process.env.CLAUDE_CODE_TEST_HOST_ADDRESS;
+  if (preset) {
+    return preset;
+  }
   const { stdout } = await run('docker', [
     'network',
     'inspect',

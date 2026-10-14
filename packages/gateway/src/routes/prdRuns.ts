@@ -4,6 +4,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -88,12 +89,12 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
       const foundIds = new Set(repos.map((r) => r.id));
       const missingIds = repoIds.filter((id) => !foundIds.has(id));
       if (missingIds.length > 0) {
-        return reply.status(404).send({
-          error: {
-            code: 'REPOS_NOT_FOUND',
-            message: `Repositories not found or inactive: ${missingIds.join(', ')}`,
-          },
-        });
+        return sendError(
+          reply,
+          404,
+          'REPOS_NOT_FOUND',
+          `Repositories not found or inactive: ${missingIds.join(', ')}`
+        );
       }
 
       // A PRD run decomposes into work requests that push and open pull
@@ -119,13 +120,12 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
         where: { name: 'prd-decomposition', status: 'ACTIVE' },
       });
       if (!template?.activeVersion) {
-        return reply.status(503).send({
-          error: {
-            code: 'TEMPLATE_NOT_FOUND',
-            message:
-              'prd-decomposition workflow template not found. Run `yarn db:seed` to seed built-in templates.',
-          },
-        });
+        return sendError(
+          reply,
+          503,
+          'TEMPLATE_NOT_FOUND',
+          'prd-decomposition workflow template not found. Run `yarn db:seed` to seed built-in templates.'
+        );
       }
 
       const workRequestId = crypto.randomUUID();
@@ -211,12 +211,12 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
         { log: fastify.log, sourceAuthorization: { actor: user } }
       );
       if (!launch.ok) {
-        return reply.status(409).send({
-          error: {
-            code: 'PRD_RUN_ALREADY_EXISTS',
-            message: `A PRD run workflow is already running for this ID: ${prdWorkflowId}`,
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'PRD_RUN_ALREADY_EXISTS',
+          `A PRD run workflow is already running for this ID: ${prdWorkflowId}`
+        );
       }
 
       return reply.status(201).send({

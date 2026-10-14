@@ -5,7 +5,8 @@ updates:
     schedule:
       interval: weekly
 
-  # Base images in the three app Dockerfiles (node:26-alpine) and the pinned
+  # Base images in the three app Dockerfiles (node:26-alpine, plus the worker's
+  # docker CLI stage), the agent executor image (defaults/Dockerfile.node) and the pinned
   # infra images in the compose files (pgvector, postgres, temporal, garage,
   # otel-lgtm, watchtower). Compose tags are `${VAR:-default}` expressions;
   # Dependabot updates the default.
@@ -14,6 +15,7 @@ updates:
       - /packages/gateway
       - /packages/web
       - /packages/worker
+      - /defaults
     schedule:
       interval: weekly
   - package-ecosystem: docker-compose

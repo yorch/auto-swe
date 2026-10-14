@@ -135,6 +135,73 @@ jobs:
           AGENT_RUN_DOCKER_TEST: '1'
         run: yarn test packages/worker/src/activities/agentRunFinalize.docker.test.ts
 
+      # The same suites through the socket proxy the worker uses in compose, with
+      # the same config: the suites cover `run -d`, `exec -i`, `cp`, `pause` and
+      # `rm`, and the start step covers volumes, a foreground `run --rm` and `port`.
+      - name: Start the Docker socket proxy
+        run: |
+          # The image compose runs by default, read from the compose file so a
+          # bump there is what CI tests.
+          image=$(sed -n 's/.*DOCKER_SOCKET_PROXY_IMAGE:-\([^}]*\)}.*/\1/p' docker-compose.prod.yml)
+          if [ -z "$image" ]; then echo "::error::no proxy image default in docker-compose.prod.yml"; exit 1; fi
+          docker run -d --name docker-socket-proxy --read-only --user root \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            -v "$PWD/infra/docker-socket-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -p 127.0.0.1:2375:2375 "$image"
+          ready=''
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:2375/_ping; then ready=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then docker logs docker-socket-proxy; exit 1; fi
+          # A path outside the allowlist must be refused, or the filter is not running.
+          status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:2375/info)
+          if [ "$status" != "403" ]; then
+            echo "::error::the socket proxy answered /info with $status, not 403"
+            exit 1
+          fi
+          # A dot segment behind an allowed prefix must be refused too.
+          status=$(curl -s -o /dev/null -w '%{http_code}' --path-as-is \
+            http://127.0.0.1:2375/containers/x/../../info)
+          if [ "$status" != "403" ]; then
+            echo "::error::the socket proxy answered a dot-segment path with $status, not 403"
+            exit 1
+          fi
+          for path in volumes/prune images/x/push; do
+            status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:2375/$path")
+            if [ "$status" != "403" ]; then
+              echo "::error::the socket proxy answered POST /$path with $status, not 403"
+              exit 1
+            fi
+          done
+          # The worker's calls the suites below do not make: an image pull (the
+          # direct runs above cached it, so drop it first), a volume, a
+          # foreground `run --rm` (attach + wait), and `docker port`.
+          docker image rm -f alpine:3.22
+          (
+            export DOCKER_HOST=tcp://127.0.0.1:2375
+            docker pull alpine:3.22
+            docker volume create proxy-smoke
+            docker run --rm -v proxy-smoke:/x alpine:3.22 sh -c 'echo ok > /x/f && cat /x/f'
+            docker volume rm proxy-smoke
+            docker run -d --name proxy-smoke-port -p 127.0.0.1::80 alpine:3.22 sleep 30
+            docker port proxy-smoke-port 80/tcp
+            docker rm -f proxy-smoke-port
+          )
+          # The test's host address: the proxy refuses the networks API, as the worker's does.
+          echo "CLAUDE_CODE_TEST_HOST_ADDRESS=$(docker network inspect bridge \
+            --format '{{(index .IPAM.Config 0).Gateway}}')" >> "$GITHUB_ENV"
+
+      - name: Docker-backed tests through the socket proxy
+        env:
+          AGENT_RUN_DOCKER_TEST: '1'
+          CLAUDE_CODE_DOCKER_TEST: '1'
+          DOCKER_HOST: tcp://127.0.0.1:2375
+        run: >-
+          yarn test packages/worker/src/agents/claudeCode/runtime.docker.test.ts
+          packages/worker/src/activities/agentRunFinalize.docker.test.ts
+
   # Real-database job: applies every migration to a fresh Postgres+pgvector
   # and runs the seed. The unit-test job deliberately uses an unreachable
   # DATABASE_URL (all Prisma access is mocked), so without this nothing in CI

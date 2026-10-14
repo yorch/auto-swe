@@ -19,6 +19,7 @@ import {
   testStoredCredential,
   updateCredential,
 } from '../lib/credentialService.js';
+import { sendError } from '../lib/httpErrors.js';
 import { catalogWarnings } from '../lib/modelCatalogService.js';
 import { upsertEmbeddingConfig } from '../lib/modelConfigService.js';
 import { ModelSpecSchema } from '../lib/modelSpecSchema.js';
@@ -91,36 +92,30 @@ async function createCredentialAndAudit(
 ): Promise<unknown> {
   const problem = credentialInputProblem(input);
   if (problem) {
-    return reply.status(400).send({ error: { code: 'INVALID_CREDENTIAL', message: problem } });
+    return sendError(reply, 400, 'INVALID_CREDENTIAL', problem);
   }
   if (input.apiBase) {
     const safety = checkProbeUrl(input.apiBase, {
       allowPrivate: isPrivateHostListed(input.apiBase, await resolvePrivateModelHosts()),
     });
     if (!safety.ok) {
-      return reply.status(400).send({
-        error: { code: 'UNSAFE_API_BASE', message: `apiBase rejected: ${safety.reason}` },
-      });
+      return sendError(reply, 400, 'UNSAFE_API_BASE', `apiBase rejected: ${safety.reason}`);
     }
   }
   if (!BUILTIN_PROVIDERS.includes(input.provider) && !input.apiBase) {
-    return reply.status(400).send({
-      error: {
-        code: 'API_BASE_REQUIRED',
-        message: `Provider '${input.provider}' is not built in, so it needs an API base URL`,
-      },
-    });
+    return sendError(
+      reply,
+      400,
+      'API_BASE_REQUIRED',
+      `Provider '${input.provider}' is not built in, so it needs an API base URL`
+    );
   }
   const result = await createCredential(fastify.prisma, input);
   if (result.outcome === 'conflict') {
-    return reply.status(409).send({
-      error: { code: 'CREDENTIAL_EXISTS', message: messages.conflict(result.existingId) },
-    });
+    return sendError(reply, 409, 'CREDENTIAL_EXISTS', messages.conflict(result.existingId));
   }
   if (result.outcome === 'conflict_race') {
-    return reply.status(409).send({
-      error: { code: 'CREDENTIAL_EXISTS', message: messages.conflictRace },
-    });
+    return sendError(reply, 409, 'CREDENTIAL_EXISTS', messages.conflictRace);
   }
   await writeAuditLog(fastify, {
     action: 'CREATE',
@@ -141,25 +136,23 @@ async function updateCredentialAndAudit(
 ): Promise<unknown> {
   const problem = credentialInputProblem(body);
   if (problem) {
-    return reply.status(400).send({ error: { code: 'INVALID_CREDENTIAL', message: problem } });
+    return sendError(reply, 400, 'INVALID_CREDENTIAL', problem);
   }
   if (body.apiBase) {
     const safety = checkProbeUrl(body.apiBase, {
       allowPrivate: isPrivateHostListed(body.apiBase, await resolvePrivateModelHosts()),
     });
     if (!safety.ok) {
-      return reply.status(400).send({
-        error: { code: 'UNSAFE_API_BASE', message: `apiBase rejected: ${safety.reason}` },
-      });
+      return sendError(reply, 400, 'UNSAFE_API_BASE', `apiBase rejected: ${safety.reason}`);
     }
   }
   if (!BUILTIN_PROVIDERS.includes(existing.provider) && body.apiBase === null) {
-    return reply.status(400).send({
-      error: {
-        code: 'API_BASE_REQUIRED',
-        message: `Provider '${existing.provider}' is not built in, so its API base URL cannot be cleared`,
-      },
-    });
+    return sendError(
+      reply,
+      400,
+      'API_BASE_REQUIRED',
+      `Provider '${existing.provider}' is not built in, so its API base URL cannot be cleared`
+    );
   }
   const updated = await updateCredential(fastify.prisma, existing.id, body);
   await writeAuditLog(fastify, {
@@ -309,9 +302,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply.status(404).send({
-          error: { code: 'NOT_FOUND', message: 'Credential not found' },
-        });
+        return sendError(reply, 404, 'NOT_FOUND', 'Credential not found');
       }
       return updateCredentialAndAudit(fastify, actor, reply, existing, request.body);
     }
@@ -326,9 +317,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply.status(404).send({
-          error: { code: 'NOT_FOUND', message: 'Credential not found' },
-        });
+        return sendError(reply, 404, 'NOT_FOUND', 'Credential not found');
       }
       return deleteCredentialAndAudit(fastify, actor, reply, existing, {
         force: request.query.force,
@@ -347,9 +336,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!cred) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Credential not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Credential not found');
       }
       return { data: await testStoredCredential(cred) };
     }
@@ -384,9 +371,7 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
       const { modelSpec, credentialId } = request.body;
       const embedProblem = embeddingProviderProblem(parseProviderModelSpec(modelSpec).provider);
       if (embedProblem) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'EMBEDDING_PROVIDER_UNSUPPORTED', message: embedProblem } });
+        return sendError(reply, 400, 'EMBEDDING_PROVIDER_UNSUPPORTED', embedProblem);
       }
 
       if (credentialId) {
@@ -394,21 +379,21 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
           where: { id: credentialId },
         });
         if (!cred) {
-          return reply.status(400).send({
-            error: {
-              code: 'CREDENTIAL_NOT_FOUND',
-              message: `Credential ${credentialId} does not exist`,
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'CREDENTIAL_NOT_FOUND',
+            `Credential ${credentialId} does not exist`
+          );
         }
         const specProvider = modelSpec.split('/')[0]?.toLowerCase();
         if (specProvider && cred.provider !== specProvider) {
-          return reply.status(400).send({
-            error: {
-              code: 'CREDENTIAL_PROVIDER_MISMATCH',
-              message: `Credential is for provider '${cred.provider}' but spec is '${modelSpec}' (provider '${specProvider}'). Pick a matching credential.`,
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'CREDENTIAL_PROVIDER_MISMATCH',
+            `Credential is for provider '${cred.provider}' but spec is '${modelSpec}' (provider '${specProvider}'). Pick a matching credential.`
+          );
         }
       }
 
@@ -470,19 +455,17 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id: 'default' },
     });
     if (!config) {
-      return reply.status(409).send({
-        error: {
-          code: 'NO_EMBEDDING_CONFIG',
-          message: 'Configure an embedding model before re-embedding memory.',
-        },
-      });
+      return sendError(
+        reply,
+        409,
+        'NO_EMBEDDING_CONFIG',
+        'Configure an embedding model before re-embedding memory.'
+      );
     }
     const [, stale] = await countStaleMemory(config.modelSpec);
     const started = await fastify.temporal.startReembedStaleMemory();
     if (!started) {
-      return reply.status(409).send({
-        error: { code: 'REEMBED_IN_PROGRESS', message: 'A memory re-embed is already running.' },
-      });
+      return sendError(reply, 409, 'REEMBED_IN_PROGRESS', 'A memory re-embed is already running.');
     }
     // Every stale row costs one embedding call, so who started it is recorded.
     await writeAuditLog(fastify, {
@@ -575,9 +558,7 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.credId },
       });
       if (!existing || existing.teamId !== request.params.id || existing.scope !== 'TEAM') {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Credential not found for this team' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Credential not found for this team');
       }
       return updateCredentialAndAudit(fastify, actor, reply, existing, request.body);
     }
@@ -592,9 +573,7 @@ export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.credId },
       });
       if (!existing || existing.teamId !== request.params.id || existing.scope !== 'TEAM') {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Credential not found for this team' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Credential not found for this team');
       }
       const teamId = request.params.id;
       return deleteCredentialAndAudit(fastify, actor, reply, existing, {

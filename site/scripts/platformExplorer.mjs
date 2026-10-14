@@ -143,16 +143,22 @@ export function parseRouteFamilies(gateway, routeFiles) {
     if (text === undefined) {
       throw new Error(`Mounted route module not found: ${name}`);
     }
+    // A module split into routes/<name>/*.ts registers its routes from those
+    // files; each part is scanned and its declarations carry their own file.
+    const parts = typeof text === 'string' ? [{ file: undefined, text }] : text;
     return {
-      declarations: [
-        ...text.matchAll(
-          /fastify\.(get|post|put|patch|delete)\s*(?:<[^;]*?>)?\s*\(\s*['"]([^'"]+)['"]/g
-        ),
-      ].map((match) => ({
-        line: text.slice(0, match.index).split('\n').length,
-        method: match[1].toUpperCase(),
-        path: match[2],
-      })),
+      declarations: parts.flatMap((part) =>
+        [
+          ...part.text.matchAll(
+            /fastify\.(get|post|put|patch|delete)\s*(?:<[^;]*?>)?\s*\(\s*['"]([^'"]+)['"]/g
+          ),
+        ].map((match) => ({
+          ...(part.file ? { file: part.file } : {}),
+          line: part.text.slice(0, match.index).split('\n').length,
+          method: match[1].toUpperCase(),
+          path: match[2],
+        }))
+      ),
       name,
       path: `packages/gateway/src/routes/${name}.ts`,
       prefixes,
@@ -338,12 +344,27 @@ export async function buildExplorerData({ analysis, commit, generatedAt } = {}) 
     };
   });
   const routeFiles = {};
-  for (const entry of await readdir(join(REPO_ROOT, 'packages/gateway/src/routes'))) {
-    if (entry.endsWith('.ts') && !entry.includes('.test.')) {
-      routeFiles[entry.slice(0, -3)] = await readFile(
-        join(REPO_ROOT, 'packages/gateway/src/routes', entry),
-        'utf8'
-      );
+  const routesDir = join(REPO_ROOT, 'packages/gateway/src/routes');
+  const routeEntries = await readdir(routesDir, { withFileTypes: true });
+  for (const entry of routeEntries) {
+    if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.includes('.test.')) {
+      const name = entry.name.slice(0, -3);
+      const text = await readFile(join(routesDir, entry.name), 'utf8');
+      const split = routeEntries.find((d) => d.isDirectory() && d.name === name);
+      if (!split) {
+        routeFiles[name] = text;
+        continue;
+      }
+      const parts = [{ file: `packages/gateway/src/routes/${entry.name}`, text }];
+      for (const sub of (await readdir(join(routesDir, name))).sort()) {
+        if (sub.endsWith('.ts') && !sub.includes('.test.')) {
+          parts.push({
+            file: `packages/gateway/src/routes/${name}/${sub}`,
+            text: await readFile(join(routesDir, name, sub), 'utf8'),
+          });
+        }
+      }
+      routeFiles[name] = parts;
     }
   }
   const packages = [];

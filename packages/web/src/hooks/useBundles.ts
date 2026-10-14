@@ -1,18 +1,10 @@
 'use client';
 
+import type { BundleInstallResult, InstalledBundleRow } from '@auto-swe/shared/bundle';
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-/** A row in the installed-bundle registry (P4/WS3). */
-export interface InstalledBundleRow {
-  name: string;
-  version: string;
-  source: string | null;
-  trustState: string;
-  signedBy: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+export type { BundleInstallResult, InstalledBundleRow };
 
 const BASE = '/api/v1/platform/bundles';
 const KEY = ['admin-bundles'];
@@ -81,12 +73,6 @@ export interface BundlePreview {
   source: string | null;
   trustState: 'VERIFIED' | 'UNVERIFIED';
   version: string;
-  warnings: string[];
-}
-
-export interface BundleInstallResult {
-  counts: { agents: number; skills: number; scannerPatterns: number; templates: number };
-  trustState: 'VERIFIED' | 'UNVERIFIED';
   warnings: string[];
 }
 

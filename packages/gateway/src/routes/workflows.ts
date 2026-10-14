@@ -9,6 +9,7 @@ import {
   type RedactedConnection,
   redactConnection,
 } from '../lib/connectionRedaction.js';
+import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -114,12 +115,12 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
         where,
       });
       if (!workflow) {
-        return reply.status(404).send({
-          error: {
-            code: 'WORKFLOW_NOT_FOUND',
-            message: `No workflow with id ${request.params.id}`,
-          },
-        });
+        return sendError(
+          reply,
+          404,
+          'WORKFLOW_NOT_FOUND',
+          `No workflow with id ${request.params.id}`
+        );
       }
       return { data: serializeWorkflow(workflow, await resolveGitHubBaseUrl()) };
     }

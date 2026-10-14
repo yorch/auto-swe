@@ -24,6 +24,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth } from '../plugins/auth.js';
 
@@ -78,12 +79,12 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
         const ghConfig = await resolveGitHubConfig();
         if (key !== hostFamily(ghConfig.baseUrl)) {
           if (!(await approvedRepositoryHosts()).map(hostKeyOf).includes(key)) {
-            return reply.status(400).send({
-              error: {
-                code: 'HOST_NOT_APPROVED',
-                message: `${key} is neither a configured GitHub host nor listed in github.repositoryHosts`,
-              },
-            });
+            return sendError(
+              reply,
+              400,
+              'HOST_NOT_APPROVED',
+              `${key} is neither a configured GitHub host nor listed in github.repositoryHosts`
+            );
           }
           host = key;
         }
@@ -95,12 +96,12 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(201).send({ data: created });
       } catch (err) {
         if (isUniqueConstraintError(err)) {
-          return reply.status(409).send({
-            error: {
-              code: 'INSTALLATION_EXISTS',
-              message: `Installation ${request.body.installationId} is already registered${host ? ` on ${host}` : ''}`,
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'INSTALLATION_EXISTS',
+            `Installation ${request.body.installationId} is already registered${host ? ` on ${host}` : ''}`
+          );
         }
         throw err;
       }
@@ -126,9 +127,7 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: updated };
       } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-          return reply.status(404).send({
-            error: { code: 'INSTALLATION_NOT_FOUND', message: 'Installation not found' },
-          });
+          return sendError(reply, 404, 'INSTALLATION_NOT_FOUND', 'Installation not found');
         }
         throw err;
       }
@@ -155,21 +154,19 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
           })
       );
       if (inUse.length > 0) {
-        return reply.status(409).send({
-          error: {
-            code: 'INSTALLATION_IN_USE',
-            message: `Still used by: ${inUse.map((c) => `${c.organizationName}/${c.repoName}`).join(', ')}`,
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'INSTALLATION_IN_USE',
+          `Still used by: ${inUse.map((c) => `${c.organizationName}/${c.repoName}`).join(', ')}`
+        );
       }
       try {
         await fastify.prisma.gitHubInstallation.delete({ where: { id: request.params.id } });
         return reply.status(204).send();
       } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-          return reply.status(404).send({
-            error: { code: 'INSTALLATION_NOT_FOUND', message: 'Installation not found' },
-          });
+          return sendError(reply, 404, 'INSTALLATION_NOT_FOUND', 'Installation not found');
         }
         // A repository repointed at this installation between the check above
         // and this delete. `ON DELETE RESTRICT` refuses, which is the right
@@ -177,13 +174,12 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
         // so the one case the pre-check exists to explain showed a generic
         // failure instead.
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
-          return reply.status(409).send({
-            error: {
-              code: 'INSTALLATION_IN_USE',
-              message:
-                'A repository was pointed at this installation while it was being deleted. Repoint it and try again.',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'INSTALLATION_IN_USE',
+            'A repository was pointed at this installation while it was being deleted. Repoint it and try again.'
+          );
         }
         throw err;
       }

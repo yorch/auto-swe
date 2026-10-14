@@ -192,6 +192,37 @@ export type BundleDependency = z.infer<typeof BundleDependencySchema>;
 export type BundleMetadata = z.infer<typeof BundleMetadataSchema>;
 export type BundleManifest = z.infer<typeof BundleManifestSchema>;
 
+// ── Response shapes of `/api/v1/platform/bundles` (gateway, web and CLI share them) ──
+
+export type BundleTrustState = 'VERIFIED' | 'UNVERIFIED';
+
+/** An installed-bundle registry row; `TDate` is `Date` in the gateway, a string on the wire. */
+export interface InstalledBundleRow<TDate = string> {
+  name: string;
+  version: string;
+  source: string | null;
+  trustState: string;
+  signedBy: string | null;
+  createdAt: TDate;
+  updatedAt: TDate;
+}
+
+export interface BundleInstallCounts {
+  agents: number;
+  skills: number;
+  scannerPatterns: number;
+  templates: number;
+}
+
+/** What an install tells its caller (the gateway adds audit-only fields beside these). */
+export interface BundleInstallResult {
+  counts: BundleInstallCounts;
+  /** VERIFIED when the bundle's signature matched a trusted key, else UNVERIFIED. */
+  trustState: BundleTrustState;
+  signedBy: string | null;
+  warnings: string[];
+}
+
 /** Thrown when a manifest declares a bundle schema version this build cannot trust. */
 export class BundleSchemaVersionError extends Error {}
 

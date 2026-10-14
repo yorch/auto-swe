@@ -5,6 +5,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { safePatAuditFields } from '../lib/patAuditFields.js';
 import {
@@ -143,9 +144,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply.status(404).send({
-          error: { code: 'TOKEN_NOT_FOUND', message: 'Token not found' },
-        });
+        return sendError(reply, 404, 'TOKEN_NOT_FOUND', 'Token not found');
       }
       if (existing.revokedAt) {
         return { data: { id: existing.id, revokedAt: existing.revokedAt } };
@@ -262,9 +261,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply.status(404).send({
-          error: { code: 'SESSION_NOT_FOUND', message: 'Session not found' },
-        });
+        return sendError(reply, 404, 'SESSION_NOT_FOUND', 'Session not found');
       }
       const before = safeSessionAuditFields(existing);
       await fastify.prisma.session.delete({ where: { id: existing.id } });

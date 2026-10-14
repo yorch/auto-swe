@@ -1,6 +1,6 @@
 'use client';
 
-import type { ScheduledWorkRequestSummary } from '@auto-swe/shared/types/api';
+import type { BudgetTier, ScheduledWorkRequestSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -12,7 +12,7 @@ export interface CreateScheduleBody {
   teamId?: string;
   description: string;
   externalTicketPrefix: string;
-  budgetTier?: 'STANDARD' | 'LARGE' | 'EPIC';
+  budgetTier?: BudgetTier;
   isActive?: boolean;
   templateId?: string;
   templateVersion?: number;
@@ -22,7 +22,7 @@ export interface UpdateScheduleBody {
   name?: string;
   cronExpression?: string;
   description?: string;
-  budgetTier?: 'STANDARD' | 'LARGE' | 'EPIC';
+  budgetTier?: BudgetTier;
   isActive?: boolean;
   templateId?: string | null;
   templateVersion?: number | null;

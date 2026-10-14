@@ -26,10 +26,15 @@ import { BaseBranchSchema, isPlatformWorkBranch } from '@auto-swe/shared/lib/git
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
-import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import {
+  BUDGET_TIERS,
+  type BudgetTier,
+  type RepoWorkRequest,
+} from '@auto-swe/shared/types/workflow';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { isOrgMember } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -53,7 +58,7 @@ const CreateAgentRunBody = z.object({
   agent: z.string().min(1).max(130).regex(AGENT_REF_RE),
   /** Branch to cut the checkout from and open a draft PR into. Unset: the default branch. */
   baseBranch: BaseBranchSchema.optional(),
-  budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).default('STANDARD'),
+  budgetTier: z.enum(BUDGET_TIERS).default('STANDARD'),
   /** `none` shows the diff, `branch` pushes a branch, `draft_pr` also opens a DRAFT pull request. */
   deliver: z.enum(AGENT_RUN_DELIVERIES).default('none'),
   /** Can only lower the platform ceiling. */
@@ -84,7 +89,7 @@ function agentScopeBranches(orgId: string | null) {
 const RerunParams = z.object({ workRequestId: z.string().uuid() });
 
 function error(reply: FastifyReply, status: number, code: string, message: string) {
-  return reply.status(status).send({ error: { code, message } });
+  return sendError(reply, status, code, message);
 }
 
 interface LaunchInput {

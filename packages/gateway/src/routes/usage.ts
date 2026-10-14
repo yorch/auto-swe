@@ -9,6 +9,7 @@ import {
   seriesBuckets,
   utcDayStart,
 } from '../lib/dateWindow.js';
+import { sendError } from '../lib/httpErrors.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -213,13 +214,12 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
       const windowDays = custom?.days ?? request.query.window;
       const scope: UsageScope = teamId ? { teamId } : orgId ? { orgId } : {};
       if (!(await mayReadUsage(prisma, user, scope))) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message:
-              'The platform-wide report is ADMIN-only; a team LEAD may read their team, an ORG_ADMIN their organization',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'The platform-wide report is ADMIN-only; a team LEAD may read their team, an ORG_ADMIN their organization'
+        );
       }
       // Whole UTC days, closed at the end of today, so every query covers
       // exactly the rows the daily bars do — including a request that runs

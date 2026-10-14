@@ -3,6 +3,7 @@ import { RUN_DETAIL_LAYOUTS } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { listMcpGrants, revokeMcpGrants } from '../lib/mcpGrants.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -95,9 +96,7 @@ export const meRoutes: FastifyPluginAsync = async (fastify) => {
         userId: sub,
       });
       if (!revoked) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'No such connected app' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'No such connected app');
       }
       return reply.status(204).send();
     }

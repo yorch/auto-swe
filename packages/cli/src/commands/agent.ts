@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises';
+import { AGENT_RUN_DELIVERIES } from '@auto-swe/shared/lib/agentRun';
 import {
   isTerminalWorkflowRunStatus,
   type WorkflowRunDetail,
   type WorkflowRunSummary,
 } from '@auto-swe/shared/types/api';
+import { BUDGET_TIERS } from '@auto-swe/shared/types/workflow';
 import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { missingValue, parseFlags } from '../lib/flags.js';
@@ -36,8 +38,8 @@ const SUB_HELP = `auto-swe agent — run a library agent on a repository
 `;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const DELIVERIES = ['none', 'branch', 'draft_pr'];
-const BUDGETS = ['STANDARD', 'LARGE', 'EPIC'];
+const DELIVERIES = AGENT_RUN_DELIVERIES;
+const BUDGETS = BUDGET_TIERS;
 
 interface LaunchResponse {
   workRequestId: string;
@@ -181,12 +183,12 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
   }
 
   const deliver = flags.deliver ?? 'none';
-  if (!DELIVERIES.includes(deliver)) {
+  if (!DELIVERIES.some((d) => d === deliver)) {
     process.stderr.write(`--deliver must be one of: ${DELIVERIES.join(', ')}\n`);
     return 1;
   }
   const budget = (flags.budget ?? 'STANDARD').toUpperCase();
-  if (!BUDGETS.includes(budget)) {
+  if (!BUDGETS.some((t) => t === budget)) {
     process.stderr.write(`--budget must be one of: ${BUDGETS.join(', ')}\n`);
     return 1;
   }

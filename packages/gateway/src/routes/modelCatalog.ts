@@ -6,6 +6,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { builtinModelFor, findUnpricedSpecs, rolePricing } from '../lib/modelCatalogService.js';
 import { isRecordNotFoundError, isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -211,9 +212,7 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
           return { data: row };
         } catch (err) {
           if (isRecordNotFoundError(err)) {
-            return reply
-              .status(404)
-              .send({ error: { code: 'NOT_FOUND', message: 'Suggestion not found' } });
+            return sendError(reply, 404, 'NOT_FOUND', 'Suggestion not found');
           }
           throw err;
         }
@@ -250,12 +249,12 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
         });
       } catch (err) {
         if (isUniqueConstraintError(err)) {
-          return reply.status(409).send({
-            error: {
-              code: 'MODEL_EXISTS',
-              message: `'${request.body.provider}/${request.body.modelId}' is already in the catalog`,
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'MODEL_EXISTS',
+            `'${request.body.provider}/${request.body.modelId}' is already in the catalog`
+          );
         }
         throw err;
       }
@@ -279,9 +278,7 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Model catalog entry not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Model catalog entry not found');
       }
       // Any edit to a built-in marks it customized, so startup seeding keeps it.
       const updated = await fastify.prisma.modelCatalogEntry.update({
@@ -309,20 +306,18 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Model catalog entry not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Model catalog entry not found');
       }
       const builtin = existing.isBuiltIn
         ? builtinModelFor(`${existing.provider}/${existing.modelId}`)
         : undefined;
       if (!builtin) {
-        return reply.status(409).send({
-          error: {
-            code: 'NOT_BUILT_IN',
-            message: 'Only a model that ships built-in can be reset to its built-in values',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'NOT_BUILT_IN',
+          'Only a model that ships built-in can be reset to its built-in values'
+        );
       }
       const updated = await fastify.prisma.modelCatalogEntry.update({
         data: {
@@ -359,18 +354,15 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Model catalog entry not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Model catalog entry not found');
       }
       if (existing.isBuiltIn) {
-        return reply.status(409).send({
-          error: {
-            code: 'BUILT_IN_MODEL',
-            message:
-              'A built-in model cannot be deleted — gateway startup would re-create it. Set its status to RETIRED instead.',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'BUILT_IN_MODEL',
+          'A built-in model cannot be deleted — gateway startup would re-create it. Set its status to RETIRED instead.'
+        );
       }
       await fastify.prisma.modelCatalogEntry.delete({ where: { id: existing.id } });
       await writeAuditLog(fastify, {

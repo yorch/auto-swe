@@ -52,6 +52,57 @@ export interface SkippedFile {
   reason: SkippedReason;
 }
 
+// ── Response shapes of `/api/v1/platform/skill-sources` (gateway, web and CLI share them) ──
+
+export type SkillSourceStatus = 'OK' | 'UPDATE_AVAILABLE' | 'ERROR' | 'DISABLED';
+export type SourceScopeKind = 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
+
+/** An existing skill a new one named alike would collide with. */
+export interface SkillConflict {
+  id: string;
+  name: string;
+  scope: string;
+}
+
+export interface PreviewSkill {
+  /** Control characters replaced: the folder is repository-controlled text. */
+  folder: string;
+  /** Frontmatter keys (e.g. `allowed-tools`) that the import reads nothing from. */
+  ignoredKeys: string[];
+  name: string | null;
+  description: string | null;
+  textLength: number;
+  referenceFileCount: number;
+  skippedFiles: SkippedFile[];
+  scanWarnings: string[];
+  conflicts: SkillConflict[];
+  errors: string[];
+  /** Refused only because `skills.import.blockOnScanWarnings` is on and it has warnings. */
+  blockedByScan: boolean;
+  installable: boolean;
+}
+
+/** One tracked source as `GET /skill-sources` returns it (dates are ISO strings). */
+export interface SkillSourceSummary {
+  id: string;
+  host: string;
+  owner: string;
+  repo: string;
+  path: string;
+  ref: string;
+  pinnedSha: string;
+  latestSha: string | null;
+  lastCheckedAt: string | null;
+  /** A fixed server-side string, never repository text. */
+  lastError: string | null;
+  status: SkillSourceStatus;
+  scriptMode: ScriptMode;
+  scope: SourceScopeKind;
+  teamId: string | null;
+  orgId: string | null;
+  skillCount: number;
+}
+
 export interface ReferenceFile {
   path: string;
   content: string;

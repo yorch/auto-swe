@@ -273,6 +273,20 @@ app.register(exampleRoutes, { prefix: '/compat/example' });`;
     expect(routes[0].declarations.map((route) => route.method)).toEqual(['GET', 'POST']);
   });
 
+  it('reads the declarations of a route module split into a directory, per file', () => {
+    const gateway = `import { exampleRoutes } from './routes/example.js';
+app.register(exampleRoutes, { prefix: '/api/v1/example' });`;
+    const routes = parseRouteFamilies(gateway, {
+      example: [
+        { file: 'routes/example.ts', text: 'registerRead(fastify);' },
+        { file: 'routes/example/write.ts', text: "\nfastify.post('/write', handler);" },
+      ],
+    });
+    expect(routes[0].declarations).toEqual([
+      { file: 'routes/example/write.ts', line: 2, method: 'POST', path: '/write' },
+    ]);
+  });
+
   // Heavy: rebuilds the snapshot from the checked-out repo; a loaded full-suite run overshoots the 5 s default.
   it('flags changed evidence rather than advancing the human-review attestation', async () => {
     const changed = structuredClone(analysis);

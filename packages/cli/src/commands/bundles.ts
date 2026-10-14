@@ -1,5 +1,9 @@
 import { promises as fs } from 'node:fs';
-import type { BundleManifest } from '@auto-swe/shared/bundle';
+import type {
+  BundleInstallResult,
+  BundleManifest,
+  InstalledBundleRow,
+} from '@auto-swe/shared/bundle';
 import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { FLAG_PRESENT, parseFlags } from '../lib/flags.js';
@@ -23,23 +27,6 @@ const SUB_HELP = `auto-swe bundles — distribute library bundles (admin)
   An install that would replace a built-in or admin-authored GLOBAL agent with
   the same key is refused; --overwrite-protected replaces it deliberately.
 `;
-
-interface InstalledBundleRow {
-  name: string;
-  version: string;
-  source: string | null;
-  trustState: string;
-  signedBy: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface InstallResult {
-  counts: { agents: number; skills: number; scannerPatterns: number; templates: number };
-  trustState: 'VERIFIED' | 'UNVERIFIED';
-  signedBy: string | null;
-  warnings: string[];
-}
 
 export async function runBundlesCommand(args: string[], env: CliEnv): Promise<number> {
   const [sub, ...rest] = args;
@@ -138,10 +125,12 @@ async function cmdInstall(args: string[], env: CliEnv): Promise<number> {
     );
     return 1;
   }
-  const result = await apiRequest<InstallResult>(env, 'POST', '/api/v1/platform/bundles/install', {
-    bundle,
-    overwriteProtected,
-  });
+  const result = await apiRequest<BundleInstallResult>(
+    env,
+    'POST',
+    '/api/v1/platform/bundles/install',
+    { bundle, overwriteProtected }
+  );
   printInstall(result);
   return 0;
 }
@@ -153,7 +142,7 @@ async function cmdInstallFromUrl(args: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Usage: bundles install-from-url <url>\n');
     return 1;
   }
-  const result = await apiRequest<InstallResult>(
+  const result = await apiRequest<BundleInstallResult>(
     env,
     'POST',
     '/api/v1/platform/bundles/install-from-url',
@@ -180,7 +169,7 @@ export function parseInstallArgs(args: string[]): {
   return { overwriteProtected: raw !== undefined, positional };
 }
 
-function printInstall(r: InstallResult): void {
+function printInstall(r: BundleInstallResult): void {
   const { agents, skills, scannerPatterns, templates } = r.counts;
   process.stdout.write(
     `Installed [${r.trustState}${r.signedBy ? ` by ${r.signedBy}` : ''}]: ` +

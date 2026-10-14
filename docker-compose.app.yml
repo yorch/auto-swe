@@ -69,6 +69,8 @@ services:
     init: true
     restart: unless-stopped
     depends_on:
+      docker-socket-proxy:
+        condition: service_started
       postgres:
         condition: service_healthy
       temporal:
@@ -117,13 +119,33 @@ services:
       - HARNESS_MODEL_PROXY_PORT=${HARNESS_MODEL_PROXY_PORT-8790}
       - HARNESS_MODEL_PROXY_URL=${HARNESS_MODEL_PROXY_URL:-http://{hostname}:${HARNESS_MODEL_PROXY_PORT:-8790}}
       - WORKSPACE_NETWORK=${WORKSPACE_NETWORK:-auto-swe-workspaces}
-    group_add:
-      - "${DOCKER_GID:-999}"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock  # DinD access
+      # The Docker CLI the worker shells out to talks to the socket proxy, not a socket.
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
     networks:
       - default
       - workspaces
+      - docker-proxy
+
+  # Docker API filter in front of the host socket: haproxy with the allowlist
+  # and timeouts in infra/docker-socket-proxy/haproxy.cfg, which says what each
+  # allowed path is for. The worker reaches the daemon only through this
+  # container (DOCKER_HOST), so it never holds the socket. It limits the API
+  # surface, NOT the options of a container the worker is allowed to create:
+  # see docs/deployment.md. Root only to open the socket; nothing else runs here.
+  docker-socket-proxy:
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.2-alpine}
+    restart: unless-stopped
+    user: root
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./infra/docker-socket-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - docker-proxy
 
   # Observability: Grafana LGTM (Grafana + Tempo + Loki + Prometheus + OTel Collector)
   otel-lgtm:
@@ -171,3 +193,8 @@ networks:
   # worker's model proxy here, never the database or Temporal.
   workspaces:
     name: ${WORKSPACE_NETWORK:-auto-swe-workspaces}
+  # The worker and the socket proxy, and nothing else. `internal` gives it no
+  # route out, so the unauthenticated Docker API on :2375 is reachable by
+  # exactly these two containers.
+  docker-proxy:
+    internal: true

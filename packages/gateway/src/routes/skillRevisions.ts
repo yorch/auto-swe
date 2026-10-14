@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { updateSkill } from '../lib/skillLibraryService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -34,7 +35,7 @@ export const skillRevisionRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!skill) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
       }
       const revisions = await fastify.prisma.skillRevision.findMany({
         include: { createdBy: { select: { email: true } } },
@@ -58,15 +59,15 @@ export const skillRevisionRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const existing = await fastify.prisma.skill.findUnique({ where: { id: request.params.id } });
       if (!existing) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
       }
       if (existing.isBuiltIn) {
-        return reply.status(403).send({
-          error: {
-            code: 'BUILTIN_SKILL',
-            message: 'Built-in skills take their text from the platform and cannot be restored.',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'BUILTIN_SKILL',
+          'Built-in skills take their text from the platform and cannot be restored.'
+        );
       }
       const source = await fastify.prisma.skillRevision.findUnique({
         where: {
@@ -74,14 +75,15 @@ export const skillRevisionRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (!source) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Revision not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Revision not found');
       }
       if (source.revision === existing.currentRevision) {
-        return reply.status(409).send({
-          error: { code: 'ALREADY_CURRENT', message: 'That revision is already the current one.' },
-        });
+        return sendError(
+          reply,
+          409,
+          'ALREADY_CURRENT',
+          'That revision is already the current one.'
+        );
       }
       let result: Awaited<ReturnType<typeof updateSkill>>;
       try {
@@ -101,12 +103,12 @@ export const skillRevisionRoutes: FastifyPluginAsync = async (fastify) => {
         );
       } catch (err) {
         if (isRevisionConflict(err)) {
-          return reply.status(409).send({
-            error: {
-              code: 'SKILL_CHANGED',
-              message: 'The skill changed since you read it; reload it and try again.',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'SKILL_CHANGED',
+            'The skill changed since you read it; reload it and try again.'
+          );
         }
         throw err;
       }

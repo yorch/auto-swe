@@ -23,6 +23,7 @@ import {
   validateMcpConnectionRef,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { ModelSpecSchema } from '../lib/modelSpecSchema.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
@@ -199,7 +200,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!agent) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
       }
       // Include the full version history of this lineage.
       const versions = await fastify.prisma.agent.findMany({
@@ -230,16 +231,14 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         workflowTemplateId: body.workflowTemplateId,
       });
       if (refError) {
-        return reply.status(400).send({ error: { code: 'NOT_FOUND', message: refError } });
+        return sendError(reply, 400, 'NOT_FOUND', refError);
       }
       const mcpError = await validateMcpConnectionRef(fastify.prisma, body.mcpConnectionId, {
         scope: body.scope,
         teamId: body.teamId,
       });
       if (mcpError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
+        return sendError(reply, 400, 'INVALID_MCP_CONNECTION', mcpError);
       }
       const credentialError = await validateCredentialRef(
         fastify.prisma,
@@ -248,9 +247,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         { orgId: body.orgId, scope: body.scope, teamId: body.teamId }
       );
       if (credentialError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+        return sendError(reply, 400, 'INVALID_CREDENTIAL', credentialError);
       }
       const named = {
         inheritsModelFrom: body.inheritsModelFrom ?? null,
@@ -294,7 +291,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
-          return reply.status(409).send({ error: { code: 'CONFLICT', message: err.message } });
+          return sendError(reply, 409, 'CONFLICT', err.message);
         }
         throw err;
       }
@@ -308,7 +305,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const current = await fastify.prisma.agent.findUnique({ where: { id: request.params.id } });
       if (!current) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
       }
       const mcpError = await validateMcpConnectionRef(
         fastify.prisma,
@@ -319,9 +316,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       );
       if (mcpError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
+        return sendError(reply, 400, 'INVALID_MCP_CONNECTION', mcpError);
       }
       const merged = mergedRuntimeAndModel(current, request.body);
       const runtimeError = await runtimeSaveError(fastify.prisma, merged);
@@ -335,9 +330,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         merged.modelSpec
       );
       if (credentialError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+        return sendError(reply, 400, 'INVALID_CREDENTIAL', credentialError);
       }
       let saved: Awaited<ReturnType<typeof updateAgent>>;
       try {
@@ -386,17 +379,17 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const current = await fastify.prisma.agent.findUnique({ where: { id: request.params.id } });
       if (!current) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
       }
       // A GLOBAL row is the last tier of the cascade: with no fallback past it, runs that need the
       // key fail and the worker refuses to start. That is allowed, but only on purpose.
       if (current.scope === 'GLOBAL' && current.isBuiltIn && !request.query.force) {
-        return reply.status(409).send({
-          error: {
-            code: 'BUILTIN_AGENT_REQUIRES_FORCE',
-            message: `'${current.key}' is a built-in agent with no fallback. Runs that need it will fail and the worker will refuse to start if it is required. Repeat the request with force=true to deactivate it anyway.`,
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'BUILTIN_AGENT_REQUIRES_FORCE',
+          `'${current.key}' is a built-in agent with no fallback. Runs that need it will fail and the worker will refuse to start if it is required. Repeat the request with force=true to deactivate it anyway.`
+        );
       }
       const count = await deactivateAgentLineage(fastify.prisma, {
         channelId: current.channelId,
@@ -513,9 +506,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       );
       if (mcpError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
+        return sendError(reply, 400, 'INVALID_MCP_CONNECTION', mcpError);
       }
       const credentialError = await validateCredentialRef(
         fastify.prisma,
@@ -524,9 +515,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         { scope: 'TEAM', teamId: request.params.id }
       );
       if (credentialError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+        return sendError(reply, 400, 'INVALID_CREDENTIAL', credentialError);
       }
       const key: AgentScopeKey = {
         key: request.body.key,
@@ -555,7 +544,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
-          return reply.status(409).send({ error: { code: 'CONFLICT', message: err.message } });
+          return sendError(reply, 409, 'CONFLICT', err.message);
         }
         throw err;
       }
@@ -575,13 +564,13 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       });
       // Confine team owners to their own team's TEAM-scope agents.
       if (current?.scope !== 'TEAM' || current.teamId !== request.params.id) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
       }
       const access = await checkTeamAccess(fastify.prisma, actor, request.params.id, {
         requireTeamAdmin: true,
       });
       if (!access.ok) {
-        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
+        return sendError(reply, 403, 'FORBIDDEN', access.message);
       }
       if (runtimeChangeForbidden(actor.role, request.body.runtime, current.runtime)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
@@ -598,9 +587,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         merged.modelSpec
       );
       if (credentialError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_CREDENTIAL', message: credentialError } });
+        return sendError(reply, 400, 'INVALID_CREDENTIAL', credentialError);
       }
       const mcpError = await validateMcpConnectionRef(
         fastify.prisma,
@@ -611,9 +598,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       );
       if (mcpError) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INVALID_MCP_CONNECTION', message: mcpError } });
+        return sendError(reply, 400, 'INVALID_MCP_CONNECTION', mcpError);
       }
       let saved: Awaited<ReturnType<typeof updateAgent>>;
       try {
@@ -670,13 +655,13 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.agentId },
       });
       if (current?.scope !== 'TEAM' || current.teamId !== request.params.id) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Agent not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
       }
       const access = await checkTeamAccess(fastify.prisma, actor, request.params.id, {
         requireTeamAdmin: true,
       });
       if (!access.ok) {
-        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
+        return sendError(reply, 403, 'FORBIDDEN', access.message);
       }
       const count = await deactivateAgentLineage(fastify.prisma, {
         key: current.key,

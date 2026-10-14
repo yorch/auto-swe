@@ -1013,6 +1013,7 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
   'default-engineering': [
     {
       properties: {
+        // A frozen record of what a past release shipped: never derived from a live constant.
         budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
         connectionId: UUID_CONNECTION_ID,
         description: { type: 'string' },

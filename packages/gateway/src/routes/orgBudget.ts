@@ -8,6 +8,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { type AuditEntityType, writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { currentYearMonth } from '../lib/orgAccess.js';
 import { PG_INT_MAX } from '../lib/pgInt.js';
 import type { JwtPayload } from '../plugins/auth.js';
@@ -117,9 +118,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
         orgMonthSpend(fastify.prisma, orgId),
       ]);
       if (!org) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Organization not found');
       }
 
       return projectBudget(org, usage, spend);
@@ -150,9 +149,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
         where: { id: orgId },
       });
       if (!org) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Organization not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Organization not found');
       }
 
       const before = {
