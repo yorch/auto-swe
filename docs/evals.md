@@ -89,6 +89,12 @@ uses, so the runtime, tool keys, skills, MCP binding and step budgets a TEAM or 
 override gives that tenant's runs are what the eval grades. A GLOBAL dataset resolves at GLOBAL
 scope. It then runs a bounded TDD loop scoring the golden test's exit code.
 
+**Only flake-screened cases are scored.** A case is scored once its reference passed every run of
+its flake screen (§4). A case never screened, or whose screen failed, is skipped — as is a case
+re-validation quarantined — so a flaky floor cannot move the verdict. Every run's summary carries
+`unscreened`: the count and ids of the cases skipped as never screened (`neverScreened`,
+`neverScreenedCaseIds`) and as failed screens (`screenFailed`, `screenFailedCaseIds`).
+
 ### Comparing runtimes
 
 Each side of a run can name the implementer runtime it runs on: `candidateRuntime` and
@@ -155,6 +161,19 @@ into measuring the wrong thing. Managed at `/govern/workflow-defaults`, with
 `GET`/`PUT /api/v1/admin/config/revalidation` and a manual trigger endpoint
 (`POST /api/v1/admin/config/revalidation/trigger`).
 
+**Flake screening.** A case's reference — its golden test at the pinned commit — is run
+`evals.flakeScreenRuns` times (setting registry, default 3, GLOBAL only, ADMIN to change) by the
+`screenDatasetCasesActivity` activity. The case is marked `flakeScreened` only when every run
+passed; either way `flakeRuns` records the number of runs, so `flakeRuns = 0` is a case never
+screened and `flakeRuns > 0` without `flakeScreened` is a failed screen (a flaky reference, or one
+that never passes). Creating a dataset with cases starts `EvalScreenWorkflow` for it, and every
+re-validation sweep screens each dataset's remaining never-screened cases after re-validating it,
+which picks up a case whose screen could not start (Temporal unavailable) or hit an infrastructure
+error — such a case is left unscreened rather than recorded as flaky. Quarantined cases are not
+screened. A screen's result is written only if the case's repository, commit and golden test are
+still the ones it ran. A case's reference cannot be edited through the API, so a new reference is
+a new case, which starts unscreened.
+
 **Canary routing.** `resolveCanaryConfig()` reads the canary agent key and version from
 `WorkflowDefaults`; `shouldRouteToCanary()` hashes the work-request ID (FNV-1a) for a deterministic
 split. A routed run is stamped `isCanary` and gets the candidate version applied as an
@@ -164,8 +183,10 @@ split. A routed run is stamped `isCanary` and gets the candidate version applied
 thresholds in the Tier-2 defaults (`evalHealthMaxFlakeRate`, `evalHealthMaxStaleRate`,
 `evalHealthMinKappa`, `evalJudgeThreshold`). An unhealthy suite is not a trustworthy gate.
 `GET /api/v1/platform/evals/suite-health` returns each dataset's case count, how many cases
-re-validation quarantined as stale and how many are flake-screened, with the three thresholds, and
-`/govern/evals` charts the stale rate per dataset against its ceiling.
+re-validation quarantined as stale, how many are flake-screened, and the count and ids of the
+non-quarantined cases the harness skips as never screened or failed screens, with the three
+thresholds, and `/govern/evals` charts the stale rate per dataset against its ceiling. The dataset
+page and `auto-swe evals show` mark each case as screened, flaky, or not checked yet.
 
 ---
 
@@ -175,7 +196,7 @@ re-validation quarantined as stale and how many are flake-screened, with the thr
 |---|---|
 | `EvalResult` | One row per scorer — normalized `value`, `passed`, `rationale`, for a judge row the model and cost of its call, and for a harness row the implementer `runtime` the candidate ran on. Indexed for per-scorer and per-day trend queries |
 | `EvalDataset` | A versioned, scope-cascaded benchmark |
-| `EvalCase` | One case — `input`, optional `reference`, `sourceRunId` provenance, tags |
+| `EvalCase` | One case — `input`, optional `reference`, `sourceRunId` provenance, tags, its flake-screen state (`flakeScreened`, `flakeRuns`) and whether re-validation quarantined it |
 | `EvalRun` | One execution of a dataset — status, candidate/baseline refs, each side's optional runtime override, aggregate statistics |
 | `EvalRubric` | A versioned judging rubric; `code-review-quality` ships seeded |
 
@@ -206,9 +227,11 @@ verdicts into trends per template, model, and prompt version.
 | `packages/worker/src/activities/runEvalNode.ts` | Node execution, scorer dispatch, short-circuiting |
 | `packages/worker/src/activities/evalHarness.ts` | `runCaseDefault`, dataset orchestration |
 | `packages/worker/src/activities/evalRevalidate.ts` | Golden-set re-validation and quarantine |
+| `packages/worker/src/activities/evalFlakeScreen.ts` | Flake screening of never-screened cases |
 | `packages/worker/src/activities/prepareScheduledEvalRun.ts` | Scheduled-run setup |
 | `packages/worker/src/workflows/evalRun.ts` | `EvalRunWorkflow` |
-| `packages/worker/src/workflows/scheduledEval.ts`, `scheduledRevalidation.ts` | Schedule-driven workflows |
+| `packages/worker/src/workflows/scheduledEval.ts`, `scheduledRevalidation.ts` | Schedule-driven workflows; the re-validation sweep also flake-screens |
+| `packages/worker/src/workflows/evalScreen.ts` | `EvalScreenWorkflow`, started when a dataset is created with cases |
 | `packages/gateway/src/routes/evals.ts` | Admin API |
 
 > End-to-end verification of the Temporal, Docker, and LLM paths requires the full infrastructure
@@ -224,14 +247,26 @@ verdicts into trends per template, model, and prompt version.
 - **End-to-end paths need real infrastructure.** The unit suite covers orchestration against mocked
   Docker, Temporal, and LLM calls; the harness has not been exercised against a live stack.
 - **Only the stale rate of suite health is measured, and only as it is now.** The flake-rate and
-  kappa thresholds are set at `/govern/workflow-defaults`, but nothing stores a flake rate per run or
-  a judge/human agreement figure, so there is nothing to chart for them; the stale rate is the
-  quarantined share of cases today, with no history, so it is a bar per dataset and not a trend.
-- **No case is flake-screened.** `EvalCase.flakeScreened` is meant to mark a case whose reference
-  passed k times in a row, and `screenGateConsistency` (`activities/standaloneGateRunner.ts`) can run
-  that check, but nothing calls it and nothing sets the flag. Every case stays `flakeScreened: false`,
-  the suite-health screened count is always zero, and the harness runs a case whether or not it was
-  screened, so a flaky reference can enter the gate.
+  kappa thresholds are set at `/govern/workflow-defaults`, but nothing compares the failed-screen
+  share against the flake-rate ceiling or stores a judge/human agreement figure, so there is nothing
+  to chart for them; the stale rate is the quarantined share of cases today, with no history, so it
+  is a bar per dataset and not a trend.
+- **A new case is not scored until it is screened.** Screening a dataset runs k workspaces per
+  case, one after another, so a run started right after a dataset is created skips the cases not yet
+  screened; a run with no screened case finishes `SUCCESS` with `n=0` and lists them under
+  `unscreened`. A gate that reads the status alone must also check that count. A case whose screen
+  could not start waits for the next re-validation sweep, so with that schedule disabled it is
+  screened only by creating it again.
+- **Screening costs k reference runs per case.** `evals.flakeScreenRuns` multiplies the clone and
+  golden-test time of every new case, and runs every time even after a failure. One screen of a
+  dataset is a single activity with a four-hour limit; a dataset too large for it is finished by its
+  retries and later sweeps, which skip the cases already recorded.
+- **A failed screen is permanent.** Nothing re-screens a case once its screen is recorded, so a
+  case that failed because of a transient fault that still let the golden test run (a flaky network
+  fetch inside the test) stays excluded; replacing it means adding the case again. Changing
+  `evals.flakeScreenRuns` does not re-screen cases already screened.
+- **k passes are evidence, not proof.** A reference that fails rarely can pass k runs and be scored;
+  re-validation quarantines it later only if it fails on the run re-validation makes.
 - **Trend breakdowns cover judge model, agent and runtime, and templates only for online signals.**
   `GET /api/v1/platform/evals/trends` accepts `by=judgeModel|agentKey|runtime` and `templateId`. A
   runtime breakdown sees only harness rows, the one place a runtime is recorded. A template
