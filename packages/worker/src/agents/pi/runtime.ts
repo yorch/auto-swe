@@ -11,8 +11,10 @@ import {
   WORKSPACE_DIR,
   withUsageReport,
 } from '../harness/adapter.js';
+import { type McpRelay, openMcpRelay } from '../harness/mcpRelay.js';
 import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { summedCallsUsage, type UsageTotals } from '../harness/usage.js';
+import { piMcpTools } from './mcp.js';
 import { aiSdkStreamFn, piModelDescriptor } from './model.js';
 import {
   canonicalisePiArgs,
@@ -53,8 +55,10 @@ interface PiUsageReport {
 
 /** One-line descriptions of Pi's tools, as Pi's own system prompt lists them. */
 const TOOL_SNIPPETS: Record<PiTool, string> = {
-  bash: 'Execute shell commands (tests, builds, git, rg, find)',
+  bash: 'Execute shell commands (tests, builds, git)',
   edit: 'Make precise edits to files by replacing exact text',
+  find: 'Find files by glob pattern',
+  grep: 'Search file contents for patterns',
   ls: 'List directory contents',
   read: 'Read file contents',
   write: 'Create or overwrite files',
@@ -69,14 +73,27 @@ const TOOL_SNIPPETS: Record<PiTool, string> = {
 export function piSystemPrompt(input: {
   system: string;
   tools: readonly PiTool[];
+  /** Tools beyond Pi's own (the Agent's MCP connection), by name and description. */
+  extraTools?: readonly { name: string; description: string }[];
   projectContext?: { path: string; content: string } | null;
   date?: Date;
 }): string {
-  const toolList = input.tools.length
-    ? input.tools.map((t) => `- ${t}: ${TOOL_SNIPPETS[t]}`).join('\n')
-    : '(none)';
+  const listed = [
+    ...input.tools.map((t) => `- ${t}: ${TOOL_SNIPPETS[t]}`),
+    ...(input.extraTools ?? []).map(
+      (t) => `- ${t.name}: ${t.description.split('\n')[0]?.trim() || 'MCP tool'}`
+    ),
+  ];
+  const toolList = listed.length ? listed.join('\n') : '(none)';
+  const explores = input.tools.some((t) => t === 'grep' || t === 'find' || t === 'ls');
   const guidelines = [
-    ...(input.tools.includes('bash') ? ['Use bash for file search (rg, find, grep)'] : []),
+    ...(input.tools.includes('bash')
+      ? [
+          explores
+            ? 'Prefer grep/find/ls tools over bash for file exploration'
+            : 'Use bash for file operations like ls, rg, find',
+        ]
+      : []),
     'Be concise in your responses',
     'Show file paths clearly when working with files',
   ];
@@ -132,10 +149,12 @@ function traceInput(toolName: string, args: Record<string, unknown>): unknown {
  * Pi's agent loop (`pi-agent-core`) runs here, not in the container. Its
  * `beforeToolCall` hook, which the loop awaits before every tool call, is
  * `turn.decide`: the call runs only if the worker allows it, and a hook that
- * throws blocks it. Pi's own `read`, `write`, `edit` and `ls` act on the
- * container through `turn.exec`; its `bash` is the worker's (`tools.ts`). Model
- * calls go through the worker's own model binding (`model.ts`). Nothing from
- * the repository is loaded but its context file, read as text.
+ * throws blocks it. Pi's own `read`, `write`, `edit`, `ls` and `find` act on
+ * the container through `turn.exec`; its `bash` and `grep` are the worker's
+ * (`tools.ts`). The Agent's MCP connection is relayed from the worker
+ * (`mcp.ts`). Model calls go through the worker's own model binding
+ * (`model.ts`). Nothing from the repository is loaded but its context file,
+ * read as text.
  *
  * The conversation is kept across turns, so a TDD loop keeps its context.
  */
@@ -151,25 +170,36 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
   let session:
     | {
         agentTools: AgentTool[];
+        /** The relayed MCP tools among `agentTools`. */
+        mcpTools: AgentTool[];
         messages: AgentMessage[];
         projectContext: { path: string; content: string } | null;
       }
     | undefined;
   let model: LanguageModel | undefined;
+  // The Agent's MCP connection, opened once from the worker for the session;
+  // null when it has none or it could not be reached (the agent then works
+  // without it, as on the Mastra loop).
+  let relay: McpRelay | null = null;
 
   async function openSession(turn: HarnessTurn) {
-    session ??= {
-      agentTools: await buildPiTools({
-        granted: tools,
-        holder,
-        maxToolOutputChars:
-          options.maxToolOutputChars ??
-          getSettingDefinition('workspace.maxToolOutputChars').defaultValue,
-        workspace,
-      }),
-      messages: [],
-      projectContext: loadProjectSettings ? await readProjectContext(turn) : null,
-    };
+    if (!session) {
+      const maxToolOutputChars =
+        options.maxToolOutputChars ??
+        getSettingDefinition('workspace.maxToolOutputChars').defaultValue;
+      relay = options.mcp ? await openMcpRelay(options.mcp, options.tracer) : null;
+      const mcpTools = relay
+        ? piMcpTools({ maxToolOutputChars, relay, tracer: options.tracer, workspace })
+        : [];
+      policy.mcpTools = mcpTools.map((t) => t.name);
+      const own = await buildPiTools({ granted: tools, holder, maxToolOutputChars, workspace });
+      session = {
+        agentTools: [...own, ...mcpTools],
+        mcpTools,
+        messages: [],
+        projectContext: loadProjectSettings ? await readProjectContext(turn) : null,
+      };
+    }
     return session;
   }
 
@@ -209,7 +239,12 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         [prompt],
         {
           messages: open.messages,
-          systemPrompt: piSystemPrompt({ projectContext: open.projectContext, system, tools }),
+          systemPrompt: piSystemPrompt({
+            extraTools: open.mcpTools,
+            projectContext: open.projectContext,
+            system,
+            tools,
+          }),
           tools: open.agentTools,
         },
         {
@@ -307,6 +342,9 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
 
   return {
     capabilities: PI_CAPABILITIES,
+    async close() {
+      await relay?.close();
+    },
     decide: async (toolName, input) => {
       const refused = canonicalisePiArgs(toolName, input);
       return refused

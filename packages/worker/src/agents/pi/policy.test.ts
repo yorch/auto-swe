@@ -14,6 +14,7 @@ import {
   decidePiToolCall,
   PI_TOOLS,
   type PiPolicyContext,
+  piMcpToolName,
   piToolsFor,
   piToolsGranting,
   resolvePiPath,
@@ -36,18 +37,18 @@ describe('tool grants', () => {
   it('reads toolKeys as the Mastra implementer does', () => {
     expect(piToolsFor(null)).toEqual([...PI_TOOLS]);
     expect(piToolsFor(['mcp'])).toEqual([...PI_TOOLS]);
-    expect(piToolsFor(['readFile'])).toEqual(['read', 'ls']);
+    expect(piToolsFor(['readFile'])).toEqual(['read', 'ls', 'grep', 'find']);
     expect(piToolsFor(['writeFile'])).toEqual(['edit', 'write']);
     expect(piToolsFor(['bash'])).toEqual(['bash']);
   });
 
   it('grants nothing for an exact grant that names nothing', () => {
     expect(piToolsGranting([])).toEqual([]);
-    expect(piToolsGranting(['listDirectory'])).toEqual(['read', 'ls']);
+    expect(piToolsGranting(['listDirectory'])).toEqual(['read', 'ls', 'grep', 'find']);
   });
 
   it('refuses a tool outside the list, and one the Agent was not granted', async () => {
-    for (const tool of ['grep', 'find', 'web_fetch']) {
+    for (const tool of ['web_fetch', 'task', 'mcp__search']) {
       await expect(decidePiToolCall(tool, {}, ctx)).resolves.toMatchObject({ allow: false });
     }
     await expect(
@@ -177,6 +178,39 @@ describe('decidePiToolCall', () => {
       allow: false,
       reason: 'blocked: nc',
       securityTag: SECURITY_TRACE_ERRORS.SHELL_BLOCK,
+    });
+  });
+
+  it('confines grep and find like any search, defaulting to the checkout', async () => {
+    const grep: Record<string, unknown> = { glob: '*.ts', pattern: '..\\/(secret|token)' };
+    expect(canonicalisePiArgs('grep', grep)).toBeNull();
+    expect(grep.path).toBe(REPO);
+    // A grep pattern is a regular expression over contents, never a path.
+    await expect(decidePiToolCall('grep', grep, ctx)).resolves.toEqual({ allow: true });
+    await expect(
+      decidePiToolCall('grep', { glob: '../../etc/*', path: REPO, pattern: 'x' }, ctx)
+    ).resolves.toMatchObject({ allow: false });
+    await expect(
+      decidePiToolCall('find', { path: '/etc', pattern: '*.conf' }, ctx)
+    ).resolves.toMatchObject({ allow: false });
+    await expect(
+      decidePiToolCall('find', { path: REPO, pattern: '/etc/*' }, ctx)
+    ).resolves.toMatchObject({ allow: false });
+    await expect(
+      decidePiToolCall('find', { path: `${REPO}/src`, pattern: '**/*.ts' }, ctx)
+    ).resolves.toEqual({ allow: true });
+  });
+
+  it('allows exactly the relayed MCP tools, by the names the model calls them', async () => {
+    const withMcp = { ...ctx, mcpTools: [piMcpToolName('search')] };
+    await expect(decidePiToolCall('mcp__search', { q: 'x' }, withMcp)).resolves.toEqual({
+      allow: true,
+    });
+    await expect(decidePiToolCall('mcp__delete', {}, withMcp)).resolves.toMatchObject({
+      allow: false,
+    });
+    await expect(decidePiToolCall('mcp__search', {}, ctx)).resolves.toMatchObject({
+      allow: false,
     });
   });
 });

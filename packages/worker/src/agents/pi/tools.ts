@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
 import type {
   EditOperations,
+  FindOperations,
   LsOperations,
   ReadOperations,
   WriteOperations,
@@ -29,6 +30,21 @@ const BASH_SCRIPT =
 const LIST_SCRIPT =
   'cd "$1" || exit 1; for e in * .[!.]* ..?*; do if [ -e "$e" ] || [ -L "$e" ]; then ' +
   'if [ -d "$e" ]; then printf \'d%s\\0\' "$e"; else printf \'f%s\\0\' "$e"; fi; fi; done';
+
+/**
+ * Lists every file under a directory, one path per line relative to it, without
+ * descending into `.git` or `node_modules`. `find` filters the list in the worker
+ * ({@link matchFiles}), so the container needs only POSIX `find`.
+ */
+const LIST_FILES_SCRIPT =
+  'cd "$1" || exit 1; find . \\( -name .git -o -name node_modules \\) -prune -o -type f -print';
+
+/** A `grep` call's ceiling. */
+const GREP_TIMEOUT_MS = 120_000;
+/** `grep`'s default and greatest number of matches, and its greatest context. */
+const GREP_DEFAULT_LIMIT = 100;
+const GREP_MAX_LIMIT = 1000;
+const GREP_MAX_CONTEXT = 20;
 
 /** The turn whose `exec` the tools run through; set for the length of each turn. */
 export interface TurnHolder {
@@ -169,7 +185,218 @@ export function containerOperations(holder: TurnHolder) {
       return { isDirectory: () => isDir };
     },
   };
-  return { edit, ls, read, write };
+  const find: FindOperations = {
+    exists: async (p) => {
+      confine(p, READ_ROOTS);
+      return ok('test -e "$1"', p);
+    },
+    glob: async (pattern, root, { limit }) => {
+      confine(root, READ_ROOTS);
+      const out = await run({ args: [root], script: LIST_FILES_SCRIPT });
+      if (out.exitCode !== 0) {
+        throw failure('Cannot search', root, out.stderr);
+      }
+      return matchFiles(out.stdout.toString('utf8'), pattern, root, limit);
+    },
+  };
+  return { edit, find, ls, read, write };
+}
+
+/**
+ * The files of a `find` listing that match `pattern`, as absolute paths under
+ * `root`, at most `limit` of them. A pattern without a `/` matches a file's name
+ * at any depth (`*.ts`), as Pi's `fd` does; one with a `/` matches its path from
+ * the root (`src/**\/*.spec.ts`). Dot-directories are not matched by `*` or `**`.
+ */
+export function matchFiles(
+  listing: string,
+  pattern: string,
+  root: string,
+  limit: number
+): string[] {
+  const byName = !pattern.includes('/');
+  const found: string[] = [];
+  for (const line of listing.split('\n')) {
+    const rel = line.startsWith('./') ? line.slice(2) : line;
+    if (!rel) {
+      continue;
+    }
+    if (path.posix.matchesGlob(byName ? path.posix.basename(rel) : rel, pattern)) {
+      found.push(path.posix.join(root, rel));
+      if (found.length >= limit) {
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+/** One `grep` result line's file, for a `file:line:` match or a `file-line-` context line. */
+const GREP_LINE = /^(.+?)([:-])(\d+)[:-]/;
+
+/**
+ * `grep` output cut to `limit` matches, paths without a leading `./`, and with
+ * what the fallback `grep` could not filter itself removed: files outside
+ * `glob`, and anything under `.git` or `node_modules`. Returns the text and
+ * whether matches were dropped.
+ */
+export function trimGrepOutput(
+  output: string,
+  options: { glob?: string; limit: number; filter: boolean }
+): { text: string; truncated: boolean } {
+  const kept: string[] = [];
+  let matches = 0;
+  let truncated = false;
+  for (const raw of output.split('\n')) {
+    // `grep -r .` prefixes every path with `./`; ripgrep does not.
+    const line = raw.startsWith('./') ? raw.slice(2) : raw;
+    const parsed = GREP_LINE.exec(line);
+    if (options.filter && parsed) {
+      const file = parsed[1] ?? '';
+      const segments = file.split('/');
+      if (segments.includes('.git') || segments.includes('node_modules')) {
+        continue;
+      }
+      if (options.glob) {
+        const subject = options.glob.includes('/') ? file : path.posix.basename(file);
+        if (!path.posix.matchesGlob(subject, options.glob)) {
+          continue;
+        }
+      }
+    }
+    if (parsed?.[2] === ':') {
+      if (matches >= options.limit) {
+        truncated = true;
+        break;
+      }
+      matches += 1;
+    }
+    kept.push(line);
+  }
+  return { text: kept.join('\n').trim(), truncated };
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, Math.floor(value)))
+    : fallback;
+}
+
+/**
+ * The model's `grep` tool, in Pi's shape (`pattern`, `path`, `glob`,
+ * `ignoreCase`, `literal`, `context`, `limit`) but not Pi's implementation,
+ * which always runs ripgrep on the machine the loop runs on. This one runs
+ * ripgrep in the container when the image has it (which honours `.gitignore`),
+ * else `grep -rn`, filtering the fallback's results by `glob` and leaving out
+ * `.git` and `node_modules` in the worker. Arguments reach the command as its
+ * argv, never through a shell.
+ */
+export function piGrepTool(options: {
+  holder: TurnHolder;
+  maxToolOutputChars: number;
+  parameters: AgentTool['parameters'];
+  workspace: Workspace;
+}): AgentTool {
+  const { holder, maxToolOutputChars, parameters, workspace } = options;
+  // Whether the container has ripgrep, learned on first use.
+  let ripgrep: Promise<boolean> | undefined;
+  return {
+    description:
+      'Search file contents for a pattern. Returns matching lines as path:line:text, with paths ' +
+      `relative to ${WORKSPACE_DIR}. Uses ripgrep when the workspace has it (respecting ` +
+      `.gitignore), else grep; .git and node_modules are skipped. At most ${GREP_MAX_LIMIT} matches.`,
+    async execute(_id, params, signal): Promise<AgentToolResult<undefined>> {
+      const turn = holder.current;
+      if (!turn) {
+        throw new Error('No turn is running.');
+      }
+      const {
+        context,
+        glob,
+        ignoreCase,
+        literal,
+        limit,
+        path: root,
+        pattern,
+      } = params as {
+        context?: number;
+        glob?: string;
+        ignoreCase?: boolean;
+        literal?: boolean;
+        limit?: number;
+        path?: string;
+        pattern: string;
+      };
+      const searchRoot = typeof root === 'string' && root ? root : WORKSPACE_DIR;
+      confine(searchRoot, READ_ROOTS);
+      const target = path.posix.relative(WORKSPACE_DIR, searchRoot) || '.';
+      const lines = clampInt(context, 0, GREP_MAX_CONTEXT, 0);
+      ripgrep ??= turn
+        .exec({ script: 'command -v rg >/dev/null 2>&1', timeoutMs: 30_000 })
+        .then((r) => r.exitCode === 0);
+      const useRipgrep = await ripgrep;
+      const flags = [...(ignoreCase ? ['-i'] : []), ...(lines > 0 ? ['-C', String(lines)] : [])];
+      const argv = useRipgrep
+        ? [
+            'rg',
+            '--line-number',
+            '--no-heading',
+            '--color',
+            'never',
+            ...(literal ? ['-F'] : []),
+            ...flags,
+            ...(glob ? ['-g', glob] : []),
+            '-e',
+            pattern,
+            '--',
+            target,
+          ]
+        : ['grep', '-rn', literal ? '-F' : '-E', ...flags, '-e', pattern, '--', target];
+      const out = await turn.exec({
+        args: argv,
+        script: 'exec "$@"',
+        signal,
+        timeoutMs: GREP_TIMEOUT_MS,
+      });
+      if (signal?.aborted) {
+        throw new Error('Search aborted');
+      }
+      if (out.timedOut) {
+        throw new Error(`The search timed out after ${GREP_TIMEOUT_MS / 1000} seconds.`);
+      }
+      if (out.exitCode === 1) {
+        return { content: [{ text: 'No matches found', type: 'text' }], details: undefined };
+      }
+      if (out.exitCode !== 0) {
+        throw new Error(
+          out.stderr.toString('utf8').trim() || `The search failed (exit ${out.exitCode}).`
+        );
+      }
+      const max = clampInt(limit, 1, GREP_MAX_LIMIT, GREP_DEFAULT_LIMIT);
+      const trimmed = trimGrepOutput(out.stdout.toString('utf8'), {
+        filter: !useRipgrep,
+        glob,
+        limit: max,
+      });
+      if (!trimmed.text) {
+        return { content: [{ text: 'No matches found', type: 'text' }], details: undefined };
+      }
+      const notes = [
+        ...(trimmed.truncated ? [`${max} matches limit reached`] : []),
+        ...(out.droppedBytes > 0 ? ['output was cut short'] : []),
+      ];
+      const { text } = await offloadIfLarge({
+        maxChars: maxToolOutputChars,
+        output: notes.length ? `${trimmed.text}\n\n[${notes.join('. ')}]` : trimmed.text,
+        toolName: 'grep',
+        workspace,
+      });
+      return { content: [{ text, type: 'text' }], details: undefined };
+    },
+    label: 'grep',
+    name: 'grep',
+    parameters,
+  };
 }
 
 /**
@@ -234,8 +461,9 @@ export function piBashTool(options: {
 
 /**
  * The Pi tools a session offers, in Pi's own implementation where it can act on
- * the container (`read`, `write`, `edit`, `ls` over {@link containerOperations})
- * and the worker's `bash` ({@link piBashTool}). Only `granted` are built.
+ * the container (`read`, `write`, `edit`, `ls`, `find` over
+ * {@link containerOperations}) and the worker's `bash` and `grep`
+ * ({@link piBashTool}, {@link piGrepTool}). Only `granted` are built.
  */
 export async function buildPiTools(options: {
   granted: readonly PiTool[];
@@ -254,6 +482,14 @@ export async function buildPiTools(options: {
         workspace: options.workspace,
       }),
     edit: () => pi.createEditTool(WORKSPACE_DIR, { operations: ops.edit }),
+    find: () => pi.createFindTool(WORKSPACE_DIR, { operations: ops.find }),
+    grep: () =>
+      piGrepTool({
+        holder: options.holder,
+        maxToolOutputChars: options.maxToolOutputChars,
+        parameters: pi.createGrepTool(WORKSPACE_DIR).parameters,
+        workspace: options.workspace,
+      }),
     ls: () => pi.createLsTool(WORKSPACE_DIR, { operations: ops.ls }),
     // No image detection: a file is read as text, so no image is resized on the worker.
     read: () => pi.createReadTool(WORKSPACE_DIR, { operations: ops.read }),

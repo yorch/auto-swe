@@ -129,6 +129,20 @@ describe('openMcpRelay', () => {
     await relay?.close();
   });
 
+  it('runs a call directly, for a harness whose loop is in the worker, audited the same way', async () => {
+    remote = await remoteServer();
+    const relay = await openMcpRelay({ url: remote.url });
+
+    await expect(relay?.callTool('echo', { text: 'direct' })).resolves.toMatchObject({
+      content: [{ text: 'echo: direct', type: 'text' }],
+    });
+    expect(h.audit).toHaveBeenCalledWith(expect.stringContaining('tool=echo'));
+    await expect(relay?.callTool('rm_rf', {})).resolves.toMatchObject({ isError: true });
+    expect(h.audit).toHaveBeenCalledTimes(1);
+
+    await relay?.close();
+  });
+
   it('opens nothing, and says why, when the server cannot be reached', async () => {
     const tracer = { addActivityEvent: vi.fn(), addToolCall: vi.fn() };
     const relay = await openMcpRelay(

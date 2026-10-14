@@ -1,13 +1,15 @@
 import { MockLanguageModelV4 } from 'ai/test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { checkSensitiveFilePath, scanShellCommand } = vi.hoisted(() => ({
+const { checkSensitiveFilePath, openMcpRelay, scanShellCommand } = vi.hoisted(() => ({
   checkSensitiveFilePath: vi.fn(async (_p: string): Promise<string | null> => null),
+  openMcpRelay: vi.fn(async (..._args: unknown[]): Promise<unknown> => null),
   scanShellCommand: vi.fn(async (_c: string): Promise<string | null> => null),
 }));
 
 vi.mock('../../lib/sensitiveFileScanner.js', () => ({ checkSensitiveFilePath }));
 vi.mock('../../lib/shellCommandScanner.js', () => ({ scanShellCommand }));
+vi.mock('../harness/mcpRelay.js', () => ({ openMcpRelay }));
 
 import type { Workspace } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
@@ -154,7 +156,7 @@ function adapterFor(
     languageModel: model,
     loadProjectSettings: false,
     maxTurns: 10,
-    tracer: {} as AgentTracer,
+    tracer: { addActivityEvent: vi.fn() } as unknown as AgentTracer,
     workspace,
     ...overrides,
   }) as HarnessAdapter<unknown>;
@@ -384,6 +386,111 @@ describe('a Pi turn', () => {
     });
 
     expect(result.stoppedReason).toBe('wall_clock');
+  });
+});
+
+describe("a Pi turn with the Agent's MCP connection", () => {
+  function fakeRelay() {
+    return {
+      callTimeoutMs: 1000,
+      callTool: vi.fn(async (name: string, args: Record<string, unknown> | undefined) => ({
+        content: [{ text: `${name} found ${String(args?.q)}`, type: 'text' }],
+      })),
+      close: vi.fn(async () => undefined),
+      createServer: vi.fn(),
+      tools: [
+        {
+          description: 'Search the wiki\nfor pages.',
+          inputSchema: {
+            properties: { q: { type: 'string' } },
+            required: ['q'],
+            type: 'object',
+          },
+          name: 'search',
+        },
+        { inputSchema: { type: 'object' }, name: 'bad.name' },
+      ],
+    };
+  }
+
+  it('relays its tools from the worker, decided and traced like Pi’s own', async () => {
+    const relay = fakeRelay();
+    openMcpRelay.mockResolvedValue(relay);
+    const tracer = { addActivityEvent: vi.fn() };
+    const { model, prompts } = scriptedModel([
+      { calls: [{ input: { q: 'deploys' }, name: 'mcp__search' }] },
+      { text: 'Found it.' },
+    ]);
+    const target = { url: 'https://mcp.example/mcp' };
+    const adapter = adapterFor(model, {
+      mcp: target,
+      tracer: tracer as unknown as AgentTracer,
+    });
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+
+    const result = await adapter.runTurn(turn as unknown as HarnessTurn, {
+      system: '',
+      user: 'go',
+    });
+
+    expect(openMcpRelay).toHaveBeenCalledWith(target, tracer);
+    expect(relay.callTool).toHaveBeenCalledWith('search', { q: 'deploys' });
+    expect(turn.decide).toHaveBeenCalledWith(
+      'call-1-0',
+      'mcp__search',
+      { q: 'deploys' },
+      expect.any(String)
+    );
+    expect(turn.completed).toHaveBeenCalledWith(
+      'call-1-0',
+      expect.objectContaining({ output: 'search found deploys', toolName: 'mcp__search' })
+    );
+    expect(result.text).toBe('Found it.');
+    const first = JSON.stringify(prompts[0]);
+    expect(first).toContain('- mcp__search: Search the wiki');
+    expect(first).not.toContain('bad.name');
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'mcp.tools_skipped', outputJson: { tools: ['bad.name'] } })
+    );
+
+    await adapter.close?.();
+    expect(relay.close).toHaveBeenCalled();
+  });
+
+  it('reports an MCP error result to the model as a failed call', async () => {
+    const relay = fakeRelay();
+    relay.callTool.mockResolvedValue({
+      content: [{ text: 'quota exceeded', type: 'text' }],
+      isError: true,
+    } as never);
+    openMcpRelay.mockResolvedValue(relay);
+    const { model, prompts } = scriptedModel([
+      { calls: [{ input: { q: 'x' }, name: 'mcp__search' }] },
+      { text: 'ok' },
+    ]);
+    const adapter = adapterFor(model, { mcp: { url: 'https://mcp.example/mcp' } });
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+
+    await adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' });
+
+    expect(turn.failed).toHaveBeenCalledWith(
+      'call-1-0',
+      expect.objectContaining({ error: 'quota exceeded', toolName: 'mcp__search' })
+    );
+    expect(JSON.stringify(prompts[1])).toContain('quota exceeded');
+  });
+
+  it('works without the connection when it cannot be reached', async () => {
+    openMcpRelay.mockResolvedValue(null);
+    const { model, prompts } = scriptedModel([{ text: 'ok' }]);
+    const adapter = adapterFor(model, { mcp: { url: 'https://mcp.example/mcp' } });
+
+    await adapter.runTurn(fakeTurn(adapter, fakeContainer().exec) as unknown as HarnessTurn, {
+      system: '',
+      user: 'go',
+    });
+
+    expect(JSON.stringify(prompts[0])).not.toContain('mcp__');
   });
 });
 

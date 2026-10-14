@@ -41,6 +41,12 @@ export interface McpRelay {
    * connection behind it is shared. Close it when the session ends.
    */
   createServer(): McpServer;
+  /**
+   * Run one call on the remote server, for a harness whose loop runs in the
+   * worker and takes the tools directly. Audit-logged like a call through the
+   * server; a failure comes back as an error result, never a throw.
+   */
+  callTool(name: string, args: Record<string, unknown> | undefined): Promise<CallToolResult>;
   /** The remote tools, as the harness sees them (names unprefixed). */
   tools: readonly Tool[];
   /** Per-call timeout, for a harness that bounds calls itself. */
@@ -135,30 +141,35 @@ export async function openMcpRelay(
   }
 
   const instructions = client.getInstructions();
+  const callTool = async (
+    name: string,
+    args: Record<string, unknown> | undefined
+  ): Promise<CallToolResult> => {
+    if (!tools.some((t) => t.name === name)) {
+      return failure(`The MCP tool '${name}' is not offered by this connection.`);
+    }
+    auditLog(
+      `[mcp:audit] server=${url} tool=${name} args=${redactString(JSON.stringify(args ?? {}).slice(0, 2_000))} via=harness`
+    );
+    try {
+      return (await withTimeout(
+        client.callTool({ arguments: args, name }),
+        callTimeoutMs,
+        `MCP tool call '${name}'`
+      )) as CallToolResult;
+    } catch (err) {
+      return failure(scrubToken(getErrorMessage(err), target.bearerToken));
+    }
+  };
   const createServer = () => {
     const server = new McpServer(
       { name: 'auto-swe-relay', version: '1.0.0' },
       { capabilities: { tools: {} }, instructions }
     );
     server.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
-    server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { arguments: args, name } = request.params;
-      if (!tools.some((t) => t.name === name)) {
-        return failure(`The MCP tool '${name}' is not offered by this connection.`);
-      }
-      auditLog(
-        `[mcp:audit] server=${url} tool=${name} args=${redactString(JSON.stringify(args ?? {}).slice(0, 2_000))} via=harness`
-      );
-      try {
-        return (await withTimeout(
-          client.callTool({ arguments: args, name }),
-          callTimeoutMs,
-          `MCP tool call '${name}'`
-        )) as CallToolResult;
-      } catch (err) {
-        return failure(scrubToken(getErrorMessage(err), target.bearerToken));
-      }
-    });
+    server.server.setRequestHandler(CallToolRequestSchema, async (request) =>
+      callTool(request.params.name, request.params.arguments)
+    );
     return server;
   };
 
@@ -172,6 +183,7 @@ export async function openMcpRelay(
   let closed: Promise<void> | undefined;
   return {
     callTimeoutMs,
+    callTool,
     close: () => {
       closed ??= client.close().catch(() => undefined);
       return closed;

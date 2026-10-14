@@ -251,6 +251,34 @@ describe.skipIf(!enabled)('the Pi runtime against a real container', () => {
     expect(procs).not.toMatch(/sleep 30[01]/);
   }, 60_000);
 
+  it('searches the checkout with grep and find, skipping node_modules and .git', async () => {
+    const ws = await startWorkspace();
+    await ws.shell(
+      "mkdir -p src/deep node_modules/x .git && printf 'const token = 1;\\n' > src/a.ts && " +
+        "printf 'token: 2\\n' > src/deep/b.yml && printf 'token\\n' > node_modules/x/i.ts && " +
+        "printf 'token\\n' > .git/config"
+    );
+    const { model, prompts } = scriptedModel([
+      { calls: [{ input: { glob: '*.ts', pattern: 'tok(en)' }, name: 'grep' }] },
+      { calls: [{ input: { pattern: '*.yml' }, name: 'find' }] },
+      { calls: [{ input: { pattern: 'nothing-matches-this' }, name: 'grep' }] },
+      { text: 'ok' },
+    ]);
+    const { runtime, toolCalls } = makeRuntime(ws, model);
+
+    await runtime.runTurn({ system: '', user: 'go' });
+
+    expect(toolCalls.map((c) => [c.toolName, c.error])).toEqual([
+      ['grep', undefined],
+      ['find', undefined],
+      ['grep', undefined],
+    ]);
+    expect(toolCalls[0]?.outputJson).toBe('src/a.ts:1:const token = 1;');
+    expect(toolCalls[1]?.outputJson).toBe('src/deep/b.yml');
+    expect(toolCalls[2]?.outputJson).toBe('No matches found');
+    expect(JSON.stringify(prompts[1])).toContain('src/a.ts:1:const token = 1;');
+  }, 60_000);
+
   it('offloads a long result beside the checkout, where read can reach it', async () => {
     const ws = await startWorkspace();
     const { model, prompts } = scriptedModel([

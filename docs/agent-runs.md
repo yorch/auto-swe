@@ -132,7 +132,8 @@ container, granted the harness tools that stand in for exactly the workspace too
 `Read`, `Glob`, `Grep`; `[]` → none), behind the same worker-side tool policy as the implementer, and
 with the agent's MCP connection relayed from the worker, as it would bind on the Mastra loop. On Pi
 the agent runs as one turn of Pi's loop in the worker, its tools acting on the container under the
-same grant (`null` → `read`, `ls`) and policy; the agent's MCP connection is not bound there.
+same grant (`null` → `read`, `ls`, `grep`, `find`) and policy, and with the agent's MCP connection
+relayed from the worker.
 The choice is pinned on the run before the clone, when the step first resolves its agent (agent
 runs skip the run-start snapshot other runs take), and recorded as an `agent.runtime` trace event. See
 [agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-harnesses).

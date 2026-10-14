@@ -15,11 +15,10 @@ import { TOOL_OUTPUT_OFFLOAD_DIR } from '../toolOutputOffload.js';
 
 /**
  * Pi's tools a workspace run may use: its four defaults (`read`, `bash`,
- * `edit`, `write`) and `ls`. Pi's `grep` and `find` are not offered: `grep`
- * always runs ripgrep on the machine the loop runs on, which here is the
- * worker, and `bash` reaches both in the container.
+ * `edit`, `write`) and its `ls`, `grep` and `find`, each acting on the
+ * container (`tools.ts`).
  */
-export const PI_TOOLS = ['read', 'bash', 'edit', 'write', 'ls'] as const;
+export const PI_TOOLS = ['read', 'bash', 'edit', 'write', 'ls', 'grep', 'find'] as const;
 
 export type PiTool = (typeof PI_TOOLS)[number];
 
@@ -38,6 +37,8 @@ export const PI_TOOL_VOCABULARY: ToolVocabulary<PiTool> = {
   canonical: {
     bash: 'shell',
     edit: 'write',
+    find: 'search',
+    grep: 'search',
     ls: 'search',
     read: 'read',
     write: 'write',
@@ -47,9 +48,9 @@ export const PI_TOOL_VOCABULARY: ToolVocabulary<PiTool> = {
 
 /**
  * Pi's tools a resolved Agent's `toolKeys` grant, read exactly as the Mastra
- * implementer reads them: `readFile` and `listDirectory` grant `read` and `ls`;
- * `writeFile` grants `write` and `edit`; `bash` grants `bash`; `null`, `[]`, or
- * a list naming no workspace tool grants all five.
+ * implementer reads them: `readFile` and `listDirectory` grant `read`, `ls`,
+ * `grep` and `find`; `writeFile` grants `write` and `edit`; `bash` grants
+ * `bash`; `null`, `[]`, or a list naming no workspace tool grants all seven.
  */
 export function piToolsFor(toolKeys: readonly string[] | null | undefined): PiTool[] {
   return nativeToolsFor(PI_TOOL_VOCABULARY, toolKeys);
@@ -61,7 +62,28 @@ export function piToolsGranting(keys: readonly string[]): PiTool[] {
 }
 
 /** The tools whose `path` argument names a file or directory. */
-const PATH_TOOLS: ReadonlySet<string> = new Set<PiTool>(['read', 'edit', 'write', 'ls']);
+const PATH_TOOLS: ReadonlySet<string> = new Set<PiTool>([
+  'read',
+  'edit',
+  'write',
+  'ls',
+  'grep',
+  'find',
+]);
+
+/** The tools whose `path` is optional, meaning the checkout. */
+const DEFAULT_PATH_TOOLS: ReadonlySet<string> = new Set<PiTool>(['ls', 'grep', 'find']);
+
+/**
+ * The name the model calls a relayed MCP tool by: `mcp__<tool>`, so no MCP tool
+ * can take the name of one of Pi's own.
+ */
+export function piMcpToolName(tool: string): string {
+  return `mcp__${tool}`;
+}
+
+/** What a model provider accepts as a tool name; a relayed tool whose name is not this is skipped. */
+export const PROVIDER_TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Characters Pi's path handling rewrites before it uses a path (it folds
@@ -101,7 +123,10 @@ export function canonicalisePiArgs(toolName: string, args: Record<string, unknow
   if (!PATH_TOOLS.has(toolName)) {
     return null;
   }
-  const raw = toolName === 'ls' && (args.path === undefined || args.path === '') ? '.' : args.path;
+  const raw =
+    DEFAULT_PATH_TOOLS.has(toolName) && (args.path === undefined || args.path === '')
+      ? '.'
+      : args.path;
   const resolved = resolvePiPath(raw);
   if ('error' in resolved) {
     return `Path rejected: ${resolved.error}.`;
@@ -120,6 +145,12 @@ export interface PiPolicyContext {
    * run under what it wrote.
    */
   projectContextLoaded: boolean;
+  /**
+   * The relayed MCP tools, by the name the model calls them
+   * ({@link piMcpToolName}). Each runs in the worker against the Agent's MCP
+   * connection and is audit-logged there; nothing about it runs in the container.
+   */
+  mcpTools?: readonly string[];
 }
 
 /** The repository's own context files the run reads, at the checkout's root. */
@@ -148,6 +179,12 @@ function toCanonical(tool: PiTool, input: Record<string, unknown>): CanonicalToo
       return { path: input.path, tool: 'read' };
     case 'ls':
       return { path: input.path, pattern: undefined, tool: 'search' };
+    // A `grep` pattern is a regular expression over contents, not a path: its
+    // `glob` is what names files.
+    case 'grep':
+      return { path: input.path, pattern: input.glob, tool: 'search' };
+    case 'find':
+      return { path: input.path, pattern: input.pattern, tool: 'search' };
   }
 }
 
@@ -158,15 +195,19 @@ function toCanonical(tool: PiTool, input: Record<string, unknown>): CanonicalToo
  *
  * Paths must already be absolute ({@link canonicalisePiArgs} makes them so); a
  * path Pi would rewrite before opening it is refused. Reads may also reach the
- * offloaded tool output beside the checkout, where the `bash` tool writes the
- * full text of an oversized result. A tool outside {@link PI_TOOLS}, or one the
- * Agent's `toolKeys` do not grant, is refused.
+ * offloaded tool output beside the checkout, where `bash` and `grep` write the
+ * full text of an oversized result. A relayed MCP tool (`ctx.mcpTools`) is
+ * allowed: it runs in the worker, not the container. Any other tool outside
+ * {@link PI_TOOLS}, or one the Agent's `toolKeys` do not grant, is refused.
  */
 export async function decidePiToolCall(
   toolName: string,
   input: Record<string, unknown>,
   ctx: PiPolicyContext
 ): Promise<ToolDecision> {
+  if (ctx.mcpTools?.includes(toolName)) {
+    return { allow: true };
+  }
   if (!(PI_TOOLS as readonly string[]).includes(toolName)) {
     return deny(`The ${toolName} tool is not available in this workspace.`);
   }

@@ -680,14 +680,16 @@ part of the CI gate that image publishing depends on.
 container (`agents/pi/`). Nothing is installed in the container and the adapter has no
 `provisioning`. The loop's `beforeToolCall` hook, which it awaits before every tool call, is
 `turn.decide`; a refused call is never run and the model is told why, and a hook that throws blocks
-the call. The loop runs one tool call at a time. Pi offers five tools, mapped onto the canonical
-vocabulary (`bash` → `shell`; `write`, `edit` → `write`; `read` → `read`; `ls` → `search`) and
-decided by `decidePiToolCall` (`pi/policy.ts`):
+the call. The loop runs one tool call at a time. Pi offers seven tools, mapped onto the canonical
+vocabulary (`bash` → `shell`; `write`, `edit` → `write`; `read` → `read`; `ls`, `grep`, `find` →
+`search`) and decided by `decidePiToolCall` (`pi/policy.ts`), plus the Agent's MCP tools:
 
 | Tool | Implementation | Worker-side policy |
 |---|---|---|
-| `read`, `write`, `edit`, `ls` | Pi's own, with their file operations (`ReadOperations`, `WriteOperations`, `EditOperations`, `LsOperations`) running in the container through `turn.exec` (`pi/tools.ts`) | the same as Claude Code's `Read`, `Write`, `Edit`, `Glob`; an `edit` has every replacement text scanned; reads also reach `/workspace/.tool-output` |
+| `read`, `write`, `edit`, `ls`, `find` | Pi's own, with their file operations (`ReadOperations`, `WriteOperations`, `EditOperations`, `LsOperations`, `FindOperations`) running in the container through `turn.exec` (`pi/tools.ts`) | the same as Claude Code's `Read`, `Write`, `Edit`, `Glob`; an `edit` has every replacement text scanned; reads and searches also reach `/workspace/.tool-output` |
+| `grep` | the worker's, in Pi's argument shape (`pattern`, `path`, `glob`, `ignoreCase`, `literal`, `context`, `limit`): ripgrep in the container when the image has it, else `grep -rn` | the same as Claude Code's `Grep`: the search root confined, `glob` relative and inside it |
 | `bash` | the worker's, in Pi's argument shape (`command`, `timeout` in seconds, at most 600): `bash -c` when the image has bash, else `sh -c`, in the checkout | audit line, then `scanShellCommand` |
+| `mcp__<tool>` | the Agent's MCP connection, relayed from the worker (`pi/mcp.ts`) | allowed by name, exactly the relayed tools; audit line in the relay |
 | anything else | — | refused |
 
 Pi resolves a tool's `path` itself before opening it: a leading `@` is dropped, a leading `~` is the
@@ -699,15 +701,35 @@ Pi runs the call on — so the path the scanners saw is the path the tool opens.
 moves the loop's working directory. Each file operation also re-checks its path against the
 checkout (and, for reads, the offload directory) before it runs.
 
-Pi's `grep` and `find` are not offered: `grep` always runs ripgrep on the machine the loop runs on,
-and `bash` reaches both in the container. Pi's own `bash` is not used either, because it writes the
-full text of a long result to the local temp directory and tells the model that path; the worker's
-`bash` offloads a result over `workspace.maxToolOutputChars` beside the checkout, as the Mastra
-tools do ([§3.6](#36-large-tool-output-offload)), where the model's `read` can reach it. A non-zero
-exit, a timeout or an abort is reported to the model as a failed call. Tool keys grant Pi's tools as
-they grant Claude Code's: `readFile` and `listDirectory` grant `read` and `ls`, `writeFile` grants
-`write` and `edit`, `bash` grants `bash`, and no opinion grants all five; an exact grant names
-exactly what it gives (`null` → `read`, `ls` for an agent run).
+Pi's own `bash` is not used, because it writes the full text of a long result to the local temp
+directory and tells the model that path; the worker's `bash` offloads a result over
+`workspace.maxToolOutputChars` beside the checkout, as the Mastra tools do
+([§3.6](#36-large-tool-output-offload)), where the model's `read` can reach it. A non-zero exit, a
+timeout or an abort is reported to the model as a failed call. Pi's own `grep` is not used either,
+because it always runs ripgrep on the machine the loop runs on (downloading it when missing). The
+worker's `grep` probes the container for `rg` once per session; ripgrep honours `.gitignore`, and
+the `grep -rn` fallback has its results filtered in the worker by `glob`, with anything under `.git`
+or `node_modules` dropped. Either way every argument reaches the command as its own argv entry,
+never through a shell, and the result is at most 1 000 matches (100 by default), offloaded when long.
+`find` lists the files under its root in the container (skipping `.git` and `node_modules`) and
+matches them in the worker: a pattern with no `/` matches a name at any depth (`*.ts`), one with a
+`/` the path from the root, and neither descends into dot-directories, as Pi's `fd` does by default.
+Tool keys grant Pi's tools as they grant Claude Code's: `readFile` and `listDirectory` grant `read`,
+`ls`, `grep` and `find`, `writeFile` grants `write` and `edit`, `bash` grants `bash`, and no opinion
+grants all seven; an exact grant names exactly what it gives (`null` → `read`, `ls`, `grep`, `find`
+for an agent run).
+
+**Pi and MCP.** An Agent whose tool keys enable `'mcp'` and that references an `mcp` Connection has
+it relayed to Pi from the worker, through the same relay as Claude Code (`harness/mcpRelay.ts`): the
+worker connects with the same guarded fetch, credential and private-network rules as the Mastra
+binding, and each tool becomes a Pi tool named `mcp__<tool>` with the server's own input schema. A
+call runs in the worker (`McpRelay.callTool`), under the connection's call timeout, audit-logged
+(`[mcp:audit] … via=harness`) and traced like any Pi tool; its token and headers never enter the
+container. An error result is reported to the model as a failed call, and a long result is offloaded
+like `bash`'s. The policy allows exactly the relayed tools by name. A remote tool whose prefixed
+name a model provider would refuse (more than 64 characters, or anything but letters, digits, `_`
+and `-`) is left out, and the trace says which (`mcp.tools_skipped`). A server that cannot be reached
+is traced (`mcp.connect_failed`) and the session runs without it, as on the Mastra loop.
 
 **Pi's model calls.** Each call is one AI SDK `generateText` step on the model the worker's own
 binding builds (`resolveModel`, `lib/models.ts`), with Pi's tools declared and none executed: the
@@ -782,8 +804,8 @@ it is registered.
   container as they are, though: `grep` always runs ripgrep on the local machine (downloading it if
   it is missing), `bash` writes overflow output to the local temp directory and tells the model that
   path, and `read` probes the local filesystem for alternative spellings of a path. The adapter
-  (*How Pi runs*, above) supplies its own `bash`, leaves `grep` out, and resolves every path before
-  the policy decides it.
+  (*How Pi runs*, above) supplies its own `bash` and `grep`, and resolves every path before the
+  policy decides it.
 
 Adding a harness is an adapter in its own directory, a `defineHarness` entry in `harnessRegistry.ts`,
 a new value in `IMPLEMENTER_RUNTIMES` (and in the `agents.runtime` CHECK constraint, by migration),
@@ -1308,11 +1330,14 @@ template override is never badged, because it may use a different model or crede
   worker instead. The verdict rests on what each CLI exposes for that callback; one that gains it
   fits the same seam.
 - **Pi runs without its own extras.** The Pi runtime is Pi's agent loop and its `read`, `write`,
-  `edit` and `ls` tools, and nothing else of Pi's: no compaction (a long session fails when it
-  outgrows the model's context window, where the Mastra loop starts each turn afresh), no `grep` or
-  `find` tool, no extensions, skills, prompt templates or settings from the repository or the worker,
-  no images (a file is read as text), and no reasoning (thinking is off). An Agent's MCP connection
-  is not bound under it: the turn runs without the connection's tools.
+  `edit`, `ls` and `find` tools, and nothing else of Pi's: no compaction (a long session fails when
+  it outgrows the model's context window, where the Mastra loop starts each turn afresh), no
+  extensions, skills, prompt templates or settings from the repository or the worker, no images (a
+  file is read as text), and no reasoning (thinking is off).
+- **Pi's `grep` depends on the image.** With ripgrep in the executor image it honours `.gitignore`;
+  without it, `grep -rn` searches everything but `.git` and `node_modules` (build output included),
+  and its `glob` filter is applied after the search rather than during it. Pi's `find` honours no
+  ignore file at all.
 - **Pi's file tools are Pi's, not the worker's.** The worker decides each call and confines each file
   operation to the checkout, but how `edit` matches text, how `read` pages and truncates, and how
   `ls` sorts and caps are Pi's. Pi's `read` still checks the worker's own filesystem for alternative
