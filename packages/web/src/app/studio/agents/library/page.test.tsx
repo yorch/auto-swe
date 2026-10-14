@@ -163,6 +163,10 @@ describe('agent library — bulk model change', () => {
     expect(screen.queryByText('2 selected')).toBeNull();
   });
 
+  // Exercising this ceiling takes 201 visible rows — the whole table rendered,
+  // then selected through the header checkbox. That is the work a loaded CI
+  // runner ran out of the 5 s default on; the test costs ~1 s under coverage
+  // here, so the budget is headroom rather than a fix for what it asserts.
   it('will not offer a change the gateway would refuse', () => {
     state.agents = Array.from({ length: 201 }, (_, index) =>
       row(`a${index}`, `Agent ${index}`, `agent-${index}`)
@@ -174,7 +178,7 @@ describe('agent library — bulk model change', () => {
     expect(screen.getByRole('button', { name: 'Change model' }).hasAttribute('disabled')).toBe(
       true
     );
-  });
+  }, 20_000);
 
   it('gives a non-admin no selection column and no way to change models in bulk', () => {
     state.admin = false;
