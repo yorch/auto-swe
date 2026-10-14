@@ -41,6 +41,8 @@ describe('redactRequestUrl', () => {
     '/api/v1/webhooks/access',
     '/api/v1/webhooks/jira?x=1',
     '/api/v1/webhooks/slack',
+    // An event endpoint's id is not a credential: its secret is.
+    `/api/v1/webhooks/events/${TOKEN}`,
     '/api/v1/webhooks/',
     '/api/v1/workflow-templates/abc/webhook/regenerate',
     '/health',

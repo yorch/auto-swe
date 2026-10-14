@@ -522,6 +522,20 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.max(MAX_FANOUT_CONCURRENCY),
     unit: 'branches',
   }),
+  // ── Inbound events ─────────────────────────────────────────────────────────
+  // Read per event by the event-endpoint receiver and the engine, with the endpoint's team.
+  'workflow.inboundEventsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether events posted to a team's event endpoints may start runs. Off by default: an event's content is the sender's text, so an admin turns this on deliberately, per team or organization. While off, an endpoint refuses every call with 409 after checking its signature, and nothing is recorded. Turning it off does not stop runs already started.",
+    group: 'workflow',
+    label: 'Inbound event automations enabled',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'workflow.maxTransitions': defineSetting({
     defaultValue: 500,
     description:

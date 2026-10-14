@@ -9,6 +9,7 @@ import TeamDetailPage from './page';
 // The allowlist and agent-library sections have their own tests and fetch their own data.
 vi.mock('@/components/teams/ShellAllowlistEditor', () => ({ ShellAllowlistEditor: () => null }));
 vi.mock('@/components/teams/EgressAllowlistEditor', () => ({ EgressAllowlistEditor: () => null }));
+vi.mock('@/components/teams/EventEndpointsCard', () => ({ EventEndpointsCard: () => null }));
 vi.mock('@/components/teams/TeamAgentLibrarySection', () => ({
   TeamAgentLibrarySection: () => null,
 }));

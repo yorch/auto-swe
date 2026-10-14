@@ -34,6 +34,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ConnectionTeamShare',
   'EvalDataset',
   'EvalRubric',
+  'EventEndpoint',
   'HumanErrorBaseline',
   'MemoryItem',
   'KnowledgeItem',

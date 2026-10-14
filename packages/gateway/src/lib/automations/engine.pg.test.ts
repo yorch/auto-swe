@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import {
+  INBOUND_EVENT,
   ISSUE_LABELED,
   issueLabeledSource,
   WORKFLOW_RUN_FAILED,
@@ -485,5 +486,34 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     } finally {
       await prisma.automation.delete({ where: { id: onTeam.id } });
     }
+  });
+  it('keeps inbound-event automations on a team, with well-formed filters and target', async () => {
+    const good = {
+      endpointId: crypto.randomUUID(),
+      eventTypes: ['alert.*'],
+      fields: {},
+      match: [],
+    };
+    const base = { filters: good, name: 'events', source: INBOUND_EVENT };
+    for (const bad of [
+      { ...base, connectionId: repoId },
+      { ...base, filters: { ...good, eventTypes: [] }, teamId },
+      { ...base, filters: { endpointId: good.endpointId, eventTypes: ['*'] }, teamId },
+      { ...base, filters: { ...good, fields: [] }, teamId },
+      // Only a team automation names a repository to act on.
+      {
+        connectionId: repoId,
+        filters: filters(),
+        name: 'x',
+        source: WORKFLOW_RUN_FAILED,
+        targetConnectionId: repoId,
+      },
+    ]) {
+      await expect(prisma.automation.create({ data: bad })).rejects.toThrow();
+    }
+    const ok = await prisma.automation.create({
+      data: { ...base, targetConnectionId: repoId, teamId },
+    });
+    await prisma.automation.delete({ where: { id: ok.id } });
   });
 });

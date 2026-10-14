@@ -15,11 +15,15 @@ import type { Prisma, Role } from '@auto-swe/shared';
 import {
   AutomationInputsSchema,
   automationOptionsProblem,
+  ENDPOINT_OWNER_KIND,
   EVENT_SOURCE_KEYS,
   type EventSource,
   eventSource,
+  INBOUND_EVENT,
+  type InboundEventFilters,
   isRepositoryOwnerKey,
   optionsSchema,
+  parseOwnerKey,
   storedInputs,
   teamOwnerKey,
 } from '@auto-swe/shared/automation';
@@ -37,6 +41,7 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import {
   type AutomationOwnerAccess,
   automationOwnerAccess,
+  findLaunchRepo,
   manageForbidden,
   ownerTeam,
 } from '../lib/automations/access.js';
@@ -50,6 +55,7 @@ import {
   parseFilters,
   resolveAutomationTemplate,
 } from '../lib/automations/engine.js';
+import { loadTargetConnection, TARGET_UNAVAILABLE } from '../lib/automations/inboundEvent.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
@@ -57,6 +63,9 @@ import { teamMembershipFilter, templateWriteFilter } from '../lib/templateLaunch
 import { signatureRequiredByPolicy } from '../lib/templateWebhookSigning.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+
+/** A repository a team automation's runs act on, as a launch decision reads it. */
+type TargetRepo = NonNullable<Awaited<ReturnType<typeof findLaunchRepo>>>;
 
 const IdParams = z.object({ id: z.string().uuid() });
 const FireParams = z.object({ fireId: z.string().uuid(), id: z.string().uuid() });
@@ -87,6 +96,11 @@ const Fields = {
   inputs: AutomationInputsSchema,
   maxRunsPerDay: z.number().int().min(1).max(500),
   name: z.string().trim().min(1).max(100),
+  /**
+   * For a team automation: the repository its runs act on, one the team owns or is shared.
+   * Null for runs on no repository.
+   */
+  targetConnectionId: z.string().uuid().nullable(),
   templateId: z.string().uuid().nullable(),
 };
 
@@ -100,6 +114,7 @@ const CreateBody = z
     inputs: AutomationInputsSchema.default({}),
     maxRunsPerDay: Fields.maxRunsPerDay.default(10),
     source: z.enum(EVENT_SOURCE_KEYS as [string, ...string[]]),
+    targetConnectionId: Fields.targetConnectionId.default(null),
     templateId: Fields.templateId.default(null),
   })
   .refine(oneOwner, ONE_OWNER);
@@ -117,6 +132,8 @@ const automationSelect = {
   maxRunsPerDay: true,
   name: true,
   source: true,
+  targetConnection: { select: { id: true, organizationName: true, repoName: true } },
+  targetConnectionId: true,
   team: { select: { id: true, name: true } },
   teamId: true,
   template: { select: { id: true, name: true } },
@@ -185,14 +202,16 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
     request: FastifyRequest,
     reply: FastifyReply,
     user: JwtPayload,
-    access: AutomationOwnerAccess
+    access: AutomationOwnerAccess,
+    /** The repository a team automation's runs act on, when it names one. */
+    target: TargetRepo | null = null
   ): Promise<boolean> {
     const decision = await authorizeLaunch(fastify.prisma, user, {
       gate: request.repoAccessGate,
       log: request.log,
       ...(access.kind === 'repository'
         ? { repos: [access.repo] }
-        : { orgs: [access.team.organization], repos: [] }),
+        : { orgs: [access.team.organization], repos: target ? [target] : [] }),
       runIdentity: 'platform',
     });
     if (decision.ok) {
@@ -210,7 +229,12 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
    */
   async function saveProblem(
     source: EventSource<unknown, unknown>,
-    body: { filters: unknown; inputs: unknown; templateId: string | null },
+    body: {
+      filters: unknown;
+      inputs: unknown;
+      templateId: string | null;
+      targetConnectionId: string | null;
+    },
     access: AutomationOwnerAccess
   ): Promise<{ code: string; message: string } | null> {
     const team = ownerTeam(access);
@@ -224,6 +248,26 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
             ? 'unreadable'
             : parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')
         }`.slice(0, 500),
+      };
+    }
+    if (source.key === INBOUND_EVENT) {
+      // The endpoint must be one of the automation's own team.
+      const { endpointId } = filters as InboundEventFilters;
+      const endpoint = await fastify.prisma.eventEndpoint.findFirst({
+        select: { id: true },
+        where: { id: endpointId, teamId: team.id },
+      });
+      if (!endpoint) {
+        return {
+          code: 'INVALID_FILTERS',
+          message: 'endpointId must name one of the team’s event endpoints',
+        };
+      }
+    }
+    if (!body.templateId && !source.defaultTemplate) {
+      return {
+        code: 'TEMPLATE_REQUIRED',
+        message: `${source.label} automations start the template they name: choose a templateId`,
       };
     }
     const inputs = storedInputs(body.inputs);
@@ -259,16 +303,70 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           }
         : {
             code: 'TEMPLATE_MISSING',
-            message: `The default template (${source.defaultTemplate.name}) is not installed`,
+            message: `The default template (${source.defaultTemplate?.name ?? 'none'}) is not installed`,
           };
     }
-    const problem = automationOptionsProblem(source, filters, template.inputSchema, body.inputs);
+    const problem = automationOptionsProblem(
+      source,
+      filters,
+      template.inputSchema,
+      body.inputs,
+      access.kind === 'repository' || body.targetConnectionId !== null
+    );
     return problem
       ? {
           code: 'INVALID_INPUTS',
           message: `The options do not fit the template: ${problem.slice(0, 500)}`,
         }
       : null;
+  }
+
+  /**
+   * The repository a team automation's runs would act on, as a launch decision reads it: one
+   * the team owns or is shared, active, and a git repository. Null for none; false when a refusal
+   * was sent.
+   */
+  async function targetRepository(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    access: AutomationOwnerAccess,
+    targetConnectionId: string | null
+  ): Promise<TargetRepo | null | false> {
+    if (targetConnectionId === null) {
+      return null;
+    }
+    if (access.kind !== 'team') {
+      await sendError(
+        reply,
+        400,
+        'TARGET_NOT_ALLOWED',
+        'Only a team automation names a repository to act on; a repository’s acts on its own'
+      );
+      return false;
+    }
+    const reachable = await fastify.prisma.connection.findFirst({
+      select: { id: true },
+      where: {
+        id: targetConnectionId,
+        OR: [{ teamId: access.team.id }, { shares: { some: { teamId: access.team.id } } }],
+        type: 'git_repo',
+      },
+    });
+    if (!reachable) {
+      await sendError(
+        reply,
+        400,
+        'TARGET_REPOSITORY_NOT_REACHABLE',
+        'targetConnectionId must name a git repository the team owns or that is shared with it'
+      );
+      return false;
+    }
+    const repo = await findLaunchRepo(fastify.prisma, targetConnectionId, requireUser(request).sub);
+    if (!repo) {
+      await sendError(reply, 409, 'REPO_INACTIVE', 'The repository is not active');
+      return false;
+    }
+    return repo;
   }
 
   /** The automation and its owner's access (repository or team), or a reply already sent. */
@@ -655,7 +753,11 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       if (mismatch) {
         return sendError(reply, 400, 'SOURCE_TARGET_MISMATCH', mismatch);
       }
-      if (body.enabled && !(await mayLaunch(request, reply, user, access))) {
+      const target = await targetRepository(request, reply, access, body.targetConnectionId);
+      if (target === false) {
+        return;
+      }
+      if (body.enabled && !(await mayLaunch(request, reply, user, access, target))) {
         return;
       }
       const problem = await saveProblem(source, body, access);
@@ -676,6 +778,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           maxRunsPerDay: body.maxRunsPerDay,
           name: body.name,
           source: source.key,
+          targetConnectionId: target ? target.id : null,
           templateId: body.templateId,
         },
         select: automationSelect,
@@ -709,27 +812,43 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 409, 'UNKNOWN_SOURCE', 'The automation names an unknown source');
       }
       const body = request.body;
+      const targetConnectionId =
+        body.targetConnectionId === undefined
+          ? (existing.targetConnectionId ?? null)
+          : body.targetConnectionId;
+      // A repository kept as it was on an automation that ends up off is not checked again: an
+      // unreachable one must not stop the automation being switched off.
+      const keepsTargetWhileOff =
+        body.targetConnectionId === undefined && (body.enabled ?? existing.enabled) === false;
+      const target = keepsTargetWhileOff
+        ? null
+        : await targetRepository(request, reply, access, targetConnectionId);
+      if (target === false) {
+        return;
+      }
       // An automation that is off after the change cannot start runs, whatever else changed,
       // so editing a disabled one is not a launch decision. Anything that leaves it on is.
       if ((body.enabled ?? existing.enabled) !== false) {
         if (!(await ownerActive(reply, access))) {
           return;
         }
-        if (!(await mayLaunch(request, reply, user, access))) {
+        if (!(await mayLaunch(request, reply, user, access, target))) {
           return;
         }
       }
-      // Template, options and filters are checked together, as they will run.
+      // Template, options, filters and the repository are checked together, as they will run.
       if (
         body.templateId !== undefined ||
         body.inputs !== undefined ||
-        body.filters !== undefined
+        body.filters !== undefined ||
+        body.targetConnectionId !== undefined
       ) {
         const problem = await saveProblem(
           source,
           {
             filters: body.filters ?? existing.filters,
             inputs: body.inputs ?? existing.inputs,
+            targetConnectionId,
             templateId: body.templateId === undefined ? existing.templateId : body.templateId,
           },
           access
@@ -837,20 +956,6 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       if (!fire) {
         return sendError(reply, 404, 'FIRE_NOT_FOUND', 'Decision not found');
       }
-      // Defence in depth: a decision is taken again only on the owner it was recorded for — a
-      // repository's on a repository key, a team's on its own team's key.
-      const ownerMatches =
-        access.kind === 'repository'
-          ? isRepositoryOwnerKey(fire.ownerKey)
-          : fire.ownerKey === teamOwnerKey(access.team.id);
-      if (!ownerMatches) {
-        return sendError(
-          reply,
-          409,
-          'NOT_RETRYABLE',
-          'The decision was recorded for another owner than the automation’s'
-        );
-      }
       if (fire.outcome === 'STARTED' || fire.retriedAt !== null) {
         return sendError(
           reply,
@@ -871,6 +976,49 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           'The recorded occurrence cannot be read by this build'
         );
       }
+      // Defence in depth: a decision is taken again only on the owner it was recorded for — a
+      // repository's on a repository key, and a team's on its own team's key. Inbound events name
+      // their owner from the occurrence (the endpoint) and are checked below, against an endpoint
+      // that must belong to the automation's team. Any other source that names its owner has no
+      // such check here, so it is refused rather than let through.
+      const ownerMatches =
+        source.key === INBOUND_EVENT ||
+        (source.ownerKey === undefined &&
+          (access.kind === 'repository'
+            ? isRepositoryOwnerKey(fire.ownerKey)
+            : fire.ownerKey === teamOwnerKey(access.team.id)));
+      if (!ownerMatches) {
+        return sendError(
+          reply,
+          409,
+          'NOT_RETRYABLE',
+          'The decision was recorded for another owner than the automation’s'
+        );
+      }
+      if (source.key === INBOUND_EVENT) {
+        // The decision's owner must be an endpoint of the automation's team, still on, and the
+        // one the recorded event names: a row whose owner key was written for another endpoint
+        // (or another team's) is not taken again here.
+        const owner = parseOwnerKey(fire.ownerKey);
+        const endpointId =
+          owner && owner.kind === ENDPOINT_OWNER_KIND && 'id' in owner ? owner.id : null;
+        const recorded = (facts.data as { endpointId: string }).endpointId;
+        const endpoint =
+          access.kind === 'team' && endpointId !== null && endpointId === recorded
+            ? await fastify.prisma.eventEndpoint.findFirst({
+                select: { enabled: true },
+                where: { id: endpointId, teamId: access.team.id },
+              })
+            : null;
+        if (!endpoint?.enabled) {
+          return sendError(
+            reply,
+            409,
+            'NOT_RETRYABLE',
+            'The event endpoint is gone, disabled, or not the team’s'
+          );
+        }
+      }
       if (!automationMatches(source, automation, facts.data)) {
         return sendError(
           reply,
@@ -882,6 +1030,8 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       // A repository automation decides on its repository row; a team's on its team, with no
       // repository.
       let owner: { connection: EngineConnection | null; team: EngineTeam };
+      let targetUnavailable: string | undefined;
+      let target: TargetRepo | null = null;
       if (access.kind === 'repository') {
         const connection = await fastify.prisma.connection.findFirst({
           include: connectionInclude,
@@ -896,9 +1046,19 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           return;
         }
         const { id, organization, orgId } = access.team;
-        owner = { connection: null, team: { id, organization, orgId } };
+        // A team automation that acts on a repository decides on it, if it is still the team's.
+        const connection = automation.targetConnectionId
+          ? await loadTargetConnection(fastify.prisma, automation.targetConnectionId, id)
+          : null;
+        if (automation.targetConnectionId && !connection) {
+          targetUnavailable = TARGET_UNAVAILABLE;
+        }
+        if (connection) {
+          target = await findLaunchRepo(fastify.prisma, connection.id, user.sub);
+        }
+        owner = { connection, team: { id, organization, orgId } };
       }
-      if (!(await mayLaunch(request, reply, user, access))) {
+      if (!(await mayLaunch(request, reply, user, access, target))) {
         return;
       }
       let result: Awaited<ReturnType<typeof decideAndStart>>;
@@ -911,6 +1071,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           ownerKey: fire.ownerKey,
           retry: { fireId: fire.id, kind: 'manual' },
           startRetryDelayMs: 1_000,
+          ...(targetUnavailable ? { targetUnavailable } : {}),
         });
       } catch (err) {
         if (err instanceof AutomationStartError) {

@@ -257,6 +257,11 @@ export async function decideAndStart<F, X>(
     now: Date;
     retry: RetryScope;
     startRetryDelayMs: number;
+    /**
+     * Why the repository a team automation's runs act on cannot be used (inactive, or no longer
+     * the team's), recorded as `FAILED_TO_START`. Absent when there is none or it is usable.
+     */
+    targetUnavailable?: string;
   }
 ): Promise<AutomationResult> {
   const prisma = fastify.prisma;
@@ -319,6 +324,30 @@ export async function decideAndStart<F, X>(
     if (unmet) {
       return recordDecision(prisma, fireBase, 'SUPPRESSED_PRECONDITION', unmet);
     }
+    if (args.targetUnavailable) {
+      return recordDecision(prisma, fireBase, 'FAILED_TO_START', args.targetUnavailable);
+    }
+    // A team automation acting on a repository another team owns (shared with it): the
+    // repository's own team must allow the source too, and its organization must have budget.
+    // Unlike the automation team's own switch above (off: ignored, nothing recorded, so a
+    // redelivery after switching it on is decided afresh), this one is RECORDED as
+    // SUPPRESSED_PRECONDITION: the owning team sees why. A redelivery then answers duplicate;
+    // after that team switches it on, a manager takes the decision again with Decide again.
+    const foreignTarget = connection && connection.team.id !== team.id ? connection.team : null;
+    if (foreignTarget) {
+      const allowed = await resolveSetting(source.killSwitch, {
+        ...(foreignTarget.orgId ? { orgId: foreignTarget.orgId } : {}),
+        teamId: foreignTarget.id,
+      });
+      if (allowed !== true) {
+        return recordDecision(
+          prisma,
+          fireBase,
+          'SUPPRESSED_PRECONDITION',
+          `${source.label} automations are switched off for the repository’s team`
+        );
+      }
+    }
     // A source that acts only for a platform member: the account on the host must be one.
     let requestedById: string | null = null;
     if (source.actor) {
@@ -345,6 +374,19 @@ export async function decideAndStart<F, X>(
         fireBase,
         'SUPPRESSED_BUDGET',
         'the organization is over its monthly budget'
+      );
+    }
+    const targetOrg = foreignTarget?.organization;
+    if (
+      targetOrg &&
+      targetOrg.id !== org?.id &&
+      (await isOrgOverBudget(prisma, targetOrg.id, targetOrg.monthlyBudgetUsdCents))
+    ) {
+      return recordDecision(
+        prisma,
+        fireBase,
+        'SUPPRESSED_BUDGET',
+        'the repository’s organization is over its monthly budget'
       );
     }
     const template = await resolveAutomationTemplate(
@@ -798,6 +840,10 @@ export async function resolveAutomationTemplate<F, X>(
     inputSchema: true,
     workspaceProvider: true,
   } as const;
+  if (!templateId && !source.defaultTemplate) {
+    // A source with no default template: an automation must name its own.
+    return null;
+  }
   const row = templateId
     ? await prisma.workflowTemplate.findFirst({
         select,
@@ -811,7 +857,7 @@ export async function resolveAutomationTemplate<F, X>(
     : await prisma.workflowTemplate.findFirst({
         orderBy: [{ updatedAt: 'desc' }],
         select,
-        where: { name: source.defaultTemplate.name, status: 'ACTIVE', teamId: null },
+        where: { name: source.defaultTemplate?.name, status: 'ACTIVE', teamId: null },
       });
   if (
     !row ||

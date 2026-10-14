@@ -117,6 +117,7 @@ export const SIDEBAR = [
       'docs/agent-runs',
       'docs/automations',
       'docs/run-callbacks',
+      'docs/inbound-events',
       'docs/ci-failure-triggers',
       'docs/channel-assistant',
       'docs/memory',

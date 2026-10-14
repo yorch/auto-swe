@@ -41,7 +41,7 @@ describe('issueLabeledSource', () => {
   });
 
   it('starts the engineering template, and no template that takes no description', () => {
-    expect(src.defaultTemplate.name).toBe('default-engineering');
+    expect(src.defaultTemplate?.name).toBe('default-engineering');
     expect(src.templateCompatible(SWE_INPUT_SCHEMA)).toBe(true);
     const { description: _d, ...rest } = SWE_INPUT_SCHEMA.properties;
     expect(src.templateCompatible({ ...SWE_INPUT_SCHEMA, properties: rest })).toBe(false);

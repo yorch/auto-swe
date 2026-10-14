@@ -53,11 +53,13 @@ import { configSettingsRoutes } from './routes/configSettings.js';
 import { connectionCredentialRoutes } from './routes/connectionCredentials.js';
 import { epicRoutes } from './routes/epics.js';
 import { evalRoutes } from './routes/evals.js';
+import { eventEndpointRoutes } from './routes/eventEndpoints.js';
 import { githubHostCredentialRoutes } from './routes/githubHostCredentials.js';
 import { githubInstallationRoutes } from './routes/githubInstallations.js';
 import { githubWebhookSecretRoutes } from './routes/githubWebhookSecrets.js';
 import { humanErrorBaselineRoutes } from './routes/humanErrorBaselines.js';
 import { humanStepRoutes } from './routes/humanSteps.js';
+import { inboundEventRoutes } from './routes/inboundEvents.js';
 import { knowledgeRoutes } from './routes/knowledge.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { mcpRoutes } from './routes/mcp.js';
@@ -308,9 +310,12 @@ async function start() {
   await app.register(runCallbackDeliveryRoutes, { prefix: '/api/v1/workflow-runs' });
   await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
+  // Signed events from other services; reads bodies as bytes in its own plugin.
+  await app.register(inboundEventRoutes, { prefix: '/api/v1/webhooks/events' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
   await app.register(callbackEndpointRoutes, { prefix: '/api/v1/teams' });
   await app.register(servicePrincipalRoutes, { prefix: '/api/v1/teams' });
+  await app.register(eventEndpointRoutes, { prefix: '/api/v1/teams' });
   await app.register(userRoutes, { prefix: '/api/v1/users' });
   await app.register(meRoutes, { prefix: '/api/v1/me' });
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });

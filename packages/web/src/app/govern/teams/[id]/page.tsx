@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
+import { EventEndpointsCard } from '@/components/teams/EventEndpointsCard';
 import { ServicePrincipalsSection } from '@/components/teams/ServicePrincipalsSection';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySection';
@@ -402,6 +403,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           teamId={id}
         />
       )}
+
+      <EventEndpointsCard team={{ id, name: team.name }} />
+
       {canManageTeamAgents && <TeamAgentLibrarySection teamId={id} />}
       {canManageCallbacks && (
         <TeamCallbackEndpointsSection isPlatformAdmin={platformRole === 'ADMIN'} teamId={id} />
