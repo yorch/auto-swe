@@ -841,6 +841,11 @@ function remapKeyFor(spec: string): string | null {
   }
 }
 
+/** The message to show an operator for a thrown value. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /** The scope cascade, most specific first — the order `resolveAgent` walks it. */
 const AGENT_SCOPE_RANK: readonly AgentScope[] = [
   'WORKFLOW_TEMPLATE',
@@ -851,18 +856,36 @@ const AGENT_SCOPE_RANK: readonly AgentScope[] = [
 ];
 
 /**
- * Whether an active row at `candidate` takes a run away from the selected row at `selected`.
- * Being narrower is not enough: a TEAM or ORGANIZATION row only wins for runs of that team or
- * organization, so a same-key row at the *other* tenant scope never overrode this one — those runs
- * did not resolve this row to begin with. A CHANNEL or WORKFLOW_TEMPLATE row wins in its own
- * context whatever it sits above, and a GLOBAL row is reached by every run, so any narrower row
- * shadows it.
+ * Whether an active row at `candidate` takes a run away from the selected row.
+ *
+ * Each run walks the cascade most-specific-first over its own context, so a narrower row wins
+ * whenever that context reaches it. A team or organization row is only reached by runs of that team
+ * or organization — so a team row wins over an organization row only when the team is inside that
+ * organization, since `cascadeWheres` checks the team tier first — and neither ever wins over a row
+ * at the other tenant scope, whose runs do not carry its id at all. A channel or workflow-template
+ * row is reached by its own context whatever it sits above, and every run reaches a GLOBAL row.
  */
-function shadowsScope(candidate: AgentScope, selected: AgentScope): boolean {
-  if (AGENT_SCOPE_RANK.indexOf(candidate) >= AGENT_SCOPE_RANK.indexOf(selected)) {
+function shadowsScope(
+  candidate: { scope: AgentScope; teamId: string | null },
+  selected: AgentScope,
+  selectedOrgId: string | null,
+  teamOrg: Map<string, string | null>
+): boolean {
+  if (AGENT_SCOPE_RANK.indexOf(candidate.scope) >= AGENT_SCOPE_RANK.indexOf(selected)) {
     return false;
   }
-  return candidate === 'TEAM' || candidate === 'ORGANIZATION' ? selected === 'GLOBAL' : true;
+  if (candidate.scope === 'ORGANIZATION') {
+    return selected === 'GLOBAL';
+  }
+  if (candidate.scope === 'TEAM') {
+    return (
+      selected === 'GLOBAL' ||
+      (selected === 'ORGANIZATION' &&
+        Boolean(selectedOrgId) &&
+        teamOrg.get(candidate.teamId ?? '') === selectedOrgId)
+    );
+  }
+  return true;
 }
 
 /** Each lineage fails independently; updateAgent remains the sole version-writing boundary. */
@@ -872,26 +895,50 @@ export async function bulkUpdateAgentModels(
   actorId: string,
   opts: { dryRun: boolean }
 ): Promise<BulkModelPlan> {
-  const rows: Array<{ id: string; row: AgentRow | null }> = [];
+  const rows: Array<{ error?: string; id: string; row: AgentRow | null }> = [];
   for (const id of new Set(request.ids)) {
-    rows.push({ id, row: await prisma.agent.findUnique({ where: { id } }) });
+    try {
+      rows.push({ id, row: await prisma.agent.findUnique({ where: { id } }) });
+    } catch (err) {
+      // A read that fails is this agent's outcome; it is no reason to abandon the others, whose
+      // rows may read perfectly well.
+      rows.push({ error: errorText(err), id, row: null });
+    }
   }
-  // Deliberately cross-tenant: which narrower scopes hold a row for a key is a fact about the
-  // whole deployment, and naming them is the point of the warning. The caller is a platform admin.
-  const shadowing = await runUnscoped(
-    'which narrower scopes hold an active row for a key is a deployment-wide fact; a platform admin edits rows at any scope',
-    ['Agent'],
-    () =>
-      prisma.agent.findMany({
-        select: { key: true, scope: true },
-        where: {
-          isActive: true,
-          key: { in: [...new Set(rows.flatMap(({ row }) => (row ? [row.key] : [])))] },
-        },
-      })
-  );
+  // Deliberately cross-tenant: which narrower scopes hold a row for a key is a fact about the whole
+  // deployment, and naming them is the point of the warning. The caller is a platform admin. The
+  // read is advisory, so a failure reports no shadowing rather than refusing the batch.
+  let shadowing: Array<{ key: string; scope: string; teamId: string | null }> = [];
+  try {
+    shadowing = await runUnscoped(
+      'which narrower scopes hold an active row for a key is a deployment-wide fact; a platform admin edits rows at any scope',
+      ['Agent'],
+      () =>
+        prisma.agent.findMany({
+          select: { key: true, scope: true, teamId: true },
+          where: {
+            isActive: true,
+            key: { in: [...new Set(rows.flatMap(({ row }) => (row ? [row.key] : [])))] },
+          },
+        })
+    );
+  } catch {
+    // Advisory only: the plan is still accurate about what it will change.
+  }
+  // A team row may only win over an organization row when the team is inside that organization.
+  const teamOrg = new Map<string, string | null>();
+  for (const teamId of new Set(
+    shadowing.filter((r) => r.scope === 'TEAM' && r.teamId).map((r) => r.teamId as string)
+  )) {
+    try {
+      const team = await prisma.team.findUnique({ select: { orgId: true }, where: { id: teamId } });
+      teamOrg.set(teamId, team?.orgId ?? null);
+    } catch {
+      // Unknown ownership: report no shadowing for it rather than fail the batch.
+    }
+  }
   const changes: BulkModelChange[] = [];
-  for (const { id, row } of rows) {
+  for (const { error, id, row } of rows) {
     const change: BulkModelChange = {
       blockers: [],
       credentialCleared: false,
@@ -911,6 +958,10 @@ export async function bulkUpdateAgentModels(
       warnings: [],
     };
     changes.push(change);
+    if (error) {
+      change.blockers.push(`Could not read this agent: ${error}`);
+      continue;
+    }
     if (!row) {
       change.blockers.push('Agent not found');
       continue;
@@ -918,11 +969,13 @@ export async function bulkUpdateAgentModels(
     // Only the write further down is expected to fail per agent; anything else that throws
     // here must not abandon the agents queued behind this one.
     try {
-      const narrower = new Set(
-        shadowing.filter((r) => r.key === row.key).map((r) => r.scope as AgentScope)
-      );
-      change.shadowedBy = AGENT_SCOPE_RANK.filter(
-        (scope) => narrower.has(scope) && shadowsScope(scope, change.scope)
+      change.shadowedBy = AGENT_SCOPE_RANK.filter((scope) =>
+        shadowing.some(
+          (candidate) =>
+            candidate.key === row.key &&
+            candidate.scope === scope &&
+            shadowsScope({ scope, teamId: candidate.teamId }, change.scope, row.orgId, teamOrg)
+        )
       );
       const lineage: AgentScopeKey = { ...row, scope: change.scope };
       const head = await prisma.agent.findFirst({
@@ -1021,11 +1074,11 @@ export async function bulkUpdateAgentModels(
         change.newVersion = saved.agent.version;
       } catch (err) {
         change.status = err instanceof AgentVersionConflictError ? 'CONFLICT' : 'ERROR';
-        change.blockers.push(err instanceof Error ? err.message : String(err));
+        change.blockers.push(errorText(err));
       }
     } catch (err) {
       change.status = 'ERROR';
-      change.blockers.push(err instanceof Error ? err.message : String(err));
+      change.blockers.push(errorText(err));
     }
   }
   const count = (status: BulkModelStatus) =>

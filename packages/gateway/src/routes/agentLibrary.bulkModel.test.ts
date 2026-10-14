@@ -332,15 +332,58 @@ describe('bulk agent model changes', () => {
     p.agent.findMany.mockImplementation(async ({ where }) =>
       where.key
         ? [
-            { key: A, scope: 'TEAM' },
-            { key: A, scope: 'CHANNEL' },
+            { key: A, scope: 'TEAM', teamId: 'team-1' },
+            { key: A, scope: 'CHANNEL', teamId: null },
           ]
         : []
     );
+    // A channel row wins in its own context whatever it sits above. A team row wins over an
+    // organization row for a run in that team, and the resolver tries the team tier first.
+    p.team.findUnique.mockResolvedValue({ orgId: 'org-1' });
     const res = await post({}, true);
-    // A channel row wins in its own context whatever it sits above; a team row only wins for its
-    // own runs, which never resolved this organization's row.
-    expect(res.json().data.changes[0].shadowedBy).toEqual(['CHANNEL']);
+    expect(res.json().data.changes[0].shadowedBy).toEqual(['CHANNEL', 'TEAM']);
+    await app.close();
+  });
+  it('ignores a team row belonging to another organization', async () => {
+    const { app, p, post } = await setup([
+      { ...agent(), orgId: 'org-1', scope: 'ORGANIZATION' as const },
+    ]);
+    p.agent.findMany.mockImplementation(async ({ where }) =>
+      where.key ? [{ key: A, scope: 'TEAM', teamId: 'team-2' }] : []
+    );
+    // Runs of that team carry its own organization, so they never resolved this row.
+    p.team.findUnique.mockResolvedValue({ orgId: 'org-2' });
+    const res = await post({}, true);
+    expect(res.json().data.changes[0].shadowedBy).toEqual([]);
+    await app.close();
+  });
+  it('reports a failed read as that agent’s outcome rather than the batch’s', async () => {
+    const rows = [agent(), agent(B)];
+    const { app, p, post } = await setup(rows);
+    p.agent.findUnique.mockImplementation(async ({ where }) => {
+      if (where.id === B) {
+        throw new Error('read failed');
+      }
+      return rows.find((r) => r.id === where.id) ?? null;
+    });
+    const res = await post();
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.changes).toMatchObject([
+      { id: A, status: 'OK' },
+      { blockers: ['Could not read this agent: read failed'], id: B, status: 'ERROR' },
+    ]);
+    expect(p.agent.create).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+  it('still returns the applied plan when an audit entry cannot be written', async () => {
+    const { app, p, post } = await setup();
+    p.configAuditLog.create.mockRejectedValueOnce(new Error('audit store down'));
+    const res = await post();
+    // The change is live; the operator is told the record of it is missing rather than being
+    // handed a failed request over something that already happened.
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.changes[0]).toMatchObject({ newVersion: 3, status: 'OK' });
+    expect(res.json().auditWarnings).toEqual([`${A}: audit store down`]);
     await app.close();
   });
   it.each([true, false])('refuses non-admins (preview=%s)', async (preview) => {

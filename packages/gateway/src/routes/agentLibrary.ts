@@ -163,6 +163,24 @@ async function pinnedCredentialError(
   });
 }
 
+/**
+ * Harness-inheritance warnings for a save that has already committed. They are advisory, so a
+ * failure here must not fail the request: the version is saved either way, and an error at this
+ * point would also cost the audit entry that follows it.
+ */
+async function harnessWarnings(
+  prisma: PrismaClient,
+  key: string,
+  modelSpec: string | null,
+  visibleToTeam?: string
+): Promise<string[]> {
+  try {
+    return await inheritingHarnessWarnings(prisma, key, modelSpec, visibleToTeam);
+  } catch {
+    return [];
+  }
+}
+
 const CreateAgentSchema = z
   .object({
     ...AgentBaseFields,
@@ -216,38 +234,49 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         const plan = await bulkUpdateAgentModels(fastify.prisma, request.body, actor.sub, {
           dryRun,
         });
+        // Every write above has committed, so nothing here may cost the operator the report of
+        // what happened — nor the audit trail of the changes that did land.
+        const auditWarnings: string[] = [];
         if (!dryRun) {
           for (const change of plan.changes) {
             if (change.status !== 'OK' || change.newVersion === null) {
               continue;
             }
-            // The old row remains immutable, so its runtime is safe to read after versioning.
-            const current = await fastify.prisma.agent.findUnique({ where: { id: change.id } });
-            await writeAuditLog(fastify, {
-              action: 'UPDATE',
-              actor,
-              after: {
-                modelSpec: change.to,
-                // This operation never touches the reasoning level; the payload mirrors what a
-                // single edit records, so a reader of the audit log sees the same shape.
-                reasoning: current?.reasoning ?? null,
-                runtime: change.runtimeChange?.to ?? current?.runtime ?? null,
-                version: change.newVersion,
-              },
-              before: {
-                modelSpec: change.from,
-                reasoning: current?.reasoning ?? null,
-                runtime: change.runtimeChange?.from ?? current?.runtime ?? null,
-                version: change.version,
-              },
-              // Anchor to the version this change created, as a single edit does: the before-state
-              // belongs to the row it replaced, but the after-state lives on the new one.
-              entityId: change.newId ?? change.id,
-              entityType: 'Agent',
-            });
+            try {
+              // The old row remains immutable, so its runtime is safe to read after versioning.
+              const current = await fastify.prisma.agent.findUnique({ where: { id: change.id } });
+              await writeAuditLog(fastify, {
+                action: 'UPDATE',
+                actor,
+                after: {
+                  modelSpec: change.to,
+                  // This operation never touches the reasoning level; the payload mirrors what a
+                  // single edit records, so a reader of the audit log sees the same shape.
+                  reasoning: current?.reasoning ?? null,
+                  runtime: change.runtimeChange?.to ?? current?.runtime ?? null,
+                  version: change.newVersion,
+                },
+                before: {
+                  modelSpec: change.from,
+                  reasoning: current?.reasoning ?? null,
+                  runtime: change.runtimeChange?.from ?? current?.runtime ?? null,
+                  version: change.version,
+                },
+                // Anchor to the version this change created, as a single edit does: the before-state
+                // belongs to the row it replaced, but the after-state lives on the new one.
+                entityId: change.newId ?? change.id,
+                entityType: 'Agent',
+              });
+            } catch (err) {
+              // Say so rather than fail the request: the change is live either way, and an
+              // operator who is told nothing would believe every entry was written.
+              auditWarnings.push(
+                `${change.key}: ${err instanceof Error ? err.message : String(err)}`
+              );
+            }
           }
         }
-        return { data: plan };
+        return { data: plan, ...(auditWarnings.length > 0 ? { auditWarnings } : {}) };
       }
     );
   }
@@ -438,7 +467,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       // A new model can strand harness agents that inherit it: say so, refuse nothing.
       const runtimeWarnings =
         request.body.modelSpec !== undefined
-          ? await inheritingHarnessWarnings(fastify.prisma, agent.key, agent.modelSpec)
+          ? await harnessWarnings(fastify.prisma, agent.key, agent.modelSpec)
           : [];
       await writeAuditLog(fastify, {
         action: 'UPDATE',
@@ -720,7 +749,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       // A new model can strand harness agents that inherit it: say so, refuse nothing.
       const runtimeWarnings =
         request.body.modelSpec !== undefined
-          ? await inheritingHarnessWarnings(
+          ? await harnessWarnings(
               fastify.prisma,
               agent.key,
               agent.modelSpec,
