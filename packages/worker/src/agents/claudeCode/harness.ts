@@ -1,5 +1,6 @@
 import { isAnthropicSpec, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { ApplicationFailure } from '@temporalio/activity';
+import { claudeCodeEffort } from '../../lib/reasoning.js';
 import { defineHarness } from '../harness/registry.js';
 import { CLAUDE_CODE_CAPABILITIES, harnessToolsGranting } from './policy.js';
 import { type ClaudeCodeAccess, claudeCodeRuntime } from './runtime.js';
@@ -21,10 +22,12 @@ export const claudeCodeHarness = defineHarness<ClaudeCodeAccess>({
         'HARNESS_UNSUPPORTED_MODEL'
       );
     }
+    const effort = claudeCodeEffort(model.reasoning);
     return {
       apiBase: model.apiBase ?? undefined,
       apiKey: model.apiKey,
       modelId: parseProviderModelSpec(model.spec).modelId,
+      ...(effort ? { effort } : {}),
     };
   },
   capabilities: CLAUDE_CODE_CAPABILITIES,

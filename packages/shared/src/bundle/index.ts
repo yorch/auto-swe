@@ -17,7 +17,7 @@ import {
   SAFE_FLAGS_RE,
 } from '../lib/regexSafety.js';
 import { SCANNER_PATTERN_TYPES } from '../lib/scannerPatternTypes.js';
-import { IMPLEMENTER_RUNTIMES, runtimeModelError } from '../types/api.js';
+import { IMPLEMENTER_RUNTIMES, REASONING_LEVELS, runtimeModelError } from '../types/api.js';
 import { WorkflowSpecSchema } from '../workflow/spec.js';
 import { formatValidationIssue, validateSpec } from '../workflow/validateSpec.js';
 
@@ -85,6 +85,13 @@ export const BundleAgentSchema = z.object({
    * opinion). The same field the agent library sets, and the same ADMIN floor:
    * only an admin installs a bundle.
    */
+  /**
+   * How hard the agent's model reasons (`off` | `low` | `medium` | `high`).
+   * Absent leaves an installed agent's level as it is; `null` clears it (no
+   * opinion). Export writes it only when set, so a bundle of agents with no
+   * level hashes as it did before the field existed.
+   */
+  reasoning: z.enum(REASONING_LEVELS).nullable().optional(),
   runtime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   skills: z.array(BundleAgentSkillSchema).optional(),
   systemPrompt: z.string().nullable().optional(),

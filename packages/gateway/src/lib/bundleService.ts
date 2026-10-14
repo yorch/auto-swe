@@ -30,7 +30,7 @@ import {
   skillContentChanged,
 } from '@auto-swe/shared/lib/skillRevision';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { toImplementerRuntime } from '@auto-swe/shared/types/api';
+import { toImplementerRuntime, toReasoningLevel } from '@auto-swe/shared/types/api';
 
 import { scanSkillAdvisory } from './skillScan.js';
 
@@ -368,7 +368,8 @@ export async function exportBundle(
       modelSpec: a.modelSpec,
       name: a.name,
       origin: a.origin,
-      // Only when set, so a bundle of agents with no opinion hashes as it always has.
+      // Each only when set, so a bundle of agents with no opinion hashes as it always has.
+      ...(toReasoningLevel(a.reasoning) ? { reasoning: toReasoningLevel(a.reasoning) } : {}),
       ...(toImplementerRuntime(a.runtime) ? { runtime: toImplementerRuntime(a.runtime) } : {}),
       skills: a.skillRefs.map((r) => ({ skill: r.skill.name, sortOrder: r.sortOrder })),
       systemPrompt: a.systemPrompt,
@@ -705,6 +706,8 @@ export async function installBundle(
           // Absent leaves the installed runtime alone — a bundle authored before the
           // field existed must not clear an admin's choice — while `null` clears it.
           ...(a.runtime !== undefined ? { runtime: a.runtime } : {}),
+          // The same rule for the reasoning level.
+          ...(a.reasoning !== undefined ? { reasoning: a.reasoning } : {}),
           // DbNull (not undefined) so a re-install clears a stale toolKeys override
           // rather than leaving the prior value on the managed base-layer row.
           toolKeys: a.toolKeys ?? Prisma.DbNull,

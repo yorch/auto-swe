@@ -67,6 +67,7 @@ type VersionContent = Pick<
   | 'mcpConnectionId'
   | 'credentialId'
   | 'runtime'
+  | 'reasoning'
   | 'skillRefs'
 >;
 
@@ -79,7 +80,7 @@ function modelText(v: VersionContent): string {
   if (v.modelSpec) {
     return v.modelSpec;
   }
-  return v.inheritsModelFrom ? `Inherits from ${v.inheritsModelFrom}` : 'Role default';
+  return v.inheritsModelFrom ? `Inherits from ${v.inheritsModelFrom}` : 'No model';
 }
 
 function toolsText(keys: string[] | null): string[] {
@@ -133,5 +134,6 @@ export function diffAgentVersions(
     named(after.credentialId, lookups.credentials)
   );
   text('Runtime', before.runtime ?? 'Default', after.runtime ?? 'Default');
+  text('Reasoning', before.reasoning ?? 'Default', after.reasoning ?? 'Default');
   return changes;
 }

@@ -199,6 +199,22 @@ describe('POST /agent-library/:id/restore', () => {
     expect(prisma.agent.create).not.toHaveBeenCalled();
   });
 
+  it('refuses a version that names no model', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { inheritsModelFrom: null, modelSpec: null }))
+      .mockResolvedValueOnce(row(2));
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('MODEL_REQUIRED');
+    expect(prisma.agent.create).not.toHaveBeenCalled();
+  });
+
   it('refuses to restore into a deactivated lineage', async () => {
     const { app, prisma } = await buildApp();
     prisma.agent.findFirst

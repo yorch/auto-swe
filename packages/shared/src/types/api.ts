@@ -983,6 +983,23 @@ export function runtimeModelError(
   return `The claude-code runtime needs an Anthropic model, but this agent's model is '${modelSpec}'. Set the model to anthropic/<model>, or the runtime to mastra.`;
 }
 
+/**
+ * How hard an Agent version's model reasons before it answers — the values of
+ * an Agent version's `reasoning` (and its CHECK constraint). `off` asks for no
+ * reasoning; null is "no opinion": the model's own default, or, for a persona
+ * that inherits its model, its parent's level. The worker maps a level onto
+ * each provider's own option; a provider with no mapping ignores it.
+ */
+export const REASONING_LEVELS = ['off', 'low', 'medium', 'high'] as const;
+export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
+
+/** Narrows a stored reasoning string (an untyped TEXT column) to a known level, else null. */
+export function toReasoningLevel(value: unknown): ReasoningLevel | null {
+  return (REASONING_LEVELS as readonly unknown[]).includes(value)
+    ? (value as ReasoningLevel)
+    : null;
+}
+
 export const EVAL_SIGNAL_SOURCES = [
   'GATE',
   'ASSERT',

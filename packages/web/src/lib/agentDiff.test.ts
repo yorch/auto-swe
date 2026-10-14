@@ -90,4 +90,10 @@ describe('diffAgentVersions', () => {
       { after: 'claude-code', before: 'Default', kind: 'text', label: 'Runtime' },
     ]);
   });
+
+  it('reports a reasoning change, naming no opinion as the default', () => {
+    expect(diffAgentVersions(base, { ...base, reasoning: 'high' })).toEqual([
+      { after: 'high', before: 'Default', kind: 'text', label: 'Reasoning' },
+    ]);
+  });
 });

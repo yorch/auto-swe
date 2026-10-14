@@ -3,6 +3,7 @@ import { isAnthropicSpec, parseProviderModelSpec } from '@auto-swe/shared/lib/mo
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   type ImplementerRuntimeKind,
+  type ReasoningLevel,
   runtimeModelError,
   toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
@@ -58,6 +59,12 @@ export interface AgentBaseInput {
    * family, Mastra for agent runs). Platform-ADMIN only: the routes enforce it.
    */
   runtime?: ImplementerRuntimeKind | null;
+  /**
+   * How hard the model reasons before it answers. null = no opinion: the
+   * provider's default, or the parent's level for a persona that inherits its
+   * model.
+   */
+  reasoning?: ReasoningLevel | null;
 }
 
 export { runtimeModelError };
@@ -79,6 +86,32 @@ export function mergedRuntimeAndModel(
     modelSpec: base.modelSpec === undefined ? (current?.modelSpec ?? null) : base.modelSpec,
     runtime: base.runtime === undefined ? (current?.runtime ?? null) : base.runtime,
   };
+}
+
+/**
+ * Why a version may not be saved without a model, or null. `resolveAgent` binds
+ * the model of the most specific row it finds, and a row that names neither a
+ * `modelSpec` nor an `inheritsModelFrom` parent throws `ConfigMissingError` for
+ * every run that resolves it — at any scope, since an override replaces the
+ * platform-wide row rather than filling in its gaps. Checked on create, and on
+ * an edit that changes either field, so an older row that already lacks both
+ * can still have its other fields edited.
+ */
+export function modelRequiredError(
+  merged: { inheritsModelFrom: string | null; modelSpec: string | null },
+  changesModel: boolean
+): string | null {
+  if (!changesModel || merged.modelSpec?.trim() || merged.inheritsModelFrom?.trim()) {
+    return null;
+  }
+  return 'An agent needs a model: set a model spec, or an agent to inherit the model from.';
+}
+
+/** Whether a write names either model field. */
+export function writesModel(
+  base: Pick<AgentBaseInput, 'inheritsModelFrom' | 'modelSpec'>
+): boolean {
+  return base.modelSpec !== undefined || base.inheritsModelFrom !== undefined;
 }
 
 type AgentReader = Pick<PrismaClient, 'agent'>;
@@ -539,6 +572,7 @@ export async function createAgent(
           name: base.name,
           orgId: scopeWhere(key).orgId,
           origin: null,
+          reasoning: base.reasoning ?? null,
           runtime: base.runtime ?? null,
           scope: key.scope,
           systemPrompt: base.systemPrompt ?? null,
@@ -643,6 +677,7 @@ export async function updateAgent(
           name: pick(base.name, current.name),
           orgId: current.orgId,
           origin: current.origin,
+          reasoning: pick(base.reasoning, current.reasoning),
           runtime: pick(base.runtime, current.runtime),
           scope: current.scope,
           systemPrompt: pick(base.systemPrompt, current.systemPrompt),

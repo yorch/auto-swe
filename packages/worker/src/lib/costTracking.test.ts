@@ -409,6 +409,19 @@ describe('recordLlmUsage', () => {
     expect(row.tokensOutputUsed).toBe(50);
   });
 
+  it('meters and prices reasoning as output: the output total, which includes it, once', async () => {
+    const row = ledger({});
+    // The AI SDK (and Mastra's usage built from it) reports `outputTokens` as the
+    // whole output, thinking included, and the reasoning share beside it.
+    const usage = { inputTokens: 100, outputTokens: 1_000, reasoningTokens: 900 };
+
+    const priced = await recordLlmUsage('wf-temporal-1', 'implementer', usage);
+
+    expect(row.tokensOutputUsed).toBe(1_000);
+    expect(priced.outputTokens).toBe(1_000);
+    expect(priced.costUsd).toBeCloseTo(await calculateCostUsd(priced.modelSpec, 100, 1_000), 10);
+  });
+
   describe('without a ledger row', () => {
     beforeEach(() => {
       (prisma.activeWorkflow.update as unknown as Mock).mockRejectedValue(

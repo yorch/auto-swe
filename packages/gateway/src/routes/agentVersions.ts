@@ -1,11 +1,12 @@
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { toImplementerRuntime } from '@auto-swe/shared/types/api';
+import { toImplementerRuntime, toReasoningLevel } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
   type AgentScope,
   AgentVersionConflictError,
+  modelRequiredError,
   updateAgent,
   validateCredentialRef,
   validateMcpConnectionRef,
@@ -127,6 +128,12 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
           'This agent is deactivated. Reactivate it before restoring a version.'
         );
       }
+      // A version cut before a model was required may name neither field; restoring it would
+      // make every run that resolves the agent throw, so refuse as create and edit do.
+      const modelError = modelRequiredError(source, true);
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
+      }
       // The same reference check an edit gets: the connection may have been deactivated or
       // belong to another team since that version was current.
       const mcpError = await validateMcpConnectionRef(fastify.prisma, source.mcpConnectionId, {
@@ -171,6 +178,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
             mcpConnectionId: source.mcpConnectionId,
             modelSpec: source.modelSpec,
             name: source.name,
+            reasoning: toReasoningLevel(source.reasoning),
             // Restore is admin-only, so it may restore the runtime too.
             runtime: toImplementerRuntime(source.runtime),
             skillRefs: source.skillRefs.map((r) => ({

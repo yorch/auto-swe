@@ -1,4 +1,4 @@
-import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
+import type { ImplementerRuntimeKind, ReasoningLevel } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -30,6 +30,8 @@ export interface AgentRow {
   credentialId: string | null;
   /** The loop that drives the agent in a workspace; null = no opinion. */
   runtime?: ImplementerRuntimeKind | null;
+  /** How hard the model reasons; null = no opinion (provider default, or the parent's). */
+  reasoning?: ReasoningLevel | null;
   origin: string | null;
   isBuiltIn: boolean;
   isVerified: boolean;
@@ -61,6 +63,7 @@ export interface CreateAgentBody {
   credentialId?: string | null;
   /** Platform-admin only. */
   runtime?: ImplementerRuntimeKind | null;
+  reasoning?: ReasoningLevel | null;
 }
 
 export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>>;

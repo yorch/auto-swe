@@ -30,19 +30,21 @@ A missing GLOBAL row is a startup error, not a runtime condition — `assertConf
 
 `ProviderCredential` rows are scoped `GLOBAL`, `ORGANIZATION`, or `TEAM` — enforced by a DB CHECK, so there is deliberately no channel- or template-level credential tier. Credential resolution cascades `TEAM → ORGANIZATION → GLOBAL`. Templates and channels that want to pin a specific credential do so via `Agent.credentialId` pointing at one of those rows. The singleton `EmbeddingConfig` row covers the system-wide embedding model — no scope cascade (only one embedding role in the system).
 
+**Reasoning.** An agent version may also carry `Agent.reasoning` (`off`, `low`, `medium`, `high`; null = the model's default), which the worker binds into the model so every call asks the provider for that much thinking. A persona with no level of its own takes the level of the row it inherits its model from. Anthropic, OpenAI and Google models honour `low`, `medium` and `high`; `off` reaches only the models whose provider adapter knows they accept it, and OpenAI-compatible providers and OpenAI credentials with an `apiBase` are sent nothing. Thinking is output, so it is metered and priced as output tokens. See [agents.md §2.1](./agents.md#21-reasoning).
+
 **Pinned credentials.** When an agent version carries `Agent.credentialId`, its model is called with that credential instead of the provider-name cascade. A persona with no pin of its own takes the pin of the row it inherits its model from, as it takes the model. Pinning is what lets two agents call the same provider with different keys — two OpenAI accounts, say — without renaming one provider and giving up its native client. A pin is used only when the credential still exists, belongs to the provider the model spec routes to, and sits at a scope the run can reach (GLOBAL, the run's organization, or the run's team). Otherwise the worker logs `agent credential pin not usable` with the reason (`missing`, `provider-mismatch`, `out-of-scope`) and falls back to the cascade.
 
 ## Per-scope system prompts
 
-`Agent` has an optional `systemPrompt` field. When set, it replaces the agent's hardcoded system prompt for that scope. The cascade works identically to model selection:
+`Agent` has an optional `systemPrompt` field. When set, it replaces the agent's hardcoded system prompt. The prompt comes from the same row as the rest of the agent: `resolveAgent` picks the most specific active row through the cascade, and uses that row's `systemPrompt`:
 
 ```
-WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → (use agent's built-in prompt)
+WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL
 ```
 
-`systemPrompt` cascades **independently of `modelSpec`**: a higher-scope row may set the model and leave `systemPrompt` null, in which case the search for a prompt continues down the cascade. So a team override can change the model without losing the global default prompt, and vice versa.
+A prompt does **not** fall through on its own: an override row whose `systemPrompt` is null runs on the agent's built-in prompt, not on the GLOBAL row's prompt. A team that overrides an agent to change its model and wants to keep a customised platform-wide prompt copies that prompt into its override.
 
-The null default (no row has a `systemPrompt`) means the agent uses its built-in prompt unchanged. Setting a prompt at GLOBAL scope overrides it system-wide; a TEAM, CHANNEL, or WORKFLOW_TEMPLATE row can further refine it for a narrower audience.
+Setting a prompt at GLOBAL scope overrides the built-in prompt system-wide, for runs that resolve the GLOBAL row; a TEAM, CHANNEL, or WORKFLOW_TEMPLATE row replaces it for a narrower audience.
 
 Common uses:
 

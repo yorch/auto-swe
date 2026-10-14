@@ -3013,6 +3013,12 @@ model Agent {
   // follows the run-pinned `workspace.implementerRuntime` setting and agent runs
   // use Mastra. A persona that inherits its model inherits this too.
   runtime            String?
+  // How hard the model reasons before it answers: 'off', 'low', 'medium' or 'high'
+  // (CHECK constraint). null = no opinion: the model's own default. Mapped onto each provider's
+  // own option (Anthropic extended thinking, OpenAI reasoning effort, Google thinking
+  // budget); other providers ignore it. A persona that inherits its model inherits
+  // this too, unless it sets its own.
+  reasoning          String?
   // Provenance: null = core platform; 'swe-starter' = SWE seed content.
   origin             String?
   isBuiltIn          Boolean     @default(false) @map("is_built_in")

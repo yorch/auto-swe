@@ -6,6 +6,7 @@
 /// that carry their own `modelSpec` (so they need a GLOBAL `Agent` at worker boot,
 /// drive cost pricing, and get a model-config UI label).
 import type { SettingResolveCtx } from '@auto-swe/shared/config/types';
+import type { ReasoningLevel } from '@auto-swe/shared/types/api';
 
 export { MODEL_BACKED_AGENT_KEYS, type ModelBackedAgentKey } from '@auto-swe/shared/agentKeys';
 
@@ -76,6 +77,13 @@ export interface ResolvedModelConfig {
    * entry caching this config uses the short fall-through TTL.
    */
   credentialFellThrough?: boolean;
+  /**
+   * How hard the model reasons (`Agent.reasoning`), read along the same
+   * `inheritsModelFrom` chain as the spec: a persona with no level of its own
+   * takes its parent's. `null`/absent = no opinion, so the provider's default
+   * applies. Bound into the model by `lib/models.ts`.
+   */
+  reasoning?: ReasoningLevel | null;
   /**
    * Optional system prompt override. `undefined` means use the hardcoded
    * constant in prompts.ts. Set on the `Agent` row via the admin UI.

@@ -1,3 +1,4 @@
+import type { ReasoningLevel } from '@auto-swe/shared/types/api';
 import type { Agent } from '@mastra/core/agent';
 import type { z } from 'zod';
 import { resolveModel } from '../models.js';
@@ -55,6 +56,8 @@ export interface InlineAgentSpec {
   modelSpec: string;
   apiKey: string;
   apiBase?: string;
+  /** How hard the model reasons; absent = the provider's default. */
+  reasoning?: ReasoningLevel | null;
   systemPrompt: string;
   skills?: ResolvedSkill[];
   tools?: AgentTools;
@@ -125,7 +128,7 @@ export async function resolveAgentSpec(
     return {
       agentKey: i.agentKey ?? 'inlineAgent',
       memoryScope: i.memoryScope,
-      model: resolveModel(i.modelSpec, i.apiKey, i.apiBase),
+      model: resolveModel(i.modelSpec, i.apiKey, i.apiBase, i.reasoning),
       modelSpec: i.modelSpec,
       outputSchema: i.outputSchema,
       skills: i.skills ?? [],
@@ -155,7 +158,12 @@ export async function resolveAgentSpec(
   return {
     agentKey,
     memoryScope,
-    model: resolveModel(agent.model.spec, agent.model.apiKey, agent.model.apiBase),
+    model: resolveModel(
+      agent.model.spec,
+      agent.model.apiKey,
+      agent.model.apiBase,
+      agent.model.reasoning
+    ),
     modelSpec: agent.model.spec,
     outputSchema,
     skills: agent.skills,

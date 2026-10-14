@@ -127,7 +127,7 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
 - **API + UI:** `/api/v1/platform/agent-library` (plus `/api/v1/teams/:id/agent-library`) and
   `/studio/agents/library`. Each agent's History view lists its versions, shows what changed
   between a version and the one before it (prompt as a line diff; model, skills, tools,
-  credential and MCP connection as field changes), and restores an older version as a new one. A
+  credential, MCP connection, runtime and reasoning level as field changes), and restores an older version as a new one. A
   restore leaves the prompt out of the new version when it equals the current prompt, so it keeps
   the current verification. A restore runs the same MCP connection check as an edit (400 when the
   connection is inactive or another team's), warns about skills deactivated since, and is refused
@@ -137,6 +137,12 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
   and inherited along `inheritsModelFrom`; setting or changing it takes a platform ADMIN, in the
   agent library or by installing a bundle that carries it ([bundles.md](./bundles.md)). See
   [§3.7](#37-runtimes-mastra-and-the-harnesses).
+- **Reasoning:** an optional `reasoning` (`off`, `low`, `medium` or `high`; null = no opinion) sets
+  how hard the agent's model reasons before it answers. It is resolved with the rest of the version
+  and inherited along `inheritsModelFrom` with the model, so a persona with no level of its own takes
+  its parent's and one that sets a level keeps it. Anyone who may edit the version may set it (it
+  has no ADMIN floor, unlike the runtime); a restore and a bundle carry it too. See
+  [§2.1](#21-reasoning).
 - **The `agent` node** carries an `agentRef` (`<key>` or `<key>@<version>`) plus optional
   `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
   and calls `runAgent`. With `workspace: true` the node runs in a throwaway checkout of the run's
@@ -157,7 +163,7 @@ ORGANIZATION scope       →  (if the team belongs to an org)
 GLOBAL scope             →  (required — every referenced agent must resolve here)
 ```
 
-**`systemPrompt` cascades independently from `modelSpec`.** A higher-scope row may supply the model spec but leave `systemPrompt = null`, allowing the cascade to continue looking for a system prompt at lower scopes. This means a team override can change the model without losing the global default system prompt (and vice versa).
+**`systemPrompt` comes from the resolved row.** The most specific active row supplies the prompt along with everything else; a row whose `systemPrompt` is null runs on the agent's built-in prompt, not on a broader row's. A team override that changes the model and should keep a customised platform-wide prompt carries a copy of it. The review personas are the exception: one with no prompt of its own falls back to the parent `reviewer` row's prompt ([§4](#4-the-review-network)).
 
 Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is found at any scope. Missing rows surface as a clear error message; credentials are managed at `/studio/models`, per-agent model specs at `/studio/agents/library`.
 
@@ -166,6 +172,53 @@ Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is fo
 **Files:** `packages/worker/src/lib/config/agentResolver.ts` — `resolveAgent` (the sole model/prompt/skills/tools resolver; `getModel`/`getModelSpec` are shims over it); `packages/worker/src/lib/config/resolver.ts` — `resolveProviderCredential`, `resolveEmbeddingConfig`, `ConfigMissingError`.
 
 **Cache:** Model config is cached in-process with a short TTL (configurable via `configCacheTtlMs()`). Cache is invalidated on pattern mutations via `invalidate()`. Mid-run config changes take effect on the next LLM call.
+
+### 2.1 Reasoning
+
+`Agent.reasoning` travels with the model: `resolveAgent` reads it along the same `inheritsModelFrom`
+chain as the spec (the first row with a level decides) onto `ResolvedModelConfig.reasoning`, and the
+worker's model binding (`buildModel` in `lib/models.ts`) binds it into the model it builds. Every
+call through that model then carries the AI SDK's provider-neutral `reasoning` call setting
+(`reasoningMiddleware`, `lib/reasoning.ts`), unless the caller set one itself. So the Mastra loop, a
+structured-output call, the generic `runAgent` and Pi's model bridge all honour one level the same
+way, with no per-call-site option.
+
+`reasoningCallSetting(spec, level, apiBase)` is the one mapping. The cells say what the worker
+sends; the adapter then translates it per model:
+
+| Level | Anthropic (a model that can think) | OpenAI (no `apiBase`) | Google (a model that can think) |
+|---|---|---|---|
+| null (no opinion) | nothing: the model's default | nothing | nothing |
+| `off` | `none`: thinking disabled; a model that cannot turn thinking off (the adapter knows which) runs at its lowest setting | `none` (effort `none`) only for `gpt-6-sol` and `gpt-6-luna`, the models the adapter lists as taking it; nothing for any other model, `gpt-6.1-sol` included | nothing: the model's default |
+| `low` / `medium` / `high` | the level: adaptive thinking at that effort, or a thinking budget (with `max_tokens` raised to fit it) on a model that predates adaptive thinking | the level as the reasoning effort; the adapter drops an effort a GPT-6 model does not list, and sends none to a model that does not reason | the level as a thinking level (Gemini 3), or a thinking budget (Gemini 2.5) |
+
+"A model that can think" follows the adapter's own model patterns. For Anthropic it is Claude 3.7
+and every `claude-` id outside the Claude 2 and Claude 3 generations (number-first ids such as
+`claude-3-haiku-…` and family-first ones such as `claude-haiku-3-5-…` alike), an unrecognised newer id
+included, as the adapter treats it as the newest. For Google it is Gemini 2.5 (not its `-image` and `-tts` variants), and every `gemini-` id
+that is neither Gemini 2 nor older, which the adapter gives its Gemini 3 behaviour. Any other model
+under those providers — Claude 3 Haiku, Gemini 2.0, Gemma — is sent nothing at any level, because the
+adapter would ask it for a thinking budget it refuses.
+
+`off` is sent only where the installed adapter's own capability data says the model accepts it (or
+how to translate it). OpenAI's adapter sends `none` unchecked to an o-series or GPT-5 model, which
+refuse it, and Google's has no data on which models may stop thinking (`gemini-2.5-pro` refuses a
+zero budget), so for those `off` sends nothing and the model runs at its default.
+
+Some credentials get nothing at all, whatever the level. An OpenAI-compatible provider is sent
+nothing: its adapter would forward a raw `reasoning_effort` that an endpoint may refuse. An OpenAI
+credential with an `apiBase` is bound to the Chat Completions adapter, which forwards the same raw
+field for any model to whatever gateway the base names, so it is sent nothing too. A level must
+never fail a call.
+
+Reasoning tokens are output tokens. Each provider's `outputTokens` already includes them (its
+`outputTokenDetails.reasoningTokens` is a share of that total, not an addition), and budgets and
+prices are charged on `outputTokens` (`recordLlmUsage`, Pi's `usageTotals`), so a call that thinks is
+metered and priced for its thinking.
+
+The Claude Code harness drives its model itself, so the level reaches it as the Agent SDK's `effort`
+option instead (`claudeCodeEffort`): `low`, `medium` and `high` set that effort; `off` and no opinion
+leave the harness's own default, since the harness chooses its thinking configuration per model.
 
 ---
 
@@ -739,7 +792,15 @@ they would take the process's global `fetch` and bypass the SSRF guard and the
 Mastra loop can — a built-in provider, or an OpenAI-compatible one whose credential names an
 `apiBase` (refused with `HARNESS_UNSUPPORTED_MODEL` before anything is built when it names none) —
 and the credential never enters the container. Each call is debited as it ends (`turn.callSpent`),
-at the Agent's spec, and a failed call's error is the one the turn fails with. Pi's own
+at the Agent's spec, and a failed call's error is the one the turn fails with. The model carries the
+Agent's reasoning level ([§2.1](#21-reasoning)). An assistant turn reaches Pi's history as its parts
+in the order the model produced them — reasoning, text and tool calls — and each part keeps its
+provider metadata (an Anthropic thinking signature or redacted thinking, an OpenAI reasoning item, a
+Google thought signature) in the part's signature field (`piContentOf`), from which `toModelMessages`
+rebuilds the AI SDK part with its `providerOptions`. So the call after a tool call sends the previous
+turn's signed thinking back, as a provider requires while the model continues with thinking on. On an
+OpenAI model the kept metadata is the Responses item id, and the adapter sends those parts back as
+references to items OpenAI stored, which needs response storage on (§11). Pi's own
 summarising compaction, sessions on disk, settings, extensions, skills and prompt templates are not part of
 this: nothing of Pi's touches the worker's filesystem.
 
@@ -757,7 +818,9 @@ the adapter fits it to `workspace.harnessContextTokens` (default 120,000 tokens;
 workflow template, team and organization) without a model call, which keeps metering exact. Before each
 model call, through Pi's `transformContext` hook, it estimates the system prompt, the tool definitions
 and the messages at three characters per token (code and JSON tokenise densely, so the estimate leans
-towards compacting early). Over the budget, it works in phases until the estimate is under it:
+towards compacting early). Thinking parts and the provider
+metadata on a turn's parts count toward it and are never stubbed, so a reasoning-heavy history is fitted
+only by dropping whole exchanges. Over the budget, it works in phases until the estimate is under it:
 
 1. In every exchange before the newest, oldest first, it replaces the text of each tool result with a
    one-line stub naming the tool, and each large string in a `write` or `edit` call's arguments
@@ -1361,10 +1424,15 @@ Importing skills from an external repository is a separate surface, documented w
 ### 9.2 Agent library (model / prompt / skills / tools)
 
 The single governed surface for per-key config. An Agent payload carries
-`modelSpec` / `inheritsModelFrom`, `systemPrompt`, `credentialId`, ordered
+`modelSpec` / `inheritsModelFrom`, `reasoning`, `systemPrompt`, `credentialId`, ordered
 `skillRefs`, and `toolKeys` (`null` = all four workspace tools; values from
 `IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash']`).
-Writes cut a new immutable `version`.
+Writes cut a new immutable `version`. A create, or an edit that changes `modelSpec` or
+`inheritsModelFrom`, is refused with `400 MODEL_REQUIRED` when the version would name neither:
+`resolveAgent` binds the model of the most specific row it finds, so such a row fails every run that
+resolves it, at any scope. An older row that already lacks both can still have its other fields
+edited. A blank `systemPrompt` resolves to the agent's built-in default prompt, not to a broader
+row's prompt.
 
 For admins, each row of the library table carries a "No credential" badge on its Model cell when the
 provider it calls has no usable credential (and the row is not pinned to its own `credentialId`). An embedding model pinned to another provider's credential (or one the platform cannot embed with) fails the embeddings readiness item but neither badges the provider it names nor marks it missing in the credentials checklist.
@@ -1396,7 +1464,7 @@ template override is never badged, because it may use a different model or crede
 | `Skill` | `skills` | Skill definitions (name, promptText, isBuiltIn, isVerified, isActive, scope, currentRevision) |
 | `SkillRevision` | `skill_revisions` | Immutable history of a skill's text and description; what a run's `skillRevisions` pin reads |
 | `SkillSource` | `skill_sources` | An external GitHub / GitHub Enterprise folder skills were imported from: location, ref, pinned commit, script mode, scope (§6.6) |
-| `Agent` | `agents` | Single source of truth per key/scope: model spec, system prompt, credential pin, tool keys, skill refs (versioned) |
+| `Agent` | `agents` | Single source of truth per key/scope: model spec, system prompt, credential pin, tool keys, skill refs, runtime, reasoning level (versioned) |
 | `AgentSkillRef` | `agent_skill_refs` | Join from an `Agent` to a `Skill` with `sortOrder` |
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |
 | `EmbeddingConfig` | `embedding_configs` | Singleton embedding model + credential |
@@ -1431,8 +1499,30 @@ template override is never badged, because it may use a different model or crede
   content in old `write`/`edit` calls and dropping the oldest exchanges, so a long session loses detail
   from its early work rather than failing at the model's window; the estimate is characters over
   three, tool-call arguments other than `write`/`edit` content are never shrunk, and a newest exchange
-  still over the budget once everything but its newest result is stubbed is sent whole), no extensions, skills, prompt templates or settings from the repository or the worker, no images (a
-  file is read as text), and no reasoning (thinking is off).
+  still over the budget once everything but its newest result is stubbed is sent whole), no extensions, skills, prompt templates or settings from the repository or the worker, and no images (a
+  file is read as text).
+- **A reasoning level is a request, not a guarantee.** No level reaches an Anthropic or Google model
+  the adapter's patterns do not count as able to think (Claude 2 and 3 other than 3.7, Gemini 2.0
+  and older, Gemma, any non-Gemini id under `google`): those run as if the level were unset. The
+  patterns are copied from the installed adapters, so a model they misfile is misfiled here too.
+  `off` reaches only Anthropic models that can think and the two OpenAI models whose adapter lists
+  the `none` effort; on every other OpenAI model and every Google model it sends nothing, and the
+  model thinks at its default. Where a level is sent, an
+  adapter that cannot apply it to the model (a GPT-6 model without that effort, an Anthropic model
+  that cannot turn thinking off) sends the nearest setting it can, or none, with an AI SDK warning
+  the worker does not surface. An OpenAI-compatible provider, and an OpenAI credential with an
+  `apiBase`, are sent no level at all. The Claude Code harness honours `low`, `medium` and `high`
+  as its effort but not `off`, which leaves it at its own default ([§2.1](#21-reasoning)). The
+  level is not pinned per run on its own: it moves with the Agent version, so the GLOBAL
+  agent-version pin freezes it and a scoped override edited mid-run reaches the next call, as its
+  model does.
+- **Pi on OpenAI needs response storage.** Pi's history keeps OpenAI's item ids with the assistant
+  turn's reasoning, text and tool calls, and the Responses adapter, with storage on (its default; the
+  worker never turns it off), sends a later call those parts as `item_reference`s to items OpenAI
+  stored. An organisation with response storage disabled (zero data retention) has nothing stored to
+  reference, so a Pi session on an OpenAI model fails on its second model call there. The Mastra loop
+  relies on the same storage between the steps of one call. No credential says storage is disabled,
+  so the worker cannot fall back to sending the parts inline.
 - **Pi's `grep` depends on the image.** With ripgrep in the executor image it honours `.gitignore`;
   without it, `grep -rn` searches everything but `.git` and `node_modules` (build output included),
   and its `glob` filter is applied after the search rather than during it. Pi's `find` honours no

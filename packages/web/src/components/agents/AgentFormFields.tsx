@@ -1,6 +1,6 @@
 'use client';
 
-import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
+import type { ImplementerRuntimeKind, ReasoningLevel } from '@auto-swe/shared/types/api';
 import { type ReactNode, useState } from 'react';
 import { ModelSpecPicker } from '@/components/modelConfig/ModelSpecPicker';
 import { Combobox } from '@/components/ui/Combobox';
@@ -27,7 +27,16 @@ export interface AgentFormValue {
   mcpConnectionId?: string | null;
   credentialId?: string | null;
   runtime?: ImplementerRuntimeKind | null;
+  reasoning?: ReasoningLevel | null;
 }
+
+const REASONING_OPTIONS: { label: string; value: '' | ReasoningLevel }[] = [
+  { label: "Default (the model's own; an inherited model's agent decides)", value: '' },
+  { label: 'Off', value: 'off' },
+  { label: 'Low', value: 'low' },
+  { label: 'Medium', value: 'medium' },
+  { label: 'High', value: 'high' },
+];
 
 const RUNTIME_OPTIONS: { label: string; value: '' | ImplementerRuntimeKind }[] = [
   { label: 'Default (the workspace.implementerRuntime setting; Mastra for agent runs)', value: '' },
@@ -46,6 +55,7 @@ type FieldName =
   | 'skills'
   | 'mcpConnection'
   | 'credential'
+  | 'reasoning'
   | 'runtime';
 
 /** Per-field hint and placeholder copy — each caller explains the fields in its own terms. */
@@ -221,6 +231,16 @@ export function AgentFormFields({
           value={value.inheritsModelFrom ?? ''}
         />
       )}
+      <Combobox
+        hint={
+          copy.reasoning?.hint ??
+          'How hard the model thinks before it answers. Anthropic, OpenAI and Google models honour it; other providers ignore it. More reasoning costs more output tokens.'
+        }
+        label={optional('Reasoning')}
+        onChange={(v) => onChange({ reasoning: (v || null) as ReasoningLevel | null })}
+        options={REASONING_OPTIONS}
+        value={value.reasoning ?? ''}
+      />
       <Textarea
         hint={copy.systemPrompt?.hint}
         label={optional('System prompt')}
