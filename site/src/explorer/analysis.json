@@ -5336,7 +5336,7 @@
       "title": "Retry routes connection-free and non-git requests to the template path"
     },
     {
-      "anchor": "code: 'EPIC_RETRY_REQUIRED',",
+      "anchor": "'EPIC_RETRY_REQUIRED',",
       "before": 4,
       "id": "retryEpic",
       "lines": 8,
@@ -7924,7 +7924,7 @@
       "before": 0,
       "id": "checkWorkflowClient",
       "lines": 60,
-      "path": "packages/web/src/components/workflow/TemplateEditor.tsx",
+      "path": "packages/web/src/components/workflow/templateEditor/useTemplateEditorState.ts",
       "title": "Check workflow asks the server once per click and reports when it could not run"
     },
     {
