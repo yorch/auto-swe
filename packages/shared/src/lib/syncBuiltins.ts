@@ -1,7 +1,6 @@
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatterns/index.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
-import { BUDGET_TIERS } from '../types/workflow.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import {
   BRAND_REVIEWER_PROMPT,
@@ -1014,7 +1013,8 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
   'default-engineering': [
     {
       properties: {
-        budget: { enum: [...BUDGET_TIERS], type: 'string' },
+        // A frozen record of what a past release shipped: never derived from a live constant.
+        budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
         connectionId: UUID_CONNECTION_ID,
         description: { type: 'string' },
         ticketId: { type: 'string' },
