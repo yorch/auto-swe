@@ -1038,16 +1038,20 @@ Current constraints of the system as built. Deliberate product boundaries are in
   branch records under a prefixed id (`fan[0]/impl`), so one node's failure rate is split across its
   branches rather than aggregated.
 - **Five node types have no editor form.** `eval` and the four human node types are offered on the
-  palette and are fully authorable in a spec, but the inspector shows raw JSON for them (and for
-  `terminate.result`, a shell's `timeoutMs`, and a container step's resource and transport fields).
-  A `humanDecision` option or a `humanInput` field can be retargeted from the canvas but not
-  added.
+  palette and are fully authorable in a spec, but their inspector section says there are no form
+  fields yet and points at JSON mode (as it does for `terminate.result`, a shell's `timeoutMs`, and a
+  container step's resource and transport fields). A `humanDecision` option or a `humanInput` field
+  can be retargeted from the canvas but not added.
 - **A run's branch name is recomputed by every activity, not pinned.** `branchPrefix` lives on the
   `WorkflowDefaults` singleton, and `executeImplementation`, the quality gates, the CI steps and a
-  shell step each resolve it when they run. An edit between two steps of one run makes the later
-  step compute a different work branch than the earlier one pushed to; a gate then refuses rather
-  than checking the wrong tree. Unlike the interpreter's bounds, this is not a run-pinned setting —
-  see [configuration.md §4](./configuration.md#4-run-pinned-settings) for what is pinned and why.
+  shell step each resolve it when they run. An edit between two steps of one run makes the later step
+  compute a different work branch than the earlier one pushed to — though only where the step has no
+  explicit override: a gate's `branch` config, a node's own `branch`, and a `CodeResult.branch`
+  already in context each take precedence over the recomputed name. The failure mode is a step that
+  cannot find the branch it expects (a gate then refuses rather than checking the wrong tree), or, if
+  a branch of that name happens to exist, one that reads the wrong tree. Unlike the interpreter's
+  bounds, this is not a run-pinned setting — see
+  [configuration.md §4](./configuration.md#4-run-pinned-settings) for what is pinned and why.
 - **`Idempotency-Key` on `POST /work-requests` has an in-progress window and never expires.** The
   ledger rows are written before the Temporal start, so a same-key request that arrives while the
   start is in flight gets `409 IDEMPOTENCY_KEY_IN_PROGRESS` (`Retry-After`), not success: the key only
@@ -1255,11 +1259,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   idempotency ledger on the run, the node's recording id (its visit number on a loop's later passes)
   and the connection, so a retry of the same visit reuses the recorded result instead of acting
   again, while two write nodes, two fan-out branches, or two passes of a loop each act — a loop's
-  *second visit* is a different node id, so it acts. That is a guard for a retry of the same visit,
-  not exactly-once: the remote call and the ledger row are not one transaction (see
+  *second visit* is a different node id, so it acts. That is completed-result caching, not
+  exactly-once delivery: the remote call and the ledger row are not one transaction (see
   [autonomy-policies.md §4.1](./autonomy-policies.md#41-the-mutation-boundary)).
-  A write node
-  that names no explicit payload writes its own inputs, less `connectionId`. Notion, Confluence, Zendesk, Slack, and issue-tracker outcomes are concrete;
+  A write node that names no explicit payload writes its own inputs, less `connectionId`. Notion, Confluence, Zendesk, Slack, and issue-tracker outcomes are concrete;
   `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
   activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
 - **A template's declared connections are authorized at launch, and mutating tools obey the

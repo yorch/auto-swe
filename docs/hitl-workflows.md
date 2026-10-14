@@ -412,12 +412,14 @@ lifecycle changes and delegated configuration grants are managed under `/govern/
   not re-checked against current membership, so someone who launched a run can still see it, cancel
   it and resolve its steps after being removed from the team that owns its repository. Revoking
   that means deactivating the user.
-- **`approverCount` is the one binding no lint rule reads.** `validateSpec` collects the paths that
-  must resolve (`inputs`, `set.values`, `eval.target`, `fanOut.over`, `terminate.result`) but not a
-  `humanApproval`'s `approverCount`, and `normalizeApproverCount` reads anything that is not a
-  positive integer as **one** approver. A mistyped path therefore silently turns a multi-approver
-  gate into a single-approver one. `humanReview.contentFrom` and a `humanDecision` option's `value`
-  are likewise unchecked.
+- **`approverCount` is the one binding no lint rule reads.** `validateSpec` collects the bindings
+  that must resolve (`inputs`, `set.values`, `eval.target`, `eval.candidateRef`, `fanOut.over`,
+  `terminate.result`) but not a `humanApproval`'s `approverCount`, and `normalizeApproverCount` reads
+  anything that is not a positive integer — an unparseable string included — as **one** approver (a
+  numeric string like `"2"` is converted and honoured). A mistyped path therefore silently turns a
+  multi-approver gate into a single-approver one. `humanReview.contentFrom` and a `humanDecision`
+  option's `value` are likewise unchecked — the latter is a literal rather than a binding, so what it
+  lacks is duplicate-value validation, not provenance.
 - **The four human node types have no canvas form.** The editor's inspector offers raw JSON for
   them, so a `humanDecision` option or a `humanInput` field can be retargeted but not added or
   removed from the form. See

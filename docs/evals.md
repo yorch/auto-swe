@@ -86,11 +86,20 @@ That branch is the run's own work branch (`<branchPrefix>/<ticketId>`) unless th
 }
 ```
 
-A per-branch fan-out subtask pushes `<branchPrefix>/<ticketId>/<subtask>`, and a launch that named a
-`baseBranch` does not work on `<branchPrefix>/<ticketId>` at all. Without `candidateRef` a `gate`
-scorer in either case checks out whatever that branch happens to hold and reports a failure the
-change never caused — a floor scorer fails safe, so the wrong branch reads as a broken change. Leave
-`candidateRef` off to accept the default.
+Name one whenever the code under review is not on `<branchPrefix>/<ticketId>` — which a per-branch
+fan-out subtask is not (`<branchPrefix>/<ticketId>/<subtask>`), and a step with its own `branch`
+override or a `codeResult.branch` may not be either. A `candidateRef` that cannot be resolved falls
+back to the default, and a binding whose path is wrong is reported by `validateSpec` just like
+`target`'s, so a mistyped path does not silently score the wrong tree.
+
+Scoring the wrong branch is wrong in **both** directions, and the second is the dangerous one:
+
+- if `<branchPrefix>/<ticketId>` does not exist, the checkout fails and a floor scorer records
+  `passed: false` — a failure the change never caused;
+- if it exists — an older attempt's branch, or a sibling run's — the scorer runs against *that* tree.
+  Its tests may pass, so the eval reports a green gate while verifying code the change never touched.
+
+Leave `candidateRef` off only when the default branch really is the candidate.
 
 ---
 

@@ -100,24 +100,38 @@ inbox and the Slack teammate both surface the same way any other human gate is s
 ### 4.1 The mutation boundary
 
 A recorded decision is only a gate if the step that performs the action checks it. That check lives
-in `packages/worker/src/lib/externalWrite.ts` and covers every step that changes something outside
-the platform — `writeOutcome`, `runTool` and `mcpCallTool` — so recording a `require_approval`
-decision and then writing through a differently-named step cannot happen:
+in `packages/worker/src/lib/externalWrite.ts` and covers the three workflow steps that change
+something outside the platform — `writeOutcome`, `runTool` and `mcpCallTool`:
 
 - Before a mutation, the latest `publish` decision for the run is read. If it is `require_approval`
   and no `approve` was recorded after it, the step is refused with a non-retryable
   `APPROVAL_REQUIRED`. A run that recorded no `publish` decision is not gated — the policy exists
   where something asked for it.
+- The decision is matched to the **run**, not to the action: a run-wide requirement, from any risk
+  class, holds every mutation until it is satisfied, and the guard cannot tell an approval for one
+  human step from an approval for another. A template that gates one action and then performs an
+  unrelated write is therefore held by the first gate. That is the conservative direction, and it is
+  the same rule `writeOutcome` has always used.
 - Connector tools that only read (`fetchTicket`, `fetchIssue`) are exempt: they change nothing, so
-  they are neither gated nor recorded. Every other tool — including every MCP tool, whose semantics
-  belong to the remote server — is treated as a mutation.
+  they are neither gated nor recorded. So is an MCP tool its server declares read-only with the
+  protocol's `readOnlyHint` annotation. Every other call — including an MCP tool with no annotation,
+  whose `readOnlyHint` defaults to false — is treated as a mutation.
 - A mutation is also recorded against the outcome ledger (see
-  [architecture.md §4](./architecture.md#4-workflow-engine)), so an activity retry returns the first
-  result instead of repeating the external effect.
+  [architecture.md §4](./architecture.md#4-workflow-engine)). A retry that arrives after the row is
+  written returns the recorded result rather than repeating the effect. This is *completed-result
+  caching, not exactly-once delivery*: the remote call and the row are not one transaction, so a
+  mutation that succeeds and then crashes before its row is written is repeated by the retry, and two
+  concurrent attempts can both observe no row.
 
-Reads and container steps are outside this: `shell` and `containerStep` reach the network through
-the sandbox rather than a connector, and are governed by the image allowlist and egress policy
-instead.
+Outside this boundary:
+
+- **An agent's own tool calls.** An agent granted the `mcp` tool key calls MCP tools inside its own
+  loop, through `lib/mcpTools.ts`, which does not consult this guard or the ledger. Governance for
+  those is the agent's tool grant and the connection's operator switch.
+- **Sandbox steps.** `shell` and `containerStep` reach the network through the sandbox rather than a
+  connector, so they are governed by the image allowlist and the egress allowlist instead. Egress
+  filtering is DNS-based: an IP-direct connection is not filtered, and a wildcard entry is
+  informational (see [architecture.md §10](./architecture.md#10-limitations)).
 
 ---
 
