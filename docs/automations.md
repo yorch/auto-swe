@@ -205,8 +205,10 @@ moved aside to `<key>~<its id>`; concurrent retries and redeliveries take it at 
 
 ### The ledger
 
-`AutomationFire` rows belong to an **owner** (`ownerKey`) and the **source**, not to the
-automation or the connection row. The owner key takes one of two shapes:
+`AutomationFire` rows belong to an **owner** (`ownerKey`, stored in the `repo_key` column, which
+keeps the name it had when every owner was a repository so that processes of an older release
+keep working during an upgrade) and the **source**, not to the automation or the connection row.
+The owner key takes one of two shapes:
 
 - **A repository** is `<host>/<owner>/<repo>`, lowercased, with no prefix. Every source's dedupe
   key starts with it, so a redelivered webhook finds the decision recorded for it.

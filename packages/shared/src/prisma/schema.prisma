@@ -1501,7 +1501,9 @@ model AutomationFire {
   automation         Automation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
   connectionId       String?     @map("connection_id") @db.Uuid
   connection         Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
-  ownerKey           String      @map("owner_key")
+  /// Stored in `repo_key`, the column's name from before owners other than repositories: a
+  /// rename would break every older gateway and worker still running during a rolling deploy.
+  ownerKey           String      @map("repo_key")
   source             String
   dedupeKey          String      @unique @map("dedupe_key")
   /// One of `AUTOMATION_OUTCOMES`.

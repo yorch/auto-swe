@@ -18,8 +18,10 @@ import {
   EVENT_SOURCE_KEYS,
   type EventSource,
   eventSource,
+  isRepositoryOwnerKey,
   optionsSchema,
   storedInputs,
+  teamOwnerKey,
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
@@ -814,6 +816,20 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!fire) {
         return sendError(reply, 404, 'FIRE_NOT_FOUND', 'Decision not found');
+      }
+      // Defence in depth: a decision is taken again only on the owner it was recorded for — a
+      // repository's on a repository key, a team's on its own team's key.
+      const ownerMatches =
+        access.kind === 'repository'
+          ? isRepositoryOwnerKey(fire.ownerKey)
+          : fire.ownerKey === teamOwnerKey(access.team.id);
+      if (!ownerMatches) {
+        return sendError(
+          reply,
+          409,
+          'NOT_RETRYABLE',
+          'The decision was recorded for another owner than the automation’s'
+        );
       }
       if (fire.outcome === 'STARTED' || fire.retriedAt !== null) {
         return sendError(

@@ -358,6 +358,14 @@ describe('automationRoutes (event automations)', () => {
       expect(engine.decideAndStart).not.toHaveBeenCalled();
     });
 
+    it('refuses a decision recorded for an owner that is not a repository', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(fire({ ownerKey: '@team/t1' }));
+      const res = await retry();
+      expect(res.statusCode).toBe(409);
+      expect(engine.decideAndStart).not.toHaveBeenCalled();
+    });
+
     it('answers 409 when another retry got there first', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
       ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());

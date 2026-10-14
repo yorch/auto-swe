@@ -751,6 +751,22 @@ describe('owners that are not a repository', () => {
     await expect(decide(h)).resolves.toEqual({ duplicate: true });
   });
 
+  it('records FAILED_TO_START when a team automation’s template needs a repository', async () => {
+    const h = harness({
+      template: {
+        ...repoless,
+        inputSchema: {
+          properties: { connectionId: { type: 'connection' }, description: { type: 'string' } },
+          required: ['connectionId'],
+          type: 'object',
+        },
+      },
+    });
+    await expect(decide(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });
+    expect(h.started).toHaveLength(0);
+    expect(h.fires[0]).toMatchObject({ outcome: 'FAILED_TO_START', ownerKey: OWNER });
+  });
+
   it('matches own output within a non-repository owner only', async () => {
     const h = harness();
     const scope = {

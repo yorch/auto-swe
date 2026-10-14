@@ -293,5 +293,25 @@ describe('automationRoutes (team automations)', () => {
       });
       expect(ctx.prisma.connection.findFirst).not.toHaveBeenCalled();
     });
+
+    it('refuses to take again a decision recorded for another owner', async () => {
+      ctx.prisma.team.findUnique.mockResolvedValue(teamRow('LEAD'));
+      for (const ownerKey of ['github.com/acme/api', '@team/someone-else', '']) {
+        ctx.prisma.automationFire.findFirst.mockResolvedValue({
+          facts: { eventId: 'e1', topic: 'deploys' },
+          id: FIRE,
+          outcome: 'SUPPRESSED_COOLDOWN',
+          ownerKey,
+          retriedAt: null,
+        });
+        const res = await ctx.app.inject({
+          headers: AUTH,
+          method: 'POST',
+          url: `${URL}/${AUTOMATION}/fires/${FIRE}/retry`,
+        });
+        expect(res.statusCode).toBe(409);
+      }
+      expect(engine.decideAndStart).not.toHaveBeenCalled();
+    });
   });
 });
