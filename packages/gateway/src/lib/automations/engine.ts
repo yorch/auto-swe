@@ -329,6 +329,10 @@ export async function decideAndStart<F, X>(
     }
     // A team automation acting on a repository another team owns (shared with it): the
     // repository's own team must allow the source too, and its organization must have budget.
+    // Unlike the automation team's own switch above (off: ignored, nothing recorded, so a
+    // redelivery after switching it on is decided afresh), this one is RECORDED as
+    // SUPPRESSED_PRECONDITION: the owning team sees why. A redelivery then answers duplicate;
+    // after that team switches it on, a manager takes the decision again with Decide again.
     const foreignTarget = connection && connection.team.id !== team.id ? connection.team : null;
     if (foreignTarget) {
       const allowed = await resolveSetting(source.killSwitch, {

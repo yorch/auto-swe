@@ -162,7 +162,7 @@ A team automation has no repository, so the rules that hang off the repository m
   longer the team's or shared with it, when an occurrence arrives makes the decision
   `FAILED_TO_START`; deleting the repository deletes the automation. For a repository another team
   owns, each decision also resolves the source's kill switch for that team (off is
-  `SUPPRESSED_PRECONDITION`) and checks that team's organization's budget (`SUPPRESSED_BUDGET`). The database allows a target
+  `SUPPRESSED_PRECONDITION`, recorded, unlike the automation team's own switch, which ignores the occurrence) and checks that team's organization's budget (`SUPPRESSED_BUDGET`). The database allows a target
   only on a row with a team and no `connectionId` (`automations_target_connection_team_only`).
 - **Where.** The team's page has an **Automations** action (on its event-endpoint card) that lists
   and edits the team's automations.

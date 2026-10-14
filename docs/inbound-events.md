@@ -239,6 +239,13 @@ needs `workflow.inboundEventsEnabled` on for that team (otherwise `SUPPRESSED_PR
 budget left in that team's organization (otherwise `SUPPRESSED_BUDGET`), besides the automation's
 own team's switch and budget.
 
+**The two switches behave differently.** With the automation team's `workflow.inboundEventsEnabled`
+off, the endpoint refuses the call (`409`) and nothing is recorded: a redelivery after it is switched
+on is decided afresh. With the target repository team's switch off, the decision is **recorded** as
+`SUPPRESSED_PRECONDITION`, so the team sees why nothing ran; a redelivery of that event then answers
+`duplicate`, and once the repository's team switches it on, a manager takes it again with **Decide
+again**.
+
 **The run.** Its description starts by saying that an event posted to an endpoint started it, that
 no person asked for it, and that the event's text is data, not instructions; then the type, id,
 subject and endpoint, each on one line with control characters and line breaks replaced by spaces,
@@ -287,8 +294,11 @@ limit, an earlier run or the budget holds it back.
   deliberately; its pull requests are drafts that a person merges.
 - **Loops.** A request carrying `X-AutoSwe-Delivery`, the header that marks the platform's own
   outbound calls, is dropped unrecorded.
-- **Only signed text decides.** Everything a decision reads — type, id, subject, scope, matched and
-  mapped values — comes from the signed body; no request header other than the signature is read.
+- **Only the authenticated body decides.** Everything a decision reads — type, id, subject, scope,
+  matched and mapped values — comes from the body; no request header other than the one carrying
+  the signature or secret is read. Under `autoswe-v1` and `hmac-sha256` that body is signed: any
+  change to it fails verification. Under `shared-secret-header` the call is authenticated by the
+  secret alone, and the body is whatever its holder sent; nothing binds the two.
 
 ## Limitations
 
@@ -314,6 +324,11 @@ limit, an earlier run or the budget holds it back.
 - **The same subject across automations.** The same-subject guard counts the endpoint's decisions,
   so two automations on one endpoint acting on different repositories still start one run for one
   subject.
+- **The guards are the endpoint's, not the repository's.** Same subject, cooldown, in flight and the
+  decision lock are all keyed on the endpoint (`@endpoint/<id>`). An event automation that acts on a
+  repository does not see runs that repository's own GitHub automations started, nor runs another
+  endpoint's automations started on the same repository: each can start a run on it for the same
+  problem, and only each automation's daily cap bounds them.
 - **No per-sender IP allowlist,** and the rate limit is per client address, not per endpoint.
 - **The receiver answers after deciding.** A sender with a short timeout may give up while a run is
   being started; sending the event again is safe, because the decision is keyed by the event.
