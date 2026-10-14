@@ -347,6 +347,14 @@ refusal. The Automations list marks a webhook that still accepts unsigned calls 
 its own. A sender that cannot switch atomically can sign with both secrets for the overlap — the
 header carries one `v1=` entry per secret.
 
+**A signed call's idempotency comes from its signature.** When a call's signature verifies, the
+run's idempotency key is derived from the signed timestamp and a hash of the body bytes, and any
+`Idempotency-Key` header is ignored (headers are not signed). Sending the same signed call again —
+a sender's retry, or a captured call replayed inside the 300-second window — is refused with
+`409 RUN_CONFLICT` and recorded as `SUPPRESSED_SAME_SUBJECT`, whatever key it carries. To start two
+runs with the same body, sign them with different timestamps. An unsigned call keeps the
+`Idempotency-Key` behaviour described in [product-overview.md](./product-overview.md).
+
 **Verifying or signing elsewhere.** `@auto-swe/sdk` exports the same implementation the gateway
 uses: `signAutoSweRequest(secret, rawBody, nowSec)` returns the header value (pass an array of
 secrets to sign with several), and `verifyAutoSweSignature({ header, rawBody, secrets, nowSec })`
@@ -396,9 +404,10 @@ path with the token replaced by `[redacted]`.
   signing is required. A leaked token on an unsigned, unrequired webhook still starts runs.
 - **No IP allowlisting.** A webhook accepts calls from any address; signing and the per-route rate
   limit (60 a minute) are the only controls on who calls it.
-- **The signature covers the timestamp and body only.** Headers are not signed, `Idempotency-Key`
-  included, and nothing records which signatures were already seen: a captured signed call can be
-  replayed for up to 300 seconds, with any `Idempotency-Key`, and starts another run each time.
+- **The signature covers the timestamp and body only.** Headers are not signed. A replayed signed
+  call cannot start a second run (its run is keyed by the signature), but it is answered and
+  recorded as a duplicate; and an unsigned call to a webhook that does not require signing is
+  not protected at all.
 - **The rotation overlap is fixed at 24 hours,** and there is one previous secret: rotating twice
   within a day drops the first secret at once.
 - **Removing a secret under policy locks the webhook.** Where policy requires signing, removing the
