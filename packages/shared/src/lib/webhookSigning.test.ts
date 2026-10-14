@@ -252,6 +252,20 @@ describe('sign — input checks', () => {
     expect(() => signWebhookBody([], 'x', NOW)).toThrow(/at least one/);
     expect(() => signWebhookBody('s', 'x', -1)).toThrow(/non-negative/);
   });
+
+  it.each([-5, -0.5, Number.NaN, Number.POSITIVE_INFINITY, 1e21, 1_000_000_000_000])(
+    'refuses to sign at t=%s, which no receiver would accept',
+    (t) => {
+      expect(() => signWebhookBody('s', 'x', t)).toThrow();
+    }
+  );
+
+  it('signs the largest timestamp a receiver accepts', () => {
+    const header = signWebhookBody('s', 'x', 999_999_999_999);
+    expect(
+      verifyWebhookSignature({ header, nowSec: 999_999_999_999, rawBody: 'x', secrets: ['s'] }).ok
+    ).toBe(true);
+  });
 });
 
 describe('generateWebhookSigningSecret', () => {

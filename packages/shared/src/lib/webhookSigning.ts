@@ -46,6 +46,8 @@ const MAX_SIGNATURES = 8;
  * is over the number's canonical text, so exactly one spelling of each timestamp exists.
  */
 const TIMESTAMP_RE = /^(0|[1-9][0-9]{0,11})$/;
+/** The largest timestamp the parser accepts; signing refuses anything a receiver would. */
+const MAX_TIMESTAMP = 999_999_999_999;
 const V1_RE = /^[0-9a-f]{64}$/;
 
 export type WebhookBody = string | Uint8Array;
@@ -93,8 +95,10 @@ export function computeWebhookSignature(
   rawBody: WebhookBody,
   timestampSec: number
 ): string {
-  if (!Number.isSafeInteger(timestampSec) || timestampSec < 0) {
-    throw new Error('A webhook signature timestamp must be a non-negative integer of seconds');
+  if (!Number.isSafeInteger(timestampSec) || timestampSec < 0 || timestampSec > MAX_TIMESTAMP) {
+    throw new Error(
+      'A webhook signature timestamp must be a non-negative integer of seconds, at most 12 digits'
+    );
   }
   if (secret.length === 0) {
     throw new Error('A webhook signing secret must not be empty');
@@ -118,6 +122,11 @@ export function signWebhookBody(
   if (secrets.length === 0) {
     throw new Error('signWebhookBody needs at least one secret');
   }
+  if (!Number.isFinite(nowSec)) {
+    throw new Error('signWebhookBody needs a finite clock in seconds');
+  }
+  // A fractional clock is floored; the result is still range-checked below, so nothing is
+  // signed that a receiver would refuse as malformed.
   const t = Math.floor(nowSec);
   const entries = secrets.map((s) => `v1=${computeWebhookSignature(s, rawBody, t)}`);
   return [`t=${t}`, ...entries].join(',');
