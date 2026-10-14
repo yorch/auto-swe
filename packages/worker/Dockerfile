@@ -1,9 +1,9 @@
 # Docker CLI source, as a named stage so Dependabot's docker ecosystem tracks the
 # tag (it reads FROM lines, not COPY --from=<image>). Nothing runs in it.
-FROM docker:28-cli AS dockercli
+FROM docker:28-cli@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d AS dockercli
 
 # ── Stage 1: Build ──
-FROM node:26-alpine AS builder
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS builder
 WORKDIR /app
 
 # node:26 ships no Corepack — it left the Node distribution in Node 25 — so the
@@ -57,7 +57,7 @@ RUN yarn workspace @auto-swe/shared db:generate \
     && yarn workspace @auto-swe/worker build
 
 # ── Stage 2: Production dependencies only ──
-FROM node:26-alpine AS prod-deps
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS prod-deps
 WORKDIR /app
 
 # No `yarn` in node:26 — same vendored-release shim as the builder stage above.
@@ -87,7 +87,7 @@ RUN yarn workspaces focus @auto-swe/worker --production \
 # apt-installs, so there is no pinned package to break, and glibc is backward
 # compatible so the `-gnu` core-bridge prebuild still loads; recorded because a
 # future OS-level surprise in this stage will not look Node-related.
-FROM node:26-slim
+FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0
 
 # Worker needs Docker CLI to manage workspace containers (DinD). It talks to the
 # daemon over DOCKER_HOST (a socket proxy in compose), so the image holds no

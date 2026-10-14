@@ -551,7 +551,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - **The Docker socket proxy narrows the API, not container options.** See §0: a worker that can create containers can still request privileged mode or host bind mounts.
 - **The Docker socket proxy runs as root.** It must open the host socket, which is root-owned; the container is read-only, drops every capability and runs nothing but haproxy. CI exercises the worker's Docker calls through the same image and config.
 - **The proxy's allowlist is by path prefix, not by operation.** It refuses the bulk and exfiltrating operations (prune, push, load, image export and import from a URL), but every other operation in an allowed group passes, including ones the worker does not use, such as `kill`, `rename` and image delete.
-- **The base images are tag-pinned, not digest-pinned.** Dependabot bumps the tags weekly; pinning digests needs a networked environment to resolve them.
+- **The infra images are tag-pinned, not digest-pinned.** The app Dockerfiles, the agent executor image, the socket proxy default and `otel-lgtm` pin `tag@sha256:<digest>` (the multi-arch index digest, so amd64 and arm64 both resolve), and Dependabot bumps tag and digest together. The images in `docker-compose.infra.yml` (pgvector, postgres, the Temporal images, Garage) and Watchtower stay tag-only because each tag is a `${VAR:-default}` override point: a digest appended after the variable would win over the tag, so a deployment's override would be silently ignored. A registry can still move what those tags resolve to. `DOCKER_SOCKET_PROXY_IMAGE` replaces the whole reference, digest included, so an override there is as pinned as the value it supplies.
 
 ---
 

@@ -295,10 +295,14 @@ const VERSION = '(\\d+(?:\\.\\d+)*)';
 // ---------------------------------------------------------------------------
 
 const composeSrc = read('docker-compose.infra.yml') + read('docker-compose.app.yml');
-/** Default tag of `<image>` in the compose files — `${VAR:-tag}` or a literal tag. */
+/**
+ * Default tag of `<image>` in the compose files — `${VAR:-tag}` or a literal tag. A
+ * `tag@sha256:…` digest pin is not part of the version, so the match stops at `@`.
+ */
 const imageTag = (image) => {
+  const name = image.replace(/[./]/g, '\\$&');
   const m = composeSrc.match(
-    new RegExp(`image:\\s*${image.replace(/[./]/g, '\\$&')}:(?:\\$\\{[A-Z_]+:-([^}]+)\\}|(\\S+))`)
+    new RegExp(`image:\\s*${name}:(?:\\$\\{[A-Z_]+:-([^}@]+)|([^\\s@]+))`)
   );
   if (!m) {
     throw new Error(`could not find an image tag for '${image}' in the compose files`);
