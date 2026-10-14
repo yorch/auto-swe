@@ -462,18 +462,24 @@ export function validateBundleAgents(manifest: BundleManifest): string[] {
   return errors;
 }
 
+/** What an admin should know about each harness before a bundle moves an agent onto it. */
+const HARNESS_RUNTIME_NOTES: Record<string, string> = {
+  'claude-code': 'which holds a model credential inside the workspace container',
+  pi: "Pi's agent loop in the worker, whose file tools are Pi's own",
+};
+
 /**
- * Advisory notes on the agents a bundle would put on a harness. A harness runs
- * with a model credential inside the workspace container, so an admin should
- * see which agents a bundle moves onto one before it installs; nothing is
- * refused for it.
+ * Advisory notes on the agents a bundle would put on a harness. A harness is a
+ * different loop with different tools — and Claude Code runs with a model
+ * credential inside the workspace container — so an admin should see which
+ * agents a bundle moves onto one before it installs; nothing is refused for it.
  */
 export function bundleAgentRuntimeWarnings(manifest: BundleManifest): string[] {
   return manifest.entities.agents
     .filter((a) => a.runtime && a.runtime !== 'mastra')
     .map(
       (a) =>
-        `agent '${a.key}': runs on the ${a.runtime} runtime, which holds a model credential inside the workspace container (docs/agents.md §3.7)`
+        `agent '${a.key}': runs on the ${a.runtime} runtime, ${HARNESS_RUNTIME_NOTES[a.runtime ?? ''] ?? 'a harness'} (docs/agents.md §3.7)`
     );
 }
 

@@ -4,6 +4,7 @@ import type { EvalResultDto } from '@auto-swe/shared/types/api';
 export const IMPLEMENTER_RUNTIME_LABELS: Record<string, string> = {
   'claude-code': 'Claude Code harness',
   mastra: 'Mastra loop',
+  pi: 'Pi loop',
 };
 
 /** The label for a runtime value, the raw value when it is not a known one, null for none. */

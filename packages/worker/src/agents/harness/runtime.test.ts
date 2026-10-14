@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   activityCancellationSignal: vi.fn((): AbortSignal | undefined => undefined),
+  execInContainer: vi.fn(),
   heartbeat: vi.fn(),
   spawn: vi.fn(),
   spawnCaptureAsync: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock('../../lib/cancellation.js', () => ({
   throwIfActivityCancelled: h.throwIfActivityCancelled,
 }));
 vi.mock('../../lib/execUtils.js', () => ({ spawnCaptureAsync: h.spawnCaptureAsync }));
+vi.mock('./containerExec.js', () => ({ execInContainer: h.execInContainer }));
 
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import { spentUsageOf } from '../implementerRuntime.js';
@@ -112,6 +114,57 @@ beforeEach(() => {
 });
 
 describe('harnessRuntime', () => {
+  describe('a harness that runs in the worker (no provisioning)', () => {
+    it('installs nothing, and has no binary to spawn', async () => {
+      let spawnError: unknown;
+      const { runtime, ws } = setup(
+        async (turn) => {
+          try {
+            turn.spawn({ args: [], env: [], secretEnv: {} });
+          } catch (err) {
+            spawnError = err;
+          }
+          return { text: 'ok', usage: {} };
+        },
+        { provisioning: undefined }
+      );
+      await expect(runtime.runTurn({ system: 'S', user: 'U' })).resolves.toMatchObject({
+        text: 'ok',
+      });
+      expect(spawnError).toBeInstanceOf(Error);
+      expect(h.spawn).not.toHaveBeenCalled();
+      expect(h.spawnCaptureAsync).not.toHaveBeenCalled();
+      expect(ws.execCapture).not.toHaveBeenCalled();
+    });
+
+    it('tags each command under the turn’s tag, so the turn’s kill reaches them all', async () => {
+      h.execInContainer.mockResolvedValue({ exitCode: 0 });
+      const { runtime, ws } = setup(
+        async (turn) => {
+          await turn.exec({ script: 'true', timeoutMs: 1000 });
+          await turn.exec({ args: ['x'], script: 'cat -- "$1"', timeoutMs: 1000 });
+          return { usage: {} };
+        },
+        { provisioning: undefined }
+      );
+      await runtime.runTurn({ system: 'S', user: 'U' });
+
+      const tags = h.execInContainer.mock.calls.map((c) => (c[0] as { tag: string }).tag);
+      expect(tags).toHaveLength(2);
+      expect(new Set(tags).size).toBe(2);
+      const script = ws.exec.mock.calls.map((c) => c[0]).find((c) => c.includes('kill -'));
+      const turnTag = /AUTO_SWE_EXEC_ID=([0-9a-f]+)/.exec(script ?? '')?.[1] ?? '';
+      expect(turnTag).toMatch(/^[0-9a-f]{16}$/);
+      for (const tag of tags) {
+        expect(tag.startsWith(turnTag)).toBe(true);
+      }
+      expect(h.execInContainer.mock.calls[1]?.[0]).toMatchObject({
+        containerId: 'workspace-xyz',
+        exec: { args: ['x'], script: 'cat -- "$1"' },
+      });
+    });
+  });
+
   it('refuses an adapter that cannot enforce the per-call policy', () => {
     const { adapter } = fakeAdapter(async () => ({ usage: {} }), {
       capabilities: { enforcesPerCallPolicyInWorker: false },

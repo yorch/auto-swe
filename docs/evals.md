@@ -92,10 +92,10 @@ scope. It then runs a bounded TDD loop scoring the golden test's exit code.
 ### Comparing runtimes
 
 Each side of a run can name the implementer runtime it runs on: `candidateRuntime` and
-`baselineRuntime` (`mastra` or `claude-code`) on `POST /api/v1/platform/evals/runs`, or
+`baselineRuntime` (`mastra`, `claude-code` or `pi`) on `POST /api/v1/platform/evals/runs`, or
 `--candidate-runtime` / `--against-runtime` on `auto-swe evals run`. A side that names none runs on
 what its agent resolves to in the dataset's scope: the Agent version's own `runtime`, else
-`workspace.implementerRuntime` ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness)). Giving both sides the
+`workspace.implementerRuntime` ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-harnesses)). Giving both sides the
 same agent ref and different runtimes grades one runtime against the other on the same prompt,
 model and skills:
 

@@ -390,10 +390,14 @@ describe('agent runtimes', () => {
         { key: 'h', name: 'H', runtime: 'claude-code' },
         { key: 'm', name: 'M', runtime: 'mastra' },
         { key: 'n', name: 'N' },
+        { key: 'p', name: 'P', runtime: 'pi' },
       ])
     );
     expect(warnings).toEqual([
-      expect.stringMatching(/^agent 'h': runs on the claude-code runtime/),
+      expect.stringMatching(
+        /^agent 'h': runs on the claude-code runtime, which holds a model credential/
+      ),
+      expect.stringMatching(/^agent 'p': runs on the pi runtime, Pi's agent loop in the worker/),
     ]);
   });
 

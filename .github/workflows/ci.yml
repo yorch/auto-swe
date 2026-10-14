@@ -128,6 +128,13 @@ jobs:
           CLAUDE_CODE_DOCKER_TEST: '1'
         run: yarn test packages/worker/src/agents/claudeCode/runtime.docker.test.ts
 
+      # Pi's loop in the worker with its tools acting on a real container: the
+      # tagged exec, the per-call policy, the kills at a timeout and a turn's end.
+      - name: Pi harness (Docker-backed tests)
+        env:
+          PI_DOCKER_TEST: '1'
+        run: yarn test packages/worker/src/agents/pi/runtime.docker.test.ts
+
       # The trusted finalize path's real shell against a deliberately hostile
       # agent container (a lying `git`, `* -diff`, a planted symlink, a secret).
       - name: Agent-run finalize (Docker-backed tests)

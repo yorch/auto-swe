@@ -33,6 +33,7 @@ const RUNTIME_OPTIONS: { label: string; value: '' | ImplementerRuntimeKind }[] =
   { label: 'Default (the workspace.implementerRuntime setting; Mastra for agent runs)', value: '' },
   { label: 'Mastra tool loop', value: 'mastra' },
   { label: 'Claude Code harness (Anthropic models only)', value: 'claude-code' },
+  { label: 'Pi agent loop', value: 'pi' },
 ];
 
 type FieldName =

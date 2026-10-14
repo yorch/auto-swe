@@ -46,6 +46,30 @@ export interface HarnessProvisioning {
   prepareContainer?(workspace: Workspace): Promise<void>;
 }
 
+/** One command the turn runs in the workspace container, for a harness whose tools run there. */
+export interface HarnessExec {
+  /** A POSIX `sh` script; `args` are its positional parameters (`$1`…), passed unquoted. */
+  script: string;
+  args?: readonly string[];
+  /** Streamed to the script's stdin. */
+  stdin?: string | Buffer;
+  /** Stops the command (and its process tree in the container); the turn's own abort always does. */
+  signal?: AbortSignal;
+  /** Kills the command after this long. */
+  timeoutMs: number;
+}
+
+/** What {@link HarnessExec} produced. Output past the cap is dropped, and says so. */
+export interface HarnessExecResult {
+  /** The exit code, or null when the command was killed (timeout or abort). */
+  exitCode: number | null;
+  stdout: Buffer;
+  stderr: Buffer;
+  timedOut: boolean;
+  /** Bytes of output dropped past the cap, stdout and stderr together. */
+  droppedBytes: number;
+}
+
 /** How one `docker exec` of the harness binary is started. */
 export interface HarnessSpawn {
   /** Arguments for the binary. */
@@ -72,8 +96,19 @@ export interface HarnessTurn {
   workspace: Workspace;
   /** The abort controller wired to the activity's cancellation; give it to the harness's client. */
   abort: AbortController;
-  /** Start the harness binary in the container, tagged for cleanup, its stderr drained. */
+  /**
+   * Start the harness binary in the container, tagged for cleanup, its stderr
+   * drained. Throws for a harness that runs in the worker (no `provisioning`).
+   */
   spawn(spawn: HarnessSpawn): ChildProcessByStdio<Writable, Readable, Readable>;
+  /**
+   * Run one command in the container as part of this turn, for a harness whose
+   * loop runs in the worker and whose tools act in the container. It carries the
+   * turn's exec tag, so what it leaves running dies with the turn; a timeout or
+   * an abort kills its own process tree at once. Never throws for the command's
+   * exit status.
+   */
+  exec(exec: HarnessExec): Promise<HarnessExecResult>;
   /** The last few KiB the harness wrote to stderr: what explains a run that died. */
   stderrTail(): string;
   heartbeat(): void;
@@ -146,7 +181,12 @@ export interface HarnessAdapter<Report> {
   /** Names the harness in messages (`Claude Code`). */
   label: string;
   capabilities: HarnessCapabilities;
-  provisioning: HarnessProvisioning;
+  /**
+   * How the harness binary reaches the container. Omitted for a harness whose
+   * loop runs in the worker: nothing is installed, `turn.spawn` is unavailable,
+   * and its tools act in the container through `turn.exec`.
+   */
+  provisioning?: HarnessProvisioning;
   usage: UsageNormaliser<Report>;
   /**
    * The verdict on one native tool call. Implementations translate the call into
@@ -178,6 +218,12 @@ export interface HarnessRuntimeOptions<Access> {
   loadProjectSettings: boolean;
   /** `workspace.agentMaxSteps`, as the cap on turns in one harness run. */
   maxTurns: number;
+  /**
+   * `workspace.maxToolOutputChars`, for a harness whose tools are the worker's
+   * to bound; the setting's default when omitted. A harness with its own tools
+   * bounds their output itself.
+   */
+  maxToolOutputChars?: number;
   /**
    * The resolved Agent's `toolKeys` (`IMPLEMENTER_TOOL_IDS`), read as the Mastra
    * implementer reads them: null, absent or empty grants every tool.

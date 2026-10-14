@@ -22,6 +22,7 @@ import {
   WORKSPACE_DIR,
 } from './adapter.js';
 import { PLATFORM_PROBE, parseContainerPlatform } from './binary.js';
+import { execInContainer } from './containerExec.js';
 import { decideWithinDeadline, type ToolDecision } from './policy.js';
 import { type SpentByModel, subtractSpent, summedCallsUsage, type UsageTotals } from './usage.js';
 
@@ -68,11 +69,12 @@ async function installedSha256(workspace: Workspace, containerPath: string): Pro
  */
 async function installBinary(
   workspace: Workspace,
-  adapter: Pick<HarnessAdapter<unknown>, 'kind' | 'label' | 'provisioning'>,
+  adapter: Pick<HarnessAdapter<unknown>, 'kind' | 'label'>,
+  provisioning: HarnessProvisioning,
   binary: string
 ): Promise<void> {
-  const { containerPath } = adapter.provisioning;
-  const expected = await adapter.provisioning.sha256(binary);
+  const { containerPath } = provisioning;
+  const expected = await provisioning.sha256(binary);
   if ((await installedSha256(workspace, containerPath)) === expected) {
     return;
   }
@@ -105,9 +107,11 @@ export interface HarnessRuntime extends ImplementerRuntime {
  *
  * The harness's client runs here, in the worker; its binary runs in the
  * workspace container, reached through `docker exec -i`. Before each turn the
- * container's binary is verified against the worker's. Every process the turn
- * starts carries an exec tag, and the tag is killed when the turn ends however
- * it ends: `docker exec` does not stop what it started when its client dies.
+ * container's binary is verified against the worker's. A harness with no
+ * binary (no `provisioning`) runs its whole loop here instead, and its tools
+ * act in the container through `turn.exec`. Every process the turn starts
+ * carries an exec tag, and the tag is killed when the turn ends however it
+ * ends: `docker exec` does not stop what it started when its client dies.
  * The activity's cancellation aborts the turn and is what a cancelled turn
  * reports; a caller's deadline aborts it too, and the adapter reports that as a
  * stop. Every tool call is decided by the worker, through `turn.decide`,
@@ -137,23 +141,30 @@ export function harnessRuntime<Report>(
     );
   }
   const { deadline, tracer, workspace } = options;
+  const { provisioning } = adapter;
   let prepared: Promise<string> | undefined;
 
   async function runTurn(input: ImplementerTurnInput) {
     const { onCallSpent } = input;
-    if (!prepared) {
-      const preparing = prepareContainer(workspace, adapter.provisioning);
-      prepared = preparing;
-      // A failed preparation is not remembered: the next turn tries again.
-      preparing.catch(() => {
-        if (prepared === preparing) {
-          prepared = undefined;
-        }
-      });
+    if (provisioning) {
+      if (!prepared) {
+        const preparing = prepareContainer(workspace, provisioning);
+        prepared = preparing;
+        // A failed preparation is not remembered: the next turn tries again.
+        preparing.catch(() => {
+          if (prepared === preparing) {
+            prepared = undefined;
+          }
+        });
+      }
+      await installBinary(workspace, adapter, provisioning, await prepared);
     }
-    await installBinary(workspace, adapter, await prepared);
 
     const tag = randomBytes(8).toString('hex');
+    // Each command `turn.exec` runs is tagged with the turn's tag plus a suffix of
+    // its own, so a timeout kills that command alone while the turn's kill, which
+    // matches the tag as a prefix, still reaches everything the turn started.
+    let execs = 0;
     const abort = new AbortController();
     const cancellation = activityCancellationSignal();
     const onCancel = () => abort.abort();
@@ -247,6 +258,16 @@ export function harnessRuntime<Report>(
         }
         return verdict;
       },
+      exec(command) {
+        execs += 1;
+        return execInContainer({
+          abort: abort.signal,
+          containerId: workspace.containerId,
+          exec: command,
+          heartbeat: () => heartbeat(adapter.kind),
+          tag: `${tag}${execs.toString(16).padStart(8, '0')}`,
+        });
+      },
       failed(callId, { error, inputJson, toolName }) {
         tracer.addToolCall({
           durationMs: elapsed(callId),
@@ -257,6 +278,9 @@ export function harnessRuntime<Report>(
       },
       heartbeat: () => heartbeat(adapter.kind),
       spawn({ args, env, leadingEnvArgs = [], secretEnv, signal }) {
+        if (!provisioning) {
+          throw new Error(`${adapter.label} runs in the worker; it has no binary to start.`);
+        }
         const child = spawn(
           'docker',
           [
@@ -272,7 +296,7 @@ export function harnessRuntime<Report>(
             ...Object.keys(secretEnv).flatMap((name) => ['-e', name]),
             ...env.flatMap((pair) => ['-e', pair]),
             workspace.containerId,
-            adapter.provisioning.containerPath,
+            provisioning.containerPath,
             ...args,
           ],
           {

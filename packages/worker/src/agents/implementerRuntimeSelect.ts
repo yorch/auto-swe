@@ -124,6 +124,7 @@ export async function buildImplementerTurnRunner(input: {
     // behaves as it did there. Its hooks run in the container; the worker-side
     // policy still decides every tool call.
     loadProjectSettings: true,
+    maxToolOutputChars: config.maxToolOutputChars,
     maxTurns: config.maxSteps,
     // The same MCP connection the Mastra loop would bind, relayed from the worker.
     mcp: isMcpToolEnabled(config.toolKeys) ? mcpTarget : null,

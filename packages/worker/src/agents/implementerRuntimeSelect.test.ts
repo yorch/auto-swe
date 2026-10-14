@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   claudeCodeRuntime: vi.fn((..._args: unknown[]) => ({ runTurn: vi.fn() })),
   closeMcp: vi.fn(async () => {}),
   generate: vi.fn(async (..._args: unknown[]) => ({ text: 'mastra says hi', usage: undefined })),
+  piRuntime: vi.fn((..._args: unknown[]) => ({ runTurn: vi.fn() })),
   resolveAgent: vi.fn(),
   resolveAgentRuntime: vi.fn(),
   resolveImplementerConfig: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: h.resolveSetting }))
 vi.mock('../lib/config/agentResolver.js', () => ({ resolveAgent: h.resolveAgent }));
 vi.mock('../lib/config/agentRuntime.js', () => ({ resolveAgentRuntime: h.resolveAgentRuntime }));
 vi.mock('./claudeCode/runtime.js', () => ({ claudeCodeRuntime: h.claudeCodeRuntime }));
+vi.mock('./pi/runtime.js', () => ({ piRuntime: h.piRuntime }));
 vi.mock('./implementer.js', () => ({
   buildImplementerForActivity: h.buildImplementerForActivity,
   resolveImplementerConfig: h.resolveImplementerConfig,
@@ -182,6 +184,28 @@ describe('buildImplementerTurnRunner', () => {
     expect(h.claudeCodeRuntime).toHaveBeenCalledWith({
       access: { apiBase: 'https://gw.example/v1', apiKey: 'k', modelId: 'claude-opus-5-5' },
       loadProjectSettings: true,
+      maxToolOutputChars: 20_000,
+      maxTurns: 42,
+      mcp: null,
+      toolKeys: null,
+      tracer: given.tracer,
+      workspace: given.workspace,
+    });
+  });
+
+  it('builds the Pi harness on the Agent’s own model and credential, whatever its provider', async () => {
+    h.resolveSetting.mockResolvedValue('pi');
+    const given = input({ agentKey: 'ciFixer' });
+
+    const turns = await buildImplementerTurnRunner(given);
+
+    expect(turns.kind).toBe('pi');
+    expect(turns.runtime).toBe(h.piRuntime.mock.results[0]?.value);
+    expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
+    expect(h.piRuntime).toHaveBeenCalledWith({
+      access: { apiBase: 'https://gw.example/v1', apiKey: 'k', spec: 'anthropic/claude-opus-5-5' },
+      loadProjectSettings: true,
+      maxToolOutputChars: 20_000,
       maxTurns: 42,
       mcp: null,
       toolKeys: null,

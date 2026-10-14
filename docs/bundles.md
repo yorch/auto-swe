@@ -127,8 +127,8 @@ On install the gateway:
    never refuse the install. Every agent's `runtime` is checked against its own model with the
    agent library's rule: `claude-code` on a version that names a non-Anthropic model refuses the
    install (and fails `validateBundle` in the SDK). An agent the bundle puts on a harness adds an
-   advisory warning, because a harness holds a model credential inside the workspace container
-   ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness)).
+   advisory warning naming the harness — for `claude-code`, that it holds a model credential inside
+   the workspace container ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-harnesses)).
 4. Refuses, with `409 PROTECTED_CONTENT_OVERWRITE`, any bundle entry that would replace GLOBAL
    content the deployment owns — a seeded built-in (`origin = 'swe-starter'`, or a core row with a
    null origin) or an admin-authored row (`origin` null): an agent by key, a skill by name, a
