@@ -2134,6 +2134,37 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     }
     return existing;
   };
+  /**
+   * Update one template's signing columns only if `condition` still holds, through the caller's
+   * write filter, then re-read the row through the same filter. `gone` means the template no
+   * longer exists or the caller may no longer edit it (404); `conflict` means it exists but the
+   * condition no longer held (409); `ok` carries the row as written, which responses and the
+   * audit log are built from. The guard cannot read `templateWriteFilter`'s spread (an ADMIN's
+   * is empty, and a global template has no team), so the calls are marked rather than filtered.
+   */
+  const updateSigningIf = async (
+    user: JwtPayload,
+    id: string,
+    data: Prisma.WorkflowTemplateUpdateManyMutationInput,
+    condition: Prisma.WorkflowTemplateWhereInput
+  ) =>
+    runUnscoped(
+      'one template by id, constrained by the caller’s write filter',
+      ['WorkflowTemplate'],
+      async () => {
+        const { count } = await fastify.prisma.workflowTemplate.updateMany({
+          data,
+          where: { AND: [{ id }, templateWriteFilter(user), condition] },
+        });
+        const row = await fastify.prisma.workflowTemplate.findFirst({
+          where: { AND: [{ id }, templateWriteFilter(user)] },
+        });
+        if (!row) {
+          return { status: 'gone' as const };
+        }
+        return count === 0 ? { row, status: 'conflict' as const } : { row, status: 'ok' as const };
+      }
+    );
   const signingAudit = (state: WebhookSigningState) => ({
     webhookRequireSignature: state.requireSignature,
     webhookSigningPreviousActive: state.previousExpiresAt !== null,
@@ -2159,21 +2190,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const rotated = rotatedSigningColumns(existing, now);
       // Conditional on the secret read: two rotations racing would otherwise both hand out a
       // secret, and the one written first would be silently replaced.
-      const { count } = await runUnscoped(
-        'one row by id, already loaded through the caller’s write filter',
-        ['WorkflowTemplate'],
-        () =>
-          fastify.prisma.workflowTemplate.updateMany({
-            data: rotated.data,
-            where: {
-              id: existing.id,
-              webhookSigningSecretNonce: existing.webhookSigningSecretNonce
-                ? { equals: existing.webhookSigningSecretNonce }
-                : null,
-            },
-          })
-      );
-      if (count === 0) {
+      const write = await updateSigningIf(user, existing.id, rotated.data, {
+        webhookSigningSecretNonce: existing.webhookSigningSecretNonce
+          ? { equals: existing.webhookSigningSecretNonce }
+          : null,
+      });
+      if (write.status === 'gone') {
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      if (write.status === 'conflict') {
         return sendError(
           reply,
           409,
@@ -2181,10 +2206,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           'The signing secret changed while it was being rotated; try again'
         );
       }
-      const after = webhookSigningState(
-        { ...existing, ...(rotated.data as Partial<typeof existing>) },
-        now
-      );
+      const after = webhookSigningState(write.row, now);
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
@@ -2225,14 +2247,26 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       const now = new Date();
-      await fastify.prisma.workflowTemplate.update({
-        data: CLEARED_SIGNING_COLUMNS,
-        where: { id: existing.id },
+      // Conditional on the switch still being off: a concurrent PUT that turned it on must not
+      // end with signatures required and no secret.
+      const cleared = await updateSigningIf(user, existing.id, CLEARED_SIGNING_COLUMNS, {
+        webhookRequireSignature: false,
       });
+      if (cleared.status === 'gone') {
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      if (cleared.status === 'conflict') {
+        return sendError(
+          reply,
+          409,
+          'WEBHOOK_SIGNATURE_REQUIRED',
+          'This webhook requires signed calls; turn that off before removing its signing secret'
+        );
+      }
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
-        after: signingAudit(webhookSigningState({}, now)),
+        after: signingAudit(webhookSigningState(cleared.row, now)),
         before: signingAudit(webhookSigningState(existing, now)),
         entityId: existing.id,
         entityType: 'WorkflowTemplate',
@@ -2265,10 +2299,26 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       const now = new Date();
-      const updated = await fastify.prisma.workflowTemplate.update({
-        data: { webhookRequireSignature: required },
-        where: { id: existing.id },
-      });
+      // Turning it on is conditional on a secret still existing: a concurrent DELETE of the
+      // secret must not leave signatures required with nothing to sign with.
+      const changed = await updateSigningIf(
+        user,
+        existing.id,
+        { webhookRequireSignature: required },
+        required ? { webhookSigningSecretCiphertext: { not: null } } : {}
+      );
+      if (changed.status === 'gone') {
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      if (changed.status === 'conflict') {
+        return sendError(
+          reply,
+          409,
+          'WEBHOOK_SIGNING_NOT_CONFIGURED',
+          'Generate a signing secret before requiring signed calls'
+        );
+      }
+      const updated = changed.row;
       if (existing.webhookRequireSignature !== required) {
         await writeAuditLog(fastify, {
           action: 'UPDATE',

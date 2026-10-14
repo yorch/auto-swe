@@ -52,7 +52,9 @@ import {
   withoutCallback,
 } from '../lib/runCallbackLaunch.js';
 import {
+  captureRawBodyBytes,
   checkTemplateSignature,
+  type RawBodyBytes,
   signatureRequiredByPolicy,
 } from '../lib/templateWebhookSigning.js';
 
@@ -1173,10 +1175,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     '/:token',
     {
       bodyLimit: 128 * 1024,
-      // The raw bytes, for the signature: it is computed over the body as sent, not as parsed.
-      config: { rateLimit: { max: 60, timeWindow: '1 minute' }, rawBody: true },
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+      // The exact bytes, for the signature: it is computed over the body as sent, not as parsed.
+      preParsing: captureRawBodyBytes,
       schema: {
-        body: z.record(z.string(), z.unknown()).optional(),
+        // A bodiless POST (no content type) arrives as null: an empty payload, which a signed
+        // call signs over the timestamp alone.
+        body: z.record(z.string(), z.unknown()).nullish(),
         headers: IdempotencyHeaderSchema,
         params: TriggerParams,
       },
@@ -1213,10 +1218,21 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           (err) => request.log.warn({ err }, 'could not record a webhook call in the ledger')
         );
       // The signature first: a caller that cannot sign learns nothing else about the template.
+      const rawBodyBytes = (request as FastifyRequest & RawBodyBytes).rawBodyBytes;
+      if (rawBodyBytes === undefined && request.body != null) {
+        // A parsed body without its bytes means the capture did not run; never verify (or
+        // accept) against a stand-in.
+        await refused(
+          'FAILED_TO_START',
+          'RAW_BODY_UNAVAILABLE',
+          'the request body was not captured'
+        );
+        return sendError(reply, 400, 'RAW_BODY_UNAVAILABLE', 'Raw body unavailable');
+      }
       const signature = checkTemplateSignature({
         header: request.raw.headers['x-autoswe-signature'],
         now: new Date(),
-        rawBody: (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody ?? '',
+        rawBody: rawBodyBytes ?? Buffer.alloc(0),
         required:
           template.webhookRequireSignature ||
           (await signatureRequiredByPolicy({
@@ -1303,10 +1319,16 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // An Idempotency-Key makes the ID a pure function of the key, so a sender
       // that retries (or fires twice) collapses onto one run instead of two.
       // Without one, every delivery is a distinct run — the previous behaviour.
-      const idempotencyKey = request.headers['idempotency-key'];
-      const temporalWorkflowId = idempotencyKey
-        ? workflowIdFromIdempotencyKey('wh', shortTplId, idempotencyKey)
-        : `wh-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+      // A verified call's key is its signature's (timestamp and body), never the unsigned
+      // header: otherwise a captured call could be replayed with a fresh key inside the window.
+      // Its own `whs` namespace: a caller-supplied key, hashed under `wh`, can never name the id
+      // a signed call will use, so an unsigned caller cannot squat it ahead of the real call.
+      const callerKey = request.headers['idempotency-key'];
+      const temporalWorkflowId = signature.verified
+        ? workflowIdFromIdempotencyKey('whs', shortTplId, signature.idempotencyKey)
+        : callerKey
+          ? workflowIdFromIdempotencyKey('wh', shortTplId, callerKey)
+          : `wh-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
       const providerMeta =
         template.workspaceProvider && isWorkspaceProviderType(template.workspaceProvider)

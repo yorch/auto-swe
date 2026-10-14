@@ -25,6 +25,18 @@ describe('@auto-swe/sdk webhook signatures', () => {
     expect(signAutoSweRequest(v.secret, v.body, v.timestamp)).toBe(`t=${v.timestamp},v1=${DIGEST}`);
   });
 
+  it('refuses a leading-zero timestamp, exactly as the platform does', () => {
+    const v = AUTO_SWE_SIGNATURE_TEST_VECTOR;
+    expect(
+      verifyAutoSweSignature({
+        header: `t=0${v.timestamp},v1=${DIGEST}`,
+        nowSec: v.timestamp,
+        rawBody: v.body,
+        secrets: [v.secret],
+      })
+    ).toEqual({ ok: false, reason: 'malformed' });
+  });
+
   it('verifies a signed request and refuses a tampered one', () => {
     const v = AUTO_SWE_SIGNATURE_TEST_VECTOR;
     const ok = verifyAutoSweSignature({
@@ -33,7 +45,7 @@ describe('@auto-swe/sdk webhook signatures', () => {
       rawBody: v.body,
       secrets: [v.secret],
     });
-    expect(ok).toEqual({ ok: true, secretIndex: 0, timestamp: v.timestamp });
+    expect(ok).toEqual({ matchedDigest: DIGEST, ok: true, secretIndex: 0, timestamp: v.timestamp });
     const tampered = verifyAutoSweSignature({
       header: v.header,
       nowSec: v.timestamp,

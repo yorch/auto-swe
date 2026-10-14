@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { decryptSecret, type EncryptedSecret, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
@@ -97,9 +99,10 @@ export function templateWebhookSecrets(tpl: TemplateSigningColumns, now: Date): 
 }
 
 /**
- * Whether policy forces signing for templates in this team or organization
- * (`workflow.templateWebhookRequireSignature`). A global template has neither,
- * so only the GLOBAL value applies to it.
+ * Whether policy requires signing for this template (`workflow.templateWebhookRequireSignature`),
+ * resolved like any setting for the template's team: most specific scope wins, so a TEAM false
+ * overrides an ORGANIZATION or GLOBAL true. A global template has neither, so only the GLOBAL
+ * value applies to it.
  */
 export async function signatureRequiredByPolicy(scope: {
   teamId: string | null;
@@ -113,7 +116,21 @@ export async function signatureRequiredByPolicy(scope: {
 }
 
 export type TemplateSignatureCheck =
-  | { ok: true; verified: boolean }
+  | {
+      ok: true;
+      verified: false;
+    }
+  | {
+      ok: true;
+      verified: true;
+      /**
+       * The run's idempotency key for a verified call: the signed timestamp and a hash of the
+       * signed bytes. A replay of the same signed call within the tolerance maps to the same run,
+       * whatever `Idempotency-Key` (an unsigned header) it carries, and whichever `v1` entry or
+       * secret it verified with.
+       */
+      idempotencyKey: string;
+    }
   | {
       ok: false;
       status: 401 | 409;
@@ -131,18 +148,18 @@ const FAILURE_TEXT: Record<WebhookSignatureFailure, string> = {
 };
 
 /**
- * Decide a call's signature. Signing is required when the template asks for it
- * or policy forces it; then an unsigned or badly signed call is refused, and a
- * template with no secret refuses every call. When it is not required, a call
- * that carries a signature is still checked against a configured secret, so a
- * sender that signs is protected from a forged body even before the template
- * enforces it. A signature on a template with no secret is ignored.
+ * Decide a call's signature. Signing is required when the template asks for it or policy
+ * requires it; then an unsigned or badly signed call is refused, and a template with no secret
+ * refuses every call. When it is not required, a call that carries a signature is still checked
+ * against a configured secret. That is not a protection — a forger simply omits the header — but
+ * it surfaces a misconfigured sender (wrong secret, re-serialised body) before the template is
+ * switched to require signatures. A signature on a template with no secret is ignored.
  */
 export function checkTemplateSignature(args: {
   template: TemplateSigningColumns;
   required: boolean;
   header: string | string[] | undefined;
-  rawBody: string | Buffer;
+  rawBody: Buffer;
   now: Date;
 }): TemplateSignatureCheck {
   const { template, required, header, rawBody, now } = args;
@@ -181,7 +198,48 @@ export function checkTemplateSignature(args: {
       status: 401,
     };
   }
-  return { ok: true, verified: true };
+  const bodyHash = createHash('sha256').update(rawBody).digest('hex');
+  return { idempotencyKey: `sig:${result.timestamp}:${bodyHash}`, ok: true, verified: true };
+}
+
+/** Where {@link captureRawBodyBytes} leaves the body. */
+export interface RawBodyBytes {
+  rawBodyBytes?: Buffer;
+}
+
+/**
+ * A route `preParsing` hook that keeps the request body's exact bytes on
+ * `request.rawBodyBytes` and hands Fastify an identical stream to parse. The gateway's raw-body
+ * plugin decodes to a UTF-8 string, which would change a body that is not valid UTF-8 (or drop a
+ * BOM) before the MAC is checked; this keeps the bytes as sent. The route's `bodyLimit` is
+ * enforced while reading, so the capture cannot be used to buffer more than the route accepts.
+ */
+export async function captureRawBodyBytes(
+  request: { routeOptions: { bodyLimit?: number } } & RawBodyBytes,
+  _reply: unknown,
+  payload: AsyncIterable<Buffer | string>
+): Promise<Readable> {
+  const limit = request.routeOptions.bodyLimit ?? 1024 * 1024;
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of payload) {
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+    size += bytes.length;
+    if (size > limit) {
+      throw Object.assign(new Error('Request body is too large'), {
+        code: 'FST_ERR_CTP_BODY_TOO_LARGE',
+        statusCode: 413,
+      });
+    }
+    chunks.push(bytes);
+  }
+  const body = Buffer.concat(chunks);
+  request.rawBodyBytes = body;
+  const stream = Readable.from(body.length > 0 ? [body] : []) as Readable & {
+    receivedEncodedLength?: number;
+  };
+  stream.receivedEncodedLength = body.length;
+  return stream;
 }
 
 /** Column values for a freshly generated secret, the replaced one kept as previous. */

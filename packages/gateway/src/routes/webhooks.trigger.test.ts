@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { signWebhookBody } from '@auto-swe/shared/lib/webhookSigning';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -558,12 +559,13 @@ describe('POST /webhooks/:token — signatures', () => {
       webhookPreviousSigningSecretExpiresAt: new Date(Date.now() + 60_000),
       webhookRequireSignature: true,
     };
-    expect((await send(signed(OLD_SECRET))).statusCode).toBe(201);
-    expect((await send(signed(SECRET))).statusCode).toBe(201);
+    // Distinct timestamps: each is a distinct signed call, not a replay of the last.
+    expect((await send(signed(OLD_SECRET, BODY, nowSec()))).statusCode).toBe(201);
+    expect((await send(signed(SECRET, BODY, nowSec() - 1))).statusCode).toBe(201);
 
     h.template = { ...h.template, webhookPreviousSigningSecretExpiresAt: new Date(Date.now() - 1) };
-    expect((await send(signed(OLD_SECRET))).statusCode).toBe(401);
-    expect((await send(signed(SECRET))).statusCode).toBe(201);
+    expect((await send(signed(OLD_SECRET, BODY, nowSec() - 2))).statusCode).toBe(401);
+    expect((await send(signed(SECRET, BODY, nowSec() - 3))).statusCode).toBe(201);
   });
 
   it('enforces the policy setting, resolved with the template’s team and organization', async () => {
@@ -582,6 +584,108 @@ describe('POST /webhooks/:token — signatures', () => {
     expect(res.json().error.code).toBe('WEBHOOK_SIGNING_NOT_CONFIGURED');
     expect(h.started).toHaveLength(0);
     expect(String(h.decisions.at(-1)?.dedupeKey)).toContain(':WEBHOOK_SIGNING_NOT_CONFIGURED:');
+  });
+
+  it('binds a signed call to one run: a replay with a different Idempotency-Key is refused', async () => {
+    h.template = {
+      ...h.template,
+      ...sealed('webhookSigningSecret', SECRET),
+      webhookRequireSignature: true,
+    };
+    const headers = signed(SECRET);
+    const first = await send({ ...headers, 'idempotency-key': 'first-key' });
+    expect(first.statusCode).toBe(201);
+    for (const key of ['another-key', undefined]) {
+      const replay = await send({ ...headers, ...(key ? { 'idempotency-key': key } : {}) });
+      expect(replay.statusCode).toBe(409);
+      expect(replay.json().error.code).toBe('RUN_CONFLICT');
+    }
+    expect(h.started).toHaveLength(1);
+    expect(h.decisions.at(-1)).toMatchObject({ outcome: 'SUPPRESSED_SAME_SUBJECT' });
+    // A fresh signature (new timestamp) is a new call.
+    const next = await send(signed(SECRET, BODY, nowSec() - 1));
+    expect(next.statusCode).toBe(201);
+  });
+
+  it('an unsigned caller cannot squat the id a signed call will use', async () => {
+    // Optional signing: unsigned calls are accepted, and the body of a cron sender is predictable.
+    h.template = { ...h.template, ...sealed('webhookSigningSecret', SECRET) };
+    const t = nowSec();
+    const bodyHash = createHash('sha256').update(BODY).digest('hex');
+    const squat = await send({ 'idempotency-key': `sig:${t}:${bodyHash}` });
+    expect(squat.statusCode).toBe(201);
+    const real = await send(signed(SECRET, BODY, t));
+    expect(real.statusCode).toBe(201);
+    expect(h.started).toHaveLength(2);
+    expect(h.started[1]).toMatch(/^whs-/);
+    expect(h.started[0]).toMatch(/^wh-/);
+  });
+
+  it('a signed call with an empty body verifies over the timestamp alone', async () => {
+    h.template = {
+      ...h.template,
+      ...sealed('webhookSigningSecret', SECRET),
+      webhookRequireSignature: true,
+    };
+    const ok = await h.app.inject({
+      headers: { 'x-autoswe-signature': signWebhookBody(SECRET, '', nowSec()) },
+      method: 'POST',
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+    expect(ok.statusCode).toBe(201);
+    // A signature over a non-empty body does not verify an empty one.
+    const bad = await h.app.inject({
+      headers: { 'x-autoswe-signature': signWebhookBody(SECRET, '{}', nowSec() - 1) },
+      method: 'POST',
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+    expect(bad.statusCode).toBe(401);
+  });
+
+  it('keeps the caller’s Idempotency-Key for an unsigned call', async () => {
+    const a = await send({ 'idempotency-key': 'k1' });
+    const b = await send({ 'idempotency-key': 'k1' });
+    expect(a.statusCode).toBe(201);
+    expect(b.statusCode).toBe(409);
+  });
+
+  it('verifies over the exact bytes, including a BOM and invalid UTF-8 inside a string', async () => {
+    h.template = {
+      ...h.template,
+      ...sealed('webhookSigningSecret', SECRET),
+      webhookRequireSignature: true,
+    };
+    for (const bytes of [
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"description":"bom"}')]),
+      Buffer.concat([
+        Buffer.from('{"description":"'),
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from('"}'),
+      ]),
+    ]) {
+      const res = await h.app.inject({
+        headers: {
+          'content-type': 'application/json',
+          'x-autoswe-signature': signWebhookBody(SECRET, bytes, nowSec()),
+        },
+        method: 'POST',
+        payload: bytes,
+        url: `/api/v1/webhooks/${TOKEN}`,
+      });
+      expect(res.statusCode).toBe(201);
+    }
+  });
+
+  it('still enforces the body limit while capturing the bytes', async () => {
+    const big = JSON.stringify({ description: 'x'.repeat(130 * 1024) });
+    const res = await h.app.inject({
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      payload: big,
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+    expect(res.statusCode).toBe(413);
+    expect(h.started).toHaveLength(0);
   });
 
   it('checks the signature before saying anything else about the template', async () => {

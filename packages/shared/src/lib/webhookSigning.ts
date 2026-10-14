@@ -41,8 +41,13 @@ export const WEBHOOK_SIGNING_SECRET_PREFIX = 'whsec_';
  */
 const MAX_HEADER_LENGTH = 2048;
 const MAX_SIGNATURES = 8;
-/** Twelve digits reach the year 33658; anything longer is not a timestamp. */
-const TIMESTAMP_RE = /^[0-9]{1,12}$/;
+/**
+ * Canonical decimal only: no sign, no leading zeros, at most twelve digits (the year 33658). The MAC
+ * is over the number's canonical text, so exactly one spelling of each timestamp exists.
+ */
+const TIMESTAMP_RE = /^(0|[1-9][0-9]{0,11})$/;
+/** The largest timestamp the parser accepts; signing refuses anything a receiver would. */
+const MAX_TIMESTAMP = 999_999_999_999;
 const V1_RE = /^[0-9a-f]{64}$/;
 
 export type WebhookBody = string | Uint8Array;
@@ -64,6 +69,8 @@ export type WebhookSignatureResult =
       timestamp: number;
       /** Which of `secrets` matched — 0 is the first (by convention, current). */
       secretIndex: number;
+      /** The `v1` digest that matched, lowercase hex. */
+      matchedDigest: string;
     }
   | { ok: false; reason: WebhookSignatureFailure };
 
@@ -88,8 +95,10 @@ export function computeWebhookSignature(
   rawBody: WebhookBody,
   timestampSec: number
 ): string {
-  if (!Number.isSafeInteger(timestampSec) || timestampSec < 0) {
-    throw new Error('A webhook signature timestamp must be a non-negative integer of seconds');
+  if (!Number.isSafeInteger(timestampSec) || timestampSec < 0 || timestampSec > MAX_TIMESTAMP) {
+    throw new Error(
+      'A webhook signature timestamp must be a non-negative integer of seconds, at most 12 digits'
+    );
   }
   if (secret.length === 0) {
     throw new Error('A webhook signing secret must not be empty');
@@ -113,6 +122,11 @@ export function signWebhookBody(
   if (secrets.length === 0) {
     throw new Error('signWebhookBody needs at least one secret');
   }
+  if (!Number.isFinite(nowSec)) {
+    throw new Error('signWebhookBody needs a finite clock in seconds');
+  }
+  // A fractional clock is floored; the result is still range-checked below, so nothing is
+  // signed that a receiver would refuse as malformed.
   const t = Math.floor(nowSec);
   const entries = secrets.map((s) => `v1=${computeWebhookSignature(s, rawBody, t)}`);
   return [`t=${t}`, ...entries].join(',');
@@ -196,7 +210,12 @@ export function verifyWebhookSignature(input: VerifyWebhookSignatureInput): Webh
     for (const candidate of parsed.signatures) {
       // Both are 64 ASCII hex bytes (the parser enforces it), so the lengths match.
       if (timingSafeEqual(expected, candidate)) {
-        return { ok: true, secretIndex: i, timestamp: parsed.timestamp };
+        return {
+          matchedDigest: candidate.toString('utf8'),
+          ok: true,
+          secretIndex: i,
+          timestamp: parsed.timestamp,
+        };
       }
     }
   }

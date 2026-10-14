@@ -574,7 +574,7 @@ export const SETTING_DEFINITIONS = {
   'workflow.templateWebhookRequireSignature': defineSetting({
     defaultValue: false,
     description:
-      "Whether every template webhook in scope must be called with a valid X-AutoSwe-Signature, whatever the template's own require-signature switch says. An unsigned or badly signed call is refused with 401, and a template with no signing secret refuses every call until one is generated. A global template is covered only by the platform-wide value.",
+      "Whether every template webhook in scope must be called with a valid X-AutoSwe-Signature, in addition to templates whose own require-signature switch is on. Resolved for the template's team, most specific scope first, so a team override of off exempts that team from an organization-wide on. An unsigned or badly signed call is refused with 401, and a template with no signing secret refuses every call until one is generated. A global template is covered only by the platform-wide value.",
     group: 'workflow',
     label: 'Template webhooks must be signed',
     overridableAt: ['TEAM', 'ORGANIZATION'],

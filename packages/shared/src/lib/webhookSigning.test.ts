@@ -52,7 +52,12 @@ describe('the known-answer vector', () => {
         rawBody: VECTOR.body,
         secrets: [VECTOR.secret],
       })
-    ).toEqual({ ok: true, secretIndex: 0, timestamp: VECTOR.timestamp });
+    ).toEqual({
+      matchedDigest: VECTOR.signature,
+      ok: true,
+      secretIndex: 0,
+      timestamp: VECTOR.timestamp,
+    });
   });
 });
 
@@ -84,6 +89,8 @@ describe('verifyWebhookSignature — refusals', () => {
     ['an exponent timestamp', `t=1.7604e9,v1=${VECTOR.signature}`],
     ['a hex timestamp', `t=0x68ed3e00,v1=${VECTOR.signature}`],
     ['a 13-digit timestamp', `t=1760400000000,v1=${VECTOR.signature}`],
+    ['a leading-zero timestamp', `t=0${NOW},v1=${VECTOR.signature}`],
+    ['a plus-signed timestamp', `t=+${NOW},v1=${VECTOR.signature}`],
     ['an empty timestamp', `t=,v1=${VECTOR.signature}`],
     ['a short digest', `t=${NOW},v1=${VECTOR.signature.slice(0, 63)}`],
     ['a long digest', `t=${NOW},v1=${VECTOR.signature}0`],
@@ -244,6 +251,20 @@ describe('sign — input checks', () => {
     expect(() => signWebhookBody('', 'x', NOW)).toThrow(/empty/);
     expect(() => signWebhookBody([], 'x', NOW)).toThrow(/at least one/);
     expect(() => signWebhookBody('s', 'x', -1)).toThrow(/non-negative/);
+  });
+
+  it.each([-5, -0.5, Number.NaN, Number.POSITIVE_INFINITY, 1e21, 1_000_000_000_000])(
+    'refuses to sign at t=%s, which no receiver would accept',
+    (t) => {
+      expect(() => signWebhookBody('s', 'x', t)).toThrow();
+    }
+  );
+
+  it('signs the largest timestamp a receiver accepts', () => {
+    const header = signWebhookBody('s', 'x', 999_999_999_999);
+    expect(
+      verifyWebhookSignature({ header, nowSec: 999_999_999_999, rawBody: 'x', secrets: ['s'] }).ok
+    ).toBe(true);
   });
 });
 
