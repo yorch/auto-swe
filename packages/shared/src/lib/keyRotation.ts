@@ -107,6 +107,7 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
   providerCredential: [{ ...fieldsFor('apiKey'), keyVersion: 'keyVersion', lastFour: 'lastFour' }],
   slackConfig: [fieldsFor('clientSecret'), fieldsFor('signingSecret'), fieldsFor('botToken')],
   slackWorkspace: [fieldsFor('botToken')],
+  workflowTemplate: [fieldsFor('webhookSigningSecret'), fieldsFor('webhookPreviousSigningSecret')],
 };
 
 export interface RotationReport {

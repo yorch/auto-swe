@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import jsonwebtoken from 'jsonwebtoken';
 import { describe, expect, it, vi } from 'vitest';
 import type { JwtPayload } from './auth.js';
 import { assertServiceScopesAdmissible, hasRole, requireAuth } from './auth.js';
@@ -156,6 +157,53 @@ describe('requireAuth — Bearer JWT path', () => {
     expect(errorCode(reply)).toBe('TOKEN_INVALID');
   });
 
+  it('answers a bad signature with a fixed message, not the library text', async () => {
+    const request = makeRequest({
+      authorization: 'Bearer forged',
+      verifyAccessToken: () => {
+        throw new jsonwebtoken.JsonWebTokenError('invalid signature');
+      },
+    });
+    const reply = makeReply();
+    await requireAuth()(request, reply as unknown as FastifyReply);
+
+    expect(reply.statusCode).toBe(401);
+    expect(reply.body).toEqual({
+      error: { code: 'TOKEN_INVALID', message: 'Invalid access token' },
+    });
+  });
+
+  it('answers an expired JWT with 401 and a fixed expiry message', async () => {
+    const request = makeRequest({
+      authorization: 'Bearer stale',
+      verifyAccessToken: () => {
+        throw new jsonwebtoken.TokenExpiredError('jwt expired', new Date(0));
+      },
+    });
+    const reply = makeReply();
+    await requireAuth()(request, reply as unknown as FastifyReply);
+
+    expect(reply.statusCode).toBe(401);
+    expect(reply.body).toEqual({
+      error: { code: 'TOKEN_INVALID', message: 'Access token expired' },
+    });
+  });
+
+  it('never echoes the text of an unexpected error in a 401', async () => {
+    const request = makeRequest({
+      authorization: 'Bearer odd',
+      verifyAccessToken: () => {
+        throw new Error('relation "users" does not exist at db-internal:5432');
+      },
+    });
+    const reply = makeReply();
+    await requireAuth()(request, reply as unknown as FastifyReply);
+
+    expect(reply.statusCode).toBe(401);
+    expect(reply.body).toEqual({ error: { code: 'TOKEN_INVALID', message: 'Invalid token' } });
+    expect(JSON.stringify(reply.body)).not.toContain('db-internal');
+  });
+
   it('with no RBAC options, any successfully-verified token passes through', async () => {
     const request = makeRequest({
       authorization: 'Bearer good-jwt',
@@ -244,6 +292,43 @@ describe('requireAuth — PAT (ats_ prefix) path', () => {
 
     expect(reply.statusCode).toBe(401);
     expect(errorCode(reply)).toBe('TOKEN_INVALID');
+  });
+
+  it('surfaces a failed token lookup as a server error, not a 401', async () => {
+    const findUnique = vi
+      .fn()
+      .mockRejectedValue(new Error('Timed out fetching a new connection from the pool'));
+    const request = makeRequest({
+      authorization: 'Bearer ats_during_outage',
+      prisma: { apiToken: { findUnique } },
+    });
+    const reply = makeReply();
+
+    await expect(requireAuth()(request, reply as unknown as FastifyReply)).rejects.toMatchObject({
+      name: 'ApiTokenLookupError',
+    });
+    // Nothing was sent: the rethrown error reaches the global handler, which
+    // answers 500 with a generic message and logs the cause.
+    expect(reply.statusCode).toBeUndefined();
+    expect(reply.body).toBeUndefined();
+  });
+
+  it('surfaces a missing relation mid-deploy as a server error too', async () => {
+    const findUnique = vi
+      .fn()
+      .mockRejectedValue(new Error('The table `public.api_tokens` does not exist'));
+    const request = makeRequest({
+      authorization: 'Bearer ats_mid_deploy',
+      prisma: { apiToken: { findUnique } },
+    });
+    const reply = makeReply();
+
+    const failure = await requireAuth()(request, reply as unknown as FastifyReply).catch(
+      (err: unknown) => err
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe('Could not load this access token');
+    expect(reply.statusCode).toBeUndefined();
   });
 
   it('rejects an expired token with 401 TOKEN_EXPIRED (distinct from TOKEN_INVALID)', async () => {

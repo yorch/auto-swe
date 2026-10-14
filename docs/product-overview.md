@@ -230,7 +230,7 @@ the template's declared `inputSchema`, with no ticket ID and no repository requi
 | Entry point | Auth | Notes |
 |---|---|---|
 | `POST /api/v1/workflow-templates/:id/runs` | ENGINEER | Arbitrary `payload`; `connectionId` optional; `externalTicketId` auto-generated from the label |
-| `POST /api/v1/webhooks/:token` | none — opaque per-template `webhookToken` | Same validation; for firing a template from an external system |
+| `POST /api/v1/webhooks/:token` | opaque per-template `webhookToken`, plus an optional or required `X-AutoSwe-Signature` ([automations.md §5.1](./automations.md#51-signed-template-webhooks)) | Same validation; for firing a template from an external system |
 
 A payload may name a **`baseBranch`**: the branch a repository run cuts its change from, diffs
 against, and opens its pull request into, in place of the repository's default branch. It is a

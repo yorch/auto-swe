@@ -13,10 +13,17 @@ const launch = vi.hoisted(() => ({
     | { ok: true }
     | { ok: false; refusal: { status: 403; body: { error: { code: string; message: string } } } },
 }));
-const settings = vi.hoisted(() => ({ pushAllowed: false }));
+const settings = vi.hoisted(() => ({
+  pushAllowed: false,
+  signingPolicyTeams: [] as string[],
+}));
 vi.mock('@auto-swe/shared/config', () => ({
-  resolveSetting: vi.fn(async (key: string) =>
-    key === 'github.ciFixPushToPullRequestEnabled' ? settings.pushAllowed : undefined
+  resolveSetting: vi.fn(async (key: string, ctx?: { teamId?: string }) =>
+    key === 'github.ciFixPushToPullRequestEnabled'
+      ? settings.pushAllowed
+      : key === 'workflow.templateWebhookRequireSignature'
+        ? settings.signingPolicyTeams.includes(ctx?.teamId ?? '')
+        : undefined
   ),
 }));
 
@@ -427,6 +434,41 @@ describe('automationRoutes (event automations)', () => {
         .mockResolvedValueOnce([]);
       const [hook] = (await list()).json().data;
       expect(hook).toMatchObject({ canManage: false, id: TEMPLATE, kind: 'template_webhook' });
+    });
+
+    it('says whether each webhook is signed and whether signatures are required', async () => {
+      settings.signingPolicyTeams = ['t-policy'];
+      const hook = (id: string, teamId: string, extra: Record<string, unknown>) => ({
+        id,
+        name: id,
+        status: 'ACTIVE',
+        team: { id: teamId, name: teamId, orgId: null },
+        teamId,
+        webhookRequireSignature: false,
+        webhookSigningSecretKeyVersion: null,
+        ...extra,
+      });
+      ctx.prisma.workflowTemplate.findMany
+        .mockResolvedValueOnce([
+          hook('unsigned', 't', {}),
+          hook('optional', 't', { webhookSigningSecretKeyVersion: 1 }),
+          hook('required', 't', {
+            webhookRequireSignature: true,
+            webhookSigningSecretKeyVersion: 1,
+          }),
+          hook('policy', 't-policy', {}),
+        ])
+        .mockResolvedValueOnce([]);
+      const rows = (await list()).json().data as Array<Record<string, unknown>>;
+      const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+      expect(byId.unsigned).toMatchObject({ signatureRequired: false, signed: false });
+      expect(byId.optional).toMatchObject({ signatureRequired: false, signed: true });
+      expect(byId.required).toMatchObject({ signatureRequired: true, signed: true });
+      expect(byId.policy).toMatchObject({ signatureRequired: true, signed: false });
+      // The secret is never selected, only whether one exists.
+      const select = JSON.stringify(ctx.prisma.workflowTemplate.findMany.mock.calls[0]?.[0]);
+      expect(select).not.toContain('Ciphertext');
+      settings.signingPolicyTeams = [];
     });
 
     it('needs platform role LEAD as well as write access to manage a webhook', async () => {

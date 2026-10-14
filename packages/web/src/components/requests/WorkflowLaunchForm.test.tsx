@@ -25,6 +25,12 @@ const template = {
   updatedAt: '',
   versionCount: 2,
   webhookConfigured: false,
+  webhookSigning: {
+    configured: false,
+    lastFour: null,
+    previousExpiresAt: null,
+    requireSignature: false,
+  },
 } satisfies WorkflowTemplateSummary;
 afterEach(() => vi.unstubAllGlobals());
 

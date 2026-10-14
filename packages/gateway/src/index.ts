@@ -25,6 +25,7 @@ import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
 } from './lib/repoIdentityIndexCheck.js';
+import { redactedRequestSerializer, redactingLogMethod } from './lib/requestUrlRedaction.js';
 import { syncSchedulesOnceConnected } from './lib/startupScheduleSync.js';
 import {
   healthBody,
@@ -107,7 +108,14 @@ async function start() {
   // Must run before betterAuth.handler is called — reads OAuth creds from DB.
   await initAuth();
 
-  const app = Fastify({ logger: true, trustProxy: parseTrustProxy(process.env.TRUST_PROXY) });
+  const app = Fastify({
+    // A template webhook's URL is its credential: log every request URL with the token redacted.
+    logger: {
+      hooks: { logMethod: redactingLogMethod },
+      serializers: { req: redactedRequestSerializer },
+    },
+    trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
+  });
 
   // Zod validation + serialization
   app.setValidatorCompiler(validatorCompiler);

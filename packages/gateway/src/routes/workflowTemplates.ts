@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import { inputSchemaProblems } from '@auto-swe/shared/lib/inputSchema';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -70,6 +71,13 @@ import {
   teamMembershipFilter,
   templateWriteFilter,
 } from '../lib/templateLaunch.js';
+import {
+  CLEARED_SIGNING_COLUMNS,
+  rotatedSigningColumns,
+  signatureRequiredByPolicy,
+  type WebhookSigningState,
+  webhookSigningState,
+} from '../lib/templateWebhookSigning.js';
 import { memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -223,10 +231,11 @@ const ValidateSpecBody = z.object({
   templateId: z.string().uuid().optional(),
 });
 const PromoteBody = z.object({ version: z.number().int().min(1) });
+const RequireSignatureBody = z.object({ required: z.boolean() });
 const ListTemplatesQuery = z.object({ teamId: z.string().uuid().optional() });
 const TEMPLATE_INCLUDE = {
   _count: { select: { versions: true } },
-  team: { select: { id: true, name: true, slug: true } },
+  team: { select: { id: true, name: true, orgId: true, slug: true } },
 } satisfies Prisma.WorkflowTemplateInclude;
 
 type TemplateWithIncludes = Prisma.WorkflowTemplateGetPayload<{ include: typeof TEMPLATE_INCLUDE }>;
@@ -479,6 +488,8 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     // The token is an unauthenticated trigger credential: expose only whether
     // one exists. The plaintext is returned once, by POST /:id/webhook/regenerate.
     webhookConfigured: tpl.webhookToken != null,
+    // Whether calls are signed, never the secret (returned once, by the rotate route).
+    webhookSigning: webhookSigningState(tpl),
     workspaceProvider: tpl.workspaceProvider ?? null,
   };
 }
@@ -1059,6 +1070,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             where: { templateId_version: { templateId: tpl.id, version: tpl.activeVersion } },
           })
         : null;
+      // Whether policy forces signing for this template's team or organization — the dashboard
+      // shows it beside the template's own switch.
+      const signaturePolicy = await signatureRequiredByPolicy({
+        orgId: tpl.team?.orgId ?? null,
+        teamId: tpl.teamId,
+      });
       return {
         data: {
           ...base,
@@ -1075,6 +1092,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
               }
             : null,
           versions: tpl.versions,
+          webhookSignatureRequiredByPolicy: signaturePolicy,
         },
       };
     }
@@ -2069,6 +2087,222 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'WorkflowTemplate',
       });
       return reply.status(204).send();
+    }
+  );
+
+  // ── Webhook signing (docs/automations.md §5) ──
+  // Same permission as the token routes: platform LEAD+, and a template the caller may edit.
+  // The audit log records whether a secret exists and the switch, never the secret.
+  const loadWritableTemplate = async (
+    request: { params: { id: string } },
+    user: JwtPayload,
+    reply: FastifyReply
+  ) => {
+    const existing = await fastify.prisma.workflowTemplate.findFirst({
+      where: { id: request.params.id, ...templateWriteFilter(user) },
+    });
+    if (!existing) {
+      await sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      return null;
+    }
+    return existing;
+  };
+  /**
+   * Update one template's signing columns only if `condition` still holds, through the caller's
+   * write filter, then re-read the row through the same filter. `gone` means the template no
+   * longer exists or the caller may no longer edit it (404); `conflict` means it exists but the
+   * condition no longer held (409); `ok` carries the row as written, which responses and the
+   * audit log are built from. The guard cannot read `templateWriteFilter`'s spread (an ADMIN's
+   * is empty, and a global template has no team), so the calls are marked rather than filtered.
+   */
+  const updateSigningIf = async (
+    user: JwtPayload,
+    id: string,
+    data: Prisma.WorkflowTemplateUpdateManyMutationInput,
+    condition: Prisma.WorkflowTemplateWhereInput
+  ) =>
+    runUnscoped(
+      'one template by id, constrained by the caller’s write filter',
+      ['WorkflowTemplate'],
+      async () => {
+        const { count } = await fastify.prisma.workflowTemplate.updateMany({
+          data,
+          where: { AND: [{ id }, templateWriteFilter(user), condition] },
+        });
+        const row = await fastify.prisma.workflowTemplate.findFirst({
+          where: { AND: [{ id }, templateWriteFilter(user)] },
+        });
+        if (!row) {
+          return { status: 'gone' as const };
+        }
+        return count === 0 ? { row, status: 'conflict' as const } : { row, status: 'ok' as const };
+      }
+    );
+  const signingAudit = (state: WebhookSigningState) => ({
+    webhookRequireSignature: state.requireSignature,
+    webhookSigningPreviousActive: state.previousExpiresAt !== null,
+    webhookSigningSecretConfigured: state.configured,
+  });
+
+  // POST /:id/webhook/signing-secret/rotate — a new signing secret, returned once. The one it
+  // replaces stays valid for 24 hours, so a sender can move over without dropping calls.
+  app.post(
+    '/:id/webhook/signing-secret/rotate',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { params: TemplateIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const existing = await loadWritableTemplate(request, user, reply);
+      if (!existing) {
+        return;
+      }
+      const now = new Date();
+      const before = webhookSigningState(existing, now);
+      const rotated = rotatedSigningColumns(existing, now);
+      // Conditional on the secret read: two rotations racing would otherwise both hand out a
+      // secret, and the one written first would be silently replaced.
+      const write = await updateSigningIf(user, existing.id, rotated.data, {
+        webhookSigningSecretNonce: existing.webhookSigningSecretNonce
+          ? { equals: existing.webhookSigningSecretNonce }
+          : null,
+      });
+      if (write.status === 'gone') {
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      if (write.status === 'conflict') {
+        return sendError(
+          reply,
+          409,
+          'SIGNING_SECRET_CHANGED',
+          'The signing secret changed while it was being rotated; try again'
+        );
+      }
+      const after = webhookSigningState(write.row, now);
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: signingAudit(after),
+        before: signingAudit(before),
+        entityId: existing.id,
+        entityType: 'WorkflowTemplate',
+      });
+      return reply.status(200).send({
+        data: {
+          signingSecret: rotated.secret,
+          webhookSigning: after,
+        },
+      });
+    }
+  );
+
+  // DELETE /:id/webhook/signing-secret — removes the current and the previous secret. Refused
+  // while the template requires signatures, which would otherwise refuse every call.
+  app.delete(
+    '/:id/webhook/signing-secret',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { params: TemplateIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const existing = await loadWritableTemplate(request, user, reply);
+      if (!existing) {
+        return;
+      }
+      if (existing.webhookRequireSignature) {
+        return sendError(
+          reply,
+          409,
+          'WEBHOOK_SIGNATURE_REQUIRED',
+          'This webhook requires signed calls; turn that off before removing its signing secret'
+        );
+      }
+      const now = new Date();
+      // Conditional on the switch still being off: a concurrent PUT that turned it on must not
+      // end with signatures required and no secret.
+      const cleared = await updateSigningIf(user, existing.id, CLEARED_SIGNING_COLUMNS, {
+        webhookRequireSignature: false,
+      });
+      if (cleared.status === 'gone') {
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      if (cleared.status === 'conflict') {
+        return sendError(
+          reply,
+          409,
+          'WEBHOOK_SIGNATURE_REQUIRED',
+          'This webhook requires signed calls; turn that off before removing its signing secret'
+        );
+      }
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: signingAudit(webhookSigningState(cleared.row, now)),
+        before: signingAudit(webhookSigningState(existing, now)),
+        entityId: existing.id,
+        entityType: 'WorkflowTemplate',
+      });
+      return reply.status(204).send();
+    }
+  );
+
+  // PUT /:id/webhook/require-signature — whether unsigned calls are refused. Turning it on needs
+  // a signing secret first, so the switch cannot lock the webhook out by accident.
+  app.put(
+    '/:id/webhook/require-signature',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      schema: { body: RequireSignatureBody, params: TemplateIdParam },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const existing = await loadWritableTemplate(request, user, reply);
+      if (!existing) {
+        return;
+      }
+      const { required } = request.body;
+      if (required && existing.webhookSigningSecretCiphertext == null) {
+        return sendError(
+          reply,
+          409,
+          'WEBHOOK_SIGNING_NOT_CONFIGURED',
+          'Generate a signing secret before requiring signed calls'
+        );
+      }
+      const now = new Date();
+      // Turning it on is conditional on a secret still existing: a concurrent DELETE of the
+      // secret must not leave signatures required with nothing to sign with.
+      const changed = await updateSigningIf(
+        user,
+        existing.id,
+        { webhookRequireSignature: required },
+        required ? { webhookSigningSecretCiphertext: { not: null } } : {}
+      );
+      if (changed.status === 'gone') {
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      if (changed.status === 'conflict') {
+        return sendError(
+          reply,
+          409,
+          'WEBHOOK_SIGNING_NOT_CONFIGURED',
+          'Generate a signing secret before requiring signed calls'
+        );
+      }
+      const updated = changed.row;
+      if (existing.webhookRequireSignature !== required) {
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: signingAudit(webhookSigningState(updated, now)),
+          before: signingAudit(webhookSigningState(existing, now)),
+          entityId: existing.id,
+          entityType: 'WorkflowTemplate',
+        });
+      }
+      return { data: { webhookSigning: webhookSigningState(updated, now) } };
     }
   );
 

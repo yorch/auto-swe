@@ -2152,40 +2152,57 @@ model HumanApproval {
 /// a new WorkflowTemplateVersion. Exactly one version may be marked active per
 /// template (enforced in application code).
 model WorkflowTemplate {
-  id                             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  teamId                         String?                @map("team_id") @db.Uuid
+  id                                     String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId                                 String?                @map("team_id") @db.Uuid
   /// Restrict, not SetNull: a null `teamId` means GLOBAL, so nulling it on team
   /// deletion would publish that team's private templates to every tenant.
-  team                           Team?                  @relation(fields: [teamId], references: [id], onDelete: Restrict)
-  name                           String
-  description                    String                 @default("")
+  team                                   Team?                  @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  name                                   String
+  description                            String                 @default("")
   /// Declarative input contract for run submission — a JSON-Schema-subset
   /// object (`{ type:'object', properties, required }`) the gateway validates
   /// the run-input payload against. Null = no declared schema (accept any
   /// payload). SWE's default template declares `{ ticketId, connectionId,
   /// description, budget }`.
-  inputSchema                    Json?                  @map("input_schema")
+  inputSchema                            Json?                  @map("input_schema")
   /// Workspace provider this template expects for the run. Must be one of the
   /// registered workspace provider types (`git_repo`, `document`, `record`,
   /// `api_only`). Null = legacy behaviour; the runtime falls back to `git_repo`.
-  workspaceProvider              String?                @map("workspace_provider")
+  workspaceProvider                      String?                @map("workspace_provider")
   /// Phase-5 assumed human minutes this template saves per run.
   /// Set by template authors; analytics roll it up by team/org.
-  estimatedHumanTimeSavedMinutes Float?                 @map("estimated_human_time_saved_minutes")
+  estimatedHumanTimeSavedMinutes         Float?                 @map("estimated_human_time_saved_minutes")
   // Provenance: null = core platform; 'swe-starter' = SWE seed content (removable).
-  origin                         String?
-  status                         WorkflowTemplateStatus @default(DRAFT)
-  isDefault                      Boolean                @default(false) @map("is_default")
-  activeVersion                  Int?                   @map("active_version")
+  origin                                 String?
+  status                                 WorkflowTemplateStatus @default(DRAFT)
+  isDefault                              Boolean                @default(false) @map("is_default")
+  activeVersion                          Int?                   @map("active_version")
   /// A/B experiment: percent of incoming work requests routed to `experimentVersion`
   /// instead of `activeVersion`. 0 or NULL disables the experiment.
-  experimentVersion              Int?                   @map("experiment_version")
-  experimentSplit                Int?                   @map("experiment_split")
+  experimentVersion                      Int?                   @map("experiment_version")
+  experimentSplit                        Int?                   @map("experiment_split")
   /// Random token used to trigger this template via the public webhook endpoint.
   /// Null = no webhook configured. Treated as a secret — only shown to LEADs/ADMINs.
-  webhookToken                   String?                @unique @map("webhook_token")
-  createdAt                      DateTime               @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt                      DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  webhookToken                           String?                @unique @map("webhook_token")
+  /// HMAC secret a caller signs webhook bodies with (`X-AutoSwe-Signature`, docs/automations.md §5),
+  /// sealed with the AES-GCM envelope. Null = no signing secret.
+  webhookSigningSecretCiphertext         Bytes?                 @map("webhook_signing_secret_ciphertext")
+  webhookSigningSecretNonce              Bytes?                 @map("webhook_signing_secret_nonce")
+  webhookSigningSecretAuthTag            Bytes?                 @map("webhook_signing_secret_auth_tag")
+  webhookSigningSecretKeyVersion         Int?                   @map("webhook_signing_secret_key_version")
+  webhookSigningSecretLastFour           String?                @map("webhook_signing_secret_last_four")
+  /// The secret the last rotation replaced, still accepted until `webhookPreviousSigningSecretExpiresAt`.
+  webhookPreviousSigningSecretCiphertext Bytes?                 @map("webhook_previous_signing_secret_ciphertext")
+  webhookPreviousSigningSecretNonce      Bytes?                 @map("webhook_previous_signing_secret_nonce")
+  webhookPreviousSigningSecretAuthTag    Bytes?                 @map("webhook_previous_signing_secret_auth_tag")
+  webhookPreviousSigningSecretKeyVersion Int?                   @map("webhook_previous_signing_secret_key_version")
+  webhookPreviousSigningSecretLastFour   String?                @map("webhook_previous_signing_secret_last_four")
+  webhookPreviousSigningSecretExpiresAt  DateTime?              @map("webhook_previous_signing_secret_expires_at") @db.Timestamptz
+  /// Refuse unsigned webhook calls. Policy (`workflow.templateWebhookRequireSignature`, resolved
+  /// for the template's team) can require it too when this is false; it never turns it off.
+  webhookRequireSignature                Boolean                @default(false) @map("webhook_require_signature")
+  createdAt                              DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                              DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   versions              WorkflowTemplateVersion[]
   workflowRuns          WorkflowRun[]

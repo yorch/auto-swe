@@ -1,0 +1,304 @@
+import { decryptSecret } from '@auto-swe/shared/lib/crypto';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  SIGNING_ROTATION_OVERLAP_MS,
+  type TemplateSigningColumns,
+  templateWebhookSecrets,
+} from '../lib/templateWebhookSigning.js';
+import { workflowTemplateRoutes } from './workflowTemplates.js';
+
+process.env.CONFIG_ENCRYPTION_KEY ??= Buffer.alloc(32, 5).toString('base64');
+
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveSetting: vi.fn(async () => false),
+}));
+
+/**
+ * The signing-secret routes on a template's webhook: rotate (secret shown once, the replaced one
+ * kept for 24 h), remove, and the require-signature switch. Same permission as the token routes
+ * (LEAD+, a template the caller may edit), audited without the secret.
+ */
+
+const ID = 'cccccccc-3333-4333-8333-cccccccccccc';
+type Row = Record<string, unknown>;
+
+interface Harness {
+  app: FastifyInstance;
+  row: Row;
+  audits: Row[];
+  role: string;
+  /** Simulates another rotation landing between this route's read and its write. */
+  raceOnce: boolean;
+  updateWheres: Row[];
+  /** Runs after the route's read: another request's write landing in between. */
+  afterRead?: () => void;
+  /** The template is deleted (or leaves the caller's reach) after the route's read. */
+  gone?: boolean;
+}
+
+async function build(): Promise<Harness> {
+  const h: Harness = {
+    app: Fastify(),
+    audits: [],
+    raceOnce: false,
+    role: 'LEAD',
+    row: {
+      id: ID,
+      name: 'deploy hook',
+      origin: null,
+      teamId: 'team-1',
+      webhookRequireSignature: false,
+      webhookSigningSecretCiphertext: null,
+      webhookSigningSecretNonce: null,
+      webhookToken: 'tok',
+    },
+    updateWheres: [],
+  };
+  h.app.setValidatorCompiler(validatorCompiler);
+  h.app.setSerializerCompiler(serializerCompiler);
+  h.app.decorate('auth', {
+    verifyAccessToken: () => ({ exp: 9_999_999_999, iat: 0, role: h.role, sub: 'user-1' }),
+  } as unknown as never);
+  const sameNonce = (a: unknown, b: unknown) =>
+    a == null || b == null
+      ? a == null && b == null
+      : Buffer.from(a as Uint8Array).equals(Buffer.from(b as Uint8Array));
+  h.app.decorate('prisma', {
+    configAuditLog: {
+      create: async ({ data }: { data: Row }) => {
+        h.audits.push(data);
+        return data;
+      },
+    },
+    workflowTemplate: {
+      findFirst: async ({ select, where }: { select?: Row; where: Row }) => {
+        const id = where.id ?? ((where.AND as Row[] | undefined)?.[0]?.id as string | undefined);
+        const row = id === ID && !h.gone ? { ...h.row } : null;
+        // The preHandler's system-template probe selects fields; only the route's read races.
+        if (row && !select) {
+          h.afterRead?.();
+          h.afterRead = undefined;
+        }
+        return row;
+      },
+      update: async () => {
+        throw new Error('signing writes must be conditional');
+      },
+      updateMany: async ({ data, where }: { data: Row; where: Row }) => {
+        if (h.raceOnce) {
+          h.raceOnce = false;
+          return { count: 0 };
+        }
+        h.updateWheres.push(where);
+        // Evaluates the conditions the routes write; the write filter's team clause is the
+        // caller's, already applied by findFirst here.
+        const holds = (c: Row): boolean =>
+          Object.entries(c).every(([k, v]) => {
+            if (k === 'id') {
+              return v === ID;
+            }
+            if (k === 'webhookSigningSecretNonce') {
+              const e = v as { equals?: unknown } | null;
+              return sameNonce(e?.equals ?? null, h.row.webhookSigningSecretNonce);
+            }
+            if (k === 'webhookRequireSignature') {
+              return h.row.webhookRequireSignature === v;
+            }
+            if (k === 'webhookSigningSecretCiphertext') {
+              return h.row.webhookSigningSecretCiphertext != null;
+            }
+            return true;
+          });
+        if (h.gone || !((where.AND as Row[]) ?? [where]).every(holds)) {
+          return { count: 0 };
+        }
+        Object.assign(h.row, data);
+        return { count: 1 };
+      },
+    },
+  } as unknown as never);
+  await h.app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
+  await h.app.ready();
+  return h;
+}
+
+const call = (h: Harness, method: 'POST' | 'DELETE' | 'PUT', suffix: string, payload?: object) =>
+  h.app.inject({
+    headers: { authorization: 'Bearer x' },
+    method,
+    ...(payload ? { payload } : {}),
+    url: `/api/v1/workflow-templates/${ID}${suffix}`,
+  });
+
+const decrypt = (row: Row, prefix: string) =>
+  decryptSecret({
+    authTag: row[`${prefix}AuthTag`] as Uint8Array,
+    ciphertext: row[`${prefix}Ciphertext`] as Uint8Array,
+    keyVersion: row[`${prefix}KeyVersion`] as number,
+    nonce: row[`${prefix}Nonce`] as Uint8Array,
+  });
+
+describe('template webhook signing routes', () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await build();
+  });
+  afterEach(() => h.app.close());
+
+  it('generates a secret, returns it once, stores it sealed and audits without it', async () => {
+    const res = await call(h, 'POST', '/webhook/signing-secret/rotate');
+    expect(res.statusCode).toBe(200);
+    const { signingSecret, webhookSigning } = res.json().data;
+    expect(signingSecret).toMatch(/^whsec_/);
+    expect(webhookSigning).toMatchObject({ configured: true, previousExpiresAt: null });
+    expect(decrypt(h.row, 'webhookSigningSecret')).toBe(signingSecret);
+    expect(h.row.webhookPreviousSigningSecretCiphertext).toBeNull();
+    expect(h.audits).toHaveLength(1);
+    expect(h.audits[0]).toMatchObject({
+      action: 'UPDATE',
+      afterJson: { webhookSigningSecretConfigured: true },
+      beforeJson: { webhookSigningSecretConfigured: false },
+      entityType: 'WorkflowTemplate',
+    });
+    expect(JSON.stringify(h.audits)).not.toContain(signingSecret);
+    // Later reads never carry it.
+    expect(JSON.stringify(h.row)).not.toContain(signingSecret);
+  });
+
+  it('rotation keeps the replaced secret as previous for 24 hours', async () => {
+    const first = (await call(h, 'POST', '/webhook/signing-secret/rotate')).json().data
+      .signingSecret as string;
+    const before = Date.now();
+    const res = await call(h, 'POST', '/webhook/signing-secret/rotate');
+    const second = res.json().data.signingSecret as string;
+    expect(second).not.toBe(first);
+    expect(decrypt(h.row, 'webhookSigningSecret')).toBe(second);
+    expect(decrypt(h.row, 'webhookPreviousSigningSecret')).toBe(first);
+    const expires = (h.row.webhookPreviousSigningSecretExpiresAt as Date).getTime();
+    expect(expires).toBeGreaterThanOrEqual(before + SIGNING_ROTATION_OVERLAP_MS);
+    expect(expires).toBeLessThan(before + SIGNING_ROTATION_OVERLAP_MS + 60_000);
+    expect(res.json().data.webhookSigning.previousExpiresAt).toBeTruthy();
+    // Both are accepted during the overlap, current first.
+    expect(templateWebhookSecrets(h.row as unknown as TemplateSigningColumns, new Date())).toEqual([
+      second,
+      first,
+    ]);
+  });
+
+  it('refuses a rotation that raced another one instead of handing out a lost secret', async () => {
+    h.raceOnce = true;
+    const res = await call(h, 'POST', '/webhook/signing-secret/rotate');
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SIGNING_SECRET_CHANGED');
+    expect(h.audits).toHaveLength(0);
+  });
+
+  it('will not require signatures before a secret exists', async () => {
+    const res = await call(h, 'PUT', '/webhook/require-signature', { required: true });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('WEBHOOK_SIGNING_NOT_CONFIGURED');
+    expect(h.row.webhookRequireSignature).toBe(false);
+  });
+
+  it('toggles require-signature, audited, and refuses removal while it is on', async () => {
+    await call(h, 'POST', '/webhook/signing-secret/rotate');
+    h.audits.length = 0;
+
+    const on = await call(h, 'PUT', '/webhook/require-signature', { required: true });
+    expect(on.statusCode).toBe(200);
+    expect(on.json().data.webhookSigning.requireSignature).toBe(true);
+    expect(h.audits.at(-1)).toMatchObject({
+      afterJson: { webhookRequireSignature: true },
+      beforeJson: { webhookRequireSignature: false },
+    });
+
+    const removal = await call(h, 'DELETE', '/webhook/signing-secret');
+    expect(removal.statusCode).toBe(409);
+    expect(removal.json().error.code).toBe('WEBHOOK_SIGNATURE_REQUIRED');
+
+    await call(h, 'PUT', '/webhook/require-signature', { required: false });
+    const removed = await call(h, 'DELETE', '/webhook/signing-secret');
+    expect(removed.statusCode).toBe(204);
+    expect(h.row.webhookSigningSecretCiphertext).toBeNull();
+    expect(h.row.webhookPreviousSigningSecretCiphertext).toBeNull();
+    expect(h.audits.at(-1)).toMatchObject({
+      afterJson: { webhookSigningSecretConfigured: false },
+      beforeJson: { webhookSigningSecretConfigured: true },
+    });
+  });
+
+  it('a removal that loses a race to require-signature is refused, not applied', async () => {
+    await call(h, 'POST', '/webhook/signing-secret/rotate');
+    // The DELETE read the switch as off; a PUT turns it on before the DELETE writes.
+    h.afterRead = () => {
+      h.row.webhookRequireSignature = true;
+    };
+    const res = await call(h, 'DELETE', '/webhook/signing-secret');
+    expect(res.statusCode).toBe(409);
+    expect(h.row.webhookSigningSecretCiphertext).not.toBeNull();
+  });
+
+  it('require-signature that loses a race to removal is refused, not applied', async () => {
+    await call(h, 'POST', '/webhook/signing-secret/rotate');
+    h.afterRead = () => {
+      h.row.webhookSigningSecretCiphertext = null;
+    };
+    const res = await call(h, 'PUT', '/webhook/require-signature', { required: true });
+    expect(res.statusCode).toBe(409);
+    expect(h.row.webhookRequireSignature).toBe(false);
+  });
+
+  it.each([
+    ['POST', '/webhook/signing-secret/rotate', undefined],
+    ['DELETE', '/webhook/signing-secret', undefined],
+    ['PUT', '/webhook/require-signature', { required: false }],
+  ] as const)(
+    '%s %s on a template that vanished mid-request is 404, not 409',
+    async (method, suffix, payload) => {
+      h.afterRead = () => {
+        h.gone = true;
+      };
+      const res = await call(h, method, suffix, payload);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('TEMPLATE_NOT_FOUND');
+      expect(h.audits).toHaveLength(0);
+    }
+  );
+
+  it('answers require-signature from the row as written', async () => {
+    await call(h, 'POST', '/webhook/signing-secret/rotate');
+    const res = await call(h, 'PUT', '/webhook/require-signature', { required: true });
+    expect(res.json().data.webhookSigning).toMatchObject({
+      configured: true,
+      requireSignature: true,
+    });
+  });
+
+  it('every write carries the caller’s write filter', async () => {
+    await call(h, 'POST', '/webhook/signing-secret/rotate');
+    expect(JSON.stringify(h.updateWheres[0])).toContain('teamId');
+  });
+
+  it('needs platform LEAD, like the token routes', async () => {
+    h.role = 'ENGINEER';
+    for (const [method, suffix, payload] of [
+      ['POST', '/webhook/signing-secret/rotate', undefined],
+      ['DELETE', '/webhook/signing-secret', undefined],
+      ['PUT', '/webhook/require-signature', { required: false }],
+    ] as const) {
+      expect((await call(h, method, suffix, payload)).statusCode).toBe(403);
+    }
+  });
+
+  it('404s a template the caller may not edit', async () => {
+    const res = await h.app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      url: '/api/v1/workflow-templates/dddddddd-4444-4444-8444-dddddddddddd/webhook/signing-secret/rotate',
+    });
+    expect(res.statusCode).toBe(404);
+  });
+});

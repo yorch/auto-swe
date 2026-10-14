@@ -6,9 +6,15 @@ import {
 } from '@auto-swe/shared/workflow';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { workflowTemplateRoutes } from './workflowTemplates.js';
+
+// The signing policy setting is read from the database; no override anywhere here.
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveSetting: vi.fn(async () => false),
+}));
 
 type Mutable = Record<string, unknown>;
 

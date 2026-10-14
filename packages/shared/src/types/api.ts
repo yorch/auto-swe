@@ -346,6 +346,9 @@ export interface WorkflowTemplateSummary {
   /** Whether an unauthenticated webhook trigger token exists. The token itself
    *  is only returned by POST /workflow-templates/:id/webhook/regenerate. */
   webhookConfigured: boolean;
+  /** Whether the webhook's calls are signed (`X-AutoSwe-Signature`). The secret itself is
+   *  only returned by POST /workflow-templates/:id/webhook/signing-secret/rotate. */
+  webhookSigning: WebhookSigningSummary;
   versionCount: number;
   inputSchema?: InputSchema | null;
   workspaceProvider?: WorkspaceProviderType | null;
@@ -378,7 +381,20 @@ export interface WorkflowTemplateVersionDetail extends WorkflowTemplateVersionSu
 }
 
 /** Shape returned by GET /api/v1/workflow-templates/:id (detail) */
+export interface WebhookSigningSummary {
+  /** A signing secret exists. */
+  configured: boolean;
+  /** The secret's last four characters, as a hint. */
+  lastFour: string | null;
+  /** When the secret the last rotation replaced stops being accepted; null when none is. */
+  previousExpiresAt: string | null;
+  /** The template's own switch: refuse unsigned calls. */
+  requireSignature: boolean;
+}
+
 export interface WorkflowTemplateDetail extends WorkflowTemplateSummary {
+  /** Policy (`workflow.templateWebhookRequireSignature`) forces signed calls for this template. */
+  webhookSignatureRequiredByPolicy: boolean;
   versions: WorkflowTemplateVersionSummary[];
   activeVersionSpec: WorkflowTemplateVersionDetail | null;
 }

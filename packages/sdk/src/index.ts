@@ -148,3 +148,21 @@ export function validateBundle(manifest: unknown): ValidateBundleResult {
   }
   return { bundle, ok: true };
 }
+
+// ── Signed webhooks ──
+// The platform's one HMAC scheme (`X-AutoSwe-Signature: t=<unix>,v1=<hex>`), re-exported rather
+// than reimplemented: a sender signing a template webhook call and a receiver checking a call
+// from the platform run exactly the code the gateway verifies with, so the two cannot drift.
+// Pass the raw request body (string or bytes), never re-serialised JSON.
+export {
+  computeWebhookSignature as computeAutoSweSignature,
+  signWebhookBody as signAutoSweRequest,
+  type VerifyWebhookSignatureInput as VerifyAutoSweSignatureInput,
+  verifyWebhookSignature as verifyAutoSweSignature,
+  WEBHOOK_SIGNATURE_HEADER as AUTO_SWE_SIGNATURE_HEADER,
+  WEBHOOK_SIGNATURE_TEST_VECTOR as AUTO_SWE_SIGNATURE_TEST_VECTOR,
+  WEBHOOK_SIGNATURE_TOLERANCE_SEC as AUTO_SWE_SIGNATURE_TOLERANCE_SEC,
+  type WebhookBody,
+  type WebhookSignatureFailure,
+  type WebhookSignatureResult,
+} from '@auto-swe/shared/lib/webhookSigning';

@@ -188,6 +188,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/automationLedger.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/webhookSigning',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/webhookSigning.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/ciWorkflowFile',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ciWorkflowFile.ts'),
       },
