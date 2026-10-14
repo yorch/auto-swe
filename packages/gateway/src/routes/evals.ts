@@ -602,31 +602,27 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       });
       return rows.map((r) => r.id);
     };
-    const rows = await Promise.all(
-      datasets.map(async (d) => {
-        const acc = perDataset.get(d.id) ?? {
-          cases: 0,
-          quarantined: 0,
-          screened: 0,
-          unscreened: 0,
-        };
-        const never = neverCounts.get(d.id) ?? 0;
-        const failed = Math.max(0, acc.unscreened - never);
-        return {
-          cases: acc.cases,
-          datasetId: d.id,
-          flakeScreened: acc.screened,
-          name: d.name,
-          neverScreened: never,
-          neverScreenedCaseIds: never > 0 ? await skippedIds(d.id, false) : [],
-          quarantined: acc.quarantined,
-          screenFailed: failed,
-          screenFailedCaseIds: failed > 0 ? await skippedIds(d.id, true) : [],
-          slug: d.slug,
-          staleRate: acc.cases > 0 ? acc.quarantined / acc.cases : 0,
-        };
-      })
-    );
+    // One dataset at a time: each may read two id lists, and firing them all at
+    // once for many datasets would outrun the connection pool.
+    const rows: EvalSuiteHealthDto['datasets'] = [];
+    for (const d of datasets) {
+      const acc = perDataset.get(d.id) ?? { cases: 0, quarantined: 0, screened: 0, unscreened: 0 };
+      const never = neverCounts.get(d.id) ?? 0;
+      const failed = Math.max(0, acc.unscreened - never);
+      rows.push({
+        cases: acc.cases,
+        datasetId: d.id,
+        flakeScreened: acc.screened,
+        name: d.name,
+        neverScreened: never,
+        neverScreenedCaseIds: never > 0 ? await skippedIds(d.id, false) : [],
+        quarantined: acc.quarantined,
+        screenFailed: failed,
+        screenFailedCaseIds: failed > 0 ? await skippedIds(d.id, true) : [],
+        slug: d.slug,
+        staleRate: acc.cases > 0 ? acc.quarantined / acc.cases : 0,
+      });
+    }
     const data: EvalSuiteHealthDto = {
       datasets: rows.sort((a, b) => a.slug.localeCompare(b.slug)),
       thresholds: {

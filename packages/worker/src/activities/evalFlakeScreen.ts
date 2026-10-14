@@ -199,22 +199,26 @@ async function defaultLoadCases(datasetId: string): Promise<ScreenCaseRow[]> {
 }
 
 async function defaultRecordInfraError(c: ScreenCaseRow, runs: number): Promise<boolean> {
-  const capped = c.infraErrors + 1 >= FLAKE_SCREEN_MAX_INFRA_ERRORS;
   // Same guard as recordScreen: only the reference this screen ran, still unscreened.
-  const { count } = await prisma.evalCase.updateMany({
-    data: {
-      flakeScreenInfraErrors: { increment: 1 },
-      ...(capped ? { flakeRuns: runs, flakeScreened: false } : {}),
-    },
-    where: {
-      baselineSha: c.baselineSha,
-      flakeRuns: 0,
-      goldenTest: c.goldenTest,
-      id: c.id,
-      repoUrl: c.repoUrl,
-    },
+  const where = {
+    baselineSha: c.baselineSha,
+    flakeRuns: 0,
+    goldenTest: c.goldenTest,
+    id: c.id,
+    repoUrl: c.repoUrl,
+  };
+  await prisma.evalCase.updateMany({
+    data: { flakeScreenInfraErrors: { increment: 1 } },
+    where,
   });
-  return capped && count > 0;
+  // The cap is decided by the stored counter, not the value this screen loaded:
+  // a concurrent screen may have counted too, and an admin reset may have
+  // zeroed it since. Only the write that lands records the failed screen.
+  const { count } = await prisma.evalCase.updateMany({
+    data: { flakeRuns: runs, flakeScreened: false },
+    where: { ...where, flakeScreenInfraErrors: { gte: FLAKE_SCREEN_MAX_INFRA_ERRORS } },
+  });
+  return count > 0;
 }
 
 async function defaultRecordScreen(
