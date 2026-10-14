@@ -1,6 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import {
-  binaryCloudEvent,
   type EventEndpointFormat,
   type EventEndpointScheme,
   isCloudEventEnvelope,
@@ -258,8 +257,9 @@ function parseJson(raw: Buffer): { ok: true; value: unknown } | { ok: false } {
 /**
  * The document an endpoint's pointers address, read from a verified body:
  * - `json`: the body, which must be JSON;
- * - `cloudevents`: a structured-mode event (`application/cloudevents+json`) as it is, or a
- *   binary-mode one (`ce-*` headers) as the same envelope with its body as `data`.
+ * - `cloudevents`: a structured-mode event (`application/cloudevents+json`), whose attributes are
+ *   in the body the signature covers. Binary mode is refused: its attributes travel in `ce-*`
+ *   headers, which no scheme signs, so a captured call could be re-sent as another event.
  */
 export function readEventDocument(args: {
   format: EventEndpointFormat | string;
@@ -272,37 +272,20 @@ export function readEventDocument(args: {
     ?.trim()
     .toLowerCase();
   if (format === 'cloudevents') {
-    if (contentType === 'application/cloudevents-batch+json') {
+    const binary = Object.keys(headers).some((h) => h.toLowerCase().startsWith('ce-'));
+    if (binary || contentType !== 'application/cloudevents+json') {
       return {
         code: 'UNSUPPORTED_EVENT',
-        message: 'Batched CloudEvents are not accepted; send one event per request',
+        message:
+          'Only structured-mode CloudEvents are accepted: one event as application/cloudevents+json, with no ce-* headers',
         ok: false,
       };
     }
-    if (contentType === 'application/cloudevents+json') {
-      const parsed = parseJson(rawBody);
-      if (!parsed.ok || !isCloudEventEnvelope(parsed.value)) {
-        return { code: 'INVALID_EVENT', message: 'The body is not a CloudEvent', ok: false };
-      }
-      return { document: parsed.value, ok: true };
+    const parsed = parseJson(rawBody);
+    if (!parsed.ok || !isCloudEventEnvelope(parsed.value)) {
+      return { code: 'INVALID_EVENT', message: 'The body is not a CloudEvent', ok: false };
     }
-    let data: unknown;
-    if (rawBody.length > 0) {
-      const isJson = contentType === 'application/json' || Boolean(contentType?.endsWith('+json'));
-      const parsed = isJson ? parseJson(rawBody) : { ok: false as const };
-      if (!parsed.ok) {
-        return {
-          code: 'INVALID_EVENT',
-          message: 'A binary-mode CloudEvent must carry JSON data',
-          ok: false,
-        };
-      }
-      data = parsed.value;
-    }
-    const envelope = binaryCloudEvent(headers, data, contentType || undefined);
-    return envelope
-      ? { document: envelope, ok: true }
-      : { code: 'INVALID_EVENT', message: 'The request is not a CloudEvent', ok: false };
+    return { document: parsed.value, ok: true };
   }
   const parsed = parseJson(rawBody);
   return parsed.ok

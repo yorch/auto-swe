@@ -99,7 +99,11 @@ describe('hmac-sha256', () => {
       reason: 'malformed',
     });
     expect(verify(e, { 'x-signature': 'sha256=zz' })).toEqual({ ok: false, reason: 'malformed' });
-    expect(verify(e, { 'x-signature': [good, good] })).toEqual({ ok: false, reason: 'malformed' });
+    // Node joins a header sent twice into one value with ", ", which is not a digest.
+    expect(verify(e, { 'x-signature': `${good}, ${good}` })).toEqual({
+      ok: false,
+      reason: 'malformed',
+    });
     expect(verify(e, {})).toEqual({ ok: false, reason: 'missing' });
   });
 });
@@ -116,6 +120,12 @@ describe('shared-secret-header', () => {
       reason: 'mismatch',
     });
     expect(verify(e, { authorization: 'Bearer whsec' })).toEqual({ ok: false, reason: 'mismatch' });
+    // A header sent twice, as Node joins it.
+    expect(
+      verify(e, {
+        authorization: 'Bearer whsec_current_secret_value, Bearer whsec_current_secret_value',
+      })
+    ).toEqual({ ok: false, reason: 'mismatch' });
     expect(verify(e, { authorization: 'whsec_current_secret_value' })).toEqual({
       ok: false,
       reason: 'malformed',
@@ -163,7 +173,7 @@ describe('readEventDocument', () => {
     expect(json('not json')).toMatchObject({ code: 'INVALID_EVENT', ok: false });
   });
 
-  it('reads structured and binary CloudEvents, and refuses batches', () => {
+  it('reads structured CloudEvents only: binary mode and batches are refused', () => {
     const structured = JSON.stringify({ id: '1', source: 's', specversion: '1.0', type: 't' });
     expect(
       json(
@@ -181,8 +191,16 @@ describe('readEventDocument', () => {
         { 'ce-id': '9', 'ce-source': 's', 'ce-specversion': '1.0', 'ce-type': 't' },
         'cloudevents'
       )
-    ).toMatchObject({ document: { data: { x: 1 }, id: '9', type: 't' }, ok: true });
-    expect(json('{"x":1}', {}, 'cloudevents')).toMatchObject({ code: 'INVALID_EVENT' });
+    ).toMatchObject({ code: 'UNSUPPORTED_EVENT', ok: false });
+    // ce-* headers are refused even beside a structured body: they are not signed.
+    expect(
+      json(
+        structured,
+        { 'ce-id': '9', 'content-type': 'application/cloudevents+json' },
+        'cloudevents'
+      )
+    ).toMatchObject({ code: 'UNSUPPORTED_EVENT' });
+    expect(json('{"x":1}', {}, 'cloudevents')).toMatchObject({ code: 'UNSUPPORTED_EVENT' });
     expect(
       json('[]', { 'content-type': 'application/cloudevents-batch+json' }, 'cloudevents')
     ).toMatchObject({ code: 'UNSUPPORTED_EVENT' });

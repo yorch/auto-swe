@@ -16,7 +16,7 @@ export const EVENT_ENDPOINT_SCHEMES = [
 ] as const;
 export type EventEndpointScheme = (typeof EVENT_ENDPOINT_SCHEMES)[number];
 
-/** How the body is read: plain JSON, or a CloudEvent (structured or binary mode). */
+/** How the body is read: plain JSON, or a structured-mode CloudEvent. */
 export const EVENT_ENDPOINT_FORMATS = ['json', 'cloudevents'] as const;
 export type EventEndpointFormat = (typeof EVENT_ENDPOINT_FORMATS)[number];
 
@@ -120,7 +120,7 @@ export const EVENT_ENDPOINT_PRESETS: ReadonlyArray<{
       signaturePrefix: null,
     },
     description:
-      'CloudEvents 1.0 in structured or binary HTTP mode: type, id, subject and source (as the scope) come from the event’s attributes.',
+      'CloudEvents 1.0 in structured HTTP mode (application/cloudevents+json): type, id, subject and source (as the scope) come from the event’s attributes.',
     key: 'cloudevents',
     label: 'CloudEvents',
   },
@@ -236,40 +236,6 @@ export function extractInboundEvent(input: {
     },
     ok: true,
   };
-}
-
-/**
- * A CloudEvent's envelope from binary-mode headers (`ce-*`) and its data, in the shape a
- * structured-mode event has, so the same pointers read both. Null when a required attribute
- * (`specversion` 1.x, `id`, `source`, `type`) is missing.
- */
-export function binaryCloudEvent(
-  headers: Record<string, string | string[] | undefined>,
-  data: unknown,
-  contentType: string | undefined
-): Record<string, unknown> | null {
-  const envelope: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(headers)) {
-    const lower = name.toLowerCase();
-    if (!lower.startsWith('ce-') || typeof value !== 'string') {
-      continue;
-    }
-    const attribute = lower.slice(3);
-    // CloudEvents attribute names are lowercase letters and digits.
-    if (/^[a-z0-9]{1,20}$/.test(attribute)) {
-      envelope[attribute] = value;
-    }
-  }
-  if (!isCloudEventEnvelope(envelope)) {
-    return null;
-  }
-  if (contentType) {
-    envelope.datacontenttype = contentType;
-  }
-  if (data !== undefined) {
-    envelope.data = data;
-  }
-  return envelope;
 }
 
 /** Whether a structured-mode body is a CloudEvent this receiver reads. */

@@ -212,4 +212,20 @@ describe('POST /api/v1/webhooks/events/:endpointId', () => {
       data: { eventId: 'e-1', ignored: true },
     });
   });
+
+  it('refuses binary-mode CloudEvents, whose attributes no signature covers', async () => {
+    const { app } = await build(row({ format: 'cloudevents' }));
+    const data = '{"severity":"high"}';
+    const res = await app.inject(
+      signed(data, { 'ce-id': '1', 'ce-source': 's', 'ce-specversion': '1.0', 'ce-type': 't' })
+    );
+    expect(res.statusCode).toBe(415);
+    expect(res.json().error.code).toBe('UNSUPPORTED_EVENT');
+    const structured = JSON.stringify({ id: '1', source: 's', specversion: '1.0', type: 't' });
+    const ok = await app.inject(
+      signed(structured, { 'content-type': 'application/cloudevents+json' })
+    );
+    expect(ok.statusCode).toBe(202);
+    expect(m.handle.mock.calls[0]?.[2]).toMatchObject({ id: '1', type: 't' });
+  });
 });
