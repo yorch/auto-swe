@@ -35,7 +35,7 @@ The routes a service token can reach, and the scope each needs:
 | `POST /api/v1/agent-runs` | `runs:agent` | Starts an [agent run](./agent-runs.md) on a repository on the principal's allowlist |
 | `POST /api/v1/workflow-templates/:id/runs` | `runs:launch` | Starts a run of a template on the principal's allowlist; a `connectionId` in the payload must be on its repository allowlist |
 | `GET /api/v1/workflow-runs` | `runs:read` | Lists the runs this principal started, and no others, whatever `scope` asks for |
-| `GET /api/v1/workflow-runs/:id` | `runs:read` | Reads one of them: status, steps and result. `includeTraces` and `fullTraces` answer `403 TRACES_NOT_AVAILABLE` |
+| `GET /api/v1/workflow-runs/:id` | `runs:read` | Reads one of them: status, steps with their inputs and outputs, the run's context and result. `includeTraces` and `fullTraces` answer `403 TRACES_NOT_AVAILABLE` |
 | `POST /api/v1/workflow-runs/:id/cancel` | `runs:cancel` | Cancels one of them |
 
 `runs:agent` is a scope of its own because an agent run takes a free-form prompt and an agent of
@@ -74,8 +74,7 @@ app.post('/', {
 ```
 
 A route without `serviceScopes` is closed to service tokens, so a new route stays closed until
-someone decides otherwise. A route that requires a team or organization role refuses a principal
-outright, since it holds no role. A person's token ignores scopes entirely and keeps acting with its
+someone decides otherwise. A person's token ignores scopes entirely and keeps acting with its
 user's role.
 
 ## 3. What a launch checks
@@ -195,5 +194,11 @@ the principal's id in the record.
 - **Only the run routes accept service tokens.** A principal cannot submit a work request, an epic or
   a PRD run, re-run an agent run, read a run's traces (through `/workflow-runs/:id/traces` or
   `includeTraces`), or call the MCP endpoint.
+- **Only traces are withheld.** A principal reads its own runs' step inputs and outputs and the
+  run's context, which can hold diffs and text the run fetched from the tracker or knowledge base
+  with platform credentials. The traces (every prompt and tool call) are what it cannot read.
+- **A run that is never finalized blocks deleting its principal.** Deletion is refused while the
+  principal has a run in flight, and a run whose workflow ended without updating its row counts as in
+  flight until the run reaper finalizes it. Disabling the principal still works meanwhile.
 - **The CLI does not manage principals.** Principals and their tokens are managed from the dashboard
   or the REST API.

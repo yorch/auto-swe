@@ -597,8 +597,8 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const caller = requireCaller(request);
       const { fullTraces, includeSpec } = request.query;
       const includeTraces = request.query.includeTraces || fullTraces;
-      // Traces carry prompts, tool output and repository content: a person's to inspect, not a
-      // machine's. A principal reads a run's status, steps and result.
+      // Traces carry every prompt and tool call: a person's to inspect, not a machine's. A
+      // principal reads its own run's status, steps (inputs and outputs), context and result.
       if (caller.kind === 'service' && includeTraces) {
         return sendError(
           reply,
