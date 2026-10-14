@@ -59,6 +59,18 @@ function visit(dom, hash) {
   return dom.window.document;
 }
 
+/**
+ * The banner with the given heading. Two of these carry `role="status"` — a local source preview
+ * when the checkout is dirty and a pending narrative review when code changed since the attested
+ * revision — and the shell renders the local one first, so `querySelector('[role="status"]')`
+ * returns whichever happens to apply rather than the one under test.
+ */
+function statusBanner(dom, heading) {
+  return [...dom.window.document.querySelectorAll('[role="status"]')].find(
+    (element) => element.querySelector('h3')?.textContent === heading
+  );
+}
+
 function input(dom, id, value) {
   const element = dom.window.document.getElementById(id);
   element.value = value;
@@ -296,9 +308,10 @@ app.register(exampleRoutes, { prefix: '/api/v1/example' });`;
     expect(snapshot.meta.changedSources).toContain(path);
     expect(snapshot.meta.reviewedCommit).toBe(analysis.reviewedCommit);
     const { dom, errors } = browser(snapshot);
-    expect(dom.window.document.querySelector('[role="status"]').textContent).toContain(
-      'Narrative review needed'
-    );
+    const reviewBanner = statusBanner(dom, 'Narrative review needed');
+    expect(reviewBanner).toBeTruthy();
+    // The changed file is named, so the reader can see what the warning is about.
+    expect(reviewBanner.textContent).toContain(path);
     expect(errors).toEqual([]);
     dom.window.close();
   }, 30_000);
@@ -458,7 +471,9 @@ describe('public explorer interactions', () => {
     snapshot.meta.dirtySourcePaths = ['packages/shared/src/prisma/schema.prisma'];
     const { dom, errors } = browser(snapshot);
     const document = visit(dom, '#models/WorkflowRun');
-    expect(document.querySelector('[role="status"]').textContent).toContain('Local source preview');
+    const previewBanner = statusBanner(dom, 'Local source preview');
+    expect(previewBanner).toBeTruthy();
+    expect(previewBanner.textContent).toContain('uncommitted changes');
     expect(document.querySelector('.detail a[href*="/blob/"]').textContent).toContain(
       'before local edits'
     );
