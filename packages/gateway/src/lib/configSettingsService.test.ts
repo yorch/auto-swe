@@ -173,11 +173,11 @@ describe('canReadScope', () => {
   });
 
   it('refuses a team-scope read that names no team, even for a team member', async () => {
-    // With no team id the tenant resolves to nothing, and the read is refused before any
-    // membership is consulted. The team lookup is answered with null for the same reason.
-    prisma.team.findUnique.mockResolvedValue(null);
+    // With no team id the tenant resolves to nothing without a lookup (Prisma throws on
+    // `where: { id: undefined }`), and the read is refused before any membership is consulted.
     prisma.teamMembership.findUnique.mockResolvedValue({ role: 'ENGINEER' });
     expect(await canReadScope(asPrisma(prisma), ENGINEER, { scope: 'TEAM' })).toBe(false);
+    expect(prisma.team.findUnique).not.toHaveBeenCalled();
     expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
   });
 });
@@ -272,11 +272,8 @@ describe('setSetting authorisation', () => {
   });
 
   it('refuses a non-GLOBAL write that names no id, with SCOPE_NOT_ALLOWED', async () => {
-    // The authorisation step looks the tenant up before the scope check runs; the team lookup
-    // is answered with null here so the denial is the one this test is about. Under real
-    // Prisma a `findUnique` with an undefined id is a validation error that would surface
-    // first; a mock cannot show that, so it is not claimed here.
-    prisma.team.findUnique.mockResolvedValue(null);
+    // No tenant lookup happens for a selector without its id: under real Prisma a
+    // `findUnique` with an undefined id throws, which would surface as a 500.
     const result = await setSetting(
       asPrisma(prisma),
       ADMIN,
@@ -291,6 +288,7 @@ describe('setSetting authorisation', () => {
         message: 'A TEAM override needs the matching id.',
       },
     });
+    expect(prisma.team.findUnique).not.toHaveBeenCalled();
     expect(prisma.configSetting.create).not.toHaveBeenCalled();
   });
 });

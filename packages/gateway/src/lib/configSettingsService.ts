@@ -90,7 +90,13 @@ export async function resolveScopeTenant(
       return {};
     case 'ORGANIZATION':
       return { orgId: selector.orgId };
+    // A non-GLOBAL selector that names no id has no tenant. Looking it up would
+    // hand Prisma `where: { id: undefined }`, which throws (a 500) instead of
+    // reaching the refusal the callers give a selector `scopeColumns` rejects.
     case 'TEAM': {
+      if (!selector.teamId) {
+        return {};
+      }
       const team = await prisma.team.findUnique({
         select: { orgId: true },
         where: { id: selector.teamId },
@@ -98,6 +104,9 @@ export async function resolveScopeTenant(
       return { orgId: team?.orgId, teamId: selector.teamId };
     }
     case 'CHANNEL': {
+      if (!selector.channelId) {
+        return {};
+      }
       const channel = await prisma.slackChannel.findUnique({
         select: { orgId: true, teamId: true },
         where: { id: selector.channelId },
@@ -105,6 +114,9 @@ export async function resolveScopeTenant(
       return { orgId: channel?.orgId, teamId: channel?.teamId };
     }
     case 'WORKFLOW_TEMPLATE': {
+      if (!selector.workflowTemplateId) {
+        return {};
+      }
       const template = await prisma.workflowTemplate.findUnique({
         select: { team: { select: { orgId: true } }, teamId: true },
         where: { id: selector.workflowTemplateId },
