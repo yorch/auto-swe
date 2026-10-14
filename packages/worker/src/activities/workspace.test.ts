@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -838,5 +838,16 @@ describe('killTaggedProcessesScript', () => {
     const script = killTaggedProcessesScript('00ff');
     expect(script.indexOf('asw_kill STOP')).toBeLessThan(script.indexOf('asw_kill KILL'));
     expect(script).toContain("grep -qs 'AUTO_SWE_EXEC_ID=00ff'");
+  });
+
+  it('matches a longer tag that starts with the one it kills', () => {
+    // A harness turn kills every command it tagged `<turn tag><suffix>` by its own tag.
+    const pattern = /grep -qs '([^']+)'/.exec(killTaggedProcessesScript('00ff'))?.[1] ?? '';
+    const environ = (tag: string) => `PATH=/bin\0AUTO_SWE_EXEC_ID=${tag}\0HOME=/root\0`;
+    const matches = (tag: string) =>
+      spawnSync('grep', ['-qs', pattern], { input: environ(tag) }).status === 0;
+    expect(matches('00ff0000000a')).toBe(true);
+    expect(matches('00ff')).toBe(true);
+    expect(matches('0aff00ff')).toBe(false);
   });
 });

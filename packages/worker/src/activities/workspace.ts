@@ -361,7 +361,9 @@ export const EXEC_TAG_ENV = 'AUTO_SWE_EXEC_ID';
  * cannot fork a new child between the scan and the kill, then SIGKILL. Uses
  * only `/proc`, `grep` and `kill`, which busybox and coreutils images both
  * have. The id is worker-generated hex, so it needs no quoting beyond the
- * check below.
+ * check below. It matches as a prefix: a process tagged `<execId><more hex>`
+ * dies too, which is how a harness turn's kill reaches every command it ran
+ * under a tag of its own (`harness/runtime.ts`).
  */
 export function killTaggedProcessesScript(execId: string): string {
   if (!/^[0-9a-f]+$/.test(execId)) {

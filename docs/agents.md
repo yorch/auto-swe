@@ -136,11 +136,11 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
   that drives the agent where it works in a workspace. It is resolved with the rest of the version
   and inherited along `inheritsModelFrom`; setting or changing it takes a platform ADMIN, in the
   agent library or by installing a bundle that carries it ([bundles.md](./bundles.md)). See
-  [§3.7](#37-runtimes-mastra-and-the-claude-code-harness).
+  [§3.7](#37-runtimes-mastra-and-the-harnesses).
 - **The `agent` node** carries an `agentRef` (`<key>` or `<key>@<version>`) plus optional
   `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
   and calls `runAgent`. With `workspace: true` the node runs in a throwaway checkout of the run's
-  repository instead, on the Agent's own runtime ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness),
+  repository instead, on the Agent's own runtime ([§3.7](#37-runtimes-mastra-and-the-harnesses),
   *Agent nodes in a checkout*).
 
 ---
@@ -177,9 +177,9 @@ Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is fo
 
 Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present whenever an MCP server was contacted (including a connect that returned zero tools) and **must** be called in a `finally` block.
 
-Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for a harness it takes the one the harness registry holds for that runtime ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)), loads the same `toolKeys`, skills and step budget, binds the Agent's model and credential through that harness, hands it the same MCP connection to relay from the worker, and never binds a Mastra model. It returns `{ kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client (or the harness's relay) and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
+Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-harnesses)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for a harness it takes the one the harness registry holds for that runtime ([§3.7](#37-runtimes-mastra-and-the-harnesses)), loads the same `toolKeys`, skills and step budget, binds the Agent's model and credential through that harness, hands it the same MCP connection to relay from the worker, and never binds a Mastra model. It returns `{ kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client (or the harness's relay) and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
 
-**Running a turn:** activities do not call `agent.generate` themselves. `runImplementerTurn` (`agents/implementerRuntime.ts`) runs one turn through an `ImplementerRuntime` — the Mastra tool loop (`mastraRuntime(agent, maxSteps)`) or the Claude Code harness, chosen per agent ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness)) — then accrues usage through `recordLlmUsage`, runs the advisory output scan, and records the LLM call on the tracer. `executeImplementation`, `implementerSession`, the eval harness, and the merge-conflict resolver all take this path, so a turn is metered and traced identically wherever it runs. The runtime only drives the loop and reports text, tool-call count, and usage; the caller still calls `assertBudgetAvailable` first and owns any failure row.
+**Running a turn:** activities do not call `agent.generate` themselves. `runImplementerTurn` (`agents/implementerRuntime.ts`) runs one turn through an `ImplementerRuntime` — the Mastra tool loop (`mastraRuntime(agent, maxSteps)`) or the Claude Code harness, chosen per agent ([§3.7](#37-runtimes-mastra-and-the-harnesses)) — then accrues usage through `recordLlmUsage`, runs the advisory output scan, and records the LLM call on the tracer. `executeImplementation`, `implementerSession`, the eval harness, and the merge-conflict resolver all take this path, so a turn is metered and traced identically wherever it runs. The runtime only drives the loop and reports text, tool-call count, and usage; the caller still calls `assertBudgetAvailable` first and owns any failure row.
 
 **Step budget.** One `agent.generate` call is a *turn*: the model calls tools until it answers or
 runs out of steps, and every tool call counts as one step. The budget is the
@@ -404,14 +404,15 @@ command is covered the same as a passing one.
   the tool falls back to a bounded truncation of the output. It never throws on a failed offload and
   never hands the model the full, unbounded result.
 
-### 3.7 Runtimes: Mastra and the Claude Code harness
+### 3.7 Runtimes: Mastra and the harnesses
 
 **Files:** `packages/worker/src/agents/implementerRuntimeSelect.ts`, `lib/config/agentRuntime.ts`,
-`agents/harness/`, `agents/harnessRegistry.ts`, `agents/claudeCode/`
+`agents/harness/`, `agents/harnessRegistry.ts`, `agents/claudeCode/`, `agents/pi/`
 
-Two loops can drive an agent that works in a workspace: the platform's own Mastra tool loop, and the
-Claude Code harness running inside the workspace container. Which one drives an agent is decided per
-agent, by `resolveAgentRuntime(key, ctx, default)`:
+Three loops can drive an agent that works in a workspace: the platform's own Mastra tool loop, the
+Claude Code harness running inside the workspace container, and Pi's agent loop running in the
+worker with its tools acting on the container. Which one drives an agent is decided per agent, by
+`resolveAgentRuntime(key, ctx, default)`:
 
 1. **The run's pin.** `WorkflowRun.agentRuntimes` (`{ agentKey: runtime | null }`) is written at run
    start by `createWorkflowRun`, or by `startChannelRun` for a channel-assistant turn
@@ -430,7 +431,7 @@ agent, by `resolveAgentRuntime(key, ctx, default)`:
    model from, because the harness can only drive the model that chain resolves. A version that names
    its own model does not inherit a runtime.
 3. **The caller's default.** For the implementer family it is the run-pinned
-   `workspace.implementerRuntime` setting (`mastra` by default; `claude-code`). An agent run's and a
+   `workspace.implementerRuntime` setting (`mastra` by default; `claude-code`, `pi`). An agent run's and a
    generic `agent` node's default is `mastra`, whatever that setting says.
 
 A first-use pin is written as a compare-and-set on the whole map, so two activities pinning
@@ -466,8 +467,9 @@ its own model must be `anthropic/…`, and a version that names none is checked 
 inherits along the platform-wide `inheritsModelFrom` chain (`runtimeSaveError`). Saving a model the
 harness cannot drive on an agent that harness agents inherit from is allowed, and the response lists
 them (`runtimeWarnings`; the library page shows them), because the saved agent is valid on its own.
-The column carries a CHECK constraint, and the worker reads an unknown value as no opinion, with a
-warning.
+`pi` has no such rule: its model calls go through the worker's own model binding, so it drives any
+model the Mastra loop can. The column carries a CHECK constraint, and the worker reads an unknown
+value as no opinion, with a warning.
 
 **Agent runs on the harness.** An agent run whose agent asks for `claude-code` runs one harness turn in
 its own container in place of the Mastra loop. The run's step ceiling is the harness's turn cap and its
@@ -514,9 +516,10 @@ wrong, against what is one harness's own:
 
 | Shared — `harnessRuntime` | Per harness — `HarnessAdapter` |
 |---|---|
-| The platform probe; installing the binary and checking its SHA-256 before every turn | `provisioning`: the binary for a platform, its hash, its path in the container, any one-off container setup |
+| The platform probe; installing the binary and checking its SHA-256 before every turn | `provisioning`: the binary for a platform, its hash, its path in the container, any one-off container setup — omitted by a harness whose loop runs in the worker, which installs nothing |
 | The `docker exec -i` spawn: exec tag, secrets named without a value, stderr drained | `runTurn`: driving one turn over the harness's own protocol, and reporting a deadline as a stop |
-| Killing the turn's tag when it ends, however it ends | `decide`: mapping a native tool call onto the canonical vocabulary |
+| `turn.exec`: one command in the container for a worker-side harness's tools, tagged with the turn's tag plus a suffix of its own (`harness/containerExec.ts`), its output captured as bytes, killed with its process tree at its timeout or the turn's abort | |
+| Killing the turn's tag when it ends, however it ends — the kill matches the tag as a prefix, so it reaches every command `turn.exec` ran | `decide`: mapping a native tool call onto the canonical vocabulary |
 | Cancellation and a caller's deadline, wired to one abort controller; a cancelled turn reports the cancellation | `usage`: a normaliser from what the harness reports to per-model usage |
 | Each decision bounded by the 60 s deadline, a throw turned into a deny, a refusal traced with its tag | `capabilities`: whether it can enforce the per-call policy |
 | Tool results bounded to 20 000 characters in the trace; a failed turn's usage accrued | `close`: anything held beyond a turn (optional) |
@@ -673,9 +676,93 @@ packages/worker/src/agents/claudeCode/runtime.docker.test.ts`. It needs the Dock
 Alpine's package mirror; the `docker-tests` job in `ci.yml` runs it with the flag set, so it is
 part of the CI gate that image publishing depends on.
 
-**Other harnesses.** Claude Code is the only harness registered. Codex CLI, OpenCode and Gemini CLI
-were each checked for what the registry requires: a callback the worker answers, synchronously,
-before every tool call, that nothing inside the container can bypass. None provides it.
+**How Pi runs.** Pi's agent loop (`pi-agent-core`'s `runAgentLoop`) runs in the worker, not in the
+container (`agents/pi/`). Nothing is installed in the container and the adapter has no
+`provisioning`. The loop's `beforeToolCall` hook, which it awaits before every tool call, is
+`turn.decide`; a refused call is never run and the model is told why, and a hook that throws blocks
+the call. The loop runs one tool call at a time. Pi offers seven tools, mapped onto the canonical
+vocabulary (`bash` → `shell`; `write`, `edit` → `write`; `read` → `read`; `ls`, `grep`, `find` →
+`search`) and decided by `decidePiToolCall` (`pi/policy.ts`), plus the Agent's MCP tools:
+
+| Tool | Implementation | Worker-side policy |
+|---|---|---|
+| `read`, `write`, `edit`, `ls`, `find` | Pi's own, with their file operations (`ReadOperations`, `WriteOperations`, `EditOperations`, `LsOperations`, `FindOperations`) running in the container through `turn.exec` (`pi/tools.ts`) | the same as Claude Code's `Read`, `Write`, `Edit`, `Glob`; an `edit` has every replacement text scanned; reads and searches also reach `/workspace/.tool-output` |
+| `grep` | the worker's, in Pi's argument shape (`pattern`, `path`, `glob`, `ignoreCase`, `literal`, `context`, `limit`): ripgrep in the container when the image has it, else `grep -rn` | the same as Claude Code's `Grep`: the search root confined, `glob` relative and inside it |
+| `bash` | the worker's, in Pi's argument shape (`command`, `timeout` in seconds, at most 600): `bash -c` when the image has bash, else `sh -c`, in the checkout | audit line, then `scanShellCommand` |
+| `mcp__<tool>` | the Agent's MCP connection, relayed from the worker (`pi/mcp.ts`) | allowed by name, exactly the relayed tools; audit line in the relay |
+| anything else | — | refused |
+
+Pi resolves a tool's `path` itself before opening it: a leading `@` is dropped, a leading `~` is the
+loop's home directory (here the worker's), Unicode spaces are folded to ASCII, and a relative path is
+relative to its working directory. The adapter's `decide` resolves the path first, to the absolute
+path inside the checkout Pi then leaves unchanged, and writes it back into the call's arguments, which
+Pi runs the call on — so the path the scanners saw is the path the tool opens. A path with a leading
+`@` or `~` or a Unicode space is refused. A relative path is relative to the checkout: no tool call
+moves the loop's working directory. Each file operation also re-checks its path against the
+checkout (and, for reads, the offload directory) before it runs.
+
+Pi's own `bash` is not used, because it writes the full text of a long result to the local temp
+directory and tells the model that path; the worker's `bash` offloads a result over
+`workspace.maxToolOutputChars` beside the checkout, as the Mastra tools do
+([§3.6](#36-large-tool-output-offload)), where the model's `read` can reach it. A non-zero exit, a
+timeout or an abort is reported to the model as a failed call. Pi's own `grep` is not used either,
+because it always runs ripgrep on the machine the loop runs on (downloading it when missing). The
+worker's `grep` probes the container for `rg` once per session; ripgrep honours `.gitignore`, and
+the `grep -rn` fallback has its results filtered in the worker by `glob`, with anything under `.git`
+or `node_modules` dropped. Either way every argument reaches the command as its own argv entry,
+never through a shell, and the result is at most 1 000 matches (100 by default), offloaded when long.
+`find` lists the files under its root in the container (skipping `.git` and `node_modules`) and
+matches them in the worker: a pattern with no `/` matches a name at any depth (`*.ts`), one with a
+`/` the path from the root, and neither descends into dot-directories, as Pi's `fd` does by default.
+Tool keys grant Pi's tools as they grant Claude Code's: `readFile` and `listDirectory` grant `read`,
+`ls`, `grep` and `find`, `writeFile` grants `write` and `edit`, `bash` grants `bash`, and no opinion
+grants all seven; an exact grant names exactly what it gives (`null` → `read`, `ls`, `grep`, `find`
+for an agent run).
+
+**Pi and MCP.** An Agent whose tool keys enable `'mcp'` and that references an `mcp` Connection has
+it relayed to Pi from the worker, through the same relay as Claude Code (`harness/mcpRelay.ts`): the
+worker connects with the same guarded fetch, credential and private-network rules as the Mastra
+binding, and each tool becomes a Pi tool named `mcp__<tool>` with the server's own input schema. A
+call runs in the worker (`McpRelay.callTool`), under the connection's call timeout, audit-logged
+(`[mcp:audit] … via=harness`) and traced like any Pi tool; its token and headers never enter the
+container. An error result is reported to the model as a failed call, and a long result is offloaded
+like `bash`'s. The policy allows exactly the relayed tools by name. A remote tool whose prefixed
+name a model provider would refuse (more than 64 characters, or anything but letters, digits, `_`
+and `-`) is left out, and the trace says which (`mcp.tools_skipped`). A server that cannot be reached
+is traced (`mcp.connect_failed`) and the session runs without it, as on the Mastra loop.
+
+**Pi's model calls.** Each call is one AI SDK `generateText` step on the model the worker's own
+binding builds (`resolveModel`, `lib/models.ts`), with Pi's tools declared and none executed: the
+tool calls return to Pi's loop (`pi/model.ts`). `pi-ai`'s own provider clients are not used, because
+they would take the process's global `fetch` and bypass the SSRF guard and the
+`models.privateNetworkHosts` policy every other model call goes through. So Pi drives any model the
+Mastra loop can — a built-in provider, or an OpenAI-compatible one whose credential names an
+`apiBase` (refused with `HARNESS_UNSUPPORTED_MODEL` before anything is built when it names none) —
+and the credential never enters the container. Each call is debited as it ends (`turn.callSpent`),
+at the Agent's spec, and a failed call's error is the one the turn fails with. Pi's own
+compaction, sessions on disk, settings, extensions, skills and prompt templates are not part of
+this: nothing of Pi's touches the worker's filesystem.
+
+**Pi's prompt and context.** The system prompt opens with Pi's own (its tool list and guidelines,
+without the paragraph pointing the model at Pi's documentation, which would be on the worker),
+followed by the caller's prompt with skills inline, then the repository's root `AGENTS.md` — else its
+`CLAUDE.md` — read once per session as text (at most 64 KiB) under Pi's "Project Context" heading.
+While that file is loaded, `write` and `edit` may not change `AGENTS.md` or `CLAUDE.md` at the root.
+Turns after the first continue the same conversation, held in the worker. Every command the turn ran
+in the container carries the turn's exec tag, so the kill when the turn ends stops anything it left
+running.
+
+**Testing Pi.** `pi/runtime.test.ts` drives the adapter with a scripted AI SDK model and an in-memory
+container; `pi/runtime.docker.test.ts` runs the real runtime against a real container with the same
+scripted model and no API key: `PI_DOCKER_TEST=1 yarn vitest run
+packages/worker/src/agents/pi/runtime.docker.test.ts` (`PI_DOCKER_TEST_IMAGE` names an image other
+than `node:24-alpine`). The `docker-tests` job in `ci.yml` runs it with the flag set.
+
+**Other harnesses.** Claude Code and Pi are the harnesses registered. Codex CLI, OpenCode, Gemini CLI
+and Pi were each checked for what the registry requires: a callback the worker answers,
+synchronously, before every tool call, that nothing inside the container can bypass. None of the
+four provides it as a CLI in the container; Pi provides it as a library in the worker, which is how
+it is registered.
 
 - **Codex CLI.** Its worker-reachable channel is the `codex app-server` JSON-RPC protocol over
   stdio, whose `item/commandExecution/requestApproval` and `item/fileChange/requestApproval`
@@ -702,10 +789,29 @@ before every tool call, that nothing inside the container can bypass. None provi
   shell command rather than the command. The rule that makes every call ask, and the system settings
   that keep repository settings out, are files inside the container (for example `/etc/gemini-cli/policies/`), which the agent's own shell can rewrite;
   there is no client-supplied settings layer like the one the Claude Agent SDK passes over its pipe.
+- **Pi, as a CLI in the container.** An extension's `tool_call` handler runs before every tool call
+  with the call's real arguments, and a handler that throws blocks the call; under `--mode rpc` it
+  could ask the worker over stdio. `--no-extensions` keeps the repository's `.pi/extensions/` and the
+  extensions its settings name out, so a worker-supplied extension (`-e`) would be the only one
+  loaded. But no flag keeps the repository's `.pi/settings.json` out, and its `shellCommandPrefix` is
+  prepended to every `bash` command after the handler has approved it (its `shellPath` picks the
+  shell the same way). The scanners would decide `ls` while the shell ran the repository's prefix
+  first.
+- **Pi, as a library in the worker.** `pi-agent-core`'s agent loop takes a `beforeToolCall` hook that
+  is awaited before every tool call, and a hook that throws blocks the call. Run in the worker, the
+  loop is not in the container at all, nothing from the repository is loaded unless the worker reads
+  it, and the model credential stays in the worker. Pi's built-in tools cannot be pointed at the
+  container as they are, though: `grep` always runs ripgrep on the local machine (downloading it if
+  it is missing), `bash` writes overflow output to the local temp directory and tells the model that
+  path, and `read` probes the local filesystem for alternative spellings of a path. The adapter
+  (*How Pi runs*, above) supplies its own `bash` and `grep`, and resolves every path before the
+  policy decides it.
 
 Adding a harness is an adapter in its own directory, a `defineHarness` entry in `harnessRegistry.ts`,
-a new value in `IMPLEMENTER_RUNTIMES`, unit tests, and a `*.docker.test.ts` named on the
-`docker-tests` job in `ci.yml` — and the adapter must honestly declare `enforcesPerCallPolicyInWorker`.
+a new value in `IMPLEMENTER_RUNTIMES` (and in the `agents.runtime` CHECK constraint, by migration),
+unit tests, and a `*.docker.test.ts` named on the `docker-tests` job in `ci.yml` — and the adapter
+must honestly declare `enforcesPerCallPolicyInWorker`. A harness whose loop can run in the worker
+omits `provisioning` and acts on the container through `turn.exec`.
 
 ---
 
@@ -1217,11 +1323,28 @@ template override is never badged, because it may use a different model or crede
   of its own (for example one written to `/etc/claude-code/` by an earlier `Bash` call). The
   worker-side policy hook decides every call a genuine binary makes; the container's own isolation is
   what holds when the binary is not genuine.
-- **Claude Code is the only harness an agent can run on.** Codex CLI, OpenCode and Gemini CLI each
-  lack a worker-answered callback before every tool call that the repository or the container cannot
-  bypass, so the registry would refuse them ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness),
-  *Other harnesses*). The verdict rests on what each CLI exposes for that callback; one that gains
-  it fits the same seam.
+- **Claude Code and Pi are the only harnesses an agent can run on.** Codex CLI, OpenCode, Gemini CLI
+  and the Pi CLI each lack a worker-answered callback before every tool call that the repository or
+  the container cannot bypass, so the registry would refuse them
+  ([§3.7](#37-runtimes-mastra-and-the-harnesses), *Other harnesses*); Pi runs as a library in the
+  worker instead. The verdict rests on what each CLI exposes for that callback; one that gains it
+  fits the same seam.
+- **Pi runs without its own extras.** The Pi runtime is Pi's agent loop and its `read`, `write`,
+  `edit`, `ls` and `find` tools, and nothing else of Pi's: no compaction (a long session fails when
+  it outgrows the model's context window, where the Mastra loop starts each turn afresh), no
+  extensions, skills, prompt templates or settings from the repository or the worker, no images (a
+  file is read as text), and no reasoning (thinking is off).
+- **Pi's `grep` depends on the image.** With ripgrep in the executor image it honours `.gitignore`;
+  without it, `grep -rn` searches everything but `.git` and `node_modules` (build output included),
+  and its `glob` filter is applied after the search rather than during it. Pi's `find` honours no
+  ignore file at all.
+- **Pi's file tools are Pi's, not the worker's.** The worker decides each call and confines each file
+  operation to the checkout, but how `edit` matches text, how `read` pages and truncates, and how
+  `ls` sorts and caps are Pi's. Pi's `read` still checks the worker's own filesystem for alternative
+  spellings of a name it cannot find (macOS screenshot names, NFD); a spelling it picks there is
+  re-checked against the checkout before it is opened in the container. Pi serializes writes to one
+  path through a process-wide queue keyed by the path, so two workspaces editing the same relative
+  file wait on each other.
 - **The capability flag is declared, not proven.** The registry trusts what an adapter declares in
   `enforcesPerCallPolicyInWorker`; it refuses an adapter that says no, but cannot test that one which
   says yes routes every call through `turn.decide`. Each adapter's unit and Docker-backed tests are

@@ -628,7 +628,7 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   implementerRuntime?: string | null;
   /**
    * The runtime the run pinned for each agent that has its own
-   * (`{ agentKey: 'mastra' | 'claude-code' }`): at run start, or the first time
+   * (`{ agentKey: 'mastra' | 'claude-code' | 'pi' }`): at run start, or the first time
    * the run resolved an agent created later. An agent's own runtime wins over
    * `implementerRuntime`. Agents with no runtime of their own are not listed:
    * they run on `implementerRuntime` (or Mastra, for an agent run).
@@ -873,7 +873,7 @@ export interface ScheduledWorkRequestSummary {
  * run-pinned `workspace.implementerRuntime` setting, an Agent version's own
  * `runtime` (and its CHECK constraint), and an eval run's per-side override.
  */
-export const IMPLEMENTER_RUNTIMES = ['mastra', 'claude-code'] as const;
+export const IMPLEMENTER_RUNTIMES = ['mastra', 'claude-code', 'pi'] as const;
 export type ImplementerRuntimeKind = (typeof IMPLEMENTER_RUNTIMES)[number];
 
 /** Narrows a stored runtime string (an untyped TEXT column) to a known runtime, else null. */
@@ -886,7 +886,8 @@ export function toImplementerRuntime(value: unknown): ImplementerRuntimeKind | n
 /**
  * Why an Agent version cannot carry this runtime, or null. The `claude-code`
  * harness speaks only the Anthropic Messages API, so a version that names its
- * own non-Anthropic model cannot ask for it. A version that inherits its model
+ * own non-Anthropic model cannot ask for it. `pi` calls its model through the
+ * worker's own binding, so it drives any model the Mastra loop can. A version that inherits its model
  * is checked when a run resolves it (`HARNESS_UNSUPPORTED_MODEL`), since the
  * parent can change independently. One rule for the agent-library API, bundle
  * install and the SDK's bundle validation.

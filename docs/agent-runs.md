@@ -126,14 +126,17 @@ persona and skill fallbacks that `buildImplementerForActivity` applies to sub-ro
 exfiltration channel.
 
 **The loop.** The agent runs on the platform's Mastra loop unless the Agent version sets
-`runtime: claude-code`; the run-wide `workspace.implementerRuntime` setting does not apply to agent
-runs. On the Claude Code harness the agent runs as one harness turn inside its container, granted the
-harness tools that stand in for exactly the workspace tools above (`null` → `Read`, `Glob`, `Grep`;
-`[]` → none), behind the same worker-side tool policy as the implementer, and with the agent's MCP
-connection relayed from the worker, as it would bind on the Mastra loop.
+`runtime: claude-code` or `runtime: pi`; the run-wide `workspace.implementerRuntime` setting does not
+apply to agent runs. On the Claude Code harness the agent runs as one harness turn inside its
+container, granted the harness tools that stand in for exactly the workspace tools above (`null` →
+`Read`, `Glob`, `Grep`; `[]` → none), behind the same worker-side tool policy as the implementer, and
+with the agent's MCP connection relayed from the worker, as it would bind on the Mastra loop. On Pi
+the agent runs as one turn of Pi's loop in the worker, its tools acting on the container under the
+same grant (`null` → `read`, `ls`, `grep`, `find`) and policy, and with the agent's MCP connection
+relayed from the worker.
 The choice is pinned on the run before the clone, when the step first resolves its agent (agent
 runs skip the run-start snapshot other runs take), and recorded as an `agent.runtime` trace event. See
-[agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-claude-code-harness).
+[agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-harnesses).
 
 ---
 
@@ -237,11 +240,12 @@ budget stops the loop with `BUDGET_EXCEEDED`. A run that hits its wall-clock dea
 fails mid-loop has already recorded every step that completed. (The generic `runAgent` call keeps its
 single record at the end unless it is asked for per-step accounting, which agent runs are.)
 
-An agent on the Claude Code harness is debited per model call instead of per step, and the budget
+An agent on a harness (Claude Code or Pi) is debited per model call instead of per step, and the budget
 is re-checked after every debit, so an exhausted budget stops the run with `BUDGET_EXCEEDED` one call
-late. Through the worker's model proxy every call is debited as its response ends; without it, each
-call the harness streams is debited once the next call begins, and what the harness did not stream is
-charged when the turn ends (see Limitations).
+late. On Pi, and on Claude Code through the worker's model proxy, every call is debited as its
+response ends; on Claude Code without the proxy, each call the harness streams is debited once the
+next call begins, and what the harness did not stream is charged when the turn ends (see
+Limitations).
 
 ---
 
