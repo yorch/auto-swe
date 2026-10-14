@@ -142,6 +142,12 @@ COPY --chown=node:node package.json ./
 
 ENV NODE_ENV=production
 
+# The worker serves no HTTP. It touches /tmp/worker-alive every 10 s while its
+# Temporal worker is RUNNING (src/lib/livenessFile.ts); unhealthy once the file
+# is two minutes stale. `find` exits 0 with no match, hence the emptiness test.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD test -n "$(find /tmp/worker-alive -mmin -2 2>/dev/null)" || exit 1
+
 # Ownership is set on each COPY above. The recursive form rewrites every
 # file's metadata into a new layer, storing the whole tree — node_modules
 # included — a second time; it cost 608MB in this image. The WORKDIR itself

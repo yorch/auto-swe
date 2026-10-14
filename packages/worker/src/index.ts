@@ -11,6 +11,7 @@ import { activityNodeTagInterceptor } from './lib/activityNodeTag.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
 import { ignoredPriceOverrideVars } from './lib/costTracking.js';
+import { startLivenessFile } from './lib/livenessFile.js';
 import { initMetrics } from './lib/metrics.js';
 import { OtelForwardingLogger } from './lib/otelLogger.js';
 import { initTemporalClient } from './lib/temporalClient.js';
@@ -121,7 +122,14 @@ async function run() {
   });
 
   console.log('Worker started, polling task queue: engineering-workflow');
-  await worker.run();
+  // The image's HEALTHCHECK reads this file's mtime; it is refreshed only while
+  // the worker is RUNNING, so a stopped or wedged worker goes unhealthy.
+  const stopLiveness = startLivenessFile({ isRunning: () => worker.getState() === 'RUNNING' });
+  try {
+    await worker.run();
+  } finally {
+    stopLiveness();
+  }
   // A graceful stop flushes the batched spans, workflow spans included.
   await otel.shutdown();
 }
